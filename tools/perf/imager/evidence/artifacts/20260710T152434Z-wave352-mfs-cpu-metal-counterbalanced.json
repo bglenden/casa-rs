@@ -4372,7 +4372,7 @@
     }
   },
   "run_id": "20260710T152434Z-wave352-mosaic-mfs-alma-large-dirty-prod-vs-wave352-mosaic-mfs-alma-large-dirty-prod-ae7ee40f",
-  "schema_version": 2,
+  "schema_version": 3,
   "status": "completed",
   "workload": {
     "id": "wave352-mosaic-mfs-alma-large-dirty-product-metal-f32"

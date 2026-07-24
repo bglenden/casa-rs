@@ -602,6 +602,7 @@ dependencies = [
  "casa-test-support",
  "casa-types",
  "libm",
+ "nalgebra",
  "ndarray",
  "num-complex",
  "objc2",
@@ -611,6 +612,7 @@ dependencies = [
  "objc2-metal-performance-shaders-graph",
  "rustfft",
  "serial_test",
+ "tempfile",
  "thiserror 2.0.18",
 ]
 

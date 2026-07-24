@@ -21,8 +21,9 @@ use std::ops;
 use std::str::FromStr;
 use std::sync::LazyLock;
 
+use super::casacore_nutation::standard_equation_of_equinoxes_rad;
 use super::error::MeasureError;
-use super::frame::MeasFrame;
+use super::frame::{IauModel, MeasFrame};
 use crate::quanta::{Quantity, Unit};
 
 /// The Julian Date offset for MJD: JD = MJD + 2400000.5.
@@ -30,6 +31,33 @@ const MJD_OFFSET: f64 = 2_400_000.5;
 
 /// Number of seconds in a day.
 const SECONDS_PER_DAY: f64 = 86_400.0;
+
+/// Greenwich apparent sidereal time using casacore's selected IAU model.
+pub(super) fn casacore_gast_rad(ut1_jd: (f64, f64), tt_jd: (f64, f64), iau_model: IauModel) -> f64 {
+    let (ut_a, ut_b) = ut1_jd;
+    let (tt_a, tt_b) = tt_jd;
+    match iau_model {
+        IauModel::Iau1976_1980 => {
+            // `MCEpoch::UT1_GAST` passes its UT1 epoch directly to
+            // `Nutation::STANDARD`; preserve that legacy time-scale choice.
+            let ut1_mjd = (ut_a - MJD_OFFSET) + ut_b;
+            let equation_of_equinoxes = standard_equation_of_equinoxes_rad(ut1_mjd);
+            let centuries_since_j2000 = (ut1_mjd - 51_544.5) / 36_525.0;
+            let gmst0_seconds = 24_110.548_41
+                + centuries_since_j2000
+                    * (8_640_184.812_866
+                        + centuries_since_j2000 * (0.093_104 + centuries_since_j2000 * -6.2e-6));
+            let gast = MjdHighPrec::from_jd_pair(ut_a, ut_b)
+                + gmst0_seconds / SECONDS_PER_DAY
+                + 6_713.0
+                + equation_of_equinoxes / std::f64::consts::TAU;
+            gast.frac() * std::f64::consts::TAU
+        }
+        IauModel::Iau2006_2000A => {
+            sofars::vm::anp(sofars::erst::gmst82(ut_a, ut_b) + sofars::erst::ee00a(tt_a, tt_b))
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // MjdHighPrec
@@ -718,7 +746,7 @@ fn apply_hop(
             // UT1 = UTC + dUT1
             Ok(value + dut1 / SECONDS_PER_DAY)
         }
-        // UT1 → GMST1: use sofars gmst06
+        // UT1 → GMST1: use SOFA's IAU-2006 epoch arithmetic.
         (UT1, GMST1) => {
             // gmst06 needs both UT1 and TT as 2-part JDs.
             // Derive TT from UT1 via UT1→UTC→TAI→TT.
@@ -794,20 +822,15 @@ fn apply_hop(
         // UT1 → GAST: Greenwich Apparent Sidereal Time
         (UT1, GAST) => {
             let (ut_a, ut_b) = value.as_jd_pair();
-
-            let gast_rad = match frame.iau_model() {
-                super::frame::IauModel::Iau1976_1980 => sofars::erst::gst94(ut_a, ut_b),
-                super::frame::IauModel::Iau2006_2000A => {
-                    // Match C++ casacore: GMST82(UT1) + ee00a(TT)
+            let tt_jd = match frame.iau_model() {
+                IauModel::Iau1976_1980 => (ut_a, ut_b),
+                IauModel::Iau2006_2000A => {
                     let utc = apply_hop(value, UT1, UTC, frame)?;
                     let tai = apply_hop(utc, UTC, TAI, frame)?;
-                    let tt = apply_hop(tai, TAI, TT, frame)?;
-                    let (tt_a, tt_b) = tt.as_jd_pair();
-                    let gmst = sofars::erst::gmst82(ut_a, ut_b);
-                    let ee = sofars::erst::ee00a(tt_a, tt_b);
-                    sofars::vm::anp(gmst + ee)
+                    apply_hop(tai, TAI, TT, frame)?.as_jd_pair()
                 }
             };
+            let gast_rad = casacore_gast_rad((ut_a, ut_b), tt_jd, frame.iau_model());
             let gast_turns = gast_rad / (2.0 * std::f64::consts::PI);
             Ok(MjdHighPrec::new(value.day(), gast_turns))
         }

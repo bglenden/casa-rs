@@ -1247,6 +1247,68 @@ final class WorkbenchStoreTests: XCTestCase {
         }
     }
 
+    func testSwiftUniFFIProjectsVlassAWProjectProfileThroughCanonicalSurface() throws {
+        let client = UniFFISurfaceParameterClient()
+        let schema = try makeImagerTaskUISchema()
+        let defaultSnapshot = try client.defaults(surfaceID: "imager")
+
+        for name in ["cfcache", "cf_resident_mb", "aterm", "psterm", "wbawp", "conjbeams", "normtype"] {
+            let argument = try XCTUnwrap(schema.arguments.first { $0.id == name })
+            XCTAssertEqual(argument.group, "Advanced Wide-Field", "unexpected group for \(name)")
+            XCTAssertTrue(argument.advanced, "\(name) must remain an advanced control")
+            XCTAssertFalse(
+                try XCTUnwrap(defaultSnapshot.states[name]).active,
+                "\(name) must be disabled until AWProject is selected"
+            )
+        }
+        let usepointing = try XCTUnwrap(schema.arguments.first { $0.id == "usepointing" })
+        XCTAssertEqual(usepointing.group, "Advanced Wide-Field")
+        XCTAssertTrue(usepointing.advanced)
+        XCTAssertTrue(try XCTUnwrap(defaultSnapshot.states["usepointing"]).active)
+
+        let fixtureRoot = repositoryRootURL().appendingPathComponent("resources/test-profiles", isDirectory: true)
+        let profileURL = fixtureRoot.appendingPathComponent("vlass-single-field-awproject.toml")
+        let profile = try String(contentsOf: profileURL, encoding: .utf8)
+        let snapshot = try client.load(
+            surfaceID: "imager",
+            profileTOML: profile,
+            sourcePath: profileURL.path
+        )
+
+        XCTAssertEqual(snapshot.contractVersion, 5)
+        XCTAssertEqual(snapshot.states["gridder"]?.value, .string(value: "awproject"))
+        XCTAssertTrue(snapshot.diagnostics.isEmpty)
+        for name in ["cfcache", "cf_resident_mb", "aterm", "psterm", "wbawp", "conjbeams", "usepointing", "normtype"] {
+            XCTAssertTrue(try XCTUnwrap(snapshot.states[name]).active, "\(name) must activate for AWProject")
+        }
+
+        let activeValues = snapshot.states.compactMapValues { state in
+            state.active ? state.value : nil
+        }
+        let invocation = try client.providerInvocation(surfaceID: "imager", values: activeValues)
+
+        func assertPair(_ flag: String, _ value: String) {
+            guard let index = invocation.args.firstIndex(of: flag), index + 1 < invocation.args.count else {
+                return XCTFail("missing provider argument \(flag)")
+            }
+            XCTAssertEqual(invocation.args[index + 1], value, "unexpected value for \(flag)")
+        }
+
+        assertPair("--gridder", "awproject")
+        assertPair("--cfcache", "cf-cache/vlass-spw2-17")
+        assertPair("--cf-resident-mb", "256")
+        assertPair("--uvrange", "<12km")
+        assertPair("--intent", "OBSERVE_TARGET#UNSPECIFIED")
+        assertPair("--stokes", "I")
+        assertPair("--projection", "SIN")
+        assertPair("--normtype", "flatnoise")
+        XCTAssertTrue(invocation.args.contains("--aterm"))
+        XCTAssertTrue(invocation.args.contains("--wbawp"))
+        XCTAssertTrue(invocation.args.contains("--conjbeams"))
+        XCTAssertTrue(invocation.args.contains("--usepointing"))
+        XCTAssertTrue(invocation.args.contains("--no-psterm"))
+    }
+
     func testSwiftUniFFIUsesCatalogProviderInvocationIncludingStdin() throws {
         let client = UniFFISurfaceParameterClient()
         let invocation = try client.providerInvocation(
@@ -5097,7 +5159,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(values["field"], "5")
         XCTAssertEqual(values["phasecenter_field"], "none")
         XCTAssertEqual(values["spw"], "5")
-        XCTAssertEqual(values["polarization"], "YY")
+        XCTAssertEqual(values["stokes"], "YY")
     }
 
     func testTWHyaTutorialImagerDefaultsUseKnownMFSParameters() throws {
@@ -5146,7 +5208,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(values["field"], "5")
         XCTAssertEqual(values["phasecenter_field"], "none")
         XCTAssertEqual(values["spw"], "0")
-        XCTAssertEqual(values["polarization"], "I")
+        XCTAssertEqual(values["stokes"], "I")
         XCTAssertEqual(values["imsize"], "250,250")
         XCTAssertEqual(values["cell"], "0.1arcsec,0.1arcsec")
         XCTAssertEqual(values["specmode"], "mfs")

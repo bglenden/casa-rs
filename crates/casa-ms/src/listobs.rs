@@ -2478,6 +2478,22 @@ mod tests {
     }
 
     #[test]
+    fn uvrange_selection_accepts_casa_kilometer_units() {
+        let ms = make_selection_fixture();
+        let summary = ListObsSummary::from_ms_with_options(
+            &ms,
+            &ListObsOptions {
+                uvrange: Some("0~0.1km".to_string()),
+                ..ListObsOptions::default()
+            },
+        )
+        .expect("build selected summary");
+
+        assert_eq!(summary.measurement_set.row_count, 2);
+        assert_eq!(summary.scans.len(), 2);
+    }
+
+    #[test]
     fn uvrange_selection_filters_rows_in_lambda_units() {
         let ms = make_selection_fixture();
         let summary = ListObsSummary::from_ms_with_options(

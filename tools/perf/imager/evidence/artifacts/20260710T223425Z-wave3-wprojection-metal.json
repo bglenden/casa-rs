@@ -2448,7 +2448,7 @@
     "reason": null,
     "status": "runnable"
   },
-  "schema_version": 2,
+  "schema_version": 3,
   "started_at": "2026-07-10T22:34:25.321995Z",
   "status": "completed",
   "workload": {

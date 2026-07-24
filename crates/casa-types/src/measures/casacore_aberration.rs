@@ -7,7 +7,9 @@
 //! using SOFA for most direction work, but frequency/radial-velocity parity
 //! with casacore requires this exact Earth orbital-velocity series.
 
-const AU_M: f64 = 149_597_870_700.0;
+// Casacore's `UnitVal(1e-8, "AU/d")` uses the legacy IAU light-time
+// definition `C::c * 499.0047837 s`, not the modern exact AU metre value.
+const AU_M: f64 = 299_792_458.0 * 499.004_783_7;
 const DAY_S: f64 = 86_400.0;
 const JD_CENTURY_DAYS: f64 = 36_525.0;
 const MJD_J2000: f64 = 51_544.5;

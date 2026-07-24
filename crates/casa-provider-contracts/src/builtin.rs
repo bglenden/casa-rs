@@ -352,6 +352,96 @@ mod tests {
     }
 
     #[test]
+    fn imager_vlass_controls_share_one_catalog_owned_awproject_surface() {
+        let catalog = builtin_surface_catalog().unwrap();
+        let surface = catalog.surface("imager").unwrap();
+        assert_eq!(surface.contract_version(), 5);
+
+        let awproject = Predicate::Equals {
+            parameter: "gridder".to_string(),
+            value: ParameterValue::String("awproject".to_string()),
+        };
+        for name in [
+            "cfcache",
+            "cf_resident_mb",
+            "facets",
+            "psfphasecenter",
+            "vptable",
+            "aterm",
+            "psterm",
+            "wbawp",
+            "conjbeams",
+            "computepastep",
+            "rotatepastep",
+            "pointingoffsetsigdev",
+            "mosweight",
+            "normtype",
+        ] {
+            let binding = surface
+                .bindings()
+                .iter()
+                .find(|binding| binding.name == name)
+                .unwrap_or_else(|| panic!("missing imager AWProject binding {name}"));
+            assert_eq!(binding.active_when, awproject, "{name}");
+            assert_eq!(
+                binding.projections.presentation.group, "Advanced Wide-Field",
+                "{name}"
+            );
+            assert!(binding.projections.presentation.advanced, "{name}");
+            assert!(binding.projections.cli.is_some(), "{name}");
+            assert!(binding.projections.python.is_some(), "{name}");
+        }
+
+        let usepointing = surface
+            .bindings()
+            .iter()
+            .find(|binding| binding.name == "usepointing")
+            .expect("missing imager POINTING binding");
+        assert_eq!(usepointing.active_when, Predicate::Always);
+        assert_eq!(
+            usepointing.projections.presentation.group,
+            "Advanced Wide-Field"
+        );
+        assert!(usepointing.projections.presentation.advanced);
+
+        for name in ["uvrange", "intent", "stokes"] {
+            assert!(
+                surface
+                    .bindings()
+                    .iter()
+                    .any(|binding| binding.name == name),
+                "missing canonical selection binding {name}"
+            );
+        }
+        let stokes = surface
+            .bindings()
+            .iter()
+            .find(|binding| binding.name == "stokes")
+            .unwrap();
+        assert_eq!(stokes.concept.id.as_str(), "image.selection.stokes");
+        assert_eq!(stokes.aliases, ["polarization"]);
+
+        for name in [
+            "imaging_memory_target_mb",
+            "imaging_prepare_buffer_mb",
+            "imaging_row_block_rows",
+            "imaging_prepare_workers",
+            "imaging_fft_precision",
+        ] {
+            let binding = surface
+                .bindings()
+                .iter()
+                .find(|binding| binding.name == name)
+                .unwrap_or_else(|| panic!("missing imager resource binding {name}"));
+            assert_eq!(
+                binding.projections.presentation.group, "Execution Resources",
+                "{name}"
+            );
+            assert!(binding.projections.presentation.advanced, "{name}");
+        }
+    }
+
+    #[test]
     fn repeated_builtin_names_share_a_concept_or_carry_a_homonym_review() {
         let catalog = builtin_surface_catalog().unwrap();
         let mut grouped = BTreeMap::<

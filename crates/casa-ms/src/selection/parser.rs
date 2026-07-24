@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 
 use casa_types::quanta::MvTime;
 
-use crate::selection::CompiledMsSelection;
 use crate::selection::syntax::{dedup_i32, parse_numeric_id_selector, parse_numeric_range};
+use crate::selection::{CompiledMsSelection, UvBound, UvBoundOp, UvSelectionRange, UvUnit};
 use crate::subtables::{get_f64, has_column};
 use crate::{MeasurementSet, MsError, MsResult};
 
@@ -192,8 +192,10 @@ fn apply_uvrange_selector(
     mut selection: CompiledMsSelection,
     value: &str,
 ) -> MsResult<CompiledMsSelection> {
+    let ranges = parse_uvrange_selector(value)?;
     let taql = build_uvrange_taql(ms, value)?;
-    selection = selection.taql(&taql);
+    selection.uv_ranges.extend(ranges);
+    selection.uv_taql_exprs.push(taql);
     Ok(selection)
 }
 
@@ -703,33 +705,6 @@ pub(crate) fn parse_correlation_selector(value: &str) -> MsResult<Vec<i32>> {
     Ok(dedup_i32(codes))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum BoundOp {
-    Greater,
-    GreaterEqual,
-    Less,
-    LessEqual,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct UvBound {
-    value: f64,
-    op: BoundOp,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum UvUnit {
-    Meters,
-    Lambda(f64),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct UvSelectionRange {
-    lower: Option<UvBound>,
-    upper: Option<UvBound>,
-    unit: UvUnit,
-}
-
 fn build_uvrange_taql(ms: &MeasurementSet, value: &str) -> MsResult<String> {
     let ranges = parse_uvrange_selector(value)?;
     let ddid_lambda_map = ddid_to_lambda_map(ms)?;
@@ -760,10 +735,10 @@ fn parse_uvrange_part(value: &str) -> MsResult<UvSelectionRange> {
         return Ok(UvSelectionRange {
             lower: Some(UvBound {
                 value: parsed,
-                op: BoundOp::GreaterEqual,
+                op: UvBoundOp::GreaterEqual,
             }),
             upper: None,
-            unit: unit.unwrap_or(UvUnit::Meters),
+            unit: unit.unwrap_or(UvUnit::Meters(1.0)),
         });
     }
     if let Some(rest) = value.strip_prefix("<=") {
@@ -772,9 +747,9 @@ fn parse_uvrange_part(value: &str) -> MsResult<UvSelectionRange> {
             lower: None,
             upper: Some(UvBound {
                 value: parsed,
-                op: BoundOp::LessEqual,
+                op: UvBoundOp::LessEqual,
             }),
-            unit: unit.unwrap_or(UvUnit::Meters),
+            unit: unit.unwrap_or(UvUnit::Meters(1.0)),
         });
     }
     if let Some(rest) = value.strip_prefix('>') {
@@ -782,10 +757,10 @@ fn parse_uvrange_part(value: &str) -> MsResult<UvSelectionRange> {
         return Ok(UvSelectionRange {
             lower: Some(UvBound {
                 value: parsed,
-                op: BoundOp::Greater,
+                op: UvBoundOp::Greater,
             }),
             upper: None,
-            unit: unit.unwrap_or(UvUnit::Meters),
+            unit: unit.unwrap_or(UvUnit::Meters(1.0)),
         });
     }
     if let Some(rest) = value.strip_prefix('<') {
@@ -794,9 +769,9 @@ fn parse_uvrange_part(value: &str) -> MsResult<UvSelectionRange> {
             lower: None,
             upper: Some(UvBound {
                 value: parsed,
-                op: BoundOp::Less,
+                op: UvBoundOp::Less,
             }),
-            unit: unit.unwrap_or(UvUnit::Meters),
+            unit: unit.unwrap_or(UvUnit::Meters(1.0)),
         });
     }
     if let Some((start_raw, end_raw)) = value.split_once('~') {
@@ -811,11 +786,11 @@ fn parse_uvrange_part(value: &str) -> MsResult<UvSelectionRange> {
         return Ok(UvSelectionRange {
             lower: Some(UvBound {
                 value: start,
-                op: BoundOp::GreaterEqual,
+                op: UvBoundOp::GreaterEqual,
             }),
             upper: Some(UvBound {
                 value: end,
-                op: BoundOp::LessEqual,
+                op: UvBoundOp::LessEqual,
             }),
             unit,
         });
@@ -825,13 +800,13 @@ fn parse_uvrange_part(value: &str) -> MsResult<UvSelectionRange> {
     Ok(UvSelectionRange {
         lower: Some(UvBound {
             value: parsed,
-            op: BoundOp::GreaterEqual,
+            op: UvBoundOp::GreaterEqual,
         }),
         upper: Some(UvBound {
             value: parsed,
-            op: BoundOp::LessEqual,
+            op: UvBoundOp::LessEqual,
         }),
-        unit: unit.unwrap_or(UvUnit::Meters),
+        unit: unit.unwrap_or(UvUnit::Meters(1.0)),
     })
 }
 
@@ -861,13 +836,14 @@ fn parse_uv_bound_value(value: &str) -> MsResult<(f64, Option<UvUnit>)> {
 
 fn parse_uv_unit(value: &str) -> MsResult<UvUnit> {
     match value.to_ascii_lowercase().as_str() {
-        "m" => Ok(UvUnit::Meters),
+        "m" => Ok(UvUnit::Meters(1.0)),
+        "km" => Ok(UvUnit::Meters(1_000.0)),
         "lambda" => Ok(UvUnit::Lambda(1.0)),
         "klambda" => Ok(UvUnit::Lambda(1_000.0)),
         "mlambda" => Ok(UvUnit::Lambda(1_000_000.0)),
         "glambda" => Ok(UvUnit::Lambda(1_000_000_000.0)),
         other => Err(MsError::VersionError(format!(
-            "uvrange unit {other:?} is not supported; use m, lambda, klambda, mlambda, or glambda"
+            "uvrange unit {other:?} is not supported; use m, km, lambda, klambda, mlambda, or glambda"
         ))),
     }
 }
@@ -878,11 +854,11 @@ fn merge_uv_units(left: Option<UvUnit>, right: Option<UvUnit>) -> MsResult<UvUni
             "uvrange bounds must use the same unit".to_string(),
         )),
         (Some(unit), _) | (_, Some(unit)) => Ok(unit),
-        (None, None) => Ok(UvUnit::Meters),
+        (None, None) => Ok(UvUnit::Meters(1.0)),
     }
 }
 
-fn ddid_to_lambda_map(ms: &MeasurementSet) -> MsResult<Vec<(i32, f64)>> {
+pub(super) fn ddid_to_lambda_map(ms: &MeasurementSet) -> MsResult<Vec<(i32, f64)>> {
     let dd = ms.data_description()?;
     let spw = ms.spectral_window()?;
     let mut mapping = Vec::new();
@@ -902,7 +878,7 @@ fn ddid_to_lambda_map(ms: &MeasurementSet) -> MsResult<Vec<(i32, f64)>> {
 
 fn uvrange_clause(range: &UvSelectionRange, ddid_lambda_map: &[(i32, f64)]) -> MsResult<String> {
     match range.unit {
-        UvUnit::Meters => Ok(build_uvdist_condition(range, None)),
+        UvUnit::Meters(scale) => Ok(build_uvdist_condition(range, Some(scale))),
         UvUnit::Lambda(scale) => {
             let mut clauses = Vec::new();
             for &(ddid, lambda_m) in ddid_lambda_map {
@@ -929,10 +905,10 @@ fn build_uvdist_condition(range: &UvSelectionRange, lambda_m: Option<f64>) -> St
     if let Some(lower) = range.lower {
         let bound = scale_uv_bound(lower.value, lambda_m);
         let op = match lower.op {
-            BoundOp::Greater => ">",
-            BoundOp::GreaterEqual => ">=",
-            BoundOp::Less => "<",
-            BoundOp::LessEqual => "<=",
+            UvBoundOp::Greater => ">",
+            UvBoundOp::GreaterEqual => ">=",
+            UvBoundOp::Less => "<",
+            UvBoundOp::LessEqual => "<=",
         };
         terms.push(format!(
             "{distance_expr} {op} {}",
@@ -942,10 +918,10 @@ fn build_uvdist_condition(range: &UvSelectionRange, lambda_m: Option<f64>) -> St
     if let Some(upper) = range.upper {
         let bound = scale_uv_bound(upper.value, lambda_m);
         let op = match upper.op {
-            BoundOp::Greater => ">",
-            BoundOp::GreaterEqual => ">=",
-            BoundOp::Less => "<",
-            BoundOp::LessEqual => "<=",
+            UvBoundOp::Greater => ">",
+            UvBoundOp::GreaterEqual => ">=",
+            UvBoundOp::Less => "<",
+            UvBoundOp::LessEqual => "<=",
         };
         terms.push(format!(
             "{distance_expr} {op} {}",

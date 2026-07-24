@@ -10,6 +10,9 @@ from typing import Any, Callable
 
 import pytest
 
+from perf_harness import RUN_RESULT_SCHEMA_VERSION
+from test_support import canonical_test_environment, canonical_workload_result
+
 import imaging_performance_ledger as ledger_tool
 
 
@@ -21,20 +24,35 @@ def canonical_result(
     results: dict[str, Any],
     status: str = "completed",
 ) -> dict[str, Any]:
+    if kind == "workload_run":
+        payload = canonical_workload_result(status=status, extra_results=results)
+        payload["run_id"] = run_id
+        payload["workload"]["id"] = workload_id
+        return payload
+
+    artifacts = {"checked_in_path": f"evidence/{run_id}.json"}
+    if kind == "alternating_comparison":
+        artifacts["report_path"] = f"evidence/{run_id}.html"
     if status not in {"completed", "dry_run"}:
         results = {
             **results,
             "failure": {"kind": "comparison_tolerance", "reason": "test failure"},
         }
+    environment = canonical_test_environment()
+    if kind == "image_comparison":
+        environment["migration"] = {
+            "source_schema_version": 2,
+            "method": "synthetic historical comparison fixture",
+        }
     return {
-        "schema_version": 2,
+        "schema_version": RUN_RESULT_SCHEMA_VERSION,
         "kind": kind,
         "status": status,
         "run_id": run_id,
         "created_at": "2026-07-18T00:00:00Z",
-        "workload": {"id": workload_id},
-        "environment": {},
-        "artifacts": {},
+        "workload": {"id": workload_id, "mode_id": "test", "description": ""},
+        "environment": environment,
+        "artifacts": artifacts,
         "results": results,
     }
 
@@ -97,7 +115,7 @@ def run_artifact(
             "rust": {"timings_seconds": {"median": wall_s, "runs": [wall_s]}},
             "casa": {"timings_seconds": {"median": None, "runs": []}},
             "stage_medians_ms": {"rust": stages_ms, "casa": {}},
-            "backend_plan_logs": {"summary": backend_summary},
+            "backend_plan_logs": {"schema_version": 1, "summary": backend_summary},
         },
     )
 
@@ -107,8 +125,10 @@ def comparison_artifact(
 ) -> dict[str, Any]:
     return {
         "status": "completed",
+        "beam_info": {"status": "synthetic_fixture"},
         "structured_difference_review": {
             "label": overall,
+            "summary": f"synthetic {overall} comparison",
             "products": {".image": overall},
         },
         "products": {
@@ -118,8 +138,13 @@ def comparison_artifact(
                 "diff_rms": max_abs / 2.0,
                 "diff_rms_over_casa_rms": max_normalized_rms,
                 "structured_difference": {
+                    "status": "computed",
                     "normalized_diff_rms": max_normalized_rms,
-                    "classification": {"overall": overall},
+                    "classification": {
+                        "amplitude": overall,
+                        "structure": overall,
+                        "overall": overall,
+                    },
                 },
             }
         },
@@ -170,28 +195,28 @@ def counterbalanced_artifact(*, no_slowdown: bool = True) -> dict[str, Any]:
             }
         )
     details = {
-            "configuration": {
-                "baseline_workload": "workloads/wave352-cpu.json",
-                "candidate_workload": "workloads/wave352-metal.json",
-                "measured_pair_count": 1,
-                "slowdown_tolerance_fraction": 0.0,
+        "configuration": {
+            "baseline_workload": "workloads/wave352-cpu.json",
+            "candidate_workload": "workloads/wave352-metal.json",
+            "measured_pair_count": 1,
+            "slowdown_tolerance_fraction": 0.0,
+        },
+        "verdict": {
+            "status": "pass" if no_slowdown else "fail",
+            "no_slowdown": no_slowdown,
+            "observed_median_relative_delta": relative_delta,
+        },
+        "schedule": schedule,
+        "runs": runs,
+        "paired_deltas": [
+            {
+                "block_index": 1,
+                "baseline_seconds": 20.0,
+                "candidate_seconds": candidate_seconds,
+                "delta_seconds": candidate_seconds - 20.0,
+                "relative_delta": relative_delta,
             },
-            "verdict": {
-                "status": "pass" if no_slowdown else "fail",
-                "no_slowdown": no_slowdown,
-                "observed_median_relative_delta": relative_delta,
-            },
-            "schedule": schedule,
-            "runs": runs,
-            "paired_deltas": [
-                {
-                    "block_index": 1,
-                    "baseline_seconds": 20.0,
-                    "candidate_seconds": candidate_seconds,
-                    "delta_seconds": candidate_seconds - 20.0,
-                    "relative_delta": relative_delta,
-                },
-            ],
+        ],
     }
     status = "completed" if no_slowdown else "out_of_tolerance"
     return {
@@ -279,7 +304,7 @@ def valid_fixture(tmp_path: pathlib.Path) -> dict[str, Any]:
                 "casa": {"timings_seconds": {"median": 20.0, "runs": [20.0]}},
                 "rust": {"timings_seconds": {"median": 8.0, "runs": [8.0]}},
                 "stage_medians_ms": {"casa": {}, "rust": {}},
-                "backend_plan_logs": {"summary": {}},
+                "backend_plan_logs": {"schema_version": 1, "summary": {}},
             },
         ),
         "oracle-comparison": canonical_result(
@@ -584,7 +609,9 @@ def test_rejects_accepted_metal_wall_slowdown(tmp_path: pathlib.Path) -> None:
         validate(fixture)
 
 
-def test_single_run_metal_slowdown_has_no_fabricated_tolerance(tmp_path: pathlib.Path) -> None:
+def test_single_run_metal_slowdown_has_no_fabricated_tolerance(
+    tmp_path: pathlib.Path,
+) -> None:
     fixture = valid_fixture(tmp_path)
     rewrite_artifact(
         fixture,
@@ -807,12 +834,11 @@ def test_rejects_tampered_casa_adjudication_product_list(
     tmp_path: pathlib.Path,
 ) -> None:
     fixture = valid_fixture(tmp_path)
-    fixture["ledger"]["runs"][1]["casa"]["adjudication"]["products"] = [
-        ".residual"
-    ]
+    fixture["ledger"]["runs"][1]["casa"]["adjudication"]["products"] = [".residual"]
 
     with pytest.raises(
-        ledger_tool.LedgerError, match="products must exactly match investigate products"
+        ledger_tool.LedgerError,
+        match="products must exactly match investigate products",
     ):
         validate(fixture)
 
@@ -900,7 +926,9 @@ def test_counterbalanced_evidence_uses_the_median_delta_block() -> None:
 
 
 def test_counterbalanced_evidence_rejects_a_slowdown_verdict() -> None:
-    with pytest.raises(ledger_tool.LedgerError, match="records a counterbalanced slowdown"):
+    with pytest.raises(
+        ledger_tool.LedgerError, match="records a counterbalanced slowdown"
+    ):
         ledger_tool.derive_counterbalanced_evidence(
             counterbalanced_artifact(no_slowdown=False), "counterbalanced"
         )
@@ -976,9 +1004,7 @@ def test_counterbalanced_evidence_rejects_consistent_tampered_summaries() -> Non
 def test_counterbalanced_evidence_rejects_role_workload_mismatch() -> None:
     artifact = counterbalanced_artifact()
     details = counterbalanced_details(artifact)
-    details["schedule"][0]["workload"] = (
-        "workloads/wave352-metal.json"
-    )
+    details["schedule"][0]["workload"] = "workloads/wave352-metal.json"
     details["runs"][0]["workload"] = "workloads/wave352-metal.json"
 
     with pytest.raises(

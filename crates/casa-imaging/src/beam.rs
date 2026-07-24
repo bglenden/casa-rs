@@ -425,7 +425,7 @@ fn fit_gaussian_beam_casa_seeded(
     let mut lambda = 1.0e-3;
     let mut best_cost = casa_gaussian_cost(samples, params)?;
 
-    for _ in 0..50 {
+    for _ in 0..1_000 {
         let (mut normal, gradient) = casa_normal_equations(samples, params)?;
         for (axis, row) in normal.iter_mut().enumerate() {
             let damping = row[axis].abs().max(1.0e-12) * lambda;
@@ -448,7 +448,7 @@ fn fit_gaussian_beam_casa_seeded(
         };
         if candidate_cost < best_cost {
             params = candidate;
-            if (best_cost - candidate_cost) / best_cost.max(1.0e-12) < 1.0e-6 {
+            if (best_cost - candidate_cost) / best_cost.max(1.0e-12) < 1.0e-12 {
                 break;
             }
             best_cost = candidate_cost;
@@ -484,37 +484,13 @@ fn casa_normal_equations(
     samples: &[FitSample],
     params: CasaBeamFitParams,
 ) -> Option<([[f64; 3]; 3], [f64; 3])> {
-    let steps = casa_parameter_steps(params);
     let mut normal = [[0.0f64; 3]; 3];
     let mut gradient = [0.0f64; 3];
 
     for sample in samples {
-        let model = casa_gaussian_value(params, sample.x_rad, sample.y_rad);
+        let (model, jacobian) =
+            casa_gaussian_value_and_jacobian(params, sample.x_rad, sample.y_rad)?;
         let residual = model - sample.value;
-        let mut jacobian = [0.0f64; 3];
-        for axis in 0..3 {
-            let mut forward = params;
-            let mut backward = params;
-            match axis {
-                0 => {
-                    forward.width_fwhm_rad += steps[0];
-                    backward.width_fwhm_rad -= steps[0];
-                }
-                1 => {
-                    forward.axial_ratio += steps[1];
-                    backward.axial_ratio -= steps[1];
-                }
-                _ => {
-                    forward.position_angle_rad += steps[2];
-                    backward.position_angle_rad -= steps[2];
-                }
-            }
-            stabilize_casa_params(&mut forward);
-            stabilize_casa_params(&mut backward);
-            let fwd = casa_gaussian_value(forward, sample.x_rad, sample.y_rad);
-            let bwd = casa_gaussian_value(backward, sample.x_rad, sample.y_rad);
-            jacobian[axis] = (fwd - bwd) / (2.0 * steps[axis]);
-        }
         for row in 0..3 {
             gradient[row] += jacobian[row] * residual;
             for col in row..3 {
@@ -531,6 +507,42 @@ fn casa_normal_equations(
         }
     }
     Some((normal, gradient))
+}
+
+fn casa_gaussian_value_and_jacobian(
+    params: CasaBeamFitParams,
+    x_rad: f64,
+    y_rad: f64,
+) -> Option<(f64, [f64; 3])> {
+    let width = params.width_fwhm_rad;
+    let ratio = params.axial_ratio;
+    if !(width.is_finite()
+        && width.abs() > MIN_SIGMA_RAD
+        && ratio.is_finite()
+        && ratio.abs() > 1.0e-6
+        && params.position_angle_rad.is_finite())
+    {
+        return None;
+    }
+
+    let cos_pa = params.position_angle_rad.cos();
+    let sin_pa = params.position_angle_rad.sin();
+    let xnorm = cos_pa * x_rad + sin_pa * y_rad;
+    let ynorm = -sin_pa * x_rad + cos_pa * y_rad;
+    let width_internal = width * CASA_FWHM_TO_INTERNAL;
+    let x_scaled = xnorm / (width_internal * ratio);
+    let y_scaled = ynorm / width_internal;
+    let x_power = x_scaled * x_scaled;
+    let y_power = y_scaled * y_scaled;
+    let model = (-(x_power + y_power)).exp();
+    let common_angle = 2.0 * xnorm * ynorm / (width_internal * width_internal);
+    let jacobian = [
+        model * 2.0 * (x_power + y_power) / width,
+        model * 2.0 * x_power / ratio,
+        -model * common_angle * (1.0 / (ratio * ratio) - 1.0),
+    ];
+    (model.is_finite() && jacobian.iter().all(|value| value.is_finite()))
+        .then_some((model, jacobian))
 }
 
 fn casa_gaussian_value(params: CasaBeamFitParams, x_rad: f64, y_rad: f64) -> f64 {
@@ -558,14 +570,6 @@ fn casa_gaussian_value(params: CasaBeamFitParams, x_rad: f64, y_rad: f64) -> f64
     }
     let exponent = -((xnorm / denom_x).powi(2) + (ynorm / denom_y).powi(2));
     exponent.exp()
-}
-
-fn casa_parameter_steps(params: CasaBeamFitParams) -> [f64; 3] {
-    [
-        (params.width_fwhm_rad.abs() * 5.0e-2).max(1.0e-8),
-        (params.axial_ratio.abs() * 5.0e-2).max(1.0e-6),
-        1.0e-3,
-    ]
 }
 
 fn stabilize_casa_params(params: &mut CasaBeamFitParams) {
@@ -607,6 +611,18 @@ fn casa_params_to_beam(params: CasaBeamFitParams) -> Option<BeamFit> {
         beam.position_angle_rad =
             casa_wrap_beam_position_angle(beam.position_angle_rad + std::f64::consts::FRAC_PI_2);
     }
+    // StokesImageUtil::FitGaussianPSF solves in Double, then assigns the
+    // fitted arcsec/arcsec/degree values to Vector<Float> before constructing
+    // GaussianBeam. Preserve that rounding in the reusable beam result so
+    // metadata and clean restoration both consume CASA's actual beam.
+    let radians_to_degrees = 180.0 / std::f64::consts::PI;
+    let radians_to_arcseconds = 3_600.0 * radians_to_degrees;
+    beam.major_fwhm_rad =
+        f64::from((beam.major_fwhm_rad * radians_to_arcseconds) as f32) / radians_to_arcseconds;
+    beam.minor_fwhm_rad =
+        f64::from((beam.minor_fwhm_rad * radians_to_arcseconds) as f32) / radians_to_arcseconds;
+    beam.position_angle_rad =
+        f64::from((beam.position_angle_rad * radians_to_degrees) as f32) / radians_to_degrees;
     Some(beam)
 }
 
@@ -891,6 +907,30 @@ mod tests {
         assert!((beam.major_fwhm_rad - expected.major_fwhm_rad).abs() < 7.5e-5);
         assert!((beam.minor_fwhm_rad - expected.minor_fwhm_rad).abs() < 7.5e-5);
         assert!((beam.position_angle_rad - expected.position_angle_rad).abs() < 0.15);
+    }
+
+    #[test]
+    fn fitted_beam_preserves_casa_float_output_quantization() {
+        let expected = BeamFit {
+            major_fwhm_rad: 5.0e-4,
+            minor_fwhm_rad: 3.0e-4,
+            position_angle_rad: 0.35,
+        };
+        let psf = synthetic_gaussian_psf((64, 64), [1.0e-4, 1.0e-4], expected);
+        let beam = fit_beam_from_psf(&psf, [1.0e-4, 1.0e-4], 0.35)
+            .beam
+            .expect("fit beam");
+        let radians_to_degrees = 180.0 / std::f64::consts::PI;
+        let radians_to_arcseconds = 3_600.0 * radians_to_degrees;
+
+        for (value_rad, unit_scale) in [
+            (beam.major_fwhm_rad, radians_to_arcseconds),
+            (beam.minor_fwhm_rad, radians_to_arcseconds),
+            (beam.position_angle_rad, radians_to_degrees),
+        ] {
+            let requantized = f64::from((value_rad * unit_scale) as f32) / unit_scale;
+            assert_eq!(value_rad.to_bits(), requantized.to_bits());
+        }
     }
 
     #[test]

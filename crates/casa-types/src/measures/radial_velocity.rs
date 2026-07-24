@@ -28,7 +28,8 @@ use super::error::MeasureError;
 use super::frame::MeasFrame;
 use super::frequency::{
     C_M_PER_S, CMB_VELOCITY, GALACTO_VELOCITY, LGROUP_VELOCITY, LSRD_VELOCITY, LSRK_VELOCITY,
-    compute_beta, doppler_shift, earth_velocity_ms, geo_topo_beta, get_direction_j2000,
+    compute_beta, compute_earth_beta, doppler_shift, earth_velocity_ms, geo_topo_beta,
+    get_direction_j2000,
 };
 
 // ---------------------------------------------------------------------------
@@ -409,13 +410,13 @@ fn apply_rv_hop(
         (BARY, GEO) => {
             let d = get_direction_j2000(frame)?;
             let v_earth = earth_velocity_ms(frame)?;
-            let beta = compute_beta(&v_earth, &d);
+            let beta = compute_earth_beta(&v_earth, &d);
             doppler_shift(f_in, beta)
         }
         (GEO, BARY) => {
             let d = get_direction_j2000(frame)?;
             let v_earth = earth_velocity_ms(frame)?;
-            let beta = compute_beta(&v_earth, &d);
+            let beta = compute_earth_beta(&v_earth, &d);
             doppler_shift(f_in, -beta)
         }
 

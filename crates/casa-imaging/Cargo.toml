@@ -16,6 +16,7 @@ casa-images = { path = "../casa-images" }
 casa-lattices = { path = "../casa-lattices" }
 casa-types = { path = "../casa-types" }
 libm = "0.2"
+nalgebra.workspace = true
 ndarray.workspace = true
 num-complex.workspace = true
 rustfft.workspace = true
@@ -63,3 +64,4 @@ objc2-metal-performance-shaders-graph = { version = "0.3.2", default-features = 
 [dev-dependencies]
 casa-test-support = { path = "../casa-test-support" }
 serial_test = "3"
+tempfile = "3"

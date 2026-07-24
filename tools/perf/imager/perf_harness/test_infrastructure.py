@@ -14,8 +14,16 @@ import unittest
 from unittest import mock
 
 from perf_harness import ms_compare
+from perf_harness.artifacts import (
+    ArtifactError,
+    prepare_atomic_directory_bundle,
+    promote_atomic_directory_bundle,
+)
 from perf_harness.casa_protocol import CasaProtocolResult, run_json_file_protocol
-from perf_harness.ms_compare import compare_measurement_set_pairs, compare_measurement_sets
+from perf_harness.ms_compare import (
+    compare_measurement_set_pairs,
+    compare_measurement_sets,
+)
 from perf_harness.provenance import capture_provenance, executable_path
 from perf_harness.subprocesses import run_command
 
@@ -25,6 +33,47 @@ CASA_PROGRAMS = tuple(sorted(PACKAGE_ROOT.glob("casa_*.py")))
 
 
 class CasaProtocolTests(unittest.TestCase):
+    def test_atomic_directory_bundle_promotes_complete_nested_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            final = pathlib.Path(temporary) / "evidence" / "run-1"
+            bundle = prepare_atomic_directory_bundle(final)
+            nested = bundle.partial_path / "protocol" / "request.json"
+            nested.parent.mkdir(parents=True)
+            nested.write_text("{}\n", encoding="utf-8")
+
+            promote_atomic_directory_bundle(bundle)
+
+            self.assertFalse(bundle.partial_path.exists())
+            self.assertEqual("{}\n", (final / "protocol" / "request.json").read_text())
+
+    def test_atomic_directory_bundle_refuses_existing_final_or_partial(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            final = root / "run"
+            final.mkdir()
+            with self.assertRaisesRegex(ArtifactError, "final artifact bundle"):
+                prepare_atomic_directory_bundle(final)
+            final.rmdir()
+            final.with_name("run.partial").mkdir()
+            with self.assertRaisesRegex(ArtifactError, "partial artifact bundle"):
+                prepare_atomic_directory_bundle(final)
+
+    def test_atomic_directory_bundle_preserves_partial_on_replace_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            final = pathlib.Path(temporary) / "run"
+            bundle = prepare_atomic_directory_bundle(final)
+            (bundle.partial_path / "evidence").write_text("retained")
+            with (
+                mock.patch(
+                    "perf_harness.artifacts.os.replace",
+                    side_effect=OSError("synthetic replace failure"),
+                ),
+                self.assertRaisesRegex(ArtifactError, "synthetic replace failure"),
+            ):
+                promote_atomic_directory_bundle(bundle)
+            self.assertTrue(bundle.partial_path.is_dir())
+            self.assertFalse(final.exists())
+
     def test_provenance_preserves_virtual_environment_invocation_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
@@ -38,7 +87,9 @@ class CasaProtocolTests(unittest.TestCase):
                 storage_label="test",
             )
 
-            self.assertEqual(str(interpreter), executable_path(provenance, "casa_python"))
+            self.assertEqual(
+                str(interpreter), executable_path(provenance, "casa_python")
+            )
             self.assertEqual(
                 str(pathlib.Path(sys.executable).resolve()),
                 provenance["executables"]["casa_python"]["resolved_path"],
@@ -49,7 +100,9 @@ class CasaProtocolTests(unittest.TestCase):
         for path in CASA_PROGRAMS:
             py_compile.compile(str(path), doraise=True)
 
-    def test_protocol_distinguishes_unavailable_execution_failure_and_success(self) -> None:
+    def test_protocol_distinguishes_unavailable_execution_failure_and_success(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             common = {
@@ -128,11 +181,35 @@ class CasaProtocolTests(unittest.TestCase):
                 stream_stdout=True,
             )
 
+    def test_shared_streaming_process_terminates_child_on_interrupt(self) -> None:
+        process = mock.Mock()
+        process.stdout = io.StringIO("")
+        process.wait.side_effect = [KeyboardInterrupt(), 0]
+        process.poll.return_value = None
+        reader = mock.Mock()
+
+        with (
+            mock.patch(
+                "perf_harness.subprocesses.subprocess.Popen", return_value=process
+            ),
+            mock.patch(
+                "perf_harness.subprocesses.threading.Thread", return_value=reader
+            ),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            run_command(["synthetic-casa"], stream_stdout=True)
+
+        process.terminate.assert_called_once_with()
+        self.assertEqual(2, process.wait.call_count)
+        reader.join.assert_called_once_with()
+        self.assertTrue(process.stdout.closed)
+
     def test_ms_comparator_exposes_full_and_sampled_modes(self) -> None:
         protocol = CasaProtocolResult(
             status="completed",
             return_code=0,
             output={"status": "passed"},
+            output_sha256=None,
             reason=None,
             request_path=pathlib.Path("request.json"),
             output_path=pathlib.Path("result.json"),
@@ -163,8 +240,12 @@ class CasaProtocolTests(unittest.TestCase):
                 cwd=pathlib.Path("."),
             )
             self.assertEqual("aca_pairs", pairs["comparison_mode"])
-            self.assertEqual(ms_compare.CASA_MS_COMPARATOR, run_protocol.call_args.kwargs["script"])
-            self.assertEqual("aca_pairs", run_protocol.call_args.kwargs["request"]["mode"])
+            self.assertEqual(
+                ms_compare.CASA_MS_COMPARATOR, run_protocol.call_args.kwargs["script"]
+            )
+            self.assertEqual(
+                "aca_pairs", run_protocol.call_args.kwargs["request"]["mode"]
+            )
 
 
 if __name__ == "__main__":

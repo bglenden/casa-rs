@@ -9,7 +9,9 @@
 
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::position::MPosition;
-use casa_types::measures::{epoch_from_record, position_from_record};
+use casa_types::measures::{
+    epoch_from_record, epoch_to_record, position_from_record, position_to_record,
+};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 use crate::error::CoordinateError;
@@ -104,22 +106,10 @@ impl ObsInfo {
             Value::Scalar(ScalarValue::String(self.observer.clone())),
         );
         if let Some(ref epoch) = self.date {
-            rec.upsert(
-                "date",
-                Value::Scalar(ScalarValue::Float64(epoch.value().as_mjd())),
-            );
+            rec.upsert("obsdate", Value::Record(epoch_to_record(epoch)));
         }
         if let Some(ref pos) = self.telescope_position {
-            let itrf = pos.as_itrf();
-            let mut pos_rec = RecordValue::default();
-            pos_rec.upsert(
-                "type",
-                Value::Scalar(ScalarValue::String("position".into())),
-            );
-            pos_rec.upsert("m0", Value::Scalar(ScalarValue::Float64(itrf[0])));
-            pos_rec.upsert("m1", Value::Scalar(ScalarValue::Float64(itrf[1])));
-            pos_rec.upsert("m2", Value::Scalar(ScalarValue::Float64(itrf[2])));
-            rec.upsert("telescopeposition", Value::Record(pos_rec));
+            rec.upsert("telescopeposition", Value::Record(position_to_record(pos)));
         }
         let pointing_center_rec = RecordValue::new(vec![
             RecordField::new(

@@ -120,7 +120,9 @@ pub fn parse_numeric_id_selector(value: &str, label: &str) -> MsResult<Vec<i32>>
 ///
 /// Supported forms include:
 /// - `0`
+/// - `2~17`
 /// - `0:4~13`
+/// - `2~17:4~13`
 /// - `0:4~9;12~14`
 /// - `0:0~10^2`
 pub fn parse_spw_selector(value: &str) -> MsResult<Vec<SpwSelector>> {
@@ -134,16 +136,20 @@ pub fn parse_spw_selector(value: &str) -> MsResult<Vec<SpwSelector>> {
             Some((spw, channels)) => (spw.trim(), Some(channels.trim())),
             None => (part, None),
         };
-        let spw_id = spw_text.parse::<i32>().map_err(|_| {
-            MsError::VersionError(format!(
+        let spw_ids = parse_numeric_id_selector(spw_text, "spw")?;
+        if spw_ids.is_empty() {
+            return Err(MsError::VersionError(format!(
                 "spw selector {part:?} does not start with a numeric spectral-window id"
-            ))
-        })?;
+            )));
+        }
         let channels = match channel_text {
             Some(text) if !text.is_empty() => Some(parse_channel_selection(text)?),
             _ => None,
         };
-        selectors.push(SpwSelector { spw_id, channels });
+        selectors.extend(spw_ids.into_iter().map(|spw_id| SpwSelector {
+            spw_id,
+            channels: channels.clone(),
+        }));
     }
     if selectors.is_empty() {
         return Err(MsError::VersionError("spw selector was empty".to_string()));
@@ -253,6 +259,24 @@ mod tests {
                 }),
             }]
         );
+    }
+
+    #[test]
+    fn parse_spw_selector_expands_spw_range_with_shared_channel_selection() {
+        let parsed = parse_spw_selector("2~4:4~6").unwrap();
+        assert_eq!(
+            parsed
+                .iter()
+                .map(|selector| selector.spw_id)
+                .collect::<Vec<_>>(),
+            vec![2, 3, 4]
+        );
+        for selector in parsed {
+            assert_eq!(
+                selector.channels.unwrap().indices(8).unwrap(),
+                vec![4, 5, 6]
+            );
+        }
     }
 
     #[test]

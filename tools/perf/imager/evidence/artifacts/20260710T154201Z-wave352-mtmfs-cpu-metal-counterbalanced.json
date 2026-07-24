@@ -3322,7 +3322,7 @@
     }
   },
   "run_id": "20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a",
-  "schema_version": 2,
+  "schema_version": 3,
   "status": "completed",
   "workload": {
     "id": "wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32"

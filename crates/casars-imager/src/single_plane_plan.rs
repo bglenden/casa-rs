@@ -89,6 +89,9 @@ fn cube_interpolation(interpolation: CubeInterpolation) -> SinglePlaneCubeInterp
 }
 
 fn projection_plan(config: &CliConfig, force_standard_gridder: bool) -> SinglePlaneProjectionPlan {
+    if config.aw_project.is_some() {
+        return SinglePlaneProjectionPlan::AwProject;
+    }
     if matches!(config.w_term_mode, WTermMode::WProject | WTermMode::Direct) {
         return SinglePlaneProjectionPlan::WProjection;
     }
@@ -357,6 +360,71 @@ mod tests {
     }
 
     #[test]
+    fn awproject_plan_keeps_combined_projection_and_cache_products_explicit() {
+        let config = parse([
+            "--gridder",
+            "awproject",
+            "--cfcache",
+            "/tmp/casa-aw-cache",
+            "--usepointing",
+            "--deconvolver",
+            "mtmfs",
+            "--nterms",
+            "2",
+            "--write-pb",
+        ]);
+        let plan = build_single_plane_execution_plan(&config, false, 1);
+
+        assert_eq!(plan.projection, SinglePlaneProjectionPlan::AwProject);
+        assert_eq!(
+            plan.primary_beam_requirement,
+            SinglePlanePrimaryBeamRequirement::AwProjection
+        );
+        assert!(plan.cpu_multi_worker.eligible);
+        assert!(
+            plan.cpu_multi_worker
+                .reason
+                .starts_with("awproject-disjoint-taylor-plane-workers-")
+        );
+        let metal_available = casa_imaging::standard_mfs_metal_device_available();
+        assert_eq!(plan.gpu_metal.eligible, metal_available);
+        assert_eq!(
+            plan.gpu_metal.reason,
+            if metal_available {
+                "awproject-metal-cf-kernel"
+            } else {
+                "metal-device-unavailable"
+            }
+        );
+        assert_eq!(
+            products(&plan),
+            vec![
+                ".image.tt0",
+                ".residual.tt0",
+                ".model.tt0",
+                ".image.tt1",
+                ".residual.tt1",
+                ".model.tt1",
+                ".psf.tt0",
+                ".sumwt.tt0",
+                ".weight.tt0",
+                ".psf.tt1",
+                ".sumwt.tt1",
+                ".weight.tt1",
+                ".psf.tt2",
+                ".sumwt.tt2",
+                ".weight.tt2",
+                ".alpha",
+                ".alpha.error",
+                ".pb.tt0",
+            ]
+        );
+        let log = plan.log_line();
+        assert!(log.contains("projection=awproject"));
+        assert!(log.contains("pb_requirement=awprojection"));
+    }
+
+    #[test]
     fn mtmfs_standard_mfs_plan_uses_shared_acceleration_controls() {
         let config = parse([
             "--gridder",
@@ -383,13 +451,15 @@ mod tests {
                 ".image.tt0",
                 ".residual.tt0",
                 ".model.tt0",
-                ".psf.tt0",
-                ".sumwt.tt0",
                 ".image.tt1",
                 ".residual.tt1",
                 ".model.tt1",
+                ".psf.tt0",
+                ".sumwt.tt0",
                 ".psf.tt1",
                 ".sumwt.tt1",
+                ".psf.tt2",
+                ".sumwt.tt2",
                 ".alpha",
                 ".alpha.error"
             ]

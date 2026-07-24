@@ -18,4 +18,7 @@ pub enum ImagingError {
     /// A normalization or deapodization step produced an unusable result.
     #[error("FFT/grid normalization failed: {0}")]
     Normalization(String),
+    /// A convolution-function cache was missing, corrupt, or incompatible.
+    #[error("convolution-function cache failed validation: {0}")]
+    ConvolutionFunctionCache(String),
 }

@@ -9,6 +9,7 @@ mod single_plane_plan;
 mod spectral_slab;
 mod task_contract;
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::env;
 use std::ffi::OsString;
@@ -23,25 +24,28 @@ use std::sync::{Arc, LazyLock, Mutex, OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use casa_coordinates::CoordinateSystem;
+use casa_coordinates::{
+    Coordinate, CoordinateSystem, DirectionCoordinate, Projection, ProjectionType,
+};
 use casa_images::{GaussianBeam, ImageBeamSet, ImageInfo, ImageType, PagedImage};
 use casa_imaging::fft_backend::{FftBackendChoice, FftPrecisionChoice};
 use casa_imaging::{
-    AxisKind, BeamFit, BeamFitDebugSummary, CleanConfig, CleanMaskProductRequest, CleanStopReason,
-    CompatibilityMetadata, CompatibilityMode, CubeAutoMultiThresholdConfig, CubeImagingDiagnostics,
-    CubeImagingResult, CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver,
-    DirtyImagingResult, DirtyProductFftPolicy, GaussianUvTaper, GridderMode,
-    GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch, HogbomIterationMode,
-    HogbomPlaneMinorCycleControl, ImageGeometry, ImageProduct, ImageProductMetadata,
-    ImageProductRole, ImageProductSet, ImagingDiagnostics, ImagingError, ImagingExecutionPlan,
-    ImagingExecutionPolicy, ImagingMemoryAllocation, ImagingPlanAdmission, ImagingRequest,
-    ImagingResolvedPlan, ImagingResources, ImagingResult, ImagingSpectralSchedule,
-    ImagingStageTimings, ImagingTileAnchor, ImagingWorkloadShape, MinorCycleTrace,
-    MosaicGridderConfig, ParallelHandBatch, PlaneStokes, PrimaryBeamModel,
-    PrimaryBeamProductRequest, PrimaryBeamWeightSample, ResidualRefreshDiagnostics,
-    RestoringBeamMode, ScalarVisibilitySample, StandardMfsBackend, StandardMfsCleanFinishPlan,
-    StandardMfsCleanPlan, StandardMfsCleanSession, StandardMfsDensitySourcePlan,
-    StandardMfsDensitySourcePlanRequest, StandardMfsDirtyAccumulator,
+    AwConvolutionFunctionEntryMetadata, AwParallelHandVisibilityBatch, AwProjectControls,
+    AwProjectGridderConfig, AwProjectNormalization, AxisKind, BeamFit, BeamFitDebugSummary,
+    CleanConfig, CleanMaskProductRequest, CleanStopReason, CompatibilityMetadata,
+    CompatibilityMode, CubeAutoMultiThresholdConfig, CubeImagingDiagnostics, CubeImagingResult,
+    CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, DirtyImagingResult,
+    DirtyProductFftPolicy, GaussianUvTaper, GridderMode, GroupedVisibilityMetadata,
+    GroupedVisibilityMetadataBatch, HogbomIterationMode, HogbomPlaneMinorCycleControl,
+    ImageGeometry, ImageProduct, ImageProductMetadata, ImageProductRole, ImageProductSet,
+    ImagingDiagnostics, ImagingError, ImagingExecutionPlan, ImagingExecutionPolicy,
+    ImagingMemoryAllocation, ImagingPlanAdmission, ImagingRequest, ImagingResolvedPlan,
+    ImagingResources, ImagingResult, ImagingSpectralSchedule, ImagingStageTimings,
+    ImagingTileAnchor, ImagingWorkloadShape, MinorCycleTrace, MosaicGridderConfig,
+    ParallelHandBatch, PlaneStokes, PrimaryBeamModel, PrimaryBeamProductRequest,
+    PrimaryBeamWeightSample, ResidualRefreshDiagnostics, RestoringBeamMode, ScalarVisibilitySample,
+    StandardMfsBackend, StandardMfsCleanFinishPlan, StandardMfsCleanPlan, StandardMfsCleanSession,
+    StandardMfsDensitySourcePlan, StandardMfsDensitySourcePlanRequest, StandardMfsDirtyAccumulator,
     StandardMfsDirtyAccumulatorRequest, StandardMfsDirtyGridResult, StandardMfsDirtyPlan,
     StandardMfsExecutionPlan, StandardMfsMinorCycleBackend, StandardMfsModelPredictor,
     StandardMfsObservabilityCallback, StandardMfsObservabilityEvent,
@@ -88,12 +92,13 @@ use casa_ms::spectral_selection::{CubeGridChannelContributions, CubeRowSpectralC
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,
     CubeSpectralSetup, MsSelection, MsSelectionIoBudget, ResolvedMsSelectionRow, SourcePartition,
-    VisibilityBuffer, VisibilityBufferFillReport, VisibilityBufferRequest,
+    SubTable, VisibilityBuffer, VisibilityBufferFillReport, VisibilityBufferRequest,
     VisibilityChannelReadRange, VisibilityComplexSamples, VisibilityFloatSamples,
     VisibilityReadBlockPlan, convert_frequency_to_frame, parse_numeric_id_selector,
     parse_rest_frequency_hz as parse_ms_rest_frequency_hz, parse_spw_selector,
     resolve_channel_selector_selection, resolve_contiguous_channel_selection,
 };
+use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_tables::{ColumnSchema, SelectedArray1DCells, TiledFileIoStats};
 
 #[cfg(target_os = "macos")]
@@ -114,6 +119,7 @@ fn release_allocator_pressure() {
 }
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::doppler::DopplerRef;
+use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
@@ -140,25 +146,26 @@ pub use schema::command_schema;
 pub use task_contract::{
     IMAGER_OBSERVABILITY_SCHEMA_VERSION, IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
     IMAGER_PROGRESS_STDERR_PREFIX, IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION,
-    ImagerArtifact, ImagerArtifactKind, ImagerAutoMultiThresholdConfig, ImagerBackendDiagnostic,
-    ImagerChannelRunResult, ImagerCleanMaskMode, ImagerCleanStopReason, ImagerCoreStageTimings,
-    ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation, ImagerDeconvolver,
-    ImagerFrontendStageTimings as ImagerFrontendTaskStageTimings, ImagerHogbomIterationMode,
-    ImagerMemoryLedgerSnapshot, ImagerObservabilityExtent, ImagerObservabilitySnapshot,
-    ImagerObservabilitySpan, ImagerObservabilitySpanState, ImagerObservedMemoryConfidence,
-    ImagerObservedMemoryEntry, ImagerObservedMemoryKind, ImagerObservedQueueConfidence,
-    ImagerObservedQueueSnapshot, ImagerObservedQueueState, ImagerObservedResource,
-    ImagerObservedResourceId, ImagerObservedResourceMemory, ImagerObservedResourceState,
-    ImagerObservedStageKind, ImagerObservedWorkerSnapshot, ImagerObservedWorkerState,
-    ImagerPlaneSelection, ImagerProductWriteDiagnostic, ImagerProgressCube,
-    ImagerProgressDeconvolution, ImagerProgressDetail, ImagerProgressDiagnostics,
-    ImagerProgressEvent, ImagerProgressMemory, ImagerProgressMemoryCategory,
-    ImagerProgressMsWindow, ImagerProgressOptions, ImagerProgressRuntime, ImagerProgressUvCoverage,
-    ImagerProgressUvPoint, ImagerProgressWork, ImagerRestoringBeamMode, ImagerRunDiagnosticSummary,
-    ImagerRunReport, ImagerRunTaskRequest, ImagerRunTaskResult, ImagerSaveModel,
-    ImagerSourceReadDiagnostic, ImagerSpectralMode, ImagerStageDiagnosticSummary,
-    ImagerTaskRequest, ImagerTaskResult, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode,
-    ImagerWeighting, imager_protocol_descriptor, imager_task_schema_bundle,
+    ImagerArtifact, ImagerArtifactKind, ImagerAutoMultiThresholdConfig, ImagerAwProjectRunReport,
+    ImagerBackendDiagnostic, ImagerChannelRunResult, ImagerCleanMaskMode, ImagerCleanStopReason,
+    ImagerCoreStageTimings, ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation,
+    ImagerDeconvolver, ImagerFrontendStageTimings as ImagerFrontendTaskStageTimings,
+    ImagerHogbomIterationMode, ImagerMemoryLedgerSnapshot, ImagerObservabilityExtent,
+    ImagerObservabilitySnapshot, ImagerObservabilitySpan, ImagerObservabilitySpanState,
+    ImagerObservedMemoryConfidence, ImagerObservedMemoryEntry, ImagerObservedMemoryKind,
+    ImagerObservedQueueConfidence, ImagerObservedQueueSnapshot, ImagerObservedQueueState,
+    ImagerObservedResource, ImagerObservedResourceId, ImagerObservedResourceMemory,
+    ImagerObservedResourceState, ImagerObservedStageKind, ImagerObservedWorkerSnapshot,
+    ImagerObservedWorkerState, ImagerPlaneSelection, ImagerProductWriteDiagnostic,
+    ImagerProgressCube, ImagerProgressDeconvolution, ImagerProgressDetail,
+    ImagerProgressDiagnostics, ImagerProgressEvent, ImagerProgressMemory,
+    ImagerProgressMemoryCategory, ImagerProgressMsWindow, ImagerProgressOptions,
+    ImagerProgressRuntime, ImagerProgressUvCoverage, ImagerProgressUvPoint, ImagerProgressWork,
+    ImagerProjection, ImagerRestoringBeamMode, ImagerRunDiagnosticSummary, ImagerRunReport,
+    ImagerRunTaskRequest, ImagerRunTaskResult, ImagerSaveModel, ImagerSourceReadDiagnostic,
+    ImagerSpectralMode, ImagerStageDiagnosticSummary, ImagerTaskRequest, ImagerTaskResult,
+    ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting, imager_protocol_descriptor,
+    imager_task_schema_bundle,
 };
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
@@ -4655,30 +4662,17 @@ pub enum GridderRequest {
     Mosaic,
     /// CASA `gridder='wproject'` W-term projection path.
     WProject,
-    /// CASA-facing AW/widefield alias routed through the currently supported
-    /// W-projection-only wide-field path.
-    AwWidefieldAlias(&'static str),
+    /// CASA `gridder='awproject'` EVLA A+W projection path.
+    AwProject,
 }
 
 impl GridderRequest {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Standard => "standard",
-            Self::Mosaic => "mosaic",
-            Self::WProject => "wproject",
-            Self::AwWidefieldAlias(alias) => alias,
-        }
-    }
-
-    fn is_aw_widefield_alias(self) -> bool {
-        matches!(self, Self::AwWidefieldAlias(_))
-    }
-
     fn core_modes(self) -> (WTermMode, bool) {
         match self {
             Self::Standard => (WTermMode::None, true),
             Self::Mosaic => (WTermMode::None, false),
-            Self::WProject | Self::AwWidefieldAlias(_) => (WTermMode::WProject, false),
+            Self::WProject => (WTermMode::WProject, false),
+            Self::AwProject => (WTermMode::None, false),
         }
     }
 }
@@ -5998,7 +5992,12 @@ pub fn export_standard_mfs_metal_fixture_from_config(
         },
     );
 
-    let geometry_columns = PreparedGeometryColumnCache::load(&ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        &ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine.as_ref(),
+    )?;
     let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
     let mut accumulate_timings = AccumulateRowTimings {
         rows_skipped_by_flag_row: selection.selected_rows.len() - active_selected_rows.len(),
@@ -6215,7 +6214,12 @@ pub fn build_prepare_geometry_trace_from_config(
         .needs_geometry_engine
         .then(|| MsCalEngine::new(&ms).map_err(|error| format!("build derived engine: {error}")))
         .transpose()?;
-    let geometry_columns = PreparedGeometryColumnCache::load(&ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        &ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine.as_ref(),
+    )?;
     let rows = build_prepared_geometry_rows(
         &ms,
         &selection.selected_rows,
@@ -6661,6 +6665,8 @@ fn run_single_image_from_config_with_gridder_override(
     } else {
         config
     };
+    let awproject_core_config = normalize_awproject_core_projection(config)?;
+    let config = awproject_core_config.as_ref();
     validate_save_model_request(config)?;
     validate_start_model_request(config)?;
     validate_auto_mask_config(config.use_mask, &config.auto_mask)?;
@@ -6803,6 +6809,55 @@ fn run_single_image_from_config_with_gridder_override(
         force_standard_gridder,
         ms_paths.len(),
     ))
+}
+
+fn normalize_awproject_core_projection(config: &CliConfig) -> Result<Cow<'_, CliConfig>, String> {
+    if config.aw_project.is_none() {
+        return Ok(Cow::Borrowed(config));
+    }
+    if config.w_term_mode == WTermMode::Direct {
+        return Err(
+            "gridder='awproject' cannot be combined with the separate direct W-term mode"
+                .to_string(),
+        );
+    }
+    let plane_workers = match config.standard_mfs_acceleration {
+        StandardMfsAccelerationPolicy::Cpu => config
+            .standard_mfs_grid_threads
+            .as_deref()
+            .and_then(parse_standard_mfs_grid_threads)
+            .unwrap_or(1),
+        StandardMfsAccelerationPolicy::Auto
+        | StandardMfsAccelerationPolicy::MultiCpu
+        | StandardMfsAccelerationPolicy::Metal => standard_mfs_grid_worker_count(config),
+    };
+    let locality_prepare_default = plane_workers > 1 && config.imaging_prepare_workers.is_none();
+    let locality_read_ahead_default =
+        plane_workers > 1 && config.imaging_read_ahead_blocks.is_none();
+    if config.w_term_mode == WTermMode::None
+        && !locality_prepare_default
+        && !locality_read_ahead_default
+    {
+        return Ok(Cow::Borrowed(config));
+    }
+    let mut normalized = config.clone();
+    if config.w_term_mode == WTermMode::WProject {
+        // CASA's `gridder='awproject'` already includes the W term. The
+        // legacy performance manifest records `wterm='wproject'` to make
+        // that combined A+W semantic explicit, but the shared stream
+        // dispatcher must not reinterpret it as the separate W-only gridder.
+        normalized.w_term_mode = WTermMode::None;
+    }
+    if locality_prepare_default {
+        // Plane workers own disjoint grids. Parallel source preparation would
+        // fragment the same CF-locality groups once per worker and multiply
+        // large cache loads, while measured preparation is negligible.
+        normalized.imaging_prepare_workers = Some(1);
+    }
+    if locality_read_ahead_default {
+        normalized.imaging_read_ahead_blocks = Some(1);
+    }
+    Ok(Cow::Owned(normalized))
 }
 
 fn default_cube_output_plane_count(
@@ -6982,7 +7037,6 @@ fn can_run_mosaic_mtmfs_from_single_plane_stream(
         && config.nterms <= 2
         && matches!(config.spectral_mode, SpectralMode::Mfs)
         && can_plan_mosaic_mfs_acceleration(config, ms_count)
-        && !config.use_pointing
         && config.save_model == SaveModelMode::None
         && config.start_model.is_none()
         && config.outlier_file.is_none()
@@ -7062,7 +7116,6 @@ fn can_run_mfs_mosaic_from_single_plane_stream(
         && !force_standard_gridder
         && can_plan_mosaic_mfs_acceleration(config, ms_count)
         && matches!(config.spectral_mode, SpectralMode::Mfs)
-        && !config.use_pointing
         && config.deconvolver != Deconvolver::Mtmfs
         && config.save_model == SaveModelMode::None
         && config.start_model.is_none()
@@ -7590,6 +7643,7 @@ fn prepare_mfs_mosaic_source_row_block_plane_from_source(
     cube_row_spectral_reusable_plan: Option<Arc<CubeRowSpectralReusablePlan>>,
 ) -> Result<PlaneInput, String> {
     let stage_started_at = Instant::now();
+    let block_selection = selected_rows_context_for_source_block(selection, source_block)?;
     let finish = if mosaic_cube_one_channel_can_use_single_plane_stream(config) {
         SourceRowBlockFinish::Cube
     } else {
@@ -7598,13 +7652,13 @@ fn prepare_mfs_mosaic_source_row_block_plane_from_source(
     let cube_context = config
         .spectral_mode
         .is_cube_like()
-        .then(|| cube_setup_context_for_selection(selection, derived_engine))
+        .then(|| cube_setup_context_for_selection(&block_selection, derived_engine))
         .transpose()?;
     let prepared_input = prepare_source_row_block_plane_inner(
         SourceRowBlockPlaneDescriptor {
             ms,
             config,
-            selection,
+            selection: &block_selection,
             ddid_info,
             spectral_window,
             polarization,
@@ -7622,7 +7676,7 @@ fn prepare_mfs_mosaic_source_row_block_plane_from_source(
     )?;
     prepare_stage_timings.prepare_processing_buffer += stage_started_at.elapsed();
     match prepared_input {
-        PreparedInput::Mfs(plane) => Ok(plane),
+        PreparedInput::Mfs(plane) => apply_requested_awproject_gridder(config, plane),
         PreparedInput::Cube(cube)
             if mosaic_cube_one_channel_can_use_single_plane_stream(config) =>
         {
@@ -7632,6 +7686,39 @@ fn prepare_mfs_mosaic_source_row_block_plane_from_source(
             Err("internal error: MFS mosaic source block produced cube input".to_string())
         }
     }
+}
+
+fn apply_requested_awproject_gridder(
+    config: &CliConfig,
+    mut plane: PlaneInput,
+) -> Result<PlaneInput, String> {
+    let Some(controls) = config.aw_project.as_ref() else {
+        return Ok(plane);
+    };
+    let mosaic = match plane.gridder_mode {
+        GridderMode::Mosaic(mosaic) => mosaic,
+        GridderMode::Standard => {
+            return Err(
+                "gridder='awproject' requires grouped POINTING/mosaic metadata from the bounded source stream"
+                    .to_string(),
+            );
+        }
+        GridderMode::AwProject(_) => {
+            return Err("internal error: AWProject gridder was applied twice".to_string());
+        }
+    };
+    if plane.aw_parallel_hand_batches.len() != plane.batches.len() {
+        return Err(format!(
+            "AWProject prepared {} parallel-hand batches for {} visibility batches",
+            plane.aw_parallel_hand_batches.len(),
+            plane.batches.len()
+        ));
+    }
+    plane.gridder_mode = GridderMode::AwProject(AwProjectGridderConfig {
+        controls: controls.clone(),
+        mosaic,
+    });
+    Ok(plane)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -7765,6 +7852,7 @@ fn one_channel_cube_plane_input_to_streaming_plane(
         spectral_frequency_edge_range_hz: None,
         plane_stokes,
         batches: channel.visibility_batches,
+        aw_parallel_hand_batches: Vec::new(),
         density_batches: Vec::new(),
         sample_frequency_range_hz: Some([reffreq_hz, reffreq_hz]),
         sample_frequency_batches_hz: Vec::new(),
@@ -8195,66 +8283,89 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         );
     }
     let flag_row = selection.flag_row.as_slice();
+    // CASA forms AWProject antenna/pointing groups from the complete
+    // VisBuffer before FLAG_ROW and per-channel rejection. Keep the flagged
+    // rows available to the metadata accumulator; their visibility samples
+    // are still rejected by the row accumulator.
+    let retain_flagged_rows_for_casa_aw_pointing_groups = config
+        .aw_project
+        .as_ref()
+        .is_some_and(|controls| controls.use_pointing);
     let active_selected_rows = selection
         .selected_rows
         .iter()
         .filter(|selected_row| {
-            flag_row
-                .get(selected_row.row_index)
-                .copied()
-                .map(|flagged| !flagged)
-                .unwrap_or(true)
+            retain_flagged_rows_for_casa_aw_pointing_groups
+                || flag_row
+                    .get(selected_row.row_index)
+                    .copied()
+                    .map(|flagged| !flagged)
+                    .unwrap_or(true)
         })
         .cloned()
         .collect::<Vec<_>>();
     if active_selected_rows.is_empty() {
         return Err("selection resolved to no active mosaic MT-MFS rows".to_string());
     }
-    let selected_spw_id = ddid_info
-        .get(selection.selected_ddid)
-        .copied()
-        .flatten()
-        .map(|(spw_id, _)| spw_id)
-        .ok_or_else(|| {
-            format!(
-                "map selected DDID {} to SPW/POLARIZATION",
-                selection.selected_ddid
-            )
-        })?;
-    let selected_freq_ref = FrequencyRef::from_casacore_code(
-        spectral_window
-            .meas_freq_ref(selected_spw_id)
-            .map_err(|error| format!("read MEAS_FREQ_REF: {error}"))?,
-    )
-    .unwrap_or(FrequencyRef::TOPO);
-    let derived_engine =
-        if selection.needs_geometry_engine || selected_freq_ref != FrequencyRef::LSRK {
-            Some(MsCalEngine::new(ms).map_err(|error| format!("build derived engine: {error}"))?)
-        } else {
-            None
-        };
-    let table_values = load_prepared_selection_table_values(
-        selection.selected_ddid,
+    let first_selected_time_mjd_seconds = active_selected_rows
+        .first()
+        .and_then(|row| row.time_mjd_seconds);
+    let requires_frequency_engine =
+        selection
+            .selected_ddids
+            .iter()
+            .try_fold(false, |requires, &ddid| {
+                let spw_id = ddid_info
+                    .get(ddid)
+                    .copied()
+                    .flatten()
+                    .map(|(spw_id, _)| spw_id)
+                    .ok_or_else(|| format!("map selected DDID {ddid} to SPW/POLARIZATION"))?;
+                let freq_ref = FrequencyRef::from_casacore_code(
+                    spectral_window
+                        .meas_freq_ref(spw_id)
+                        .map_err(|error| format!("read MEAS_FREQ_REF: {error}"))?,
+                )
+                .unwrap_or(FrequencyRef::TOPO);
+                Ok::<_, String>(requires || freq_ref != FrequencyRef::LSRK)
+            })?;
+    let derived_engine = if selection.needs_geometry_engine || requires_frequency_engine {
+        Some(MsCalEngine::new(ms).map_err(|error| format!("build derived engine: {error}"))?)
+    } else {
+        None
+    };
+    let active_row_count = active_selected_rows.len();
+    let ddid_plans = prepare_mfs_ddid_plans(
+        config,
+        &selection,
+        active_selected_rows,
         &ddid_info,
         &spectral_window,
         &polarization,
+        derived_engine.as_ref(),
     )?;
-    let channel_read_range =
-        selected_channel_read_range_for_shared_single_plane_acceleration(config, &table_values)?;
-    let selected_channel_count =
-        selected_channel_count_estimate_from_table_values(config, &table_values);
+    let selected_channel_count = ddid_plans
+        .iter()
+        .map(|plan| plan.selected_channel_count)
+        .max()
+        .unwrap_or(1);
+    let correlation_count = ddid_plans
+        .iter()
+        .map(|plan| plan.table_values.corr_types.len())
+        .max()
+        .unwrap_or(1);
     let strategy = standard_mfs_memory_plan_for_ms(
         config,
         ms,
         data_column,
         selected_channel_count,
-        active_selected_rows.len(),
-        table_values.corr_types.len(),
+        active_row_count,
+        correlation_count,
     )?;
     let row_block_rows = strategy.ingest.source_row_block_rows.max(1);
     log_standard_mfs_memory_plan_actual(
         &strategy,
-        active_selected_rows.len(),
+        active_row_count,
         0,
         0,
         "mosaic_mtmfs_single_plane_stream",
@@ -8262,35 +8373,52 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
     set_imager_progress_standard_mfs_memory(&strategy, config.nterms);
 
     let stage_started_at = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine.as_ref(),
+    )?;
     let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
     prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
     let mut accumulate_timings = AccumulateRowTimings {
-        rows_skipped_by_flag_row: selection.selected_rows.len() - active_selected_rows.len(),
+        rows_skipped_by_flag_row: selection.selected_rows.len() - active_row_count,
         ..Default::default()
     };
-    let full_selection_frequency_metadata = mfs_output_frequency_metadata_for_config_selection(
-        config,
-        &table_values,
-        &active_selected_rows,
-        derived_engine.as_ref(),
+    let full_selection_frequency_metadata = merge_mfs_output_frequency_metadata(
+        ddid_plans
+            .iter()
+            .map(|plan| &plan.output_frequency_metadata),
     )?;
 
-    let first_rows_len = row_block_rows.min(active_selected_rows.len());
+    let first_plan = ddid_plans
+        .first()
+        .ok_or_else(|| "selection resolved to no active MFS DDID plan".to_string())?;
+    let first_selected_field_id = first_plan
+        .active_selected_rows
+        .first()
+        .map(|row| row.field_id)
+        .ok_or_else(|| "selection resolved to no active MFS row".to_string())?;
+    let source_rest_frequency_hz = casa_mfs_source_rest_frequency_hz(
+        ms,
+        first_selected_field_id,
+        first_plan.table_values.spw_id,
+    )?;
+    let first_rows_len = row_block_rows.min(first_plan.active_selected_rows.len());
     let mut first_plane = prepare_mfs_mosaic_source_row_block_plane(
         ms,
         config,
         data_column,
         false,
         &selection,
-        &table_values,
+        &first_plan.table_values,
         &ddid_info,
         &spectral_window,
         &polarization,
         flag_row,
-        &active_selected_rows[..first_rows_len],
+        &first_plan.active_selected_rows[..first_rows_len],
         derived_engine.as_ref(),
-        channel_read_range,
+        first_plan.channel_read_range,
         &geometry_columns,
         prepare_started_at,
         &mut prepare_stage_timings,
@@ -8341,91 +8469,108 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
             let load_visibility_values = pass.needs_visibility_values();
             let mut block_count = 0usize;
             let mut sample_count = 0usize;
-            stream_mfs_mosaic_source_row_block_planes(
-                ms,
-                config,
-                data_column,
-                load_visibility_values,
-                &selection,
-                &table_values,
-                &ddid_info,
-                &spectral_window,
-                &polarization,
-                flag_row,
-                &active_selected_rows,
-                derived_engine.as_ref(),
-                channel_read_range,
-                &geometry_columns,
-                row_block_rows,
-                strategy.ingest.max_live_row_blocks,
-                selected_channel_count,
-                prepare_started_at,
-                &mut prepare_stage_timings,
-                &mut accumulate_timings,
-                None,
-                "mosaic_mtmfs_replay",
-                |plane, _row_count| {
-                let GridderMode::Mosaic(mosaic) = plane.gridder_mode else {
-                    return Err(ImagingError::InvalidRequest(
-                        "streaming mosaic MT-MFS row block produced standard gridder metadata"
-                            .to_string(),
-                    ));
-                };
-                if plane.sample_frequency_batches_hz.len() != plane.batches.len() {
-                    return Err(ImagingError::InvalidRequest(format!(
-                        "streaming mosaic MT-MFS produced {} frequency batches for {} visibility batches",
-                        plane.sample_frequency_batches_hz.len(),
-                        plane.batches.len()
-                    )));
-                }
-                if mosaic.grouped_metadata_batches.len() != plane.batches.len() {
-                    return Err(ImagingError::InvalidRequest(format!(
-                        "streaming mosaic MT-MFS produced {} metadata batches for {} visibility batches",
-                        mosaic.grouped_metadata_batches.len(),
-                        plane.batches.len()
-                    )));
-                }
-                let density_batches =
-                    align_optional_density_batches(&plane.batches, plane.density_batches)?;
-                for (((batch, density), frequencies_hz), metadata) in plane
-                    .batches
-                    .into_iter()
-                    .zip(density_batches)
-                    .zip(plane.sample_frequency_batches_hz)
-                    .zip(mosaic.grouped_metadata_batches)
-                {
-                    if frequencies_hz.len() != batch.len() {
-                        return Err(ImagingError::InvalidRequest(format!(
-                            "streaming mosaic MT-MFS block has {} frequencies for {} visibility samples",
-                            frequencies_hz.len(),
-                            batch.len()
-                        )));
-                    }
-                    sample_count += batch.len();
-                    consumer(MosaicMtmfsVisibilityBlock {
-                        visibility: batch,
-                        density,
-                        sample_frequencies_hz: frequencies_hz,
-                        gridder_metadata: metadata,
-                    })?;
-                }
-                block_count += 1;
-                if frontend_progress_enabled() {
-                    eprintln!(
-                        "frontend stage=run_imaging/mosaic_mtmfs_stream_replay invocation={} pass={:?} load_visibility_values={} rows_done={} rows_total={} blocks={} samples={} elapsed_s={:.3}",
-                        ordinal,
-                        pass,
-                        load_visibility_values,
-                        (block_count * row_block_rows).min(active_selected_rows.len()),
-                        active_selected_rows.len(),
-                        block_count,
-                        sample_count,
-                        replay_started.elapsed().as_secs_f64(),
-                    );
-                }
-                    Ok(())
-                },
-            )?;
+            let mut rows_done = 0usize;
+            for ddid_plan in &ddid_plans {
+                stream_mfs_mosaic_source_row_block_planes(
+                    ms,
+                    config,
+                    data_column,
+                    load_visibility_values,
+                    &selection,
+                    &ddid_plan.table_values,
+                    &ddid_info,
+                    &spectral_window,
+                    &polarization,
+                    flag_row,
+                    &ddid_plan.active_selected_rows,
+                    derived_engine.as_ref(),
+                    ddid_plan.channel_read_range,
+                    &geometry_columns,
+                    row_block_rows,
+                    strategy.ingest.max_live_row_blocks,
+                    ddid_plan.selected_channel_count,
+                    prepare_started_at,
+                    &mut prepare_stage_timings,
+                    &mut accumulate_timings,
+                    None,
+                    "mosaic_mtmfs_replay",
+                    |plane, row_count| {
+                        let mosaic = match plane.gridder_mode {
+                            GridderMode::Mosaic(mosaic) => mosaic,
+                            GridderMode::AwProject(awproject) => awproject.mosaic,
+                            GridderMode::Standard => {
+                                return Err(ImagingError::InvalidRequest(
+                                    "streaming mosaic MT-MFS row block produced standard gridder metadata"
+                                        .to_string(),
+                                ));
+                            }
+                        };
+                        if plane.sample_frequency_batches_hz.len() != plane.batches.len() {
+                            return Err(ImagingError::InvalidRequest(format!(
+                                "streaming mosaic MT-MFS produced {} frequency batches for {} visibility batches",
+                                plane.sample_frequency_batches_hz.len(),
+                                plane.batches.len()
+                            )));
+                        }
+                        if mosaic.grouped_metadata_batches.len() != plane.batches.len() {
+                            return Err(ImagingError::InvalidRequest(format!(
+                                "streaming mosaic MT-MFS produced {} metadata batches for {} visibility batches",
+                                mosaic.grouped_metadata_batches.len(),
+                                plane.batches.len()
+                            )));
+                        }
+                        let density_batches = align_optional_density_batches(
+                            &plane.batches,
+                            plane.density_batches,
+                        )?;
+                        let aw_parallel_hand_batches =
+                            align_optional_aw_parallel_hand_batches(
+                                &plane.batches,
+                                plane.aw_parallel_hand_batches,
+                            )?;
+                        for ((((batch, density), parallel_hands), frequencies_hz), metadata) in plane
+                            .batches
+                            .into_iter()
+                            .zip(density_batches)
+                            .zip(aw_parallel_hand_batches)
+                            .zip(plane.sample_frequency_batches_hz)
+                            .zip(mosaic.grouped_metadata_batches)
+                        {
+                            if frequencies_hz.len() != batch.len() {
+                                return Err(ImagingError::InvalidRequest(format!(
+                                    "streaming mosaic MT-MFS block has {} frequencies for {} visibility samples",
+                                    frequencies_hz.len(),
+                                    batch.len()
+                                )));
+                            }
+                            sample_count += batch.len();
+                            consumer(MosaicMtmfsVisibilityBlock {
+                                visibility: batch,
+                                aw_parallel_hands: parallel_hands,
+                                density,
+                                sample_frequencies_hz: frequencies_hz,
+                                gridder_metadata: metadata,
+                            })?;
+                        }
+                        block_count += 1;
+                        rows_done += row_count;
+                        if frontend_progress_enabled() {
+                            eprintln!(
+                                "frontend stage=run_imaging/mosaic_mtmfs_stream_replay invocation={} pass={:?} load_visibility_values={} rows_done={} rows_total={} blocks={} samples={} elapsed_s={:.3}",
+                                ordinal,
+                                pass,
+                                load_visibility_values,
+                                rows_done,
+                                active_row_count,
+                                block_count,
+                                sample_count,
+                                replay_started.elapsed().as_secs_f64(),
+                            );
+                        }
+                        Ok(())
+                    },
+                )?;
+            }
             if standard_mfs_profile_detail_enabled() {
                 eprintln!(
                     "mosaic_mtmfs_stream_replay invocation={} pass={:?} load_visibility_values={} blocks={} samples={} elapsed_ms={:.3}",
@@ -8441,6 +8586,30 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         },
     )
     .map_err(|error| error.to_string())?;
+    if let Some(awproject) = result.awproject.as_ref() {
+        eprintln!("{}", awproject.plan_key.log_line());
+        eprintln!(
+            "awproject_cache residency_budget_bytes={} resident_cells={} resident_bytes={} loads={} hits={} evictions={} attempted_samples={} accepted_samples={} rejected_not_gridable={} rejected_invalid_input={} rejected_rr_imaging_plan={} rejected_ll_imaging_plan={} rejected_rr_psf_plan={} rejected_ll_psf_plan={} rejected_nonfinite_coordinate={} rejected_outside_grid={} rejected_kernel_index={} rejected_invalid_normalization={}",
+            awproject.resident_budget_bytes,
+            awproject.resident.resident_cells,
+            awproject.resident.resident_bytes,
+            awproject.resident.loads,
+            awproject.resident.hits,
+            awproject.resident.evictions,
+            awproject.samples.attempted_samples,
+            awproject.samples.accepted_samples,
+            awproject.samples.rejected_not_gridable,
+            awproject.samples.rejected_invalid_input,
+            awproject.samples.rejected_rr_imaging_plan,
+            awproject.samples.rejected_ll_imaging_plan,
+            awproject.samples.rejected_rr_psf_plan,
+            awproject.samples.rejected_ll_psf_plan,
+            awproject.samples.rejected_nonfinite_coordinate,
+            awproject.samples.rejected_outside_grid,
+            awproject.samples.rejected_kernel_index,
+            awproject.samples.rejected_invalid_normalization,
+        );
+    }
     let run_imaging_time = run_started_at.elapsed();
     accumulate_timings.log(prepare_started_at.elapsed());
     maybe_log_frontend_progress("run_imaging", run_imaging_time, total_start.elapsed());
@@ -8451,13 +8620,13 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         .mosaic_weight_image
         .as_ref()
         .map(single_plane_image_product);
-    let run_result = RunProducts::Mtmfs(MtmfsRunProducts {
+    let run_result = RunProducts::Mtmfs(Box::new(MtmfsRunProducts {
         result,
         primary_beam_weight_samples: Vec::new(),
         mosaic_weight,
         spectral_delta_hz: spectral_frequency_edge_range_hz.and_then(spectral_delta_from_range),
-    });
-    let coords = build_image_coordinate_system(
+    }));
+    let mut coords = build_image_coordinate_system(
         config.imsize,
         phase_center.angles_rad,
         config.cell_arcsec,
@@ -8469,8 +8638,17 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         config
             .cube_axis
             .rest_frequency_hz
+            .or(source_rest_frequency_hz)
             .or_else(|| run_result.rest_frequency_hz()),
     );
+    let obsinfo_phase_center_direction_rad = phase_center_obsinfo_direction_rad(ms, &phase_center)?;
+    populate_image_observation_info(
+        &mut coords,
+        ms,
+        first_selected_time_mjd_seconds,
+        obsinfo_phase_center_direction_rad,
+        derived_engine.as_ref(),
+    )?;
     let build_coordinate_system = stage_start.elapsed();
     maybe_log_frontend_progress(
         "build_coordinate_system",
@@ -8498,6 +8676,7 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         clean_stop_reason: run_result.clean_stop_reason(),
         minor_cycle_traces: run_result.minor_cycle_traces(),
         channel_summaries: run_result.channel_summaries(),
+        awproject: run_result.awproject_diagnostics(),
         stage_timings: run_result.stage_timings(),
         frontend_timings: FrontendStageTimings {
             open_measurement_set,
@@ -8514,6 +8693,50 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
             total: total_start.elapsed(),
         },
     })
+}
+
+fn populate_image_observation_info(
+    coords: &mut CoordinateSystem,
+    ms: &MeasurementSet,
+    first_selected_time_mjd_seconds: Option<f64>,
+    phase_center_direction_rad: [f64; 2],
+    derived_engine: Option<&MsCalEngine>,
+) -> Result<(), String> {
+    let observation = ms
+        .observation()
+        .map_err(|error| format!("open OBSERVATION for image metadata: {error}"))?;
+    if observation.row_count() == 0 {
+        return Ok(());
+    }
+    let telescope = observation
+        .string(0, "TELESCOPE_NAME")
+        .map_err(|error| format!("read OBSERVATION.TELESCOPE_NAME: {error}"))?;
+    let observer = observation
+        .string(0, "OBSERVER")
+        .map_err(|error| format!("read OBSERVATION.OBSERVER: {error}"))?;
+    let obs_info = coords.obs_info_mut();
+    obs_info.telescope = telescope;
+    obs_info.observer = observer;
+    obs_info.date = first_selected_time_mjd_seconds
+        .map(|seconds| MEpoch::from_mjd(seconds / 86_400.0, EpochRef::UTC));
+    obs_info.telescope_position =
+        derived_engine.map(|engine| engine.observatory_position().clone());
+    obs_info.pointing_center_rad = [
+        casa_obsinfo_longitude_rad(phase_center_direction_rad[0]),
+        phase_center_direction_rad[1],
+    ];
+    obs_info.pointing_center_initial = false;
+    Ok(())
+}
+
+fn casa_obsinfo_longitude_rad(longitude_rad: f64) -> f64 {
+    if longitude_rad > std::f64::consts::PI {
+        longitude_rad - std::f64::consts::TAU
+    } else if longitude_rad < -std::f64::consts::PI {
+        longitude_rad + std::f64::consts::TAU
+    } else {
+        longitude_rad
+    }
 }
 
 struct MosaicSinglePlaneStreamProducts {
@@ -8676,7 +8899,12 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
     }
 
     let stage_started_at = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, read_config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        read_config.use_pointing,
+        &selection.selected_rows,
+        derived_engine.as_ref(),
+    )?;
     let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
     prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
     let mut accumulate_timings = AccumulateRowTimings {
@@ -9249,6 +9477,7 @@ fn run_mfs_mosaic_from_single_plane_stream_open_ms_with_output_config(
         clean_stop_reason: run_result.clean_stop_reason(),
         minor_cycle_traces: run_result.minor_cycle_traces(),
         channel_summaries: run_result.channel_summaries(),
+        awproject: run_result.awproject_diagnostics(),
         stage_timings: run_result.stage_timings(),
         frontend_timings: FrontendStageTimings {
             open_measurement_set,
@@ -9409,6 +9638,7 @@ fn run_mfs_mosaic_multi_ms_materialized_from_paths(
         clean_stop_reason: run_result.clean_stop_reason(),
         minor_cycle_traces: run_result.minor_cycle_traces(),
         channel_summaries: run_result.channel_summaries(),
+        awproject: run_result.awproject_diagnostics(),
         stage_timings: run_result.stage_timings(),
         frontend_timings: FrontendStageTimings {
             open_measurement_set,
@@ -10226,6 +10456,7 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
         clean_stop_reason: None,
         minor_cycle_traces: Vec::new(),
         channel_summaries,
+        awproject: None,
         stage_timings,
         frontend_timings: FrontendStageTimings {
             open_measurement_set,
@@ -10290,6 +10521,7 @@ fn one_channel_mosaic_cube_metadata_plane(cube: &CubePlaneInput) -> Result<Plane
         spectral_frequency_edge_range_hz: None,
         plane_stokes: cube.plane_stokes,
         batches: Vec::new(),
+        aw_parallel_hand_batches: Vec::new(),
         density_batches: Vec::new(),
         sample_frequency_range_hz: Some([reffreq_hz, reffreq_hz]),
         sample_frequency_batches_hz: Vec::new(),
@@ -10636,7 +10868,12 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
             prepare_started_at.elapsed().as_secs_f64(),
         );
     }
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine.as_ref(),
+    )?;
     let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
     prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
     if frontend_progress_enabled() {
@@ -10856,6 +11093,7 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
             clean_stop_reason: None,
             minor_cycle_traces: Vec::new(),
             channel_summaries: Vec::new(),
+            awproject: None,
             stage_timings: ImagingStageTimings::default(),
             frontend_timings: FrontendStageTimings {
                 open_measurement_set,
@@ -11214,6 +11452,7 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
         clean_stop_reason: run_result.clean_stop_reason(),
         minor_cycle_traces: run_result.minor_cycle_traces(),
         channel_summaries: run_result.channel_summaries(),
+        awproject: run_result.awproject_diagnostics(),
         stage_timings: run_result.stage_timings(),
         frontend_timings: FrontendStageTimings {
             open_measurement_set,
@@ -11380,7 +11619,12 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
 
     let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
     let stage_started_at = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine.as_ref(),
+    )?;
     prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
     let mut accumulate_timings = AccumulateRowTimings {
         rows_skipped_by_flag_row: selection.selected_rows.len() - active_selected_rows.len(),
@@ -12234,6 +12478,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
         clean_stop_reason: run_result.clean_stop_reason(),
         minor_cycle_traces: run_result.minor_cycle_traces(),
         channel_summaries: run_result.channel_summaries(),
+        awproject: run_result.awproject_diagnostics(),
         stage_timings: run_result.stage_timings(),
         frontend_timings: FrontendStageTimings {
             open_measurement_set,
@@ -12405,7 +12650,12 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
     };
     let mut prepared_batch_count = 0usize;
     let stage_started_at = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine.as_ref(),
+    )?;
     prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
 
     for row_chunk in active_selected_rows.chunks(strategy.ingest.source_row_block_rows) {
@@ -12562,6 +12812,7 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
         clean_stop_reason: run_result.clean_stop_reason(),
         minor_cycle_traces: run_result.minor_cycle_traces(),
         channel_summaries: run_result.channel_summaries(),
+        awproject: run_result.awproject_diagnostics(),
         stage_timings: run_result.stage_timings(),
         frontend_timings: FrontendStageTimings {
             open_measurement_set,
@@ -13473,6 +13724,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
             clean_stop_reason: aggregate.clean_stop_reason,
             minor_cycle_traces: Vec::new(),
             channel_summaries,
+            awproject: None,
             stage_timings: aggregate.stage_timings,
             frontend_timings: FrontendStageTimings {
                 open_measurement_set,
@@ -14247,6 +14499,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
         clean_stop_reason: aggregate.clean_stop_reason,
         minor_cycle_traces: Vec::new(),
         channel_summaries,
+        awproject: None,
         stage_timings: aggregate.stage_timings,
         frontend_timings: FrontendStageTimings {
             open_measurement_set,
@@ -14282,65 +14535,63 @@ fn collect_cube_slab_run_metadata(
     let nplanes = config
         .channel_count
         .ok_or_else(|| "cube slab metadata requires explicit channel_count".to_string())?;
-    let mut phase_center = None::<PhaseCenter>;
-    let mut freq_ref = None::<FrequencyRef>;
-    let mut channel_frequencies_hz = vec![0.0; nplanes];
-    let mut output_channel_widths_hz = Vec::<f64>::with_capacity(nplanes);
-    let mut rest_frequency_hz = None::<f64>;
+    let mut expected_plane_start = 0usize;
+    for (expected_slab_id, slab) in slab_manifest.iter().enumerate() {
+        if slab.slab_id != expected_slab_id
+            || slab.plane_start != expected_plane_start
+            || slab.plane_end <= slab.plane_start
+            || slab.plane_end > nplanes
+        {
+            return Err(format!(
+                "cube slab metadata manifest entry {} does not continuously cover {} planes: slab_id={} planes={}..{} expected_start={expected_plane_start}",
+                expected_slab_id, nplanes, slab.slab_id, slab.plane_start, slab.plane_end,
+            ));
+        }
+        expected_plane_start = slab.plane_end;
+    }
+    if expected_plane_start != nplanes {
+        return Err(format!(
+            "cube slab metadata manifest covers {expected_plane_start} of {nplanes} planes"
+        ));
+    }
+
+    // Coordinate metadata belongs to the requested cube, not its runtime slab
+    // partition.  Reconstructing it independently for each slab makes frame
+    // conversion roundoff (and therefore the persisted spectral increment)
+    // depend on worker count and channel-chunk planning.
+    let full_config = slab_config_for_cube_planes(config, channel_start, 0, nplanes)?;
+    let mut cube_axis = full_config.cube_axis.clone();
+    cube_axis.specmode = full_config.spectral_mode.cube_specmode();
     let cube_context = cube_setup_context_for_selection(selection, Some(derived_engine))?;
     let plane_stokes = cube_slab_metadata_plane_stokes(config, &table_values.corr_types)?;
-
-    for slab in slab_manifest {
-        let slab_config =
-            slab_config_for_cube_planes(config, channel_start, slab.plane_start, slab.plane_end)?;
-        let mut cube_axis = slab_config.cube_axis.clone();
-        cube_axis.specmode = slab_config.spectral_mode.cube_specmode();
-        let (cube_setup, support_selection) = CubeSpectralSetup::for_casa_cube_axis(
-            table_values.freq_ref,
-            &table_values.spw_freqs_hz,
-            &table_values.spw_widths_hz,
-            slab_config
-                .channel_count
-                .unwrap_or(table_values.spw_freqs_hz.len()),
-            &cube_axis,
-            cube_context.reference_row_time_mjd_sec,
-            cube_context.spectral_frame_field_id,
-            cube_context.phase_center_direction.clone(),
-            cube_context.time_bounds_mjd_sec,
-            cube_context.derived_engine,
-        )
-        .map_err(|error| error.to_string())?;
-        phase_center.get_or_insert_with(|| selection.phase_center.clone());
-        freq_ref.get_or_insert(cube_setup.output_freq_ref);
-        rest_frequency_hz = rest_frequency_hz.or_else(|| {
-            support_selection
-                .frequencies_hz
-                .first()
-                .zip(support_selection.frequencies_hz.last())
-                .map(|(first, last)| 0.5 * (*first + *last))
-        });
-        output_channel_widths_hz.extend(cube_setup.output_channel_widths_hz.iter().copied());
-        for (offset, frequency_hz) in cube_setup.output_channel_frequencies_hz.iter().enumerate() {
-            let output_index = slab.plane_start + offset;
-            if output_index >= channel_frequencies_hz.len() {
-                return Err(format!(
-                    "cube slab metadata output index {output_index} exceeds {nplanes} planes"
-                ));
-            }
-            channel_frequencies_hz[output_index] = *frequency_hz;
-        }
-    }
-    let spectral_delta_hz = output_channel_widths_hz
+    let (cube_setup, support_selection) = CubeSpectralSetup::for_casa_cube_axis(
+        table_values.freq_ref,
+        &table_values.spw_freqs_hz,
+        &table_values.spw_widths_hz,
+        nplanes,
+        &cube_axis,
+        cube_context.reference_row_time_mjd_sec,
+        cube_context.spectral_frame_field_id,
+        cube_context.phase_center_direction,
+        cube_context.time_bounds_mjd_sec,
+        cube_context.derived_engine,
+    )
+    .map_err(|error| error.to_string())?;
+    let spectral_delta_hz = cube_setup
+        .output_channel_widths_hz
         .iter()
         .copied()
         .find(|value| value.is_finite() && *value != 0.0);
+    let rest_frequency_hz = support_selection
+        .frequencies_hz
+        .first()
+        .zip(support_selection.frequencies_hz.last())
+        .map(|(first, last)| 0.5 * (*first + *last));
     Ok(CubeSlabRunMetadata {
-        phase_center: phase_center
-            .ok_or_else(|| "cube slab metadata prepared no phase center".to_string())?,
-        freq_ref: freq_ref
-            .ok_or_else(|| "cube slab metadata prepared no frequency frame".to_string())?,
+        phase_center: selection.phase_center.clone(),
+        freq_ref: cube_setup.output_freq_ref,
         plane_stokes,
-        channel_frequencies_hz,
+        channel_frequencies_hz: cube_setup.output_channel_frequencies_hz,
         spectral_delta_hz,
         rest_frequency_hz,
     })
@@ -19600,15 +19851,25 @@ fn run_mtmfs_from_bounded_stream_open_ms(
     }
 
     let flag_row = selection.flag_row.as_slice();
+    // CASA's AWProject POINTING grouping is formed from every row in the
+    // VisBuffer before FLAG_ROW and per-channel rejection. Retain those rows
+    // in this execution path so the metadata accumulator sees the same
+    // antenna population; the row accumulator still rejects them before
+    // adapting visibility samples.
+    let retain_flagged_rows_for_casa_aw_pointing_groups = config
+        .aw_project
+        .as_ref()
+        .is_some_and(|controls| controls.use_pointing);
     let active_selected_rows = selection
         .selected_rows
         .iter()
         .filter(|selected_row| {
-            flag_row
-                .get(selected_row.row_index)
-                .copied()
-                .map(|flagged| !flagged)
-                .unwrap_or(true)
+            retain_flagged_rows_for_casa_aw_pointing_groups
+                || flag_row
+                    .get(selected_row.row_index)
+                    .copied()
+                    .map(|flagged| !flagged)
+                    .unwrap_or(true)
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -19689,7 +19950,12 @@ fn run_mtmfs_from_bounded_stream_open_ms(
         ..Default::default()
     };
     let stage_started_at = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine.as_ref(),
+    )?;
     prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
 
     let mut phase_center = None::<PhaseCenter>;
@@ -19847,12 +20113,12 @@ fn run_mtmfs_from_bounded_stream_open_ms(
     maybe_log_frontend_progress("run_imaging", run_imaging_time, total_start.elapsed());
 
     let stage_start = Instant::now();
-    let run_result = RunProducts::Mtmfs(MtmfsRunProducts {
+    let run_result = RunProducts::Mtmfs(Box::new(MtmfsRunProducts {
         result,
         primary_beam_weight_samples: Vec::new(),
         mosaic_weight: None,
         spectral_delta_hz: spectral_frequency_edge_range_hz.and_then(spectral_delta_from_range),
-    });
+    }));
     let coords = build_image_coordinate_system(
         config.imsize,
         phase_center.angles_rad,
@@ -19894,6 +20160,7 @@ fn run_mtmfs_from_bounded_stream_open_ms(
         clean_stop_reason: run_result.clean_stop_reason(),
         minor_cycle_traces: run_result.minor_cycle_traces(),
         channel_summaries: run_result.channel_summaries(),
+        awproject: run_result.awproject_diagnostics(),
         stage_timings: run_result.stage_timings(),
         frontend_timings: FrontendStageTimings {
             open_measurement_set,
@@ -20124,6 +20391,7 @@ fn run_joint_outlier_clean_from_configs(
             clean_stop_reason: result.diagnostics.clean_stop_reason,
             minor_cycle_traces: result.diagnostics.minor_cycle_traces.clone(),
             channel_summaries: Vec::new(),
+            awproject: None,
             stage_timings: result.diagnostics.stage_timings,
             frontend_timings: FrontendStageTimings {
                 open_measurement_set: if index == 0 {
@@ -21714,14 +21982,18 @@ fn standard_mfs_minor_cycle_backend_for_config(config: &CliConfig) -> StandardMf
         mosaic_mfs_eligible && mosaic_cube_one_channel_can_use_single_plane_stream(config);
     let eligible = standard_mfs_eligible || mosaic_mfs_eligible;
     let metal_requested = match config.standard_mfs_acceleration {
-        StandardMfsAccelerationPolicy::Auto => standard_mfs_auto_metal_enabled(
-            config,
-            eligible,
-            mosaic_mfs_eligible,
-            mosaic_cube_one_channel_eligible,
-            matches!(config.w_term_mode, WTermMode::WProject),
-            casa_imaging::standard_mfs_metal_device_available(),
-        ),
+        StandardMfsAccelerationPolicy::Auto => {
+            standard_mfs_auto_metal_decision(
+                config,
+                eligible,
+                mosaic_mfs_eligible,
+                mosaic_cube_one_channel_eligible,
+                matches!(config.w_term_mode, WTermMode::WProject),
+                cfg!(target_os = "macos"),
+                casa_imaging::standard_mfs_metal_device_available(),
+            )
+            .0
+        }
         StandardMfsAccelerationPolicy::Metal => true,
         StandardMfsAccelerationPolicy::Cpu | StandardMfsAccelerationPolicy::MultiCpu => false,
     };
@@ -21772,6 +22044,24 @@ fn plan_standard_mfs_runtime(
     ms_count: usize,
     backend_command_target_ms: Option<u64>,
 ) -> StandardMfsRuntimePlan {
+    plan_standard_mfs_runtime_with_metal_device(
+        config,
+        force_standard_gridder,
+        ms_count,
+        backend_command_target_ms,
+        cfg!(target_os = "macos"),
+        casa_imaging::standard_mfs_metal_device_available(),
+    )
+}
+
+fn plan_standard_mfs_runtime_with_metal_device(
+    config: &CliConfig,
+    force_standard_gridder: bool,
+    ms_count: usize,
+    backend_command_target_ms: Option<u64>,
+    metal_runtime_supported: bool,
+    metal_device_available: bool,
+) -> StandardMfsRuntimePlan {
     let standard_mfs_eligible =
         can_plan_standard_mfs_acceleration(config, force_standard_gridder, ms_count);
     let mosaic_mfs_eligible = can_plan_mosaic_mfs_acceleration(config, ms_count);
@@ -21780,15 +22070,15 @@ fn plan_standard_mfs_runtime(
     let eligible = standard_mfs_eligible || mosaic_mfs_eligible;
     let standard_cube_like_one_channel =
         standard_cube_like_one_channel_can_use_mfs_single_plane_path(config);
-    let metal_device_available = casa_imaging::standard_mfs_metal_device_available();
     let wproject_acceleration = matches!(config.w_term_mode, WTermMode::WProject);
     let auto_threads = standard_mfs_grid_worker_count(config);
-    let auto_metal = standard_mfs_auto_metal_enabled(
+    let (auto_metal, auto_metal_reason) = standard_mfs_auto_metal_decision(
         config,
         eligible,
         mosaic_mfs_eligible,
         mosaic_cube_one_channel_eligible,
         wproject_acceleration,
+        metal_runtime_supported,
         metal_device_available,
     );
     let auto_multi_cpu = eligible && auto_threads > 1;
@@ -21964,13 +22254,18 @@ fn plan_standard_mfs_runtime(
         };
 
     eprintln!(
-        "standard_mfs_runtime_plan policy={} imaging_fft_precision={} imaging_fft_backend={} eligible={} auto_multi_cpu={} auto_metal={} metal_device_available={} assigned_cpu_capacity={} backend={} backend_source={} grid_threads={} grid_threads_source={} density_threads={} density_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={} minor_cycle_backend={} minor_cycle_backend_reason={} metal_minor_cycle_chunk={} metal_minor_cycle_chunk_source={} mtmfs_metal_backend={} mtmfs_metal_input_cache={}",
+        "standard_mfs_runtime_plan policy={} imaging_fft_precision={} imaging_fft_backend={} eligible={} auto_multi_cpu={} auto_metal={} auto_metal_reason={} metal_device_available={} assigned_cpu_capacity={} backend={} backend_source={} grid_threads={} grid_threads_source={} density_threads={} density_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={} minor_cycle_backend={} minor_cycle_backend_reason={} metal_minor_cycle_chunk={} metal_minor_cycle_chunk_source={} mtmfs_metal_backend={} mtmfs_metal_input_cache={}",
         standard_mfs_acceleration_policy_label(config.standard_mfs_acceleration),
         imaging_fft_precision_policy_label(config.imaging_fft_precision),
         imaging_fft_backend_policy_label(config.imaging_fft_backend),
         eligible,
         auto_multi_cpu,
         policy_metal_requested,
+        if config.standard_mfs_acceleration == StandardMfsAccelerationPolicy::Auto {
+            auto_metal_reason
+        } else {
+            "not_applicable_explicit_policy"
+        },
         metal_device_available,
         auto_threads,
         backend.as_deref().unwrap_or("cpu"),
@@ -21999,6 +22294,8 @@ fn plan_standard_mfs_runtime(
             "mosaic_mfs_runtime_plan cpu_strategy={} grid_threads={} gpu_strategy={} initial_dirty_backend={} residual_backend={}",
             if grid_threads.as_deref().unwrap_or("1") == "1" {
                 "serial"
+            } else if config.aw_project.is_some() {
+                "awproject-disjoint-taylor-plane-owners"
             } else if matches!(
                 config.standard_mfs_acceleration,
                 StandardMfsAccelerationPolicy::MultiCpu
@@ -22034,36 +22331,63 @@ fn plan_standard_mfs_runtime(
     }
 }
 
-fn standard_mfs_auto_metal_enabled(
+fn standard_mfs_auto_metal_decision(
     config: &CliConfig,
     eligible: bool,
     mosaic_mfs_eligible: bool,
     mosaic_cube_one_channel_eligible: bool,
     wproject_acceleration: bool,
+    metal_runtime_supported: bool,
     metal_device_available: bool,
-) -> bool {
-    if !(eligible && cfg!(target_os = "macos") && metal_device_available) {
-        return false;
+) -> (bool, &'static str) {
+    if !eligible {
+        return (false, "ineligible_imaging_contract");
+    }
+    if !metal_runtime_supported {
+        return (false, "requires_macos");
+    }
+    if !metal_device_available {
+        return (false, "metal_device_unavailable");
+    }
+    if config.aw_project.is_some() {
+        // The AWProject Metal path grids the complete PSF/residual/weight
+        // Taylor set with compensated f64 readback and is valid for dirty as
+        // well as clean MT-MFS.  It is the measured Mac-mini winner, so the
+        // public automatic policy must not retain the older clean-only mosaic
+        // eligibility rule after true AW gridding has been selected.
+        return (true, "selected_awproject");
     }
     if wproject_acceleration {
-        return true;
+        return (true, "selected_wprojection");
     }
     if mosaic_cube_one_channel_eligible {
-        return !config.dirty_only && config.niter > 0;
+        return if !config.dirty_only && config.niter > 0 {
+            (true, "selected_mosaic_cube_clean")
+        } else {
+            (false, "mosaic_cube_dirty_not_measured")
+        };
     }
     if config.deconvolver == Deconvolver::Mtmfs {
-        return !config.dirty_only && config.niter > 0;
+        return if !config.dirty_only && config.niter > 0 {
+            (true, "selected_mtmfs_clean")
+        } else {
+            (false, "mtmfs_dirty_not_measured")
+        };
     }
     if matches!(
         config.deconvolver,
         Deconvolver::Hogbom | Deconvolver::Multiscale
     ) {
-        return !config.dirty_only && config.niter > 0;
+        return if !config.dirty_only && config.niter > 0 {
+            (true, "selected_clean_minor_cycle")
+        } else {
+            (false, "dirty_minor_cycle_not_measured")
+        };
     }
     if mosaic_mfs_eligible {
-        return false;
+        return (false, "mosaic_contract_not_measured");
     }
-    false
+    (false, "deconvolver_not_supported")
 }
 
 fn can_plan_standard_mfs_acceleration(
@@ -22166,11 +22490,21 @@ fn standard_mfs_auto_grid_threads() -> usize {
 }
 
 fn standard_mfs_grid_worker_count(config: &CliConfig) -> usize {
-    config
+    let explicit_grid_workers = config
         .standard_mfs_grid_threads
         .as_deref()
-        .and_then(parse_standard_mfs_grid_threads)
-        .or(config.imaging_prepare_workers)
+        .and_then(parse_standard_mfs_grid_threads);
+    explicit_grid_workers
+        .or_else(|| {
+            // AWProject plane ownership is independent of source preparation.
+            // Its locality-preserving auto plan intentionally uses one prepare
+            // worker while retaining the host's useful plane-worker capacity.
+            config
+                .aw_project
+                .is_none()
+                .then_some(config.imaging_prepare_workers)
+                .flatten()
+        })
         .unwrap_or_else(imaging_hardware_threads)
         .max(1)
 }
@@ -22623,6 +22957,10 @@ pub struct CliConfig {
     pub cell_arcsec: f64,
     /// Optional selected `FIELD_ID`s.
     pub field_ids: Option<Vec<i32>>,
+    /// Optional CASA-style baseline-length selector.
+    pub uvrange: Option<String>,
+    /// Optional CASA-style observing-intent selector.
+    pub intent: Option<String>,
     /// Optional `FIELD_ID` used as the image phase center.
     pub phasecenter_field: Option<i32>,
     /// Optional explicit direction used as the image phase center.
@@ -22721,6 +23059,8 @@ pub struct CliConfig {
     pub force_standard_gridder: bool,
     /// Optional explicit `wproject` plane budget.
     pub w_project_planes: Option<usize>,
+    /// CASA AWProject controls when `gridder='awproject'` is selected.
+    pub aw_project: Option<AwProjectControls>,
     /// Skip CLEAN and only write dirty/residual products.
     pub dirty_only: bool,
     /// Optional CASA-like top-level spectral channel chunk count request.
@@ -22855,6 +23195,8 @@ impl CliConfig {
         let mut imsize = None::<usize>;
         let mut cell_arcsec = None::<f64>;
         let mut field_ids = None::<Vec<i32>>;
+        let mut uvrange = None::<String>;
+        let mut intent = None::<String>;
         let mut phasecenter_field = None::<i32>;
         let mut phasecenter = None::<String>;
         let mut ddid = None::<i32>;
@@ -22901,6 +23243,21 @@ impl CliConfig {
         let mut w_term_mode = WTermMode::None;
         let mut force_standard_gridder = false;
         let mut w_project_planes = None::<usize>;
+        let mut aw_project_requested = false;
+        let mut aw_cf_cache = None::<PathBuf>;
+        let mut aw_cf_resident_mb = 256usize;
+        let mut aw_facets = 1usize;
+        let mut aw_psf_phase_center = None::<String>;
+        let mut aw_vp_table = None::<PathBuf>;
+        let mut aw_a_term = true;
+        let mut aw_ps_term = false;
+        let mut aw_wb_awp = true;
+        let mut aw_conjugate_beams = true;
+        let mut aw_compute_pa_step_deg = 360.0f64;
+        let mut aw_rotate_pa_step_deg = 360.0f64;
+        let mut aw_pointing_offset_sigdev = vec![0.0f64];
+        let mut aw_mosaic_weighting = false;
+        let mut aw_normalization = AwProjectNormalization::FlatNoise;
         let mut dirty_only = false;
         let mut parallel = None::<bool>;
         let mut chanchunks = None::<usize>;
@@ -22954,11 +23311,28 @@ impl CliConfig {
                     );
                     continue;
                 }
+                "--projection" => {
+                    let projection = next_value(&mut args, "--projection")?;
+                    if !projection.eq_ignore_ascii_case("SIN") {
+                        return Err(format!(
+                            "unsupported --projection {projection:?}; current production imaging supports SIN only and will not silently rewrite another projection"
+                        ));
+                    }
+                    continue;
+                }
                 "--field" => {
                     field_ids = Some(parse_numeric_selector(
                         &next_value(&mut args, "--field")?,
                         "field",
                     )?);
+                    continue;
+                }
+                "--uvrange" => {
+                    uvrange = Some(next_value(&mut args, "--uvrange")?);
+                    continue;
+                }
+                "--intent" => {
+                    intent = Some(next_value(&mut args, "--intent")?);
                     continue;
                 }
                 "--phasecenter-field" => {
@@ -23073,12 +23447,98 @@ impl CliConfig {
                     let (mode, force_standard) = parsed.core_modes();
                     w_term_mode = mode;
                     force_standard_gridder = force_standard;
-                    if parsed.is_aw_widefield_alias() {
-                        eprintln!(
-                            "aw_widefield_alias_plan gridder_request={} core_projection=wproject a_term_cf_planning=not_implemented remaining_capability_issue=https://github.com/bglenden/casa-rs/issues/52",
-                            parsed.label(),
-                        );
+                    aw_project_requested = parsed == GridderRequest::AwProject;
+                    continue;
+                }
+                "--cfcache" => {
+                    aw_cf_cache = Some(next_path(&mut args, "--cfcache")?);
+                    continue;
+                }
+                "--cf-resident-mb" => {
+                    aw_cf_resident_mb = next_value(&mut args, "--cf-resident-mb")?
+                        .parse::<usize>()
+                        .map_err(|error| format!("parse --cf-resident-mb: {error}"))?;
+                    if aw_cf_resident_mb == 0 {
+                        return Err("--cf-resident-mb must be positive".to_string());
                     }
+                    continue;
+                }
+                "--facets" => {
+                    aw_facets = next_value(&mut args, "--facets")?
+                        .parse::<usize>()
+                        .map_err(|error| format!("parse --facets: {error}"))?;
+                    continue;
+                }
+                "--psfphasecenter" => {
+                    aw_psf_phase_center = Some(next_value(&mut args, "--psfphasecenter")?);
+                    continue;
+                }
+                "--vptable" => {
+                    aw_vp_table = Some(next_path(&mut args, "--vptable")?);
+                    continue;
+                }
+                "--aterm" => {
+                    aw_a_term = true;
+                    continue;
+                }
+                "--no-aterm" => {
+                    aw_a_term = false;
+                    continue;
+                }
+                "--psterm" => {
+                    aw_ps_term = true;
+                    continue;
+                }
+                "--no-psterm" => {
+                    aw_ps_term = false;
+                    continue;
+                }
+                "--wbawp" => {
+                    aw_wb_awp = true;
+                    continue;
+                }
+                "--no-wbawp" => {
+                    aw_wb_awp = false;
+                    continue;
+                }
+                "--conjbeams" => {
+                    aw_conjugate_beams = true;
+                    continue;
+                }
+                "--no-conjbeams" => {
+                    aw_conjugate_beams = false;
+                    continue;
+                }
+                "--computepastep" => {
+                    aw_compute_pa_step_deg = next_value(&mut args, "--computepastep")?
+                        .parse::<f64>()
+                        .map_err(|error| format!("parse --computepastep: {error}"))?;
+                    continue;
+                }
+                "--rotatepastep" => {
+                    aw_rotate_pa_step_deg = next_value(&mut args, "--rotatepastep")?
+                        .parse::<f64>()
+                        .map_err(|error| format!("parse --rotatepastep: {error}"))?;
+                    continue;
+                }
+                "--pointingoffsetsigdev" => {
+                    aw_pointing_offset_sigdev = parse_f64_list(
+                        &next_value(&mut args, "--pointingoffsetsigdev")?,
+                        "--pointingoffsetsigdev",
+                    )?;
+                    continue;
+                }
+                "--mosweight" => {
+                    aw_mosaic_weighting = true;
+                    continue;
+                }
+                "--no-mosweight" => {
+                    aw_mosaic_weighting = false;
+                    continue;
+                }
+                "--normtype" => {
+                    aw_normalization =
+                        parse_awproject_normalization(&next_value(&mut args, "--normtype")?)?;
                     continue;
                 }
                 "--perchanweightdensity" => {
@@ -23503,6 +23963,49 @@ impl CliConfig {
         }
         validate_auto_mask_config(use_mask, &auto_mask)?;
 
+        let aw_project = if aw_project_requested {
+            if spectral_mode != SpectralMode::Mfs || deconvolver != Deconvolver::Mtmfs {
+                return Err(
+                    "gridder='awproject' currently requires --specmode mfs --deconvolver mtmfs"
+                        .to_string(),
+                );
+            }
+            let cf_cache = aw_cf_cache.ok_or_else(|| {
+                "gridder='awproject' requires an existing CASA CF cache via --cfcache".to_string()
+            })?;
+            let cf_resident_bytes = aw_cf_resident_mb
+                .checked_mul(1024 * 1024)
+                .ok_or_else(|| "--cf-resident-mb exceeds addressable memory".to_string())?;
+            let psf_phase_center_direction_rad = aw_psf_phase_center
+                .as_deref()
+                .map(parse_phase_center_literal)
+                .transpose()?
+                .map(|center| center.angles_rad);
+            Some(AwProjectControls {
+                cf_cache,
+                cf_resident_bytes,
+                facets: aw_facets,
+                w_plane_count: w_project_planes,
+                psf_phase_center_direction_rad,
+                vp_table: aw_vp_table,
+                a_term: aw_a_term,
+                ps_term: aw_ps_term,
+                wb_awp: aw_wb_awp,
+                conjugate_beams: aw_conjugate_beams,
+                compute_pa_step_deg: aw_compute_pa_step_deg,
+                rotate_pa_step_deg: aw_rotate_pa_step_deg,
+                pointing_offset_sigdev: aw_pointing_offset_sigdev,
+                use_pointing,
+                mosaic_weighting: aw_mosaic_weighting,
+                normalization: aw_normalization,
+            })
+        } else {
+            if aw_cf_cache.is_some() {
+                return Err("--cfcache requires --gridder awproject".to_string());
+            }
+            None
+        };
+
         let per_channel_weight_density = per_channel_weight_density
             .unwrap_or_else(|| default_per_channel_weight_density(spectral_mode));
 
@@ -23514,6 +24017,8 @@ impl CliConfig {
             cell_arcsec: cell_arcsec
                 .ok_or_else(|| format!("missing --cell-arcsec\n\n{}", help_text()))?,
             field_ids,
+            uvrange,
+            intent,
             phasecenter_field,
             phasecenter,
             ddid,
@@ -23559,6 +24064,7 @@ impl CliConfig {
             w_term_mode,
             force_standard_gridder,
             w_project_planes,
+            aw_project,
             dirty_only,
             chanchunks,
             standard_mfs_acceleration,
@@ -23606,6 +24112,8 @@ pub struct RunSummary {
     /// Per-channel cube diagnostics when running cube-like spectral modes,
     /// empty for MFS runs.
     pub channel_summaries: Vec<ChannelRunSummary>,
+    /// Resolved AWProject plan, cache identity, and bounded-residency evidence.
+    pub awproject: Option<casa_imaging::AwProjectRunDiagnostics>,
     /// Stage timing breakdown reported by the pure imaging core.
     pub stage_timings: ImagingStageTimings,
     /// Stage timing breakdown for the MeasurementSet-backed frontend and persistence path.
@@ -23624,6 +24132,7 @@ fn diagnostic_plan_probe_summary(
         clean_stop_reason: None,
         minor_cycle_traces: Vec::new(),
         channel_summaries: Vec::new(),
+        awproject: None,
         stage_timings: ImagingStageTimings::default(),
         frontend_timings: FrontendStageTimings {
             open_measurement_set,
@@ -25311,6 +25820,15 @@ fn read_columnar_prepared_source_with_progress_cube(
     geometry_cache_key: Option<VisibilityGeometryCacheKey>,
     progress_output_cube: Option<ImagerProgressCube>,
 ) -> Result<ColumnarPreparedSource, String> {
+    let source_ddid = row_chunk
+        .first()
+        .map(|row| row.ddid)
+        .ok_or_else(|| "columnar visibility source row block is empty".to_string())?;
+    if row_chunk.iter().any(|row| row.ddid != source_ddid) {
+        return Err(format!(
+            "columnar visibility source row block mixes DATA_DESC_ID values; expected {source_ddid}"
+        ));
+    }
     let row_indices = row_chunk
         .iter()
         .map(|selected_row| selected_row.row_index)
@@ -25319,19 +25837,23 @@ fn read_columnar_prepared_source_with_progress_cube(
         .map(|range| (range.start, range.count))
         .unwrap_or((0, table_values.spw_freqs_hz.len()));
     let (_, polarization_id) = ddid_info
-        .get(selection.selected_ddid)
+        .get(source_ddid)
         .copied()
         .flatten()
-        .ok_or_else(|| {
-            format!(
-                "map selected DDID {} to SPW/POLARIZATION",
-                selection.selected_ddid
-            )
-        })?;
+        .ok_or_else(|| format!("map selected DDID {} to SPW/POLARIZATION", source_ddid))?;
+    if row_chunk
+        .iter()
+        .any(|row| row.spw_id != table_values.spw_id)
+    {
+        return Err(format!(
+            "columnar visibility source DDID {source_ddid} row block does not match prepared SPW {}",
+            table_values.spw_id
+        ));
+    }
     let source_partition = SourcePartition::new(
         casa_ms::SourcePartitionId(0),
         0,
-        selection.selected_ddid as i32,
+        source_ddid as i32,
         table_values.spw_id as i32,
         polarization_id as i32,
         table_values.spw_freqs_hz.len(),
@@ -25522,6 +26044,7 @@ struct PlaneInput {
     spectral_frequency_edge_range_hz: Option<[f64; 2]>,
     plane_stokes: PlaneStokes,
     batches: Vec<VisibilityBatch>,
+    aw_parallel_hand_batches: Vec<AwParallelHandVisibilityBatch>,
     density_batches: Vec<VisibilityBatch>,
     sample_frequency_range_hz: Option<[f64; 2]>,
     sample_frequency_batches_hz: Vec<Vec<f64>>,
@@ -25554,6 +26077,39 @@ fn align_optional_density_batches(
         }
     }
     Ok(density_batches.into_iter().map(Some).collect())
+}
+
+fn align_optional_aw_parallel_hand_batches(
+    visibility_batches: &[VisibilityBatch],
+    parallel_hand_batches: Vec<AwParallelHandVisibilityBatch>,
+) -> Result<Vec<Option<AwParallelHandVisibilityBatch>>, ImagingError> {
+    if parallel_hand_batches.is_empty() {
+        return Ok((0..visibility_batches.len()).map(|_| None).collect());
+    }
+    if parallel_hand_batches.len() != visibility_batches.len() {
+        return Err(ImagingError::InvalidRequest(format!(
+            "prepared input has {} AW parallel-hand batches for {} visibility batches",
+            parallel_hand_batches.len(),
+            visibility_batches.len()
+        )));
+    }
+    for (index, (visibility, parallel_hands)) in visibility_batches
+        .iter()
+        .zip(&parallel_hand_batches)
+        .enumerate()
+    {
+        if parallel_hands.len() != visibility.len()
+            || parallel_hands.second_visibility.len() != visibility.len()
+        {
+            return Err(ImagingError::InvalidRequest(format!(
+                "prepared AW parallel-hand batch {index} has first/second lengths {}/{} for {} visibility samples",
+                parallel_hands.len(),
+                parallel_hands.second_visibility.len(),
+                visibility.len()
+            )));
+        }
+    }
+    Ok(parallel_hand_batches.into_iter().map(Some).collect())
 }
 
 #[derive(Clone)]
@@ -25774,35 +26330,85 @@ fn casa_mfs_frequency_edge_range_for_selected_rows(
         "internal error: missing derived engine for MFS frequency-frame conversion".to_string()
     })?;
     let mut edge_range_hz = None::<[f64; 2]>;
-    for row_slot in casa_mfs_representative_selected_row_indices(selected_rows)? {
+    let representative_row_slots = casa_mfs_representative_selected_row_indices(selected_rows)?;
+    let mut low_extremum = None::<(f64, usize)>;
+    let mut high_extremum = None::<(f64, usize)>;
+    for &row_slot in &representative_row_slots {
         let selected_row = &selected_rows[row_slot];
         let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
             "internal error: missing row time for MFS frequency-frame conversion".to_string()
         })?;
-        let low_hz = convert_frequency_to_frame(
+        let low_hz = casa_mfs_convert_frequency_to_frame(
             source_freq_ref,
-            FrequencyRef::LSRK,
             source_edge_range_hz[0],
             row_time_mjd_sec,
             selected_row.field_id,
             derived_engine,
-        )
-        .map_err(|error| error.to_string())?;
-        let high_hz = convert_frequency_to_frame(
+        )?;
+        let high_hz = casa_mfs_convert_frequency_to_frame(
             source_freq_ref,
-            FrequencyRef::LSRK,
             source_edge_range_hz[1],
             row_time_mjd_sec,
             selected_row.field_id,
             derived_engine,
-        )
-        .map_err(|error| error.to_string())?;
-        extend_frequency_range_hz(
-            &mut edge_range_hz,
-            [low_hz.min(high_hz), low_hz.max(high_hz)],
+        )?;
+        let row_low_hz = low_hz.min(high_hz);
+        let row_high_hz = low_hz.max(high_hz);
+        if low_extremum.is_none_or(|(value, _)| row_low_hz < value) {
+            low_extremum = Some((row_low_hz, row_slot));
+        }
+        if high_extremum.is_none_or(|(value, _)| row_high_hz > value) {
+            high_extremum = Some((row_high_hz, row_slot));
+        }
+        extend_frequency_range_hz(&mut edge_range_hz, [row_low_hz, row_high_hz]);
+    }
+    if standard_mfs_profile_detail_enabled()
+        && let (Some((low_hz, low_slot)), Some((high_hz, high_slot))) =
+            (low_extremum, high_extremum)
+    {
+        let low_row = &selected_rows[low_slot];
+        let high_row = &selected_rows[high_slot];
+        eprintln!(
+            "casa_mfs_frequency_edge_range source_ref={} target_ref=LSRK source_low_hz={:.17e} source_high_hz={:.17e} representatives={} low_hz={:.17e} low_row={} low_time_mjd_seconds={:.17e} low_field={} low_ddid={} high_hz={:.17e} high_row={} high_time_mjd_seconds={:.17e} high_field={} high_ddid={}",
+            source_freq_ref,
+            source_edge_range_hz[0],
+            source_edge_range_hz[1],
+            representative_row_slots.len(),
+            low_hz,
+            low_row.row_index,
+            low_row.time_mjd_seconds.unwrap_or_default(),
+            low_row.field_id,
+            low_row.ddid,
+            high_hz,
+            high_row.row_index,
+            high_row.time_mjd_seconds.unwrap_or_default(),
+            high_row.field_id,
+            high_row.ddid,
         );
     }
     edge_range_hz.ok_or_else(|| "MFS row metadata resolved to no spectral edges".to_string())
+}
+
+fn casa_mfs_convert_frequency_to_frame(
+    source_ref: FrequencyRef,
+    source_hz: f64,
+    time_mjd_sec: f64,
+    field_id: usize,
+    derived_engine: &MsCalEngine,
+) -> Result<f64, String> {
+    // Evaluate the shared measures conversion at each representative row.
+    // The previous local finite-difference interpolation shifted a frozen
+    // VLASS spectral edge by one ULP; the exact series reproduces CASA's
+    // endpoint and avoids maintaining a second aberration implementation.
+    convert_frequency_to_frame(
+        source_ref,
+        FrequencyRef::LSRK,
+        source_hz,
+        time_mjd_sec,
+        field_id,
+        derived_engine,
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn mfs_output_frequency_metadata_for_config_selection(
@@ -25844,6 +26450,49 @@ fn mfs_output_frequency_metadata_for_config_selection(
         selected_rows,
         derived_engine,
     )
+}
+
+fn merge_mfs_output_frequency_metadata<'a>(
+    metadata: impl IntoIterator<Item = &'a MfsOutputFrequencyMetadata>,
+) -> Result<MfsOutputFrequencyMetadata, String> {
+    let mut metadata = metadata.into_iter();
+    let first = *metadata
+        .next()
+        .ok_or_else(|| "cannot merge empty MFS frequency metadata".to_string())?;
+    let mut merged = first;
+    for next in metadata {
+        if next.freq_ref != merged.freq_ref {
+            return Err(format!(
+                "MFS DATA_DESC_ID plans resolve to different output frequency frames: {:?} versus {:?}",
+                merged.freq_ref, next.freq_ref
+            ));
+        }
+        merged.selected_frequency_range_hz = [
+            merged.selected_frequency_range_hz[0].min(next.selected_frequency_range_hz[0]),
+            merged.selected_frequency_range_hz[1].max(next.selected_frequency_range_hz[1]),
+        ];
+        merged.spectral_frequency_edge_range_hz = match (
+            merged.spectral_frequency_edge_range_hz,
+            next.spectral_frequency_edge_range_hz,
+        ) {
+            (Some(left), Some(right)) => Some([left[0].min(right[0]), left[1].max(right[1])]),
+            (left, right) => left.or(right),
+        };
+        merged.sample_frequency_range_hz = match (
+            merged.sample_frequency_range_hz,
+            next.sample_frequency_range_hz,
+        ) {
+            (Some(left), Some(right)) => Some([left[0].min(right[0]), left[1].max(right[1])]),
+            (left, right) => left.or(right),
+        };
+    }
+    merged.reffreq_hz = merged
+        .spectral_frequency_edge_range_hz
+        .map(|range| 0.5 * (range[0] + range[1]))
+        .unwrap_or_else(|| {
+            0.5 * (merged.selected_frequency_range_hz[0] + merged.selected_frequency_range_hz[1])
+        });
+    Ok(merged)
 }
 
 fn apply_mfs_output_frequency_metadata(
@@ -26123,6 +26772,8 @@ fn merge_two_prepared_inputs(
             left.reffreq_hz =
                 0.5 * (left.selected_frequency_range_hz[0] + left.selected_frequency_range_hz[1]);
             left.batches.extend(right.batches);
+            left.aw_parallel_hand_batches
+                .extend(right.aw_parallel_hand_batches);
             left.density_batches.extend(right.density_batches);
             left.sample_frequency_batches_hz
                 .extend(right.sample_frequency_batches_hz);
@@ -26459,6 +27110,10 @@ fn merge_gridder_modes(
         | (GridderMode::Mosaic(_), GridderMode::Standard) => {
             Err("multi-MS inputs resolved to mixed standard and mosaic gridders".to_string())
         }
+        (GridderMode::AwProject(_), _) | (_, GridderMode::AwProject(_)) => Err(
+            "multi-MS AWProject inputs require the bounded streaming frontend and cannot be merged as materialized prepared inputs"
+                .to_string(),
+        ),
     }
 }
 
@@ -26507,7 +27162,7 @@ fn merge_optional_frequency_ranges(
 #[allow(dead_code)]
 enum RunProducts {
     Mfs(casa_imaging::ImagingResult),
-    Mtmfs(MtmfsRunProducts),
+    Mtmfs(Box<MtmfsRunProducts>),
     Cube(CubeRunProducts),
 }
 
@@ -26532,6 +27187,13 @@ fn array_payload_bytes<T>(array: &Array4<T>) -> usize {
 }
 
 impl RunProducts {
+    fn awproject_diagnostics(&self) -> Option<casa_imaging::AwProjectRunDiagnostics> {
+        match self {
+            Self::Mtmfs(products) => products.result.awproject.clone(),
+            Self::Mfs(_) | Self::Cube(_) => None,
+        }
+    }
+
     fn estimated_product_payload_bytes(&self) -> usize {
         match self {
             Self::Mfs(result) => array_payload_bytes(&result.psf)
@@ -27263,6 +27925,7 @@ fn prepare_mosaic_cube_direct_replay_block(
         channel_axes,
         geometry_columns,
         row_chunk,
+        derived_engine,
         channel_read_range,
     )?;
     let read_elapsed = read_started.elapsed();
@@ -28465,6 +29128,7 @@ fn read_ms_imaging_essentials_block(
     channel_axes: Arc<MsImagingChannelAxisCatalog>,
     geometry_columns: &PreparedGeometryColumnCache,
     row_chunk: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
     channel_read_range: Option<SelectedChannelReadRange>,
 ) -> Result<(MsImagingEssentialsBlock, MsImagingEssentialsReadTimings), String> {
     let row_indices = row_chunk
@@ -28569,9 +29233,13 @@ fn read_ms_imaging_essentials_block(
             geometry_columns.pointing_resolver.as_ref(),
             selected_row.time_mjd_seconds,
         ) {
-            (Some(resolver), Some(time_mjd_seconds)) => {
-                resolver.resolve(pointing_id, antenna1_id, time_mjd_seconds, row_phase_center)
-            }
+            (Some(resolver), Some(time_mjd_seconds)) => resolver.resolve(
+                pointing_id,
+                antenna1_id,
+                time_mjd_seconds,
+                row_phase_center,
+                derived_engine,
+            )?,
             (Some(_), None) => {
                 return Err(format!(
                     "row {row_index} requires TIME to resolve POINTING directions"
@@ -28587,9 +29255,13 @@ fn read_ms_imaging_essentials_block(
             geometry_columns.pointing_resolver.as_ref(),
             selected_row.time_mjd_seconds,
         ) {
-            (Some(resolver), Some(time_mjd_seconds)) => {
-                resolver.resolve(pointing_id, antenna2_id, time_mjd_seconds, row_phase_center)
-            }
+            (Some(resolver), Some(time_mjd_seconds)) => resolver.resolve(
+                pointing_id,
+                antenna2_id,
+                time_mjd_seconds,
+                row_phase_center,
+                derived_engine,
+            )?,
             (Some(_), None) => {
                 return Err(format!(
                     "row {row_index} requires TIME to resolve POINTING directions"
@@ -29026,80 +29698,310 @@ struct PointingDirectionRow {
     antenna_id: i32,
     time_mjd_seconds: f64,
     interval_seconds: f64,
-    angles_rad: [f64; 2],
+    source_ref: DirectionRef,
+    raw_angles_rad: [f64; 2],
 }
 
-#[derive(Debug, Clone)]
+fn resolve_table_direction_reference(
+    table: &casa_tables::Table,
+    table_name: &str,
+    column_name: &str,
+    row_index: usize,
+) -> Result<DirectionRef, String> {
+    let Some(descriptor) = TableMeasDesc::reconstruct(table, column_name) else {
+        return Ok(DirectionRef::J2000);
+    };
+    let reference = match descriptor.ref_desc() {
+        MeasRefDesc::Fixed { refer } => refer.clone(),
+        MeasRefDesc::VariableInt {
+            ref_column,
+            tab_ref_types,
+            tab_ref_codes,
+        } => {
+            let code = match table
+                .cell_accessor(row_index, ref_column)
+                .and_then(|cell| cell.scalar())
+                .map_err(|error| {
+                    format!(
+                        "read {table_name}.{ref_column} row {row_index} for {column_name} reference: {error}"
+                    )
+                })? {
+                &ScalarValue::Int32(value) => value,
+                &ScalarValue::Int64(value) => i32::try_from(value).map_err(|_| {
+                    format!(
+                        "{table_name}.{ref_column} row {row_index} reference code {value} exceeds Int32"
+                    )
+                })?,
+                &ScalarValue::UInt32(value) => i32::try_from(value).map_err(|_| {
+                    format!(
+                        "{table_name}.{ref_column} row {row_index} reference code {value} exceeds Int32"
+                    )
+                })?,
+                other => {
+                    return Err(format!(
+                        "{table_name}.{ref_column} row {row_index} must contain an integer direction reference, found {:?}",
+                        other.primitive_type()
+                    ));
+                }
+            };
+            let index = tab_ref_codes
+                .iter()
+                .position(|candidate| *candidate == code)
+                .ok_or_else(|| {
+                    format!(
+                        "{table_name}.{ref_column} row {row_index} has unknown direction reference code {code}"
+                    )
+                })?;
+            tab_ref_types.get(index).cloned().ok_or_else(|| {
+                format!(
+                    "{table_name}.{column_name} reference type is missing for code {code} at index {index}"
+                )
+            })?
+        }
+        MeasRefDesc::VariableString { ref_column } => match table
+            .cell_accessor(row_index, ref_column)
+            .and_then(|cell| cell.scalar())
+            .map_err(|error| {
+                format!(
+                    "read {table_name}.{ref_column} row {row_index} for {column_name} reference: {error}"
+                )
+            })? {
+            ScalarValue::String(value) => value.clone(),
+            other => {
+                return Err(format!(
+                    "{table_name}.{ref_column} row {row_index} must contain a string direction reference, found {:?}",
+                    other.primitive_type()
+                ));
+            }
+        },
+    };
+    reference.parse::<DirectionRef>().map_err(|_| {
+        format!(
+            "{table_name}.{column_name} row {row_index} uses unsupported direction reference {reference}"
+        )
+    })
+}
+
+#[derive(Debug)]
 struct PointingDirectionResolver {
     by_antenna: BTreeMap<i32, Vec<PointingDirectionRow>>,
     by_row_index: HashMap<usize, PointingDirectionRow>,
+    j2000_by_row_main_time: Mutex<HashMap<(usize, u64), [f64; 2]>>,
+    table_row_count: usize,
+    retained_row_count: usize,
 }
 
 impl PointingDirectionResolver {
-    fn new(ms: &MeasurementSet) -> Result<Option<Self>, String> {
+    fn new(
+        ms: &MeasurementSet,
+        selected_rows: &[SelectedMainRow],
+        derived_engine: Option<&MsCalEngine>,
+    ) -> Result<Option<Self>, String> {
         let Ok(pointing) = ms.pointing() else {
             return Ok(None);
         };
-        if pointing.row_count() == 0 {
+        let table_row_count = pointing.row_count();
+        if table_row_count == 0 || selected_rows.is_empty() {
             return Ok(None);
         }
         let table = pointing.table();
+        let selected_antennas = selected_rows
+            .iter()
+            .flat_map(|row| [row.antenna1_id, row.antenna2_id])
+            .collect::<BTreeSet<_>>();
+        let selected_time_bounds = selected_rows
+            .iter()
+            .filter_map(|row| row.time_mjd_seconds)
+            .fold(None::<[f64; 2]>, |bounds, time| {
+                Some(match bounds {
+                    Some([low, high]) => [low.min(time), high.max(time)],
+                    None => [time, time],
+                })
+            })
+            .ok_or_else(|| {
+                "selected MAIN rows require TIME to build the POINTING window".to_string()
+            })?;
+        let selected_main_row_indices = selected_rows
+            .iter()
+            .map(|row| row.row_index)
+            .collect::<Vec<_>>();
+        let explicit_pointing_rows =
+            load_selected_optional_i32_main_column(ms, "POINTING_ID", &selected_main_row_indices)?
+                .into_iter()
+                .flatten()
+                .map(|row| {
+                    usize::try_from(row)
+                        .map_err(|_| format!("selected POINTING_ID {row} is negative"))
+                })
+                .collect::<Result<HashSet<_>, String>>()?;
+
+        let antenna_column = table
+            .column_accessor("ANTENNA_ID")
+            .map_err(|error| format!("open POINTING.ANTENNA_ID: {error}"))?;
+        let time_column = table
+            .column_accessor("TIME")
+            .map_err(|error| format!("open POINTING.TIME: {error}"))?;
+        let interval_column = table
+            .column_accessor("INTERVAL")
+            .map_err(|error| format!("open POINTING.INTERVAL: {error}"))?;
+        let direction_column = table
+            .column_accessor("DIRECTION")
+            .map_err(|error| format!("open POINTING.DIRECTION: {error}"))?;
+
+        // POINTING can be orders of magnitude larger than the selected MAIN
+        // row set (VLASS has millions of OTF samples). Scan only the fixed-width
+        // selector columns in bounded blocks, then materialize DIRECTION for
+        // rows whose antenna/time support overlaps the selected MAIN window or
+        // whose explicit POINTING_ID was selected.
+        const POINTING_SCAN_BLOCK_ROWS: usize = 65_536;
+        let mut retained_metadata = BTreeMap::<usize, (i32, f64, f64)>::new();
+        let mut timestamp_guard_before = BTreeMap::<i32, (usize, f64, f64)>::new();
+        let mut timestamp_guard_after = BTreeMap::<i32, (usize, f64, f64)>::new();
+        for block_start in (0..table_row_count).step_by(POINTING_SCAN_BLOCK_ROWS) {
+            let block_end = (block_start + POINTING_SCAN_BLOCK_ROWS).min(table_row_count);
+            let row_indices = (block_start..block_end).collect::<Vec<_>>();
+            let antenna_values = antenna_column
+                .scalar_cells_owned_for_rows(&row_indices)
+                .map_err(|error| {
+                    format!("read POINTING.ANTENNA_ID rows {block_start}..{block_end}: {error}")
+                })?;
+            let time_values = time_column
+                .scalar_cells_owned_for_rows(&row_indices)
+                .map_err(|error| {
+                    format!("read POINTING.TIME rows {block_start}..{block_end}: {error}")
+                })?;
+            let interval_values = interval_column
+                .scalar_cells_owned_for_rows(&row_indices)
+                .map_err(|error| {
+                    format!("read POINTING.INTERVAL rows {block_start}..{block_end}: {error}")
+                })?;
+            for (row_slot, row_index) in row_indices.into_iter().enumerate() {
+                let antenna_id = match antenna_values.get(row_slot).and_then(Option::as_ref) {
+                    Some(ScalarValue::Int32(value)) => *value,
+                    Some(other) => {
+                        return Err(format!(
+                            "POINTING.ANTENNA_ID row {row_index} must be Int32, found {:?}",
+                            other.primitive_type()
+                        ));
+                    }
+                    None => {
+                        return Err(format!("POINTING.ANTENNA_ID row {row_index} is missing"));
+                    }
+                };
+                let time_mjd_seconds = match time_values.get(row_slot).and_then(Option::as_ref) {
+                    Some(ScalarValue::Float64(value)) => *value,
+                    Some(other) => {
+                        return Err(format!(
+                            "POINTING.TIME row {row_index} must be Float64, found {:?}",
+                            other.primitive_type()
+                        ));
+                    }
+                    None => return Err(format!("POINTING.TIME row {row_index} is missing")),
+                };
+                let interval_seconds = match interval_values.get(row_slot).and_then(Option::as_ref)
+                {
+                    Some(ScalarValue::Float64(value)) => *value,
+                    Some(other) => {
+                        return Err(format!(
+                            "POINTING.INTERVAL row {row_index} must be Float64, found {:?}",
+                            other.primitive_type()
+                        ));
+                    }
+                    None => {
+                        return Err(format!("POINTING.INTERVAL row {row_index} is missing"));
+                    }
+                };
+                if !time_mjd_seconds.is_finite() || !interval_seconds.is_finite() {
+                    return Err(format!(
+                        "POINTING row {row_index} has invalid TIME/INTERVAL {time_mjd_seconds}/{interval_seconds}"
+                    ));
+                }
+                let selected_antenna = selected_antennas.contains(&antenna_id);
+                let overlaps_selection = if interval_seconds > 0.0 {
+                    let half_interval = 0.5 * interval_seconds;
+                    selected_antenna
+                        && time_mjd_seconds + half_interval >= selected_time_bounds[0]
+                        && time_mjd_seconds - half_interval <= selected_time_bounds[1]
+                } else {
+                    selected_antenna
+                        && (selected_time_bounds[0]..=selected_time_bounds[1])
+                            .contains(&time_mjd_seconds)
+                };
+                if overlaps_selection || explicit_pointing_rows.contains(&row_index) {
+                    retained_metadata
+                        .insert(row_index, (antenna_id, time_mjd_seconds, interval_seconds));
+                }
+                if selected_antenna && interval_seconds <= 0.0 {
+                    if time_mjd_seconds < selected_time_bounds[0] {
+                        let replace = timestamp_guard_before
+                            .get(&antenna_id)
+                            .is_none_or(|(_, retained_time, _)| time_mjd_seconds > *retained_time);
+                        if replace {
+                            timestamp_guard_before.insert(
+                                antenna_id,
+                                (row_index, time_mjd_seconds, interval_seconds),
+                            );
+                        }
+                    } else if time_mjd_seconds > selected_time_bounds[1] {
+                        let replace = timestamp_guard_after
+                            .get(&antenna_id)
+                            .is_none_or(|(_, retained_time, _)| time_mjd_seconds < *retained_time);
+                        if replace {
+                            timestamp_guard_after.insert(
+                                antenna_id,
+                                (row_index, time_mjd_seconds, interval_seconds),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        for (antenna_id, (row_index, time_mjd_seconds, interval_seconds)) in timestamp_guard_before
+            .into_iter()
+            .chain(timestamp_guard_after)
+        {
+            retained_metadata.entry(row_index).or_insert((
+                antenna_id,
+                time_mjd_seconds,
+                interval_seconds,
+            ));
+        }
+
+        let retained_row_indices = retained_metadata.keys().copied().collect::<Vec<_>>();
+        let retained_directions = direction_column
+            .array_cells_owned(&retained_row_indices)
+            .map_err(|error| format!("read selected POINTING.DIRECTION rows: {error}"))?;
         let mut by_antenna = BTreeMap::<i32, Vec<PointingDirectionRow>>::new();
         let mut by_row_index = HashMap::<usize, PointingDirectionRow>::new();
-        for row_index in 0..table.row_count() {
-            let antenna_id = match table
-                .cell_accessor(row_index, "ANTENNA_ID")
-                .and_then(|cell| cell.scalar())
-                .map_err(|error| format!("read POINTING.ANTENNA_ID row {row_index}: {error}"))?
-            {
-                &ScalarValue::Int32(value) => value,
-                other => {
-                    return Err(format!(
-                        "POINTING.ANTENNA_ID row {row_index} must be Int32, found {:?}",
-                        other.primitive_type()
-                    ));
-                }
-            };
-            let time_mjd_seconds = match table
-                .cell_accessor(row_index, "TIME")
-                .and_then(|cell| cell.scalar())
-                .map_err(|error| format!("read POINTING.TIME row {row_index}: {error}"))?
-            {
-                &ScalarValue::Float64(value) => value,
-                other => {
-                    return Err(format!(
-                        "POINTING.TIME row {row_index} must be Float64, found {:?}",
-                        other.primitive_type()
-                    ));
-                }
-            };
-            let interval_seconds = match table
-                .cell_accessor(row_index, "INTERVAL")
-                .and_then(|cell| cell.scalar())
-                .map_err(|error| format!("read POINTING.INTERVAL row {row_index}: {error}"))?
-            {
-                &ScalarValue::Float64(value) => value,
-                other => {
-                    return Err(format!(
-                        "POINTING.INTERVAL row {row_index} must be Float64, found {:?}",
-                        other.primitive_type()
-                    ));
-                }
-            };
-            let angles_rad = extract_constant_direction_angles(
-                table
-                    .cell_accessor(row_index, "DIRECTION")
-                    .and_then(|cell| cell.array())
-                    .map_err(|error| format!("read POINTING.DIRECTION row {row_index}: {error}"))?,
+        for ((row_index, (antenna_id, time_mjd_seconds, interval_seconds)), direction) in
+            retained_metadata.into_iter().zip(retained_directions)
+        {
+            let raw_angles_rad = extract_constant_direction_angles(
+                direction
+                    .as_ref()
+                    .ok_or_else(|| format!("POINTING.DIRECTION row {row_index} is missing"))?,
                 "POINTING.DIRECTION",
                 row_index,
             )?;
+            if !raw_angles_rad.into_iter().all(f64::is_finite) {
+                return Err(format!(
+                    "POINTING.DIRECTION row {row_index} contains a non-finite angle"
+                ));
+            }
+            let source_ref =
+                resolve_table_direction_reference(table, "POINTING", "DIRECTION", row_index)?;
+            if source_ref != DirectionRef::J2000 && derived_engine.is_none() {
+                return Err(format!(
+                    "POINTING.DIRECTION row {row_index} uses {source_ref}, but no measures engine was prepared"
+                ));
+            }
             let entry = PointingDirectionRow {
                 row_index,
                 antenna_id,
                 time_mjd_seconds,
                 interval_seconds,
-                angles_rad,
+                source_ref,
+                raw_angles_rad,
             };
             by_antenna.entry(antenna_id).or_default().push(entry);
             by_row_index.insert(row_index, entry);
@@ -29114,6 +30016,9 @@ impl PointingDirectionResolver {
         Ok(Some(Self {
             by_antenna,
             by_row_index,
+            j2000_by_row_main_time: Mutex::new(HashMap::new()),
+            table_row_count,
+            retained_row_count: retained_row_indices.len(),
         }))
     }
 
@@ -29123,46 +30028,126 @@ impl PointingDirectionResolver {
         antenna_id: i32,
         time_mjd_seconds: f64,
         fallback_angles_rad: [f64; 2],
-    ) -> ResolvedPointingDirection {
+        derived_engine: Option<&MsCalEngine>,
+    ) -> Result<ResolvedPointingDirection, String> {
         if let Some(pointing_row) = pointing_id
             .and_then(|value| usize::try_from(value).ok())
             .and_then(|row_index| self.by_row_index.get(&row_index).copied())
             .filter(|entry| entry.antenna_id == antenna_id)
         {
-            return ResolvedPointingDirection {
-                source_row_index: Some(pointing_row.row_index),
-                used_fallback: false,
-                angles_rad: pointing_row.angles_rad,
-            };
+            return self.resolve_row(pointing_row, time_mjd_seconds, derived_engine);
         }
         let Some(entries) = self.by_antenna.get(&antenna_id) else {
-            return ResolvedPointingDirection {
+            return Ok(ResolvedPointingDirection {
                 source_row_index: None,
                 used_fallback: true,
                 angles_rad: fallback_angles_rad,
-            };
+            });
         };
         let lower = entries.partition_point(|entry| entry.time_mjd_seconds < time_mjd_seconds);
-        for entry in [lower.checked_sub(1), Some(lower)]
+        let candidates = [lower.checked_sub(1), Some(lower)]
             .into_iter()
             .flatten()
             .filter_map(|candidate_index| entries.get(candidate_index).copied())
-        {
-            if time_mjd_seconds >= entry.time_mjd_seconds - entry.interval_seconds
-                && time_mjd_seconds <= entry.time_mjd_seconds + entry.interval_seconds
-            {
-                return ResolvedPointingDirection {
-                    source_row_index: Some(entry.row_index),
-                    used_fallback: false,
-                    angles_rad: entry.angles_rad,
-                };
-            }
+            .collect::<Vec<_>>();
+        if let Some(entry) = candidates.iter().copied().find(|entry| {
+            let half_interval = 0.5 * entry.interval_seconds;
+            entry.interval_seconds > 0.0
+                && time_mjd_seconds >= entry.time_mjd_seconds - half_interval
+                && time_mjd_seconds <= entry.time_mjd_seconds + half_interval
+        }) {
+            return self.resolve_row(entry, time_mjd_seconds, derived_engine);
         }
-        ResolvedPointingDirection {
+        if let Some(entry) = candidates
+            .iter()
+            .copied()
+            .filter(|entry| entry.interval_seconds <= 0.0)
+            .min_by(|left, right| {
+                (left.time_mjd_seconds - time_mjd_seconds)
+                    .abs()
+                    .total_cmp(&(right.time_mjd_seconds - time_mjd_seconds).abs())
+                    .then_with(|| left.row_index.cmp(&right.row_index))
+            })
+        {
+            return self.resolve_row(entry, time_mjd_seconds, derived_engine);
+        }
+        Ok(ResolvedPointingDirection {
             source_row_index: None,
             used_fallback: true,
             angles_rad: fallback_angles_rad,
-        }
+        })
+    }
+
+    fn resolve_row(
+        &self,
+        row: PointingDirectionRow,
+        main_time_mjd_seconds: f64,
+        derived_engine: Option<&MsCalEngine>,
+    ) -> Result<ResolvedPointingDirection, String> {
+        let angles_rad = if row.source_ref == DirectionRef::J2000 {
+            row.raw_angles_rad
+        } else {
+            let key = (row.row_index, main_time_mjd_seconds.to_bits());
+            if let Some(angles_rad) = self
+                .j2000_by_row_main_time
+                .lock()
+                .map_err(|_| "POINTING direction conversion cache lock is poisoned".to_string())?
+                .get(&key)
+                .copied()
+            {
+                angles_rad
+            } else {
+                let derived_engine = derived_engine.ok_or_else(|| {
+                    format!(
+                        "POINTING.DIRECTION row {} uses {}, but no measures engine was prepared",
+                        row.row_index, row.source_ref
+                    )
+                })?;
+                let raw_direction = MDirection::from_angles(
+                    row.raw_angles_rad[0],
+                    row.raw_angles_rad[1],
+                    row.source_ref,
+                );
+                // VisBufferUtil converts the selected POINTING measure in a
+                // frame whose epoch is the MAIN/VisBuffer time, not the
+                // POINTING row's own timestamp.  The distinction is visible
+                // for OTF data because the nearest antenna rows straddle each
+                // integration time.
+                let frame = derived_engine
+                    .spectral_frame_observatory_direction(
+                        main_time_mjd_seconds,
+                        raw_direction.clone(),
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "build POINTING.DIRECTION frame for row {} at MAIN time {}: {error}",
+                            row.row_index, main_time_mjd_seconds
+                        )
+                    })?;
+                let converted = raw_direction
+                    .convert_to(DirectionRef::J2000, &frame)
+                    .map_err(|error| {
+                        format!(
+                            "convert POINTING.DIRECTION row {} from {} to J2000 at MAIN time {}: {error}",
+                            row.row_index, row.source_ref, main_time_mjd_seconds
+                        )
+                    })?;
+                let (longitude_rad, latitude_rad) = converted.as_angles();
+                let angles_rad = [longitude_rad, latitude_rad];
+                self.j2000_by_row_main_time
+                    .lock()
+                    .map_err(|_| {
+                        "POINTING direction conversion cache lock is poisoned".to_string()
+                    })?
+                    .insert(key, angles_rad);
+                angles_rad
+            }
+        };
+        Ok(ResolvedPointingDirection {
+            source_row_index: Some(row.row_index),
+            used_fallback: false,
+            angles_rad,
+        })
     }
 }
 
@@ -29171,13 +30156,27 @@ struct PreparedGeometryColumnCache {
 }
 
 impl PreparedGeometryColumnCache {
-    fn load(ms: &MeasurementSet, use_pointing: bool) -> Result<Self, String> {
+    fn load(
+        ms: &MeasurementSet,
+        use_pointing: bool,
+        selected_rows: &[SelectedMainRow],
+        derived_engine: Option<&MsCalEngine>,
+    ) -> Result<Self, String> {
         let geometry_started_at = Instant::now();
         let pointing_resolver = if use_pointing {
-            PointingDirectionResolver::new(ms)?
+            PointingDirectionResolver::new(ms, selected_rows, derived_engine)?
         } else {
             None
         };
+        if let Some(resolver) = pointing_resolver.as_ref() {
+            eprintln!(
+                "pointing_resolver_plan table_rows={} retained_rows={} selected_main_rows={} resident_fraction={:.9}",
+                resolver.table_row_count,
+                resolver.retained_row_count,
+                selected_rows.len(),
+                resolver.retained_row_count as f64 / resolver.table_row_count.max(1) as f64,
+            );
+        }
         maybe_log_frontend_progress(
             "prepare_plane_input/build_prepared_geometry_rows/build_pointing_resolver",
             geometry_started_at.elapsed(),
@@ -29190,6 +30189,7 @@ impl PreparedGeometryColumnCache {
 #[derive(Debug, Clone)]
 struct SelectedRowsContext {
     selected_rows: Vec<SelectedMainRow>,
+    selected_ddids: Vec<usize>,
     selected_ddid: usize,
     phase_center: PhaseCenter,
     reference_row_time_mjd_sec: Option<f64>,
@@ -29287,6 +30287,8 @@ fn select_main_rows(
     if let Some(field_ids) = config.field_ids.as_deref() {
         request = request.field(field_ids);
     }
+    request.uvrange.clone_from(&config.uvrange);
+    request.intent.clone_from(&config.intent);
     let selection_memory = imaging_process_memory_ledger(config);
     let row_selection = ms
         .resolve_selection(
@@ -29307,13 +30309,16 @@ fn select_main_rows(
         .iter()
         .map(|row| row.data_desc_id)
         .collect::<BTreeSet<_>>();
+    let selected_ddids = selected_ddids
+        .into_iter()
+        .map(|ddid| {
+            usize::try_from(ddid).map_err(|_| format!("selected DATA_DESC_ID {ddid} is negative"))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     let selected_ddid = if selected_ddids.is_empty() {
         return Err("selection resolved to no rows".to_string());
-    } else if selected_ddids.len() != 1 {
-        return Err("selection spans multiple DATA_DESC_ID values".to_string());
     } else {
-        let ddid = *selected_ddids.iter().next().expect("one selected DDID");
-        usize::try_from(ddid).map_err(|_| format!("selected DATA_DESC_ID {ddid} is negative"))?
+        selected_ddids[0]
     };
     let selected_fields = row_selection
         .selected_rows
@@ -29383,9 +30388,20 @@ fn select_main_rows(
         select_started_at.elapsed(),
         select_started_at.elapsed(),
     );
+    if selected_ddids.len() > 1
+        && (!matches!(config.spectral_mode, SpectralMode::Mfs)
+            || config.force_standard_gridder
+            || (!config.use_pointing && config.phasecenter.is_none() && selected_fields.len() <= 1))
+    {
+        return Err(format!(
+            "selection spans {} DATA_DESC_ID values; bounded multi-DDID execution currently requires MFS mosaic or pointing imaging",
+            selected_ddids.len()
+        ));
+    }
     let needs_geometry_engine = config.spectral_mode.is_cube_like()
         || config.w_term_mode != WTermMode::None
         || config.phasecenter.is_some()
+        || needs_pointing_times
         || selected_fields
             .iter()
             .copied()
@@ -29393,6 +30409,7 @@ fn select_main_rows(
 
     Ok(SelectedRowsContext {
         selected_rows,
+        selected_ddids,
         selected_ddid,
         phase_center,
         reference_row_time_mjd_sec,
@@ -29601,7 +30618,8 @@ fn build_prepared_geometry_rows_from_selected_uvw(
                 antenna1_id,
                 time_mjd_seconds,
                 row_phase_center,
-            ),
+                derived_engine,
+            )?,
             (Some(_), None) => {
                 return Err(format!(
                     "row {row} requires TIME to resolve POINTING directions"
@@ -29625,7 +30643,8 @@ fn build_prepared_geometry_rows_from_selected_uvw(
                 antenna2_id,
                 time_mjd_seconds,
                 row_phase_center,
-            ),
+                derived_engine,
+            )?,
             (Some(_), None) => {
                 return Err(format!(
                     "row {row} requires TIME to resolve POINTING directions"
@@ -29663,6 +30682,34 @@ fn build_prepared_geometry_rows_from_selected_uvw(
     Ok(rows)
 }
 
+fn selected_rows_context_for_source_block(
+    selection: &SelectedRowsContext,
+    source_block: &ColumnarPreparedSource,
+) -> Result<SelectedRowsContext, String> {
+    let selected_rows = (0..source_block.row_count())
+        .map(|row_slot| source_block.selected_main_row(row_slot))
+        .collect::<Result<Vec<_>, _>>()?;
+    let selected_ddid = selected_rows
+        .first()
+        .map(|row| row.ddid)
+        .ok_or_else(|| "prepared source block contains no rows".to_string())?;
+    if selected_rows.iter().any(|row| row.ddid != selected_ddid) {
+        return Err(format!(
+            "prepared source block mixes DATA_DESC_ID values; expected {selected_ddid}"
+        ));
+    }
+    Ok(SelectedRowsContext {
+        selected_ddids: vec![selected_ddid],
+        selected_ddid,
+        selected_rows,
+        flag_row: Vec::new(),
+        phase_center: selection.phase_center.clone(),
+        needs_geometry_engine: selection.needs_geometry_engine,
+        reference_row_time_mjd_sec: selection.reference_row_time_mjd_sec,
+        time_bounds_mjd_sec: selection.time_bounds_mjd_sec,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn prepare_processing_buffer(
     ms: &MeasurementSet,
@@ -29677,18 +30724,7 @@ fn prepare_processing_buffer(
     accumulate_timings: &mut AccumulateRowTimings,
     mfs_batch_size: usize,
 ) -> Result<PlaneInput, String> {
-    let selected_rows = (0..source_block.row_count())
-        .map(|row_slot| source_block.selected_main_row(row_slot))
-        .collect::<Result<Vec<_>, _>>()?;
-    let block_selection = SelectedRowsContext {
-        selected_ddid: selection.selected_ddid,
-        selected_rows,
-        flag_row: flag_row.to_vec(),
-        phase_center: selection.phase_center.clone(),
-        needs_geometry_engine: selection.needs_geometry_engine,
-        reference_row_time_mjd_sec: selection.reference_row_time_mjd_sec,
-        time_bounds_mjd_sec: selection.time_bounds_mjd_sec,
-    };
+    let block_selection = selected_rows_context_for_source_block(selection, source_block)?;
     let cube_context = if config.spectral_mode.is_cube_like()
         && standard_mfs_shared_acceleration_spectral_mode_is_eligible(config)
         && !standard_cube_like_one_channel_can_use_mfs_single_plane_path(config)
@@ -30129,6 +31165,7 @@ where
             Arc::clone(&channel_axes),
             geometry_columns,
             row_chunk,
+            derived_engine,
             channel_read_range,
         )?;
         let get_ms_values_elapsed = stage_started_at.elapsed();
@@ -30263,6 +31300,7 @@ fn stream_standard_mfs_density_and_metal_grouped_input_cache_row_blocks(
             Arc::clone(&channel_axes),
             geometry_columns,
             row_chunk,
+            derived_engine,
             channel_read_range,
         )?;
         let get_ms_values_elapsed = stage_started_at.elapsed();
@@ -30505,6 +31543,7 @@ where
             Arc::clone(&channel_axes),
             geometry_columns,
             row_chunk,
+            derived_engine,
             channel_read_range,
         )?;
         let get_ms_values_elapsed = stage_started_at.elapsed();
@@ -30860,7 +31899,12 @@ fn prepare_standard_mfs_input_in_row_blocks(
     let mut prepared_batch_count = 0usize;
     let mut stage_timings = PreparePlaneInputStageTimings::default();
     let stage_started_at = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine,
+    )?;
     stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
     let mut accumulate_timings = AccumulateRowTimings {
         rows_skipped_by_flag_row: selection.selected_rows.len() - active_selected_rows.len(),
@@ -31118,6 +32162,7 @@ where
             Arc::clone(&channel_axes),
             geometry_columns,
             row_chunk,
+            derived_engine,
             channel_read_range,
         )?;
         let get_ms_values_elapsed = stage_started_at.elapsed();
@@ -31754,6 +32799,7 @@ fn prepare_standard_mfs_routed_visibility_essentials_block(
         channel_axes,
         geometry_columns,
         row_chunk,
+        derived_engine,
         channel_read_range,
     )?;
     let source_bytes = block.logical_bytes() as u64;
@@ -32325,7 +33371,12 @@ fn prepare_mfs_mosaic_without_trace_in_source_row_blocks(
     set_imager_progress_standard_mfs_memory(&memory_plan, 1);
 
     let geometry_columns_started = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine,
+    )?;
     let geometry_columns_elapsed = geometry_columns_started.elapsed();
     maybe_log_frontend_progress(
         "prepare_plane_input/mfs_mosaic_source_row_blocks/load_geometry_columns",
@@ -32607,7 +33658,12 @@ fn read_shared_columnar_cube_slab_source(
 ) -> Result<SharedColumnarCubeSlabSource, String> {
     let started = Instant::now();
     let geometry_columns_started = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        Some(derived_engine),
+    )?;
     let geometry_columns_elapsed = geometry_columns_started.elapsed();
     maybe_log_frontend_progress(
         "prepare_plane_input/cube_shared_columnar_slab/load_geometry_columns",
@@ -32959,7 +34015,12 @@ fn prepare_cube_without_trace_in_source_row_blocks(
     );
 
     let geometry_columns_started = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine,
+    )?;
     let geometry_columns_elapsed = geometry_columns_started.elapsed();
     maybe_log_frontend_progress(
         "prepare_plane_input/cube_source_row_blocks/load_geometry_columns",
@@ -33196,7 +34257,12 @@ fn prepare_trace_in_source_row_blocks(
     );
 
     let geometry_columns_started = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::load(
+        ms,
+        config.use_pointing,
+        &selection.selected_rows,
+        derived_engine,
+    )?;
     let geometry_columns_elapsed = geometry_columns_started.elapsed();
     maybe_log_frontend_progress(
         "prepare_plane_input/trace_source_row_blocks/load_geometry_columns",
@@ -33712,6 +34778,12 @@ fn merge_mfs_mosaic_prepared_inputs(inputs: Vec<PreparedInput>) -> Result<Prepar
         GridderMode::Standard => {
             return Err("internal error: MFS mosaic chunk produced standard gridder".to_string());
         }
+        GridderMode::AwProject(_) => {
+            return Err(
+                "internal error: materialized MFS mosaic chunk produced AWProject gridder"
+                    .to_string(),
+            );
+        }
     };
     for input in inputs {
         let PreparedInput::Mfs(mut plane) = input else {
@@ -33727,6 +34799,9 @@ fn merge_mfs_mosaic_prepared_inputs(inputs: Vec<PreparedInput>) -> Result<Prepar
         }
         merged_plane.batches.append(&mut plane.batches);
         merged_plane
+            .aw_parallel_hand_batches
+            .append(&mut plane.aw_parallel_hand_batches);
+        merged_plane
             .density_batches
             .append(&mut plane.density_batches);
         merged_plane
@@ -33737,6 +34812,12 @@ fn merge_mfs_mosaic_prepared_inputs(inputs: Vec<PreparedInput>) -> Result<Prepar
             GridderMode::Standard => {
                 return Err(
                     "internal error: MFS mosaic chunk produced standard gridder".to_string()
+                );
+            }
+            GridderMode::AwProject(_) => {
+                return Err(
+                    "internal error: materialized MFS mosaic chunk produced AWProject gridder"
+                        .to_string(),
                 );
             }
         };
@@ -33787,6 +34868,11 @@ fn merge_one_channel_mosaic_cube_prepared_inputs(
         GridderMode::Standard => {
             return Err(
                 "internal error: one-channel mosaic cube chunk used standard gridder".to_string(),
+            );
+        }
+        GridderMode::AwProject(_) => {
+            return Err(
+                "internal error: one-channel mosaic cube chunk used AWProject gridder".to_string(),
             );
         }
     };
@@ -33852,6 +34938,12 @@ fn merge_one_channel_mosaic_cube_prepared_inputs(
             GridderMode::Standard => {
                 return Err(
                     "internal error: one-channel mosaic cube chunk used standard gridder"
+                        .to_string(),
+                );
+            }
+            GridderMode::AwProject(_) => {
+                return Err(
+                    "internal error: one-channel mosaic cube chunk used AWProject gridder"
                         .to_string(),
                 );
             }
@@ -34026,12 +35118,20 @@ fn standard_mfs_memory_plan_with_cache_channels_for_ms(
         selected_channel_count,
         corr_count,
     )?;
-    standard_mfs_memory_plan_with_visibility_shape(
+    let pointing_table_row_count = if config.use_pointing {
+        ms.pointing()
+            .map(|pointing| pointing.row_count())
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    standard_mfs_memory_plan_with_visibility_shape_and_pointing_rows(
         config,
         selected_channel_count,
         cache_selected_channel_count,
         active_row_count,
         visibility_shape,
+        pointing_table_row_count,
     )
 }
 
@@ -34055,6 +35155,238 @@ fn checked_imaging_sum(
         .ok_or_else(|| format!("imaging workload size overflowed while computing {component}"))
 }
 
+fn mosaic_mtmfs_grid_plane_count(nterms: usize) -> Result<usize, String> {
+    nterms
+        .checked_mul(5)
+        .and_then(|value| value.checked_sub(2))
+        .ok_or_else(|| "mosaic MT-MFS grid plane count overflowed".to_string())
+}
+
+const AWPROJECT_CF_INDEX_HEAP_AND_TREE_ALLOWANCE_BYTES_PER_PAIR: usize = 4096;
+
+fn awproject_cf_index_estimate_bytes(controls: &AwProjectControls) -> Result<usize, String> {
+    let directory = fs::read_dir(&controls.cf_cache).map_err(|error| {
+        format!(
+            "read AWProject CF cache {} for memory planning: {error}",
+            controls.cf_cache.display()
+        )
+    })?;
+    let mut paired_entry_count = 0usize;
+    for entry in directory {
+        let entry = entry.map_err(|error| {
+            format!(
+                "enumerate AWProject CF cache {} for memory planning: {error}",
+                controls.cf_cache.display()
+            )
+        })?;
+        let file_type = entry.file_type().map_err(|error| {
+            format!(
+                "inspect AWProject CF cache entry {} for memory planning: {error}",
+                entry.path().display()
+            )
+        })?;
+        if !file_type.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("CFS_") && name.ends_with(".im") {
+            paired_entry_count = paired_entry_count.checked_add(1).ok_or_else(|| {
+                "AWProject CF index entry count overflowed during memory planning".to_string()
+            })?;
+        }
+    }
+    if paired_entry_count == 0 {
+        return Err(format!(
+            "AWProject CF cache {} contains no CFS_*.im directories for memory planning",
+            controls.cf_cache.display()
+        ));
+    }
+
+    // The index owns two paths, coordinate/misc-info strings, a scientific
+    // key, and BTree nodes for every paired entry. `size_of` covers inline
+    // metadata; the fixed heap allowance deliberately bounds the owned path
+    // and string allocations without reading any CF pixels.
+    checked_imaging_product(
+        [
+            paired_entry_count,
+            std::mem::size_of::<AwConvolutionFunctionEntryMetadata>()
+                .checked_add(AWPROJECT_CF_INDEX_HEAP_AND_TREE_ALLOWANCE_BYTES_PER_PAIR)
+                .ok_or_else(|| "AWProject CF index entry size overflowed".to_string())?,
+        ],
+        "AWProject CF metadata index",
+    )
+}
+
+fn awproject_pointing_index_estimate_bytes(
+    active_row_count: usize,
+    pointing_table_row_count: usize,
+) -> Result<usize, String> {
+    // Every retained POINTING row is copied into both the antenna-sorted and
+    // row-id indexes. The full table count is a conservative production bound
+    // before the selected time window is materialized. Non-J2000 conversion
+    // caching can additionally retain two antenna lookups per active MAIN row.
+    let retained_row_bytes = checked_imaging_product(
+        [
+            pointing_table_row_count,
+            std::mem::size_of::<PointingDirectionRow>()
+                .checked_mul(2)
+                .and_then(|bytes| bytes.checked_add(8 * std::mem::size_of::<usize>()))
+                .ok_or_else(|| "POINTING retained-row index size overflowed".to_string())?,
+        ],
+        "POINTING retained-row indexes",
+    )?;
+    let conversion_cache_bytes = checked_imaging_product(
+        [active_row_count, 2, 8 * std::mem::size_of::<usize>()],
+        "POINTING direction conversion cache",
+    )?;
+    checked_imaging_sum(
+        [retained_row_bytes, conversion_cache_bytes],
+        "POINTING index",
+    )
+}
+
+fn awproject_mtmfs_run_state_bytes(nterms: usize, image_pixels: usize) -> Result<usize, String> {
+    // During a residual refresh the immutable PSF/weight products, current
+    // residual/model terms, mosaic weight, clean mask, and nterms Complex32
+    // prediction grids coexist with the one topology-owned grid set.
+    let resident_f32_planes = nterms
+        .checked_mul(6)
+        .and_then(|value| value.checked_sub(1))
+        .ok_or_else(|| "AWProject MT-MFS resident plane count overflowed".to_string())?;
+    let bytes_per_pixel = checked_imaging_sum(
+        [
+            checked_imaging_product(
+                [resident_f32_planes, std::mem::size_of::<f32>()],
+                "AWProject MT-MFS resident image planes",
+            )?,
+            checked_imaging_product(
+                [nterms, std::mem::size_of::<Complex32>()],
+                "AWProject MT-MFS model prediction grids",
+            )?,
+            std::mem::size_of::<bool>(),
+        ],
+        "AWProject MT-MFS run-state bytes per pixel",
+    )?;
+    checked_imaging_product(
+        [image_pixels, bytes_per_pixel],
+        "AWProject MT-MFS run state",
+    )
+}
+
+fn awproject_mtmfs_multiscale_minor_cycle_scratch_bytes(
+    nterms: usize,
+    scale_count: usize,
+    image_pixels: usize,
+) -> Result<usize, String> {
+    // The bounded MT-MFS scale search retains at most one scale's nterms RHS
+    // images. Its compact scale kernel is expanded into one Complex32 FFT
+    // spectrum and one in-place Complex32 work plane, while scale-specific
+    // clean masks remain resident across iterations.
+    let bytes_per_pixel = checked_imaging_sum(
+        [
+            checked_imaging_product(
+                [nterms, std::mem::size_of::<f32>()],
+                "MT-MFS scale RHS planes",
+            )?,
+            checked_imaging_product(
+                [2, std::mem::size_of::<Complex32>()],
+                "MT-MFS compact convolution FFT planes",
+            )?,
+            checked_imaging_product(
+                [scale_count.max(1), std::mem::size_of::<bool>()],
+                "MT-MFS scale masks",
+            )?,
+        ],
+        "AWProject MT-MFS multiscale minor-cycle scratch bytes per pixel",
+    )?;
+    checked_imaging_product(
+        [image_pixels, bytes_per_pixel],
+        "AWProject MT-MFS multiscale minor-cycle scratch",
+    )
+}
+
+fn awproject_mtmfs_finish_state_bytes(nterms: usize, image_pixels: usize) -> Result<usize, String> {
+    // `MtmfsResult` expands 2D products into 4D CASA products. Until the
+    // return expression completes, the original products, principal residual
+    // terms, and expanded result coexist.
+    let f32_planes = nterms
+        .checked_mul(15)
+        .and_then(|value| value.checked_add(1))
+        .ok_or_else(|| "AWProject MT-MFS finish plane count overflowed".to_string())?;
+    let bytes_per_pixel = checked_imaging_sum(
+        [
+            checked_imaging_product(
+                [f32_planes, std::mem::size_of::<f32>()],
+                "AWProject MT-MFS finish image planes",
+            )?,
+            2 * std::mem::size_of::<bool>(),
+        ],
+        "AWProject MT-MFS finish bytes per pixel",
+    )?;
+    checked_imaging_product(
+        [image_pixels, bytes_per_pixel],
+        "AWProject MT-MFS finish state",
+    )
+}
+
+fn awproject_mtmfs_product_state_bytes(
+    nterms: usize,
+    image_pixels: usize,
+) -> Result<usize, String> {
+    // Returned products plus the mosaic/PB products and shared masks built by
+    // `run_products_to_image_product_set`. Writer scratch is charged
+    // separately because it is reused one product at a time.
+    let f32_planes = nterms
+        .checked_mul(7)
+        .and_then(|value| value.checked_add(4))
+        .ok_or_else(|| "AWProject MT-MFS product plane count overflowed".to_string())?;
+    let bytes_per_pixel = checked_imaging_sum(
+        [
+            checked_imaging_product(
+                [f32_planes, std::mem::size_of::<f32>()],
+                "AWProject MT-MFS product image planes",
+            )?,
+            4 * std::mem::size_of::<bool>(),
+        ],
+        "AWProject MT-MFS product bytes per pixel",
+    )?;
+    checked_imaging_product(
+        [image_pixels, bytes_per_pixel],
+        "AWProject MT-MFS product state",
+    )
+}
+
+fn awproject_product_writer_scratch_bytes(image_pixels: usize) -> Result<usize, String> {
+    checked_imaging_product(
+        [
+            image_pixels,
+            std::mem::size_of::<f32>() + std::mem::size_of::<bool>(),
+        ],
+        "AWProject product writer scratch",
+    )
+}
+
+fn awproject_mtmfs_in_place_fft_eligible(config: &CliConfig) -> bool {
+    config.imsize & 1 == 0
+        && matches!(
+            config.imaging_fft_precision,
+            ImagingFftPrecisionPolicy::Auto
+                | ImagingFftPrecisionPolicy::F32
+                | ImagingFftPrecisionPolicy::F64
+        )
+        && config.imaging_fft_backend == ImagingFftBackendPolicy::RustFft
+}
+
+fn awproject_mtmfs_grid_element_bytes(config: &CliConfig) -> usize {
+    match config.imaging_fft_precision {
+        ImagingFftPrecisionPolicy::F32 => std::mem::size_of::<Complex32>(),
+        ImagingFftPrecisionPolicy::Auto | ImagingFftPrecisionPolicy::F64 => {
+            std::mem::size_of::<Complex64>()
+        }
+    }
+}
+
 fn standard_mfs_plane_state_requirements(
     config: &CliConfig,
 ) -> spectral_slab::PlaneStateRequirements {
@@ -34076,12 +35408,13 @@ fn plan_standard_mfs_execution_shape(
     active_row_count: usize,
     visibility_shape: &spectral_slab::VisibilitySourceShape,
 ) -> Result<ImagingResolvedPlan, String> {
-    plan_standard_mfs_execution_shape_with_memory_ledger(
+    plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         config,
         selected_channel_count,
         cache_selected_channel_count,
         active_row_count,
         visibility_shape,
+        active_row_count,
         imaging_process_memory_ledger(config),
     )
 }
@@ -34094,6 +35427,26 @@ fn plan_standard_mfs_execution_shape_with_memory_ledger(
     visibility_shape: &spectral_slab::VisibilitySourceShape,
     memory_target: ImagingProcessMemoryLedger,
 ) -> Result<ImagingResolvedPlan, String> {
+    plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
+        config,
+        selected_channel_count,
+        cache_selected_channel_count,
+        active_row_count,
+        visibility_shape,
+        active_row_count,
+        memory_target,
+    )
+}
+
+fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
+    config: &CliConfig,
+    selected_channel_count: usize,
+    cache_selected_channel_count: usize,
+    active_row_count: usize,
+    visibility_shape: &spectral_slab::VisibilitySourceShape,
+    pointing_table_row_count: usize,
+    memory_target: ImagingProcessMemoryLedger,
+) -> Result<ImagingResolvedPlan, String> {
     let selected_channel_count = selected_channel_count.max(1);
     let cache_selected_channel_count = cache_selected_channel_count.max(1);
     if memory_target.target_bytes == 0 {
@@ -34103,13 +35456,24 @@ fn plan_standard_mfs_execution_shape_with_memory_ledger(
         );
     }
 
+    let mosaic_full_grid = can_plan_mosaic_mfs_acceleration(config, 1);
+    let awproject_mtmfs =
+        mosaic_full_grid && config.deconvolver == Deconvolver::Mtmfs && config.aw_project.is_some();
     let image_pixels =
         checked_imaging_product([config.imsize, config.imsize], "standard-MFS image pixels")?;
-    let grid_side = casa_composite_padded_len_estimate(config.imsize, 1.2);
-    let grid_cells =
-        checked_imaging_product([grid_side, grid_side], "standard-MFS padded grid cells")?;
-    let image_working_set_bytes =
-        standard_mfs_plane_state_requirements(config).estimated_bytes_per_plane(image_pixels);
+    // The streaming mosaic/AWProject gridder deliberately uses image-sized,
+    // unpadded grids. Standard-gridder paths retain CASA composite padding.
+    let grid_side = if mosaic_full_grid {
+        config.imsize
+    } else {
+        casa_composite_padded_len_estimate(config.imsize, 1.2)
+    };
+    let grid_cells = checked_imaging_product([grid_side, grid_side], "standard-MFS grid cells")?;
+    let image_working_set_bytes = if awproject_mtmfs {
+        awproject_mtmfs_run_state_bytes(config.nterms, image_pixels)?
+    } else {
+        standard_mfs_plane_state_requirements(config).estimated_bytes_per_plane(image_pixels)
+    };
     let weighting_density_bytes = if matches!(
         config.weighting,
         WeightingMode::Uniform | WeightingMode::Briggs { .. } | WeightingMode::BriggsBwTaper { .. }
@@ -34121,7 +35485,9 @@ fn plan_standard_mfs_execution_shape_with_memory_ledger(
     } else {
         0
     };
-    let grid_planes = if config.deconvolver == Deconvolver::Mtmfs {
+    let grid_planes = if config.deconvolver == Deconvolver::Mtmfs && mosaic_full_grid {
+        mosaic_mtmfs_grid_plane_count(config.nterms)?
+    } else if config.deconvolver == Deconvolver::Mtmfs {
         config
             .nterms
             .checked_mul(3)
@@ -34130,8 +35496,13 @@ fn plan_standard_mfs_execution_shape_with_memory_ledger(
     } else {
         2
     };
+    let grid_element_bytes = if awproject_mtmfs {
+        awproject_mtmfs_grid_element_bytes(config)
+    } else {
+        std::mem::size_of::<Complex64>()
+    };
     let grid_bytes = checked_imaging_product(
-        [grid_cells, grid_planes, std::mem::size_of::<Complex64>()],
+        [grid_cells, grid_planes, grid_element_bytes],
         "standard-MFS resident grids",
     )?;
 
@@ -34144,11 +35515,37 @@ fn plan_standard_mfs_execution_shape_with_memory_ledger(
     let source_bytes_per_row = visibility_shape
         .raw_source_buffer_bytes_for_rows(1, selected_channel_count)
         .max(1);
-    let prepared_bytes_per_row = visibility_shape.live_source_scratch_bytes_for_rows(
-        prepared_residency,
-        1,
-        selected_channel_count,
-    );
+    let aw_cf_locality_index_bytes_per_row = if awproject_mtmfs {
+        checked_imaging_product(
+            [selected_channel_count, std::mem::size_of::<usize>()],
+            "AWProject CF-locality indices per source row",
+        )?
+    } else {
+        0
+    };
+    let aw_parallel_plan_bytes_per_row = if awproject_mtmfs {
+        // The lower-level plan is private implementation detail. Charge a
+        // deliberately rounded-up 256 bytes per selected sample so the app
+        // planner stays conservative without adding a public library API.
+        checked_imaging_product(
+            [selected_channel_count, 256],
+            "AWProject MT-MFS plane-plan bytes per source row",
+        )?
+    } else {
+        0
+    };
+    let prepared_bytes_per_row = checked_imaging_sum(
+        [
+            visibility_shape.live_source_scratch_bytes_for_rows(
+                prepared_residency,
+                1,
+                selected_channel_count,
+            ),
+            aw_cf_locality_index_bytes_per_row,
+            aw_parallel_plan_bytes_per_row,
+        ],
+        "prepared source-row scratch",
+    )?;
     let sample_count = checked_imaging_product(
         [active_row_count, selected_channel_count],
         "standard-MFS sample count",
@@ -34193,11 +35590,32 @@ fn plan_standard_mfs_execution_shape_with_memory_ledger(
     } else {
         0
     };
-    let mosaic_full_grid = can_plan_mosaic_mfs_acceleration(config, 1);
     let direct_metal_scratch_candidate_bytes = if mosaic_full_grid {
+        let grid_allocation_bytes = if awproject_mtmfs {
+            // AWProject owns a Complex32 output and compensation pair plus
+            // two equally sized u32 fixed-point limbs while one packed CF
+            // batch is resident. The f64 topology estimate is exactly one
+            // output/compensation pair; double it for the two fixed limbs and
+            // conservatively bound packed taps by the admitted CF residency.
+            checked_imaging_sum(
+                [
+                    checked_imaging_product(
+                        [grid_cells, grid_planes, std::mem::size_of::<Complex64>(), 2],
+                        "AWProject Metal compensated and fixed grids",
+                    )?,
+                    config
+                        .aw_project
+                        .as_ref()
+                        .map_or(0, |controls| controls.cf_resident_bytes),
+                ],
+                "AWProject Metal grid and packed-CF scratch",
+            )?
+        } else {
+            grid_bytes
+        };
         checked_imaging_sum(
             [
-                grid_bytes,
+                grid_allocation_bytes,
                 checked_imaging_product(
                     [
                         sample_count,
@@ -34220,9 +35638,18 @@ fn plan_standard_mfs_execution_shape_with_memory_ledger(
         .field_ids
         .as_ref()
         .map_or(1, |field_ids| field_ids.len().max(1));
+    let mosaic_density_facets = if config
+        .aw_project
+        .as_ref()
+        .is_some_and(|controls| !controls.mosaic_weighting)
+    {
+        1
+    } else {
+        mosaic_facets
+    };
     let mosaic_density_bytes = if mosaic_full_grid {
         checked_imaging_product(
-            [weighting_density_bytes, mosaic_facets],
+            [weighting_density_bytes, mosaic_density_facets],
             "mosaic weighting density maps",
         )?
     } else {
@@ -34277,7 +35704,91 @@ fn plan_standard_mfs_execution_shape_with_memory_ledger(
         _ => ImagingTileAnchor::CenterBoundary,
     };
 
-    plan_imaging_execution(
+    let aw_cf_index_bytes = if awproject_mtmfs {
+        config
+            .aw_project
+            .as_ref()
+            .map(awproject_cf_index_estimate_bytes)
+            .transpose()?
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    let aw_cf_resident_bytes = if awproject_mtmfs {
+        config
+            .aw_project
+            .as_ref()
+            .map_or(0, |controls| controls.cf_resident_bytes)
+    } else {
+        0
+    };
+    let pointing_index_bytes = if awproject_mtmfs && config.use_pointing {
+        awproject_pointing_index_estimate_bytes(active_row_count, pointing_table_row_count)?
+    } else {
+        0
+    };
+    let aw_safety_margin_bytes = if awproject_mtmfs {
+        memory_target.target_bytes / 20
+    } else {
+        0
+    };
+    let mut fixed_allocations = vec![
+        ImagingMemoryAllocation {
+            component: if awproject_mtmfs {
+                "AWProject MT-MFS run state"
+            } else {
+                "image working set"
+            },
+            stage: "run",
+            bytes: image_working_set_bytes,
+        },
+        ImagingMemoryAllocation {
+            component: if mosaic_full_grid {
+                "mosaic weighting density maps"
+            } else {
+                "weighting density"
+            },
+            stage: "weighting",
+            bytes: mosaic_density_bytes,
+        },
+    ];
+    if awproject_mtmfs {
+        fixed_allocations.extend([
+            ImagingMemoryAllocation {
+                component: "AWProject CF pixels",
+                stage: "run",
+                bytes: aw_cf_resident_bytes,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject CF index",
+                stage: "run",
+                bytes: aw_cf_index_bytes,
+            },
+            ImagingMemoryAllocation {
+                component: "POINTING index",
+                stage: "run",
+                bytes: pointing_index_bytes,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject safety margin",
+                stage: "run",
+                bytes: aw_safety_margin_bytes,
+            },
+        ]);
+    }
+    let fft_bytes_per_plane = if awproject_mtmfs && awproject_mtmfs_in_place_fft_eligible(config) {
+        checked_imaging_product(
+            [image_pixels, std::mem::size_of::<f32>()],
+            "in-place AWProject MT-MFS FFT product plane",
+        )?
+    } else {
+        checked_imaging_product(
+            [grid_cells, std::mem::size_of::<Complex64>(), 2],
+            "dirty-product FFT plane scratch",
+        )?
+    };
+
+    let mut plan = plan_imaging_execution(
         &ImagingWorkloadShape {
             selected_rows: active_row_count,
             correlations: visibility_shape.corr_count,
@@ -34296,30 +35807,12 @@ fn plan_standard_mfs_execution_shape_with_memory_ledger(
             prepared_bytes_per_row,
             worker_scratch_bytes,
             image_element_bytes: 0,
-            grid_element_bytes: std::mem::size_of::<Complex64>(),
-            fft_bytes_per_plane: checked_imaging_product(
-                [grid_cells, std::mem::size_of::<Complex64>(), 2],
-                "dirty-product FFT plane scratch",
-            )?,
+            grid_element_bytes,
+            fft_bytes_per_plane,
             spectral_state_bytes_per_plane: image_working_set_bytes,
             sample_count,
             metal_bytes_per_sample: metal_lane_bytes,
-            fixed_allocations: vec![
-                ImagingMemoryAllocation {
-                    component: "image working set",
-                    stage: "run",
-                    bytes: image_working_set_bytes,
-                },
-                ImagingMemoryAllocation {
-                    component: if mosaic_full_grid {
-                        "mosaic weighting density maps"
-                    } else {
-                        "weighting density"
-                    },
-                    stage: "weighting",
-                    bytes: mosaic_density_bytes,
-                },
-            ],
+            fixed_allocations,
             routed_replay_cache_candidate_bytes,
             metal_grouped_input_cache_candidate_bytes,
             materialized_sample_plan_candidate_bytes,
@@ -34358,6 +35851,212 @@ fn plan_standard_mfs_execution_shape_with_memory_ledger(
             direct_metal_scratch_limit_bytes: None,
         },
     )
+    .map_err(|error| error.to_string())?;
+
+    plan.decisions.extend([
+        casa_imaging::ImagingPlanDecision {
+            name: "grid_planes",
+            value: grid_planes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: if awproject_mtmfs {
+                format!(
+                    "one owner for {} PSF, {} residual, and {} weight grids",
+                    2 * config.nterms - 1,
+                    config.nterms,
+                    2 * config.nterms - 1
+                )
+            } else {
+                "derived from the selected deconvolver and grid topology".to_string()
+            },
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "grid_side",
+            value: grid_side.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: if mosaic_full_grid {
+                "streaming mosaic/AWProject uses the core's unpadded image-sized grid".to_string()
+            } else {
+                "standard gridder uses CASA composite padding".to_string()
+            },
+        },
+    ]);
+
+    if !awproject_mtmfs {
+        return Ok(plan);
+    }
+
+    let multiscale_minor_cycle_scratch_bytes = if clean_is_dirty(config) {
+        0
+    } else {
+        awproject_mtmfs_multiscale_minor_cycle_scratch_bytes(
+            config.nterms,
+            config.multiscale_scales.len().max(1),
+            image_pixels,
+        )?
+    };
+    let finish_state_bytes = awproject_mtmfs_finish_state_bytes(config.nterms, image_pixels)?;
+    let product_state_bytes = awproject_mtmfs_product_state_bytes(config.nterms, image_pixels)?;
+    let product_writer_scratch_bytes = awproject_product_writer_scratch_bytes(image_pixels)?;
+    if multiscale_minor_cycle_scratch_bytes > 0 {
+        plan.memory_allocations.push(ImagingMemoryAllocation {
+            component: "AWProject MT-MFS bounded multiscale scratch",
+            stage: "minor-cycle",
+            bytes: multiscale_minor_cycle_scratch_bytes,
+        });
+    }
+    plan.memory_allocations.extend([
+        ImagingMemoryAllocation {
+            component: "AWProject MT-MFS finish state",
+            stage: "finish",
+            bytes: finish_state_bytes,
+        },
+        ImagingMemoryAllocation {
+            component: "AWProject MT-MFS product state",
+            stage: "products",
+            bytes: product_state_bytes,
+        },
+        ImagingMemoryAllocation {
+            component: "product writer scratch",
+            stage: "products",
+            bytes: product_writer_scratch_bytes,
+        },
+    ]);
+    let minor_cycle_peak_bytes = checked_imaging_sum(
+        [
+            aw_cf_resident_bytes,
+            aw_cf_index_bytes,
+            pointing_index_bytes,
+            image_working_set_bytes,
+            multiscale_minor_cycle_scratch_bytes,
+            aw_safety_margin_bytes,
+        ],
+        "AWProject MT-MFS multiscale minor-cycle peak",
+    )?;
+    let finish_peak_bytes = checked_imaging_sum(
+        [
+            aw_cf_resident_bytes,
+            aw_cf_index_bytes,
+            pointing_index_bytes,
+            finish_state_bytes,
+            aw_safety_margin_bytes,
+        ],
+        "AWProject MT-MFS finish peak",
+    )?;
+    let product_peak_bytes = checked_imaging_sum(
+        [
+            pointing_index_bytes,
+            product_state_bytes,
+            product_writer_scratch_bytes,
+            aw_safety_margin_bytes,
+        ],
+        "AWProject MT-MFS product-write peak",
+    )?;
+    plan.maximum_planned_resident_bytes = plan
+        .maximum_planned_resident_bytes
+        .max(minor_cycle_peak_bytes)
+        .max(finish_peak_bytes)
+        .max(product_peak_bytes);
+    plan.decisions.extend([
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_cf_resident_bytes",
+            value: aw_cf_resident_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::UserPolicy,
+            reason: "bounded LRU pixel residency from the AWProject controls".to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_cf_index_bytes",
+            value: aw_cf_index_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "metadata-only paired-CF index with owned path/string allowance".to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "pointing_index_bytes",
+            value: pointing_index_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: format!(
+                "bounded by {pointing_table_row_count} POINTING rows and {active_row_count} active MAIN rows"
+            ),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_cf_locality_index_bytes_per_row",
+            value: aw_cf_locality_index_bytes_per_row.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "one bounded sample index per selected channel groups repeated CF quartets"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_parallel_plan_bytes_per_row",
+            value: aw_parallel_plan_bytes_per_row.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "bounded per-sample placement plans feed disjoint Taylor-plane workers without duplicate grids"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_safety_margin_bytes",
+            value: aw_safety_margin_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "five percent of the assigned process budget is reserved for allocator and unmodeled metadata overhead"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_fft_residency",
+            value: if awproject_mtmfs_in_place_fft_eligible(config) {
+                match config.imaging_fft_precision {
+                    ImagingFftPrecisionPolicy::F32 => "in-place-rustfft-f32",
+                    ImagingFftPrecisionPolicy::Auto | ImagingFftPrecisionPolicy::F64 => {
+                        "in-place-rustfft-f64"
+                    }
+                }
+            } else {
+                "bounded-copy"
+            }
+            .to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "selected FFT precision/backend and even unpadded grid geometry".to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_multiscale_minor_cycle_peak_bytes",
+            value: minor_cycle_peak_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: if multiscale_minor_cycle_scratch_bytes == 0 {
+                "dirty-only execution does not allocate MT-MFS minor-cycle scale scratch"
+                    .to_string()
+            } else {
+                "one scale RHS stack, compact-kernel FFT work, and scale masks coexist with the run state"
+                    .to_string()
+            },
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_finish_peak_bytes",
+            value: finish_peak_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "CF residency, POINTING state, and 2D-to-4D result expansion coexist"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_product_peak_bytes",
+            value: product_peak_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "returned products, derived PB/masks, and one reusable writer buffer"
+                .to_string(),
+        },
+    ]);
+
+    admit_imaging_execution(ImagingPlanAdmission {
+        workload: plan.workload,
+        usable_memory_bytes: plan.usable_memory_bytes,
+        workers: plan.workers,
+        worker_partition_rows: plan.worker_partition_rows,
+        ingest: plan.ingest,
+        fft: plan.fft,
+        tile: plan.tile,
+        spectral: plan.spectral,
+        metal: plan.metal,
+        caches: plan.caches,
+        memory_allocations: plan.memory_allocations,
+        maximum_planned_resident_bytes: plan.maximum_planned_resident_bytes,
+        decisions: plan.decisions,
+    })
     .map_err(|error| error.to_string())
 }
 
@@ -34374,6 +36073,25 @@ fn standard_mfs_memory_plan_with_visibility_shape(
         cache_selected_channel_count,
         active_row_count,
         &visibility_shape,
+    )
+}
+
+fn standard_mfs_memory_plan_with_visibility_shape_and_pointing_rows(
+    config: &CliConfig,
+    selected_channel_count: usize,
+    cache_selected_channel_count: usize,
+    active_row_count: usize,
+    visibility_shape: spectral_slab::VisibilitySourceShape,
+    pointing_table_row_count: usize,
+) -> Result<ImagingResolvedPlan, String> {
+    plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
+        config,
+        selected_channel_count,
+        cache_selected_channel_count,
+        active_row_count,
+        &visibility_shape,
+        pointing_table_row_count,
+        imaging_process_memory_ledger(config),
     )
 }
 
@@ -34534,6 +36252,20 @@ fn imaging_process_memory_ledger(config: &CliConfig) -> ImagingProcessMemoryLedg
     let baseline_process_bytes = spectral_slab::current_process_memory_snapshot()
         .current_rss_bytes
         .unwrap_or(0);
+    imaging_process_memory_ledger_from_snapshot(
+        config,
+        system_memory_bytes,
+        available_memory_bytes,
+        baseline_process_bytes,
+    )
+}
+
+fn imaging_process_memory_ledger_from_snapshot(
+    config: &CliConfig,
+    system_memory_bytes: Option<usize>,
+    available_memory_bytes: Option<usize>,
+    baseline_process_bytes: usize,
+) -> ImagingProcessMemoryLedger {
     let non_process_resident_bytes =
         system_memory_bytes
             .zip(available_memory_bytes)
@@ -34542,16 +36274,17 @@ fn imaging_process_memory_ledger(config: &CliConfig) -> ImagingProcessMemoryLedg
                     .saturating_sub(available)
                     .saturating_sub(baseline_process_bytes)
             });
-    let assigned_target = |requested: usize| {
-        available_memory_bytes.map_or(requested, |available| requested.min(available))
-    };
     if let Some(target_mb) = config.imaging_memory_target_mb.filter(|value| *value > 0) {
         return ImagingProcessMemoryLedger {
             system_memory_bytes,
             available_memory_bytes,
             baseline_process_bytes,
             non_process_resident_bytes,
-            target_bytes: assigned_target(target_mb.saturating_mul(1024 * 1024)),
+            // An explicit target is an operator-selected process budget, not a
+            // request for the kernel's current free-page count. Honoring it is
+            // what permits deliberate, observable swap-backed runs; automatic
+            // planning below remains bounded by the kernel snapshot.
+            target_bytes: target_mb.saturating_mul(1024 * 1024),
             source: "cli-imaging",
         };
     }
@@ -34564,7 +36297,7 @@ fn imaging_process_memory_ledger(config: &CliConfig) -> ImagingProcessMemoryLedg
             available_memory_bytes,
             baseline_process_bytes,
             non_process_resident_bytes,
-            target_bytes: assigned_target(target_mb.saturating_mul(1024 * 1024)),
+            target_bytes: target_mb.saturating_mul(1024 * 1024),
             source: "cli-standard-mfs",
         };
     }
@@ -34835,6 +36568,7 @@ fn standard_one_channel_cube_input_to_plane(cube: CubePlaneInput) -> Result<Plan
         spectral_frequency_edge_range_hz: None,
         plane_stokes,
         batches: channel.visibility_batches,
+        aw_parallel_hand_batches: Vec::new(),
         density_batches: Vec::new(),
         sample_frequency_range_hz: None,
         sample_frequency_batches_hz: Vec::new(),
@@ -34976,7 +36710,10 @@ fn standard_single_plane_result_to_run_products(
 }
 
 fn standard_mfs_streaming_weight_density_mode(config: &CliConfig) -> WeightDensityMode {
-    if effective_per_channel_weight_density(config) {
+    // task_tclean.py explicitly resets perchanweightdensity to false for MFS
+    // before constructing ImagerParameters, even when the public task call
+    // records true.
+    if config.spectral_mode.is_cube_like() && effective_per_channel_weight_density(config) {
         WeightDensityMode::PerPlane
     } else {
         WeightDensityMode::Combined
@@ -35254,6 +36991,94 @@ fn load_prepared_selection_table_values(
         freq_ref,
         corr_types,
     })
+}
+
+#[derive(Debug)]
+struct PreparedMfsDdidPlan {
+    ddid: usize,
+    table_values: PreparedSelectionTableValues,
+    active_selected_rows: Vec<SelectedMainRow>,
+    channel_read_range: Option<SelectedChannelReadRange>,
+    selected_channel_count: usize,
+    output_frequency_metadata: MfsOutputFrequencyMetadata,
+}
+
+fn prepare_mfs_ddid_plans(
+    config: &CliConfig,
+    selection: &SelectedRowsContext,
+    active_selected_rows: Vec<SelectedMainRow>,
+    ddid_info: &[Option<(usize, usize)>],
+    spectral_window: &casa_ms::subtables::spectral_window::MsSpectralWindow<'_>,
+    polarization: &casa_ms::subtables::polarization::MsPolarization<'_>,
+    derived_engine: Option<&MsCalEngine>,
+) -> Result<Vec<PreparedMfsDdidPlan>, String> {
+    let mut rows_by_ddid = BTreeMap::<usize, Vec<SelectedMainRow>>::new();
+    for row in active_selected_rows {
+        rows_by_ddid.entry(row.ddid).or_default().push(row);
+    }
+    let mut plans = Vec::with_capacity(selection.selected_ddids.len());
+    for &ddid in &selection.selected_ddids {
+        let active_selected_rows = rows_by_ddid.remove(&ddid).unwrap_or_default();
+        if active_selected_rows.is_empty() {
+            continue;
+        }
+        let table_values =
+            load_prepared_selection_table_values(ddid, ddid_info, spectral_window, polarization)?;
+        let channel_read_range = selected_channel_read_range_for_shared_single_plane_acceleration(
+            config,
+            &table_values,
+        )?;
+        let selected_channel_count =
+            selected_channel_count_estimate_from_table_values(config, &table_values);
+        let output_frequency_metadata = mfs_output_frequency_metadata_for_config_selection(
+            config,
+            &table_values,
+            &active_selected_rows,
+            derived_engine,
+        )?;
+        plans.push(PreparedMfsDdidPlan {
+            ddid,
+            table_values,
+            active_selected_rows,
+            channel_read_range,
+            selected_channel_count,
+            output_frequency_metadata,
+        });
+    }
+    if !rows_by_ddid.is_empty() {
+        return Err(format!(
+            "selected MAIN rows reference unplanned DATA_DESC_ID values {:?}",
+            rows_by_ddid.keys().collect::<Vec<_>>()
+        ));
+    }
+    if plans.is_empty() {
+        return Err("selection resolved to no active MFS DATA_DESC_ID plans".to_string());
+    }
+    eprintln!(
+        "mfs_ddid_execution_plan ddids={} spws={} rows={} selected_channel_visits={} bounded_row_groups=true",
+        plans
+            .iter()
+            .map(|plan| plan.ddid.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+        plans
+            .iter()
+            .map(|plan| plan.table_values.spw_id.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+        plans
+            .iter()
+            .map(|plan| plan.active_selected_rows.len())
+            .sum::<usize>(),
+        plans
+            .iter()
+            .map(|plan| plan
+                .active_selected_rows
+                .len()
+                .saturating_mul(plan.selected_channel_count))
+            .sum::<usize>(),
+    );
+    Ok(plans)
 }
 
 fn selected_channel_count_estimate_from_table_values(
@@ -36356,16 +38181,19 @@ fn allowed_ddids(
     ddid_info: &[Option<(usize, usize)>],
 ) -> Result<Vec<bool>, String> {
     let mut allowed = vec![true; ddid_info.len()];
-    let selected_spw = selected_spw_id(config)?;
-    if let Some(spw) = selected_spw {
+    let selected_spws = selected_spw_ids(config)?;
+    if !selected_spws.is_empty() {
         allowed.fill(false);
         for (ddid, info) in ddid_info.iter().enumerate() {
-            if info.is_some_and(|(row_spw, _)| row_spw == spw as usize) {
+            if info.is_some_and(|(row_spw, _)| selected_spws.contains(&(row_spw as i32))) {
                 allowed[ddid] = true;
             }
         }
         if !allowed.iter().any(|value| *value) {
-            return Err(format!("selection resolved to no DDID for SPW {spw}"));
+            return Err(format!(
+                "selection resolved to no DDID for SPWs {:?}",
+                selected_spws
+            ));
         }
     }
     if let Some(ddid) = config.ddid {
@@ -36374,31 +38202,29 @@ fn allowed_ddids(
                 "DATA_DESC_ID {ddid} is outside the DATA_DESCRIPTION table"
             ));
         }
-        if let Some(spw) = selected_spw
-            && ddid_info[ddid as usize].is_none_or(|(row_spw, _)| row_spw != spw as usize)
+        if !selected_spws.is_empty()
+            && ddid_info[ddid as usize]
+                .is_none_or(|(row_spw, _)| !selected_spws.contains(&(row_spw as i32)))
         {
-            return Err(format!("DATA_DESC_ID {ddid} does not map to SPW {spw}"));
+            return Err(format!(
+                "DATA_DESC_ID {ddid} does not map to selected SPWs {:?}",
+                selected_spws
+            ));
         }
     }
     Ok(allowed)
 }
 
-fn selected_spw_id(config: &CliConfig) -> Result<Option<i32>, String> {
+fn selected_spw_ids(config: &CliConfig) -> Result<BTreeSet<i32>, String> {
     if let Some(selector_text) = config.spw_selector.as_deref() {
         let selectors = parse_spw_selector(selector_text).map_err(|error| error.to_string())?;
         let ids = selectors
             .iter()
             .map(|selector| selector.spw_id)
-            .collect::<std::collections::BTreeSet<_>>();
-        return match ids.len() {
-            0 => Ok(None),
-            1 => Ok(ids.into_iter().next()),
-            _ => Err(format!(
-                "spw selector {selector_text:?} resolved to multiple SPWs; the current frontend accepts exactly one"
-            )),
-        };
+            .collect::<BTreeSet<_>>();
+        return Ok(ids);
     }
-    Ok(config.spw)
+    Ok(config.spw.into_iter().collect())
 }
 
 fn selected_spw_channel_selector(
@@ -36438,14 +38264,185 @@ fn extract_phase_center(ms: &MeasurementSet, field_id: usize) -> Result<PhaseCen
             "moving or tracked phase centers (NUM_POLY != 0) are not supported".to_string(),
         );
     }
-    let phase_dir = resolve_field_phase_direction_j2000(ms, field_id)
-        .map_err(|error| format!("resolve FIELD.PHASE_DIR[{field_id}] to J2000: {error}"))?;
-    let (ra, dec) = phase_dir.as_angles();
+    let source_ref =
+        resolve_table_direction_reference(field.table(), "FIELD", "PHASE_DIR", field_id)?;
+    let [ra, dec] = if source_ref == DirectionRef::J2000 {
+        // CASA carries an already-J2000 FIELD phase center directly into the
+        // output coordinate. Avoid the angle -> direction-cosine -> angle
+        // round trip here: it can move an input angle by a few ULPs and also
+        // perturb the LSRK frequency conversion that uses this direction.
+        extract_constant_direction_angles(
+            field
+                .phase_dir(field_id)
+                .map_err(|error| format!("read FIELD.PHASE_DIR[{field_id}]: {error}"))?,
+            "FIELD.PHASE_DIR",
+            field_id,
+        )?
+    } else {
+        let phase_dir = resolve_field_phase_direction_j2000(ms, field_id)
+            .map_err(|error| format!("resolve FIELD.PHASE_DIR[{field_id}] to J2000: {error}"))?;
+        let (ra, dec) = phase_dir.as_angles();
+        [ra, dec]
+    };
     Ok(PhaseCenter {
         field_id: Some(field_id),
         angles_rad: [ra, dec],
         reference: DirectionRef::J2000,
     })
+}
+
+fn phase_center_obsinfo_direction_rad(
+    ms: &MeasurementSet,
+    phase_center: &PhaseCenter,
+) -> Result<[f64; 2], String> {
+    let Some(field_id) = phase_center.field_id else {
+        return Ok(phase_center.angles_rad);
+    };
+    let field = ms.field().map_err(|error| format!("open FIELD: {error}"))?;
+    let source_ref =
+        resolve_table_direction_reference(field.table(), "FIELD", "PHASE_DIR", field_id)?;
+    if source_ref != DirectionRef::J2000 {
+        return Ok(phase_center.angles_rad);
+    }
+    extract_constant_direction_angles(
+        field
+            .phase_dir(field_id)
+            .map_err(|error| format!("read FIELD.PHASE_DIR[{field_id}]: {error}"))?,
+        "FIELD.PHASE_DIR",
+        field_id,
+    )
+}
+
+fn source_rest_frequency_values(
+    source: &casa_ms::subtables::source::MsSource<'_>,
+    row: usize,
+) -> Result<Vec<f64>, String> {
+    let Some(value) = source
+        .optional_array(row, "REST_FREQUENCY")
+        .map_err(|error| format!("read SOURCE.REST_FREQUENCY row {row}: {error}"))?
+    else {
+        return Ok(Vec::new());
+    };
+    match value {
+        ArrayValue::Float64(values) if values.ndim() == 1 => Ok(values.iter().copied().collect()),
+        ArrayValue::Float64(values) => Err(format!(
+            "SOURCE.REST_FREQUENCY row {row} must be one-dimensional, found shape {:?}",
+            values.shape()
+        )),
+        other => Err(format!(
+            "SOURCE.REST_FREQUENCY row {row} must be Float64, found {:?}",
+            other.primitive_type()
+        )),
+    }
+}
+
+fn source_row_matches(source_id: i32, spw_id: i32, wanted_source: i32, wanted_spw: i32) -> bool {
+    (source_id == -1 || source_id == wanted_source) && (spw_id == -1 || spw_id == wanted_spw)
+}
+
+fn casa_mfs_source_rest_frequency_hz(
+    ms: &MeasurementSet,
+    field_id: usize,
+    spw_id: usize,
+) -> Result<Option<f64>, String> {
+    let field = ms.field().map_err(|error| format!("open FIELD: {error}"))?;
+    let source_id = field
+        .source_id(field_id)
+        .map_err(|error| format!("read FIELD.SOURCE_ID[{field_id}]: {error}"))?;
+    if source_id < 0 {
+        return Ok(None);
+    }
+    let Ok(source) = ms.source() else {
+        return Ok(None);
+    };
+    let wanted_spw =
+        i32::try_from(spw_id).map_err(|_| format!("selected SPW {spw_id} exceeds Int32"))?;
+
+    let spectral_window = ms
+        .spectral_window()
+        .map_err(|error| format!("open SPECTRAL_WINDOW: {error}"))?;
+    let doppler_id = if spectral_window
+        .table()
+        .schema()
+        .is_some_and(|schema| schema.contains_column("DOPPLER_ID"))
+    {
+        match spectral_window
+            .table()
+            .cell_accessor(spw_id, "DOPPLER_ID")
+            .and_then(|cell| cell.scalar())
+            .map_err(|error| format!("read SPECTRAL_WINDOW.DOPPLER_ID[{spw_id}]: {error}"))?
+        {
+            &ScalarValue::Int32(id) if id >= 0 => Some(id),
+            &ScalarValue::Int32(_) => None,
+            other => {
+                return Err(format!(
+                    "SPECTRAL_WINDOW.DOPPLER_ID[{spw_id}] must be Int32, found {:?}",
+                    other.primitive_type()
+                ));
+            }
+        }
+    } else {
+        None
+    };
+    if let Some(doppler_id) = doppler_id
+        && let Ok(doppler) = ms.doppler()
+    {
+        for doppler_row in 0..doppler.row_count() {
+            if doppler
+                .i32(doppler_row, "DOPPLER_ID")
+                .map_err(|error| format!("read DOPPLER.DOPPLER_ID row {doppler_row}: {error}"))?
+                != doppler_id
+                || doppler
+                    .i32(doppler_row, "SOURCE_ID")
+                    .map_err(|error| format!("read DOPPLER.SOURCE_ID row {doppler_row}: {error}"))?
+                    != source_id
+            {
+                continue;
+            }
+            let transition_id = doppler.i32(doppler_row, "TRANSITION_ID").map_err(|error| {
+                format!("read DOPPLER.TRANSITION_ID row {doppler_row}: {error}")
+            })?;
+            let transition_id = usize::try_from(transition_id)
+                .map_err(|_| format!("DOPPLER.TRANSITION_ID row {doppler_row} is negative"))?;
+            for source_row in 0..source.row_count() {
+                let row_source_id = source
+                    .i32(source_row, "SOURCE_ID")
+                    .map_err(|error| format!("read SOURCE.SOURCE_ID row {source_row}: {error}"))?;
+                let row_spw_id = source
+                    .i32(source_row, "SPECTRAL_WINDOW_ID")
+                    .map_err(|error| {
+                        format!("read SOURCE.SPECTRAL_WINDOW_ID row {source_row}: {error}")
+                    })?;
+                if !source_row_matches(row_source_id, row_spw_id, source_id, wanted_spw) {
+                    continue;
+                }
+                let values = source_rest_frequency_values(&source, source_row)?;
+                if let Some(&rest_frequency_hz) = values.get(transition_id) {
+                    return Ok(Some(rest_frequency_hz));
+                }
+            }
+        }
+        return Ok(None);
+    }
+
+    for source_row in 0..source.row_count() {
+        let row_source_id = source
+            .i32(source_row, "SOURCE_ID")
+            .map_err(|error| format!("read SOURCE.SOURCE_ID row {source_row}: {error}"))?;
+        let row_spw_id = source
+            .i32(source_row, "SPECTRAL_WINDOW_ID")
+            .map_err(|error| format!("read SOURCE.SPECTRAL_WINDOW_ID row {source_row}: {error}"))?;
+        if !source_row_matches(row_source_id, row_spw_id, source_id, wanted_spw) {
+            continue;
+        }
+        if let Some(rest_frequency_hz) = source_rest_frequency_values(&source, source_row)?
+            .into_iter()
+            .next()
+        {
+            return Ok(Some(rest_frequency_hz));
+        }
+    }
+    Ok(None)
 }
 
 fn resolve_phase_center(
@@ -37326,6 +39323,7 @@ enum PreparedState {
         transform: PairCollapseTransform,
         pair: (usize, usize),
         batch: VisibilityBatch,
+        aw_parallel_hands: Option<AwParallelHandVisibilityBatch>,
         density_batch: Option<VisibilityBatch>,
         sample_frequency_hz: Vec<f64>,
         mosaic_metadata: Option<MfsMosaicMetadataAccumulator>,
@@ -37349,6 +39347,20 @@ enum PreparedState {
     },
 }
 
+impl PreparedState {
+    fn mfs_mosaic_metadata_mut(&mut self) -> Option<&mut MfsMosaicMetadataAccumulator> {
+        match self {
+            Self::ExplicitMfs {
+                mosaic_metadata, ..
+            }
+            | Self::CollapsedMfs {
+                mosaic_metadata, ..
+            } => mosaic_metadata.as_mut(),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct MfsMosaicMetadataAccumulator {
     sample_pointing_ids: Vec<usize>,
@@ -37358,7 +39370,25 @@ struct MfsMosaicMetadataAccumulator {
     frequency_range_by_spw: BTreeMap<usize, (f64, f64)>,
     sample_frequency_bits_by_spw_limited: BTreeMap<usize, Vec<u64>>,
     pointing_direction_by_id: BTreeMap<usize, [f64; 2]>,
+    pointing_id_by_direction_bits: BTreeMap<(u64, u64), usize>,
     selected_antenna_ids: BTreeSet<i32>,
+    casa_aw_pointing_groups: Option<CasaAwPointingGroupAccumulator>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CasaAwPointingGroupConfig {
+    geometry: ImageGeometry,
+    phase_center_direction_rad: [f64; 2],
+    grouping_sigdev_arcsec: f64,
+    refresh_sigdev_arcsec: f64,
+}
+
+#[derive(Debug, Clone)]
+struct CasaAwPointingGroupAccumulator {
+    config: CasaAwPointingGroupConfig,
+    first_direction_by_field_antenna: BTreeMap<(usize, i32), [f64; 2]>,
+    baseline_by_pointing_id: BTreeMap<usize, (usize, i32, i32)>,
+    pointing_id_by_baseline: BTreeMap<(usize, i32, i32), usize>,
 }
 
 impl MfsMosaicMetadataAccumulator {
@@ -37371,8 +39401,21 @@ impl MfsMosaicMetadataAccumulator {
             frequency_range_by_spw: BTreeMap::new(),
             sample_frequency_bits_by_spw_limited: BTreeMap::new(),
             pointing_direction_by_id: BTreeMap::new(),
+            pointing_id_by_direction_bits: BTreeMap::new(),
             selected_antenna_ids: BTreeSet::new(),
+            casa_aw_pointing_groups: None,
         }
+    }
+
+    fn with_casa_aw_pointing_groups(capacity: usize, config: CasaAwPointingGroupConfig) -> Self {
+        let mut metadata = Self::with_capacity(capacity);
+        metadata.casa_aw_pointing_groups = Some(CasaAwPointingGroupAccumulator {
+            config,
+            first_direction_by_field_antenna: BTreeMap::new(),
+            baseline_by_pointing_id: BTreeMap::new(),
+            pointing_id_by_baseline: BTreeMap::new(),
+        });
+        metadata
     }
 
     fn reserve(&mut self, additional: usize) {
@@ -37389,10 +39432,75 @@ impl MfsMosaicMetadataAccumulator {
         self.selected_antenna_ids.insert(antenna2_id);
     }
 
-    fn record_pointing_direction(&mut self, pointing_id: usize, pointing_direction_rad: [f64; 2]) {
+    fn observe_casa_aw_row(
+        &mut self,
+        field_id: usize,
+        antenna1_id: i32,
+        antenna1_direction_rad: [f64; 2],
+        antenna2_id: i32,
+        antenna2_direction_rad: [f64; 2],
+    ) {
+        self.record_selected_antennas(antenna1_id, antenna2_id);
+        let Some(groups) = self.casa_aw_pointing_groups.as_mut() else {
+            return;
+        };
+        groups
+            .first_direction_by_field_antenna
+            .entry((field_id, antenna1_id))
+            .or_insert(antenna1_direction_rad);
+        groups
+            .first_direction_by_field_antenna
+            .entry((field_id, antenna2_id))
+            .or_insert(antenna2_direction_rad);
+    }
+
+    fn intern_pointing_direction(&mut self, pointing_direction_rad: [f64; 2]) -> usize {
+        let key = (
+            pointing_direction_rad[0].to_bits(),
+            pointing_direction_rad[1].to_bits(),
+        );
+        if let Some(pointing_id) = self.pointing_id_by_direction_bits.get(&key).copied() {
+            return pointing_id;
+        }
+        let pointing_id = self.pointing_direction_by_id.len();
+        self.pointing_id_by_direction_bits.insert(key, pointing_id);
         self.pointing_direction_by_id
-            .entry(pointing_id)
-            .or_insert(pointing_direction_rad);
+            .insert(pointing_id, pointing_direction_rad);
+        pointing_id
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn intern_casa_aw_baseline_pointing(
+        &mut self,
+        field_id: usize,
+        antenna1_id: i32,
+        antenna1_direction_rad: [f64; 2],
+        antenna2_id: i32,
+        antenna2_direction_rad: [f64; 2],
+    ) -> Option<usize> {
+        self.observe_casa_aw_row(
+            field_id,
+            antenna1_id,
+            antenna1_direction_rad,
+            antenna2_id,
+            antenna2_direction_rad,
+        );
+        let groups = self.casa_aw_pointing_groups.as_mut()?;
+        let baseline = (field_id, antenna1_id, antenna2_id);
+        if let Some(pointing_id) = groups.pointing_id_by_baseline.get(&baseline).copied() {
+            return Some(pointing_id);
+        }
+        let pointing_id = groups.baseline_by_pointing_id.len();
+        groups.pointing_id_by_baseline.insert(baseline, pointing_id);
+        groups.baseline_by_pointing_id.insert(pointing_id, baseline);
+        Some(pointing_id)
+    }
+
+    fn effective_pointing_direction_by_id(&self) -> Result<BTreeMap<usize, [f64; 2]>, String> {
+        let Some(groups) = self.casa_aw_pointing_groups.as_ref() else {
+            return Ok(self.pointing_direction_by_id.clone());
+        };
+        groups.effective_pointing_direction_by_id()
     }
 
     fn push_sample(&mut self, pointing_id: usize, spw_id: usize, sample_frequency_hz: f64) {
@@ -37445,6 +39553,198 @@ impl MfsMosaicMetadataAccumulator {
                 .or_insert_with(|| vec![sample_frequency_hz.to_bits()]);
         }
     }
+}
+
+impl CasaAwPointingGroupAccumulator {
+    fn effective_pointing_direction_by_id(&self) -> Result<BTreeMap<usize, [f64; 2]>, String> {
+        let geometry = self.config.geometry;
+        let direction_coordinate = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            self.config.phase_center_direction_rad,
+            [-geometry.cell_size_rad[0], geometry.cell_size_rad[1]],
+            [geometry.nx() as f64 / 2.0, geometry.ny() as f64 / 2.0],
+        );
+        let cell_increment_norm = geometry.cell_size_rad[0].hypot(geometry.cell_size_rad[1]);
+        let requested_grouping_arcsec = self.config.grouping_sigdev_arcsec;
+        let grouping_arcsec = if requested_grouping_arcsec > 0.0 {
+            requested_grouping_arcsec
+        } else {
+            // VB2CFBMap uses a 0.001 arcsec bin when the first effective
+            // pointingoffsetsigdev element is exactly zero.
+            1.0e-3
+        };
+        let bin_width_pixels = grouping_arcsec.to_radians() / 3600.0 / cell_increment_norm;
+        if !(bin_width_pixels.is_finite() && bin_width_pixels > 0.0) {
+            return Err(format!(
+                "invalid CASA AW pointing bin width for pointingoffsetsigdev={} arcsec and image cell {:?}",
+                requested_grouping_arcsec, geometry.cell_size_rad
+            ));
+        }
+
+        let mut pixel_by_field_antenna = BTreeMap::<(usize, i32), [f64; 2]>::new();
+        for (&field_antenna, &direction_rad) in &self.first_direction_by_field_antenna {
+            let pixel = direction_coordinate.to_pixel(&direction_rad).map_err(|error| {
+                format!(
+                    "convert CASA AW POINTING direction for field {} antenna {} to image pixel: {error}",
+                    field_antenna.0, field_antenna.1
+                )
+            })?;
+            if standard_mfs_profile_detail_enabled() {
+                eprintln!(
+                    "casa_aw_pointing_group_input field_id={} antenna_id={} direction_ra_rad={:.17e} direction_dec_rad={:.17e} pixel_x={:.17e} pixel_y={:.17e}",
+                    field_antenna.0,
+                    field_antenna.1,
+                    direction_rad[0],
+                    direction_rad[1],
+                    pixel[0],
+                    pixel[1],
+                );
+            }
+            pixel_by_field_antenna.insert(field_antenna, [pixel[0], pixel[1]]);
+        }
+
+        let field_ids = pixel_by_field_antenna
+            .keys()
+            .map(|(field_id, _)| *field_id)
+            .collect::<BTreeSet<_>>();
+        let mut grouped_pixel_by_field_antenna = BTreeMap::<(usize, i32), [f64; 2]>::new();
+        for field_id in field_ids {
+            let field_pixels = pixel_by_field_antenna
+                .iter()
+                .filter_map(|(&(candidate_field_id, antenna_id), &pixel)| {
+                    (candidate_field_id == field_id).then_some((antenna_id, pixel))
+                })
+                .collect::<Vec<_>>();
+            let min_x = field_pixels
+                .iter()
+                .map(|(_, pixel)| pixel[0])
+                .fold(f64::INFINITY, f64::min);
+            let min_y = field_pixels
+                .iter()
+                .map(|(_, pixel)| pixel[1])
+                .fold(f64::INFINITY, f64::min);
+            let mut bin_by_antenna = BTreeMap::<i32, (i64, i64)>::new();
+            // BaselineType::findAntennaGroups stores meanAntGrdPO_l in
+            // vector<float>.  The compound additions therefore round after
+            // every antenna, and the final division is also float32 before
+            // assignment to the double-valued phase-gradient coordinates.
+            // Preserve that observable CASA arithmetic: at VLASS geometry an
+            // f64 mean displaces the effective pointing by about 0.008 pixel.
+            let mut sums_by_bin = BTreeMap::<(i64, i64), (f32, f32, usize)>::new();
+            for (antenna_id, pixel) in field_pixels {
+                let bin = (
+                    ((pixel[0] - min_x) / bin_width_pixels).floor() as i64,
+                    ((pixel[1] - min_y) / bin_width_pixels).floor() as i64,
+                );
+                bin_by_antenna.insert(antenna_id, bin);
+                let sums = sums_by_bin.entry(bin).or_insert((0.0, 0.0, 0));
+                sums.0 += pixel[0] as f32;
+                sums.1 += pixel[1] as f32;
+                sums.2 += 1;
+            }
+            let mean_by_bin = sums_by_bin
+                .into_iter()
+                .map(|(bin, (sum_x, sum_y, count))| {
+                    let mean_pixel = [
+                        (sum_x / count as f32) as f64,
+                        (sum_y / count as f32) as f64,
+                    ];
+                    if standard_mfs_profile_detail_enabled() {
+                        eprintln!(
+                            "casa_aw_pointing_group_mean field_id={} bin_x={} bin_y={} antenna_count={} pixel_x={:.17e} pixel_y={:.17e}",
+                            field_id, bin.0, bin.1, count, mean_pixel[0], mean_pixel[1],
+                        );
+                    }
+                    (bin, mean_pixel)
+                })
+                .collect::<BTreeMap<_, _>>();
+            for (antenna_id, bin) in bin_by_antenna {
+                let mean_pixel = mean_by_bin[&bin];
+                grouped_pixel_by_field_antenna.insert((field_id, antenna_id), mean_pixel);
+            }
+        }
+
+        let mut directions = BTreeMap::new();
+        for (&pointing_id, &(field_id, antenna1_id, antenna2_id)) in &self.baseline_by_pointing_id {
+            let antenna1_pixel = grouped_pixel_by_field_antenna
+                .get(&(field_id, antenna1_id))
+                .copied()
+                .ok_or_else(|| {
+                    format!(
+                        "missing CASA AW pointing group for field {field_id} antenna {antenna1_id}"
+                    )
+                })?;
+            let antenna2_pixel = grouped_pixel_by_field_antenna
+                .get(&(field_id, antenna2_id))
+                .copied()
+                .ok_or_else(|| {
+                    format!(
+                        "missing CASA AW pointing group for field {field_id} antenna {antenna2_id}"
+                    )
+                })?;
+            let baseline_pixel = [
+                0.5 * (antenna1_pixel[0] + antenna2_pixel[0]),
+                0.5 * (antenna1_pixel[1] + antenna2_pixel[1]),
+            ];
+            directions.insert(
+                pointing_id,
+                sin_direction_for_image_pixel(
+                    geometry,
+                    self.config.phase_center_direction_rad,
+                    baseline_pixel,
+                )?,
+            );
+        }
+        Ok(directions)
+    }
+}
+
+fn sin_direction_for_image_pixel(
+    geometry: ImageGeometry,
+    phase_center_direction_rad: [f64; 2],
+    pixel: [f64; 2],
+) -> Result<[f64; 2], String> {
+    let l = -(pixel[0] - geometry.nx() as f64 / 2.0) * geometry.cell_size_rad[0].abs();
+    let m = (pixel[1] - geometry.ny() as f64 / 2.0) * geometry.cell_size_rad[1].abs();
+    let n_squared = 1.0 - l * l - m * m;
+    if !(n_squared.is_finite() && n_squared >= 0.0) {
+        return Err(format!(
+            "CASA AW pointing-group pixel {pixel:?} lies outside the SIN projection domain"
+        ));
+    }
+    let n = n_squared.sqrt();
+    let dec0 = phase_center_direction_rad[1];
+    let dec = (m * dec0.cos() + n * dec0.sin()).asin();
+    let delta_ra = l.atan2(n * dec0.cos() - m * dec0.sin());
+    let ra = (phase_center_direction_rad[0] + delta_ra).rem_euclid(std::f64::consts::TAU);
+    Ok([ra, dec])
+}
+
+fn mosaic_pointing_id_for_row(
+    metadata: &mut MfsMosaicMetadataAccumulator,
+    cached_pointing_id: &mut Option<usize>,
+    geometry_row: &PreparedGeometryRow,
+    baseline_pointing_direction_rad: [f64; 2],
+) -> usize {
+    if let Some(pointing_id) = *cached_pointing_id {
+        return pointing_id;
+    }
+    let field_id = geometry_row.selected_row.field_id;
+    let antenna1_id = geometry_row.antenna1_id;
+    let antenna2_id = geometry_row.antenna2_id;
+    metadata.record_selected_antennas(antenna1_id, antenna2_id);
+    let pointing_id = metadata
+        .intern_casa_aw_baseline_pointing(
+            field_id,
+            antenna1_id,
+            geometry_row.antenna1_pointing.angles_rad,
+            antenna2_id,
+            geometry_row.antenna2_pointing.angles_rad,
+        )
+        .unwrap_or_else(|| metadata.intern_pointing_direction(baseline_pointing_direction_rad));
+    *cached_pointing_id = Some(pointing_id);
+    pointing_id
 }
 
 fn row_imaging_transform(
@@ -37826,6 +40126,7 @@ impl PreparedSelection {
                         transform,
                         pair,
                         batch: empty_visibility_batch(max_samples),
+                        aw_parallel_hands: None,
                         density_batch: None,
                         sample_frequency_hz: Vec::with_capacity(max_samples),
                         mosaic_metadata: None,
@@ -37849,6 +40150,7 @@ impl PreparedSelection {
                     transform,
                     pair,
                     batch: empty_visibility_batch(max_samples),
+                    aw_parallel_hands: None,
                     density_batch: None,
                     sample_frequency_hz: Vec::with_capacity(max_samples),
                     mosaic_metadata: None,
@@ -37938,6 +40240,7 @@ impl PreparedSelection {
             (
                 PreparedState::CollapsedMfs {
                     batch,
+                    aw_parallel_hands,
                     density_batch,
                     sample_frequency_hz,
                     mosaic_metadata,
@@ -37946,6 +40249,10 @@ impl PreparedSelection {
                 PreparedTraceState::PairedMfs { samples },
             ) => {
                 reserve_visibility_batch(batch, sample_capacity);
+                if let Some(parallel_hands) = aw_parallel_hands {
+                    parallel_hands.first_visibility.reserve(sample_capacity);
+                    parallel_hands.second_visibility.reserve(sample_capacity);
+                }
                 if let Some(density_batch) = density_batch {
                     reserve_visibility_batch(density_batch, sample_capacity);
                 }
@@ -38268,6 +40575,32 @@ impl PreparedSelection {
                 .corr_type(polarization_id)
                 .map_err(|error| format!("read CORR_TYPE: {error}"))?;
             let max_samples = source_channel_frequencies_hz.len();
+            let casa_aw_pointing_group_config = config.aw_project.as_ref().and_then(|controls| {
+                controls.use_pointing.then(|| {
+                    let effective_sigdev = controls.effective_pointing_offset_sigdev_arcsec();
+                    let cell_size_rad =
+                        config.cell_arcsec * std::f64::consts::PI / (180.0 * 3600.0);
+                    CasaAwPointingGroupConfig {
+                        geometry: ImageGeometry {
+                            image_shape: [config.imsize, config.imsize],
+                            cell_size_rad: [cell_size_rad, cell_size_rad],
+                        },
+                        phase_center_direction_rad: phase_center.angles_rad,
+                        grouping_sigdev_arcsec: effective_sigdev[0],
+                        refresh_sigdev_arcsec: effective_sigdev[1],
+                    }
+                })
+            });
+            let new_mfs_mosaic_metadata = || {
+                if let Some(group_config) = casa_aw_pointing_group_config {
+                    MfsMosaicMetadataAccumulator::with_casa_aw_pointing_groups(
+                        max_samples,
+                        group_config,
+                    )
+                } else {
+                    MfsMosaicMetadataAccumulator::with_capacity(max_samples)
+                }
+            };
             let explicit_plane = config
                 .correlation
                 .as_deref()
@@ -38301,8 +40634,7 @@ impl PreparedSelection {
                             density_batch: (trace_free_mfs_mosaic && use_density_batches)
                                 .then(|| empty_visibility_batch(max_samples)),
                             sample_frequency_hz: Vec::with_capacity(max_samples),
-                            mosaic_metadata: trace_free_mfs_mosaic
-                                .then(|| MfsMosaicMetadataAccumulator::with_capacity(max_samples)),
+                            mosaic_metadata: trace_free_mfs_mosaic.then(new_mfs_mosaic_metadata),
                         },
                         SpectralMode::Cube | SpectralMode::Cubedata => {
                             PreparedState::ExplicitCube {
@@ -38340,11 +40672,16 @@ impl PreparedSelection {
                             transform,
                             pair,
                             batch: empty_visibility_batch(max_samples),
+                            aw_parallel_hands: config.aw_project.as_ref().map(|_| {
+                                AwParallelHandVisibilityBatch {
+                                    first_visibility: Vec::with_capacity(max_samples),
+                                    second_visibility: Vec::with_capacity(max_samples),
+                                }
+                            }),
                             density_batch: (trace_free_mfs_mosaic && use_density_batches)
                                 .then(|| empty_visibility_batch(max_samples)),
                             sample_frequency_hz: Vec::with_capacity(max_samples),
-                            mosaic_metadata: trace_free_mfs_mosaic
-                                .then(|| MfsMosaicMetadataAccumulator::with_capacity(max_samples)),
+                            mosaic_metadata: trace_free_mfs_mosaic.then(new_mfs_mosaic_metadata),
                         },
                         SpectralMode::Cube | SpectralMode::Cubedata if trace_enabled => {
                             PreparedState::PairedCube {
@@ -38403,11 +40740,16 @@ impl PreparedSelection {
                         transform,
                         pair,
                         batch: empty_visibility_batch(max_samples),
+                        aw_parallel_hands: config.aw_project.as_ref().map(|_| {
+                            AwParallelHandVisibilityBatch {
+                                first_visibility: Vec::with_capacity(max_samples),
+                                second_visibility: Vec::with_capacity(max_samples),
+                            }
+                        }),
                         density_batch: (trace_free_mfs_mosaic && use_density_batches)
                             .then(|| empty_visibility_batch(max_samples)),
                         sample_frequency_hz: Vec::with_capacity(max_samples),
-                        mosaic_metadata: trace_free_mfs_mosaic
-                            .then(|| MfsMosaicMetadataAccumulator::with_capacity(max_samples)),
+                        mosaic_metadata: trace_free_mfs_mosaic.then(new_mfs_mosaic_metadata),
                     },
                     SpectralMode::Cube | SpectralMode::Cubedata if trace_enabled => {
                         PreparedState::PairedCube {
@@ -38592,6 +40934,15 @@ impl PreparedSelection {
         let collect_detail_timings = standard_mfs_profile_block_detail_enabled();
         let selected_row = &geometry_row.selected_row;
         let row = selected_row.row_index;
+        if let Some(metadata) = self.state.mfs_mosaic_metadata_mut() {
+            metadata.observe_casa_aw_row(
+                selected_row.field_id,
+                geometry_row.antenna1_id,
+                geometry_row.antenna1_pointing.angles_rad,
+                geometry_row.antenna2_id,
+                geometry_row.antenna2_pointing.angles_rad,
+            );
+        }
         let stage_started_at = collect_detail_timings.then(Instant::now);
         if source_block.flag_row_value(flag_row, row_slot, row)? {
             if let Some(started) = stage_started_at {
@@ -38708,7 +41059,7 @@ impl PreparedSelection {
                 mosaic_metadata,
                 ..
             } => {
-                let mut recorded_mosaic_antennas = false;
+                let mut mosaic_pointing_id = None;
                 if let Some(weight) = weights.channel_invariant_weight(*corr_index)? {
                     if weight.is_finite() && weight > 0.0 {
                         for (channel_index, frequency_hz) in self
@@ -38741,16 +41092,14 @@ impl PreparedSelection {
                                 );
                             }
                             if let Some(metadata) = mosaic_metadata {
-                                if !recorded_mosaic_antennas {
-                                    metadata.record_selected_antennas(antenna1_id, antenna2_id);
-                                    metadata.record_pointing_direction(
-                                        selected_row.field_id,
-                                        baseline_pointing_direction_rad,
-                                    );
-                                    recorded_mosaic_antennas = true;
-                                }
+                                let pointing_id = mosaic_pointing_id_for_row(
+                                    metadata,
+                                    &mut mosaic_pointing_id,
+                                    geometry_row,
+                                    baseline_pointing_direction_rad,
+                                );
                                 metadata.push_sample(
-                                    selected_row.field_id,
+                                    pointing_id,
                                     selected_row.spw_id,
                                     imaging_frequency_hz,
                                 );
@@ -38792,16 +41141,14 @@ impl PreparedSelection {
                             );
                         }
                         if let Some(metadata) = mosaic_metadata {
-                            if !recorded_mosaic_antennas {
-                                metadata.record_selected_antennas(antenna1_id, antenna2_id);
-                                metadata.record_pointing_direction(
-                                    selected_row.field_id,
-                                    baseline_pointing_direction_rad,
-                                );
-                                recorded_mosaic_antennas = true;
-                            }
+                            let pointing_id = mosaic_pointing_id_for_row(
+                                metadata,
+                                &mut mosaic_pointing_id,
+                                geometry_row,
+                                baseline_pointing_direction_rad,
+                            );
                             metadata.push_sample(
-                                selected_row.field_id,
+                                pointing_id,
                                 selected_row.spw_id,
                                 imaging_frequency_hz,
                             );
@@ -38813,13 +41160,14 @@ impl PreparedSelection {
                 plane_stokes,
                 pair,
                 batch,
+                aw_parallel_hands,
                 density_batch,
                 sample_frequency_hz,
                 mosaic_metadata,
                 ..
             } => {
                 let sumwt_factor = plane_stokes.paired_sumwt_factor();
-                let mut recorded_mosaic_antennas = false;
+                let mut mosaic_pointing_id = None;
                 if let Some((first_weight, second_weight)) =
                     weights.channel_invariant_pair_weights(pair.0, pair.1)?
                 {
@@ -38850,6 +41198,10 @@ impl PreparedSelection {
                                 batch.sumwt_factor.push(sumwt_factor);
                                 batch.gridable.push(is_cross);
                                 batch.visibility.push(zero_visibility);
+                                if let Some(parallel_hands) = aw_parallel_hands.as_mut() {
+                                    parallel_hands.first_visibility.push(zero_visibility);
+                                    parallel_hands.second_visibility.push(zero_visibility);
+                                }
                                 sample_frequency_hz.push(imaging_frequency_hz);
                                 if let Some(density_batch) = density_batch.as_mut() {
                                     push_mfs_density_sample(
@@ -38862,16 +41214,14 @@ impl PreparedSelection {
                                     );
                                 }
                                 if let Some(metadata) = mosaic_metadata {
-                                    if !recorded_mosaic_antennas {
-                                        metadata.record_selected_antennas(antenna1_id, antenna2_id);
-                                        metadata.record_pointing_direction(
-                                            selected_row.field_id,
-                                            baseline_pointing_direction_rad,
-                                        );
-                                        recorded_mosaic_antennas = true;
-                                    }
+                                    let pointing_id = mosaic_pointing_id_for_row(
+                                        metadata,
+                                        &mut mosaic_pointing_id,
+                                        geometry_row,
+                                        baseline_pointing_direction_rad,
+                                    );
                                     metadata.push_sample(
-                                        selected_row.field_id,
+                                        pointing_id,
                                         selected_row.spw_id,
                                         imaging_frequency_hz,
                                     );
@@ -38915,6 +41265,10 @@ impl PreparedSelection {
                         batch.sumwt_factor.push(sumwt_factor);
                         batch.gridable.push(is_cross);
                         batch.visibility.push(zero_visibility);
+                        if let Some(parallel_hands) = aw_parallel_hands.as_mut() {
+                            parallel_hands.first_visibility.push(zero_visibility);
+                            parallel_hands.second_visibility.push(zero_visibility);
+                        }
                         sample_frequency_hz.push(imaging_frequency_hz);
                         if let Some(density_batch) = density_batch.as_mut() {
                             push_mfs_density_sample(
@@ -38927,16 +41281,14 @@ impl PreparedSelection {
                             );
                         }
                         if let Some(metadata) = mosaic_metadata {
-                            if !recorded_mosaic_antennas {
-                                metadata.record_selected_antennas(antenna1_id, antenna2_id);
-                                metadata.record_pointing_direction(
-                                    selected_row.field_id,
-                                    baseline_pointing_direction_rad,
-                                );
-                                recorded_mosaic_antennas = true;
-                            }
+                            let pointing_id = mosaic_pointing_id_for_row(
+                                metadata,
+                                &mut mosaic_pointing_id,
+                                geometry_row,
+                                baseline_pointing_direction_rad,
+                            );
                             metadata.push_sample(
-                                selected_row.field_id,
+                                pointing_id,
                                 selected_row.spw_id,
                                 imaging_frequency_hz,
                             );
@@ -39033,10 +41385,8 @@ impl PreparedSelection {
                         .and_then(|metadata| metadata.get_mut(output_channel))
                     {
                         metadata.record_selected_antennas(antenna1_id, antenna2_id);
-                        metadata.record_pointing_direction(
-                            selected_row.field_id,
-                            baseline_pointing_direction_rad,
-                        );
+                        let pointing_id =
+                            metadata.intern_pointing_direction(baseline_pointing_direction_rad);
                         let beam_frequency_hz = cached_casa_one_channel_cube_mosaic_pb_frequency_hz(
                             cube_mosaic_pb_frequency_cache,
                             selected_row,
@@ -39048,7 +41398,7 @@ impl PreparedSelection {
                             spw_widths_hz,
                         );
                         metadata.push_sample_with_beam_frequency(
-                            selected_row.field_id,
+                            pointing_id,
                             selected_row.spw_id,
                             output_frequency_hz,
                             beam_frequency_hz,
@@ -39150,10 +41500,8 @@ impl PreparedSelection {
                         .and_then(|metadata| metadata.get_mut(output_channel))
                     {
                         metadata.record_selected_antennas(antenna1_id, antenna2_id);
-                        metadata.record_pointing_direction(
-                            selected_row.field_id,
-                            baseline_pointing_direction_rad,
-                        );
+                        let pointing_id =
+                            metadata.intern_pointing_direction(baseline_pointing_direction_rad);
                         let beam_frequency_hz = cached_casa_one_channel_cube_mosaic_pb_frequency_hz(
                             cube_mosaic_pb_frequency_cache,
                             selected_row,
@@ -39165,7 +41513,7 @@ impl PreparedSelection {
                             spw_widths_hz,
                         );
                         metadata.push_sample_with_beam_frequency(
-                            selected_row.field_id,
+                            pointing_id,
                             selected_row.spw_id,
                             output_frequency_hz,
                             beam_frequency_hz,
@@ -39201,6 +41549,15 @@ impl PreparedSelection {
         timings.rows_seen += 1;
         let selected_row = &geometry_row.selected_row;
         let row = selected_row.row_index;
+        if let Some(metadata) = self.state.mfs_mosaic_metadata_mut() {
+            metadata.observe_casa_aw_row(
+                selected_row.field_id,
+                geometry_row.antenna1_id,
+                geometry_row.antenna1_pointing.angles_rad,
+                geometry_row.antenna2_id,
+                geometry_row.antenna2_pointing.angles_rad,
+            );
+        }
         let collect_detail_timings = standard_mfs_profile_block_detail_enabled();
         let stage_started_at = collect_detail_timings.then(Instant::now);
         if source_block.flag_row_value(flag_row, row_slot, row)? {
@@ -39486,7 +41843,7 @@ impl PreparedSelection {
                 },
                 PreparedTraceState::ExplicitMfs { samples },
             ) => {
-                let mut recorded_mosaic_antennas = false;
+                let mut mosaic_pointing_id = None;
                 for (channel_slot, (channel_index, frequency_hz)) in self
                     .source_channel_indices
                     .iter()
@@ -39528,16 +41885,14 @@ impl PreparedSelection {
                         );
                     }
                     if let Some(metadata) = mosaic_metadata {
-                        if !recorded_mosaic_antennas {
-                            metadata.record_selected_antennas(antenna1_id, antenna2_id);
-                            metadata.record_pointing_direction(
-                                selected_row.field_id,
-                                baseline_pointing_direction_rad,
-                            );
-                            recorded_mosaic_antennas = true;
-                        }
+                        let pointing_id = mosaic_pointing_id_for_row(
+                            metadata,
+                            &mut mosaic_pointing_id,
+                            geometry_row,
+                            baseline_pointing_direction_rad,
+                        );
                         metadata.push_sample(
-                            selected_row.field_id,
+                            pointing_id,
                             selected_row.spw_id,
                             imaging_frequency_hz,
                         );
@@ -39808,10 +42163,8 @@ impl PreparedSelection {
                         .and_then(|metadata| metadata.get_mut(output_channel))
                     {
                         metadata.record_selected_antennas(antenna1_id, antenna2_id);
-                        metadata.record_pointing_direction(
-                            selected_row.field_id,
-                            baseline_pointing_direction_rad,
-                        );
+                        let pointing_id =
+                            metadata.intern_pointing_direction(baseline_pointing_direction_rad);
                         let beam_frequency_hz = cached_casa_one_channel_cube_mosaic_pb_frequency_hz(
                             cube_mosaic_pb_frequency_cache,
                             selected_row,
@@ -39823,7 +42176,7 @@ impl PreparedSelection {
                             spw_widths_hz,
                         );
                         metadata.push_sample_with_beam_frequency(
-                            selected_row.field_id,
+                            pointing_id,
                             selected_row.spw_id,
                             output_frequency_hz,
                             beam_frequency_hz,
@@ -39895,6 +42248,7 @@ impl PreparedSelection {
                     transform: pair_transform,
                     pair,
                     batch,
+                    aw_parallel_hands,
                     density_batch,
                     sample_frequency_hz,
                     mosaic_metadata,
@@ -39902,7 +42256,7 @@ impl PreparedSelection {
                 PreparedTraceState::PairedMfs { .. },
             ) => {
                 let sumwt_factor = plane_stokes.paired_sumwt_factor();
-                let mut recorded_mosaic_antennas = false;
+                let mut mosaic_pointing_id = None;
                 if let Some((first_weight, second_weight)) =
                     weights.channel_invariant_pair_weights(pair.0, pair.1)?
                 {
@@ -39932,11 +42286,18 @@ impl PreparedSelection {
                                 let second_visibility =
                                     data_2d.get_local(pair.1, local_channel, channel_index)?;
                                 let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
-                                let visibility = phase_rotate_visibility(
-                                    pair_transform.collapse(first_visibility, second_visibility),
+                                let first_visibility = phase_rotate_visibility(
+                                    first_visibility,
                                     transform.phase_shift_m,
                                     imaging_frequency_hz,
                                 );
+                                let second_visibility = phase_rotate_visibility(
+                                    second_visibility,
+                                    transform.phase_shift_m,
+                                    imaging_frequency_hz,
+                                );
+                                let visibility =
+                                    pair_transform.collapse(first_visibility, second_visibility);
                                 if !(visibility.re.is_finite() && visibility.im.is_finite()) {
                                     continue;
                                 }
@@ -39948,6 +42309,10 @@ impl PreparedSelection {
                                 batch.sumwt_factor.push(sumwt_factor);
                                 batch.gridable.push(is_cross);
                                 batch.visibility.push(visibility);
+                                if let Some(parallel_hands) = aw_parallel_hands.as_mut() {
+                                    parallel_hands.first_visibility.push(first_visibility);
+                                    parallel_hands.second_visibility.push(second_visibility);
+                                }
                                 sample_frequency_hz.push(imaging_frequency_hz);
                                 if let Some(density_batch) = density_batch.as_mut() {
                                     push_mfs_density_sample(
@@ -39960,16 +42325,14 @@ impl PreparedSelection {
                                     );
                                 }
                                 if let Some(metadata) = mosaic_metadata {
-                                    if !recorded_mosaic_antennas {
-                                        metadata.record_selected_antennas(antenna1_id, antenna2_id);
-                                        metadata.record_pointing_direction(
-                                            selected_row.field_id,
-                                            baseline_pointing_direction_rad,
-                                        );
-                                        recorded_mosaic_antennas = true;
-                                    }
+                                    let pointing_id = mosaic_pointing_id_for_row(
+                                        metadata,
+                                        &mut mosaic_pointing_id,
+                                        geometry_row,
+                                        baseline_pointing_direction_rad,
+                                    );
                                     metadata.push_sample(
-                                        selected_row.field_id,
+                                        pointing_id,
                                         selected_row.spw_id,
                                         imaging_frequency_hz,
                                     );
@@ -40010,11 +42373,18 @@ impl PreparedSelection {
                         if !(combined_weight.is_finite() && combined_weight > 0.0) {
                             continue;
                         }
-                        let visibility = phase_rotate_visibility(
-                            pair_transform.collapse(first_visibility, second_visibility),
+                        let first_visibility = phase_rotate_visibility(
+                            first_visibility,
                             transform.phase_shift_m,
                             imaging_frequency_hz,
                         );
+                        let second_visibility = phase_rotate_visibility(
+                            second_visibility,
+                            transform.phase_shift_m,
+                            imaging_frequency_hz,
+                        );
+                        let visibility =
+                            pair_transform.collapse(first_visibility, second_visibility);
                         if !(visibility.re.is_finite() && visibility.im.is_finite()) {
                             continue;
                         }
@@ -40026,6 +42396,10 @@ impl PreparedSelection {
                         batch.sumwt_factor.push(sumwt_factor);
                         batch.gridable.push(is_cross);
                         batch.visibility.push(visibility);
+                        if let Some(parallel_hands) = aw_parallel_hands.as_mut() {
+                            parallel_hands.first_visibility.push(first_visibility);
+                            parallel_hands.second_visibility.push(second_visibility);
+                        }
                         sample_frequency_hz.push(imaging_frequency_hz);
                         if let Some(density_batch) = density_batch.as_mut() {
                             push_mfs_density_sample(
@@ -40038,16 +42412,14 @@ impl PreparedSelection {
                             );
                         }
                         if let Some(metadata) = mosaic_metadata {
-                            if !recorded_mosaic_antennas {
-                                metadata.record_selected_antennas(antenna1_id, antenna2_id);
-                                metadata.record_pointing_direction(
-                                    selected_row.field_id,
-                                    baseline_pointing_direction_rad,
-                                );
-                                recorded_mosaic_antennas = true;
-                            }
+                            let pointing_id = mosaic_pointing_id_for_row(
+                                metadata,
+                                &mut mosaic_pointing_id,
+                                geometry_row,
+                                baseline_pointing_direction_rad,
+                            );
                             metadata.push_sample(
-                                selected_row.field_id,
+                                pointing_id,
                                 selected_row.spw_id,
                                 imaging_frequency_hz,
                             );
@@ -40381,10 +42753,8 @@ impl PreparedSelection {
                         .and_then(|metadata| metadata.get_mut(output_channel))
                     {
                         metadata.record_selected_antennas(antenna1_id, antenna2_id);
-                        metadata.record_pointing_direction(
-                            selected_row.field_id,
-                            baseline_pointing_direction_rad,
-                        );
+                        let pointing_id =
+                            metadata.intern_pointing_direction(baseline_pointing_direction_rad);
                         let beam_frequency_hz = cached_casa_one_channel_cube_mosaic_pb_frequency_hz(
                             cube_mosaic_pb_frequency_cache,
                             selected_row,
@@ -40396,7 +42766,7 @@ impl PreparedSelection {
                             spw_widths_hz,
                         );
                         metadata.push_sample_with_beam_frequency(
-                            selected_row.field_id,
+                            pointing_id,
                             selected_row.spw_id,
                             output_frequency_hz,
                             beam_frequency_hz,
@@ -41589,17 +43959,15 @@ impl PreparedSelection {
             trace_enabled: _,
         } = self;
         let phase_center_direction_rad = phase_center.angles_rad;
-        let (plane_stokes, batch, density_batch, sample_frequency_hz, mosaic_metadata) = match state
-        {
+        let (
+            plane_stokes,
+            batch,
+            aw_parallel_hands,
+            density_batch,
+            sample_frequency_hz,
+            mosaic_metadata,
+        ) = match state {
             PreparedState::ExplicitMfs {
-                plane_stokes,
-                batch,
-                density_batch,
-                sample_frequency_hz,
-                mosaic_metadata: Some(mosaic_metadata),
-                ..
-            }
-            | PreparedState::CollapsedMfs {
                 plane_stokes,
                 batch,
                 density_batch,
@@ -41609,6 +43977,23 @@ impl PreparedSelection {
             } => (
                 plane_stokes,
                 batch,
+                None,
+                density_batch,
+                sample_frequency_hz,
+                mosaic_metadata,
+            ),
+            PreparedState::CollapsedMfs {
+                plane_stokes,
+                batch,
+                aw_parallel_hands,
+                density_batch,
+                sample_frequency_hz,
+                mosaic_metadata: Some(mosaic_metadata),
+                ..
+            } => (
+                plane_stokes,
+                batch,
+                aw_parallel_hands,
                 density_batch,
                 sample_frequency_hz,
                 mosaic_metadata,
@@ -41645,6 +44030,7 @@ impl PreparedSelection {
             spectral_frequency_edge_range_hz: frequency_metadata.spectral_frequency_edge_range_hz,
             plane_stokes,
             batches: vec![batch],
+            aw_parallel_hand_batches: aw_parallel_hands.into_iter().collect(),
             density_batches: density_batch
                 .map(|batch| chunk_visibility_batch(batch, mosaic_batch_size))
                 .unwrap_or_default(),
@@ -41713,6 +44099,7 @@ impl PreparedSelection {
                         .spectral_frequency_edge_range_hz,
                     plane_stokes,
                     batches: chunk_visibility_batch(batch, max_batch_size),
+                    aw_parallel_hand_batches: Vec::new(),
                     density_batches: Vec::new(),
                     sample_frequency_range_hz: frequency_metadata.sample_frequency_range_hz,
                     sample_frequency_batches_hz: chunk_sample_frequencies_hz(
@@ -41740,6 +44127,7 @@ impl PreparedSelection {
                         .or(Some(selected_frequency_edge_range_hz)),
                     plane_stokes,
                     batches: chunk_visibility_batch(collapsed, max_batch_size),
+                    aw_parallel_hand_batches: Vec::new(),
                     density_batches: Vec::new(),
                     sample_frequency_range_hz: None,
                     sample_frequency_batches_hz: Vec::new(),
@@ -41769,6 +44157,7 @@ impl PreparedSelection {
                         .spectral_frequency_edge_range_hz,
                     plane_stokes,
                     batches: chunk_visibility_batch(batch, max_batch_size),
+                    aw_parallel_hand_batches: Vec::new(),
                     density_batches: Vec::new(),
                     sample_frequency_range_hz: frequency_metadata.sample_frequency_range_hz,
                     sample_frequency_batches_hz: chunk_sample_frequencies_hz(
@@ -42123,6 +44512,7 @@ impl PreparedSelection {
                         spectral_frequency_edge_range_hz,
                         plane_stokes,
                         batches: chunk_visibility_batch(batch, batch_size),
+                        aw_parallel_hand_batches: Vec::new(),
                         density_batches: Vec::new(),
                         sample_frequency_range_hz: Some(selected_frequency_range_hz),
                         sample_frequency_batches_hz: chunk_sample_frequencies_hz_from_samples(
@@ -42173,6 +44563,7 @@ impl PreparedSelection {
                         spectral_frequency_edge_range_hz,
                         plane_stokes,
                         batches: chunk_visibility_batch(collapsed, batch_size),
+                        aw_parallel_hand_batches: Vec::new(),
                         density_batches: Vec::new(),
                         sample_frequency_range_hz: Some(selected_frequency_range_hz),
                         sample_frequency_batches_hz: chunk_sample_frequencies_hz_from_samples(
@@ -42549,7 +44940,7 @@ fn append_single_plane_primary_beam_products(
     };
     let support_mask = Arc::new(support_mask);
     for role in [ImageProductRole::Residual, ImageProductRole::Image] {
-        product_set.set_first_role_shared_mask(role, support_mask.clone());
+        product_set.set_role_shared_mask(role, support_mask.clone());
     }
     if config.write_pb || config.pbcor || config.mosaic_pb_limit < 0.0 {
         product_set.push_owned(
@@ -42655,6 +45046,9 @@ fn append_mtmfs_primary_beam_products<'a>(
         config.pbcor,
     );
     let tt0_support_mask = Arc::new(tt0_pb_outputs.1);
+    for role in [ImageProductRole::Residual, ImageProductRole::Image] {
+        product_set.set_role_shared_mask(role, tt0_support_mask.clone());
+    }
     if config.write_pb || config.pbcor || config.mosaic_pb_limit < 0.0 {
         product_set.push_owned(
             ".pb.tt0",
@@ -42662,18 +45056,6 @@ fn append_mtmfs_primary_beam_products<'a>(
             ImageProductMetadata::new(ImageProductRole::PrimaryBeam, "", ImageBeamSet::default())
                 .with_shared_mask(tt0_support_mask.clone()),
         );
-        for term_index in 1..products.result.image_terms.len() {
-            let zero_pb_term = Array4::<f32>::zeros(image_tt0.dim());
-            product_set.push_owned(
-                format!(".pb.tt{term_index}"),
-                zero_pb_term,
-                ImageProductMetadata::new(
-                    ImageProductRole::PrimaryBeam,
-                    "",
-                    ImageBeamSet::default(),
-                ),
-            );
-        }
     }
     if config.pbcor {
         for (term_index, image_term) in products.result.image_terms.iter().enumerate() {
@@ -43396,14 +45778,38 @@ fn parse_gridder_request(text: &str) -> Result<GridderRequest, String> {
         "standard" | "gridft" | "ft" => Ok(GridderRequest::Standard),
         "mosaic" => Ok(GridderRequest::Mosaic),
         "wproject" => Ok(GridderRequest::WProject),
-        "widefield" => Ok(GridderRequest::AwWidefieldAlias("widefield")),
-        "awproject" => Ok(GridderRequest::AwWidefieldAlias("awproject")),
-        "awp2" => Ok(GridderRequest::AwWidefieldAlias("awp2")),
-        "awphpg" => Ok(GridderRequest::AwWidefieldAlias("awphpg")),
+        "awproject" => Ok(GridderRequest::AwProject),
+        "widefield" | "awp2" | "awphpg" => Err(format!(
+            "gridder={text:?} is not an alias for AWProject; select --gridder awproject with an explicit --cfcache, or use --gridder wproject for W-only projection"
+        )),
         _ => Err(format!(
-            "unsupported --gridder value {text:?}; expected standard, wproject, widefield, mosaic, awproject, awp2, or awphpg"
+            "unsupported --gridder value {text:?}; expected standard, wproject, mosaic, or awproject"
         )),
     }
+}
+
+fn parse_awproject_normalization(text: &str) -> Result<AwProjectNormalization, String> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "flatnoise" | "flat-noise" => Ok(AwProjectNormalization::FlatNoise),
+        "flatsky" | "flat-sky" => Ok(AwProjectNormalization::FlatSky),
+        "pbsquare" | "pb-square" => Ok(AwProjectNormalization::PbSquare),
+        _ => Err(format!(
+            "unsupported --normtype value {text:?}; expected flatnoise, flatsky, or pbsquare"
+        )),
+    }
+}
+
+fn parse_f64_list(text: &str, option: &str) -> Result<Vec<f64>, String> {
+    if text.trim().is_empty() {
+        return Err(format!("{option} requires at least one value"));
+    }
+    text.split(',')
+        .map(str::trim)
+        .map(|item| {
+            item.parse::<f64>()
+                .map_err(|error| format!("parse {option} entry {item:?}: {error}"))
+        })
+        .collect()
 }
 
 fn parse_mask_box(text: &str) -> Result<[usize; 4], String> {
@@ -43999,11 +46405,16 @@ fn build_mfs_mosaic_gridder_mode_without_trace(
     let beam_frequency_elapsed =
         beam_frequency_started.map_or(Duration::ZERO, |started| started.elapsed());
     let chunk_started = profile_detail.then(Instant::now);
+    let pointing_direction_by_id = metadata.effective_pointing_direction_by_id()?;
+    let (sample_pointing_ids, pointing_direction_by_id) = canonicalize_effective_pointing_ids(
+        &metadata.sample_pointing_ids,
+        &pointing_direction_by_id,
+    )?;
     let metadata_batches = if let Some(beam_frequency_hz) = explicit_beam_frequency_hz {
         chunk_mfs_mosaic_metadata_batches_from_explicit_beam_frequencies(
             beam_frequency_hz,
-            &metadata.sample_pointing_ids,
-            &metadata.pointing_direction_by_id,
+            &sample_pointing_ids,
+            &pointing_direction_by_id,
             primary_beam_model,
             max_batch_size,
         )?
@@ -44012,19 +46423,30 @@ fn build_mfs_mosaic_gridder_mode_without_trace(
             sample_frequency_hz,
             &metadata.sample_spw_ids,
             &beam_frequency_by_spw_freq,
-            &metadata.sample_pointing_ids,
-            &metadata.pointing_direction_by_id,
+            &sample_pointing_ids,
+            &pointing_direction_by_id,
             primary_beam_model,
             max_batch_size,
         )?
     };
     let chunk_elapsed = chunk_started.map_or(Duration::ZERO, |started| started.elapsed());
     if standard_mfs_profile_block_detail_enabled() {
+        let casa_aw_sigdev = metadata
+            .casa_aw_pointing_groups
+            .as_ref()
+            .map(|groups| {
+                format!(
+                    "{:.9},{:.9}",
+                    groups.config.grouping_sigdev_arcsec, groups.config.refresh_sigdev_arcsec
+                )
+            })
+            .unwrap_or_else(|| "none".to_string());
         eprintln!(
-            "mosaic_prepare_gridder_mode samples={} selected_antennas={} unique_pointings={} explicit_beam_frequencies={} beam_frequency_lookup_entries={} max_batch_size={} metadata_batches={} primary_beam_ms={:.3} beam_frequency_ms={:.3} metadata_chunk_ms={:.3} total_ms={:.3}",
+            "mosaic_prepare_gridder_mode samples={} selected_antennas={} unique_pointings={} casa_aw_effective_pointingoffsetsigdev_arcsec={} explicit_beam_frequencies={} beam_frequency_lookup_entries={} max_batch_size={} metadata_batches={} primary_beam_ms={:.3} beam_frequency_ms={:.3} metadata_chunk_ms={:.3} total_ms={:.3}",
             sample_frequency_hz.len(),
             metadata.selected_antenna_ids.len(),
-            metadata.pointing_direction_by_id.len(),
+            pointing_direction_by_id.len(),
+            casa_aw_sigdev,
             explicit_beam_frequency_hz.is_some(),
             beam_frequency_by_spw_freq.len(),
             max_batch_size,
@@ -44118,6 +46540,36 @@ fn cube_gridder_modes_without_trace(
 }
 
 type MosaicBeamFrequencyLookup = HashMap<(usize, u64), f64>;
+type CanonicalPointingIds = (Vec<usize>, BTreeMap<usize, [f64; 2]>);
+
+fn canonicalize_effective_pointing_ids(
+    sample_pointing_ids: &[usize],
+    pointing_direction_by_id: &BTreeMap<usize, [f64; 2]>,
+) -> Result<CanonicalPointingIds, String> {
+    let mut canonical_id_by_direction_bits = BTreeMap::<(u64, u64), usize>::new();
+    let mut canonical_direction_by_id = BTreeMap::<usize, [f64; 2]>::new();
+    let mut canonical_sample_ids = Vec::with_capacity(sample_pointing_ids.len());
+    for &pointing_id in sample_pointing_ids {
+        let direction = pointing_direction_by_id
+            .get(&pointing_id)
+            .copied()
+            .ok_or_else(|| {
+                format!("internal error: missing effective pointing direction for id {pointing_id}")
+            })?;
+        let key = (direction[0].to_bits(), direction[1].to_bits());
+        let canonical_id = match canonical_id_by_direction_bits.get(&key).copied() {
+            Some(canonical_id) => canonical_id,
+            None => {
+                let canonical_id = canonical_direction_by_id.len();
+                canonical_id_by_direction_bits.insert(key, canonical_id);
+                canonical_direction_by_id.insert(canonical_id, direction);
+                canonical_id
+            }
+        };
+        canonical_sample_ids.push(canonical_id);
+    }
+    Ok((canonical_sample_ids, canonical_direction_by_id))
+}
 
 fn chunk_mfs_mosaic_metadata_batches_from_explicit_beam_frequencies(
     beam_frequency_hz: &[f64],
@@ -46922,7 +49374,10 @@ fn help_text() -> String {
     "Usage: casars-imager --ms PATH --imagename PREFIX --imsize N --cell-arcsec ARCSEC [options]
 
 Options:
+  --projection SIN          image direction-coordinate projection (other values fail closed)
   --field IDS               restrict to selected FIELD_IDs (CASA selector syntax)
+  --uvrange SELECTOR        restrict baseline length (for example <12km)
+  --intent SELECTOR         restrict STATE observing intent (CASA selector syntax)
   --phasecenter-field ID    FIELD_ID used as the image phase center
   --phasecenter TEXT        explicit CASA-style direction used as the image phase center
   --ddid ID                 restrict to one DATA_DESC_ID
@@ -46937,7 +49392,25 @@ Options:
   --stokes I|Q|U|V          explicit scalar Stokes-plane imaging
   --specmode MODE           mfs, cube, or cubedata
   --weighting MODE          natural, uniform, briggs, or briggsbwtaper
-  --gridder MODE            standard, wproject, widefield, mosaic, awproject, awp2, or awphpg
+  --gridder MODE            standard, wproject, mosaic, or awproject
+  --cfcache PATH            CASA AWProject convolution-function cache (required for awproject)
+  --cf-resident-mb N        bounded resident AW convolution-function cache in MiB
+  --facets N                AWProject facet count (the VLASS slice requires 1)
+  --psfphasecenter TEXT     optional AWProject PSF phase center
+  --vptable PATH            optional AWProject voltage-pattern table
+  --aterm/--no-aterm        enable or disable the AWProject aperture term
+  --psterm/--no-psterm      enable or disable the AWProject prolate-spheroidal term
+  --wbawp/--no-wbawp        enable or disable wideband aperture projection
+  --conjbeams/--no-conjbeams
+                            enable or disable conjugate-beam frequency mapping
+  --computepastep DEGREES   AW convolution-function parallactic-angle step
+  --rotatepastep DEGREES    AW convolution-function rotation step
+  --pointingoffsetsigdev CSV
+                            AW antenna grouping,refresh thresholds in arcsec;
+                            non-pairs use CASA's effective 600,600
+  --mosweight/--no-mosweight
+                            enable or disable mosaic sensitivity weighting
+  --normtype MODE           flatnoise, flatsky, or pbsquare AW normalization
   --perchanweightdensity    cube uniform/briggs density per output channel
   --no-perchanweightdensity use one shared cube density estimate
   --usepointing             use POINTING-table directions instead of FIELD phase centers
@@ -47035,6 +49508,9 @@ mod tests {
     use std::os::unix::ffi::{OsStrExt, OsStringExt};
     use std::path::{Path, PathBuf};
 
+    use casa_coordinates::{
+        CoordinateSystem, LinearCoordinate, SpectralCoordinate, StokesCoordinate, StokesType,
+    };
     use casa_images::PagedImage;
     use casa_imaging::{
         primary_beam_correct_image_product, primary_beam_limited_product,
@@ -47058,6 +49534,118 @@ mod tests {
 
     static IMAGER_PROGRESS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
     static SPECTRAL_SLAB_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    #[test]
+    fn casa_obsinfo_longitude_uses_direct_two_pi_wrap() {
+        assert_eq!(
+            casa_obsinfo_longitude_rad(3.545602179904208),
+            -2.737583127275378
+        );
+        assert_eq!(casa_obsinfo_longitude_rad(0.5), 0.5);
+    }
+
+    #[test]
+    fn field_backed_obsinfo_direction_preserves_raw_j2000_angles() {
+        let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
+        let raw_direction = [-1.049_488_295_839_840_2, 0.708_029_172_097_583_1];
+        add_field_row_with_raw_direction(&mut ms, raw_direction, -1, TEST_TIME_MJD_SEC);
+        let phase_center = PhaseCenter {
+            field_id: Some(0),
+            angles_rad: [raw_direction[0] + std::f64::consts::TAU, raw_direction[1]],
+            reference: DirectionRef::J2000,
+        };
+
+        assert_eq!(
+            phase_center_obsinfo_direction_rad(&ms, &phase_center).unwrap(),
+            raw_direction
+        );
+    }
+
+    #[test]
+    fn field_backed_phase_center_preserves_raw_j2000_angle_bits() {
+        let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
+        let raw_direction = [3.563_967_168_628_84, 0.275_496_026_491_076_2];
+        add_field_row_with_raw_direction(&mut ms, raw_direction, -1, TEST_TIME_MJD_SEC);
+
+        let phase_center = extract_phase_center(&ms, 0).unwrap();
+
+        assert_eq!(phase_center.reference, DirectionRef::J2000);
+        assert_eq!(
+            phase_center.angles_rad.map(f64::to_bits),
+            raw_direction.map(f64::to_bits)
+        );
+    }
+
+    #[test]
+    fn casa_mfs_rest_frequency_uses_matching_source_and_first_selected_spw() {
+        let mut ms = MeasurementSet::create_memory(
+            MeasurementSetBuilder::new().with_optional_subtable(SubtableId::Source),
+        )
+        .unwrap();
+        add_field_row_with_raw_direction(&mut ms, [1.0, 0.5], 7, TEST_TIME_MJD_SEC);
+        add_spectral_window_row(&mut ms, &[2.0e9]);
+        add_spectral_window_row(&mut ms, &[3.0e9]);
+        ms.subtable_mut(SubtableId::Source)
+            .unwrap()
+            .add_column(
+                ColumnSchema::array_variable("REST_FREQUENCY", PrimitiveType::Float64, Some(1)),
+                None,
+            )
+            .unwrap();
+        for (source_id, spw_id, rest_frequency_hz) in
+            [(8, 0, 8.05e9), (7, 1, 7.15e9), (7, 0, 2.05e9)]
+        {
+            ms.subtable_mut(SubtableId::Source)
+                .unwrap()
+                .add_row(RecordValue::new(vec![
+                    RecordField::new("CALIBRATION_GROUP", Value::Scalar(ScalarValue::Int32(0))),
+                    RecordField::new("CODE", Value::Scalar(ScalarValue::String(String::new()))),
+                    RecordField::new(
+                        "DIRECTION",
+                        Value::Array(ArrayValue::Float64(
+                            ArrayD::from_shape_vec(vec![2], vec![1.0, 0.5]).unwrap(),
+                        )),
+                    ),
+                    RecordField::new("INTERVAL", Value::Scalar(ScalarValue::Float64(1.0))),
+                    RecordField::new(
+                        "NAME",
+                        Value::Scalar(ScalarValue::String("source".to_string())),
+                    ),
+                    RecordField::new("NUM_LINES", Value::Scalar(ScalarValue::Int32(1))),
+                    RecordField::new(
+                        "PROPER_MOTION",
+                        Value::Array(ArrayValue::Float64(
+                            ArrayD::from_shape_vec(vec![2], vec![0.0, 0.0]).unwrap(),
+                        )),
+                    ),
+                    RecordField::new(
+                        "REST_FREQUENCY",
+                        Value::Array(ArrayValue::Float64(
+                            ArrayD::from_shape_vec(vec![1], vec![rest_frequency_hz]).unwrap(),
+                        )),
+                    ),
+                    RecordField::new("SOURCE_ID", Value::Scalar(ScalarValue::Int32(source_id))),
+                    RecordField::new(
+                        "SPECTRAL_WINDOW_ID",
+                        Value::Scalar(ScalarValue::Int32(spw_id)),
+                    ),
+                    RecordField::new(
+                        "TIME",
+                        Value::Scalar(ScalarValue::Float64(TEST_TIME_MJD_SEC)),
+                    ),
+                ]))
+                .unwrap();
+        }
+
+        assert_eq!(
+            casa_mfs_source_rest_frequency_hz(&ms, 0, 0).unwrap(),
+            Some(2.05e9)
+        );
+        assert_eq!(
+            casa_mfs_source_rest_frequency_hz(&ms, 0, 1).unwrap(),
+            Some(7.15e9)
+        );
+    }
 
     #[test]
     fn bounded_uv_coverage_accumulator_keeps_measured_limit() {
@@ -50071,7 +52659,13 @@ mod tests {
             &polarization,
         )
         .unwrap();
-        let geometry_columns = PreparedGeometryColumnCache::load(&ms, config.use_pointing).unwrap();
+        let geometry_columns = PreparedGeometryColumnCache::load(
+            &ms,
+            config.use_pointing,
+            &selection.selected_rows,
+            None,
+        )
+        .unwrap();
         let reversed_rows = vec![
             selection.selected_rows[1].clone(),
             selection.selected_rows[0].clone(),
@@ -50265,6 +52859,15 @@ mod tests {
     }
 
     fn assert_f32_images_close(lhs_path: impl AsRef<Path>, rhs_path: impl AsRef<Path>, tol: f32) {
+        assert_f32_images_close_scaled(lhs_path, rhs_path, tol, 0.0);
+    }
+
+    fn assert_f32_images_close_scaled(
+        lhs_path: impl AsRef<Path>,
+        rhs_path: impl AsRef<Path>,
+        absolute_tolerance: f32,
+        relative_tolerance: f32,
+    ) {
         let lhs_image = PagedImage::<f32>::open(lhs_path.as_ref()).unwrap();
         let rhs_image = PagedImage::<f32>::open(rhs_path.as_ref()).unwrap();
         assert_eq!(lhs_image.shape(), rhs_image.shape());
@@ -50293,13 +52896,31 @@ mod tests {
         let rhs = rhs_image
             .get_slice(&vec![0; rhs_image.shape().len()], rhs_image.shape())
             .unwrap();
-        let mut max_abs_diff = 0.0f32;
-        for (lhs, rhs) in lhs.iter().zip(rhs.iter()) {
-            max_abs_diff = max_abs_diff.max((*lhs - *rhs).abs());
+        let mut largest_violation_ratio = 0.0f32;
+        let mut largest_violation_index = 0usize;
+        let mut largest_abs_diff = 0.0f32;
+        let mut largest_limit = absolute_tolerance;
+        for (index, (lhs, rhs)) in lhs.iter().zip(rhs.iter()).enumerate() {
+            let abs_diff = (*lhs - *rhs).abs();
+            let scale = lhs.abs().max(rhs.abs());
+            let limit = absolute_tolerance.max(relative_tolerance * scale);
+            let violation_ratio = if limit == 0.0 {
+                if abs_diff == 0.0 { 0.0 } else { f32::INFINITY }
+            } else {
+                abs_diff / limit
+            };
+            if violation_ratio > largest_violation_ratio {
+                largest_violation_ratio = violation_ratio;
+                largest_violation_index = index;
+                largest_abs_diff = abs_diff;
+                largest_limit = limit;
+            }
         }
         assert!(
-            max_abs_diff <= tol,
-            "image products differ: max_abs_diff={max_abs_diff} tol={tol} lhs={} rhs={}",
+            largest_violation_ratio <= 1.0,
+            "image products differ: abs_diff={largest_abs_diff} index={largest_violation_index} lhs_value={} rhs_value={} limit={largest_limit} abs_tol={absolute_tolerance} rel_tol={relative_tolerance} lhs={} rhs={}",
+            lhs.iter().nth(largest_violation_index).unwrap(),
+            rhs.iter().nth(largest_violation_index).unwrap(),
             lhs_path.as_ref().display(),
             rhs_path.as_ref().display()
         );
@@ -50347,6 +52968,49 @@ mod tests {
         let metal = plan_standard_mfs_runtime(&config, false, 1, None);
         assert_eq!(metal.metal_minor_cycle_chunk.as_deref(), Some("auto"));
         assert_eq!(metal.metal_grouped_input_cache, None);
+    }
+
+    #[test]
+    fn awproject_dirty_auto_selects_the_measured_metal_grid_path_when_available() {
+        let mut config = awproject_mtmfs_planner_config(
+            PathBuf::from("/tmp/awproject-auto-policy-cache"),
+            32 * 1024,
+        );
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Auto;
+        config.standard_mfs_grid_threads = None;
+        config.dirty_only = true;
+        config.niter = 0;
+
+        let eligible = can_plan_mosaic_mfs_acceleration(&config, 1);
+        assert!(eligible);
+        assert_eq!(
+            standard_mfs_auto_metal_decision(&config, eligible, true, false, false, true, true),
+            (true, "selected_awproject")
+        );
+
+        let runtime =
+            plan_standard_mfs_runtime_with_metal_device(&config, false, 1, None, true, true);
+        assert_eq!(
+            runtime.initial_dirty_backend.as_deref(),
+            Some("metal-row-run-grouped")
+        );
+        assert_eq!(
+            runtime.residual_backend.as_deref(),
+            Some("metal-row-run-grouped")
+        );
+
+        let unavailable =
+            plan_standard_mfs_runtime_with_metal_device(&config, false, 1, None, true, false);
+        assert_eq!(unavailable.initial_dirty_backend, None);
+        assert_eq!(unavailable.residual_backend, None);
+        assert_eq!(
+            standard_mfs_auto_metal_decision(&config, eligible, true, false, false, true, false),
+            (false, "metal_device_unavailable")
+        );
+        assert_eq!(
+            standard_mfs_auto_metal_decision(&config, eligible, true, false, false, false, true),
+            (false, "requires_macos")
+        );
     }
 
     #[test]
@@ -51168,6 +53832,22 @@ mod tests {
             false,
             1
         ));
+
+        let mut pointing_mtmfs = config.clone();
+        pointing_mtmfs.use_pointing = true;
+        assert!(can_run_mosaic_mtmfs_from_single_plane_stream(
+            &pointing_mtmfs,
+            false,
+            1
+        ));
+
+        let mut pointing_single_term = pointing_mtmfs;
+        pointing_single_term.deconvolver = Deconvolver::Multiscale;
+        assert!(can_run_mfs_mosaic_from_single_plane_stream(
+            &pointing_single_term,
+            false,
+            1
+        ));
     }
 
     #[test]
@@ -51690,6 +54370,768 @@ mod tests {
         let target = imaging_process_memory_ledger(&config);
 
         assert_eq!(target.target_bytes, 789 * 1024 * 1024);
+        assert_eq!(target.source, "cli-imaging");
+    }
+
+    const VLASS_FROZEN_MS_NAME: &str =
+        "VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms";
+    const VLASS_REAL_CACHE_LADDER_PRODUCTS: [&str; 18] = [
+        ".alpha",
+        ".alpha.error",
+        ".image.tt0",
+        ".image.tt1",
+        ".model.tt0",
+        ".model.tt1",
+        ".pb.tt0",
+        ".psf.tt0",
+        ".psf.tt1",
+        ".psf.tt2",
+        ".residual.tt0",
+        ".residual.tt1",
+        ".sumwt.tt0",
+        ".sumwt.tt1",
+        ".sumwt.tt2",
+        ".weight.tt0",
+        ".weight.tt1",
+        ".weight.tt2",
+    ];
+
+    fn vlass_field_1525_real_cache_config(
+        ms: &Path,
+        cf_cache: &Path,
+        imagename: &Path,
+        imsize: usize,
+        spw: &str,
+    ) -> CliConfig {
+        CliConfig::parse([
+            OsString::from("--ms"),
+            ms.as_os_str().to_owned(),
+            OsString::from("--imagename"),
+            imagename.as_os_str().to_owned(),
+            OsString::from("--imsize"),
+            OsString::from(imsize.to_string()),
+            OsString::from("--cell-arcsec"),
+            OsString::from("0.6"),
+            OsString::from("--field"),
+            OsString::from("1525"),
+            OsString::from("--phasecenter-field"),
+            OsString::from("1525"),
+            OsString::from("--spw"),
+            OsString::from(spw),
+            OsString::from("--channel-start"),
+            OsString::from("0"),
+            OsString::from("--channel-count"),
+            OsString::from("64"),
+            OsString::from("--specmode"),
+            OsString::from("mfs"),
+            OsString::from("--gridder"),
+            OsString::from("awproject"),
+            OsString::from("--projection"),
+            OsString::from("SIN"),
+            OsString::from("--datacolumn"),
+            OsString::from("data"),
+            OsString::from("--stokes"),
+            OsString::from("I"),
+            OsString::from("--uvrange"),
+            OsString::from("<12km"),
+            OsString::from("--intent"),
+            OsString::from("OBSERVE_TARGET#UNSPECIFIED"),
+            OsString::from("--usepointing"),
+            OsString::from("--weighting"),
+            OsString::from("briggs"),
+            OsString::from("--robust"),
+            OsString::from("1.0"),
+            OsString::from("--perchanweightdensity"),
+            OsString::from("--deconvolver"),
+            OsString::from("mtmfs"),
+            OsString::from("--standard-mfs-acceleration"),
+            OsString::from("cpu"),
+            OsString::from("--standard-mfs-grid-threads"),
+            OsString::from("1"),
+            OsString::from("--no-parallel"),
+            OsString::from("--imaging-fft-precision"),
+            OsString::from("f64"),
+            OsString::from("--imaging-fft-backend"),
+            OsString::from("rustfft"),
+            OsString::from("--hogbom-iteration-mode"),
+            OsString::from("strict"),
+            OsString::from("--nterms"),
+            OsString::from("2"),
+            OsString::from("--scales"),
+            OsString::from("0,5,12"),
+            OsString::from("--smallscalebias"),
+            OsString::from("0.0"),
+            OsString::from("--niter"),
+            OsString::from("0"),
+            OsString::from("--gain"),
+            OsString::from("0.1"),
+            OsString::from("--threshold-jy"),
+            OsString::from("0.0"),
+            OsString::from("--nsigma"),
+            OsString::from("5.0"),
+            OsString::from("--psfcutoff"),
+            OsString::from("0.35"),
+            OsString::from("--pblimit"),
+            OsString::from("0.0001"),
+            OsString::from("--write-pb"),
+            OsString::from("--minor-cycle-length"),
+            OsString::from("2000"),
+            OsString::from("--cyclefactor"),
+            OsString::from("3.0"),
+            OsString::from("--minpsffraction"),
+            OsString::from("0.05"),
+            OsString::from("--maxpsffraction"),
+            OsString::from("0.8"),
+            OsString::from("--wterm"),
+            OsString::from("wproject"),
+            OsString::from("--wprojplanes"),
+            OsString::from("32"),
+            OsString::from("--cfcache"),
+            cf_cache.as_os_str().to_owned(),
+            OsString::from("--cf-resident-mb"),
+            OsString::from("256"),
+            OsString::from("--facets"),
+            OsString::from("1"),
+            OsString::from("--aterm"),
+            OsString::from("--no-psterm"),
+            OsString::from("--wbawp"),
+            OsString::from("--conjbeams"),
+            OsString::from("--computepastep"),
+            OsString::from("360.0"),
+            OsString::from("--rotatepastep"),
+            OsString::from("360.0"),
+            OsString::from("--pointingoffsetsigdev"),
+            OsString::from("0.0"),
+            OsString::from("--no-mosweight"),
+            OsString::from("--normtype"),
+            OsString::from("flatnoise"),
+            OsString::from("--restoringbeam"),
+            OsString::from("common"),
+            OsString::from("--usemask"),
+            OsString::from("user"),
+            OsString::from("--savemodel"),
+            OsString::from("none"),
+            OsString::from("--dirty-only"),
+            OsString::from("--no-preview-pngs"),
+        ])
+        .expect("parse frozen VLASS real-cache ladder configuration")
+    }
+
+    #[test]
+    fn vlass_real_cache_ladder_configs_preserve_the_frozen_recipe_surface() {
+        let ms = Path::new("/vlass/data").join(VLASS_FROZEN_MS_NAME);
+        let cf_cache = Path::new("/vlass/cache/single-field");
+        let imagename = Path::new("/vlass/output/rust");
+
+        for (spw, expected_spw_count) in [("2", 1), ("2~3", 2), ("2~17", 16)] {
+            let config = vlass_field_1525_real_cache_config(&ms, cf_cache, imagename, 64, spw);
+            let awproject = config.aw_project.as_ref().expect("AWProject controls");
+
+            assert_eq!(config.ms, ms);
+            assert_eq!(config.imagename, imagename);
+            assert_eq!(config.imsize, 64);
+            assert_eq!(config.cell_arcsec, 0.6);
+            assert_eq!(config.field_ids, Some(vec![1525]));
+            assert_eq!(config.phasecenter_field, Some(1525));
+            assert_eq!(selected_spw_ids(&config).unwrap().len(), expected_spw_count);
+            assert_eq!(config.channel_start, Some(0));
+            assert_eq!(config.channel_count, Some(64));
+            assert_eq!(config.datacolumn.as_deref(), Some("data"));
+            assert_eq!(config.correlation.as_deref(), Some("I"));
+            assert_eq!(config.spectral_mode, SpectralMode::Mfs);
+            assert_eq!(config.uvrange.as_deref(), Some("<12km"));
+            assert_eq!(config.intent.as_deref(), Some("OBSERVE_TARGET#UNSPECIFIED"));
+            assert_eq!(config.weighting, WeightingMode::Briggs { robust: 1.0 });
+            assert!(config.per_channel_weight_density);
+            assert_eq!(config.deconvolver, Deconvolver::Mtmfs);
+            assert_eq!(config.nterms, 2);
+            assert_eq!(config.multiscale_scales, vec![0.0, 5.0, 12.0]);
+            assert_eq!(config.small_scale_bias, 0.0);
+            assert_eq!(config.niter, 0);
+            assert!(config.dirty_only);
+            assert_eq!(config.gain, 0.1);
+            assert_eq!(config.threshold_jy, 0.0);
+            assert_eq!(config.nsigma, 5.0);
+            assert_eq!(config.psf_cutoff, 0.35);
+            assert_eq!(config.mosaic_pb_limit, 0.0001);
+            assert!(!config.pbcor);
+            assert!(config.write_pb);
+            assert_eq!(config.minor_cycle_length, 2000);
+            assert_eq!(config.cyclefactor, 3.0);
+            assert_eq!(config.min_psf_fraction, 0.05);
+            assert_eq!(config.max_psf_fraction, 0.8);
+            assert_eq!(config.hogbom_iteration_mode, HogbomIterationMode::Strict);
+            assert_eq!(config.use_mask, CleanMaskMode::User);
+            assert_eq!(config.save_model, SaveModelMode::None);
+            assert_eq!(config.restoring_beam_mode, RestoringBeamMode::Common);
+            assert!(config.use_pointing);
+            assert_eq!(config.w_term_mode, WTermMode::WProject);
+            assert_eq!(config.w_project_planes, Some(32));
+            assert_eq!(
+                config.standard_mfs_acceleration,
+                StandardMfsAccelerationPolicy::Cpu
+            );
+            assert_eq!(config.standard_mfs_grid_threads.as_deref(), Some("1"));
+            assert_eq!(config.imaging_prepare_workers, Some(1));
+            assert_eq!(config.imaging_read_ahead_blocks, Some(1));
+            assert_eq!(config.imaging_fft_precision, ImagingFftPrecisionPolicy::F64);
+            assert_eq!(config.imaging_fft_backend, ImagingFftBackendPolicy::RustFft);
+            assert_eq!(config.standard_mfs_metal_grouped_input_cache, Some(false));
+            assert!(!config.write_preview_pngs);
+            assert_eq!(awproject.cf_cache, cf_cache);
+            assert_eq!(awproject.cf_resident_bytes, 256 * 1024 * 1024);
+            assert_eq!(awproject.facets, 1);
+            assert_eq!(awproject.w_plane_count, Some(32));
+            assert_eq!(awproject.psf_phase_center_direction_rad, None);
+            assert_eq!(awproject.vp_table, None);
+            assert!(awproject.a_term);
+            assert!(!awproject.ps_term);
+            assert!(awproject.wb_awp);
+            assert!(awproject.conjugate_beams);
+            assert_eq!(awproject.compute_pa_step_deg, 360.0);
+            assert_eq!(awproject.rotate_pa_step_deg, 360.0);
+            assert_eq!(awproject.pointing_offset_sigdev, vec![0.0]);
+            assert!(awproject.use_pointing);
+            assert!(!awproject.mosaic_weighting);
+            assert_eq!(awproject.normalization, AwProjectNormalization::FlatNoise);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the staged frozen VLASS MeasurementSet"]
+    fn vlass_single_field_mfs_coordinate_metadata_matches_frozen_casa() {
+        let data_root = env::var_os("CASA_RS_VLASS_DATA_ROOT")
+            .map(PathBuf::from)
+            .expect("set CASA_RS_VLASS_DATA_ROOT to the staged frozen VLASS data root");
+        let ms_path = data_root.join(VLASS_FROZEN_MS_NAME);
+        let config = vlass_field_1525_real_cache_config(
+            &ms_path,
+            Path::new("/unused/cf-cache"),
+            Path::new("/unused/output"),
+            12_150,
+            "2~17",
+        );
+        let ms = MeasurementSet::open(&ms_path).expect("open frozen VLASS MeasurementSet");
+        let data_description = ms.data_description().expect("open frozen DATA_DESCRIPTION");
+        let ddid_info = data_description_index(&data_description).expect("index frozen DDIDs");
+        let spectral_window = ms.spectral_window().expect("open frozen SPECTRAL_WINDOW");
+        let polarization = ms.polarization().expect("open frozen POLARIZATION");
+        let selection =
+            select_main_rows(&ms, &config, &ddid_info).expect("select frozen VLASS field 1525");
+        let engine = MsCalEngine::new(&ms).expect("build frozen measures engine");
+        let plans = prepare_mfs_ddid_plans(
+            &config,
+            &selection,
+            selection.selected_rows.clone(),
+            &ddid_info,
+            &spectral_window,
+            &polarization,
+            Some(&engine),
+        )
+        .expect("derive frozen per-DDID metadata");
+        let merged = merge_mfs_output_frequency_metadata(
+            plans.iter().map(|plan| &plan.output_frequency_metadata),
+        )
+        .expect("merge frozen SPW metadata");
+
+        assert_eq!(merged.reffreq_hz, 2_987_890_056.546_800_6);
+        assert_eq!(
+            merged
+                .spectral_frequency_edge_range_hz
+                .map(spectral_delta_from_range),
+            Some(Some(2_047_924_643.945_432_2))
+        );
+    }
+
+    #[test]
+    #[ignore = "requires the staged frozen VLASS MeasurementSet"]
+    fn vlass_single_field_pointing_group_matches_frozen_casa() {
+        let data_root = env::var_os("CASA_RS_VLASS_DATA_ROOT")
+            .map(PathBuf::from)
+            .expect("set CASA_RS_VLASS_DATA_ROOT to the staged frozen VLASS data root");
+        let ms_path = data_root.join(VLASS_FROZEN_MS_NAME);
+        let config = vlass_field_1525_real_cache_config(
+            &ms_path,
+            Path::new("/unused/cf-cache"),
+            Path::new("/unused/output"),
+            12_150,
+            "2~17",
+        );
+        let trace =
+            build_prepare_geometry_trace_from_config(&config).expect("prepare frozen geometry");
+        let casa_phase_center: [f64; 2] = [-2.737_583_127_275_378_6, 0.293_215_314_333_100_33];
+        assert!(
+            (trace.phase_center.angles_rad[0].rem_euclid(std::f64::consts::TAU)
+                - casa_phase_center[0].rem_euclid(std::f64::consts::TAU))
+            .abs()
+                < 1.0e-12
+                && (trace.phase_center.angles_rad[1] - casa_phase_center[1]).abs() < 1.0e-12,
+            "phase center was {:?}, expected CASA {casa_phase_center:?}",
+            trace.phase_center.angles_rad
+        );
+        let expected_pointing_rows = [
+            353_626, 353_646, 353_629, 353_645, 353_627, 353_640, 353_641, 353_631, 353_633,
+            353_635, 353_628, 353_651, 353_630, 353_632, 353_638, 353_624, 353_637, 353_644,
+            353_643, 353_636, 353_639, 353_642, 353_647, 353_648, 353_634, 353_649,
+        ];
+        let mut pointing_row_by_antenna = BTreeMap::new();
+        let mut pointing_direction_by_antenna = BTreeMap::new();
+        let grouping = CasaAwPointingGroupConfig {
+            geometry: ImageGeometry {
+                image_shape: [12_150, 12_150],
+                cell_size_rad: [0.6_f64.to_radians() / 3600.0, 0.6_f64.to_radians() / 3600.0],
+            },
+            phase_center_direction_rad: trace.phase_center.angles_rad,
+            grouping_sigdev_arcsec: 600.0,
+            refresh_sigdev_arcsec: 600.0,
+        };
+        let mut metadata =
+            MfsMosaicMetadataAccumulator::with_casa_aw_pointing_groups(trace.rows.len(), grouping);
+        let mut first_pointing_id = None;
+        for row in &trace.rows {
+            pointing_row_by_antenna
+                .entry(row.antenna1_id)
+                .or_insert(row.antenna1_pointing_row);
+            pointing_row_by_antenna
+                .entry(row.antenna2_id)
+                .or_insert(row.antenna2_pointing_row);
+            pointing_direction_by_antenna
+                .entry(row.antenna1_id)
+                .or_insert(row.antenna1_pointing_direction_rad);
+            pointing_direction_by_antenna
+                .entry(row.antenna2_id)
+                .or_insert(row.antenna2_pointing_direction_rad);
+            let pointing_id = metadata
+                .intern_casa_aw_baseline_pointing(
+                    row.input_field_id,
+                    row.antenna1_id,
+                    row.antenna1_pointing_direction_rad,
+                    row.antenna2_id,
+                    row.antenna2_pointing_direction_rad,
+                )
+                .expect("intern frozen baseline pointing");
+            first_pointing_id.get_or_insert(pointing_id);
+        }
+
+        assert_eq!(trace.rows.len(), 10_400);
+        assert_eq!(
+            pointing_row_by_antenna
+                .into_values()
+                .map(|row| row.expect("concrete POINTING row"))
+                .collect::<Vec<_>>(),
+            expected_pointing_rows,
+        );
+        let casa_antenna0_direction: [f64; 2] = [-2.737_271_799_597_558, 0.293_214_430_441_607_2];
+        let antenna0_direction = pointing_direction_by_antenna[&0];
+        assert!(
+            (antenna0_direction[0].rem_euclid(std::f64::consts::TAU)
+                - casa_antenna0_direction[0].rem_euclid(std::f64::consts::TAU))
+            .abs()
+                < 5.0e-11
+                && (antenna0_direction[1] - casa_antenna0_direction[1]).abs() < 5.0e-11,
+            "antenna 0 J2000 direction was {antenna0_direction:?}, expected CASA {casa_antenna0_direction:?}"
+        );
+        let effective = metadata
+            .effective_pointing_direction_by_id()
+            .expect("derive CASA pointing group");
+        let effective_direction = effective[&first_pointing_id.expect("first pointing id")];
+        let casa_effective_direction: [f64; 2] = [-2.737_313_475_002_641, 0.293_214_991_795_931_7];
+        assert!(
+            (effective_direction[0].rem_euclid(std::f64::consts::TAU)
+                - casa_effective_direction[0].rem_euclid(std::f64::consts::TAU))
+            .abs()
+                < 1.0e-12
+                && (effective_direction[1] - casa_effective_direction[1]).abs() < 1.0e-12,
+            "effective J2000 direction was {effective_direction:?}, expected CASA {casa_effective_direction:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires the staged frozen VLASS MeasurementSet and 23 GiB CASA single-field CF cache"]
+    fn vlass_field_1525_real_cache_rejects_32_then_passes_64_for_1_2_16_spws() {
+        let data_root = env::var_os("CASA_RS_VLASS_DATA_ROOT")
+            .map(PathBuf::from)
+            .expect("set CASA_RS_VLASS_DATA_ROOT to the staged frozen VLASS data root");
+        let cf_cache = env::var_os("CASA_RS_VLASS_SINGLE_FIELD_CF_CACHE")
+            .map(PathBuf::from)
+            .expect(
+                "set CASA_RS_VLASS_SINGLE_FIELD_CF_CACHE to the frozen CASA 6.7.5.9 single-field cache",
+            );
+        let ms = data_root.join(VLASS_FROZEN_MS_NAME);
+        assert!(
+            ms.is_dir(),
+            "frozen VLASS MeasurementSet missing: {}",
+            ms.display()
+        );
+        assert!(
+            cf_cache.is_dir(),
+            "frozen single-field CF cache missing: {}",
+            cf_cache.display()
+        );
+        let temp = tempdir().expect("VLASS real-cache ladder output");
+
+        let grid32 = vlass_field_1525_real_cache_config(
+            &ms,
+            &cf_cache,
+            &temp.path().join("grid32-spw2"),
+            32,
+            "2",
+        );
+        let grid32_error =
+            run_from_config(&grid32).expect_err("32-pixel real-cache probe must reject");
+        assert!(
+            grid32_error.contains("cannot place even the cache's smallest paired support"),
+            "unexpected 32-pixel rejection: {grid32_error}"
+        );
+
+        for (label, spw, expected_frequency_count) in [
+            ("grid64-spw2", "2", 16),
+            ("grid64-spw2-3", "2~3", 16),
+            ("grid64-spw2-17", "2~17", 16),
+        ] {
+            let imagename = temp.path().join(label);
+            let config = vlass_field_1525_real_cache_config(&ms, &cf_cache, &imagename, 64, spw);
+            let summary = run_from_config(&config)
+                .unwrap_or_else(|error| panic!("{label} real-cache execution failed: {error}"));
+            let diagnostics = summary
+                .awproject
+                .as_ref()
+                .unwrap_or_else(|| panic!("{label} omitted AWProject diagnostics"));
+
+            assert_eq!(diagnostics.plan_key.image_shape, [64, 64]);
+            assert_eq!(diagnostics.plan_key.w_plane_count, 32);
+            assert_eq!(diagnostics.plan_key.cache.paired_cells, 1024);
+            assert_eq!(
+                diagnostics.plan_key.cache.frequency_hz_bits.len(),
+                expected_frequency_count
+            );
+            assert_eq!(diagnostics.plan_key.cache.mueller_elements, vec![0, 15]);
+            assert!(diagnostics.samples.attempted_samples > 0);
+            assert!(diagnostics.samples.accepted_samples > 0);
+            assert_eq!(diagnostics.samples.rejected_invalid_input, 0);
+            assert_eq!(diagnostics.samples.rejected_kernel_index, 0);
+            assert_eq!(diagnostics.samples.rejected_invalid_normalization, 0);
+            assert!(diagnostics.resident.resident_bytes <= diagnostics.resident_budget_bytes);
+            let mut actual_products = fs::read_dir(temp.path())
+                .expect("read VLASS ladder output directory")
+                .map(|entry| entry.expect("read VLASS ladder output entry"))
+                .filter(|entry| entry.path().is_dir())
+                .filter_map(|entry| {
+                    entry
+                        .file_name()
+                        .to_str()
+                        .and_then(|name| name.strip_prefix(label))
+                        .map(str::to_owned)
+                })
+                .collect::<Vec<_>>();
+            actual_products.sort();
+            let mut expected_products = VLASS_REAL_CACHE_LADDER_PRODUCTS
+                .iter()
+                .map(|suffix| (*suffix).to_owned())
+                .collect::<Vec<_>>();
+            expected_products.sort();
+            assert_eq!(
+                actual_products, expected_products,
+                "{label} product inventory differs from the frozen 18-product contract"
+            );
+        }
+    }
+
+    fn make_awproject_planner_cache(root: &Path, paired_cells: usize) {
+        fs::create_dir(root).unwrap();
+        for index in 0..paired_cells {
+            fs::create_dir(root.join(format!("CFS_0_0_CF_{index}_0_0.im"))).unwrap();
+            fs::create_dir(root.join(format!("WTCFS_0_0_CF_{index}_0_0.im"))).unwrap();
+        }
+    }
+
+    fn awproject_mtmfs_planner_config(cf_cache: PathBuf, memory_target_mb: usize) -> CliConfig {
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imsize = 128;
+        config.cell_arcsec = 0.6;
+        config.field_ids = Some(vec![0, 1]);
+        config.phasecenter_field = Some(0);
+        config.use_pointing = true;
+        config.deconvolver = Deconvolver::Mtmfs;
+        config.nterms = 2;
+        config.niter = 2;
+        config.weighting = WeightingMode::Briggs { robust: 0.0 };
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Cpu;
+        config.standard_mfs_grid_threads = Some("1".to_string());
+        config.imaging_memory_target_mb = Some(memory_target_mb);
+        config.imaging_fft_precision = ImagingFftPrecisionPolicy::F64;
+        config.imaging_fft_backend = ImagingFftBackendPolicy::RustFft;
+        config.write_preview_pngs = false;
+        let mut controls = AwProjectControls::casa_defaults(cf_cache);
+        controls.use_pointing = true;
+        config.aw_project = Some(controls);
+        config
+    }
+
+    #[test]
+    fn awproject_mtmfs_memory_plan_accounts_for_exact_grid_and_external_indexes() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("planner-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
+
+        let plan = standard_mfs_memory_plan(&config, 64, 1024);
+
+        assert_eq!(plan.workload.grid_width, config.imsize);
+        assert_eq!(plan.workload.grid_height, config.imsize);
+        assert_eq!(plan.workload.grid_planes, 8);
+        assert_eq!(plan.workload.worker_scratch_bytes, 0);
+        let resident_grid_bytes = config.imsize
+            * config.imsize
+            * plan.workload.grid_planes
+            * std::mem::size_of::<Complex64>();
+        let routed_sample_bytes = 64 * 1024 * std::mem::size_of::<StandardMfsRoutedGridSample>();
+        assert_eq!(
+            plan.workload.direct_metal_scratch_candidate_bytes,
+            resident_grid_bytes * 2
+                + config.aw_project.as_ref().unwrap().cf_resident_bytes
+                + routed_sample_bytes,
+            "AWProject Metal scratch must charge output/compensation, fixed limbs, packed CFs, and routed samples",
+        );
+        assert_eq!(
+            plan.allocation_bytes("AWProject CF pixels"),
+            config.aw_project.as_ref().unwrap().cf_resident_bytes
+        );
+        assert!(plan.allocation_bytes("AWProject CF index") > 0);
+        assert!(plan.allocation_bytes("POINTING index") > 0);
+        assert_eq!(
+            plan.allocation_bytes("AWProject safety margin"),
+            plan.usable_memory_bytes / 20
+        );
+        assert!(plan.allocation_bytes("AWProject MT-MFS run state") > 0);
+        assert!(plan.allocation_bytes("AWProject MT-MFS bounded multiscale scratch") > 0);
+        assert!(plan.allocation_bytes("AWProject MT-MFS finish state") > 0);
+        assert!(plan.allocation_bytes("AWProject MT-MFS product state") > 0);
+        assert!(plan.allocation_bytes("product writer scratch") > 0);
+        assert_eq!(
+            plan.allocation_bytes("FFT chunks"),
+            config.imsize * config.imsize * std::mem::size_of::<f32>()
+        );
+        assert!(plan.maximum_planned_resident_bytes <= plan.usable_memory_bytes);
+        assert!(plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_fft_residency" && decision.value == "in-place-rustfft-f64"
+        }));
+        assert!(plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_cf_locality_index_bytes_per_row"
+                && decision.value == (64 * std::mem::size_of::<usize>()).to_string()
+        }));
+        assert!(plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_parallel_plan_bytes_per_row"
+                && decision.value == (64 * 256).to_string()
+        }));
+
+        config.niter = 0;
+        config.dirty_only = true;
+        let dirty_plan = standard_mfs_memory_plan(&config, 64, 1024);
+        assert_eq!(
+            dirty_plan.allocation_bytes("AWProject MT-MFS bounded multiscale scratch"),
+            0
+        );
+        assert!(dirty_plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_multiscale_minor_cycle_peak_bytes"
+                && decision.reason.contains("dirty-only")
+        }));
+    }
+
+    #[test]
+    fn awproject_normalizes_redundant_wproject_without_becoming_w_only() {
+        let mut config = awproject_mtmfs_planner_config(
+            PathBuf::from("/tmp/awproject-normalization-cache"),
+            4096,
+        );
+        config.w_term_mode = WTermMode::WProject;
+
+        let normalized = normalize_awproject_core_projection(&config).unwrap();
+
+        assert!(normalized.aw_project.is_some());
+        assert_eq!(normalized.w_term_mode, WTermMode::None);
+        assert!(can_run_mosaic_mtmfs_from_single_plane_stream(
+            normalized.as_ref(),
+            false,
+            1,
+        ));
+
+        config.w_term_mode = WTermMode::Direct;
+        assert!(
+            normalize_awproject_core_projection(&config)
+                .unwrap_err()
+                .contains("cannot be combined")
+        );
+
+        config.w_term_mode = WTermMode::None;
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::MultiCpu;
+        config.standard_mfs_grid_threads = Some("4".to_string());
+        config.imaging_prepare_workers = None;
+        config.imaging_read_ahead_blocks = None;
+        let normalized = normalize_awproject_core_projection(&config).unwrap();
+        assert_eq!(normalized.imaging_prepare_workers, Some(1));
+        assert_eq!(normalized.imaging_read_ahead_blocks, Some(1));
+        assert_eq!(standard_mfs_grid_worker_count(&normalized), 4);
+
+        config.imaging_prepare_workers = Some(2);
+        config.imaging_read_ahead_blocks = Some(3);
+        let explicit = normalize_awproject_core_projection(&config).unwrap();
+        assert_eq!(explicit.imaging_prepare_workers, Some(2));
+        assert_eq!(explicit.imaging_read_ahead_blocks, Some(3));
+    }
+
+    #[test]
+    fn awproject_in_place_fft_admission_matches_host_dirty_fft_resolution() {
+        let mut config =
+            awproject_mtmfs_planner_config(PathBuf::from("/tmp/awproject-fft-cache"), 4096);
+
+        assert!(awproject_mtmfs_in_place_fft_eligible(&config));
+
+        config.imaging_fft_precision = ImagingFftPrecisionPolicy::Auto;
+        assert!(
+            awproject_mtmfs_in_place_fft_eligible(&config),
+            "host auto precision with RustFFT uses the bounded in-place path"
+        );
+
+        config.imaging_fft_precision = ImagingFftPrecisionPolicy::F32;
+        assert!(awproject_mtmfs_in_place_fft_eligible(&config));
+
+        config.imaging_fft_precision = ImagingFftPrecisionPolicy::Auto;
+        config.imaging_fft_backend = ImagingFftBackendPolicy::MetalMpsGraph;
+        assert!(!awproject_mtmfs_in_place_fft_eligible(&config));
+
+        config.imaging_fft_precision = ImagingFftPrecisionPolicy::F64;
+        config.imaging_fft_backend = ImagingFftBackendPolicy::RustFft;
+        config.imsize += 1;
+        assert!(!awproject_mtmfs_in_place_fft_eligible(&config));
+    }
+
+    #[test]
+    fn vlass_awproject_full_geometry_admits_32_gib_and_rejects_24_and_16_gib() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("planner-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 1024);
+        let active_rows = 3_086_232;
+        let pointing_table_rows = active_rows;
+
+        let mut full = awproject_mtmfs_planner_config(cf_cache.clone(), 32 * 1024);
+        full.imsize = 12_150;
+        full.imaging_fft_precision = ImagingFftPrecisionPolicy::Auto;
+        let visibility_shape =
+            prepared_single_plane_visibility_source_shape(&full, active_rows, 64);
+        let plan = standard_mfs_memory_plan_with_visibility_shape_and_pointing_rows(
+            &full,
+            64,
+            64,
+            active_rows,
+            visibility_shape.clone(),
+            pointing_table_rows,
+        )
+        .expect("32 GiB must admit the serial full-geometry AWProject plan");
+
+        assert_eq!(plan.workload.grid_width, 12_150);
+        assert_eq!(plan.workload.grid_planes, 8);
+        assert_eq!(plan.workers, 1);
+        assert_eq!(plan.workload.worker_scratch_bytes, 0);
+        assert!(plan.ingest.source_row_block_rows > 0);
+        assert!(plan.maximum_planned_resident_bytes <= 32 * 1024 * 1024 * 1024);
+        assert_eq!(
+            plan.allocation_bytes("AWProject CF index"),
+            1024 * (std::mem::size_of::<AwConvolutionFunctionEntryMetadata>()
+                + AWPROJECT_CF_INDEX_HEAP_AND_TREE_ALLOWANCE_BYTES_PER_PAIR)
+        );
+        eprintln!(
+            "vlass_awproject_memory_fixture target_gib=32 decision=admit grid_side={} grid_planes={} grid_bytes={} fft_scratch_bytes={} run_state_bytes={} multiscale_scratch_bytes={} cf_pixel_bytes={} cf_index_bytes={} pointing_index_bytes={} safety_margin_bytes={} source_row_block_rows={} planned_peak_bytes={}",
+            plan.workload.grid_width,
+            plan.workload.grid_planes,
+            plan.allocation_bytes("grids"),
+            plan.allocation_bytes("FFT chunks"),
+            plan.allocation_bytes("AWProject MT-MFS run state"),
+            plan.allocation_bytes("AWProject MT-MFS bounded multiscale scratch"),
+            plan.allocation_bytes("AWProject CF pixels"),
+            plan.allocation_bytes("AWProject CF index"),
+            plan.allocation_bytes("POINTING index"),
+            plan.allocation_bytes("AWProject safety margin"),
+            plan.ingest.source_row_block_rows,
+            plan.maximum_planned_resident_bytes,
+        );
+
+        full.imaging_memory_target_mb = Some(24 * 1024);
+        let error_24 = standard_mfs_memory_plan_with_visibility_shape_and_pointing_rows(
+            &full,
+            64,
+            64,
+            active_rows,
+            visibility_shape.clone(),
+            pointing_table_rows,
+        )
+        .unwrap_err();
+        assert!(
+            error_24.contains("needs")
+                && error_24.contains("bytes")
+                && error_24.contains("assigned"),
+            "{error_24}"
+        );
+        eprintln!("vlass_awproject_memory_fixture target_gib=24 decision=reject reason={error_24}");
+
+        full.imaging_memory_target_mb = Some(16 * 1024);
+        let error = standard_mfs_memory_plan_with_visibility_shape_and_pointing_rows(
+            &full,
+            64,
+            64,
+            active_rows,
+            visibility_shape,
+            pointing_table_rows,
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("needs") && error.contains("bytes") && error.contains("assigned"),
+            "{error}"
+        );
+        eprintln!("vlass_awproject_memory_fixture target_gib=16 decision=reject reason={error}");
+
+        let mut turnaround = full;
+        turnaround.imsize = 4096;
+        let turnaround_rows = 250_000;
+        let turnaround_shape =
+            prepared_single_plane_visibility_source_shape(&turnaround, turnaround_rows, 64);
+        let turnaround_plan = standard_mfs_memory_plan_with_visibility_shape_and_pointing_rows(
+            &turnaround,
+            64,
+            64,
+            turnaround_rows,
+            turnaround_shape,
+            turnaround_rows,
+        )
+        .expect("16 GiB must retain a mode-faithful AWProject turnaround plan");
+        assert_eq!(turnaround_plan.workload.grid_planes, 8);
+        assert_eq!(turnaround_plan.workers, 1);
+        assert!(turnaround_plan.maximum_planned_resident_bytes <= 16 * 1024 * 1024 * 1024);
+        eprintln!(
+            "vlass_awproject_memory_fixture target_gib=16 decision=admit_turnaround grid_side={} active_rows={} source_row_block_rows={} planned_peak_bytes={}",
+            turnaround_plan.workload.grid_width,
+            turnaround_rows,
+            turnaround_plan.ingest.source_row_block_rows,
+            turnaround_plan.maximum_planned_resident_bytes,
+        );
+    }
+
+    #[test]
+    fn explicit_imaging_memory_target_can_exceed_kernel_available_memory() {
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imaging_memory_target_mb = Some(32 * 1024);
+
+        let target = imaging_process_memory_ledger_from_snapshot(
+            &config,
+            Some(32 * 1024 * 1024 * 1024),
+            Some(15 * 1024 * 1024 * 1024),
+            256 * 1024 * 1024,
+        );
+
+        assert_eq!(target.target_bytes, 32 * 1024 * 1024 * 1024);
+        assert_eq!(target.available_memory_bytes, Some(15 * 1024 * 1024 * 1024));
         assert_eq!(target.source, "cli-imaging");
     }
 
@@ -52803,6 +56245,229 @@ mod tests {
         );
     }
 
+    #[test]
+    fn mfs_mosaic_metadata_preserves_distinct_baseline_pointing_directions() {
+        let mut metadata = MfsMosaicMetadataAccumulator::with_capacity(4);
+        let first_direction = [1.0, 0.5];
+        let second_direction = [1.0 + 1.0e-9, 0.5 - 2.0e-9];
+
+        let first_id = metadata.intern_pointing_direction(first_direction);
+        let second_id = metadata.intern_pointing_direction(second_direction);
+        let repeated_first_id = metadata.intern_pointing_direction(first_direction);
+        metadata.push_sample(first_id, 7, 101.0);
+        metadata.push_sample(second_id, 7, 102.0);
+
+        assert_ne!(first_id, second_id);
+        assert_eq!(repeated_first_id, first_id);
+        assert_eq!(metadata.sample_pointing_ids, vec![first_id, second_id]);
+        assert_eq!(metadata.pointing_direction_by_id.len(), 2);
+        assert_eq!(
+            metadata.pointing_direction_by_id[&first_id],
+            first_direction
+        );
+        assert_eq!(
+            metadata.pointing_direction_by_id[&second_id],
+            second_direction
+        );
+    }
+
+    #[test]
+    fn casa_aw_default_sigdev_collapses_antennas_to_the_pixel_mean_group() {
+        let cell_size_rad = 0.6 * std::f64::consts::PI / (180.0 * 3600.0);
+        let config = CasaAwPointingGroupConfig {
+            geometry: ImageGeometry {
+                image_shape: [128, 128],
+                cell_size_rad: [cell_size_rad, cell_size_rad],
+            },
+            phase_center_direction_rad: [1.0, 0.5],
+            grouping_sigdev_arcsec: 600.0,
+            refresh_sigdev_arcsec: 600.0,
+        };
+        let coordinate = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            config.phase_center_direction_rad,
+            [-cell_size_rad, cell_size_rad],
+            [64.0, 64.0],
+        );
+        let direction_at = |pixel: [f64; 2]| {
+            let direction = coordinate.to_world(&pixel).unwrap();
+            [direction[0], direction[1]]
+        };
+        let mut metadata = MfsMosaicMetadataAccumulator::with_casa_aw_pointing_groups(4, config);
+        let first_id = metadata
+            .intern_casa_aw_baseline_pointing(
+                1525,
+                0,
+                direction_at([60.0, 60.0]),
+                1,
+                direction_at([61.0, 60.0]),
+            )
+            .unwrap();
+        let second_id = metadata
+            .intern_casa_aw_baseline_pointing(
+                1525,
+                2,
+                direction_at([62.0, 61.0]),
+                3,
+                direction_at([63.0, 61.0]),
+            )
+            .unwrap();
+
+        let effective = metadata.effective_pointing_direction_by_id().unwrap();
+        assert_ne!(first_id, second_id);
+        assert_eq!(effective[&first_id], effective[&second_id]);
+        let (canonical_sample_ids, canonical_directions) =
+            canonicalize_effective_pointing_ids(&[first_id, second_id], &effective).unwrap();
+        assert_eq!(canonical_sample_ids, vec![0, 0]);
+        assert_eq!(canonical_directions.len(), 1);
+        let effective_pixel = coordinate.to_pixel(&effective[&first_id]).unwrap();
+        assert!(
+            (effective_pixel[0] - 61.5).abs() < 1.0e-5,
+            "effective pixel was {effective_pixel:?}"
+        );
+        assert!(
+            (effective_pixel[1] - 60.5).abs() < 1.0e-5,
+            "effective pixel was {effective_pixel:?}"
+        );
+    }
+
+    #[test]
+    fn casa_aw_group_mean_includes_rows_without_usable_visibility_samples() {
+        let cell_size_rad = 0.6 * std::f64::consts::PI / (180.0 * 3600.0);
+        let config = CasaAwPointingGroupConfig {
+            geometry: ImageGeometry {
+                image_shape: [128, 128],
+                cell_size_rad: [cell_size_rad, cell_size_rad],
+            },
+            phase_center_direction_rad: [1.0, 0.5],
+            grouping_sigdev_arcsec: 600.0,
+            refresh_sigdev_arcsec: 600.0,
+        };
+        let coordinate = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            config.phase_center_direction_rad,
+            [-cell_size_rad, cell_size_rad],
+            [64.0, 64.0],
+        );
+        let direction_at = |pixel: [f64; 2]| {
+            let direction = coordinate.to_world(&pixel).unwrap();
+            [direction[0], direction[1]]
+        };
+        let mut metadata = MfsMosaicMetadataAccumulator::with_casa_aw_pointing_groups(4, config);
+        let baseline_id = metadata
+            .intern_casa_aw_baseline_pointing(
+                1525,
+                0,
+                direction_at([60.0, 60.0]),
+                1,
+                direction_at([61.0, 60.0]),
+            )
+            .unwrap();
+
+        // CASA forms antenna groups from the complete VisBuffer before
+        // per-row/per-channel flag and weight rejection. These antennas do
+        // not produce a sample, but they still move the single-group mean.
+        metadata.observe_casa_aw_row(
+            1525,
+            2,
+            direction_at([68.0, 64.0]),
+            3,
+            direction_at([69.0, 64.0]),
+        );
+
+        let effective = metadata.effective_pointing_direction_by_id().unwrap();
+        let effective_pixel = coordinate.to_pixel(&effective[&baseline_id]).unwrap();
+        assert!(
+            (effective_pixel[0] - 64.5).abs() < 1.0e-5,
+            "effective pixel was {effective_pixel:?}"
+        );
+        assert!(
+            (effective_pixel[1] - 62.0).abs() < 1.0e-5,
+            "effective pixel was {effective_pixel:?}"
+        );
+    }
+
+    #[test]
+    fn casa_aw_group_mean_preserves_casa_float32_accumulation() {
+        let cell_size_rad = 0.6 * std::f64::consts::PI / (180.0 * 3600.0);
+        let config = CasaAwPointingGroupConfig {
+            geometry: ImageGeometry {
+                image_shape: [12_150, 12_150],
+                cell_size_rad: [cell_size_rad, cell_size_rad],
+            },
+            phase_center_direction_rad: [1.0, 0.5],
+            grouping_sigdev_arcsec: 600.0,
+            refresh_sigdev_arcsec: 600.0,
+        };
+        let coordinate = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            config.phase_center_direction_rad,
+            [-cell_size_rad, cell_size_rad],
+            [6075.0, 6075.0],
+        );
+        let antenna_pixels = (0..26)
+            .map(|antenna| {
+                [
+                    6_075.123_456_789 + antenna as f64 * 0.017_123_45,
+                    6_075.987_654_321 - antenna as f64 * 0.011_234_56,
+                ]
+            })
+            .collect::<Vec<_>>();
+        let direction_at = |pixel: [f64; 2]| {
+            let direction = coordinate.to_world(&pixel).unwrap();
+            [direction[0], direction[1]]
+        };
+        let mut metadata = MfsMosaicMetadataAccumulator::with_casa_aw_pointing_groups(4, config);
+        let baseline_id = metadata
+            .intern_casa_aw_baseline_pointing(
+                1525,
+                0,
+                direction_at(antenna_pixels[0]),
+                1,
+                direction_at(antenna_pixels[1]),
+            )
+            .unwrap();
+        for antenna in (2..26).step_by(2) {
+            metadata.observe_casa_aw_row(
+                1525,
+                antenna,
+                direction_at(antenna_pixels[antenna as usize]),
+                antenna + 1,
+                direction_at(antenna_pixels[antenna as usize + 1]),
+            );
+        }
+
+        let expected = [0, 1].map(|axis| {
+            let casa_sum = antenna_pixels
+                .iter()
+                .fold(0.0_f32, |sum, pixel| sum + pixel[axis] as f32);
+            (casa_sum / antenna_pixels.len() as f32) as f64
+        });
+        let f64_mean = [0, 1].map(|axis| {
+            antenna_pixels.iter().map(|pixel| pixel[axis]).sum::<f64>()
+                / antenna_pixels.len() as f64
+        });
+        assert!(
+            (expected[0] - f64_mean[0]).abs() > 1.0e-4
+                || (expected[1] - f64_mean[1]).abs() > 1.0e-4,
+            "fixture must distinguish CASA float32 accumulation from an f64 mean"
+        );
+
+        let effective = metadata.effective_pointing_direction_by_id().unwrap();
+        let effective_pixel = coordinate.to_pixel(&effective[&baseline_id]).unwrap();
+        assert!(
+            (effective_pixel[0] - expected[0]).abs() < 1.0e-5,
+            "effective pixel was {effective_pixel:?}, expected {expected:?}"
+        );
+        assert!(
+            (effective_pixel[1] - expected[1]).abs() < 1.0e-5,
+            "effective pixel was {effective_pixel:?}, expected {expected:?}"
+        );
+    }
+
     fn test_phase_center() -> PhaseCenter {
         PhaseCenter {
             field_id: Some(0),
@@ -53020,6 +56685,7 @@ mod tests {
             spectral_frequency_edge_range_hz: Some([113.9e9, 115.1e9]),
             plane_stokes: PlaneStokes::I,
             batches: vec![test_visibility_batch(10.0)],
+            aw_parallel_hand_batches: Vec::new(),
             density_batches: Vec::new(),
             sample_frequency_range_hz: Some([114.5e9, 114.5e9]),
             sample_frequency_batches_hz: vec![vec![114.5e9]],
@@ -53033,6 +56699,7 @@ mod tests {
             spectral_frequency_edge_range_hz: Some([114.9e9, 116.1e9]),
             plane_stokes: PlaneStokes::I,
             batches: vec![test_visibility_batch(20.0)],
+            aw_parallel_hand_batches: Vec::new(),
             density_batches: Vec::new(),
             sample_frequency_range_hz: Some([115.5e9, 115.5e9]),
             sample_frequency_batches_hz: vec![vec![115.5e9]],
@@ -53938,6 +57605,8 @@ mod tests {
             imsize: 100,
             cell_arcsec: 8.0,
             field_ids: Some(vec![0]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: Some(0),
             phasecenter: None,
             ddid: None,
@@ -53993,6 +57662,7 @@ mod tests {
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -54023,6 +57693,8 @@ mod tests {
             imsize: 100,
             cell_arcsec: 10.0,
             field_ids: Some(vec![0]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: Some(0),
             phasecenter: None,
             ddid: None,
@@ -54068,6 +57740,7 @@ mod tests {
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -54106,6 +57779,8 @@ mod tests {
             imsize: 100,
             cell_arcsec: 8.0,
             field_ids: Some(vec![0]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: Some(0),
             phasecenter: None,
             ddid: None,
@@ -54159,6 +57834,7 @@ mod tests {
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -54189,6 +57865,8 @@ mod tests {
             imsize: 100,
             cell_arcsec: 8.0,
             field_ids: Some(vec![0]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: Some(0),
             phasecenter: None,
             ddid: None,
@@ -54242,6 +57920,7 @@ mod tests {
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -54272,6 +57951,8 @@ mod tests {
             imsize: 100,
             cell_arcsec: 8.0,
             field_ids: Some(vec![0]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: Some(0),
             phasecenter: None,
             ddid: None,
@@ -54328,6 +58009,7 @@ mod tests {
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -54358,6 +58040,8 @@ mod tests {
             imsize: 100,
             cell_arcsec: 8.0,
             field_ids: Some(vec![0]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: Some(0),
             phasecenter: None,
             ddid: None,
@@ -54411,6 +58095,7 @@ mod tests {
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -54441,6 +58126,8 @@ mod tests {
             imsize: 100,
             cell_arcsec: 8.0,
             field_ids: Some(vec![0]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: Some(0),
             phasecenter: None,
             ddid: None,
@@ -54486,6 +58173,7 @@ mod tests {
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -55130,8 +58818,15 @@ mod tests {
                 Array4::from_elem((1, 1, 1, 1), 0.0),
                 Array4::from_elem((1, 1, 1, 1), 0.0),
             ],
+            weight_terms: vec![
+                Array4::from_elem((2, 2, 1, 1), 1.0),
+                Array4::zeros((2, 2, 1, 1)),
+                Array4::zeros((2, 2, 1, 1)),
+            ],
             alpha: Some(zeros.clone()),
             alpha_error: None,
+            alpha_mask: None,
+            awproject: None,
             beam: None,
             diagnostics: ImagingDiagnostics {
                 warnings: Vec::new(),
@@ -55173,14 +58868,14 @@ mod tests {
                 image_units: "Jy/beam".to_string(),
             },
         };
-        let run_products = RunProducts::Mtmfs(MtmfsRunProducts {
+        let run_products = RunProducts::Mtmfs(Box::new(MtmfsRunProducts {
             result,
             primary_beam_weight_samples: Vec::new(),
             mosaic_weight: Some(single_plane_image_product(
                 &Array2::from_shape_vec((2, 2), vec![4.0, 1.0, 0.04, 0.0]).unwrap(),
             )),
             spectral_delta_hz: None,
-        });
+        }));
         let coords = build_image_coordinate_system(
             2,
             [1.0, 0.5],
@@ -55202,10 +58897,28 @@ mod tests {
             .map(|product| product.suffix().to_string())
             .collect::<Vec<_>>();
         assert!(suffixes.contains(&".pb.tt0".to_string()));
-        assert!(suffixes.contains(&".pb.tt1".to_string()));
+        assert!(!suffixes.contains(&".pb.tt1".to_string()));
+        assert!(suffixes.contains(&".weight.tt0".to_string()));
+        assert!(suffixes.contains(&".weight.tt1".to_string()));
+        assert!(suffixes.contains(&".weight.tt2".to_string()));
         assert!(suffixes.contains(&".image.tt0.pbcor".to_string()));
         assert!(suffixes.contains(&".image.tt1.pbcor".to_string()));
         assert!(!suffixes.contains(&".alpha.pbcor".to_string()));
+        for product in product_set.products().iter().filter(|product| {
+            product.suffix().starts_with(".residual.tt")
+                || product.suffix().starts_with(".image.tt")
+        }) {
+            let mask = product
+                .metadata()
+                .mask_array()
+                .expect("MT-MFS restored products carry the PB support mask");
+            assert_eq!(
+                mask.iter().copied().collect::<Vec<_>>(),
+                vec![true, true, false, false],
+                "{} mask",
+                product.suffix()
+            );
+        }
         let pbcor_tt1 = product_set
             .products()
             .iter()
@@ -55481,18 +59194,16 @@ mod tests {
             extend_frequency_range_hz(
                 &mut expected_edge_range_hz,
                 [
-                    convert_frequency_to_frame(
+                    casa_mfs_convert_frequency_to_frame(
                         FrequencyRef::TOPO,
-                        FrequencyRef::LSRK,
                         source_edge_range_hz[0],
                         row.time_mjd_seconds.unwrap(),
                         row.field_id,
                         &engine,
                     )
                     .unwrap(),
-                    convert_frequency_to_frame(
+                    casa_mfs_convert_frequency_to_frame(
                         FrequencyRef::TOPO,
-                        FrequencyRef::LSRK,
                         source_edge_range_hz[1],
                         row.time_mjd_seconds.unwrap(),
                         row.field_id,
@@ -56020,7 +59731,7 @@ mod tests {
     }
 
     #[test]
-    fn cli_uses_casa_cube_per_channel_density_default_with_explicit_override() {
+    fn cli_matches_casa_cube_density_defaults_and_mfs_task_override() {
         let cube = CliConfig::parse([
             OsString::from("--ms"),
             OsString::from("demo.ms"),
@@ -56069,6 +59780,48 @@ mod tests {
         .unwrap();
         assert!(!cubedata.per_channel_weight_density);
         assert!(!effective_per_channel_weight_density(&cubedata));
+
+        let mfs = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("demo.ms"),
+            OsString::from("--imagename"),
+            OsString::from("out/mfs"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.5"),
+            OsString::from("--specmode"),
+            OsString::from("mfs"),
+            OsString::from("--weighting"),
+            OsString::from("briggs"),
+            OsString::from("--perchanweightdensity"),
+        ])
+        .unwrap();
+        assert!(mfs.per_channel_weight_density);
+        assert_eq!(
+            standard_mfs_streaming_weight_density_mode(&mfs),
+            WeightDensityMode::Combined
+        );
+
+        let mfs_default = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("demo.ms"),
+            OsString::from("--imagename"),
+            OsString::from("out/mfs-default"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.5"),
+            OsString::from("--specmode"),
+            OsString::from("mfs"),
+            OsString::from("--weighting"),
+            OsString::from("briggs"),
+        ])
+        .unwrap();
+        assert_eq!(
+            standard_mfs_streaming_weight_density_mode(&mfs_default),
+            WeightDensityMode::Combined
+        );
     }
 
     #[test]
@@ -56237,8 +59990,10 @@ mod tests {
         );
         assert_eq!(
             parse_gridder_request("awproject").unwrap(),
-            GridderRequest::AwWidefieldAlias("awproject")
+            GridderRequest::AwProject
         );
+        assert!(parse_gridder_request("widefield").is_err());
+        assert!(parse_gridder_request("awp2").is_err());
 
         assert_eq!(parse_mask_box("1,2,3,4").unwrap(), [1, 2, 3, 4]);
         assert!(parse_mask_box("1,2,3").is_err());
@@ -56917,6 +60672,8 @@ deconvolver=mtmfs
             imsize: 4,
             cell_arcsec: 1.0,
             field_ids: None,
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -56962,6 +60719,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: false,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -57455,6 +61213,9 @@ deconvolver=mtmfs
         assert_eq!(phase_center.reference, DirectionRef::J2000);
         assert!((phase_center.angles_rad[0] - 1.0).abs() < 1e-9);
         assert!((phase_center.angles_rad[1] - 0.5).abs() < 1e-9);
+        let obsinfo_direction = phase_center_obsinfo_direction_rad(&ms, &phase_center).unwrap();
+        assert!((obsinfo_direction[0] - 1.0).abs() < 1e-9);
+        assert!((obsinfo_direction[1] - 0.5).abs() < 1e-9);
     }
 
     #[test]
@@ -57492,6 +61253,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: Some(vec![0, 1]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -57537,6 +61300,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -57612,6 +61376,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: Some(vec![0, 1]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -57657,6 +61423,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -57728,6 +61495,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: Some(vec![0, 1]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: Some(0),
             phasecenter: None,
             ddid: None,
@@ -57773,6 +61542,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -57896,6 +61666,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: Some(vec![0, 1]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: Some(0),
             phasecenter: None,
             ddid: None,
@@ -57941,6 +61713,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: true,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -58044,6 +61817,8 @@ deconvolver=mtmfs
             imsize: 64,
             cell_arcsec: 800.0,
             field_ids: None,
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -58089,6 +61864,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::WProject,
             force_standard_gridder: false,
             w_project_planes: Some(6),
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -58145,6 +61921,8 @@ deconvolver=mtmfs
             imsize: 256,
             cell_arcsec: 80.0,
             field_ids: Some(vec![0]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: Some(0),
             phasecenter: None,
             ddid: None,
@@ -58190,6 +61968,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::WProject,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -58278,6 +62057,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: Some(vec![0, 1]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: Some(0),
             phasecenter: None,
             ddid: None,
@@ -58323,6 +62104,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -58406,6 +62188,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: Some(vec![0]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: Some(0),
             phasecenter: None,
             ddid: None,
@@ -58451,6 +62235,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -58516,6 +62301,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: Some(vec![0]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: Some(0),
             phasecenter: None,
             ddid: None,
@@ -58561,6 +62348,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -58603,48 +62391,375 @@ deconvolver=mtmfs
             antenna_id: 0,
             time_mjd_seconds: TEST_TIME_MJD_SEC,
             interval_seconds: 5.0,
-            angles_rad: [1.2, 0.4],
+            source_ref: DirectionRef::J2000,
+            raw_angles_rad: [1.2, 0.4],
         };
         let second = PointingDirectionRow {
             row_index: 1,
             antenna_id: 0,
             time_mjd_seconds: TEST_TIME_MJD_SEC + 30.0,
             interval_seconds: 5.0,
-            angles_rad: [1.25, 0.45],
+            source_ref: DirectionRef::J2000,
+            raw_angles_rad: [1.25, 0.45],
         };
         let other_antenna = PointingDirectionRow {
             row_index: 2,
             antenna_id: 1,
             time_mjd_seconds: TEST_TIME_MJD_SEC,
             interval_seconds: 5.0,
-            angles_rad: [1.3, 0.5],
+            source_ref: DirectionRef::J2000,
+            raw_angles_rad: [1.3, 0.5],
         };
         let resolver = PointingDirectionResolver {
             by_antenna: BTreeMap::from([(0, vec![first, second]), (1, vec![other_antenna])]),
             by_row_index: HashMap::from([(0, first), (1, second), (2, other_antenna)]),
+            j2000_by_row_main_time: Mutex::new(HashMap::new()),
+            table_row_count: 3,
+            retained_row_count: 3,
         };
 
         let fallback_angles = [0.9, 0.1];
-        let explicit = resolver.resolve(Some(0), 0, TEST_TIME_MJD_SEC + 100.0, fallback_angles);
+        let explicit = resolver
+            .resolve(Some(0), 0, TEST_TIME_MJD_SEC + 100.0, fallback_angles, None)
+            .unwrap();
         assert_eq!(explicit.source_row_index, Some(0));
         assert!(!explicit.used_fallback);
         assert_eq!(explicit.angles_rad, [1.2, 0.4]);
 
-        let nearest = resolver.resolve(None, 0, TEST_TIME_MJD_SEC + 31.0, fallback_angles);
+        let nearest = resolver
+            .resolve(None, 0, TEST_TIME_MJD_SEC + 31.0, fallback_angles, None)
+            .unwrap();
         assert_eq!(nearest.source_row_index, Some(1));
         assert!(!nearest.used_fallback);
         assert_eq!(nearest.angles_rad, [1.25, 0.45]);
 
-        let no_matching_window =
-            resolver.resolve(Some(2), 0, TEST_TIME_MJD_SEC + 500.0, fallback_angles);
+        let no_matching_window = resolver
+            .resolve(Some(2), 0, TEST_TIME_MJD_SEC + 500.0, fallback_angles, None)
+            .unwrap();
         assert_eq!(no_matching_window.source_row_index, None);
         assert!(no_matching_window.used_fallback);
         assert_eq!(no_matching_window.angles_rad, fallback_angles);
 
-        let missing_antenna = resolver.resolve(None, 9, TEST_TIME_MJD_SEC, fallback_angles);
+        let missing_antenna = resolver
+            .resolve(None, 9, TEST_TIME_MJD_SEC, fallback_angles, None)
+            .unwrap();
         assert_eq!(missing_antenna.source_row_index, None);
         assert!(missing_antenna.used_fallback);
         assert_eq!(missing_antenna.angles_rad, fallback_angles);
+    }
+
+    #[test]
+    fn pointing_direction_resolver_retains_only_selected_time_and_antenna_window() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("pointing_window.ms");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_vla_antenna_pair(&mut ms);
+        add_field_row(&mut ms);
+        add_spectral_window_row(&mut ms, &[1.4e9]);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        add_main_row_with_field_and_antennas_channels(
+            &mut ms,
+            0,
+            0,
+            1,
+            [30.0, -15.0, 5.0],
+            &[Complex32::new(1.0, 0.5), Complex32::new(0.0, 0.0)],
+        );
+        for (antenna_id, direction) in [(0, [1.2, 0.4]), (1, [1.3, 0.45])] {
+            add_pointing_row(
+                &mut ms,
+                antenna_id,
+                direction,
+                TEST_TIME_MJD_SEC - 100.0,
+                5.0,
+            );
+            add_pointing_row(&mut ms, antenna_id, direction, TEST_TIME_MJD_SEC, 5.0);
+            add_pointing_row(
+                &mut ms,
+                antenna_id,
+                direction,
+                TEST_TIME_MJD_SEC + 100.0,
+                5.0,
+            );
+        }
+        add_pointing_row(&mut ms, 9, [1.8, 0.2], TEST_TIME_MJD_SEC, 5.0);
+        ms.save().unwrap();
+
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            ms_path.into_os_string(),
+            OsString::from("--imagename"),
+            OsString::from("unused"),
+            OsString::from("--imsize"),
+            OsString::from("32"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("20.0"),
+            OsString::from("--spw"),
+            OsString::from("0"),
+            OsString::from("--phasecenter-field"),
+            OsString::from("0"),
+            OsString::from("--usepointing"),
+        ])
+        .unwrap();
+        let data_description = ms.data_description().unwrap();
+        let ddid_info = data_description_index(&data_description).unwrap();
+        let selection = select_main_rows(&ms, &config, &ddid_info).unwrap();
+        let resolver = PointingDirectionResolver::new(&ms, &selection.selected_rows, None)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(resolver.table_row_count, 7);
+        assert_eq!(resolver.retained_row_count, 2);
+        assert_eq!(
+            resolver.by_antenna.keys().copied().collect::<Vec<_>>(),
+            [0, 1]
+        );
+        assert_eq!(
+            resolver
+                .by_row_index
+                .keys()
+                .copied()
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([1, 4])
+        );
+    }
+
+    #[test]
+    fn pointing_direction_resolver_converts_azelgeo_directions_to_j2000() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("pointing_azelgeo.ms");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_vla_antenna_pair(&mut ms);
+        add_field_row(&mut ms);
+        add_observation_row(&mut ms);
+        add_spectral_window_row(&mut ms, &[1.4e9]);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        add_main_row_with_field_and_antennas_channels(
+            &mut ms,
+            0,
+            0,
+            1,
+            [30.0, -15.0, 5.0],
+            &[Complex32::new(1.0, 0.5), Complex32::new(0.0, 0.0)],
+        );
+        let raw_azelgeo = [1.2, 0.7];
+        let pointing_row_time_mjd_sec = TEST_TIME_MJD_SEC + 5.0;
+        add_pointing_row(&mut ms, 0, raw_azelgeo, pointing_row_time_mjd_sec, -1.0);
+        add_pointing_row(&mut ms, 1, raw_azelgeo, pointing_row_time_mjd_sec, -1.0);
+        TableMeasDesc::new_fixed("DIRECTION", MeasureType::Direction, "AZELGEO")
+            .write(ms.subtable_mut(SubtableId::Pointing).unwrap())
+            .unwrap();
+        ms.save().unwrap();
+
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            ms_path.into_os_string(),
+            OsString::from("--imagename"),
+            OsString::from("unused"),
+            OsString::from("--imsize"),
+            OsString::from("32"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("20.0"),
+            OsString::from("--spw"),
+            OsString::from("0"),
+            OsString::from("--phasecenter-field"),
+            OsString::from("0"),
+            OsString::from("--usepointing"),
+        ])
+        .unwrap();
+        let data_description = ms.data_description().unwrap();
+        let ddid_info = data_description_index(&data_description).unwrap();
+        let selection = select_main_rows(&ms, &config, &ddid_info).unwrap();
+        let engine = MsCalEngine::new(&ms).unwrap();
+        let resolver = PointingDirectionResolver::new(&ms, &selection.selected_rows, Some(&engine))
+            .unwrap()
+            .unwrap();
+
+        let raw_direction =
+            MDirection::from_angles(raw_azelgeo[0], raw_azelgeo[1], DirectionRef::AZELGEO);
+        let frame = engine
+            .spectral_frame_observatory_direction(TEST_TIME_MJD_SEC, raw_direction.clone())
+            .unwrap();
+        let expected = raw_direction
+            .convert_to(DirectionRef::J2000, &frame)
+            .unwrap();
+        let expected_angles = expected.as_angles();
+        let pointing_row_frame = engine
+            .spectral_frame_observatory_direction(pointing_row_time_mjd_sec, raw_direction.clone())
+            .unwrap();
+        let wrong_pointing_row_epoch = raw_direction
+            .convert_to(DirectionRef::J2000, &pointing_row_frame)
+            .unwrap()
+            .as_angles();
+        let resolved = resolver
+            .resolve(None, 0, TEST_TIME_MJD_SEC, [0.0, 0.0], Some(&engine))
+            .unwrap();
+
+        assert!((resolved.angles_rad[0] - expected_angles.0).abs() < 1.0e-12);
+        assert!((resolved.angles_rad[1] - expected_angles.1).abs() < 1.0e-12);
+        assert!(
+            (resolved.angles_rad[0] - wrong_pointing_row_epoch.0).abs() > 1.0e-8,
+            "conversion must use the MAIN/VisBuffer epoch rather than the POINTING row epoch"
+        );
+        assert!((resolved.angles_rad[0] - raw_azelgeo[0]).abs() > 1.0e-3);
+        assert!(!resolved.used_fallback);
+    }
+
+    #[test]
+    fn pointing_direction_resolver_retains_timestamp_guards_and_uses_nearest() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("pointing_timestamp_window.ms");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_vla_antenna_pair(&mut ms);
+        add_field_row(&mut ms);
+        add_spectral_window_row(&mut ms, &[1.4e9]);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        add_main_row_with_field_and_antennas_channels(
+            &mut ms,
+            0,
+            0,
+            1,
+            [30.0, -15.0, 5.0],
+            &[Complex32::new(1.0, 0.5), Complex32::new(0.0, 0.0)],
+        );
+        for (antenna_id, direction) in [(0, [1.2, 0.4]), (1, [1.3, 0.45])] {
+            for offset in [0.0, 20.0, 100.0] {
+                add_pointing_row(
+                    &mut ms,
+                    antenna_id,
+                    direction,
+                    TEST_TIME_MJD_SEC + offset,
+                    -1.0,
+                );
+            }
+        }
+        ms.save().unwrap();
+
+        let selected_rows = vec![SelectedMainRow {
+            row_index: 0,
+            field_id: 0,
+            ddid: 0,
+            spw_id: 0,
+            polarization_id: 0,
+            antenna1_id: 0,
+            antenna2_id: 1,
+            time_mjd_seconds: Some(TEST_TIME_MJD_SEC + 12.0),
+        }];
+        let resolver = PointingDirectionResolver::new(&ms, &selected_rows, None)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(resolver.table_row_count, 6);
+        assert_eq!(resolver.retained_row_count, 4);
+        assert_eq!(
+            resolver
+                .by_row_index
+                .keys()
+                .copied()
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([0, 1, 3, 4])
+        );
+        let resolved = resolver
+            .resolve(None, 0, TEST_TIME_MJD_SEC + 12.0, [0.0, 0.0], None)
+            .unwrap();
+        assert_eq!(resolved.source_row_index, Some(1));
+        assert!(!resolved.used_fallback);
+    }
+
+    #[test]
+    fn mosaic_mtmfs_streams_multiple_ddids_and_spws() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("multi_spw_mosaic_mtmfs.ms");
+        let image_prefix = tmp.path().join("multi_spw_mosaic_mtmfs_image");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_vla_antenna_pair(&mut ms);
+        add_field_row(&mut ms);
+        add_observation_row(&mut ms);
+        add_spectral_window_row(&mut ms, &[1.0e9, 1.1e9]);
+        add_spectral_window_row(&mut ms, &[1.9e9, 2.0e9]);
+        add_polarization_row(&mut ms);
+        add_data_description_row_for_spw(&mut ms, 0);
+        add_data_description_row_for_spw(&mut ms, 1);
+        add_pointing_row(&mut ms, 0, [1.0, 0.5], TEST_TIME_MJD_SEC, -1.0);
+        add_pointing_row(&mut ms, 1, [1.0, 0.5], TEST_TIME_MJD_SEC, -1.0);
+        for (ddid, uvw, amplitude) in [
+            (0, [30.0, -15.0, 0.0], 1.0),
+            (1, [-25.0, 20.0, 0.0], 1.5),
+            (0, [10.0, 35.0, 0.0], 0.8),
+            (1, [-15.0, -30.0, 0.0], 1.2),
+        ] {
+            add_main_row_with_field_ddid_and_antennas_corr_channels(
+                &mut ms,
+                0,
+                ddid,
+                0,
+                1,
+                uvw,
+                2,
+                &[
+                    Complex32::new(amplitude, 0.0),
+                    Complex32::new(amplitude, 0.0),
+                    Complex32::new(amplitude, 0.0),
+                    Complex32::new(amplitude, 0.0),
+                ],
+            );
+        }
+        ms.save().unwrap();
+
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            ms_path.into_os_string(),
+            OsString::from("--imagename"),
+            image_prefix.clone().into_os_string(),
+            OsString::from("--imsize"),
+            OsString::from("32"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("20.0"),
+            OsString::from("--spw"),
+            OsString::from("0,1"),
+            OsString::from("--gridder"),
+            OsString::from("mosaic"),
+            OsString::from("--usepointing"),
+            OsString::from("--deconvolver"),
+            OsString::from("mtmfs"),
+            OsString::from("--nterms"),
+            OsString::from("2"),
+            OsString::from("--dirty-only"),
+            OsString::from("--weighting"),
+            OsString::from("natural"),
+            OsString::from("--no-parallel"),
+            OsString::from("--no-preview-pngs"),
+        ])
+        .unwrap();
+        let summary = run_from_config(&config).unwrap();
+
+        assert!(summary.gridded_samples >= 8);
+        for suffix in ["psf.tt0", "psf.tt1", "psf.tt2", "image.tt0", "image.tt1"] {
+            let path = format!("{}.{}", image_prefix.display(), suffix);
+            assert!(
+                Path::new(&path).exists(),
+                "missing multi-SPW product {path}"
+            );
+        }
     }
 
     #[test]
@@ -58680,6 +62795,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: None,
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -58725,6 +62842,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -58796,6 +62914,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: None,
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -58841,6 +62961,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -58913,6 +63034,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: None,
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -58958,6 +63081,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -59025,6 +63149,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: None,
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -59070,6 +63196,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -59139,6 +63266,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: Some(vec![0]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: Some(0),
             phasecenter: None,
             ddid: None,
@@ -59198,6 +63327,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -59281,6 +63411,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: Some(vec![0]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: Some(0),
             phasecenter: None,
             ddid: None,
@@ -59334,6 +63466,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -59388,6 +63521,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: Some(vec![0]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: Some(0),
             phasecenter: None,
             ddid: None,
@@ -59447,6 +63582,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -59707,6 +63843,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: None,
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -59752,6 +63890,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -59833,6 +63972,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: None,
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -59878,6 +64019,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -59976,6 +64118,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: None,
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -60021,6 +64165,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: false,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -60117,6 +64262,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: Some(vec![0, 1]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -60162,6 +64309,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: false,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Cpu,
@@ -60267,6 +64415,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: Some(vec![0, 1]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: Some(0),
             phasecenter: None,
             ddid: None,
@@ -60318,6 +64468,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -60601,6 +64752,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: Some(vec![0, 1]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: Some(0),
             phasecenter: None,
             ddid: None,
@@ -60652,6 +64805,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: false,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -61069,6 +65223,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: None,
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -61117,6 +65273,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -61459,6 +65616,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: None,
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -61508,6 +65667,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -61705,6 +65865,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: None,
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -61750,6 +65912,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: false,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -61835,6 +65998,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: None,
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -61880,6 +66045,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: false,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -61926,6 +66092,231 @@ deconvolver=mtmfs
                 format!("{}.{}", read_ahead_prefix.display(), suffix),
                 1.0e-5,
             );
+        }
+    }
+
+    #[test]
+    fn awproject_mtmfs_bounded_stream_writes_complete_persisted_product_topology() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("tiny_awproject_mtmfs.ms");
+        let cf_cache = tmp.path().join("synthetic-cf-cache");
+        let image_prefix = tmp.path().join("tiny_awproject_mtmfs_image");
+        fs::create_dir(&cf_cache).unwrap();
+        let frequencies_hz = [1.39e9, 1.41e9];
+        let w_values_lambda = [0.0, 2.0];
+        write_synthetic_awproject_cf_cache(&cf_cache, &frequencies_hz, &w_values_lambda);
+
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_vla_antenna_pair(&mut ms);
+        add_observation_row(&mut ms);
+        add_field_row(&mut ms);
+        add_pointing_row(&mut ms, 0, [1.0, 0.5], TEST_TIME_MJD_SEC, -1.0);
+        add_pointing_row(&mut ms, 1, [1.00015, 0.4999], TEST_TIME_MJD_SEC, -1.0);
+        add_spectral_window_row(&mut ms, &frequencies_hz);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        for (uvw, visibilities) in [
+            (
+                [30.0, -15.0, -2.0],
+                [
+                    Complex32::new(0.8, 0.10),
+                    Complex32::new(0.7, -0.04),
+                    Complex32::new(1.2, 0.02),
+                    Complex32::new(1.1, -0.03),
+                ],
+            ),
+            (
+                [-25.0, 20.0, 1.5],
+                [
+                    Complex32::new(0.7, -0.05),
+                    Complex32::new(0.9, 0.03),
+                    Complex32::new(1.3, -0.02),
+                    Complex32::new(1.0, 0.06),
+                ],
+            ),
+            (
+                [10.0, 35.0, -0.5],
+                [
+                    Complex32::new(0.9, 0.04),
+                    Complex32::new(0.8, -0.01),
+                    Complex32::new(1.1, -0.03),
+                    Complex32::new(1.2, 0.05),
+                ],
+            ),
+        ] {
+            add_main_row_channels(&mut ms, uvw, &visibilities);
+        }
+        ms.save().unwrap();
+
+        let mut aw_project = AwProjectControls::casa_defaults(cf_cache.clone());
+        aw_project.cf_resident_bytes = 4 * (16 * 16 + 32 * 32) * std::mem::size_of::<Complex32>();
+        aw_project.w_plane_count = Some(w_values_lambda.len());
+        aw_project.use_pointing = true;
+        let config = CliConfig {
+            ms: ms_path,
+            imagename: image_prefix.clone(),
+            imsize: 64,
+            cell_arcsec: 20.0,
+            field_ids: None,
+            uvrange: None,
+            intent: None,
+            phasecenter_field: None,
+            phasecenter: None,
+            ddid: None,
+            spw: None,
+            spw_selector: None,
+            channel_start: None,
+            channel_count: None,
+            datacolumn: None,
+            save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
+            correlation: None,
+            spectral_mode: SpectralMode::Mfs,
+            cube_axis: CubeAxisConfig::default(),
+            weighting: WeightingMode::Natural,
+            per_channel_weight_density: false,
+            use_pointing: true,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::Common,
+            deconvolver: Deconvolver::Mtmfs,
+            nterms: 2,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 2,
+            nmajor: None,
+            fullsummary: false,
+            gain: 0.1,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
+            pbcor: false,
+            write_pb: true,
+            minor_cycle_length: 1,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.1,
+            max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
+            w_project_planes: Some(w_values_lambda.len()),
+            aw_project: Some(aw_project),
+            dirty_only: false,
+            chanchunks: None,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Cpu,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: Some("1".to_string()),
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
+            standard_mfs_metal_grouped_input_cache: None,
+            standard_mfs_memory_target_mb: None,
+            standard_mfs_prepare_buffer_mb: None,
+            imaging_memory_target_mb: None,
+            imaging_prepare_buffer_mb: None,
+            imaging_row_block_rows: Some(1),
+            imaging_prepare_workers: Some(1),
+            imaging_read_ahead_blocks: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::F64,
+            imaging_fft_backend: ImagingFftBackendPolicy::RustFft,
+            write_preview_pngs: false,
+        };
+        let summary = run_from_config(&config).unwrap();
+        assert!(summary.gridded_samples > 0);
+        assert!(summary.minor_iterations > 0);
+        let diagnostics = summary.awproject.expect("AWProject diagnostics");
+        assert_eq!(diagnostics.samples.rejected_not_gridable, 0);
+        assert_eq!(diagnostics.samples.rejected_invalid_input, 0);
+        assert!(diagnostics.samples.accepted_samples > 0);
+        assert!(diagnostics.resident.resident_bytes <= diagnostics.resident_budget_bytes);
+
+        let expected_suffixes = [
+            "psf.tt0",
+            "psf.tt1",
+            "psf.tt2",
+            "residual.tt0",
+            "residual.tt1",
+            "model.tt0",
+            "model.tt1",
+            "image.tt0",
+            "image.tt1",
+            "sumwt.tt0",
+            "sumwt.tt1",
+            "sumwt.tt2",
+            "weight.tt0",
+            "weight.tt1",
+            "weight.tt2",
+            "pb.tt0",
+            "alpha",
+            "alpha.error",
+        ];
+        for suffix in &expected_suffixes {
+            let path = format!("{}.{}", image_prefix.display(), suffix);
+            assert!(
+                Path::new(&path).exists(),
+                "missing AWProject product {path}"
+            );
+            let image = PagedImage::<f32>::open(&path).unwrap();
+            let expected_shape: &[usize] = if suffix.starts_with("sumwt") {
+                &[1, 1, 1, 1]
+            } else {
+                &[64, 64, 1, 1]
+            };
+            assert_eq!(image.shape(), expected_shape, "unexpected shape for {path}");
+        }
+
+        let parallel_prefix = tmp.path().join("tiny_awproject_mtmfs_parallel_image");
+        let mut parallel = config.clone();
+        parallel.imagename = parallel_prefix.clone();
+        parallel.standard_mfs_acceleration = StandardMfsAccelerationPolicy::MultiCpu;
+        parallel.standard_mfs_grid_threads = Some("4".to_string());
+        let parallel_summary = run_from_config(&parallel).unwrap();
+        assert_eq!(parallel_summary.gridded_samples, summary.gridded_samples);
+        for suffix in &expected_suffixes {
+            assert_f32_images_close(
+                format!("{}.{}", image_prefix.display(), suffix),
+                format!("{}.{}", parallel_prefix.display(), suffix),
+                1.0e-6,
+            );
+        }
+
+        #[cfg(target_os = "macos")]
+        if casa_imaging::standard_mfs_metal_device_available() {
+            let metal_prefix = tmp.path().join("tiny_awproject_mtmfs_metal_image");
+            let mut metal = config.clone();
+            metal.imagename = metal_prefix.clone();
+            metal.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
+            metal.standard_mfs_grid_threads = Some("1".to_string());
+            metal.imaging_fft_precision = ImagingFftPrecisionPolicy::F64;
+            metal.imaging_fft_backend = ImagingFftBackendPolicy::RustFft;
+            let metal_summary = run_from_config(&metal).unwrap();
+            assert_eq!(metal_summary.gridded_samples, summary.gridded_samples);
+            assert_eq!(metal_summary.minor_iterations, summary.minor_iterations);
+            for suffix in &expected_suffixes {
+                // Alpha products are ratios of already-compared Taylor terms,
+                // so preserve the absolute bound and also bound ratio amplification.
+                let relative_tolerance = if matches!(*suffix, "alpha" | "alpha.error") {
+                    1.0e-5
+                } else {
+                    0.0
+                };
+                assert_f32_images_close_scaled(
+                    format!("{}.{}", image_prefix.display(), suffix),
+                    format!("{}.{}", metal_prefix.display(), suffix),
+                    1.0e-5,
+                    relative_tolerance,
+                );
+            }
         }
     }
 
@@ -61981,6 +66372,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: None,
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -62026,6 +66419,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: false,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -62120,6 +66514,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: None,
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -62165,6 +66561,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: false,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Cpu,
@@ -62244,6 +66641,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: Some(vec![0]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: Some(0),
             phasecenter: None,
             ddid: None,
@@ -62303,6 +66702,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -62372,6 +66772,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: Some(vec![0, 1]),
+            uvrange: None,
+            intent: None,
             phasecenter_field: Some(0),
             phasecenter: None,
             ddid: None,
@@ -62417,6 +66819,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Cpu,
@@ -62482,6 +66885,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: None,
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -62527,6 +66932,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Cpu,
@@ -62593,6 +66999,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: None,
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -62638,6 +67046,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: true,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -62707,6 +67116,8 @@ deconvolver=mtmfs
             imsize: 32,
             cell_arcsec: 20.0,
             field_ids: None,
+            uvrange: None,
+            intent: None,
             phasecenter_field: None,
             phasecenter: None,
             ddid: None,
@@ -62752,6 +67163,7 @@ deconvolver=mtmfs
             w_term_mode: WTermMode::None,
             force_standard_gridder: false,
             w_project_planes: None,
+            aw_project: None,
             dirty_only: false,
             chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -63923,6 +68335,121 @@ deconvolver=mtmfs
         panic!("diagnostic complete");
     }
 
+    fn write_synthetic_awproject_cf_cache(
+        root: &Path,
+        frequencies_hz: &[f64],
+        w_values_lambda: &[f64],
+    ) {
+        for (frequency_index, &frequency_hz) in frequencies_hz.iter().enumerate() {
+            for (w_index, &w_value_lambda) in w_values_lambda.iter().enumerate() {
+                for (mueller_index, mueller_element) in [0, 15].into_iter().enumerate() {
+                    for weight in [false, true] {
+                        let family = if weight { "WTCFS" } else { "CFS" };
+                        let name = format!(
+                            "{family}_0_0_CF_{frequency_index}_{w_index}_{mueller_index}.im"
+                        );
+                        let path = root.join(&name);
+                        let mut coords = CoordinateSystem::new();
+                        let (shape, reference_pixel, increment, support) = if weight {
+                            (vec![32, 32, 1, 1], [16.0, 16.0], [-1.0, 1.0], 4)
+                        } else {
+                            (vec![16, 16, 1, 1], [8.0, 8.0], [-2.0, 2.0], 2)
+                        };
+                        coords.add_coordinate(
+                            LinearCoordinate::new(
+                                2,
+                                vec!["UU".to_string(), "VV".to_string()],
+                                vec!["lambda".to_string(), "lambda".to_string()],
+                            )
+                            .with_reference_value(vec![0.0, 0.0])
+                            .with_reference_pixel(reference_pixel.to_vec())
+                            .with_increment(increment.to_vec()),
+                        );
+                        coords.add_coordinate(StokesCoordinate::new(vec![
+                            if mueller_element == 0 {
+                                StokesType::RR
+                            } else {
+                                StokesType::LL
+                            },
+                        ]));
+                        coords.add_coordinate(SpectralCoordinate::new(
+                            FrequencyRef::LSRK,
+                            frequency_hz,
+                            1.0,
+                            0.0,
+                            frequency_hz,
+                        ));
+                        let mut image =
+                            PagedImage::<Complex32>::create(shape, coords, &path).unwrap();
+                        image
+                            .set(if weight {
+                                Complex32::new(7.0, 2.0)
+                            } else {
+                                Complex32::new(3.0, -1.0)
+                            })
+                            .unwrap();
+                        image
+                            .set_misc_info(RecordValue::new(vec![
+                                RecordField::new(
+                                    "BandName",
+                                    Value::Scalar(ScalarValue::String("EVLA_L".to_string())),
+                                ),
+                                RecordField::new(
+                                    "ConjFreq",
+                                    Value::Scalar(ScalarValue::Float64(frequency_hz)),
+                                ),
+                                RecordField::new(
+                                    "ConjPoln",
+                                    Value::Scalar(ScalarValue::Int32(if mueller_element == 0 {
+                                        StokesType::LL.code()
+                                    } else {
+                                        StokesType::RR.code()
+                                    })),
+                                ),
+                                RecordField::new(
+                                    "Diameter",
+                                    Value::Scalar(ScalarValue::Float64(25.0)),
+                                ),
+                                RecordField::new(
+                                    "MuellerElement",
+                                    Value::Scalar(ScalarValue::Int32(mueller_element)),
+                                ),
+                                RecordField::new("Name", Value::Scalar(ScalarValue::String(name))),
+                                RecordField::new("OpCode", Value::Scalar(ScalarValue::Bool(false))),
+                                RecordField::new(
+                                    "ParallacticAngle",
+                                    Value::Scalar(ScalarValue::Float64(30.0)),
+                                ),
+                                RecordField::new(
+                                    "Sampling",
+                                    Value::Scalar(ScalarValue::Float64(2.0)),
+                                ),
+                                RecordField::new(
+                                    "TelescopeName",
+                                    Value::Scalar(ScalarValue::String("EVLA".to_string())),
+                                ),
+                                RecordField::new("WIncr", Value::Scalar(ScalarValue::Float64(0.5))),
+                                RecordField::new(
+                                    "WValue",
+                                    Value::Scalar(ScalarValue::Float64(w_value_lambda)),
+                                ),
+                                RecordField::new(
+                                    "Xsupport",
+                                    Value::Scalar(ScalarValue::Int32(support)),
+                                ),
+                                RecordField::new(
+                                    "Ysupport",
+                                    Value::Scalar(ScalarValue::Int32(support)),
+                                ),
+                            ]))
+                            .unwrap();
+                        image.save().unwrap();
+                    }
+                }
+            }
+        }
+    }
+
     fn add_field_row(ms: &mut MeasurementSet) {
         add_field_row_with_direction(
             ms,
@@ -64058,10 +68585,20 @@ deconvolver=mtmfs
         direction: MDirection,
         time_mjd_sec: f64,
     ) {
-        let table = ms.subtable_mut(SubtableId::Field).unwrap();
         let (lon, lat) = direction.as_angles();
-        let direction =
-            ArrayValue::Float64(ArrayD::from_shape_vec(vec![2, 1], vec![lon, lat]).unwrap());
+        add_field_row_with_raw_direction(ms, [lon, lat], -1, time_mjd_sec);
+    }
+
+    fn add_field_row_with_raw_direction(
+        ms: &mut MeasurementSet,
+        direction_rad: [f64; 2],
+        source_id: i32,
+        time_mjd_sec: f64,
+    ) {
+        let table = ms.subtable_mut(SubtableId::Field).unwrap();
+        let direction = ArrayValue::Float64(
+            ArrayD::from_shape_vec(vec![2, 1], direction_rad.to_vec()).unwrap(),
+        );
         table
             .add_row(RecordValue::new(vec![
                 RecordField::new("CODE", Value::Scalar(ScalarValue::String(String::new()))),
@@ -64074,7 +68611,7 @@ deconvolver=mtmfs
                 RecordField::new("NUM_POLY", Value::Scalar(ScalarValue::Int32(0))),
                 RecordField::new("PHASE_DIR", Value::Array(direction.clone())),
                 RecordField::new("REFERENCE_DIR", Value::Array(direction)),
-                RecordField::new("SOURCE_ID", Value::Scalar(ScalarValue::Int32(-1))),
+                RecordField::new("SOURCE_ID", Value::Scalar(ScalarValue::Int32(source_id))),
                 RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time_mjd_sec))),
             ]))
             .unwrap();
@@ -64206,12 +68743,19 @@ deconvolver=mtmfs
     }
 
     fn add_data_description_row(ms: &mut MeasurementSet) {
+        add_data_description_row_for_spw(ms, 0);
+    }
+
+    fn add_data_description_row_for_spw(ms: &mut MeasurementSet, spw_id: i32) {
         let table = ms.subtable_mut(SubtableId::DataDescription).unwrap();
         table
             .add_row(RecordValue::new(vec![
                 RecordField::new("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
                 RecordField::new("POLARIZATION_ID", Value::Scalar(ScalarValue::Int32(0))),
-                RecordField::new("SPECTRAL_WINDOW_ID", Value::Scalar(ScalarValue::Int32(0))),
+                RecordField::new(
+                    "SPECTRAL_WINDOW_ID",
+                    Value::Scalar(ScalarValue::Int32(spw_id)),
+                ),
             ]))
             .unwrap();
     }
@@ -64261,6 +68805,22 @@ deconvolver=mtmfs
         num_corr: usize,
         vis: &[Complex32],
     ) {
+        add_main_row_with_field_ddid_and_antennas_corr_channels(
+            ms, field_id, 0, antenna1, antenna2, uvw, num_corr, vis,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_main_row_with_field_ddid_and_antennas_corr_channels(
+        ms: &mut MeasurementSet,
+        field_id: i32,
+        ddid: i32,
+        antenna1: i32,
+        antenna2: i32,
+        uvw: [f64; 3],
+        num_corr: usize,
+        vis: &[Complex32],
+    ) {
         assert!(
             vis.len().is_multiple_of(num_corr),
             "test helper expects [num_corr, num_chan] visibility ordering"
@@ -64279,7 +68839,7 @@ deconvolver=mtmfs
                 }
                 "ARRAY_ID" => RecordField::new("ARRAY_ID", Value::Scalar(ScalarValue::Int32(0))),
                 "DATA_DESC_ID" => {
-                    RecordField::new("DATA_DESC_ID", Value::Scalar(ScalarValue::Int32(0)))
+                    RecordField::new("DATA_DESC_ID", Value::Scalar(ScalarValue::Int32(ddid)))
                 }
                 "FIELD_ID" => {
                     RecordField::new("FIELD_ID", Value::Scalar(ScalarValue::Int32(field_id)))

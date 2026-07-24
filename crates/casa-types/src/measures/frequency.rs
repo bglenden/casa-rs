@@ -331,6 +331,13 @@ pub(super) fn compute_beta(velocity_ms: &[f64; 3], dir_j2000: &[f64; 3]) -> f64 
     sofars::vm::pdp(velocity_ms, dir_j2000) / C_M_PER_S
 }
 
+/// Project casacore's Earth-orbital aberration vector after converting each
+/// component from metres per second to beta, matching `Aberration::operator()`.
+pub(super) fn compute_earth_beta(velocity_ms: &[f64; 3], dir_j2000: &[f64; 3]) -> f64 {
+    let velocity_beta = velocity_ms.map(|component| component / C_M_PER_S);
+    sofars::vm::pdp(&velocity_beta, dir_j2000)
+}
+
 /// Get direction in J2000 from the frame.
 pub(super) fn get_direction_j2000(frame: &MeasFrame) -> Result<[f64; 3], MeasureError> {
     frame.cached_direction_j2000(|| {
@@ -392,7 +399,8 @@ pub(super) fn geo_topo_beta(frame: &MeasFrame) -> Result<f64, MeasureError> {
     let app_dir = get_direction_app(frame)?;
     let scale = diurnal_aberration_factor(radius, tdb_mjd) * lat.cos();
     let diurnal_dir = [-last.sin(), last.cos(), 0.0];
-    Ok(scale * sofars::vm::pdp(&diurnal_dir, &app_dir))
+    let diurnal_beta = diurnal_dir.map(|component| component * scale);
+    Ok(sofars::vm::pdp(&diurnal_beta, &app_dir))
 }
 
 // ---------------------------------------------------------------------------
@@ -582,13 +590,13 @@ fn apply_freq_hop(
         (BARY, GEO) => {
             let d = get_direction_j2000(frame)?;
             let v_earth = earth_velocity_ms(frame)?;
-            let beta = compute_beta(&v_earth, &d);
+            let beta = compute_earth_beta(&v_earth, &d);
             Ok(doppler_shift(hz, beta))
         }
         (GEO, BARY) => {
             let d = get_direction_j2000(frame)?;
             let v_earth = earth_velocity_ms(frame)?;
-            let beta = compute_beta(&v_earth, &d);
+            let beta = compute_earth_beta(&v_earth, &d);
             Ok(doppler_shift(hz, -beta))
         }
 

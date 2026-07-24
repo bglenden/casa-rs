@@ -6,11 +6,9 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 import datetime as dt
-import json
 import os
 import pathlib
 import re
-import statistics
 import subprocess
 import sys
 import uuid
@@ -23,9 +21,13 @@ from perf_harness import (
     RUN_RESULT_SCHEMA_VERSION,
     atomic_write_json,
     finite_number,
+    load_run_result,
     load_workload_manifest,
     validate_run_result,
+    validate_workload_manifest,
 )
+from perf_harness import casa_tclean_workflow
+from perf_harness.errors import HarnessError
 from perf_harness.image_compare import compare_products as compare_image_products
 from perf_harness.provenance import capture_provenance, executable_path
 from perf_harness.stages import (
@@ -39,6 +41,7 @@ from perf_harness.subprocesses import run_command
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 WORKLOAD_DIR = pathlib.Path(__file__).resolve().parent / "workloads"
 BENCH_SCRIPT = REPO_ROOT / "scripts" / "bench-imager-vs-casa.sh"
+CASA_TCLEAN_PROTOCOL = casa_tclean_workflow.CASA_TCLEAN_PROTOCOL
 SUPPORTED_GRIDDER_VALUES = {
     "awp2",
     "awphpg",
@@ -61,7 +64,12 @@ SUPPORTED_SPEC_MODES = {"cubedata", "cube", "mfs"}
 RUNNABLE_SPEC_MODES = {"cubedata", "cube", "mfs"}
 SUPPORTED_BENCH_MODES = {"dirty", "clean"}
 SUPPORTED_INTERPOLATION = {"nearest", "linear"}
-SUPPORTED_HOGBOM_ITERATION_MODES = {"strict", "casa", "casa-inclusive", "casa_inclusive"}
+SUPPORTED_HOGBOM_ITERATION_MODES = {
+    "strict",
+    "casa",
+    "casa-inclusive",
+    "casa_inclusive",
+}
 SUPPORTED_MS_STAGING = {"copy", "direct"}
 SUPPORTED_BOOLEAN_FLAGS = {"0", "1", "false", "true", "no", "yes", "off", "on"}
 STRING_IMAGING_OVERRIDE_KEYS = {"start", "width"}
@@ -75,13 +83,21 @@ STRUCTURED_DIFFERENCE_REVIEW_LEGEND = {
 MAX_BACKEND_LOG_ENTRIES_PER_BUCKET = 128
 
 
-class HarnessError(Exception):
-    """Error that should be shown without a Python traceback."""
-
-
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("workload", help="workload manifest id or JSON path")
+    parser.add_argument(
+        "workload",
+        nargs="?",
+        help="workload manifest id or JSON path",
+    )
+    parser.add_argument(
+        "--recover-receipt",
+        type=pathlib.Path,
+        help=(
+            "recover a completed recipe bundle after outer receipt publication "
+            "failed; never reinvokes CASA or the comparator"
+        ),
+    )
     parser.add_argument(
         "--output-dir",
         type=pathlib.Path,
@@ -96,6 +112,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "root for large benchmark artifacts such as image products, panels, "
             f"and scratch data; defaults to ${perf_paths.ARTIFACT_ROOT_ENV} or "
             f"{perf_paths.DEFAULT_EXTERNAL_ARTIFACT_ROOT}"
+        ),
+    )
+    parser.add_argument(
+        "--cf-cache-root",
+        type=pathlib.Path,
+        default=None,
+        help=(
+            "durable root for CASA convolution-function caches; recipe-backed "
+            "runs default to a cf-cache sibling of --artifact-root"
         ),
     )
     parser.add_argument(
@@ -138,11 +163,33 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
+    plan: dict[str, Any] | None = None
+    result_path: pathlib.Path | None = None
+    log_path: pathlib.Path | None = None
 
     try:
+        recovery_value = getattr(args, "recover_receipt", None)
+        recovery_path = (
+            recovery_value if isinstance(recovery_value, pathlib.Path) else None
+        )
+        if recovery_path is not None:
+            if args.workload is not None:
+                raise HarnessError(
+                    "workload and --recover-receipt are mutually exclusive"
+                )
+            recover_recipe_receipt(recovery_path.expanduser().resolve())
+            return
+        if args.workload is None:
+            raise HarnessError("workload is required unless --recover-receipt is used")
         manifest_path = resolve_workload(args.workload)
         manifest = load_manifest(manifest_path)
         apply_imaging_overrides(manifest, args.set_imaging)
+        try:
+            validate_workload_manifest(
+                manifest, source=f"{manifest_path} after command-line overrides"
+            )
+        except ContractError as error:
+            raise HarnessError(str(error)) from error
         plan = build_plan(
             manifest_path=manifest_path,
             manifest=manifest,
@@ -158,12 +205,34 @@ def main() -> None:
             if args.artifact_root is not None
             else perf_paths.default_artifact_root()
         ).resolve()
+        cf_cache_root = (
+            args.cf_cache_root.expanduser().resolve()
+            if args.cf_cache_root is not None
+            else casa_tclean_workflow.default_cf_cache_root(plan, artifact_root)
+        )
         output_dir.mkdir(parents=True, exist_ok=True)
-        if not args.dry_run:
+        if not args.dry_run and plan["command"].get("kind") not in {
+            "casa_tclean_protocol",
+            "recipe_bound_benchmark",
+        }:
             perf_paths.mark_safe_to_delete(artifact_root)
-        attach_output_paths(plan, output_dir, artifact_root, dry_run=args.dry_run)
+        if not args.dry_run:
+            casa_tclean_workflow.validate_storage_preconditions(
+                plan,
+                output_dir=output_dir,
+                artifact_root=artifact_root,
+                cf_cache_root=cf_cache_root,
+            )
         result_path = output_dir / f"{plan['run_id']}.json"
         log_path = output_dir / f"{plan['run_id']}.log"
+        attach_output_paths(
+            plan,
+            output_dir,
+            artifact_root,
+            cf_cache_root=cf_cache_root,
+            dry_run=args.dry_run,
+        )
+        log_path = casa_tclean_workflow.bundle_benchmark_log_path(plan, log_path)
 
         if args.dry_run:
             result = {
@@ -171,7 +240,8 @@ def main() -> None:
                 "kind": "workload_run",
                 "status": "dry_run",
                 **plan,
-                "logs": {"benchmark_log": None},
+                "exit_code": 0,
+                "logs": casa_tclean_workflow.benchmark_log_evidence(None),
                 "results": empty_results(casa_status="not_run", reason="dry run"),
                 "human_review": human_review_gate(plan, None),
             }
@@ -181,13 +251,142 @@ def main() -> None:
             return
 
         result = run_plan(plan, log_path)
-        result["logs"] = {"benchmark_log": str(log_path)}
+        result["logs"] = casa_tclean_workflow.benchmark_log_evidence(log_path)
+        if plan["command"].get("kind") in {
+            "casa_tclean_protocol",
+            "recipe_bound_benchmark",
+        }:
+            result = casa_tclean_workflow.finalize_bundle_result(result)
+        exit_code = normalize_cli_exit_code(result)
         validate_run_result(result, source=str(result_path))
         atomic_write_json(result_path, result)
         print(result_path)
+        if exit_code != 0:
+            raise SystemExit(exit_code)
+    except KeyboardInterrupt:
+        if plan is not None and result_path is not None and log_path is not None:
+            result = failed_bundled_run_result(
+                plan,
+                log_path=log_path,
+                reason="workload interrupted by operator before completion",
+                failure_kind="operator_interrupt",
+                exit_code=130,
+            )
+            if plan["command"].get("kind") in {
+                "casa_tclean_protocol",
+                "recipe_bound_benchmark",
+            }:
+                result = casa_tclean_workflow.finalize_bundle_result(result)
+            validate_run_result(result, source=str(result_path))
+            atomic_write_json(result_path, result)
+            print(f"interrupted receipt: {result_path}", file=sys.stderr)
+        raise SystemExit(130) from None
     except HarnessError as error:
+        if (
+            plan is not None
+            and result_path is not None
+            and log_path is not None
+            and plan.get("command", {}).get("kind")
+            in {"casa_tclean_protocol", "recipe_bound_benchmark"}
+            and pathlib.Path(
+                plan.get("artifacts", {}).get("bundle", {}).get("partial_root", "")
+            ).is_dir()
+        ):
+            result = failed_bundled_run_result(
+                plan,
+                log_path=log_path,
+                reason=str(error),
+            )
+            result = casa_tclean_workflow.finalize_bundle_result(result)
+            validate_run_result(result, source=str(result_path))
+            atomic_write_json(result_path, result)
+            print(f"failed receipt: {result_path}", file=sys.stderr)
         print(f"error: {error}", file=sys.stderr)
         raise SystemExit(2) from None
+    except Exception as error:
+        if (
+            plan is not None
+            and result_path is not None
+            and log_path is not None
+            and plan.get("command", {}).get("kind")
+            in {"casa_tclean_protocol", "recipe_bound_benchmark"}
+            and pathlib.Path(
+                plan.get("artifacts", {}).get("bundle", {}).get("partial_root", "")
+            ).is_dir()
+        ):
+            try:
+                result = failed_bundled_run_result(
+                    plan,
+                    log_path=log_path,
+                    reason=f"{type(error).__name__}: {error}",
+                    failure_kind="harness_internal",
+                    exit_code=1,
+                )
+                result = casa_tclean_workflow.finalize_bundle_result(result)
+                validate_run_result(result, source=str(result_path))
+                atomic_write_json(result_path, result)
+                print(f"internal-failure receipt: {result_path}", file=sys.stderr)
+            except Exception as receipt_error:
+                print(
+                    "warning: could not retain typed internal-failure receipt: "
+                    f"{type(receipt_error).__name__}: {receipt_error}",
+                    file=sys.stderr,
+                )
+        print(f"internal error: {type(error).__name__}: {error}", file=sys.stderr)
+        raise
+
+
+def recover_recipe_receipt(receipt_path: pathlib.Path) -> None:
+    """Publish an already-completed recipe bundle from fail-closed artifacts."""
+
+    failed_result = load_run_result(receipt_path)
+    bundle = failed_result.get("artifacts", {}).get("bundle")
+    if not isinstance(bundle, dict) or not isinstance(bundle.get("partial_root"), str):
+        raise HarnessError("recovery receipt does not name a partial artifact bundle")
+    log_path = pathlib.Path(bundle["partial_root"]) / "benchmark-summary.log"
+    try:
+        recovered = casa_tclean_workflow.recover_completed_recipe_run(
+            failed_result,
+            log_path,
+            services=recipe_execution_services(),
+        )
+    except casa_tclean_workflow.ProtocolError as error:
+        raise HarnessError(str(error)) from error
+    recovered["logs"] = casa_tclean_workflow.benchmark_log_evidence(log_path)
+    recovered = casa_tclean_workflow.finalize_bundle_result(recovered)
+    normalize_cli_exit_code(recovered)
+    validate_run_result(recovered, source=str(receipt_path))
+    atomic_write_json(receipt_path, recovered)
+    if recovered.get("status") != "completed":
+        failure = recovered.get("results", {}).get("failure")
+        reason = failure.get("reason") if isinstance(failure, dict) else None
+        raise HarnessError(
+            "recovered bundle failed final publication validation"
+            + (f": {reason}" if reason else "")
+        )
+    print(receipt_path)
+
+
+CLI_SUCCESS_STATUSES = {"completed", "dry_run", "recovered_publication"}
+
+
+def normalize_cli_exit_code(result: dict[str, Any]) -> int:
+    """Bind process success to the durable receipt's top-level status."""
+
+    status = result.get("status")
+    if status in CLI_SUCCESS_STATUSES:
+        exit_code = 0
+    else:
+        recorded = result.get("exit_code")
+        exit_code = (
+            recorded
+            if isinstance(recorded, int)
+            and not isinstance(recorded, bool)
+            and recorded != 0
+            else 1
+        )
+    result["exit_code"] = exit_code
+    return exit_code
 
 
 def resolve_workload(value: str) -> pathlib.Path:
@@ -211,6 +410,11 @@ def load_manifest(path: pathlib.Path) -> dict[str, Any]:
 def apply_imaging_overrides(manifest: dict[str, Any], overrides: list[str]) -> None:
     if not overrides:
         return
+    if object_value(manifest, "casa"):
+        raise HarnessError(
+            "--set-imaging is forbidden for frozen recipe-backed evidence; "
+            "add a separately reviewed non-fiducial workload instead"
+        )
     imaging = required_object(manifest, "imaging")
     for override in overrides:
         if "=" not in override:
@@ -231,9 +435,13 @@ def parse_override_value(key: str, value: str) -> Any:
         return None
     if re.fullmatch(r"-?[0-9]+", value):
         return int(value)
-    if re.fullmatch(r"-?(?:[0-9]+[.][0-9]*|[0-9]*[.][0-9]+)(?:[eE][+-]?[0-9]+)?", value):
+    if re.fullmatch(
+        r"-?(?:[0-9]+[.][0-9]*|[0-9]*[.][0-9]+)(?:[eE][+-]?[0-9]+)?", value
+    ):
         return float(value)
-    if "," in value and all(re.fullmatch(r"-?[0-9]+", part) for part in value.split(",")):
+    if "," in value and all(
+        re.fullmatch(r"-?[0-9]+", part) for part in value.split(",")
+    ):
         return [int(part) for part in value.split(",")]
     return value
 
@@ -250,6 +458,7 @@ def build_plan(
 ) -> dict[str, Any]:
     workload_id = required_str(manifest, "id")
     mode_id = required_str(manifest, "mode_id")
+    casa = object_value(manifest, "casa")
     dataset = required_object(manifest, "dataset")
     imaging = required_object(manifest, "imaging")
     run = object_value(manifest, "run")
@@ -258,7 +467,9 @@ def build_plan(
     specmode = enum_value(imaging, "specmode", SUPPORTED_SPEC_MODES)
     gridder = enum_value(imaging, "gridder", SUPPORTED_GRIDDER_VALUES)
     bench_mode = enum_value(imaging, "mode", SUPPORTED_BENCH_MODES)
-    interpolation = enum_value_default(imaging, "interpolation", "linear", SUPPORTED_INTERPOLATION)
+    interpolation = enum_value_default(
+        imaging, "interpolation", "linear", SUPPORTED_INTERPOLATION
+    )
     hogbom_iteration_mode = enum_value_default(
         imaging, "hogbom_iteration_mode", "strict", SUPPORTED_HOGBOM_ITERATION_MODES
     )
@@ -271,11 +482,19 @@ def build_plan(
         gridder=gridder,
         wterm=wterm,
     )
-    if not dry_run and run_support["status"] != "runnable":
-        raise HarnessError(f"{workload_id}: {run_support['reason']}")
-    repeats = repeats_override if repeats_override is not None else int_value(run, "repeats", 5)
+    repeats = (
+        repeats_override
+        if repeats_override is not None
+        else int_value(run, "repeats", 5)
+    )
     if repeats < 1:
         raise HarnessError("repeats must be >= 1")
+    warmups = int_value(run, "warmups", 0)
+    if warmups < 0:
+        raise HarnessError("run.warmups must be >= 0")
+    cf_cache_role = str_value(run, "cf_cache_role", "none")
+    if cf_cache_role not in {"none", "cold", "warm"}:
+        raise HarnessError("run.cf_cache_role must be none, cold, or warm")
     ms_staging = os.environ.get("CASA_RS_BENCH_MS_STAGING") or str_value(
         run, "ms_staging", "direct"
     )
@@ -300,7 +519,9 @@ def build_plan(
         run, "skip_profile", "0"
     )
     if skip_profile.lower() not in SUPPORTED_BOOLEAN_FLAGS:
-        raise HarnessError("run.skip_profile must be 0/1, true/false, yes/no, or on/off")
+        raise HarnessError(
+            "run.skip_profile must be 0/1, true/false, yes/no, or on/off"
+        )
     reuse_rust_prefix = os.environ.get("CASA_RS_BENCH_REUSE_RUST_PREFIX") or str_value(
         run, "reuse_rust_prefix", ""
     )
@@ -311,14 +532,64 @@ def build_plan(
         skip_rust = "1"
     if reuse_casa_prefix:
         skip_casa = "1"
+    recipe_path = casa_tclean_workflow.resolve_recipe_path(casa) if casa else None
+    if casa:
+        run_support = casa_tclean_workflow.recipe_run_support(
+            workload_id=workload_id,
+            imaging=imaging,
+            skip_casa=boolean_flag(skip_casa),
+            skip_rust=boolean_flag(skip_rust),
+            reuse_casa=bool(reuse_casa_prefix),
+        )
+    if not dry_run and run_support["status"] not in {"runnable", "casa_only"}:
+        raise HarnessError(f"{workload_id}: {run_support['reason']}")
     profile_repeats = os.environ.get("CASA_RS_BENCH_PROFILE_REPEATS") or str(
         int_value(run, "profile_repeats", repeats)
     )
     if not profile_repeats.isdigit() or int(profile_repeats) < 1:
         raise HarnessError("run.profile_repeats must be an integer >= 1")
     extra_env = string_map_value(run, "env")
+    if casa and extra_env:
+        raise HarnessError(
+            "recipe-backed run.env is unsupported because unbound environment "
+            "values cannot be part of the frozen CASA invocation"
+        )
 
     dataset_path = resolve_dataset_path(dataset, dry_run=dry_run)
+    rust_requested = not boolean_flag(skip_rust)
+    comparison_products = product_suffixes_value(comparison)
+    if reuse_casa_prefix and rust_requested:
+        validate_reused_product_prefix(
+            reuse_casa_prefix,
+            expected_suffixes=comparison_products,
+            require_existing=not dry_run,
+            label="frozen CASA",
+        )
+    resolved_cfcache = ""
+    if imaging.get("cfcache") is not None:
+        resolved_cfcache = str(
+            resolve_imaging_path(
+                str_value(imaging, "cfcache", ""),
+                dataset_path=dataset_path,
+                field="imaging.cfcache",
+                require_directory=not dry_run and rust_requested,
+            )
+        )
+    if not casa and rust_requested and gridder in {
+        "awproject",
+        "awp2",
+        "awphpg",
+        "widefield",
+    }:
+        if gridder != "awproject":
+            raise HarnessError(
+                f"gridder={gridder!r} is not a Rust AWProject alias; use "
+                "gridder='awproject' with an explicit imaging.cfcache"
+            )
+        if not resolved_cfcache:
+            raise HarnessError(
+                "Rust gridder='awproject' requires an explicit imaging.cfcache"
+            )
     casa_python = os.environ.get("CASA_RS_CASA_PYTHON")
     if not dry_run and not casa_python:
         raise HarnessError("CASA_RS_CASA_PYTHON is required for a benchmark run")
@@ -333,13 +604,16 @@ def build_plan(
 
     env = {
         "BENCH_REPEATS": str(repeats),
+        "IMAGER_BENCH_WARMUPS": str(warmups),
         "IMAGER_BENCH_MODE": bench_mode,
         "IMAGER_BENCH_SPECMODE": specmode,
         "IMAGER_BENCH_GRIDDER": gridder,
         "IMAGER_BENCH_CASA_GRIDDER": casa_gridder,
         "IMAGER_BENCH_INTERPOLATION": interpolation,
         "IMAGER_BENCH_FIELD": str_value(imaging, "field", "0"),
-        "IMAGER_BENCH_PHASECENTER_FIELD": optional_int_string(imaging, "phasecenter_field"),
+        "IMAGER_BENCH_PHASECENTER_FIELD": optional_int_string(
+            imaging, "phasecenter_field"
+        ),
         "IMAGER_BENCH_SPW": str_value(imaging, "spw", "0"),
         "IMAGER_BENCH_CHANNEL_START": str(int_value(imaging, "channel_start", 0)),
         "IMAGER_BENCH_CHANNEL_COUNT": str(int_value(imaging, "channel_count", 1)),
@@ -370,6 +644,42 @@ def build_plan(
         "IMAGER_BENCH_WTERM": wterm,
         "IMAGER_BENCH_WPROJPLANES": wprojplanes,
         "IMAGER_BENCH_CASA_WPROJPLANES": casa_wprojplanes,
+        "IMAGER_BENCH_DATACOLUMN": str_value(imaging, "datacolumn", "DATA"),
+        "IMAGER_BENCH_STOKES": str_value(imaging, "stokes", "I"),
+        "IMAGER_BENCH_PROJECTION": str_value(imaging, "projection", "SIN"),
+        "IMAGER_BENCH_UVRANGE": str_value(imaging, "uvrange", ""),
+        "IMAGER_BENCH_INTENT": str_value(imaging, "intent", ""),
+        "IMAGER_BENCH_CFCACHE": resolved_cfcache,
+        "IMAGER_BENCH_CF_RESIDENT_MB": str(
+            int_value(imaging, "cf_resident_mb", 256)
+        ),
+        "IMAGER_BENCH_FACETS": str(int_value(imaging, "facets", 1)),
+        "IMAGER_BENCH_PSFPHASECENTER": str_value(
+            imaging, "psfphasecenter", ""
+        ),
+        "IMAGER_BENCH_VPTABLE": str_value(imaging, "vptable", ""),
+        "IMAGER_BENCH_ATERM": boolean_env_value(imaging, "aterm", True),
+        "IMAGER_BENCH_PSTERM": boolean_env_value(imaging, "psterm", False),
+        "IMAGER_BENCH_WBAWP": boolean_env_value(imaging, "wbawp", True),
+        "IMAGER_BENCH_CONJBEAMS": boolean_env_value(
+            imaging, "conjbeams", True
+        ),
+        "IMAGER_BENCH_COMPUTEPASTEP": str(
+            float_value(imaging, "computepastep", 360.0)
+        ),
+        "IMAGER_BENCH_ROTATEPASTEP": str(
+            float_value(imaging, "rotatepastep", 360.0)
+        ),
+        "IMAGER_BENCH_POINTINGOFFSETSIGDEV": str(
+            float_value(imaging, "pointingoffsetsigdev", 0.0)
+        ),
+        "IMAGER_BENCH_MOSWEIGHT": boolean_env_value(
+            imaging, "mosweight", False
+        ),
+        "IMAGER_BENCH_NORMTYPE": str_value(imaging, "normtype", "flatnoise"),
+        "IMAGER_BENCH_USEPOINTING": boolean_env_value(
+            imaging, "usepointing", False
+        ),
         "IMAGER_BENCH_NITER": str(int_value(imaging, "niter", 4)),
         "IMAGER_BENCH_GAIN": str(float_value(imaging, "gain", 0.1)),
         "IMAGER_BENCH_THRESHOLD_JY": str(float_value(imaging, "threshold_jy", 0.0)),
@@ -378,6 +688,24 @@ def build_plan(
         "IMAGER_BENCH_PBLIMIT": str(float_value(imaging, "pblimit", 0.2)),
         "IMAGER_BENCH_WRITE_PB": boolean_env_value(imaging, "write_pb", False),
         "IMAGER_BENCH_PBCOR": boolean_env_value(imaging, "pbcor", False),
+        "IMAGER_BENCH_SMALLSCALEBIAS": str(
+            float_value(imaging, "smallscalebias", 0.0)
+        ),
+        "IMAGER_BENCH_RESTORATION": boolean_env_value(
+            imaging, "restoration", True
+        ),
+        "IMAGER_BENCH_RESTORINGBEAM": str_value(
+            imaging, "restoringbeam", ""
+        ),
+        "IMAGER_BENCH_INTERACTIVE": boolean_env_value(
+            imaging, "interactive", False
+        ),
+        "IMAGER_BENCH_USEMASK": str_value(imaging, "usemask", "user"),
+        "IMAGER_BENCH_MASK_IMAGE": str_value(imaging, "mask_image", ""),
+        "IMAGER_BENCH_RESTART": boolean_env_value(imaging, "restart", False),
+        "IMAGER_BENCH_SAVEMODEL": str_value(imaging, "savemodel", "none"),
+        "IMAGER_BENCH_CALCRES": boolean_env_value(imaging, "calcres", True),
+        "IMAGER_BENCH_CALCPSF": boolean_env_value(imaging, "calcpsf", True),
         "IMAGER_BENCH_MINOR_CYCLE_LENGTH": str(
             int_value(imaging, "minor_cycle_length", 2)
         ),
@@ -394,6 +722,7 @@ def build_plan(
         "IMAGER_BENCH_SKIP_RUST": skip_rust,
         "IMAGER_BENCH_SKIP_PROFILE": skip_profile,
         "IMAGER_BENCH_PROFILE_REPEATS": profile_repeats,
+        "IMAGER_BENCH_PROFILE_WARMUPS": str(warmups),
     }
     if reuse_rust_prefix:
         env["IMAGER_BENCH_REUSE_RUST_PREFIX"] = reuse_rust_prefix
@@ -424,6 +753,32 @@ def build_plan(
     env.update(extra_env)
 
     command = [str(BENCH_SCRIPT), str(dataset_path)]
+    command_plan: dict[str, Any]
+    if casa:
+        assert recipe_path is not None
+        command_plan = casa_tclean_workflow.build_recipe_command_plan(
+            casa=casa,
+            recipe_path=recipe_path,
+            dataset=dataset,
+            dataset_path=dataset_path,
+            imaging=imaging,
+            run_support=run_support,
+            casa_python=casa_python,
+            dry_run=dry_run,
+        )
+        command_plan["evidence_storage"] = casa_tclean_workflow.storage_requirement(
+            run, dataset
+        )
+        if rust_requested:
+            command_plan.update(
+                {
+                    "kind": "recipe_bound_benchmark",
+                    "argv": command,
+                    "env": env,
+                }
+            )
+    else:
+        command_plan = {"kind": "legacy_benchmark_script", "argv": command, "env": env}
     plan = {
         "run_id": f"{utc_stamp()}-{workload_id}-{uuid.uuid4().hex[:8]}",
         "created_at": utc_now(),
@@ -443,7 +798,10 @@ def build_plan(
             "specmode": specmode,
             "gridder": gridder,
             "bench_mode": bench_mode,
-            "image_shape": [int_value(imaging, "imsize", 128), int_value(imaging, "imsize", 128)],
+            "image_shape": [
+                int_value(imaging, "imsize", 128),
+                int_value(imaging, "imsize", 128),
+            ],
             "channel_count": int_value(imaging, "channel_count", 1),
             "start": str_value(imaging, "start", "") or None,
             "width": str_value(imaging, "width", "") or None,
@@ -504,24 +862,37 @@ def build_plan(
                 else bool_value(run, "stream_log", False)
             ),
             "profile_repeats": int(profile_repeats),
+            "warmups": warmups,
+            "cf_cache_role": cf_cache_role,
+            "evidence_role": str_value(run, "evidence_role", "benchmark"),
         },
         "run_support": run_support,
         "review": review_contract_value(manifest, run),
         "comparison": {
-            "products": product_suffixes_value(comparison),
+            "mode": str_value(comparison, "mode", "sampled"),
+            "products": comparison_products,
             "max_elements_per_product": int_value(
                 comparison, "max_elements_per_product", 1_000_000
             ),
+            "full_chunk_elements": int_value(
+                comparison, "full_chunk_elements", 1_000_000
+            ),
+            "require_exact_product_inventory": bool_value(
+                comparison, "require_exact_product_inventory", False
+            ),
+            "require_metadata_parity": bool_value(
+                comparison, "require_metadata_parity", False
+            ),
+            "source_regions": comparison.get("source_regions", []),
+            "tolerances": comparison.get("tolerances"),
         },
-        "command": {
-            "argv": command,
-            "env": env,
-        },
+        "command": command_plan,
         "environment": capture_provenance(
             repo_root=REPO_ROOT,
             executables={
                 "bench_script": BENCH_SCRIPT,
                 "casa_python": casa_python,
+                "casa_tclean_protocol": CASA_TCLEAN_PROTOCOL if casa else None,
             },
             datasets={"measurement_set": dataset_path},
             storage_label=storage_label_override
@@ -537,8 +908,27 @@ def attach_output_paths(
     output_dir: pathlib.Path,
     artifact_root: pathlib.Path,
     *,
+    cf_cache_root: pathlib.Path | None = None,
     dry_run: bool,
 ) -> None:
+    if plan["command"].get("kind") == "casa_tclean_protocol":
+        casa_tclean_workflow.attach_output_paths(
+            plan,
+            output_dir=output_dir,
+            artifact_root=artifact_root,
+            cf_cache_root=cf_cache_root
+            or casa_tclean_workflow.default_cf_cache_root(plan, artifact_root),
+            dry_run=dry_run,
+        )
+        return
+    if plan["command"].get("kind") == "recipe_bound_benchmark":
+        casa_tclean_workflow.attach_recipe_bound_benchmark_paths(
+            plan,
+            output_dir=output_dir,
+            artifact_root=artifact_root,
+            dry_run=dry_run,
+        )
+        return
     product_root = artifact_root / "products" / plan["run_id"]
     comparison_root = artifact_root / "comparisons" / plan["run_id"]
     tmp_root = artifact_root / "tmp"
@@ -560,12 +950,56 @@ def attach_output_paths(
         plan["command"]["env"]["IMAGER_BENCH_TMP_ROOT"] = str(tmp_root)
 
 
+def validate_reused_product_prefix(
+    value: str,
+    *,
+    expected_suffixes: list[str],
+    require_existing: bool,
+    label: str,
+) -> None:
+    """Fail before an expensive run when a reused product family is incomplete."""
+
+    prefix = pathlib.Path(os.path.expanduser(value))
+    if not prefix.is_absolute():
+        raise HarnessError(f"{label} product prefix must be absolute: {prefix}")
+    if not require_existing:
+        return
+    parent = prefix.parent
+    if not parent.is_dir() or parent.is_symlink():
+        raise HarnessError(f"{label} product parent is missing or unsafe: {parent}")
+    stem = prefix.name
+    observed = sorted(
+        path.name[len(stem) :]
+        for path in parent.iterdir()
+        if path.name.startswith(stem)
+        and path.name != stem
+        and path.name[len(stem) :].startswith(".")
+    )
+    expected = sorted(expected_suffixes)
+    if observed != expected:
+        raise HarnessError(
+            f"{label} product inventory mismatch: expected {expected}, got {observed}"
+        )
+    unsafe = [
+        pathlib.Path(f"{prefix}{suffix}")
+        for suffix in expected
+        if not pathlib.Path(f"{prefix}{suffix}").is_dir()
+        or pathlib.Path(f"{prefix}{suffix}").is_symlink()
+    ]
+    if unsafe:
+        raise HarnessError(
+            f"{label} product inventory contains missing or unsafe trees: {unsafe}"
+        )
+
+
 def benchmark_run_support(
     *, workload_id: str, specmode: str, gridder: str, wterm: str
 ) -> dict[str, Any]:
     reasons = []
     if specmode not in RUNNABLE_SPEC_MODES:
-        reasons.append(f"specmode={specmode!r} needs benchmark-script execution support")
+        reasons.append(
+            f"specmode={specmode!r} needs benchmark-script execution support"
+        )
     if gridder not in RUNNABLE_GRIDDER_VALUES:
         reasons.append(f"gridder={gridder!r} needs benchmark-script execution support")
     if wterm != "none" and not (
@@ -586,7 +1020,13 @@ def benchmark_run_support(
     }
 
 
-def review_contract_value(manifest: dict[str, Any], run: dict[str, Any]) -> dict[str, Any]:
+def boolean_flag(value: str) -> bool:
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
+def review_contract_value(
+    manifest: dict[str, Any], run: dict[str, Any]
+) -> dict[str, Any]:
     review = object_value(manifest, "review")
     required_roles = review.get(
         "required_evidence_roles",
@@ -595,7 +1035,9 @@ def review_contract_value(manifest: dict[str, Any], run: dict[str, Any]) -> dict
     if not isinstance(required_roles, list) or not all(
         isinstance(role, str) and role for role in required_roles
     ):
-        raise HarnessError("review.required_evidence_roles must be a non-empty string list")
+        raise HarnessError(
+            "review.required_evidence_roles must be a non-empty string list"
+        )
     evidence_role = str_value(run, "evidence_role", "unspecified")
     return {
         "required_reviewer": str_value(review, "required_reviewer", "Brian"),
@@ -662,6 +1104,8 @@ def review_panel_status(comparison: dict[str, Any]) -> tuple[str, str | None]:
 
 
 def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
+    if plan.get("command", {}).get("kind") == "casa_tclean_protocol":
+        return run_casa_recipe_plan(plan, log_path)
     env = os.environ.copy()
     env.update(plan["command"]["env"])
     if bool(plan.get("run", {}).get("stream_log", False)):
@@ -701,7 +1145,9 @@ def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
     attach_stage_breakdown(plan, parsed)
     comparison = compare_products(plan, parsed, log_path)
     parsed["product_comparison"] = comparison
-    evidence_status, failure = comparison_evidence_status(comparison)
+    evidence_status, failure = comparison_evidence_status(
+        comparison, required=plan["comparison"].get("tolerances") is not None
+    )
     if failure is not None:
         parsed["failure"] = failure
     completed_plan = dict(plan)
@@ -719,18 +1165,112 @@ def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
     }
 
 
+def run_casa_recipe_plan(
+    plan: dict[str, Any], log_path: pathlib.Path
+) -> dict[str, Any]:
+    """Dispatch a recipe-backed plan through the shared tclean workflow."""
+
+    return casa_tclean_workflow.run_recipe_plan(
+        plan, log_path, services=recipe_execution_services()
+    )
+
+
+def recipe_execution_services() -> casa_tclean_workflow.ExecutionServices:
+    """Bind generic dispatcher services to the recipe workflow owner."""
+
+    return casa_tclean_workflow.ExecutionServices(
+        utc_now=utc_now,
+        empty_results=empty_results,
+        empty_stage_breakdown=empty_stage_breakdown,
+        build_benchmark_feature_summary=build_benchmark_feature_summary,
+        comparison_evidence_status=comparison_evidence_status,
+        human_review_gate=human_review_gate,
+        compare_image_products=compare_image_products,
+    )
+
+
+def failed_bundled_run_result(
+    plan: dict[str, Any],
+    *,
+    log_path: pathlib.Path,
+    reason: str,
+    failure_kind: str = "harness",
+    exit_code: int = 2,
+) -> dict[str, Any]:
+    """Build the command-kind-specific typed failure receipt."""
+
+    services = recipe_execution_services()
+    if plan.get("command", {}).get("kind") == "recipe_bound_benchmark":
+        return casa_tclean_workflow.failed_recipe_bound_benchmark_result(
+            plan,
+            log_path=log_path,
+            reason=reason,
+            services=services,
+            failure_kind=failure_kind,
+            exit_code=exit_code,
+        )
+    return casa_tclean_workflow.failed_recipe_run_result(
+        plan,
+        log_path=log_path,
+        reason=reason,
+        services=services,
+        failure_kind=failure_kind,
+        exit_code=exit_code,
+    )
+
+
 def comparison_evidence_status(
-    comparison: dict[str, Any]
+    comparison: dict[str, Any],
+    *,
+    required: bool = False,
 ) -> tuple[str, dict[str, Any] | None]:
     status = comparison.get("status")
+    evaluation = comparison.get("tolerance_evaluation")
+    if isinstance(evaluation, dict) and evaluation.get("status") != "passed":
+        failed = evaluation.get("status") == "failed"
+        names = (
+            evaluation.get("failed_checks")
+            if failed
+            else evaluation.get("incomplete_checks")
+        )
+        return (
+            "out_of_tolerance" if failed else "failed_comparison",
+            {
+                "kind": "comparison_tolerance" if failed else "comparison",
+                "reason": (
+                    f"frozen tolerance evaluation {evaluation.get('status')}: "
+                    + ", ".join(names or [])
+                ),
+            },
+        )
+    if status == "out_of_tolerance":
+        return (
+            "out_of_tolerance",
+            {
+                "kind": "comparison_tolerance",
+                "reason": str(comparison.get("reason") or status),
+            },
+        )
     if status in {"unavailable", "skipped"}:
+        if required:
+            return (
+                "failed_comparison",
+                {
+                    "kind": "comparison",
+                    "reason": str(
+                        comparison.get("reason") or f"required comparison is {status}"
+                    ),
+                },
+            )
         return "completed", None
     if status != "completed":
         return (
             "failed_comparison",
             {
                 "kind": "comparison",
-                "reason": str(comparison.get("reason") or status or "comparison failed"),
+                "reason": str(
+                    comparison.get("reason") or status or "comparison failed"
+                ),
             },
         )
     products = comparison.get("products")
@@ -753,14 +1293,14 @@ def comparison_evidence_status(
             },
         )
     review = comparison.get("structured_difference_review")
-    if isinstance(review, dict) and review.get("label") == "bad":
+    if isinstance(review, dict) and review.get("label") in {"bad", "investigate"}:
         return (
             "out_of_tolerance",
             {
                 "kind": "comparison_tolerance",
                 "reason": str(
                     review.get("summary")
-                    or "scientific product comparison is outside accepted tolerance"
+                    or "scientific product comparison needs tolerance review"
                 ),
             },
         )
@@ -1036,7 +1576,9 @@ def parse_scalar_value(value: str) -> Any:
             return int(value)
         except ValueError:
             return value
-    if re.fullmatch(r"-?(?:[0-9]+[.][0-9]*|[0-9]*[.][0-9]+)(?:[eE][+-]?[0-9]+)?", value):
+    if re.fullmatch(
+        r"-?(?:[0-9]+[.][0-9]*|[0-9]*[.][0-9]+)(?:[eE][+-]?[0-9]+)?", value
+    ):
         try:
             return float(value)
         except ValueError:
@@ -1044,7 +1586,9 @@ def parse_scalar_value(value: str) -> Any:
     return value
 
 
-def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+def summarize_backend_plan_logs(
+    buckets: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
     runtime = last_fields(buckets.get("standard_mfs_runtime_plan", []))
     memory = last_fields(buckets.get("source_stream_memory_plan", []))
     source_read_ahead_entries = unique_entries_by_raw(
@@ -1082,7 +1626,9 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
     ]
     cube_per_plane_backend = last_fields(buckets.get("cube_per_plane_backend", []))
     cube_resident_control = last_fields(buckets.get("cube_resident_clean_control", []))
-    cube_resident_executor = last_fields(buckets.get("cube_resident_clean_executor", []))
+    cube_resident_executor = last_fields(
+        buckets.get("cube_resident_clean_executor", [])
+    )
     cube_resident_stage = last_fields(
         [
             entry
@@ -1179,18 +1725,26 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
             "gpu_metal": single_plane.get("gpu_metal_reason"),
         },
         "resolved_backend": runtime.get("backend"),
+        "resolved_auto_metal": runtime.get("auto_metal"),
+        "resolved_auto_metal_reason": runtime.get("auto_metal_reason"),
         "resolved_grid_threads": runtime.get("grid_threads"),
         "resolved_tile_anchor": runtime.get("tile_anchor"),
         "resolved_residual_backend": runtime.get("residual_backend"),
         "resolved_initial_dirty_backend": runtime.get("initial_dirty_backend"),
         "resolved_minor_cycle_backend": runtime.get("minor_cycle_backend"),
-        "resolved_minor_cycle_backend_reason": runtime.get("minor_cycle_backend_reason"),
+        "resolved_minor_cycle_backend_reason": runtime.get(
+            "minor_cycle_backend_reason"
+        ),
         "requested_imaging_fft_backend": runtime.get("imaging_fft_backend"),
         "dirty_product_fft_selected_backend": dirty_product_fft.get("selected_backend"),
-        "dirty_product_fft_requested_backend": dirty_product_fft.get("requested_backend"),
+        "dirty_product_fft_requested_backend": dirty_product_fft.get(
+            "requested_backend"
+        ),
         "dirty_product_fft_fallback_used": dirty_product_fft.get("fallback_used"),
         "dirty_product_fft_total_ms": dirty_product_fft.get("total_ms"),
-        "dirty_product_gpu_resident_products": dirty_product_gpu_resident.get("products"),
+        "dirty_product_gpu_resident_products": dirty_product_gpu_resident.get(
+            "products"
+        ),
         "dirty_product_gpu_resident_requested_backend": dirty_product_gpu_resident.get(
             "requested_backend"
         ),
@@ -1217,7 +1771,9 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "dirty_product_gpu_resident_postprocess_ms": dirty_product_gpu_resident.get(
             "postprocess_ms"
         ),
-        "dirty_product_gpu_resident_total_ms": dirty_product_gpu_resident.get("total_ms"),
+        "dirty_product_gpu_resident_total_ms": dirty_product_gpu_resident.get(
+            "total_ms"
+        ),
         "dirty_product_gpu_resident_fallback_reason": dirty_product_gpu_fallback.get(
             "reason"
         ),
@@ -1226,12 +1782,16 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "cube_per_plane_backend": cube_per_plane_backend.get("selected_backend"),
         "cube_per_plane_phase": cube_per_plane_backend.get("phase"),
         "cube_per_plane_workers": cube_per_plane_backend.get("plane_worker_count"),
-        "cube_per_plane_grid_threads": cube_per_plane_backend.get("per_plane_grid_threads"),
+        "cube_per_plane_grid_threads": cube_per_plane_backend.get(
+            "per_plane_grid_threads"
+        ),
         "cube_per_plane_fixed_tile_eligible": cube_per_plane_backend.get(
             "fixed_tile_cpu_eligible"
         ),
         "cube_per_plane_metal_eligible": cube_per_plane_backend.get("metal_eligible"),
-        "cube_per_plane_fallback_reasons": cube_per_plane_backend.get("fallback_reasons"),
+        "cube_per_plane_fallback_reasons": cube_per_plane_backend.get(
+            "fallback_reasons"
+        ),
         "cube_resident_clean_planes": cube_resident_control.get("planes"),
         "cube_resident_clean_cycle_threshold": cube_resident_control.get(
             "cycle_threshold"
@@ -1385,9 +1945,7 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "source_read_ahead_source_prepare_ms": source_read_ahead.get(
             "source_prepare_ms"
         ),
-        "source_read_ahead_streamed_samples": source_read_ahead.get(
-            "streamed_samples"
-        ),
+        "source_read_ahead_streamed_samples": source_read_ahead.get("streamed_samples"),
         "source_read_ahead_source_bytes": source_read_ahead.get("source_bytes"),
         "source_read_ahead_effective_read_bandwidth_mib_s": source_read_ahead.get(
             "effective_read_bandwidth_mib_s"
@@ -1459,8 +2017,12 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "cube_product_image_pbcor_ms": sum_int_or_float_field(
             cube_product_summaries, "product_image_pbcor_ms"
         ),
-        "cube_product_bytes": sum_int_or_float_field(cube_product_summaries, "product_bytes"),
-        "cube_product_groups": sum_int_or_float_field(cube_product_summaries, "product_groups"),
+        "cube_product_bytes": sum_int_or_float_field(
+            cube_product_summaries, "product_bytes"
+        ),
+        "cube_product_groups": sum_int_or_float_field(
+            cube_product_summaries, "product_groups"
+        ),
         "cube_product_group_planes": sum_int_or_float_field(
             cube_product_summaries, "product_group_planes"
         ),
@@ -1703,14 +2265,22 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "spectral_best_modeled_schedule": spectral_plan.get("best_modeled_schedule"),
         "spectral_executor_capabilities": spectral_plan.get("executor_capabilities"),
         "spectral_cache_budget_bytes": spectral_plan.get("cache_budget_bytes"),
-        "spectral_visibility_cache_policy": spectral_plan.get("visibility_cache_policy"),
+        "spectral_visibility_cache_policy": spectral_plan.get(
+            "visibility_cache_policy"
+        ),
         "spectral_prepared_residency": spectral_plan.get("prepared_residency"),
         "spectral_visibility_cache_bytes": spectral_plan.get("visibility_cache_bytes"),
         "spectral_product_batch_planes": spectral_plan.get("product_batch_planes"),
         "spectral_source_channel_visits": spectral_plan.get("source_channel_visits"),
-        "spectral_max_slab_source_channels": spectral_plan.get("max_slab_source_channels"),
-        "spectral_full_source_channel_count": spectral_plan.get("full_source_channel_count"),
-        "spectral_source_cell_channel_count": spectral_plan.get("source_cell_channel_count"),
+        "spectral_max_slab_source_channels": spectral_plan.get(
+            "max_slab_source_channels"
+        ),
+        "spectral_full_source_channel_count": spectral_plan.get(
+            "full_source_channel_count"
+        ),
+        "spectral_source_cell_channel_count": spectral_plan.get(
+            "source_cell_channel_count"
+        ),
         "spectral_visibility_row_channel_bytes": spectral_plan.get(
             "visibility_row_channel_bytes"
         ),
@@ -1753,12 +2323,16 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "spectral_best_modeled_active_planes": spectral_plan.get(
             "best_modeled_active_planes"
         ),
-        "spectral_best_modeled_slab_count": spectral_plan.get("best_modeled_slab_count"),
+        "spectral_best_modeled_slab_count": spectral_plan.get(
+            "best_modeled_slab_count"
+        ),
         "spectral_best_modeled_source_channel_visits": spectral_plan.get(
             "best_modeled_source_channel_visits"
         ),
         "spectral_modeled_total_io_bytes": spectral_plan.get("modeled_total_io_bytes"),
-        "spectral_modeled_source_read_bytes": spectral_plan.get("modeled_source_read_bytes"),
+        "spectral_modeled_source_read_bytes": spectral_plan.get(
+            "modeled_source_read_bytes"
+        ),
         "spectral_modeled_visibility_cache_fill_bytes": spectral_plan.get(
             "modeled_visibility_cache_fill_bytes"
         ),
@@ -1846,7 +2420,9 @@ def aggregate_source_read_ahead_fields(entries: list[dict[str, Any]]) -> dict[st
         fields["enabled"] = any(value is True for value in enabled)
     source_bytes = fields.get("source_bytes")
     source_read_ms = fields.get("source_read_ms")
-    if isinstance(source_bytes, (int, float)) and isinstance(source_read_ms, (int, float)):
+    if isinstance(source_bytes, (int, float)) and isinstance(
+        source_read_ms, (int, float)
+    ):
         fields["effective_read_bandwidth_mib_s"] = (
             source_bytes / (1024.0 * 1024.0) / (source_read_ms / 1000.0)
             if source_bytes > 0 and source_read_ms > 0
@@ -1858,7 +2434,11 @@ def aggregate_source_read_ahead_fields(entries: list[dict[str, Any]]) -> dict[st
 def unique_entries_by_raw(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     raw_entries = [entry.get("raw") for entry in entries]
     half = len(raw_entries) // 2
-    if half > 0 and len(raw_entries) % 2 == 0 and raw_entries[:half] == raw_entries[half:]:
+    if (
+        half > 0
+        and len(raw_entries) % 2 == 0
+        and raw_entries[:half] == raw_entries[half:]
+    ):
         return entries[:half]
     return entries
 
@@ -1874,7 +2454,9 @@ def fields_for_names(
 
 
 def max_int_field(entries: list[dict[str, Any]], field: str) -> int | None:
-    values = [entry.get(field) for entry in entries if isinstance(entry.get(field), int)]
+    values = [
+        entry.get(field) for entry in entries if isinstance(entry.get(field), int)
+    ]
     return max(values) if values else None
 
 
@@ -1890,7 +2472,9 @@ def max_int_or_float_field(
     return max(values) if values else None
 
 
-def sum_int_or_float_field(entries: list[dict[str, Any]], field: str) -> int | float | None:
+def sum_int_or_float_field(
+    entries: list[dict[str, Any]], field: str
+) -> int | float | None:
     values = [
         entry.get(field)
         for entry in entries
@@ -1969,11 +2553,22 @@ def build_benchmark_feature_summary(
     environment = plan.get("environment", {})
     runtime = environment.get("runtime", {})
     backend_logs = (parsed or {}).get("backend_plan_logs", {})
-    backend_summary = backend_logs.get("summary", {}) if isinstance(backend_logs, dict) else {}
+    backend_summary = (
+        backend_logs.get("summary", {}) if isinstance(backend_logs, dict) else {}
+    )
     stages = ((parsed or {}).get("stage_medians_ms") or {}).get("rust", {})
+    casa_evidence_resources = (
+        ((parsed or {}).get("casa") or {}).get("evidence_summary") or {}
+    ).get("resources", {})
     image_shape = mode.get("image_shape") or [None, None]
-    imsize_x = int(image_shape[0]) if image_shape and image_shape[0] is not None else None
-    imsize_y = int(image_shape[1]) if len(image_shape) > 1 and image_shape[1] is not None else imsize_x
+    imsize_x = (
+        int(image_shape[0]) if image_shape and image_shape[0] is not None else None
+    )
+    imsize_y = (
+        int(image_shape[1])
+        if len(image_shape) > 1 and image_shape[1] is not None
+        else imsize_x
+    )
     selected_channels = first_int(
         backend_summary.get("selected_channels"),
         source_channel_width(mode),
@@ -1983,12 +2578,21 @@ def build_benchmark_feature_summary(
     gridded_samples = first_int(backend_summary.get("gridded_samples"))
     correlations = planned_correlation_count(plan)
     flagged_fraction = None
-    if gridded_samples is not None and selected_rows and selected_channels and correlations:
+    if (
+        gridded_samples is not None
+        and selected_rows
+        and selected_channels
+        and correlations
+    ):
         denominator = selected_rows * selected_channels * correlations
         if denominator > 0:
             flagged_fraction = max(0.0, min(1.0, 1.0 - (gridded_samples / denominator)))
     visibility_work = None
-    if selected_rows is not None and selected_channels is not None and correlations is not None:
+    if (
+        selected_rows is not None
+        and selected_channels is not None
+        and correlations is not None
+    ):
         visibility_work = selected_rows * selected_channels * correlations
         if flagged_fraction is not None:
             visibility_work = int(round(visibility_work * (1.0 - flagged_fraction)))
@@ -2000,7 +2604,10 @@ def build_benchmark_feature_summary(
     source_stream_throughput = None
     prepare_ms = sum(
         float(stages.get(name, 0.0) or 0.0)
-        for name in ("get_ms_values_into_processing_buffer", "prepare_processing_buffer")
+        for name in (
+            "get_ms_values_into_processing_buffer",
+            "prepare_processing_buffer",
+        )
     )
     if prepare_ms > 0 and visibility_work:
         source_stream_throughput = visibility_work / (prepare_ms / 1000.0)
@@ -2014,7 +2621,9 @@ def build_benchmark_feature_summary(
             "flagged_fraction": finite_float(flagged_fraction),
             "visibility_work": visibility_work,
             "gridded_samples": gridded_samples,
-            "source_stream_throughput_samples_per_s": finite_float(source_stream_throughput),
+            "source_stream_throughput_samples_per_s": finite_float(
+                source_stream_throughput
+            ),
         },
         "image": {
             "imsize_x": imsize_x,
@@ -2029,15 +2638,47 @@ def build_benchmark_feature_summary(
             "deconvolver": mode.get("deconvolver"),
             "weighting": mode.get("weighting"),
             "niter": mode.get("niter"),
-            "cycleniter": plan.get("command", {}).get("env", {}).get("IMAGER_BENCH_MINOR_CYCLE_LENGTH"),
+            "cycleniter": plan.get("command", {})
+            .get("env", {})
+            .get("IMAGER_BENCH_MINOR_CYCLE_LENGTH"),
             "actual_major_cycles": backend_summary.get("major_cycles"),
             "actual_minor_iterations": backend_summary.get("minor_iterations"),
             "multiscale_scale_count": multiscale_scale_count(plan),
-            "mtmfs_nterms": mode.get("nterms") if mode.get("deconvolver") == "mtmfs" else None,
+            "mtmfs_nterms": mode.get("nterms")
+            if mode.get("deconvolver") == "mtmfs"
+            else None,
             "wprojplanes": mode.get("wprojplanes"),
             "mosaic_field_count": field_count(plan),
         },
         "resources": {
+            "casa_peak_rss_bytes": casa_evidence_resources.get("peak_rss_bytes_max"),
+            "casa_user_cpu_seconds_median": casa_evidence_resources.get(
+                "user_cpu_seconds_median"
+            ),
+            "casa_system_cpu_seconds_median": casa_evidence_resources.get(
+                "system_cpu_seconds_median"
+            ),
+            "casa_disk_read_bytes_median": casa_evidence_resources.get(
+                "disk_read_bytes_median"
+            ),
+            "casa_disk_write_bytes_median": casa_evidence_resources.get(
+                "disk_write_bytes_median"
+            ),
+            "casa_block_input_operations_median": casa_evidence_resources.get(
+                "block_input_operations_median"
+            ),
+            "casa_block_output_operations_median": casa_evidence_resources.get(
+                "block_output_operations_median"
+            ),
+            "casa_product_logical_bytes_median": casa_evidence_resources.get(
+                "product_logical_bytes_median"
+            ),
+            "casa_cf_cache_logical_bytes_max": casa_evidence_resources.get(
+                "cf_cache_logical_bytes_max"
+            ),
+            "casa_cf_cache_included_file_count_max": casa_evidence_resources.get(
+                "cf_cache_included_file_count_max"
+            ),
             "physical_cores": runtime.get("physical_cores"),
             "logical_cores": runtime.get("logical_cores"),
             "available_parallelism": runtime.get("logical_cores"),
@@ -2045,7 +2686,9 @@ def build_benchmark_feature_summary(
             "memory_target_bytes": backend_summary.get("memory_target_bytes"),
             "planned_active_bytes": backend_summary.get("planned_active_bytes"),
             "memory_headroom_bytes": memory_headroom_bytes(backend_summary),
-            "row_block_count": row_block_count(selected_rows, backend_summary.get("row_block_rows")),
+            "row_block_count": row_block_count(
+                selected_rows, backend_summary.get("row_block_rows")
+            ),
             "row_block_rows": backend_summary.get("row_block_rows"),
             "source_read_ahead_enabled": backend_summary.get(
                 "source_read_ahead_enabled"
@@ -2093,14 +2736,18 @@ def build_benchmark_feature_summary(
             ),
             "peak_rss_bytes": backend_summary.get("peak_rss_bytes"),
             "metal_device": backend_summary.get("metal_device_available"),
-            "metal_grouped_input_cache": backend_summary.get("metal_grouped_input_cache"),
+            "metal_grouped_input_cache": backend_summary.get(
+                "metal_grouped_input_cache"
+            ),
             "dirty_product_fft_selected_backend": backend_summary.get(
                 "dirty_product_fft_selected_backend"
             ),
             "dirty_product_fft_requested_backend": backend_summary.get(
                 "dirty_product_fft_requested_backend"
             ),
-            "dirty_product_fft_total_ms": backend_summary.get("dirty_product_fft_total_ms"),
+            "dirty_product_fft_total_ms": backend_summary.get(
+                "dirty_product_fft_total_ms"
+            ),
             "dirty_product_gpu_resident_plan_ms": backend_summary.get(
                 "dirty_product_gpu_resident_plan_ms"
             ),
@@ -2137,8 +2784,12 @@ def build_benchmark_feature_summary(
             "resolved_backend": backend_summary.get("resolved_backend"),
             "resolved_grid_threads": backend_summary.get("resolved_grid_threads"),
             "resolved_tile_anchor": backend_summary.get("resolved_tile_anchor"),
-            "resolved_residual_backend": backend_summary.get("resolved_residual_backend"),
-            "resolved_initial_dirty_backend": backend_summary.get("resolved_initial_dirty_backend"),
+            "resolved_residual_backend": backend_summary.get(
+                "resolved_residual_backend"
+            ),
+            "resolved_initial_dirty_backend": backend_summary.get(
+                "resolved_initial_dirty_backend"
+            ),
             "dirty_product_fft_selected_backend": backend_summary.get(
                 "dirty_product_fft_selected_backend"
             ),
@@ -2195,10 +2846,14 @@ def build_benchmark_feature_summary(
             "mosaic_cube_slab_product_state": backend_summary.get(
                 "mosaic_cube_slab_product_state"
             ),
-            "cpu_multi_worker_reason": backend_summary.get("single_plane_reason", {}).get("cpu_multi_worker")
+            "cpu_multi_worker_reason": backend_summary.get(
+                "single_plane_reason", {}
+            ).get("cpu_multi_worker")
             if isinstance(backend_summary.get("single_plane_reason"), dict)
             else None,
-            "gpu_metal_reason": backend_summary.get("single_plane_reason", {}).get("gpu_metal")
+            "gpu_metal_reason": backend_summary.get("single_plane_reason", {}).get(
+                "gpu_metal"
+            )
             if isinstance(backend_summary.get("single_plane_reason"), dict)
             else None,
         },
@@ -2310,7 +2965,9 @@ def empty_stage_breakdown(reason: str) -> dict[str, Any]:
     }
 
 
-def build_rust_stage_breakdown(plan: dict[str, Any], stages: dict[str, float]) -> dict[str, Any]:
+def build_rust_stage_breakdown(
+    plan: dict[str, Any], stages: dict[str, float]
+) -> dict[str, Any]:
     dirty_only = plan["mode"]["bench_mode"] == "dirty" or plan["mode"]["niter"] == 0
     categories = {
         "frontend_ms_preparation": stage_category(
@@ -2412,6 +3069,30 @@ def build_rust_stage_breakdown(plan: dict[str, Any], stages: dict[str, float]) -
 
 def build_casa_stage_breakdown(stages: dict[str, float]) -> dict[str, Any]:
     categories = {
+        "protocol_preflight": stage_category(
+            stages,
+            ["protocol_preflight"],
+            "Checked-in tclean protocol preconditions and runtime/mask validation.",
+        ),
+        "opaque_tclean_task": stage_category(
+            stages,
+            ["tclean_task"],
+            (
+                "Opaque CASA tclean task envelope containing internal MS selection, "
+                "CF/AW work, gridding, FFTs, deconvolution, restoration, and product "
+                "writes; it does not claim internal attribution."
+            ),
+        ),
+        "evidence_postconditions": stage_category(
+            stages,
+            ["product_inventory", "cache_postcondition"],
+            "Stable product hashing plus CF-cache validation and publication evidence.",
+        ),
+        "protocol_total": stage_category(
+            stages,
+            ["protocol_total"],
+            "End-to-end checked-in tclean protocol execution.",
+        ),
         "setup_and_tool_construction": stage_category(
             stages,
             [
@@ -2559,19 +3240,27 @@ def compare_products(
     plan: dict[str, Any], parsed: dict[str, Any], log_path: pathlib.Path
 ) -> dict[str, Any]:
     product_paths = parsed.get("product_paths", {})
-    rust_prefix = product_paths.get("rust_prefix") or plan.get("products", {}).get("rust_prefix")
-    casa_prefix = product_paths.get("casa_prefix") or plan.get("products", {}).get("casa_prefix")
+    rust_prefix = product_paths.get("rust_prefix") or plan.get("products", {}).get(
+        "rust_prefix"
+    )
+    casa_prefix = product_paths.get("casa_prefix") or plan.get("products", {}).get(
+        "casa_prefix"
+    )
     casa_python = executable_path(plan.get("environment", {}), "casa_python")
     if not rust_prefix or not casa_prefix:
         return {
             "status": "skipped",
             "reason": "benchmark did not preserve product prefixes",
+            "source_regions": plan["comparison"].get("source_regions", []),
+            "tolerances": plan["comparison"].get("tolerances"),
             "products": {},
         }
     if not casa_python:
         return {
             "status": "skipped",
             "reason": "CASA Python is required for CASA image product comparison",
+            "source_regions": plan["comparison"].get("source_regions", []),
+            "tolerances": plan["comparison"].get("tolerances"),
             "products": {},
         }
 
@@ -2581,12 +3270,26 @@ def compare_products(
         if comparison_root
         else log_path.with_suffix(".panels")
     )
+    structure_workspace_dir = (
+        pathlib.Path(comparison_root) / "structure-workspace"
+        if comparison_root
+        else log_path.with_suffix(".structure-workspace")
+    ).resolve()
     request = {
         "rust_prefix": rust_prefix,
         "casa_prefix": casa_prefix,
         "products": plan["comparison"]["products"],
         "max_elements_per_product": plan["comparison"]["max_elements_per_product"],
+        "mode": plan["comparison"]["mode"],
+        "full_chunk_elements": plan["comparison"]["full_chunk_elements"],
+        "require_exact_product_inventory": plan["comparison"][
+            "require_exact_product_inventory"
+        ],
+        "require_metadata_parity": plan["comparison"]["require_metadata_parity"],
+        "source_regions": plan["comparison"].get("source_regions", []),
+        "tolerances": plan["comparison"].get("tolerances"),
         "panel_dir": str(panel_dir),
+        "structure_workspace_dir": str(structure_workspace_dir),
     }
     comparison = compare_image_products(
         casa_python=casa_python,
@@ -2594,7 +3297,20 @@ def compare_products(
         artifact_prefix=log_path,
         cwd=REPO_ROOT,
     )
+    if comparison.get("status") in {
+        "unavailable",
+        "failed_execution",
+        "failed_validation",
+    }:
+        status = comparison.get("status")
+        return {
+            "status": "unavailable" if status == "unavailable" else "failed_execution",
+            "reason": str(comparison.get("reason") or status),
+            "products": {},
+        }
     comparison["panel_dir"] = str(panel_dir)
+    comparison["source_regions"] = plan["comparison"].get("source_regions", [])
+    comparison["tolerances"] = plan["comparison"].get("tolerances")
     return comparison
 
 
@@ -2621,12 +3337,32 @@ def resolve_dataset_path(dataset: dict[str, Any], *, dry_run: bool) -> pathlib.P
         root = os.environ.get(root_env)
         if not root:
             if dry_run:
-                root = f"${root_env}"
+                root = str(pathlib.Path("/") / "__casa_rs_dry_run__" / root_env)
             else:
-                raise HarnessError(f"{root_env} is required for dataset {dataset.get('key')!r}")
+                raise HarnessError(
+                    f"{root_env} is required for dataset {dataset.get('key')!r}"
+                )
         path = pathlib.Path(root) / required_str(dataset, "relative_path")
+    if dry_run and not path.is_absolute():
+        path = (REPO_ROOT / path).resolve()
     if not dry_run and not path.is_dir():
         raise HarnessError(f"dataset path does not exist: {path}")
+    return path
+
+
+def resolve_imaging_path(
+    value: str,
+    *,
+    dataset_path: pathlib.Path,
+    field: str,
+    require_directory: bool,
+) -> pathlib.Path:
+    path = pathlib.Path(os.path.expanduser(value))
+    if not path.is_absolute():
+        path = dataset_path.parent / path
+    path = path.resolve()
+    if require_directory and not path.is_dir():
+        raise HarnessError(f"{field} directory does not exist: {path}")
     return path
 
 

@@ -70,6 +70,61 @@ def test_importvla_wrapper_preserves_the_archive_path_list(monkeypatch) -> None:
     assert captured["overrides"] == {"archivefiles": archivefiles}
 
 
+def test_generated_imager_wrapper_preserves_vlass_awproject_controls(monkeypatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_run(task: str, **options: Any) -> object:
+        captured.update(task=task, **options)
+        return object()
+
+    monkeypatch.setattr(_catalog, "_run", fake_run)
+    tasks.imager(
+        vis="vlass.ms",
+        imagename="vlass",
+        field="1107~1127,1512~1532,1542~1562",
+        spw="2~17",
+        uvrange="<12km",
+        intent="OBSERVE_TARGET#UNSPECIFIED",
+        stokes="I",
+        projection="SIN",
+        gridder="awproject",
+        wprojplanes=32,
+        cfcache="cf-cache/vlass",
+        cf_resident_mb=256,
+        facets=1,
+        aterm=True,
+        psterm=False,
+        wbawp=True,
+        conjbeams=True,
+        usepointing=True,
+        computepastep=360.0,
+        rotatepastep=360.0,
+        pointingoffsetsigdev="0",
+        mosweight=False,
+        normtype="flatnoise",
+        deconvolver="mtmfs",
+        nterms=2,
+        scales="0,5,12",
+        parallel=False,
+        imaging_memory_target_mb=16384,
+        imaging_prepare_workers=4,
+        imaging_fft_backend="metal-mpsgraph",
+        imaging_fft_precision="f32",
+    )
+
+    assert captured["task"] == "imager"
+    overrides = captured["overrides"]
+    assert overrides["field"] == "1107~1127,1512~1532,1542~1562"
+    assert overrides["stokes"] == "I"
+    assert overrides["gridder"] == "awproject"
+    assert overrides["cfcache"] == "cf-cache/vlass"
+    assert overrides["psterm"] is False
+    assert overrides["parallel"] is False
+    assert overrides["imaging_memory_target_mb"] == 16384
+    assert overrides["imaging_fft_backend"] == "metal-mpsgraph"
+    assert overrides["imaging_fft_precision"] == "f32"
+
+
 def test_catalog_generates_one_wrapper_for_every_session(monkeypatch) -> None:
     session_ids = tuple(
         surface["id"]

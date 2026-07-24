@@ -54,19 +54,40 @@ impl GaussianBeam {
 
     /// Serializes the beam to the casacore quantity-record representation.
     pub fn to_record(&self) -> RecordValue {
-        fn quantity_record(value: f64) -> RecordValue {
+        fn quantity_record(value: f64, unit: &str) -> RecordValue {
             RecordValue::new(vec![
                 RecordField::new("value", Value::Scalar(ScalarValue::Float64(value))),
-                RecordField::new("unit", Value::Scalar(ScalarValue::String("rad".into()))),
+                RecordField::new("unit", Value::Scalar(ScalarValue::String(unit.into()))),
             ])
         }
 
+        // CASA image products conventionally persist fitted beam widths in
+        // arcseconds and position angles in degrees. Keep radians as the
+        // in-memory contract while matching that interoperable record form.
+        let radians_to_degrees = 180.0 / std::f64::consts::PI;
+        let radians_to_arcseconds = 3_600.0 * radians_to_degrees;
+
         RecordValue::new(vec![
-            RecordField::new("major", Value::Record(quantity_record(self.major))),
-            RecordField::new("minor", Value::Record(quantity_record(self.minor))),
+            RecordField::new(
+                "major",
+                Value::Record(quantity_record(
+                    self.major * radians_to_arcseconds,
+                    "arcsec",
+                )),
+            ),
+            RecordField::new(
+                "minor",
+                Value::Record(quantity_record(
+                    self.minor * radians_to_arcseconds,
+                    "arcsec",
+                )),
+            ),
             RecordField::new(
                 "positionangle",
-                Value::Record(quantity_record(self.position_angle)),
+                Value::Record(quantity_record(
+                    self.position_angle * radians_to_degrees,
+                    "deg",
+                )),
             ),
         ])
     }
@@ -785,6 +806,12 @@ fn count_to_pair(nchan: usize, _nstokes: usize, count: usize) -> Option<(usize, 
 mod tests {
     use super::*;
 
+    fn assert_beam_close(left: GaussianBeam, right: GaussianBeam) {
+        assert!((left.major - right.major).abs() < 1e-15);
+        assert!((left.minor - right.minor).abs() < 1e-15);
+        assert!((left.position_angle - right.position_angle).abs() < 1e-15);
+    }
+
     fn beam_arcsec(major: f64, minor: f64, pa_deg: f64) -> GaussianBeam {
         GaussianBeam::new(
             arcsec_to_rad(major),
@@ -862,8 +889,21 @@ mod tests {
     #[test]
     fn beam_record_round_trip() {
         let beam = GaussianBeam::new(1e-4, 5e-5, 0.3);
-        let back = GaussianBeam::from_record(&beam.to_record()).unwrap();
-        assert_eq!(beam, back);
+        let record = beam.to_record();
+        let back = GaussianBeam::from_record(&record).unwrap();
+        assert!((beam.major - back.major).abs() < 1e-18);
+        assert!((beam.minor - back.minor).abs() < 1e-18);
+        assert!((beam.position_angle - back.position_angle).abs() < 1e-15);
+        let quantity_unit = |name| match record.get(name) {
+            Some(Value::Record(quantity)) => match quantity.get("unit") {
+                Some(Value::Scalar(ScalarValue::String(unit))) => unit.as_str(),
+                _ => panic!("{name} quantity is missing its unit"),
+            },
+            _ => panic!("beam record is missing {name}"),
+        };
+        assert_eq!(quantity_unit("major"), "arcsec");
+        assert_eq!(quantity_unit("minor"), "arcsec");
+        assert_eq!(quantity_unit("positionangle"), "deg");
     }
 
     #[test]
@@ -903,7 +943,12 @@ mod tests {
             ],
         ]);
         let back = ImageBeamSet::from_record(&beams.to_record()).unwrap();
-        assert_eq!(beams, back);
+        assert_eq!(beams.shape(), back.shape());
+        for channel in 0..beams.n_channels() {
+            for stokes in 0..beams.n_stokes() {
+                assert_beam_close(*beams.beam(channel, stokes), *back.beam(channel, stokes));
+            }
+        }
     }
 
     #[test]
@@ -972,7 +1017,7 @@ mod tests {
         legacy.upsert("nStokes", Value::Scalar(ScalarValue::Int32(1)));
         legacy.upsert("*0_0", Value::Record(global.to_record()));
         let parsed = ImageBeamSet::from_record(&legacy).unwrap();
-        assert_eq!(parsed.single_beam(), Some(global));
+        assert_beam_close(parsed.single_beam().unwrap(), global);
 
         let mut missing = RecordValue::default();
         missing.upsert("nChannels", Value::Scalar(ScalarValue::Int32(1)));

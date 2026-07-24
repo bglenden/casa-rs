@@ -17,14 +17,14 @@
 //! nutation (custom series), and aberration (Stumpff polynomial series).
 //! SOFA is only an optional casacore build dependency used for testing.
 //!
-//! This Rust implementation uses [`sofars`] (a Rust port of SOFA) instead of
-//! transliterating casacore's bespoke algorithms. Both implement the same IAU
-//! standards but with different polynomial series and internal decompositions.
-//! Accepted casacore-vs-SOFA divergence on the apparent-place branch:
+//! This Rust implementation uses [`sofars`] (a Rust port of SOFA) for the
+//! shared precession, nutation, and ephemeris building blocks. The
+//! apparent-place branch preserves casacore's observable semantics by using
+//! its Stumpff aberration series and explicit solar-deflection hop:
 //!
 //! | IAU model | Typical deviation | Main contributors |
 //! |-----------|-------------------|-------------------|
-//! | 1976/1980 | ~1.5 mas | Sun deflection, velocity series |
+//! | 1976/1980 | sub-mas | residual series decomposition |
 //! | 2000A | ~16 mas | Precession/nutation parameterization |
 //!
 //! The affected conversion paths are the ones that pass through apparent place:
@@ -37,12 +37,12 @@
 //! implementations transit the apparent-place branch before applying local
 //! sidereal-time, horizon, or terrestrial rotations.
 //!
-//! The IAU 1976/1980 deviation is dominated by:
-//! - **Sun gravitational deflection**: C++ casacore applies full light deflection
-//!   by the Sun (`applySolarPos`, up to ~1.75" at the limb, typically ~1–2 mas
-//!   at moderate elongation). SOFA's `ab()` includes only a ~0.4 µas correction.
-//! - **Earth velocity**: SOFA uses VSOP87 via `epv00`; casacore uses Stumpff
-//!   polynomial series. Difference: ~0.1 mas.
+//! The 1976/1980 path ports the two effects that otherwise dominate the
+//! difference:
+//! - **Sun gravitational deflection**: the `J2000 ↔ JNAT` hop follows
+//!   casacore `MeasMath::applySolarPos` / `deapplySolarPos`.
+//! - **Earth velocity**: the `JNAT ↔ APP` hop uses casacore's Stumpff
+//!   polynomial velocity series and relativistic aberration transform.
 //!
 //! The larger IAU 2000A deviation (~16 mas) comes from differences in how
 //! casacore and SOFA parameterize the IAU 2000 precession-nutation model.
@@ -57,20 +57,19 @@
 //! IAU 1976/1980 path.
 //!
 //! A test program comparing casacore and ERFA (SOFA) side-by-side is in
-//! `misc/casacore_vs_sofa_deviation.cpp`. The Rust project treats the current
-//! mismatch as an accepted, regression-tested divergence rather than
-//! re-implementing casacore's bespoke pre-SOFA algorithms byte-for-byte.
+//! `misc/casacore_vs_sofa_deviation.cpp`.
 //!
 //! # Implemented routes
 //!
 //! **Constant-matrix** (no frame data needed):
 //! J2000 ↔ GALACTIC, J2000 ↔ ICRS, GALACTIC ↔ SUPERGAL,
-//! AZEL ↔ AZELSW, AZELGEO ↔ AZELSWGEO, JNAT ↔ J2000
+//! AZEL ↔ AZELSW, AZELGEO ↔ AZELSWGEO
 //!
 //! **Epoch-dependent** (need epoch in frame):
 //! J2000 ↔ JMEAN (precession), JMEAN ↔ JTRUE (nutation),
 //! J2000 ↔ ECLIPTIC (obliquity), JMEAN ↔ MECLIPTIC, JTRUE ↔ TECLIPTIC,
-//! JTRUE ↔ APP (aberration)
+//! J2000 ↔ JNAT (solar deflection), JNAT ↔ APP (aberration plus
+//! precession/nutation)
 //!
 //! **Epoch + position** (need both):
 //! APP ↔ HADEC (sidereal time), HADEC ↔ AZEL, HADEC ↔ AZELGEO
@@ -84,12 +83,16 @@ use std::sync::LazyLock;
 use crate::quanta::MvAngle;
 use crate::quanta::{Quantity, Unit};
 
-use super::epoch::{EpochRef, MEpoch};
+use super::casacore_aberration::earth_barycentric_velocity_ms;
+use super::epoch::{EpochRef, MEpoch, casacore_gast_rad};
 use super::error::MeasureError;
 use super::frame::{IauModel, MeasFrame};
 
 /// Speed of light in AU/day (IAU 2012 nominal).
 const C_AU_PER_DAY: f64 = 173.144_632_674_240_34;
+
+/// Exact SI speed of light used by casacore's aberration normalization.
+const C_M_PER_S: f64 = 299_792_458.0;
 
 /// MJD offset for JD pairs.
 const MJD_OFFSET: f64 = 2_400_000.5;
@@ -1131,8 +1134,8 @@ fn earth_velocity_au_per_day(
 /// Get GAST (Greenwich Apparent Sidereal Time) from the frame.
 ///
 /// Dispatches on the IAU model:
-/// - [`Iau1976_1980`](IauModel::Iau1976_1980): GMST82 + equation of equinoxes 1994
-///   (`sofars::erst::gst94`)
+/// - [`Iau1976_1980`](IauModel::Iau1976_1980): GMST82 plus casacore's
+///   IAU-1980 equation of equinoxes (without the later 1994 complementary terms)
 /// - [`Iau2006_2000A`](IauModel::Iau2006_2000A): GMST82 + equation of equinoxes
 ///   IAU 2000A (`sofars::erst::gmst82` + `sofars::erst::ee00a`).
 ///
@@ -1146,16 +1149,11 @@ fn get_gast(frame: &MeasFrame, ctx: &ConvCtx) -> Result<f64, MeasureError> {
 /// Compute GAST (uncached, used by ConvCtx).
 fn compute_gast(frame: &MeasFrame, ctx: &ConvCtx) -> Result<f64, MeasureError> {
     let (ut_a, ut_b) = ctx.get_ut1_jd(frame)?;
-
-    Ok(match frame.iau_model() {
-        IauModel::Iau1976_1980 => sofars::erst::gst94(ut_a, ut_b),
-        IauModel::Iau2006_2000A => {
-            let (tt_a, tt_b) = ctx.get_tt_jd(frame)?;
-            let gmst = sofars::erst::gmst82(ut_a, ut_b);
-            let ee = sofars::erst::ee00a(tt_a, tt_b);
-            sofars::vm::anp(gmst + ee)
-        }
-    })
+    let tt_jd = match frame.iau_model() {
+        IauModel::Iau1976_1980 => (ut_a, ut_b),
+        IauModel::Iau2006_2000A => ctx.get_tt_jd(frame)?,
+    };
+    Ok(casacore_gast_rad((ut_a, ut_b), tt_jd, frame.iau_model()))
 }
 
 /// Get the observer geodetic latitude from the frame position.
@@ -1282,6 +1280,105 @@ fn bias_precession_nutation(frame: &MeasFrame, tt1: f64, tt2: f64) -> [[f64; 3];
     }
 }
 
+/// Return the frame epoch as a TDB MJD, matching the time argument used by
+/// casacore's `Aberration` and `SolarPos` helpers.
+fn tdb_mjd(frame: &MeasFrame) -> Result<f64, MeasureError> {
+    let epoch = frame.epoch().ok_or(MeasureError::MissingFrameData {
+        what: "epoch (for apparent-place conversion)",
+    })?;
+    Ok(epoch.convert_to(EpochRef::TDB, frame)?.value().as_mjd())
+}
+
+/// Casacore `Aberration::STANDARD` Earth barycentric velocity as β = v/c in
+/// J2000 Cartesian coordinates.
+fn casacore_aberration_beta(frame: &MeasFrame) -> Result<[f64; 3], MeasureError> {
+    let velocity_ms = earth_barycentric_velocity_ms(tdb_mjd(frame)?);
+    Ok(velocity_ms.map(|component| component / C_M_PER_S))
+}
+
+/// Apply the relativistic stellar-aberration transform used by casacore's
+/// `MeasMath::applyAberration`. Passing `-beta` applies the exact inverse
+/// Lorentz transform.
+fn apply_relativistic_aberration(direction: [f64; 3], beta: [f64; 3]) -> [f64; 3] {
+    let beta_squared = beta
+        .iter()
+        .map(|component| component * component)
+        .sum::<f64>();
+    let gamma_inverse = (1.0 - beta_squared).sqrt();
+    let dot = direction
+        .iter()
+        .zip(beta.iter())
+        .map(|(direction, beta)| direction * beta)
+        .sum::<f64>();
+    let beta_factor = 1.0 + dot / (1.0 + gamma_inverse);
+    let denominator = 1.0 + dot;
+    let shifted = std::array::from_fn(|axis| {
+        (gamma_inverse * direction[axis] + beta_factor * beta[axis]) / denominator
+    });
+    sofars::vm::pn(&shifted).1
+}
+
+/// Geocentric direction and distance of the Sun in the J2000-compatible SOFA
+/// ephemeris axes. Casacore's deflection formula depends only weakly on the
+/// sub-milliarcsecond ephemeris-series difference.
+fn geocentric_sun_position(frame: &MeasFrame) -> Result<([f64; 3], f64), MeasureError> {
+    let tdb_mjd = tdb_mjd(frame)?;
+    let (earth_heliocentric, _) =
+        sofars::eph::epv00(MJD_OFFSET, tdb_mjd).ok_or(MeasureError::SofarsError { code: -1 })?;
+    let sun = [
+        -earth_heliocentric[0][0],
+        -earth_heliocentric[0][1],
+        -earth_heliocentric[0][2],
+    ];
+    let (distance_au, unit) = sofars::vm::pn(&sun);
+    Ok((unit, distance_au))
+}
+
+/// Casacore `MeasMath::applySolarPos`: convert a J2000 mean direction to the
+/// corresponding natural direction before annual aberration.
+fn apply_solar_deflection(
+    direction: [f64; 3],
+    frame: &MeasFrame,
+) -> Result<[f64; 3], MeasureError> {
+    const SOLAR_SEMIDIAMETER_RAD_AT_ONE_AU: f64 = 0.004_652_472_638;
+    const TWO_GM_SUN_OVER_C2_AU: f64 = 1.974e-8;
+
+    let (sun_direction, sun_distance_au) = geocentric_sun_position(frame)?;
+    let dot = direction
+        .iter()
+        .zip(sun_direction.iter())
+        .map(|(direction, sun)| direction * sun)
+        .sum::<f64>();
+    let limb_tolerance = 1.0 - (SOLAR_SEMIDIAMETER_RAD_AT_ONE_AU / sun_distance_au).cos();
+    if (dot - 1.0).abs() <= limb_tolerance {
+        return Ok(direction);
+    }
+
+    let scale = (-TWO_GM_SUN_OVER_C2_AU / sun_distance_au) / (1.0 - dot);
+    let shifted = std::array::from_fn(|axis| {
+        direction[axis] + (sun_direction[axis] - dot * direction[axis]) * scale
+    });
+    Ok(sofars::vm::pn(&shifted).1)
+}
+
+/// Casacore `MeasMath::deapplySolarPos`: invert the very small solar
+/// deflection. Fixed-point correction converges quadratically here because
+/// the forward displacement is O(1e-8) away from the solar limb.
+fn remove_solar_deflection(
+    natural_direction: [f64; 3],
+    frame: &MeasFrame,
+) -> Result<[f64; 3], MeasureError> {
+    let mut mean_direction = natural_direction;
+    for _ in 0..5 {
+        let predicted_natural = apply_solar_deflection(mean_direction, frame)?;
+        let corrected = std::array::from_fn(|axis| {
+            mean_direction[axis] + natural_direction[axis] - predicted_natural[axis]
+        });
+        mean_direction = sofars::vm::pn(&corrected).1;
+    }
+    Ok(mean_direction)
+}
+
 /// Get the observer longitude from the frame position.
 fn get_longitude(frame: &MeasFrame) -> Result<f64, MeasureError> {
     let pos = frame.position().ok_or(MeasureError::MissingFrameData {
@@ -1304,8 +1401,8 @@ const ROUTING_EDGES: &[(DirectionRef, DirectionRef)] = &[
     (DirectionRef::JMEAN, DirectionRef::JTRUE),
     (DirectionRef::JMEAN, DirectionRef::MECLIPTIC),
     (DirectionRef::JTRUE, DirectionRef::TECLIPTIC),
-    (DirectionRef::JTRUE, DirectionRef::APP),
     (DirectionRef::JNAT, DirectionRef::J2000),
+    (DirectionRef::JNAT, DirectionRef::APP),
     (DirectionRef::HADEC, DirectionRef::AZEL),
     (DirectionRef::HADEC, DirectionRef::AZELGEO),
     (DirectionRef::AZEL, DirectionRef::AZELSW),
@@ -1568,8 +1665,26 @@ fn apply_hop(
         // AZELGEO ↔ AZELSWGEO (same sign flip)
         (AZELGEO, AZELSWGEO) | (AZELSWGEO, AZELGEO) => Ok([-cosines[0], -cosines[1], cosines[2]]),
 
-        // JNAT ↔ J2000 (gravitational deflection — simplified: identity)
-        (JNAT, J2000) | (J2000, JNAT) => Ok(cosines),
+        // J2000 ↔ JNAT (solar gravitational deflection)
+        (J2000, JNAT) => apply_solar_deflection(cosines, frame),
+        (JNAT, J2000) => remove_solar_deflection(cosines, frame),
+
+        // JNAT ↔ APP. C++ casacore combines annual aberration with the
+        // J2000-to-true precession/nutation rotation in this hop.
+        (JNAT, APP) => {
+            let beta = casacore_aberration_beta(frame)?;
+            let aberrated_j2000 = apply_relativistic_aberration(cosines, beta);
+            let precession = precession_matrix(frame, ctx)?;
+            let nutation = nutation_matrix(frame, ctx)?;
+            Ok(rotate(&nutation, &rotate(&precession, &aberrated_j2000)))
+        }
+        (APP, JNAT) => {
+            let precession = precession_matrix(frame, ctx)?;
+            let nutation = nutation_matrix(frame, ctx)?;
+            let aberrated_j2000 = rotate_t(&precession, &rotate_t(&nutation, &cosines));
+            let beta = casacore_aberration_beta(frame)?.map(|component| -component);
+            Ok(apply_relativistic_aberration(aberrated_j2000, beta))
+        }
 
         // ----- Epoch-dependent matrices -----
 
@@ -2100,6 +2215,52 @@ mod tests {
         let back = jm.convert_to(DirectionRef::J2000, &frame).unwrap();
         let sep = sofars::vm::sepp(&d.cosines(), &back.cosines());
         assert!(sep < 1e-12, "roundtrip sep = {} rad", sep);
+    }
+
+    #[test]
+    fn j2000_jnat_applies_solar_deflection_and_roundtrips() {
+        let direction = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
+        let frame = wsrt_frame();
+        let natural = direction.convert_to(DirectionRef::JNAT, &frame).unwrap();
+        let displacement = sofars::vm::sepp(&direction.cosines(), &natural.cosines());
+        assert!(
+            displacement > 1.0e-10,
+            "solar deflection was unexpectedly absent: {displacement} rad"
+        );
+        let roundtrip = natural.convert_to(DirectionRef::J2000, &frame).unwrap();
+        let error = sofars::vm::sepp(&direction.cosines(), &roundtrip.cosines());
+        assert!(error < 1.0e-14, "J2000/JNAT roundtrip = {error} rad");
+    }
+
+    #[test]
+    fn j2000_app_roundtrip_uses_casacore_apparent_place_path() {
+        let direction = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
+        let frame = wsrt_frame();
+        let apparent = direction.convert_to(DirectionRef::APP, &frame).unwrap();
+        let roundtrip = apparent.convert_to(DirectionRef::J2000, &frame).unwrap();
+        let error = sofars::vm::sepp(&direction.cosines(), &roundtrip.cosines());
+        assert!(error < 1.0e-12, "J2000/APP roundtrip = {error} rad");
+    }
+
+    #[test]
+    fn iau1980_gast_omits_the_1994_complementary_terms_like_casacore() {
+        let frame = MeasFrame::new()
+            .with_measures(test_measures())
+            .with_epoch(MEpoch::from_mjd(58_574.453_934_895_835, EpochRef::UTC))
+            .with_dut1(-0.119_625_683_873_891_83);
+        let ctx = ConvCtx::new();
+        let gast = compute_gast(&frame, &ctx).unwrap();
+        let casa_gast = 6.159_758_319_092_965_5;
+        let error = sofars::vm::anpm(gast - casa_gast).abs();
+        assert!(error < 5.0e-10, "casacore GAST error = {error} rad");
+
+        let (ut1_a, ut1_b) = compute_ut1_jd(&frame).unwrap();
+        let sofa_1994 = sofars::erst::gst94(ut1_a, ut1_b);
+        let complementary_term = sofars::vm::anpm(sofa_1994 - gast).abs();
+        assert!(
+            complementary_term > 1.0e-8,
+            "1994 complementary terms unexpectedly absent: {complementary_term} rad"
+        );
     }
 
     #[test]

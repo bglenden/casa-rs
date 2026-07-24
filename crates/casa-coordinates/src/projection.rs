@@ -252,11 +252,15 @@ fn deproject_sin(x: f64, y: f64, params: &[f64]) -> Result<(f64, f64), Coordinat
                 "SIN deproject: point outside unit circle".into(),
             ));
         }
-        let r = r2.min(1.0).sqrt();
-        // cos(theta) = r, so theta = atan2(sin_theta, cos_theta)
-        let sin_theta = (1.0 - r2.min(1.0)).max(0.0).sqrt();
-        let theta = sin_theta.atan2(r);
-        let phi = x.atan2(-y);
+        let phi = if r2 == 0.0 { 0.0 } else { x.atan2(-y) };
+        // Match WCSLIB's numerically stable orthographic branches. CASA image
+        // coordinates are backed by WCSLIB, which uses acos near the native
+        // pole and asin near the projection boundary rather than atan2.
+        let theta = if r2 < 0.5 {
+            r2.sqrt().acos()
+        } else {
+            (1.0 - r2.min(1.0)).max(0.0).sqrt().asin()
+        };
         Ok((phi, theta))
     } else {
         // Generalised SIN:
