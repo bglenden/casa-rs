@@ -1,7 +1,7 @@
 # VLASS Fragment Imaging Correctness And Performance Plan
 
 Truth class: approved execution contract
-Last reality check: 2026-07-23
+Last reality check: 2026-07-25
 Verification: `just docs-check`
 
 WDAD scope:
@@ -292,6 +292,65 @@ panel review. The deterministic clean mask, two clean manifests/fiducials, four
 final correctness-green rows, four independent 10x timing gates, signed-in
 Oracle review, and complete review/verification gates remain required owners;
 the dirty launch manifests do not close or defer them.
+
+### 2026-07-25 Full-Geometry Serial Checkpoint
+
+The first casa-rs-only 12,150-pixel field-1525 diagnostic completed on
+GLENDENNING without rerunning CASA. Its immutable receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260725T010514Z-vlass-fragment-single-field-1d9922c1.json`.
+The measured casa-rs runtime was 216.930656 seconds, or 5.883x faster than the
+matched frozen 1,276.157-second single-field CASA task. The correct
+single-field 10x boundary is 127.6157 seconds; the 818.326-second target applies
+only to the all-fields row. This checkpoint is therefore neither a correctness
+nor a performance pass.
+
+All 385,862 attempted AWProject samples were accepted. Sixteen products retain
+topology parity and numerical tolerance. `.alpha` and `.alpha.error` differ at
+exactly two mask pixels each, `[12068,1736]` and `[6867,9898]`, where CASA's
+strict principal-image threshold includes the pixel and casa-rs excludes it.
+The current casa-rs threshold is `0.0024236352`. Scalar-threshold experiments
+do not reproduce the CASA topology without changing other pixels.
+
+The run also falsified applying CASA's literal `real(tmp)` projection directly
+to casa-rs's shared paired-hand WTCF grid. CASA retains separate parallel-hand
+planes and its `AWProjectWBFT::makeSensitivityImage` loop overwrites `tmp` with
+the final plane before projecting its real part. casa-rs instead compresses the
+paired hands into one shared WTCF grid. For that representation, magnitude is
+the parity-preserving non-negative sensitivity: the preserved receipt before
+the experiment has `.weight.tt1` RMS ratio `4.781221153330683e-09`; shared-grid
+`real()` produced a coherent `2.985920079720224e-06` RMS ratio. Commit
+`55b14e994` restores and documents the representation-correct projection.
+
+Commit `54c1d4557` adds profile-only memory accounting for an exact CASA-order
+AW replay. Each warmup or measured pass contains 104 POINTING/SPW metadata
+groups and 385,862 planned samples. Planned-sample storage is 0.096 to 1.93 MiB
+per group. The compact tap upper bound is 20.2 to 594.1 MiB per group; 32 groups
+exceed 256 MiB and six exceed 512 MiB. These are mutually exclusive group
+working sets, not simultaneous residency.
+
+The remaining arithmetic-order difference cannot be fixed by replaying whole
+metadata groups. `GroupedVisibilityMetadataBatch` records groups in first-seen
+order and source-contiguous ranges inside each group, so group-at-a-time
+execution still reorders interleaved samples. The proposed production change
+must instead:
+
+1. construct a bounded sample-to-metadata route for one streamed source block;
+2. split the block only into contiguous source-order windows;
+3. use cache metadata to bound each window's unique
+   `(POINTING, cell, offset, conjugation, role)` tap bundles before loading
+   pixels;
+4. load each required full CF once, pack the phase-applied Complex32 taps, and
+   release evictable full cells;
+5. replay the compact sample plans in ascending row/channel order, with RR then
+   LL updates and disjoint Taylor-plane workers; and
+6. process consecutive windows in order so segmentation cannot change any
+   plane's accumulation order.
+
+The compact-tap budget must be an explicit allocation in the shared resource
+plan. It may reduce source-window length but may not consume the five-percent
+AW safety reserve or create another image-sized grid. This is a material
+performance-algorithm/runtime change and remains proposed until Brian gives
+the explicit approval required by `AGENTS.md`.
 
 ## Outcome
 
