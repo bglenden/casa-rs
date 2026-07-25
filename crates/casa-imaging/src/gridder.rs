@@ -1755,11 +1755,15 @@ impl StandardGridder {
         raw: &Array2<Complex64>,
         conv_sampling: usize,
     ) -> Array2<f32> {
-        // refim::AWProjectWBFT converts its transformed WTCF lattice to the
-        // Float sensitivity plane with `real(tmp)`. AWProjectFT::getWeightImage
-        // then applies the reciprocal sinc correction. Preserve that
-        // projection and Float narrowing before the correction because low
-        // weights are later square rooted for flat-noise normalization.
+        // refim::AWProjectWBFT retains separate parallel-hand WTCF planes, then
+        // overwrites `tmp` while iterating them and converts the final plane to
+        // Float with `real(tmp)`. This grid is instead the shared paired-hand
+        // representation accumulated by casa-rs. Its corresponding
+        // non-negative sensitivity is the complex magnitude; applying
+        // `real()` to the shared representation produces a structured MT-MFS
+        // weight.tt1 error. Narrow to Float before the reciprocal sinc
+        // correction because low weights are later square rooted for
+        // flat-noise normalization.
         let sinc = build_sinc_axis(self.grid_shape[0].max(self.grid_shape[1]), conv_sampling);
         let fft_scale_x = self.grid_shape[0] as f32;
         let fft_scale_y = self.grid_shape[1] as f32;
@@ -1770,7 +1774,7 @@ impl StandardGridder {
                 let grid_y = self.image_blc[1] + y;
                 let scaled =
                     raw[(grid_x, grid_y)] * f64::from(fft_scale_x) * f64::from(fft_scale_y);
-                let sensitivity = scaled.re as f32;
+                let sensitivity = scaled.norm() as f32;
                 let correction = 1.0 / (sinc[grid_x] * sinc[grid_y]);
                 image[(x, y)] = sensitivity * correction;
             }
@@ -1795,12 +1799,8 @@ impl StandardGridder {
         raw: &Array2<Complex32>,
         conv_sampling: usize,
     ) -> Array2<f32> {
-        // refim::AWProjectWBFT transforms its WTCF lattice as Complex and
-        // converts the result to the Float sensitivity plane with
-        // `real(tmp)`. AWProjectFT::getWeightImage then applies the reciprocal
-        // sinc correction. Low weights are subsequently square rooted for
-        // flat-noise residual normalization, so both precision and projection
-        // are observable at image edges.
+        // See the f64 path above: this is the shared paired-hand WTCF
+        // representation, not CASA's final individual polarization plane.
         let sinc = build_sinc_axis(self.grid_shape[0].max(self.grid_shape[1]), conv_sampling);
         let fft_scale_x = self.grid_shape[0] as f32;
         let fft_scale_y = self.grid_shape[1] as f32;
@@ -1811,7 +1811,7 @@ impl StandardGridder {
                 let grid_y = self.image_blc[1] + y;
                 let scaled = raw[(grid_x, grid_y)] * fft_scale_x * fft_scale_y;
                 let correction = 1.0 / (sinc[grid_x] * sinc[grid_y]);
-                image[(x, y)] = scaled.re * correction;
+                image[(x, y)] = scaled.norm() * correction;
             }
         }
         image
@@ -4383,7 +4383,7 @@ mod tests {
     }
 
     #[test]
-    fn aw_weight_image_uses_casa_real_projection_and_sampling_sinc_correction() {
+    fn aw_weight_image_uses_shared_parallel_hand_magnitude_and_sampling_sinc_correction() {
         let geometry = ImageGeometry {
             image_shape: [8, 8],
             cell_size_rad: [
@@ -4400,9 +4400,9 @@ mod tests {
         let weight_f32 = gridder.aw_weight_image_from_grid(&raw_f32, conv_sampling);
         let sinc = super::build_sinc_axis(8, conv_sampling);
 
-        assert_eq!(weight_f64[(4, 4)], 3.0 * 8.0 * 8.0);
-        assert_eq!(weight_f32[(4, 4)], 3.0 * 8.0 * 8.0);
-        let expected_corner = 3.0 * 8.0 * 8.0 * (1.0 / (sinc[0] * sinc[0]));
+        assert_eq!(weight_f64[(4, 4)], 5.0 * 8.0 * 8.0);
+        assert_eq!(weight_f32[(4, 4)], 5.0 * 8.0 * 8.0);
+        let expected_corner = 5.0 * 8.0 * 8.0 * (1.0 / (sinc[0] * sinc[0]));
         assert_eq!(weight_f64[(0, 0)], expected_corner);
         assert_eq!(weight_f32[(0, 0)], expected_corner);
         assert!(weight_f64[(0, 0)] > weight_f64[(4, 4)]);
