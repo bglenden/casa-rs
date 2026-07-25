@@ -24,7 +24,7 @@
 //! - staged Hogbom major/minor-cycle CLEAN with explicit stop reasons
 //! - PSF-cutoff beam fitting with interpolation and retry semantics
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 use std::cell::RefCell;
@@ -8958,6 +8958,10 @@ fn accumulate_awproject_mtmfs_metadata_group(
 
     #[cfg(all(target_os = "macos", not(coverage)))]
     let mut metal_batch = AwProjectMetalBatch::default();
+    let profile_compact_source_order = profile::standard_mfs_profile_detail_enabled();
+    let mut compact_source_order_samples = 0usize;
+    let mut compact_source_order_tap_bundles = 0usize;
+    let mut compact_source_order_tap_bytes_upper_bound = 0usize;
     for locality_group in locality_groups.into_values() {
         let first_key = locality_group.first_imaging;
         let second_key = locality_group.second_imaging;
@@ -9148,6 +9152,68 @@ fn accumulate_awproject_mtmfs_metadata_group(
             accumulation.gridded_samples += 1;
             accumulation.aw_sample_census.accepted_samples += 1;
         }
+        if profile_compact_source_order {
+            let unique_plans =
+                |plans: &mut BTreeSet<(isize, isize, bool)>,
+                 plan: &gridder::AwProjectSamplePlan| {
+                    plans.insert((plan.off_x, plan.off_y, plan.conjugate_for_grid));
+                };
+            let compact_bytes = |plan_count: usize, x_support: usize, y_support: usize| -> usize {
+                plan_count
+                    .saturating_mul(2usize.saturating_mul(x_support).saturating_add(1))
+                    .saturating_mul(2usize.saturating_mul(y_support).saturating_add(1))
+                    .saturating_mul(std::mem::size_of::<Complex32>())
+            };
+            let mut first_imaging_plans = BTreeSet::new();
+            let mut second_imaging_plans = BTreeSet::new();
+            let mut first_psf_plans = BTreeSet::new();
+            let mut second_psf_plans = BTreeSet::new();
+            for sample in &planned_samples {
+                unique_plans(&mut first_imaging_plans, &sample.first_imaging_plan);
+                unique_plans(&mut second_imaging_plans, &sample.second_imaging_plan);
+                unique_plans(&mut first_psf_plans, &sample.first_psf_plan);
+                unique_plans(&mut second_psf_plans, &sample.second_psf_plan);
+            }
+            compact_source_order_samples =
+                compact_source_order_samples.saturating_add(planned_samples.len());
+            compact_source_order_tap_bundles = compact_source_order_tap_bundles
+                .saturating_add(first_imaging_plans.len())
+                .saturating_add(second_imaging_plans.len())
+                .saturating_add(first_psf_plans.len())
+                .saturating_add(second_psf_plans.len())
+                .saturating_add(2);
+            compact_source_order_tap_bytes_upper_bound = compact_source_order_tap_bytes_upper_bound
+                .saturating_add(compact_bytes(
+                    first_imaging_plans.len(),
+                    first_cell.metadata.imaging.x_support,
+                    first_cell.metadata.imaging.y_support,
+                ))
+                .saturating_add(compact_bytes(
+                    second_imaging_plans.len(),
+                    second_cell.metadata.imaging.x_support,
+                    second_cell.metadata.imaging.y_support,
+                ))
+                .saturating_add(compact_bytes(
+                    first_psf_plans.len(),
+                    first_cell.metadata.weight.x_support,
+                    first_cell.metadata.weight.y_support,
+                ))
+                .saturating_add(compact_bytes(
+                    second_psf_plans.len(),
+                    second_cell.metadata.weight.x_support,
+                    second_cell.metadata.weight.y_support,
+                ))
+                .saturating_add(compact_bytes(
+                    1,
+                    first_zero_w_cell.metadata.weight.x_support,
+                    first_zero_w_cell.metadata.weight.y_support,
+                ))
+                .saturating_add(compact_bytes(
+                    1,
+                    second_zero_w_cell.metadata.weight.x_support,
+                    second_zero_w_cell.metadata.weight.y_support,
+                ));
+        }
         match &mut accumulation.storage {
             MosaicMtmfsStreamGridStorage::HostF32(grids) => {
                 grid_awproject_mtmfs_planned_samples_host_f32(
@@ -9208,6 +9274,18 @@ fn accumulate_awproject_mtmfs_metadata_group(
                 )?;
             }
         }
+    }
+    if profile_compact_source_order {
+        eprintln!(
+            "awproject_compact_source_order_estimate planned_samples={} planned_sample_bytes={} tap_bundles={} tap_bytes_upper_bound={} pointing_ra_rad={:.17e} pointing_dec_rad={:.17e}",
+            compact_source_order_samples,
+            compact_source_order_samples
+                .saturating_mul(std::mem::size_of::<AwProjectMtmfsPlannedSample>()),
+            compact_source_order_tap_bundles,
+            compact_source_order_tap_bytes_upper_bound,
+            group.pointing_direction_rad[0],
+            group.pointing_direction_rad[1],
+        );
     }
     #[cfg(all(target_os = "macos", not(coverage)))]
     if !metal_batch.samples.is_empty()
