@@ -8,6 +8,7 @@ import os
 import pathlib
 import sys
 import tempfile
+import time
 
 import numpy as np
 
@@ -63,7 +64,14 @@ def main():
         beam_info = estimate_beam_info(right_prefix + beam_suffix, max_elements)
     panel_displays = product_panel_displays(request, max_elements)
     try:
-        for suffix in expected_products:
+        product_count = len(expected_products)
+        for product_index, suffix in enumerate(expected_products, start=1):
+            product_started = time.monotonic()
+            print(
+                "image_compare_progress "
+                f"product={product_index}/{product_count} suffix={suffix} state=started",
+                flush=True,
+            )
             left_path = left_prefix + suffix
             right_path = right_prefix + suffix
             products[suffix] = compare_one(
@@ -86,6 +94,12 @@ def main():
                 right_label=request["right_label"],
                 legacy_operand_aliases=request["legacy_operand_aliases"],
                 structure_workspace_dir=request["structure_workspace_dir"],
+            )
+            print(
+                "image_compare_progress "
+                f"product={product_index}/{product_count} suffix={suffix} state=completed "
+                f"elapsed_s={time.monotonic() - product_started:.3f}",
+                flush=True,
             )
     except Exception as error:
         if request["mode"] == "full":

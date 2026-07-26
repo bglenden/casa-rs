@@ -197,8 +197,8 @@ if [[ "$imaging_fft_precision" != "auto" && "$imaging_fft_precision" != "f64" &&
   echo "error: IMAGER_BENCH_IMAGING_FFT_PRECISION must be auto, f64, or f32" >&2
   exit 2
 fi
-if [[ "$imaging_fft_backend" != "auto" && "$imaging_fft_backend" != "rustfft" && "$imaging_fft_backend" != "accelerate" && "$imaging_fft_backend" != "metal-mpsgraph" ]]; then
-  echo "error: IMAGER_BENCH_IMAGING_FFT_BACKEND must be auto, rustfft, accelerate, or metal-mpsgraph" >&2
+if [[ "$imaging_fft_backend" != "auto" && "$imaging_fft_backend" != "rustfft" && "$imaging_fft_backend" != "accelerate" && "$imaging_fft_backend" != "metal-mpsgraph" && "$imaging_fft_backend" != "fftw-local-bench" ]]; then
+  echo "error: IMAGER_BENCH_IMAGING_FFT_BACKEND must be auto, rustfft, accelerate, metal-mpsgraph, or fftw-local-bench" >&2
   exit 2
 fi
 if [[ -n "$imaging_memory_target_mb" && ! "$imaging_memory_target_mb" =~ ^[0-9]+$ ]]; then

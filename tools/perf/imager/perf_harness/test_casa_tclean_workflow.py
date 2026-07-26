@@ -123,6 +123,31 @@ class EvidenceStorageTests(unittest.TestCase):
         self.assertEqual((self.root / "masks" / "clean.mask").resolve(), calls[1][1])
 
 
+class IncrementalLogTests(unittest.TestCase):
+    def test_failure_marker_preserves_streamed_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            log_path = pathlib.Path(tempdir) / "benchmark.log"
+            log_path.write_text(
+                "rust_warmup_start warmup=1\n  warmup=1 real=12.5\n",
+                encoding="utf-8",
+            )
+
+            casa_tclean_workflow.append_failure_log_marker(
+                log_path,
+                failure_kind="operator_interrupt",
+                reason="stopped after bounded experiment",
+            )
+
+            self.assertEqual(
+                "rust_warmup_start warmup=1\n"
+                "  warmup=1 real=12.5\n"
+                "\n"
+                "status=failed_execution kind=operator_interrupt "
+                "reason=stopped after bounded experiment\n",
+                log_path.read_text(encoding="utf-8"),
+            )
+
+
 class CacheIdentityTests(unittest.TestCase):
     def test_vlass_full_cold_and_warm_manifests_share_exact_cf_plan(self) -> None:
         for stem in ("single-field", "all-fields"):

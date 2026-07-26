@@ -61,6 +61,15 @@ VLASS_TURNAROUND_METAL_WORKLOAD = "vlass-awproject-turnaround-metal.json"
 VLASS_SINGLE_FIELD_METAL_FFT_EXPERIMENT = (
     "vlass-fragment-single-field-metal-fft-f32-experiment.json"
 )
+VLASS_SINGLE_FIELD_FFTW_F64_EXPERIMENT = (
+    "vlass-fragment-single-field-fftw-f64-experiment.json"
+)
+VLASS_SINGLE_FIELD_METAL_FFTW_F64_EXPERIMENT = (
+    "vlass-fragment-single-field-metal-fftw-f64-experiment.json"
+)
+VLASS_SINGLE_FIELD_MULTICPU_FFTW_F64_EXPERIMENT = (
+    "vlass-fragment-single-field-multicpu-fftw-f64-experiment.json"
+)
 
 
 def explicit_aw_workload() -> dict[str, object]:
@@ -231,6 +240,96 @@ class SchemaTests(unittest.TestCase):
         )
         self.assertEqual(
             "experimental_metal_fft_f32", manifest["run"]["evidence_role"]
+        )
+        self.assertEqual("1", manifest["run"]["skip_casa"])
+        self.assertTrue(manifest["comparison"]["tolerances"]["require_full_array"])
+
+    def test_vlass_single_field_fftw_f64_experiment_is_non_fiducial(self) -> None:
+        path = (
+            REPO_ROOT
+            / "tools/perf/imager/workloads"
+            / VLASS_SINGLE_FIELD_FFTW_F64_EXPERIMENT
+        )
+        manifest = load_workload_manifest(path)
+
+        self.assertIn("never final acceptance evidence", manifest["description"])
+        self.assertEqual("single_field", manifest["casa"]["dataset_selection"])
+        self.assertEqual("1525", manifest["imaging"]["field"])
+        self.assertEqual("2~17", manifest["imaging"]["spw"])
+        self.assertEqual(12150, manifest["imaging"]["imsize"])
+        self.assertTrue(manifest["imaging"]["parallel"])
+        self.assertEqual("cpu", manifest["imaging"]["standard_mfs_acceleration"])
+        self.assertEqual(1, manifest["imaging"]["standard_mfs_grid_threads"])
+        self.assertEqual(1, manifest["imaging"]["imaging_prepare_workers"])
+        self.assertEqual(1, manifest["imaging"]["imaging_read_ahead_blocks"])
+        self.assertEqual("f64", manifest["imaging"]["imaging_fft_precision"])
+        self.assertEqual(
+            "fftw-local-bench", manifest["imaging"]["imaging_fft_backend"]
+        )
+        self.assertEqual(
+            "experimental_fftw_f64", manifest["run"]["evidence_role"]
+        )
+        self.assertEqual("1", manifest["run"]["skip_casa"])
+        self.assertTrue(manifest["comparison"]["tolerances"]["require_full_array"])
+
+    def test_vlass_single_field_metal_fftw_f64_experiment_is_non_fiducial(
+        self,
+    ) -> None:
+        path = (
+            REPO_ROOT
+            / "tools/perf/imager/workloads"
+            / VLASS_SINGLE_FIELD_METAL_FFTW_F64_EXPERIMENT
+        )
+        manifest = load_workload_manifest(path)
+
+        self.assertIn("never final acceptance evidence", manifest["description"])
+        self.assertEqual("single_field", manifest["casa"]["dataset_selection"])
+        self.assertEqual("1525", manifest["imaging"]["field"])
+        self.assertEqual("2~17", manifest["imaging"]["spw"])
+        self.assertEqual(12150, manifest["imaging"]["imsize"])
+        self.assertTrue(manifest["imaging"]["parallel"])
+        self.assertEqual("metal", manifest["imaging"]["standard_mfs_acceleration"])
+        self.assertEqual(1, manifest["imaging"]["standard_mfs_grid_threads"])
+        self.assertEqual(1, manifest["imaging"]["imaging_prepare_workers"])
+        self.assertEqual(1, manifest["imaging"]["imaging_read_ahead_blocks"])
+        self.assertEqual("f64", manifest["imaging"]["imaging_fft_precision"])
+        self.assertEqual(
+            "fftw-local-bench", manifest["imaging"]["imaging_fft_backend"]
+        )
+        self.assertEqual(
+            "experimental_metal_grid_fftw_f64", manifest["run"]["evidence_role"]
+        )
+        self.assertEqual("1", manifest["run"]["skip_casa"])
+        self.assertTrue(manifest["comparison"]["tolerances"]["require_full_array"])
+
+    def test_vlass_single_field_multicpu_fftw_f64_experiment_is_non_fiducial(
+        self,
+    ) -> None:
+        path = (
+            REPO_ROOT
+            / "tools/perf/imager/workloads"
+            / VLASS_SINGLE_FIELD_MULTICPU_FFTW_F64_EXPERIMENT
+        )
+        manifest = load_workload_manifest(path)
+
+        self.assertIn("never final acceptance evidence", manifest["description"])
+        self.assertEqual("single_field", manifest["casa"]["dataset_selection"])
+        self.assertEqual("1525", manifest["imaging"]["field"])
+        self.assertEqual("2~17", manifest["imaging"]["spw"])
+        self.assertEqual(12150, manifest["imaging"]["imsize"])
+        self.assertTrue(manifest["imaging"]["parallel"])
+        self.assertEqual(
+            "multi-cpu", manifest["imaging"]["standard_mfs_acceleration"]
+        )
+        self.assertEqual(4, manifest["imaging"]["standard_mfs_grid_threads"])
+        self.assertEqual(4, manifest["imaging"]["imaging_prepare_workers"])
+        self.assertEqual(1, manifest["imaging"]["imaging_read_ahead_blocks"])
+        self.assertEqual("f64", manifest["imaging"]["imaging_fft_precision"])
+        self.assertEqual(
+            "fftw-local-bench", manifest["imaging"]["imaging_fft_backend"]
+        )
+        self.assertEqual(
+            "experimental_multicpu_fftw_f64", manifest["run"]["evidence_role"]
         )
         self.assertEqual("1", manifest["run"]["skip_casa"])
         self.assertTrue(manifest["comparison"]["tolerances"]["require_full_array"])

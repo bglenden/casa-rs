@@ -9377,7 +9377,8 @@ struct MetalMtmfsParams {
     grid_height: u32,
     term_count: u32,
     model_term_count: u32,
-    _pad0: [u32; 3],
+    source_term_count: u32,
+    _pad0: [u32; 2],
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -9414,11 +9415,16 @@ pub(crate) struct MtmfsMetalResidualAccumulation {
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 pub(crate) struct MtmfsMetalInputCache {
-    // Keep this field before `samples` so the no-copy Metal buffer is dropped
-    // before the host Vec whose allocation backs it.
+    // Keep no-copy Metal buffers before the host Vecs whose allocations back
+    // them so the buffers are dropped first.
     sample_buffer: MetalBuffer,
+    taylor_power_buffer: MetalBuffer,
+    term_weight_buffer: MetalBuffer,
     samples: Vec<MetalMtmfsSample>,
+    taylor_powers: Vec<f32>,
+    term_weights: Vec<f32>,
     grouped_chunks: Vec<MtmfsMetalGroupedChunk>,
+    source_term_count: usize,
     pub(crate) reported_sumwt_terms: Vec<f64>,
     pub(crate) normalization_sumwt: f64,
     pub(crate) gridded_samples: usize,
@@ -9433,7 +9439,9 @@ impl MtmfsMetalInputCache {
 
     pub(crate) fn host_bytes(&self) -> usize {
         self.grouped_chunks.iter().fold(
-            std::mem::size_of_val(self.samples.as_slice()),
+            std::mem::size_of_val(self.samples.as_slice())
+                .saturating_add(std::mem::size_of_val(self.taylor_powers.as_slice()))
+                .saturating_add(std::mem::size_of_val(self.term_weights.as_slice())),
             |bytes, chunk| bytes.saturating_add(chunk.host_bytes()),
         )
     }
@@ -10894,15 +10902,6 @@ fn mtmfs_metal_weight_base(span: TapAxisSpan) -> Result<u32, ImagingError> {
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
-fn mtmfs_taylor_power(taylor_x: f32, order: usize) -> f32 {
-    if order == 0 {
-        1.0
-    } else {
-        taylor_x.powi(order as i32)
-    }
-}
-
-#[cfg(all(target_os = "macos", not(coverage)))]
 fn read_mtmfs_term_grids(
     grid_re: &[u32],
     grid_im: &[u32],
@@ -11408,6 +11407,8 @@ impl MetalDirtyBackend {
         let mut sumwt_time = Duration::ZERO;
         let mut grouping_time = Duration::ZERO;
         let mut samples = Vec::<MetalMtmfsSample>::new();
+        let mut taylor_powers = Vec::<f32>::new();
+        let mut term_weights = Vec::<f32>::new();
         let mut normalization_sumwt = 0.0_f64;
         let mut reported_sumwt_terms = vec![0.0_f64; reported_term_count];
         let mut gridded_samples = 0usize;
@@ -11426,6 +11427,18 @@ impl MetalDirtyBackend {
                     ))
                 })?;
             samples.reserve(frequencies_hz.len().min(batch.len()));
+            taylor_powers.reserve(
+                frequencies_hz
+                    .len()
+                    .min(batch.len())
+                    .saturating_mul(reported_term_count),
+            );
+            term_weights.reserve(
+                frequencies_hz
+                    .len()
+                    .min(batch.len())
+                    .saturating_mul(reported_term_count),
+            );
             for (index, &frequency_hz) in frequencies_hz.iter().enumerate().take(batch.len()) {
                 let weight = batch.weight[index];
                 let sumwt_factor = batch.sumwt_factor[index];
@@ -11464,9 +11477,12 @@ impl MetalDirtyBackend {
                 let sumwt_started = collect_profile.then(Instant::now);
                 normalization_sumwt += 2.0 * f64::from(weight);
                 for (order, sumwt) in reported_sumwt_terms.iter_mut().enumerate() {
-                    *sumwt += f64::from(weight)
-                        * f64::from(mtmfs_taylor_power(sample.taylor_x, order))
-                        * f64::from(sumwt_factor);
+                    let taylor_power = crate::mtmfs_casa_taylor_power_x(sample.taylor_x, order);
+                    let term_weight =
+                        crate::mtmfs_casa_weighted_taylor_x(weight, sample.taylor_x, order);
+                    taylor_powers.push(taylor_power);
+                    term_weights.push(term_weight);
+                    *sumwt += f64::from(term_weight) * f64::from(sumwt_factor);
                 }
                 if let Some(started) = sumwt_started {
                     sumwt_time += started.elapsed();
@@ -11478,6 +11494,14 @@ impl MetalDirtyBackend {
         let sample_buffer_started = collect_profile.then(Instant::now);
         let sample_buffer = self.buffer_from_slice_no_copy(
             &samples,
+            objc2_metal::MTLResourceOptions::StorageModeShared,
+        )?;
+        let taylor_power_buffer = self.buffer_from_slice_no_copy(
+            &taylor_powers,
+            objc2_metal::MTLResourceOptions::StorageModeShared,
+        )?;
+        let term_weight_buffer = self.buffer_from_slice_no_copy(
+            &term_weights,
             objc2_metal::MTLResourceOptions::StorageModeShared,
         )?;
         let sample_buffer_time =
@@ -11519,7 +11543,9 @@ impl MetalDirtyBackend {
                 "mtmfs_metal_input_cache samples={} reported_terms={} host_bytes={} skipped_samples={} grouped_chunks={} grouped_descs={} grouped_refs={} grouped_host_bytes={} grouped_cells={} grouped_scan_tests={} total_ms={:.3} validate_ms={:.3} sample_plan_ms={:.3} sumwt_ms={:.3} sample_buffer_ms={:.3} grouping_ms={:.3}",
                 samples.len(),
                 reported_term_count,
-                std::mem::size_of_val(samples.as_slice()),
+                std::mem::size_of_val(samples.as_slice())
+                    .saturating_add(std::mem::size_of_val(taylor_powers.as_slice()))
+                    .saturating_add(std::mem::size_of_val(term_weights.as_slice())),
                 skipped_samples,
                 grouped_chunks.len(),
                 grouped_descs,
@@ -11537,8 +11563,13 @@ impl MetalDirtyBackend {
         }
         Ok(MtmfsMetalInputCache {
             sample_buffer,
+            taylor_power_buffer,
+            term_weight_buffer,
             samples,
+            taylor_powers,
+            term_weights,
             grouped_chunks,
+            source_term_count: reported_term_count,
             reported_sumwt_terms,
             normalization_sumwt,
             gridded_samples,
@@ -11600,7 +11631,9 @@ impl MetalDirtyBackend {
                     grid_width,
                     grid_height,
                     term_count,
+                    cache.source_term_count,
                     &cache.sample_buffer,
+                    &cache.term_weight_buffer,
                     &params_buffer,
                     &tap_weights_buffer,
                     &grid_re_buffer,
@@ -11625,13 +11658,25 @@ impl MetalDirtyBackend {
                             "MTMFS Metal PSF sample buffer offset is too large".to_string(),
                         )
                     })?;
+                let term_buffer_offset = chunk_index
+                    .checked_mul(chunk_capacity)
+                    .and_then(|offset| offset.checked_mul(cache.source_term_count))
+                    .and_then(|offset| offset.checked_mul(mem::size_of::<f32>()))
+                    .ok_or_else(|| {
+                        ImagingError::InvalidRequest(
+                            "MTMFS Metal PSF Taylor-weight buffer offset is too large".to_string(),
+                        )
+                    })?;
                 let dispatch_timing = self.dispatch_mtmfs_psf_chunk(
                     chunk.len(),
                     sample_buffer_offset,
+                    term_buffer_offset,
                     grid_width,
                     grid_height,
                     term_count,
+                    cache.source_term_count,
                     &cache.sample_buffer,
+                    &cache.term_weight_buffer,
                     &params_buffer,
                     &tap_weights_buffer,
                     &grid_re_buffer,
@@ -11826,7 +11871,10 @@ impl MetalDirtyBackend {
                     grid_width,
                     grid_height,
                     model_term_count,
+                    cache.source_term_count,
                     &cache.sample_buffer,
+                    &cache.taylor_power_buffer,
+                    &cache.term_weight_buffer,
                     &params_buffer,
                     &tap_weights_buffer,
                     &model_re_buffer,
@@ -11853,14 +11901,27 @@ impl MetalDirtyBackend {
                             "MTMFS Metal residual sample buffer offset is too large".to_string(),
                         )
                     })?;
+                let term_buffer_offset = chunk_index
+                    .checked_mul(chunk_capacity)
+                    .and_then(|offset| offset.checked_mul(cache.source_term_count))
+                    .and_then(|offset| offset.checked_mul(mem::size_of::<f32>()))
+                    .ok_or_else(|| {
+                        ImagingError::InvalidRequest(
+                            "MTMFS Metal residual Taylor buffer offset is too large".to_string(),
+                        )
+                    })?;
                 let dispatch_timing = self.dispatch_mtmfs_residual_chunk(
                     chunk.len(),
                     sample_buffer_offset,
+                    term_buffer_offset,
                     grid_width,
                     grid_height,
                     term_count,
                     model_term_count,
+                    cache.source_term_count,
                     &cache.sample_buffer,
+                    &cache.taylor_power_buffer,
+                    &cache.term_weight_buffer,
                     &params_buffer,
                     &tap_weights_buffer,
                     &model_re_buffer,
@@ -11943,7 +12004,9 @@ impl MetalDirtyBackend {
         grid_width: usize,
         grid_height: usize,
         term_count: usize,
+        source_term_count: usize,
         sample_buffer: &MetalBuffer,
+        term_weights: &MetalBuffer,
         params_buffer: &MetalBuffer,
         tap_weights: &MetalBuffer,
         grid_re: &MetalBuffer,
@@ -11982,7 +12045,12 @@ impl MetalDirtyBackend {
                 ImagingError::InvalidRequest("MTMFS Metal term count exceeds u32".to_string())
             })?,
             model_term_count: 0,
-            _pad0: [0; 3],
+            source_term_count: u32::try_from(source_term_count).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "MTMFS Metal source term count exceeds u32".to_string(),
+                )
+            })?,
+            _pad0: [0; 2],
         };
         let params_buffer_started = Instant::now();
         unsafe {
@@ -12000,6 +12068,15 @@ impl MetalDirtyBackend {
             .ok_or_else(|| {
                 ImagingError::InvalidRequest(
                     "MTMFS Metal grouped PSF sample buffer offset is too large".to_string(),
+                )
+            })?;
+        let term_buffer_offset = chunk
+            .sample_start
+            .checked_mul(source_term_count)
+            .and_then(|offset| offset.checked_mul(std::mem::size_of::<f32>()))
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "MTMFS Metal grouped PSF Taylor-weight buffer offset is too large".to_string(),
                 )
             })?;
         let encode_started = Instant::now();
@@ -12024,6 +12101,7 @@ impl MetalDirtyBackend {
             encoder.setBuffer_offset_atIndex(Some(tap_weights), 0, 4);
             encoder.setBuffer_offset_atIndex(Some(grid_re), 0, 5);
             encoder.setBuffer_offset_atIndex(Some(grid_im), 0, 6);
+            encoder.setBuffer_offset_atIndex(Some(term_weights), term_buffer_offset, 7);
         }
         let accumulate_width = chunk.max_halo_cells.max(1);
         let accumulate_height = chunk.group_descs.len().max(1);
@@ -12087,7 +12165,10 @@ impl MetalDirtyBackend {
         grid_width: usize,
         grid_height: usize,
         model_term_count: usize,
+        source_term_count: usize,
         sample_buffer: &MetalBuffer,
+        taylor_powers: &MetalBuffer,
+        term_weights: &MetalBuffer,
         params_buffer: &MetalBuffer,
         tap_weights: &MetalBuffer,
         model_re: &MetalBuffer,
@@ -12145,7 +12226,12 @@ impl MetalDirtyBackend {
             model_term_count: u32::try_from(model_term_count).map_err(|_| {
                 ImagingError::InvalidRequest("MTMFS Metal model term count exceeds u32".to_string())
             })?,
-            _pad0: [0; 3],
+            source_term_count: u32::try_from(source_term_count).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "MTMFS Metal source term count exceeds u32".to_string(),
+                )
+            })?,
+            _pad0: [0; 2],
         };
         let params_buffer_started = Instant::now();
         unsafe {
@@ -12163,6 +12249,15 @@ impl MetalDirtyBackend {
             .ok_or_else(|| {
                 ImagingError::InvalidRequest(
                     "MTMFS Metal grouped residual sample buffer offset is too large".to_string(),
+                )
+            })?;
+        let term_buffer_offset = chunk
+            .sample_start
+            .checked_mul(source_term_count)
+            .and_then(|offset| offset.checked_mul(std::mem::size_of::<f32>()))
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "MTMFS Metal grouped residual Taylor buffer offset is too large".to_string(),
                 )
             })?;
         let encode_started = Instant::now();
@@ -12186,6 +12281,8 @@ impl MetalDirtyBackend {
             encoder.setBuffer_offset_atIndex(Some(model_re), 0, 3);
             encoder.setBuffer_offset_atIndex(Some(model_im), 0, 4);
             encoder.setBuffer_offset_atIndex(Some(&residual_lane_buffer), 0, 5);
+            encoder.setBuffer_offset_atIndex(Some(taylor_powers), term_buffer_offset, 6);
+            encoder.setBuffer_offset_atIndex(Some(term_weights), term_buffer_offset, 7);
         }
         let prepare_thread_width = self
             .mtmfs_grouped_residual_prepare_pipeline
@@ -12275,10 +12372,13 @@ impl MetalDirtyBackend {
         &self,
         sample_count: usize,
         sample_buffer_offset: usize,
+        term_buffer_offset: usize,
         grid_width: usize,
         grid_height: usize,
         term_count: usize,
+        source_term_count: usize,
         sample_buffer: &MetalBuffer,
+        term_weights: &MetalBuffer,
         params_buffer: &MetalBuffer,
         tap_weights: &MetalBuffer,
         grid_re: &MetalBuffer,
@@ -12287,11 +12387,15 @@ impl MetalDirtyBackend {
         self.dispatch_mtmfs_chunk(
             sample_count,
             sample_buffer_offset,
+            term_buffer_offset,
             grid_width,
             grid_height,
             term_count,
             0,
+            source_term_count,
             sample_buffer,
+            None,
+            term_weights,
             params_buffer,
             tap_weights,
             None,
@@ -12308,11 +12412,15 @@ impl MetalDirtyBackend {
         &self,
         sample_count: usize,
         sample_buffer_offset: usize,
+        term_buffer_offset: usize,
         grid_width: usize,
         grid_height: usize,
         term_count: usize,
         model_term_count: usize,
+        source_term_count: usize,
         sample_buffer: &MetalBuffer,
+        taylor_powers: &MetalBuffer,
+        term_weights: &MetalBuffer,
         params_buffer: &MetalBuffer,
         tap_weights: &MetalBuffer,
         model_re: &MetalBuffer,
@@ -12323,11 +12431,15 @@ impl MetalDirtyBackend {
         self.dispatch_mtmfs_chunk(
             sample_count,
             sample_buffer_offset,
+            term_buffer_offset,
             grid_width,
             grid_height,
             term_count,
             model_term_count,
+            source_term_count,
             sample_buffer,
+            Some(taylor_powers),
+            term_weights,
             params_buffer,
             tap_weights,
             Some(model_re),
@@ -12344,11 +12456,15 @@ impl MetalDirtyBackend {
         &self,
         sample_count: usize,
         sample_buffer_offset: usize,
+        term_buffer_offset: usize,
         grid_width: usize,
         grid_height: usize,
         term_count: usize,
         model_term_count: usize,
+        source_term_count: usize,
         sample_buffer: &MetalBuffer,
+        taylor_powers: Option<&MetalBuffer>,
+        term_weights: &MetalBuffer,
         params_buffer: &MetalBuffer,
         tap_weights: &MetalBuffer,
         model_re: Option<&MetalBuffer>,
@@ -12385,7 +12501,12 @@ impl MetalDirtyBackend {
             model_term_count: u32::try_from(model_term_count).map_err(|_| {
                 ImagingError::InvalidRequest("MTMFS Metal model term count exceeds u32".to_string())
             })?,
-            _pad0: [0; 3],
+            source_term_count: u32::try_from(source_term_count).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "MTMFS Metal source term count exceeds u32".to_string(),
+                )
+            })?,
+            _pad0: [0; 2],
         };
         let params_buffer_started = Instant::now();
         unsafe {
@@ -12414,9 +12535,13 @@ impl MetalDirtyBackend {
             encoder.setBuffer_offset_atIndex(Some(tap_weights), 0, 2);
             encoder.setBuffer_offset_atIndex(Some(grid_re), 0, 3);
             encoder.setBuffer_offset_atIndex(Some(grid_im), 0, 4);
+            encoder.setBuffer_offset_atIndex(Some(term_weights), term_buffer_offset, 7);
             if let (Some(model_re), Some(model_im)) = (model_re, model_im) {
                 encoder.setBuffer_offset_atIndex(Some(model_re), 0, 5);
                 encoder.setBuffer_offset_atIndex(Some(model_im), 0, 6);
+            }
+            if let Some(taylor_powers) = taylor_powers {
+                encoder.setBuffer_offset_atIndex(Some(taylor_powers), term_buffer_offset, 8);
             }
         }
         let thread_width = pipeline.threadExecutionWidth().max(1);
@@ -15867,7 +15992,8 @@ struct MtmfsParams {
     uint grid_height;
     uint term_count;
     uint model_term_count;
-    uint _pad0[3];
+    uint source_term_count;
+    uint _pad0[2];
 };
 
 struct MtmfsResidualGroupedLane {
@@ -16025,14 +16151,6 @@ static inline bool row_run_density_lookup(
     }
     cell_density = density[uint(anchor_x) * params.density_height + uint(anchor_y)];
     return isfinite(cell_density) && cell_density > 0.0f;
-}
-
-static inline float mtmfs_taylor_power(float taylor_x, uint order) {
-    float value = 1.0f;
-    for (uint index = 0u; index < order; ++index) {
-        value *= taylor_x;
-    }
-    return value;
 }
 
 static inline float2 mtmfs_degrid_term(
@@ -16516,6 +16634,7 @@ kernel void mtmfs_psf_terms_global_atomic(
     device const float *tap_weights [[buffer(2)]],
     device atomic_uint *grid_re [[buffer(3)]],
     device atomic_uint *grid_im [[buffer(4)]],
+    device const float *term_weights [[buffer(7)]],
     uint2 gid [[thread_position_in_grid]]
 ) {
     const uint sample_index = gid.x;
@@ -16524,8 +16643,8 @@ kernel void mtmfs_psf_terms_global_atomic(
         return;
     }
     const MtmfsSample sample = samples[sample_index];
-    const float factor = mtmfs_taylor_power(sample.taylor_x, term_order);
-    const float psf_weight = sample.weight * factor;
+    const float psf_weight =
+        term_weights[sample_index * params.source_term_count + term_order];
     if (!(isfinite(psf_weight) && psf_weight != 0.0f)) {
         return;
     }
@@ -16548,6 +16667,8 @@ kernel void mtmfs_residual_terms_global_atomic(
     device atomic_uint *grid_im [[buffer(4)]],
     device const float *model_re [[buffer(5)]],
     device const float *model_im [[buffer(6)]],
+    device const float *term_weights [[buffer(7)]],
+    device const float *taylor_powers [[buffer(8)]],
     uint2 gid [[thread_position_in_grid]]
 ) {
     const uint sample_index = gid.x;
@@ -16556,17 +16677,18 @@ kernel void mtmfs_residual_terms_global_atomic(
         return;
     }
     const MtmfsSample sample = samples[sample_index];
-    const float observed_factor = mtmfs_taylor_power(sample.taylor_x, residual_order);
     float2 predicted = float2(0.0f, 0.0f);
     for (uint model_order = 0u; model_order < params.model_term_count; ++model_order) {
-        const float factor = mtmfs_taylor_power(sample.taylor_x, residual_order + model_order);
+        const float factor =
+            taylor_powers[sample_index * params.source_term_count + model_order];
         const float2 model_visibility =
             mtmfs_degrid_term(model_re, model_im, tap_weights, params, sample, model_order);
         predicted += model_visibility * factor;
     }
-    const float2 observed =
-        float2(sample.visibility_re * observed_factor, sample.visibility_im * observed_factor);
-    const float2 residual = (observed - predicted) * sample.weight;
+    const float term_weight =
+        term_weights[sample_index * params.source_term_count + residual_order];
+    const float2 observed = float2(sample.visibility_re, sample.visibility_im);
+    const float2 residual = (observed - predicted) * term_weight;
     if (!isfinite(residual.x) || !isfinite(residual.y)) {
         return;
     }
@@ -16589,6 +16711,7 @@ kernel void mtmfs_psf_terms_grouped_accumulate(
     device const float *tap_weights [[buffer(4)]],
     device atomic_uint *grid_re [[buffer(5)]],
     device atomic_uint *grid_im [[buffer(6)]],
+    device const float *term_weights [[buffer(7)]],
     uint3 gid [[thread_position_in_grid]]
 ) {
     const uint cell_index = gid.x;
@@ -16637,11 +16760,12 @@ kernel void mtmfs_psf_terms_grouped_accumulate(
             side == 0u ? sample.positive_x_weight_base : sample.negative_x_weight_base;
         const uint y_weight_base =
             side == 0u ? sample.positive_y_weight_base : sample.negative_y_weight_base;
-        const float factor = mtmfs_taylor_power(sample.taylor_x, term_order);
+        const float term_weight =
+            term_weights[sample_index * params.source_term_count + term_order];
         const float weighted_tap =
             tap_weights[x_weight_base + uint(tap_x)] *
             tap_weights[y_weight_base + uint(tap_y)] *
-            sample.weight * factor;
+            term_weight;
         if (isfinite(weighted_tap)) {
             sum += weighted_tap;
         }
@@ -16663,6 +16787,8 @@ kernel void mtmfs_residual_terms_grouped_prepare_nterms2(
     device const float *model_re [[buffer(3)]],
     device const float *model_im [[buffer(4)]],
     device MtmfsResidualGroupedLane *grouped_lanes [[buffer(5)]],
+    device const float *taylor_powers [[buffer(6)]],
+    device const float *term_weights [[buffer(7)]],
     uint sample_index [[thread_position_in_grid]]
 ) {
     if (sample_index >= params.sample_count) {
@@ -16687,11 +16813,19 @@ kernel void mtmfs_residual_terms_grouped_prepare_nterms2(
     if (params.model_term_count > 1u) {
         model1 = mtmfs_degrid_term(model_re, model_im, tap_weights, params, sample, 1u);
     }
-    const float x = sample.taylor_x;
-    const float x2 = x * x;
+    const float power0 =
+        taylor_powers[sample_index * params.source_term_count];
+    const float power1 =
+        taylor_powers[sample_index * params.source_term_count + 1u];
+    const float weight0 =
+        term_weights[sample_index * params.source_term_count];
+    const float weight1 =
+        term_weights[sample_index * params.source_term_count + 1u];
     const float2 observed = float2(sample.visibility_re, sample.visibility_im);
-    const float2 residual0 = (observed - (model0 + model1 * x)) * sample.weight;
-    const float2 residual1 = (observed * x - (model0 * x + model1 * x2)) * sample.weight;
+    const float2 prediction = model0 * power0 + model1 * power1;
+    const float2 residual_visibility = observed - prediction;
+    const float2 residual0 = residual_visibility * weight0;
+    const float2 residual1 = residual_visibility * weight1;
     output.residual0_re = isfinite(residual0.x) ? residual0.x : 0.0f;
     output.residual0_im = isfinite(residual0.y) ? residual0.y : 0.0f;
     output.residual1_re = isfinite(residual1.x) ? residual1.x : 0.0f;
@@ -18405,6 +18539,143 @@ mod tests {
                 "x = u_lambda * params.density_u_scale + params.density_center_x;\n        y = -v_lambda * params.density_v_scale + params.density_center_y;"
             ),
             "Cube Briggs density convention must match StandardGridder::weight_density_cell_anchor"
+        );
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn metal_mtmfs_shader_accepts_host_precomputed_casa_taylor_terms() {
+        if !crate::standard_mfs_metal_device_available() {
+            return;
+        }
+        assert!(!METAL_DIRTY_SHADER.contains("static inline float mtmfs_taylor_power"));
+        assert!(METAL_DIRTY_SHADER.contains("device const float *term_weights [[buffer(7)]]"));
+        assert!(METAL_DIRTY_SHADER.contains("device const float *taylor_powers [[buffer(8)]]"));
+        super::MetalDirtyBackend::new(&StandardMfsExecutionPlan::default())
+            .expect("standard MT-MFS Metal shader with host Taylor buffers should compile");
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn metal_mtmfs_dispatch_uses_host_precomputed_casa_taylor_terms() {
+        if !crate::standard_mfs_metal_device_available() {
+            return;
+        }
+        let geometry = ImageGeometry {
+            image_shape: [32, 32],
+            cell_size_rad: [1.0e-3, 1.0e-3],
+        };
+        let gridder = StandardGridder::new(geometry).unwrap();
+        let weight = f32::from_bits(1_100_430_393);
+        let frequency_hz = 1.35e9;
+        let reffreq_hz = 1.0e9;
+        let batch = VisibilityBatch {
+            u_lambda: vec![10.0],
+            v_lambda: vec![-7.0],
+            w_lambda: vec![0.0],
+            weight: vec![weight],
+            sumwt_factor: vec![1.0],
+            gridable: vec![true],
+            visibility: vec![Complex32::new(0.75, -0.25)],
+        };
+        let backend = super::MetalDirtyBackend::new(&StandardMfsExecutionPlan::default()).unwrap();
+        let cache = backend
+            .prepare_mtmfs_input_cache(&gridder, &[batch], &[vec![frequency_hz]], reffreq_hz, 3)
+            .unwrap();
+        let taylor_x = crate::mtmfs_casa_taylor_x(frequency_hz, reffreq_hz);
+        assert_eq!(cache.source_term_count, 3);
+        for order in 0..3 {
+            assert_eq!(
+                cache.taylor_powers[order].to_bits(),
+                crate::mtmfs_casa_taylor_power_x(taylor_x, order).to_bits()
+            );
+            assert_eq!(
+                cache.term_weights[order].to_bits(),
+                crate::mtmfs_casa_weighted_taylor_x(weight, taylor_x, order).to_bits()
+            );
+        }
+        let psf = backend
+            .accumulate_mtmfs_psf_grids_from_cache(&gridder, &cache, 3)
+            .unwrap();
+        let residual = backend
+            .accumulate_mtmfs_residual_grids_from_cache(&gridder, &cache, 2, None)
+            .unwrap();
+        let [grid_width, grid_height] = gridder.grid_shape();
+        let model_grids = vec![
+            ndarray::Array2::from_elem((grid_width, grid_height), Complex32::new(0.125, -0.0625)),
+            ndarray::Array2::from_elem((grid_width, grid_height), Complex32::new(-0.375, 0.1875)),
+        ];
+        let modeled_residual = backend
+            .accumulate_mtmfs_residual_grids_from_cache(&gridder, &cache, 2, Some(&model_grids))
+            .unwrap();
+        assert_eq!(psf.psf_grids.len(), 3);
+        assert_eq!(residual.residual_grids.len(), 2);
+        assert_eq!(modeled_residual.residual_grids.len(), 2);
+        assert_eq!(psf.gridded_samples, 1);
+        assert!(
+            psf.psf_grids
+                .iter()
+                .chain(&residual.residual_grids)
+                .chain(&modeled_residual.residual_grids)
+                .all(|grid| grid
+                    .iter()
+                    .all(|value| value.re.is_finite() && value.im.is_finite()))
+        );
+
+        let plan = gridder
+            .plan_sample(10.0, -7.0)
+            .expect("test sample should remain gridable");
+        let predicted = model_grids
+            .iter()
+            .enumerate()
+            .map(|(order, model)| {
+                gridder.degrid_sample_product_planned_normalized(model, &plan.positive)
+                    * crate::mtmfs_casa_taylor_power_x(taylor_x, order)
+            })
+            .fold(Complex32::new(0.0, 0.0), |sum, term| sum + term);
+        let residual_visibility = Complex32::new(0.75, -0.25) - predicted;
+        let mut expected = (0..2)
+            .map(|_| ndarray::Array2::<Complex32>::zeros((grid_width, grid_height)))
+            .collect::<Vec<_>>();
+        for (order, grid) in expected.iter_mut().enumerate() {
+            let weighted_residual =
+                residual_visibility * crate::mtmfs_casa_weighted_taylor_x(weight, taylor_x, order);
+            gridder.grid_sample_product_planned(grid, &plan.positive, weighted_residual);
+            gridder.grid_sample_product_planned(grid, &plan.negative, weighted_residual.conj());
+        }
+        let mut observed_model_effect = 0.0f32;
+        for ((actual, expected), without_model) in modeled_residual
+            .residual_grids
+            .iter()
+            .zip(&expected)
+            .zip(&residual.residual_grids)
+        {
+            let reference_peak = expected
+                .iter()
+                .map(|value| value.norm())
+                .fold(0.0f32, f32::max);
+            let max_delta = actual
+                .iter()
+                .zip(expected)
+                .map(|(lhs, rhs)| (*lhs - *rhs).norm())
+                .fold(0.0f32, f32::max);
+            let tolerance = (reference_peak * 2.0e-5).max(2.0e-6);
+            assert!(
+                max_delta <= tolerance,
+                "Metal MT-MFS modeled residual differs from the CASA-order host result: \
+                 max_delta={max_delta:.9e} tolerance={tolerance:.9e}"
+            );
+            observed_model_effect = observed_model_effect.max(
+                actual
+                    .iter()
+                    .zip(without_model)
+                    .map(|(lhs, rhs)| (*lhs - *rhs).norm())
+                    .fold(0.0f32, f32::max),
+            );
+        }
+        assert!(
+            observed_model_effect > 1.0e-6,
+            "nonzero model terms must affect the Metal residual and exercise the Taylor-power buffer"
         );
     }
 

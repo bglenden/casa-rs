@@ -15,10 +15,12 @@ casa-coordinates = { path = "../casa-coordinates" }
 casa-images = { path = "../casa-images" }
 casa-lattices = { path = "../casa-lattices" }
 casa-types = { path = "../casa-types" }
+libloading = "0.8"
 libm = "0.2"
 nalgebra.workspace = true
 ndarray.workspace = true
 num-complex.workspace = true
+rayon = "1.11"
 rustfft.workspace = true
 thiserror.workspace = true
 

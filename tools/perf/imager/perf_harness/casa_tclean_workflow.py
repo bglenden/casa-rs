@@ -867,10 +867,10 @@ def failed_recipe_run_result(
     """Build a typed partial receipt for any recipe-workflow failure."""
 
     partial_calls = _partial_call_records(plan)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(
-        f"status=failed_execution kind={failure_kind} reason={reason}\n",
-        encoding="utf-8",
+    append_failure_log_marker(
+        log_path,
+        failure_kind=failure_kind,
+        reason=reason,
     )
     results = services.empty_results(casa_status="failed", reason=reason)
     results["casa_tclean_calls"] = {"partial": partial_calls}
@@ -900,10 +900,10 @@ def failed_recipe_bound_benchmark_result(
 ) -> dict[str, Any]:
     """Build a typed partial receipt for a bundled Rust benchmark failure."""
 
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(
-        f"status=failed_execution kind={failure_kind} reason={reason}\n",
-        encoding="utf-8",
+    append_failure_log_marker(
+        log_path,
+        failure_kind=failure_kind,
+        reason=reason,
     )
     results = services.empty_results(casa_status="blocked", reason=reason)
     results["failure"] = {"kind": failure_kind, "reason": reason}
@@ -919,6 +919,25 @@ def failed_recipe_bound_benchmark_result(
         "results": results,
         "human_review": services.human_review_gate(plan, None),
     }
+
+
+def append_failure_log_marker(
+    log_path: pathlib.Path,
+    *,
+    failure_kind: str,
+    reason: str,
+) -> None:
+    """Preserve streamed evidence and append the typed terminal marker."""
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    separator = ""
+    if log_path.is_file() and log_path.stat().st_size > 0:
+        separator = "\n"
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(separator)
+        handle.write(
+            f"status=failed_execution kind={failure_kind} reason={reason}\n",
+        )
 
 
 def _partial_call_records(plan: dict[str, Any]) -> list[dict[str, Any]]:

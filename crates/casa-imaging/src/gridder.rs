@@ -2301,7 +2301,7 @@ impl<'a> AwProjector<'a> {
         value / plan.normalization.conj()
     }
 
-    #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn packed_taps(&self, plan: &AwProjectSamplePlan) -> AwProjectorPackedTaps {
         let mut values =
             Vec::with_capacity((2 * self.x_support + 1).saturating_mul(2 * self.y_support + 1));
@@ -2311,6 +2311,64 @@ impl<'a> AwProjector<'a> {
             x_support: self.x_support,
             y_support: self.y_support,
         }
+    }
+
+    pub(crate) fn plan_and_pack_geometry(
+        &self,
+        geometry: AwProjectSampleGeometry,
+    ) -> Result<(AwProjectSamplePlan, AwProjectorPackedTaps), AwProjectSamplePlanRejection> {
+        let x_support = self.x_support as isize;
+        let y_support = self.y_support as isize;
+        let mut normalization = Complex32::new(0.0, 0.0);
+        let mut values =
+            Vec::with_capacity((2 * self.x_support + 1).saturating_mul(2 * self.y_support + 1));
+        for iy in -y_support..=y_support {
+            let kernel_y = usize::try_from(
+                self.kernel_center[1] as isize + iy * self.sampling as isize + geometry.off_y,
+            )
+            .map_err(|_| AwProjectSamplePlanRejection::KernelIndexOutsideCell)?;
+            for ix in -x_support..=x_support {
+                let kernel_x = usize::try_from(
+                    self.kernel_center[0] as isize + ix * self.sampling as isize + geometry.off_x,
+                )
+                .map_err(|_| AwProjectSamplePlanRejection::KernelIndexOutsideCell)?;
+                let mut tap = *self
+                    .kernel
+                    .get((kernel_x, kernel_y))
+                    .ok_or(AwProjectSamplePlanRejection::KernelIndexOutsideCell)?;
+                if geometry.conjugate_for_grid {
+                    tap = tap.conj();
+                }
+                normalization += tap;
+                let phase_x = (ix * self.sampling as isize + geometry.off_x) as f64
+                    * self.phase_gradient_rad_per_sample[0];
+                let phase_y = (iy * self.sampling as isize + geometry.off_y) as f64
+                    * self.phase_gradient_rad_per_sample[1];
+                tap *= casa_aw_phase_gradient(phase_x, phase_y);
+                values.push(tap);
+            }
+        }
+        if !(normalization.re.is_finite()
+            && normalization.im.is_finite()
+            && normalization.norm() > 0.0)
+        {
+            return Err(AwProjectSamplePlanRejection::InvalidNormalization);
+        }
+        Ok((
+            AwProjectSamplePlan {
+                loc_x: geometry.loc_x,
+                loc_y: geometry.loc_y,
+                off_x: geometry.off_x,
+                off_y: geometry.off_y,
+                conjugate_for_grid: geometry.conjugate_for_grid,
+                normalization,
+            },
+            AwProjectorPackedTaps {
+                values,
+                x_support: self.x_support,
+                y_support: self.y_support,
+            },
+        ))
     }
 
     fn for_each_grid_tap(
@@ -3992,6 +4050,32 @@ mod tests {
                 plan.conjugate_for_grid,
             )
         );
+        let (fused_plan, fused_packed) =
+            projector.plan_and_pack_geometry(indexed_geometry).unwrap();
+        let separately_packed = projector.packed_taps(&plan);
+        assert_eq!(
+            (
+                fused_plan.loc_x,
+                fused_plan.loc_y,
+                fused_plan.off_x,
+                fused_plan.off_y,
+                fused_plan.conjugate_for_grid,
+                fused_plan.normalization.re.to_bits(),
+                fused_plan.normalization.im.to_bits(),
+            ),
+            (
+                plan.loc_x,
+                plan.loc_y,
+                plan.off_x,
+                plan.off_y,
+                plan.conjugate_for_grid,
+                plan.normalization.re.to_bits(),
+                plan.normalization.im.to_bits(),
+            )
+        );
+        assert_eq!(fused_packed.values, separately_packed.values);
+        assert_eq!(fused_packed.x_support, separately_packed.x_support);
+        assert_eq!(fused_packed.y_support, separately_packed.y_support);
 
         let mut expected_norm = Complex32::new(0.0, 0.0);
         for iy in -2isize..=2 {

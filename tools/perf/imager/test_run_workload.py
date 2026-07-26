@@ -1603,6 +1603,38 @@ real 1.145408
                 dry_run=True,
             )
 
+    def test_recipe_backed_rust_only_run_accepts_recorded_environment(self) -> None:
+        manifest_path = (
+            run_workload.WORKLOAD_DIR
+            / "vlass-fragment-single-field-fftw-f64-experiment.json"
+        )
+        manifest = copy.deepcopy(run_workload.load_manifest(manifest_path))
+        manifest["run"]["skip_casa"] = "1"
+        manifest["run"]["env"] = {"CASA_RS_STANDARD_MFS_PROFILE_DETAIL": "0"}
+
+        with mock.patch.dict(
+            os.environ,
+            {"CASA_RS_VLASS_DATA_ROOT": "/Volumes/GLENDENNING/test-data"},
+            clear=False,
+        ):
+            plan = run_workload.build_plan(
+                manifest_path=manifest_path,
+                manifest=manifest,
+                repeats_override=None,
+                run_label_override=None,
+                storage_label_override=None,
+                dry_run=True,
+            )
+
+        self.assertEqual(
+            "0",
+            plan["command"]["env"]["CASA_RS_STANDARD_MFS_PROFILE_DETAIL"],
+        )
+        self.assertEqual(
+            {"CASA_RS_STANDARD_MFS_PROFILE_DETAIL": "0"},
+            plan["run"]["env"],
+        )
+
     def test_recipe_dry_plan_uses_an_absolute_data_independent_placeholder(
         self,
     ) -> None:
@@ -1982,6 +2014,7 @@ standard_mfs_profile_run run=1 gridded_samples=500000 major_cycles=10 minor_iter
 
         _, kwargs = run_command.call_args
         self.assertTrue(kwargs["stream_log"])
+        self.assertEqual(Path(tempdir) / "bench.log", kwargs["incremental_output_path"])
         self.assertEqual("1", kwargs["env"]["IMAGER_BENCH_STREAM_LOG"])
         self.assertEqual("1", kwargs["env"]["CASA_RS_IMAGING_PROGRESS"])
 

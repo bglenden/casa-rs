@@ -543,6 +543,40 @@ fn rustfft_centered_transform_f64(
         backend_choice,
     );
     let selection = select_fft_backend(spec);
+    if selection.selected_backend == FftBackendChoice::FftwLocalBench
+        && selection.requested_backend_supported
+    {
+        if let Ok(result) = crate::fftw_local::centered_transform_f64(input, direction, use_case) {
+            return result;
+        }
+        let fallback_selection = FftBackendSelection {
+            requested_backend: backend_choice,
+            selected_backend: FftBackendChoice::RustFft,
+            requested_backend_supported: false,
+            fallback_used: true,
+            reason: "selected_fftw_local_backend_failed_using_rustfft",
+        };
+        return rustfft_centered_transform_f64_selected(input, inverse, spec, fallback_selection);
+    }
+    if selection.selected_backend != FftBackendChoice::RustFft {
+        let fallback_selection = FftBackendSelection {
+            requested_backend: backend_choice,
+            selected_backend: FftBackendChoice::RustFft,
+            requested_backend_supported: false,
+            fallback_used: true,
+            reason: selection.reason,
+        };
+        return rustfft_centered_transform_f64_selected(input, inverse, spec, fallback_selection);
+    }
+    rustfft_centered_transform_f64_selected(input, inverse, spec, selection)
+}
+
+fn rustfft_centered_transform_f64_selected(
+    input: &Array2<Complex64>,
+    inverse: bool,
+    spec: Fft2Spec,
+    selection: FftBackendSelection,
+) -> (Array2<Complex64>, FftTiming) {
     let mut timing = FftTiming::new(spec, selection);
     timing.plan_cache_hit = plans_cached_f64(input.shape()[1], input.shape()[0], inverse);
 

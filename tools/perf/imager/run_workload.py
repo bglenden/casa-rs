@@ -549,7 +549,7 @@ def build_plan(
     if not profile_repeats.isdigit() or int(profile_repeats) < 1:
         raise HarnessError("run.profile_repeats must be an integer >= 1")
     extra_env = string_map_value(run, "env")
-    if casa and extra_env:
+    if casa and extra_env and not boolean_flag(skip_casa):
         raise HarnessError(
             "recipe-backed run.env is unsupported because unbound environment "
             "values cannot be part of the frozen CASA invocation"
@@ -1116,6 +1116,7 @@ def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
         plan["command"]["argv"],
         env=env,
         stream_log=bool(plan.get("run", {}).get("stream_log", False)),
+        incremental_output_path=log_path,
     )
     log_path.write_text(completed.stdout, encoding="utf-8")
     if completed.returncode != 0:
@@ -1308,13 +1309,18 @@ def comparison_evidence_status(
 
 
 def run_benchmark_command(
-    argv: list[str], *, env: dict[str, str], stream_log: bool
+    argv: list[str],
+    *,
+    env: dict[str, str],
+    stream_log: bool,
+    incremental_output_path: pathlib.Path,
 ) -> subprocess.CompletedProcess[str]:
     return run_command(
         argv,
         cwd=REPO_ROOT,
         environment=env,
         stream_stdout=stream_log,
+        incremental_output_path=incremental_output_path,
     )
 
 

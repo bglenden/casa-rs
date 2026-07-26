@@ -8179,6 +8179,16 @@ fn prepare_source_row_block_plane_inner(
     } else {
         merge_prepared_inputs_for_same_measurement_set(inputs)?
     };
+    if let PreparedInput::Mfs(plane) = &prepared_input
+        && matches!(finish, SourceRowBlockFinish::MfsMosaic)
+        && let Some(error) =
+            mosaic_gridder_metadata_alignment_error(&plane.gridder_mode, &plane.batches)
+    {
+        return Err(format!(
+            "internal error: parallel trace-free MFS mosaic metadata is not aligned after merge: \
+             {error}"
+        ));
+    }
     let merge_elapsed = merge_started.elapsed();
     if standard_mfs_profile_block_detail_enabled() {
         eprintln!(
@@ -10607,6 +10617,49 @@ fn mosaic_gridder_metadata_alignment_error(
                     .iter()
                     .map(|group| group.sample_ranges.len())
                     .sum::<usize>()
+            ));
+        }
+        let mut group_by_sample = vec![usize::MAX; batch.len()];
+        for (group_index, group) in metadata.groups.iter().enumerate() {
+            for range in &group.sample_ranges {
+                if range.start >= range.end || range.end > batch.len() {
+                    return Some(format!(
+                        "batch={} group={} invalid_range=[{}, {}) visibility_samples={}",
+                        batch_index + 1,
+                        group_index,
+                        range.start,
+                        range.end,
+                        batch.len(),
+                    ));
+                }
+                for (sample_index, slot) in group_by_sample
+                    .iter_mut()
+                    .enumerate()
+                    .take(range.end)
+                    .skip(range.start)
+                {
+                    if *slot != usize::MAX {
+                        return Some(format!(
+                            "batch={} sample={} assigned_to_groups={} and {}",
+                            batch_index + 1,
+                            sample_index,
+                            *slot,
+                            group_index,
+                        ));
+                    }
+                    *slot = group_index;
+                }
+            }
+        }
+        if let Some(sample_index) = group_by_sample
+            .iter()
+            .position(|&group_index| group_index == usize::MAX)
+        {
+            return Some(format!(
+                "batch={} sample={} is not assigned to any of {} metadata groups",
+                batch_index + 1,
+                sample_index,
+                metadata.groups.len(),
             ));
         }
     }
@@ -23149,6 +23202,8 @@ pub enum ImagingFftBackendPolicy {
     Accelerate,
     /// Use Apple Metal MPSGraph when available for f32 product FFT batches.
     MetalMpsGraph,
+    /// Explicit local-only FFTW experiment; never selected by `auto`.
+    FftwLocalBench,
 }
 
 impl ImagingFftBackendPolicy {
@@ -23158,6 +23213,7 @@ impl ImagingFftBackendPolicy {
             Self::RustFft => "rustfft",
             Self::Accelerate => "accelerate",
             Self::MetalMpsGraph => "metal-mpsgraph",
+            Self::FftwLocalBench => "fftw-local-bench",
         }
     }
 }
@@ -35368,14 +35424,24 @@ fn awproject_product_writer_scratch_bytes(image_pixels: usize) -> Result<usize, 
 }
 
 fn awproject_mtmfs_in_place_fft_eligible(config: &CliConfig) -> bool {
-    config.imsize & 1 == 0
-        && matches!(
+    if config.imsize & 1 != 0 {
+        return false;
+    }
+    match config.imaging_fft_backend {
+        ImagingFftBackendPolicy::RustFft => matches!(
             config.imaging_fft_precision,
             ImagingFftPrecisionPolicy::Auto
                 | ImagingFftPrecisionPolicy::F32
                 | ImagingFftPrecisionPolicy::F64
-        )
-        && config.imaging_fft_backend == ImagingFftBackendPolicy::RustFft
+        ),
+        ImagingFftBackendPolicy::FftwLocalBench => matches!(
+            config.imaging_fft_precision,
+            ImagingFftPrecisionPolicy::Auto | ImagingFftPrecisionPolicy::F64
+        ),
+        ImagingFftBackendPolicy::Auto
+        | ImagingFftBackendPolicy::Accelerate
+        | ImagingFftBackendPolicy::MetalMpsGraph => false,
+    }
 }
 
 fn awproject_mtmfs_grid_element_bytes(config: &CliConfig) -> usize {
@@ -35592,23 +35658,28 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     };
     let direct_metal_scratch_candidate_bytes = if mosaic_full_grid {
         let grid_allocation_bytes = if awproject_mtmfs {
-            // AWProject owns a Complex32 output and compensation pair plus
-            // two equally sized u32 fixed-point limbs while one packed CF
-            // batch is resident. The f64 topology estimate is exactly one
-            // output/compensation pair; double it for the two fixed limbs and
-            // conservatively bound packed taps by the admitted CF residency.
+            // The regular Complex64 grid ledger already represents the
+            // persistent Complex32 output and compensation pair. Direct Metal
+            // scratch therefore charges only the two u32 fixed-point limbs
+            // plus one packed source-order batch. A conservative 256 bytes per
+            // source sample covers its six plans and Taylor weights; packed CF
+            // pixels are bounded independently by the admitted tap residency.
             checked_imaging_sum(
                 [
                     checked_imaging_product(
-                        [grid_cells, grid_planes, std::mem::size_of::<Complex64>(), 2],
-                        "AWProject Metal compensated and fixed grids",
+                        [grid_cells, grid_planes, std::mem::size_of::<Complex64>()],
+                        "AWProject Metal fixed-point limbs",
                     )?,
                     config
                         .aw_project
                         .as_ref()
                         .map_or(0, |controls| controls.cf_resident_bytes),
+                    checked_imaging_product(
+                        [sample_count, 256],
+                        "AWProject Metal packed source-order samples",
+                    )?,
                 ],
-                "AWProject Metal grid and packed-CF scratch",
+                "AWProject Metal fixed-grid and packed-batch scratch",
             )?
         } else {
             grid_bytes
@@ -35616,13 +35687,17 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         checked_imaging_sum(
             [
                 grid_allocation_bytes,
-                checked_imaging_product(
-                    [
-                        sample_count,
-                        std::mem::size_of::<StandardMfsRoutedGridSample>(),
-                    ],
-                    "direct Metal routed samples",
-                )?,
+                if awproject_mtmfs {
+                    0
+                } else {
+                    checked_imaging_product(
+                        [
+                            sample_count,
+                            std::mem::size_of::<StandardMfsRoutedGridSample>(),
+                        ],
+                        "direct Metal routed samples",
+                    )?
+                },
             ],
             "direct Metal host scratch",
         )?
@@ -36019,11 +36094,19 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         casa_imaging::ImagingPlanDecision {
             name: "awproject_fft_residency",
             value: if awproject_mtmfs_in_place_fft_eligible(config) {
-                match config.imaging_fft_precision {
-                    ImagingFftPrecisionPolicy::F32 => "in-place-rustfft-f32",
-                    ImagingFftPrecisionPolicy::Auto | ImagingFftPrecisionPolicy::F64 => {
-                        "in-place-rustfft-f64"
-                    }
+                match (
+                    config.imaging_fft_backend,
+                    config.imaging_fft_precision,
+                ) {
+                    (
+                        ImagingFftBackendPolicy::FftwLocalBench,
+                        ImagingFftPrecisionPolicy::Auto | ImagingFftPrecisionPolicy::F64,
+                    ) => "in-place-fftw-local-f64",
+                    (_, ImagingFftPrecisionPolicy::F32) => "in-place-rustfft-f32",
+                    (
+                        _,
+                        ImagingFftPrecisionPolicy::Auto | ImagingFftPrecisionPolicy::F64,
+                    ) => "in-place-rustfft-f64",
                 }
             } else {
                 "bounded-copy"
@@ -36797,6 +36880,7 @@ fn dirty_product_fft_policy(config: &CliConfig) -> DirtyProductFftPolicy {
         ImagingFftBackendPolicy::RustFft => FftBackendChoice::RustFft,
         ImagingFftBackendPolicy::Accelerate => FftBackendChoice::Accelerate,
         ImagingFftBackendPolicy::MetalMpsGraph => FftBackendChoice::MetalMpsGraph,
+        ImagingFftBackendPolicy::FftwLocalBench => FftBackendChoice::FftwLocalBench,
     };
     DirtyProductFftPolicy::new(precision, backend)
 }
@@ -44023,6 +44107,22 @@ impl PreparedSelection {
                 );
             }
         };
+        let visibility_sample_count = batch.len();
+        if sample_frequency_hz.len() != visibility_sample_count
+            || mosaic_metadata.sample_pointing_ids.len() != visibility_sample_count
+            || mosaic_metadata.sample_spw_ids.len() != visibility_sample_count
+            || mosaic_metadata.sample_frequency_hz.len() != visibility_sample_count
+        {
+            return Err(format!(
+                "internal error: trace-free MFS mosaic sample alignment mismatch: \
+                 visibilities={visibility_sample_count} frequencies={} pointings={} spws={} \
+                 metadata_frequencies={}",
+                sample_frequency_hz.len(),
+                mosaic_metadata.sample_pointing_ids.len(),
+                mosaic_metadata.sample_spw_ids.len(),
+                mosaic_metadata.sample_frequency_hz.len(),
+            ));
+        }
         let frequency_metadata = mfs_output_frequency_metadata(
             freq_ref,
             0.5 * (selected_frequency_range_hz[0] + selected_frequency_range_hz[1]),
@@ -44040,6 +44140,14 @@ impl PreparedSelection {
             &mosaic_metadata,
             mosaic_batch_size,
         )?;
+        if let Some(error) =
+            mosaic_gridder_metadata_alignment_error(&gridder_mode, std::slice::from_ref(&batch))
+        {
+            return Err(format!(
+                "internal error: trace-free MFS mosaic metadata is not aligned after finalize: \
+                 {error}"
+            ));
+        }
         Ok(PreparedInput::Mfs(PlaneInput {
             phase_center,
             freq_ref: frequency_metadata.freq_ref,
@@ -45700,8 +45808,9 @@ fn parse_imaging_fft_backend_policy(text: &str) -> Result<ImagingFftBackendPolic
         "metal-mpsgraph" | "mpsgraph" | "mps-graph" | "metal" | "gpu" => {
             Ok(ImagingFftBackendPolicy::MetalMpsGraph)
         }
+        "fftw-local-bench" | "fftw-local" | "fftw" => Ok(ImagingFftBackendPolicy::FftwLocalBench),
         _ => Err(format!(
-            "unsupported --imaging-fft-backend value {text:?}; expected auto, rustfft, accelerate, or metal-mpsgraph"
+            "unsupported --imaging-fft-backend value {text:?}; expected auto, rustfft, accelerate, metal-mpsgraph, or fftw-local-bench"
         )),
     }
 }
@@ -49492,7 +49601,7 @@ Options:
                             override planner use of the grouped Metal input cache
   --imaging-fft-precision auto|f64|f32
                             imaging-wide dirty/residual FFT precision policy
-  --imaging-fft-backend auto|rustfft|accelerate|metal-mpsgraph
+  --imaging-fft-backend auto|rustfft|accelerate|metal-mpsgraph|fftw-local-bench
                             imaging-wide dirty/residual FFT backend policy
   --standard-mfs-memory-target-mb N
                             compatibility alias for --imaging-memory-target-mb
@@ -54904,13 +55013,13 @@ mod tests {
             * config.imsize
             * plan.workload.grid_planes
             * std::mem::size_of::<Complex64>();
-        let routed_sample_bytes = 64 * 1024 * std::mem::size_of::<StandardMfsRoutedGridSample>();
+        let packed_sample_bytes = 64 * 1024 * 256;
         assert_eq!(
             plan.workload.direct_metal_scratch_candidate_bytes,
-            resident_grid_bytes * 2
+            resident_grid_bytes
                 + config.aw_project.as_ref().unwrap().cf_resident_bytes
-                + routed_sample_bytes,
-            "AWProject Metal scratch must charge output/compensation, fixed limbs, packed CFs, and routed samples",
+                + packed_sample_bytes,
+            "AWProject Metal scratch must charge fixed limbs, packed CFs, and packed source-order samples without double-counting the persistent output/compensation grids",
         );
         assert_eq!(
             plan.allocation_bytes("AWProject CF pixels"),
@@ -55032,6 +55141,13 @@ mod tests {
 
         config.imaging_fft_precision = ImagingFftPrecisionPolicy::Auto;
         config.imaging_fft_backend = ImagingFftBackendPolicy::MetalMpsGraph;
+        assert!(!awproject_mtmfs_in_place_fft_eligible(&config));
+
+        config.imaging_fft_precision = ImagingFftPrecisionPolicy::F64;
+        config.imaging_fft_backend = ImagingFftBackendPolicy::FftwLocalBench;
+        assert!(awproject_mtmfs_in_place_fft_eligible(&config));
+
+        config.imaging_fft_precision = ImagingFftPrecisionPolicy::F32;
         assert!(!awproject_mtmfs_in_place_fft_eligible(&config));
 
         config.imaging_fft_precision = ImagingFftPrecisionPolicy::F64;
