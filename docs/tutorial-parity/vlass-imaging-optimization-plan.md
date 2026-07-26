@@ -886,6 +886,72 @@ was restored to four grid workers. Its retained negative-evidence receipt and
 `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T201306Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-feb2a938.json`
 (`23dc9038b7c23b19bcb659f773f1e6a604a1852e831fdd61cb31e6da7884995f`).
 
+A bounded four-cell CF-load batch was also slower than the retained one-cell
+lookahead. The first block took 69.750 seconds versus 64.525 seconds, an
+8.10-percent regression. Materialization was 36.225 seconds, while concurrent
+loads increased tap packing to 25.507 seconds and grid work to 13.565 seconds;
+the added memory-bandwidth and cache contention outweighed parallel I/O. The
+run was stopped after the first block, and the load-batch code and manifest
+control were removed rather than retained as a second runtime path. Its
+interrupted receipt and 2,333,794-byte log are
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T203235Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-433ed3d8.json`
+(`53a49fb0292fc2a92b6d567b7fca575069a4ea3cc30db8c17385650a864baae2`).
+
+Halving only the compact-tap arena to 512 MiB while retaining the 1 GiB CF
+cache also failed the first-block criterion. It increased the number of exact
+source-order windows from 63 to 160, raised CF-load worker time from 20.651 to
+53.687 seconds, and raised first-block replay from 64.525 to 108.537 seconds.
+The extra boundaries defeated the successful alternating reuse pattern. The
+run was stopped after the first block, and the internal tap-budget override
+was removed. Its interrupted receipt and 2,333,841-byte log are
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T203849Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-6ce370b7.json`
+(`5376d1fb33eb831c0bcffe9dc768177409aef9ced2535c830462afe8bcf6b6f4`).
+
+Increasing only that arena to 1.5 GiB, temporarily borrowing 512 MiB from the
+logged 1.7 GiB safety margin, did not help either. It reduced the first block
+to 46 windows but raised planning to 23.319 seconds, tap packing to 34.011
+seconds, grid work to 15.227 seconds, and total replay to 82.685 seconds.
+The run was stopped after the first block, the override was removed, and the
+already admitted 1 GiB arena remains the measured optimum among these three
+sizes. The interrupted receipt and 2,333,777-byte log are
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T204330Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-64476dd8.json`
+(`b7d81710827433a31c850a1ab05c9555237d8a2a7700b0a43e364f5c06e8814f`).
+
+Factoring the exact CASA phase-gradient construction into reusable x and y
+axis phasors was positive. CASA first narrows each axis phasor to Complex32,
+promotes both values for a Complex64 multiply, and narrows the product again;
+the retained implementation preserves those rounding boundaries while
+evaluating trigonometric functions once per axis coordinate instead of once
+per two-dimensional tap. Exact focused replay tests remained bit-identical.
+On the four-SPW all-fields turnaround, complete replay fell from 540.970 to
+452.208 seconds (16.41 percent), and the complete warmup through all eighteen
+product writes fell from 595.516 to 492.692 seconds (17.27 percent). First
+block tap packing fell from 24.068 to 15.078 seconds, while all 6,416,526
+samples were accepted and the terminal CF counters remained exactly 18,907
+loads, 19,139 hits, and 18,879 evictions. The redundant measured invocation
+was stopped. The interrupted receipt and 5,350,081-byte log are
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T204904Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-d8b0ce4a.json`
+(`0af6b891d2af31e1decf348b5a46defb1cd53b26dce698b1a5ee0b75b8e95327`).
+The combined phase-factorization, one-cell lookahead, and four-plane-worker
+path still requires the planned fresh eighteen-product single-field
+comparison before incorporation.
+
+That fresh comparison then passed. The measured complete single-field
+invocation took 66.378748 seconds, 17.552 percent faster than the preceding
+80.509509-second exact-source-order candidate, 19.225x faster than the frozen
+1,276.157-second CASA row, and 61.236952 seconds below the independent 10x
+boundary. All 385,862 samples were accepted. The exact eighteen-product
+inventory matched; full-array numerical, topology, metadata, beam,
+source-region, and structured-difference contracts passed with zero failed or
+incomplete checks; the overall structured-difference label was `good`; and
+twenty panels are ready for Brian's still-required visual review. Its
+immutable receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T210158Z-vlass-fragment-single-field-fftw-f64-experiment-7dc431a7.json`
+(`694d3a255c5e67b589adbef77ff8570324c4a0534f6749c8783b9efd92c63ff9`).
+This supplies the full-product correctness evidence for the combined
+lookahead, four-plane-worker, and phase-factorized AW replay experiment; human
+panel acceptance and final incorporation approval remain separate gates.
+
 ## Outcome
 
 Make two imaging workloads derived from the archived VLASS test MeasurementSet

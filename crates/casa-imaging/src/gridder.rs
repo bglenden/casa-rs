@@ -2322,12 +2322,26 @@ impl<'a> AwProjector<'a> {
         let mut normalization = Complex32::new(0.0, 0.0);
         let mut values =
             Vec::with_capacity((2 * self.x_support + 1).saturating_mul(2 * self.y_support + 1));
-        for iy in -y_support..=y_support {
+        let x_phases = (-x_support..=x_support)
+            .map(|ix| {
+                let phase_x = (ix * self.sampling as isize + geometry.off_x) as f64
+                    * self.phase_gradient_rad_per_sample[0];
+                casa_aw_axis_phase(phase_x)
+            })
+            .collect::<Vec<_>>();
+        let y_phases = (-y_support..=y_support)
+            .map(|iy| {
+                let phase_y = (iy * self.sampling as isize + geometry.off_y) as f64
+                    * self.phase_gradient_rad_per_sample[1];
+                casa_aw_axis_phase(phase_y)
+            })
+            .collect::<Vec<_>>();
+        for (iy_index, iy) in (-y_support..=y_support).enumerate() {
             let kernel_y = usize::try_from(
                 self.kernel_center[1] as isize + iy * self.sampling as isize + geometry.off_y,
             )
             .map_err(|_| AwProjectSamplePlanRejection::KernelIndexOutsideCell)?;
-            for ix in -x_support..=x_support {
+            for (ix_index, ix) in (-x_support..=x_support).enumerate() {
                 let kernel_x = usize::try_from(
                     self.kernel_center[0] as isize + ix * self.sampling as isize + geometry.off_x,
                 )
@@ -2340,11 +2354,7 @@ impl<'a> AwProjector<'a> {
                     tap = tap.conj();
                 }
                 normalization += tap;
-                let phase_x = (ix * self.sampling as isize + geometry.off_x) as f64
-                    * self.phase_gradient_rad_per_sample[0];
-                let phase_y = (iy * self.sampling as isize + geometry.off_y) as f64
-                    * self.phase_gradient_rad_per_sample[1];
-                tap *= casa_aw_phase_gradient(phase_x, phase_y);
+                tap *= casa_aw_phase_gradient_from_axes(x_phases[ix_index], y_phases[iy_index]);
                 values.push(tap);
             }
         }
@@ -2488,8 +2498,14 @@ fn casa_aw_phase_gradient(phase_x: f64, phase_y: f64) -> Complex32 {
     // it through casacore::Complex, multiplies the promoted axis values as
     // DComplex, and finally stores the product as Complex. Preserve those
     // rounding boundaries instead of evaluating exp(i * (x + y)) directly.
-    let x = Complex32::new(phase_x.cos() as f32, phase_x.sin() as f32);
-    let y = Complex32::new(phase_y.cos() as f32, phase_y.sin() as f32);
+    casa_aw_phase_gradient_from_axes(casa_aw_axis_phase(phase_x), casa_aw_axis_phase(phase_y))
+}
+
+fn casa_aw_axis_phase(phase: f64) -> Complex32 {
+    Complex32::new(phase.cos() as f32, phase.sin() as f32)
+}
+
+fn casa_aw_phase_gradient_from_axes(x: Complex32, y: Complex32) -> Complex32 {
     let product = Complex64::new(f64::from(x.re), f64::from(x.im))
         * Complex64::new(f64::from(y.re), f64::from(y.im));
     Complex32::new(product.re as f32, product.im as f32)

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "vlass-fragment-single-field-fftw-f64-experiment",
   "mode_id": "vlass-awproject-mtmfs-single-field",
-  "description": "Full-geometry field-1525 VLASS dirty-product experiment against the frozen CASA 6.7.5.9 products using exact source-order replay, alternating CF locality, four bounded planning and tap-pack workers, local f64 FFTW, and 1 GiB CF/tap residency. It disables diagnostic detail during the measured process, is never final acceptance evidence, and does not replace the frozen serial row.",
+  "description": "Full-geometry field-1525 VLASS dirty-product experiment against the frozen CASA 6.7.5.9 products using exact source-order replay, alternating CF locality, one-cell CF lookahead, four bounded planning, tap-pack, and disjoint Taylor-plane workers, local f64 FFTW, and 1 GiB CF/tap residency. It disables diagnostic detail during the measured process, is never final acceptance evidence, and does not replace the frozen serial row.",
   "casa": {
     "dataset_geometry_path": "tools/perf/imager/recipes/vlass-fragment-dataset-geometry.json",
     "dataset_selection": "single_field",
@@ -79,7 +79,7 @@
     "calcpsf": true,
     "parallel": true,
     "standard_mfs_acceleration": "cpu",
-    "standard_mfs_grid_threads": 1,
+    "standard_mfs_grid_threads": 4,
     "imaging_prepare_workers": 1,
     "imaging_read_ahead_blocks": 1,
     "imaging_fft_precision": "f64",
@@ -105,6 +105,7 @@
       "CASA_RS_AWPROJECT_PACK_THREADS": "4",
       "CASA_RS_AWPROJECT_PLAN_CHUNK_SAMPLES": "16384",
       "CASA_RS_AWPROJECT_PLAN_THREADS": "4",
+      "CASA_RS_AWPROJECT_PREFETCH_CF_CELL": "1",
       "CASA_RS_FFTW_LIBRARY_DIR": "/Users/brianglendenning/SoftwareProjects/casa-build/venv/lib/python3.14/site-packages/casaplotms/__bin__/casaplotms.app/Contents/Frameworks",
       "CASA_RS_STANDARD_MFS_PROFILE_DETAIL": "0"
     },
