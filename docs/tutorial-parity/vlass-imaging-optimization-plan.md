@@ -1,7 +1,7 @@
 # VLASS Fragment Imaging Correctness And Performance Plan
 
 Truth class: approved execution contract
-Last reality check: 2026-07-25
+Last reality check: 2026-07-26
 Verification: `just docs-check`
 
 WDAD scope:
@@ -69,6 +69,26 @@ The interrupted receipt is
 (`70b33ca592a71139c8f85adf99e8d4249a8852d58d18b9e3adf5550f95eb7d4f`);
 it retains the completed warmup and partial measured-001 request/log, and no
 measured-002/003 call was launched.
+
+### Experiment Authorization And Incorporation Boundary
+
+Brian explicitly authorized non-destructive performance and correctness
+experiments for this wave on 2026-07-26. An experiment may test changes outside
+normal production practice without another approval, including alternate FFT
+libraries, reduced precision, Metal/GPU implementations, memory layouts,
+thread/worker ownership, buffer sizes, instrumentation, diagnostic
+dependencies, temporary benchmark manifests, and prospective algorithm or
+runtime changes. Each experiment must preserve its configuration, correctness
+comparison, end-to-end timing, resource evidence, and negative result.
+
+This standing authorization does not approve final incorporation. Before a
+materially different algorithm, substantial dependency, runtime/default,
+public API, persisted format, provider contract, or concurrency guarantee
+graduates into the production path, present its measured evidence and request
+Brian's approval. Rejected experiments remain explicitly non-fiducial and
+cannot weaken the frozen correctness or final performance gates. Destructive
+actions and changes outside this approved VLASS wave remain governed by the
+normal repository contract.
 
 ### 2026-07-22 Mac Mini Continuation
 
@@ -376,6 +396,37 @@ numerical checks pass. A scalar threshold adjustment remains invalid because
 correctly excluded pixels lie closer to the casa-rs threshold. The next
 correctness investigation therefore owns the FFT/principal-solution numerical
 boundary rather than source replay order.
+
+An exact-shape backend probe then confirmed that the existing MPSGraph backend
+can execute a 12,150 by 12,150 Complex32 dirty-product transform on this host,
+but it does not support Complex64. The successful one-repeat probe reported
+847 ms packing, 661 ms execution, and 1,742 ms total. A first full-workload
+attempt also proved that explicit `metal-mpsgraph` correctly fails closed when
+combined with the strict `--no-parallel` RustFFT comparison surface. Its
+preserved receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T105536Z-vlass-fragment-single-field-metal-fft-f32-experiment-d266e985.json`
+(`d72f71668151abd64a1d8de9f081bd4553e71c9dcf9959b808ff91d45200d7c5`).
+
+The bounded full-geometry experiment therefore selected the Metal product FFT
+explicitly while pinning AW gridding, preparation, and read-ahead to one CPU
+owner. It reused the frozen CASA products and accepted all 385,862 visibility
+samples. The measured casa-rs time was 171.372528 seconds, only 5.1% faster
+than the f64 RustFFT checkpoint and still slower than the 127.6157-second
+target. Its profile run took 172.107264 seconds with 21,802,172,416-byte peak
+RSS; gridding remained the owner at 126.712393 seconds, while the product FFT
+stage took 18.512345 seconds.
+
+The full-array comparison rejects this f32 path. `.residual.tt0` and
+`.residual.tt1` had 0.416% and 0.418% RMS ratios and 2.80% and 3.00%
+peak-normalized absolute differences. `.alpha` and `.alpha.error` each had
+4,138 mask mismatches, rather than the two-pixel f64 boundary. PB structure
+also required investigation. The strict receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T105757Z-vlass-fragment-single-field-metal-fft-f32-experiment-c4fe43ae.json`
+(`e4cde5d9581546697ae077b3fd8fd03a39d268b177caa12ffc708f563d052682`).
+This result is experimental evidence only and must not be incorporated as a
+default or used for final acceptance. The next FFT experiment must preserve
+f64 arithmetic, such as an FFTW candidate, unless another precision strategy
+first passes the same frozen comparison.
 
 ## Outcome
 
@@ -866,6 +917,9 @@ capacity-stop partial as accepted evidence.
 - Do not rerun fixed CASA oracles after casa-rs-only changes.
 - Optimization controls graduate from diagnostics to explicit parameters; the
   final path cannot depend on hidden environment variables.
+- Non-destructive experiments are pre-approved under the experiment boundary
+  above. Stop for approval when evidence supports final incorporation, not
+  merely to create or run the experiment.
 
 ## Stop Conditions
 
@@ -878,8 +932,12 @@ Stop and request direction rather than changing the contract if:
 - the all-field workload reveals that a connected-fragment assumption is wrong;
 - either workload remains below 10x after the measured memory, CPU, and GPU
   owners have been exhausted; or
-- completing the goal requires distributed execution, a different machine, or
-  a materially different persisted/public contract.
+- completing the goal requires distributed execution or a different machine;
+  or
+- the best measured result requires final incorporation of a materially
+  different algorithm, substantial dependency, runtime/default, public API,
+  persisted format, provider contract, or concurrency guarantee that Brian has
+  not yet approved.
 
 Reduced workloads, accepted correctness differences, target changes, or scope
 deferrals require explicit Brian signoff. They are not implicit closeout paths.

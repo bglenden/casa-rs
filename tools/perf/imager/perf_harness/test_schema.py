@@ -58,6 +58,9 @@ VLASS_CASA_ONLY_WORKLOADS = {
 VLASS_RUST_FINAL_WORKLOADS = VLASS_WORKLOADS - VLASS_CASA_ONLY_WORKLOADS
 VLASS_TURNAROUND_WORKLOAD = "vlass-awproject-turnaround.json"
 VLASS_TURNAROUND_METAL_WORKLOAD = "vlass-awproject-turnaround-metal.json"
+VLASS_SINGLE_FIELD_METAL_FFT_EXPERIMENT = (
+    "vlass-fragment-single-field-metal-fft-f32-experiment.json"
+)
 
 
 def explicit_aw_workload() -> dict[str, object]:
@@ -202,6 +205,34 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(
             "reduced_turnaround_only", manifest["run"]["evidence_role"]
         )
+        self.assertTrue(manifest["comparison"]["tolerances"]["require_full_array"])
+
+    def test_vlass_single_field_metal_fft_experiment_is_non_fiducial(self) -> None:
+        path = (
+            REPO_ROOT
+            / "tools/perf/imager/workloads"
+            / VLASS_SINGLE_FIELD_METAL_FFT_EXPERIMENT
+        )
+        manifest = load_workload_manifest(path)
+
+        self.assertIn("never final acceptance evidence", manifest["description"])
+        self.assertEqual("single_field", manifest["casa"]["dataset_selection"])
+        self.assertEqual("1525", manifest["imaging"]["field"])
+        self.assertEqual("2~17", manifest["imaging"]["spw"])
+        self.assertEqual(12150, manifest["imaging"]["imsize"])
+        self.assertTrue(manifest["imaging"]["parallel"])
+        self.assertEqual("cpu", manifest["imaging"]["standard_mfs_acceleration"])
+        self.assertEqual(1, manifest["imaging"]["standard_mfs_grid_threads"])
+        self.assertEqual(1, manifest["imaging"]["imaging_prepare_workers"])
+        self.assertEqual(1, manifest["imaging"]["imaging_read_ahead_blocks"])
+        self.assertEqual("f32", manifest["imaging"]["imaging_fft_precision"])
+        self.assertEqual(
+            "metal-mpsgraph", manifest["imaging"]["imaging_fft_backend"]
+        )
+        self.assertEqual(
+            "experimental_metal_fft_f32", manifest["run"]["evidence_role"]
+        )
+        self.assertEqual("1", manifest["run"]["skip_casa"])
         self.assertTrue(manifest["comparison"]["tolerances"]["require_full_array"])
 
     def test_current_product_contract_accepts_bound_source_region_evidence(
