@@ -348,9 +348,34 @@ must instead:
 
 The compact-tap budget must be an explicit allocation in the shared resource
 plan. It may reduce source-window length but may not consume the five-percent
-AW safety reserve or create another image-sized grid. This is a material
-performance-algorithm/runtime change and remains proposed until Brian gives
-the explicit approval required by `AGENTS.md`.
+AW safety reserve or create another image-sized grid.
+
+Brian explicitly approved this material performance-algorithm/runtime change
+on 2026-07-25. The production path now constructs a strict source-sample route,
+plans compact tap bundles from CF metadata before loading pixels, segments only
+at source-sample boundaries, and replays consecutive windows in source order.
+The planner charges the full-cell LRU and compact tap arena as independent
+allocations under the same public `cf_resident_mb` per-allocation ceiling. The
+five-percent AW safety reserve is unchanged and the execution topology still
+owns only the original eight image-sized grids.
+
+The first full-size serial receipt for this path is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T013019Z-vlass-fragment-single-field-1cdf84fd.json`.
+All 385,862 samples were accepted, adaptive windows stayed within the
+268,435,456-byte compact-tap ceiling, and peak RSS was 21,098,823,680 bytes.
+The measured casa-rs time was 180.553504 seconds, a 16.8% improvement over the
+216.930656-second checkpoint and 7.068x faster than frozen CASA. This still
+misses the 127.6157-second single-field 10x boundary.
+
+The exact-source-order hypothesis was not the final alpha-topology owner. The
+same two `.alpha` and `.alpha.error` mask mismatches remain. At those pixels,
+CASA's restored principal TT0 values are just above CASA's
+`max(principal_tt0)/10` threshold while the numerically close casa-rs values
+are below its corresponding threshold. All other product topology and frozen
+numerical checks pass. A scalar threshold adjustment remains invalid because
+correctly excluded pixels lie closer to the casa-rs threshold. The next
+correctness investigation therefore owns the FFT/principal-solution numerical
+boundary rather than source replay order.
 
 ## Outcome
 

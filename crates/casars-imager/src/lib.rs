@@ -35722,6 +35722,11 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     } else {
         0
     };
+    // The compact source-order tap arena coexists with the full-cell LRU.
+    // Reuse the explicit AW byte control as its ceiling, but charge the two
+    // allocations independently so adaptive row planning cannot borrow the
+    // tap arena from the safety reserve or CF residency.
+    let aw_source_order_tap_bytes = aw_cf_resident_bytes;
     let pointing_index_bytes = if awproject_mtmfs && config.use_pointing {
         awproject_pointing_index_estimate_bytes(active_row_count, pointing_table_row_count)?
     } else {
@@ -35758,6 +35763,11 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
                 component: "AWProject CF pixels",
                 stage: "run",
                 bytes: aw_cf_resident_bytes,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject source-order tap scratch",
+                stage: "run",
+                bytes: aw_source_order_tap_bytes,
             },
             ImagingMemoryAllocation {
                 component: "AWProject CF index",
@@ -35964,6 +35974,13 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             reason: "bounded LRU pixel residency from the AWProject controls".to_string(),
         },
         casa_imaging::ImagingPlanDecision {
+            name: "awproject_source_order_tap_bytes",
+            value: aw_source_order_tap_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::UserPolicy,
+            reason: "independently charged compact phase-applied tap ceiling derived from the AWProject byte control"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
             name: "awproject_cf_index_bytes",
             value: aw_cf_index_bytes.to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Workload,
@@ -35981,8 +35998,9 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             name: "awproject_cf_locality_index_bytes_per_row",
             value: aw_cf_locality_index_bytes_per_row.to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Workload,
-            reason: "one bounded sample index per selected channel groups repeated CF quartets"
-                .to_string(),
+            reason:
+                "one bounded sample-to-pointing route entry per selected source channel"
+                    .to_string(),
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_parallel_plan_bytes_per_row",
@@ -49394,7 +49412,7 @@ Options:
   --weighting MODE          natural, uniform, briggs, or briggsbwtaper
   --gridder MODE            standard, wproject, mosaic, or awproject
   --cfcache PATH            CASA AWProject convolution-function cache (required for awproject)
-  --cf-resident-mb N        bounded resident AW convolution-function cache in MiB
+  --cf-resident-mb N        per-allocation AW full-cell/tap ceiling in MiB
   --facets N                AWProject facet count (the VLASS slice requires 1)
   --psfphasecenter TEXT     optional AWProject PSF phase center
   --vptable PATH            optional AWProject voltage-pattern table
@@ -54898,6 +54916,11 @@ mod tests {
             plan.allocation_bytes("AWProject CF pixels"),
             config.aw_project.as_ref().unwrap().cf_resident_bytes
         );
+        assert_eq!(
+            plan.allocation_bytes("AWProject source-order tap scratch"),
+            config.aw_project.as_ref().unwrap().cf_resident_bytes,
+            "compact taps coexist with and are charged independently from full-cell residency"
+        );
         assert!(plan.allocation_bytes("AWProject CF index") > 0);
         assert!(plan.allocation_bytes("POINTING index") > 0);
         assert_eq!(
@@ -54924,6 +54947,16 @@ mod tests {
         assert!(plan.decisions.iter().any(|decision| {
             decision.name == "awproject_parallel_plan_bytes_per_row"
                 && decision.value == (64 * 256).to_string()
+        }));
+        assert!(plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_source_order_tap_bytes"
+                && decision.value
+                    == config
+                        .aw_project
+                        .as_ref()
+                        .unwrap()
+                        .cf_resident_bytes
+                        .to_string()
         }));
 
         config.niter = 0;
@@ -55042,7 +55075,7 @@ mod tests {
                 + AWPROJECT_CF_INDEX_HEAP_AND_TREE_ALLOWANCE_BYTES_PER_PAIR)
         );
         eprintln!(
-            "vlass_awproject_memory_fixture target_gib=32 decision=admit grid_side={} grid_planes={} grid_bytes={} fft_scratch_bytes={} run_state_bytes={} multiscale_scratch_bytes={} cf_pixel_bytes={} cf_index_bytes={} pointing_index_bytes={} safety_margin_bytes={} source_row_block_rows={} planned_peak_bytes={}",
+            "vlass_awproject_memory_fixture target_gib=32 decision=admit grid_side={} grid_planes={} grid_bytes={} fft_scratch_bytes={} run_state_bytes={} multiscale_scratch_bytes={} cf_pixel_bytes={} source_order_tap_bytes={} cf_index_bytes={} pointing_index_bytes={} safety_margin_bytes={} source_row_block_rows={} planned_peak_bytes={}",
             plan.workload.grid_width,
             plan.workload.grid_planes,
             plan.allocation_bytes("grids"),
@@ -55050,6 +55083,7 @@ mod tests {
             plan.allocation_bytes("AWProject MT-MFS run state"),
             plan.allocation_bytes("AWProject MT-MFS bounded multiscale scratch"),
             plan.allocation_bytes("AWProject CF pixels"),
+            plan.allocation_bytes("AWProject source-order tap scratch"),
             plan.allocation_bytes("AWProject CF index"),
             plan.allocation_bytes("POINTING index"),
             plan.allocation_bytes("AWProject safety margin"),

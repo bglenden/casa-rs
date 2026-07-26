@@ -7008,26 +7008,26 @@ where
                 return Ok(());
             }
         }
-        for group in &block.gridder_metadata.groups {
-            match (aw_cache, aw_controls, block.aw_parallel_hands.as_ref()) {
-                (Some(cache), Some(controls), Some(parallel_hands)) => {
-                    accumulate_awproject_mtmfs_metadata_group(
-                        request,
-                        config,
-                        gridder,
-                        &weighted,
-                        parallel_hands,
-                        &block.sample_frequencies_hz,
-                        group,
-                        model_grids,
-                        cache,
-                        controls,
-                        requested_threads,
-                        &mut accumulation,
-                        &mut taylor_weights,
-                    )?;
-                }
-                (None, None, _) => {
+        match (aw_cache, aw_controls, block.aw_parallel_hands.as_ref()) {
+            (Some(cache), Some(controls), Some(parallel_hands)) => {
+                accumulate_awproject_mtmfs_metadata_batch(
+                    request,
+                    config,
+                    gridder,
+                    &weighted,
+                    parallel_hands,
+                    &block.sample_frequencies_hz,
+                    &block.gridder_metadata.groups,
+                    model_grids,
+                    cache,
+                    controls,
+                    requested_threads,
+                    &mut accumulation,
+                    &mut taylor_weights,
+                )?;
+            }
+            (None, None, _) => {
+                for group in &block.gridder_metadata.groups {
                     accumulate_mosaic_mtmfs_metadata_group(
                         request,
                         config,
@@ -7043,8 +7043,8 @@ where
                         &mut predicted_terms,
                     )?;
                 }
-                _ => unreachable!("AWProject state consistency was validated above"),
             }
+            _ => unreachable!("AWProject state consistency was validated above"),
         }
         Ok(())
     })?;
@@ -7075,39 +7075,97 @@ where
 type AwProjectStableCellKey = (u64, u64, i32, u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct AwProjectMtmfsLocalityKey {
-    first_imaging: AwProjectStableCellKey,
-    second_imaging: AwProjectStableCellKey,
-    first_weight: AwProjectStableCellKey,
-    second_weight: AwProjectStableCellKey,
+enum AwProjectCompactKernelKind {
+    Imaging,
+    Weight,
 }
 
-struct AwProjectMtmfsLocalityGroup {
-    first_imaging: AwConvolutionFunctionKey,
-    second_imaging: AwConvolutionFunctionKey,
-    first_weight: AwConvolutionFunctionKey,
-    second_weight: AwConvolutionFunctionKey,
-    sample_indices: Vec<usize>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct AwProjectCompactTapKey {
+    group_index: usize,
+    cell: AwProjectStableCellKey,
+    kernel_kind: AwProjectCompactKernelKind,
+    off_x: isize,
+    off_y: isize,
+    conjugate_for_grid: bool,
 }
 
 #[derive(Clone, Copy)]
-struct AwProjectMtmfsPlannedSample {
-    first_imaging_plan: gridder::AwProjectSamplePlan,
-    second_imaging_plan: gridder::AwProjectSamplePlan,
-    first_psf_plan: gridder::AwProjectSamplePlan,
-    second_psf_plan: gridder::AwProjectSamplePlan,
+struct AwProjectCompactTapRequest {
+    key: AwProjectCompactTapKey,
+    cell_key: AwConvolutionFunctionKey,
+    representative_uvw_lambda: [f64; 3],
+}
+
+struct AwProjectCompactTapBundle {
+    values: Vec<Complex32>,
+    x_support: usize,
+    y_support: usize,
+    normalization: Complex32,
+}
+
+enum AwProjectCompactMaterializedTap {
+    Ready(AwProjectCompactTapBundle),
+    Rejected(gridder::AwProjectSamplePlanRejection),
+}
+
+#[derive(Clone, Copy)]
+struct AwProjectCompactSamplePlan {
+    loc_x: isize,
+    loc_y: isize,
+    tap_bundle: usize,
+}
+
+#[derive(Clone, Copy)]
+struct AwProjectCompactSourceSample {
+    sample_index: usize,
+    first_imaging_plan: AwProjectCompactSamplePlan,
+    second_imaging_plan: AwProjectCompactSamplePlan,
+    first_psf_plan: AwProjectCompactSamplePlan,
+    second_psf_plan: AwProjectCompactSamplePlan,
+    first_weight_plan: AwProjectCompactSamplePlan,
+    second_weight_plan: AwProjectCompactSamplePlan,
+}
+
+#[derive(Clone, Copy)]
+struct AwProjectCompactTapSpec {
+    request: AwProjectCompactTapRequest,
+    geometry: gridder::AwProjectSampleGeometry,
+    tap_bytes: usize,
+}
+
+type AwProjectCompactSourceOutcome =
+    Result<[AwProjectCompactTapSpec; 6], AwProjectCompactSourceRejection>;
+
+enum AwProjectCompactSourceRejection {
+    NotGridable,
+    InvalidInput,
+    FirstImaging(gridder::AwProjectSamplePlanRejection),
+    SecondImaging(gridder::AwProjectSamplePlanRejection),
+    FirstPsf(gridder::AwProjectSamplePlanRejection),
+    SecondPsf(gridder::AwProjectSamplePlanRejection),
+}
+
+#[derive(Clone, Copy)]
+struct AwProjectCompactPlannedSample {
+    first_imaging_plan: AwProjectCompactSamplePlan,
+    second_imaging_plan: AwProjectCompactSamplePlan,
+    first_psf_plan: AwProjectCompactSamplePlan,
+    second_psf_plan: AwProjectCompactSamplePlan,
+    first_weight_plan: AwProjectCompactSamplePlan,
+    second_weight_plan: AwProjectCompactSamplePlan,
     frequency_hz: f64,
     weight: f32,
     first_residual: Complex32,
     second_residual: Complex32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
-struct AwProjectMetalTapKey {
-    off_x: isize,
-    off_y: isize,
-    conjugate_for_grid: bool,
+#[derive(Default)]
+struct AwProjectCompactReplayStats {
+    windows: usize,
+    largest_window_samples: usize,
+    largest_window_tap_bundles: usize,
+    peak_tap_bytes: usize,
 }
 
 #[repr(C)]
@@ -7315,7 +7373,116 @@ thread_local! {
     };
 }
 
-enum AwProjectMtmfsPlaneTask<'a> {
+fn awproject_compact_grid_sample_f64(
+    grid: &mut Array2<Complex64>,
+    plan: AwProjectCompactSamplePlan,
+    bundle: &AwProjectCompactTapBundle,
+    value: Complex32,
+) {
+    let columns = grid.shape()[1];
+    let x_support = bundle.x_support as isize;
+    let y_support = bundle.y_support as isize;
+    let mut tap_index = 0usize;
+    if let Some(storage) = grid.as_slice_memory_order_mut() {
+        for iy in -y_support..=y_support {
+            for ix in -x_support..=x_support {
+                let contribution = value * bundle.values[tap_index];
+                let grid_x = (plan.loc_x + ix) as usize;
+                let grid_y = (plan.loc_y + iy) as usize;
+                storage[grid_x * columns + grid_y] +=
+                    Complex64::new(f64::from(contribution.re), f64::from(contribution.im));
+                tap_index += 1;
+            }
+        }
+    } else {
+        for iy in -y_support..=y_support {
+            for ix in -x_support..=x_support {
+                let contribution = value * bundle.values[tap_index];
+                grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)] +=
+                    Complex64::new(f64::from(contribution.re), f64::from(contribution.im));
+                tap_index += 1;
+            }
+        }
+    }
+    debug_assert_eq!(tap_index, bundle.values.len());
+}
+
+fn awproject_compact_grid_sample_f32(
+    grid: &mut Array2<Complex32>,
+    plan: AwProjectCompactSamplePlan,
+    bundle: &AwProjectCompactTapBundle,
+    value: Complex32,
+) {
+    let columns = grid.shape()[1];
+    let x_support = bundle.x_support as isize;
+    let y_support = bundle.y_support as isize;
+    let mut tap_index = 0usize;
+    if let Some(storage) = grid.as_slice_memory_order_mut() {
+        for iy in -y_support..=y_support {
+            for ix in -x_support..=x_support {
+                let grid_x = (plan.loc_x + ix) as usize;
+                let grid_y = (plan.loc_y + iy) as usize;
+                storage[grid_x * columns + grid_y] += value * bundle.values[tap_index];
+                tap_index += 1;
+            }
+        }
+    } else {
+        for iy in -y_support..=y_support {
+            for ix in -x_support..=x_support {
+                grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)] +=
+                    value * bundle.values[tap_index];
+                tap_index += 1;
+            }
+        }
+    }
+    debug_assert_eq!(tap_index, bundle.values.len());
+}
+
+fn awproject_compact_degrid_sample(
+    grid: &Array2<Complex32>,
+    plan: AwProjectCompactSamplePlan,
+    bundle: &AwProjectCompactTapBundle,
+) -> Complex32 {
+    let columns = grid.shape()[1];
+    let x_support = bundle.x_support as isize;
+    let y_support = bundle.y_support as isize;
+    let mut tap_index = 0usize;
+    let mut value = Complex32::new(0.0, 0.0);
+    if let Some(storage) = grid.as_slice_memory_order() {
+        for iy in -y_support..=y_support {
+            for ix in -x_support..=x_support {
+                let grid_x = (plan.loc_x + ix) as usize;
+                let grid_y = (plan.loc_y + iy) as usize;
+                value += bundle.values[tap_index].conj() * storage[grid_x * columns + grid_y];
+                tap_index += 1;
+            }
+        }
+    } else {
+        for iy in -y_support..=y_support {
+            for ix in -x_support..=x_support {
+                value += bundle.values[tap_index].conj()
+                    * grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)];
+                tap_index += 1;
+            }
+        }
+    }
+    debug_assert_eq!(tap_index, bundle.values.len());
+    value / bundle.normalization.conj()
+}
+
+fn awproject_ready_compact_tap(
+    bundles: &[AwProjectCompactMaterializedTap],
+    index: usize,
+) -> &AwProjectCompactTapBundle {
+    match &bundles[index] {
+        AwProjectCompactMaterializedTap::Ready(bundle) => bundle,
+        AwProjectCompactMaterializedTap::Rejected(_) => {
+            unreachable!("rejected compact AW tap reached the replay stage")
+        }
+    }
+}
+
+enum AwProjectCompactF64PlaneTask<'a> {
     Psf {
         order: usize,
         grid: &'a mut Array2<Complex64>,
@@ -7330,88 +7497,74 @@ enum AwProjectMtmfsPlaneTask<'a> {
     },
 }
 
-#[allow(clippy::too_many_arguments)]
-fn execute_awproject_mtmfs_plane_tasks(
-    tasks: Vec<AwProjectMtmfsPlaneTask<'_>>,
-    samples: &[AwProjectMtmfsPlannedSample],
+fn execute_awproject_compact_f64_plane_tasks(
+    tasks: Vec<AwProjectCompactF64PlaneTask<'_>>,
+    samples: &[AwProjectCompactPlannedSample],
+    bundles: &[AwProjectCompactMaterializedTap],
     reffreq_hz: f64,
-    first_imaging_projector: &AwProjector<'_>,
-    second_imaging_projector: &AwProjector<'_>,
-    first_psf_projector: &AwProjector<'_>,
-    second_psf_projector: &AwProjector<'_>,
-    first_weight_projector: &AwProjector<'_>,
-    second_weight_projector: &AwProjector<'_>,
-    first_weight_plan: &gridder::AwProjectSamplePlan,
-    second_weight_plan: &gridder::AwProjectSamplePlan,
 ) {
     for task in tasks {
         match task {
-            AwProjectMtmfsPlaneTask::Psf { order, grid } => {
+            AwProjectCompactF64PlaneTask::Psf { order, grid } => {
                 for sample in samples {
-                    let taylor_weight =
-                        mtmfs_taylor_weight_for_order(sample.frequency_hz, reffreq_hz, order);
-                    let value = Complex32::new(sample.weight * taylor_weight, 0.0);
-                    first_psf_projector.grid_sample_planned_f64(
-                        grid,
-                        &sample.first_psf_plan,
-                        value,
+                    let value = Complex32::new(
+                        sample.weight
+                            * mtmfs_taylor_weight_for_order(sample.frequency_hz, reffreq_hz, order),
+                        0.0,
                     );
-                    second_psf_projector.grid_sample_planned_f64(
-                        grid,
-                        &sample.second_psf_plan,
-                        value,
-                    );
+                    for plan in [sample.first_psf_plan, sample.second_psf_plan] {
+                        awproject_compact_grid_sample_f64(
+                            grid,
+                            plan,
+                            awproject_ready_compact_tap(bundles, plan.tap_bundle),
+                            value,
+                        );
+                    }
                 }
             }
-            AwProjectMtmfsPlaneTask::Residual { order, grid } => {
+            AwProjectCompactF64PlaneTask::Residual { order, grid } => {
                 for sample in samples {
-                    let taylor_weight =
-                        mtmfs_taylor_weight_for_order(sample.frequency_hz, reffreq_hz, order);
-                    let term_weight = sample.weight * taylor_weight;
-                    let first_value = sample.first_residual * term_weight;
-                    let second_value = sample.second_residual * term_weight;
-                    first_imaging_projector.grid_sample_planned_f64(
-                        grid,
-                        &sample.first_imaging_plan,
-                        first_value,
-                    );
-                    second_imaging_projector.grid_sample_planned_f64(
-                        grid,
-                        &sample.second_imaging_plan,
-                        second_value,
-                    );
+                    let term_weight = sample.weight
+                        * mtmfs_taylor_weight_for_order(sample.frequency_hz, reffreq_hz, order);
+                    for (plan, residual) in [
+                        (sample.first_imaging_plan, sample.first_residual),
+                        (sample.second_imaging_plan, sample.second_residual),
+                    ] {
+                        awproject_compact_grid_sample_f64(
+                            grid,
+                            plan,
+                            awproject_ready_compact_tap(bundles, plan.tap_bundle),
+                            residual * term_weight,
+                        );
+                    }
                 }
             }
-            AwProjectMtmfsPlaneTask::Weight { order, grid } => {
+            AwProjectCompactF64PlaneTask::Weight { order, grid } => {
                 for sample in samples {
-                    let taylor_weight =
-                        mtmfs_taylor_weight_for_order(sample.frequency_hz, reffreq_hz, order);
-                    let value = Complex32::new(sample.weight * taylor_weight, 0.0);
-                    first_weight_projector.grid_sample_planned_f64(grid, first_weight_plan, value);
-                    second_weight_projector.grid_sample_planned_f64(
-                        grid,
-                        second_weight_plan,
-                        value,
+                    let value = Complex32::new(
+                        sample.weight
+                            * mtmfs_taylor_weight_for_order(sample.frequency_hz, reffreq_hz, order),
+                        0.0,
                     );
+                    for plan in [sample.first_weight_plan, sample.second_weight_plan] {
+                        awproject_compact_grid_sample_f64(
+                            grid,
+                            plan,
+                            awproject_ready_compact_tap(bundles, plan.tap_bundle),
+                            value,
+                        );
+                    }
                 }
             }
         }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn grid_awproject_mtmfs_planned_samples_host(
+fn grid_awproject_compact_samples_host_f64(
     grids: &mut MosaicMtmfsHostGrids,
-    samples: &[AwProjectMtmfsPlannedSample],
+    samples: &[AwProjectCompactPlannedSample],
+    bundles: &[AwProjectCompactMaterializedTap],
     reffreq_hz: f64,
-    first_imaging_projector: &AwProjector<'_>,
-    second_imaging_projector: &AwProjector<'_>,
-    first_psf_projector: &AwProjector<'_>,
-    second_psf_projector: &AwProjector<'_>,
-    first_weight_projector: &AwProjector<'_>,
-    second_weight_projector: &AwProjector<'_>,
-    first_weight_plan: &gridder::AwProjectSamplePlan,
-    second_weight_plan: &gridder::AwProjectSamplePlan,
     requested_threads: usize,
 ) -> Result<(), ImagingError> {
     let MosaicMtmfsHostGrids {
@@ -7419,92 +7572,63 @@ fn grid_awproject_mtmfs_planned_samples_host(
         residual_grids,
         weight_grids,
     } = grids;
-    let mut tasks = Vec::<AwProjectMtmfsPlaneTask<'_>>::with_capacity(
+    let mut tasks = Vec::<AwProjectCompactF64PlaneTask<'_>>::with_capacity(
         psf_grids.len() + residual_grids.len() + weight_grids.len(),
     );
     tasks.extend(
         psf_grids
             .iter_mut()
             .enumerate()
-            .map(|(order, grid)| AwProjectMtmfsPlaneTask::Psf { order, grid }),
+            .map(|(order, grid)| AwProjectCompactF64PlaneTask::Psf { order, grid }),
     );
     tasks.extend(
         residual_grids
             .iter_mut()
             .enumerate()
-            .map(|(order, grid)| AwProjectMtmfsPlaneTask::Residual { order, grid }),
+            .map(|(order, grid)| AwProjectCompactF64PlaneTask::Residual { order, grid }),
     );
     tasks.extend(
         weight_grids
             .iter_mut()
             .enumerate()
-            .map(|(order, grid)| AwProjectMtmfsPlaneTask::Weight { order, grid }),
+            .map(|(order, grid)| AwProjectCompactF64PlaneTask::Weight { order, grid }),
     );
     let worker_count = requested_threads.max(1).min(tasks.len().max(1));
     let mut worker_tasks = (0..worker_count)
-        .map(|_| Vec::<AwProjectMtmfsPlaneTask<'_>>::new())
+        .map(|_| Vec::<AwProjectCompactF64PlaneTask<'_>>::new())
         .collect::<Vec<_>>();
     for (index, task) in tasks.into_iter().enumerate() {
         worker_tasks[index % worker_count].push(task);
     }
-    let started = Instant::now();
     if worker_count == 1 {
-        execute_awproject_mtmfs_plane_tasks(
-            worker_tasks.pop().expect("one AWProject plane worker"),
+        execute_awproject_compact_f64_plane_tasks(
+            worker_tasks.pop().expect("one compact AWProject worker"),
             samples,
+            bundles,
             reffreq_hz,
-            first_imaging_projector,
-            second_imaging_projector,
-            first_psf_projector,
-            second_psf_projector,
-            first_weight_projector,
-            second_weight_projector,
-            first_weight_plan,
-            second_weight_plan,
         );
     } else {
         thread::scope(|scope| {
             let mut handles = Vec::with_capacity(worker_count);
             for tasks in worker_tasks {
                 handles.push(scope.spawn(move || {
-                    execute_awproject_mtmfs_plane_tasks(
-                        tasks,
-                        samples,
-                        reffreq_hz,
-                        first_imaging_projector,
-                        second_imaging_projector,
-                        first_psf_projector,
-                        second_psf_projector,
-                        first_weight_projector,
-                        second_weight_projector,
-                        first_weight_plan,
-                        second_weight_plan,
-                    );
+                    execute_awproject_compact_f64_plane_tasks(tasks, samples, bundles, reffreq_hz);
                 }));
             }
             for handle in handles {
                 handle.join().map_err(|_| {
                     ImagingError::InvalidRequest(
-                        "AWProject MT-MFS plane worker panicked".to_string(),
+                        "compact AWProject MT-MFS plane worker panicked".to_string(),
                     )
                 })?;
             }
             Ok::<(), ImagingError>(())
         })?;
     }
-    if profile::standard_mfs_profile_detail_enabled() {
-        eprintln!(
-            "awproject_plane_parallel workers={} planes={} planned_samples={} elapsed_ms={:.3}",
-            worker_count,
-            psf_grids.len() + residual_grids.len() + weight_grids.len(),
-            samples.len(),
-            profile::millis(started.elapsed()),
-        );
-    }
     Ok(())
 }
 
-enum AwProjectMtmfsF32PlaneTask<'a> {
+enum AwProjectCompactF32PlaneTask<'a> {
     Psf {
         order: usize,
         grid: &'a mut Array2<Complex32>,
@@ -7519,74 +7643,74 @@ enum AwProjectMtmfsF32PlaneTask<'a> {
     },
 }
 
-#[allow(clippy::too_many_arguments)]
-fn execute_awproject_mtmfs_f32_plane_tasks(
-    tasks: Vec<AwProjectMtmfsF32PlaneTask<'_>>,
-    samples: &[AwProjectMtmfsPlannedSample],
+fn execute_awproject_compact_f32_plane_tasks(
+    tasks: Vec<AwProjectCompactF32PlaneTask<'_>>,
+    samples: &[AwProjectCompactPlannedSample],
+    bundles: &[AwProjectCompactMaterializedTap],
     reffreq_hz: f64,
-    first_imaging_projector: &AwProjector<'_>,
-    second_imaging_projector: &AwProjector<'_>,
-    first_psf_projector: &AwProjector<'_>,
-    second_psf_projector: &AwProjector<'_>,
-    first_weight_projector: &AwProjector<'_>,
-    second_weight_projector: &AwProjector<'_>,
-    first_weight_plan: &gridder::AwProjectSamplePlan,
-    second_weight_plan: &gridder::AwProjectSamplePlan,
 ) {
     for task in tasks {
         match task {
-            AwProjectMtmfsF32PlaneTask::Psf { order, grid } => {
+            AwProjectCompactF32PlaneTask::Psf { order, grid } => {
                 for sample in samples {
-                    let taylor_weight =
-                        mtmfs_taylor_weight_for_order(sample.frequency_hz, reffreq_hz, order);
-                    let value = Complex32::new(sample.weight * taylor_weight, 0.0);
-                    first_psf_projector.grid_sample_planned(grid, &sample.first_psf_plan, value);
-                    second_psf_projector.grid_sample_planned(grid, &sample.second_psf_plan, value);
+                    let value = Complex32::new(
+                        sample.weight
+                            * mtmfs_taylor_weight_for_order(sample.frequency_hz, reffreq_hz, order),
+                        0.0,
+                    );
+                    for plan in [sample.first_psf_plan, sample.second_psf_plan] {
+                        awproject_compact_grid_sample_f32(
+                            grid,
+                            plan,
+                            awproject_ready_compact_tap(bundles, plan.tap_bundle),
+                            value,
+                        );
+                    }
                 }
             }
-            AwProjectMtmfsF32PlaneTask::Residual { order, grid } => {
+            AwProjectCompactF32PlaneTask::Residual { order, grid } => {
                 for sample in samples {
-                    let taylor_weight =
-                        mtmfs_taylor_weight_for_order(sample.frequency_hz, reffreq_hz, order);
-                    let term_weight = sample.weight * taylor_weight;
-                    first_imaging_projector.grid_sample_planned(
-                        grid,
-                        &sample.first_imaging_plan,
-                        sample.first_residual * term_weight,
-                    );
-                    second_imaging_projector.grid_sample_planned(
-                        grid,
-                        &sample.second_imaging_plan,
-                        sample.second_residual * term_weight,
-                    );
+                    let term_weight = sample.weight
+                        * mtmfs_taylor_weight_for_order(sample.frequency_hz, reffreq_hz, order);
+                    for (plan, residual) in [
+                        (sample.first_imaging_plan, sample.first_residual),
+                        (sample.second_imaging_plan, sample.second_residual),
+                    ] {
+                        awproject_compact_grid_sample_f32(
+                            grid,
+                            plan,
+                            awproject_ready_compact_tap(bundles, plan.tap_bundle),
+                            residual * term_weight,
+                        );
+                    }
                 }
             }
-            AwProjectMtmfsF32PlaneTask::Weight { order, grid } => {
+            AwProjectCompactF32PlaneTask::Weight { order, grid } => {
                 for sample in samples {
-                    let taylor_weight =
-                        mtmfs_taylor_weight_for_order(sample.frequency_hz, reffreq_hz, order);
-                    let value = Complex32::new(sample.weight * taylor_weight, 0.0);
-                    first_weight_projector.grid_sample_planned(grid, first_weight_plan, value);
-                    second_weight_projector.grid_sample_planned(grid, second_weight_plan, value);
+                    let value = Complex32::new(
+                        sample.weight
+                            * mtmfs_taylor_weight_for_order(sample.frequency_hz, reffreq_hz, order),
+                        0.0,
+                    );
+                    for plan in [sample.first_weight_plan, sample.second_weight_plan] {
+                        awproject_compact_grid_sample_f32(
+                            grid,
+                            plan,
+                            awproject_ready_compact_tap(bundles, plan.tap_bundle),
+                            value,
+                        );
+                    }
                 }
             }
         }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn grid_awproject_mtmfs_planned_samples_host_f32(
+fn grid_awproject_compact_samples_host_f32(
     grids: &mut MosaicMtmfsHostF32Grids,
-    samples: &[AwProjectMtmfsPlannedSample],
+    samples: &[AwProjectCompactPlannedSample],
+    bundles: &[AwProjectCompactMaterializedTap],
     reffreq_hz: f64,
-    first_imaging_projector: &AwProjector<'_>,
-    second_imaging_projector: &AwProjector<'_>,
-    first_psf_projector: &AwProjector<'_>,
-    second_psf_projector: &AwProjector<'_>,
-    first_weight_projector: &AwProjector<'_>,
-    second_weight_projector: &AwProjector<'_>,
-    first_weight_plan: &gridder::AwProjectSamplePlan,
-    second_weight_plan: &gridder::AwProjectSamplePlan,
     requested_threads: usize,
 ) -> Result<(), ImagingError> {
     let MosaicMtmfsHostF32Grids {
@@ -7594,214 +7718,61 @@ fn grid_awproject_mtmfs_planned_samples_host_f32(
         residual_grids,
         weight_grids,
     } = grids;
-    let mut tasks = Vec::<AwProjectMtmfsF32PlaneTask<'_>>::with_capacity(
+    let mut tasks = Vec::<AwProjectCompactF32PlaneTask<'_>>::with_capacity(
         psf_grids.len() + residual_grids.len() + weight_grids.len(),
     );
     tasks.extend(
         psf_grids
             .iter_mut()
             .enumerate()
-            .map(|(order, grid)| AwProjectMtmfsF32PlaneTask::Psf { order, grid }),
+            .map(|(order, grid)| AwProjectCompactF32PlaneTask::Psf { order, grid }),
     );
     tasks.extend(
         residual_grids
             .iter_mut()
             .enumerate()
-            .map(|(order, grid)| AwProjectMtmfsF32PlaneTask::Residual { order, grid }),
+            .map(|(order, grid)| AwProjectCompactF32PlaneTask::Residual { order, grid }),
     );
     tasks.extend(
         weight_grids
             .iter_mut()
             .enumerate()
-            .map(|(order, grid)| AwProjectMtmfsF32PlaneTask::Weight { order, grid }),
+            .map(|(order, grid)| AwProjectCompactF32PlaneTask::Weight { order, grid }),
     );
     let worker_count = requested_threads.max(1).min(tasks.len().max(1));
     let mut worker_tasks = (0..worker_count)
-        .map(|_| Vec::<AwProjectMtmfsF32PlaneTask<'_>>::new())
+        .map(|_| Vec::<AwProjectCompactF32PlaneTask<'_>>::new())
         .collect::<Vec<_>>();
     for (index, task) in tasks.into_iter().enumerate() {
         worker_tasks[index % worker_count].push(task);
     }
-    let started = Instant::now();
     if worker_count == 1 {
-        execute_awproject_mtmfs_f32_plane_tasks(
-            worker_tasks.pop().expect("one AWProject f32 plane worker"),
+        execute_awproject_compact_f32_plane_tasks(
+            worker_tasks
+                .pop()
+                .expect("one compact AWProject f32 worker"),
             samples,
+            bundles,
             reffreq_hz,
-            first_imaging_projector,
-            second_imaging_projector,
-            first_psf_projector,
-            second_psf_projector,
-            first_weight_projector,
-            second_weight_projector,
-            first_weight_plan,
-            second_weight_plan,
         );
     } else {
         thread::scope(|scope| {
             let mut handles = Vec::with_capacity(worker_count);
             for tasks in worker_tasks {
                 handles.push(scope.spawn(move || {
-                    execute_awproject_mtmfs_f32_plane_tasks(
-                        tasks,
-                        samples,
-                        reffreq_hz,
-                        first_imaging_projector,
-                        second_imaging_projector,
-                        first_psf_projector,
-                        second_psf_projector,
-                        first_weight_projector,
-                        second_weight_projector,
-                        first_weight_plan,
-                        second_weight_plan,
-                    );
+                    execute_awproject_compact_f32_plane_tasks(tasks, samples, bundles, reffreq_hz);
                 }));
             }
             for handle in handles {
                 handle.join().map_err(|_| {
                     ImagingError::InvalidRequest(
-                        "AWProject MT-MFS f32 plane worker panicked".to_string(),
+                        "compact AWProject MT-MFS f32 plane worker panicked".to_string(),
                     )
                 })?;
             }
             Ok::<(), ImagingError>(())
         })?;
     }
-    if profile::standard_mfs_profile_detail_enabled() {
-        eprintln!(
-            "awproject_plane_parallel workers={} planes={} planned_samples={} accumulation_precision=f32 elapsed_ms={:.3}",
-            worker_count,
-            psf_grids.len() + residual_grids.len() + weight_grids.len(),
-            samples.len(),
-            profile::millis(started.elapsed()),
-        );
-    }
-    Ok(())
-}
-
-#[cfg(all(target_os = "macos", not(coverage)))]
-fn awproject_metal_plan(
-    projector: &AwProjector<'_>,
-    plan: &gridder::AwProjectSamplePlan,
-    tap_bases: &mut BTreeMap<AwProjectMetalTapKey, (u32, usize, usize)>,
-    kernel_values: &mut Vec<WProjectMetalComplex>,
-) -> Result<AwProjectMetalPlan, ImagingError> {
-    let key = AwProjectMetalTapKey {
-        off_x: plan.off_x,
-        off_y: plan.off_y,
-        conjugate_for_grid: plan.conjugate_for_grid,
-    };
-    let (kernel_base, x_support, y_support) = if let Some(&packed_plan) = tap_bases.get(&key) {
-        packed_plan
-    } else {
-        let packed = projector.packed_taps(plan);
-        let base = u32::try_from(kernel_values.len()).map_err(|_| {
-            ImagingError::InvalidRequest(
-                "AWProject Metal packed CF tap offset exceeds u32".to_string(),
-            )
-        })?;
-        kernel_values.extend(packed.values.iter().map(|value| WProjectMetalComplex {
-            re: value.re,
-            im: value.im,
-        }));
-        tap_bases.insert(key, (base, packed.x_support, packed.y_support));
-        (base, packed.x_support, packed.y_support)
-    };
-    Ok(AwProjectMetalPlan {
-        loc_x: i32::try_from(plan.loc_x).map_err(|_| {
-            ImagingError::InvalidRequest(
-                "AWProject Metal planned x coordinate exceeds i32".to_string(),
-            )
-        })?,
-        loc_y: i32::try_from(plan.loc_y).map_err(|_| {
-            ImagingError::InvalidRequest(
-                "AWProject Metal planned y coordinate exceeds i32".to_string(),
-            )
-        })?,
-        x_support: u32::try_from(x_support).map_err(|_| {
-            ImagingError::InvalidRequest("AWProject Metal x support exceeds u32".to_string())
-        })?,
-        y_support: u32::try_from(y_support).map_err(|_| {
-            ImagingError::InvalidRequest("AWProject Metal y support exceeds u32".to_string())
-        })?,
-        kernel_base,
-        _pad0: 0,
-    })
-}
-
-#[cfg(all(target_os = "macos", not(coverage)))]
-#[allow(clippy::too_many_arguments)]
-fn pack_awproject_mtmfs_metal_samples(
-    batch: &mut AwProjectMetalBatch,
-    samples: &[AwProjectMtmfsPlannedSample],
-    reffreq_hz: f64,
-    first_imaging_projector: &AwProjector<'_>,
-    second_imaging_projector: &AwProjector<'_>,
-    first_psf_projector: &AwProjector<'_>,
-    second_psf_projector: &AwProjector<'_>,
-    first_weight_projector: &AwProjector<'_>,
-    second_weight_projector: &AwProjector<'_>,
-    first_weight_plan: &gridder::AwProjectSamplePlan,
-    second_weight_plan: &gridder::AwProjectSamplePlan,
-) -> Result<(), ImagingError> {
-    if samples.is_empty() {
-        return Ok(());
-    }
-    let kernel_pack_started = Instant::now();
-    let mut first_imaging_bases = BTreeMap::new();
-    let mut second_imaging_bases = BTreeMap::new();
-    let mut first_psf_bases = BTreeMap::new();
-    let mut second_psf_bases = BTreeMap::new();
-    let mut first_weight_bases = BTreeMap::new();
-    let mut second_weight_bases = BTreeMap::new();
-    batch.samples.reserve(samples.len());
-    for sample in samples {
-        batch.samples.push(AwProjectMetalSample {
-            first_imaging: awproject_metal_plan(
-                first_imaging_projector,
-                &sample.first_imaging_plan,
-                &mut first_imaging_bases,
-                &mut batch.kernels,
-            )?,
-            second_imaging: awproject_metal_plan(
-                second_imaging_projector,
-                &sample.second_imaging_plan,
-                &mut second_imaging_bases,
-                &mut batch.kernels,
-            )?,
-            first_psf: awproject_metal_plan(
-                first_psf_projector,
-                &sample.first_psf_plan,
-                &mut first_psf_bases,
-                &mut batch.kernels,
-            )?,
-            second_psf: awproject_metal_plan(
-                second_psf_projector,
-                &sample.second_psf_plan,
-                &mut second_psf_bases,
-                &mut batch.kernels,
-            )?,
-            first_weight: awproject_metal_plan(
-                first_weight_projector,
-                first_weight_plan,
-                &mut first_weight_bases,
-                &mut batch.kernels,
-            )?,
-            second_weight: awproject_metal_plan(
-                second_weight_projector,
-                second_weight_plan,
-                &mut second_weight_bases,
-                &mut batch.kernels,
-            )?,
-            taylor_x: mtmfs_casa_taylor_x(sample.frequency_hz, reffreq_hz),
-            weight: sample.weight,
-            first_residual_re: sample.first_residual.re,
-            first_residual_im: sample.first_residual.im,
-            second_residual_re: sample.second_residual.re,
-            second_residual_im: sample.second_residual.im,
-        });
-    }
-    batch.kernel_pack += kernel_pack_started.elapsed();
     Ok(())
 }
 
@@ -8778,15 +8749,681 @@ fn awproject_stable_cell_key(key: AwConvolutionFunctionKey) -> AwProjectStableCe
     )
 }
 
+fn awproject_source_group_route(
+    sample_count: usize,
+    groups: &[GroupedVisibilityMetadata],
+) -> Result<Vec<usize>, ImagingError> {
+    let mut route = vec![usize::MAX; sample_count];
+    for (group_index, group) in groups.iter().enumerate() {
+        for range in &group.sample_ranges {
+            if range.start >= range.end || range.end > sample_count {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "grouped AWProject metadata range [{}, {}) is invalid for {sample_count} samples",
+                    range.start, range.end
+                )));
+            }
+            for (sample_index, slot) in route
+                .iter_mut()
+                .enumerate()
+                .take(range.end)
+                .skip(range.start)
+            {
+                if *slot != usize::MAX {
+                    return Err(ImagingError::InvalidRequest(format!(
+                        "grouped AWProject metadata assigns sample {sample_index} to both groups {} and {group_index}",
+                        *slot
+                    )));
+                }
+                *slot = group_index;
+            }
+        }
+    }
+    if let Some(sample_index) = route.iter().position(|&group| group == usize::MAX) {
+        return Err(ImagingError::InvalidRequest(format!(
+            "grouped AWProject metadata does not assign source sample {sample_index}"
+        )));
+    }
+    Ok(route)
+}
+
+fn awproject_compact_tap_bytes(
+    metadata: &AwConvolutionFunctionKernelMetadata,
+) -> Result<usize, ImagingError> {
+    (2usize
+        .checked_mul(metadata.x_support)
+        .and_then(|value| value.checked_add(1))
+        .and_then(|width| {
+            2usize
+                .checked_mul(metadata.y_support)
+                .and_then(|value| value.checked_add(1))
+                .and_then(|height| width.checked_mul(height))
+        })
+        .and_then(|values| values.checked_mul(std::mem::size_of::<Complex32>())))
+    .ok_or_else(|| {
+        ImagingError::InvalidRequest(
+            "compact AWProject tap-bundle byte size overflowed".to_string(),
+        )
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
-fn accumulate_awproject_mtmfs_metadata_group(
+fn awproject_compact_tap_spec(
+    gridder: &StandardGridder,
+    cache: &AwConvolutionFunctionResidentCache,
+    group_index: usize,
+    cell_key: AwConvolutionFunctionKey,
+    kernel_kind: AwProjectCompactKernelKind,
+    uvw_lambda: [f64; 3],
+) -> Result<AwProjectCompactTapSpec, gridder::AwProjectSamplePlanRejection> {
+    let metadata = cache
+        .cache()
+        .metadata(cell_key)
+        .expect("selected AWProject key must have indexed metadata");
+    let kernel_metadata = match kernel_kind {
+        AwProjectCompactKernelKind::Imaging => &metadata.imaging,
+        AwProjectCompactKernelKind::Weight => &metadata.weight,
+    };
+    let geometry = gridder::plan_awproject_sample_geometry(
+        gridder,
+        kernel_metadata,
+        uvw_lambda[0],
+        uvw_lambda[1],
+        uvw_lambda[2],
+    )?;
+    let tap_bytes = awproject_compact_tap_bytes(kernel_metadata)
+        .expect("validated AWProject support must have a representable tap size");
+    Ok(AwProjectCompactTapSpec {
+        request: AwProjectCompactTapRequest {
+            key: AwProjectCompactTapKey {
+                group_index,
+                cell: awproject_stable_cell_key(cell_key),
+                kernel_kind,
+                off_x: geometry.off_x,
+                off_y: geometry.off_y,
+                conjugate_for_grid: geometry.conjugate_for_grid,
+            },
+            cell_key,
+            representative_uvw_lambda: uvw_lambda,
+        },
+        geometry,
+        tap_bytes,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn classify_awproject_compact_source_sample(
+    request: &MtmfsRequest,
+    gridder: &StandardGridder,
+    batch: &VisibilityBatch,
+    parallel_hands: &AwParallelHandVisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    group_index: usize,
+    sample_index: usize,
+    cache: &AwConvolutionFunctionResidentCache,
+    controls: &AwProjectControls,
+    pa_deg: f64,
+) -> Result<AwProjectCompactSourceOutcome, ImagingError> {
+    if !batch.gridable[sample_index] {
+        return Ok(Err(AwProjectCompactSourceRejection::NotGridable));
+    }
+    let frequency_hz = sample_frequencies_hz[sample_index];
+    let weight = batch.weight[sample_index];
+    let direct_first_visibility = parallel_hands.first_visibility[sample_index];
+    let direct_second_visibility = parallel_hands.second_visibility[sample_index];
+    if !(frequency_hz.is_finite()
+        && frequency_hz > 0.0
+        && weight.is_finite()
+        && weight > 0.0
+        && direct_first_visibility.re.is_finite()
+        && direct_first_visibility.im.is_finite()
+        && direct_second_visibility.re.is_finite()
+        && direct_second_visibility.im.is_finite())
+    {
+        return Ok(Err(AwProjectCompactSourceRejection::InvalidInput));
+    }
+
+    let uvw_lambda = [
+        batch.u_lambda[sample_index],
+        batch.v_lambda[sample_index],
+        batch.w_lambda[sample_index],
+    ];
+    let select_key = |w_lambda, mueller_element, label: &str| {
+        cache
+            .cache()
+            .select_key_for_sample(
+                frequency_hz,
+                request.reffreq_hz,
+                w_lambda,
+                mueller_element,
+                pa_deg,
+                controls.conjugate_beams,
+            )
+            .ok_or_else(|| {
+                ImagingError::ConvolutionFunctionCache(format!(
+                    "no {label} AWProject CF cell for frequency {frequency_hz} Hz, W {w_lambda} lambda"
+                ))
+            })
+    };
+    let first_key = select_key(uvw_lambda[2], 0, "RR")?;
+    let second_key = select_key(uvw_lambda[2], 15, "LL")?;
+    let first_zero_w_key = select_key(0.0, 0, "W=0 RR weight")?;
+    let second_zero_w_key = select_key(0.0, 15, "W=0 LL weight")?;
+
+    let first_imaging = match awproject_compact_tap_spec(
+        gridder,
+        cache,
+        group_index,
+        first_key,
+        AwProjectCompactKernelKind::Imaging,
+        uvw_lambda,
+    ) {
+        Ok(spec) => spec,
+        Err(reason) => {
+            return Ok(Err(AwProjectCompactSourceRejection::FirstImaging(reason)));
+        }
+    };
+    let second_imaging = match awproject_compact_tap_spec(
+        gridder,
+        cache,
+        group_index,
+        second_key,
+        AwProjectCompactKernelKind::Imaging,
+        uvw_lambda,
+    ) {
+        Ok(spec) => spec,
+        Err(reason) => {
+            return Ok(Err(AwProjectCompactSourceRejection::SecondImaging(reason)));
+        }
+    };
+    let first_psf = match awproject_compact_tap_spec(
+        gridder,
+        cache,
+        group_index,
+        first_key,
+        AwProjectCompactKernelKind::Weight,
+        uvw_lambda,
+    ) {
+        Ok(spec) => spec,
+        Err(reason) => {
+            return Ok(Err(AwProjectCompactSourceRejection::FirstPsf(reason)));
+        }
+    };
+    let second_psf = match awproject_compact_tap_spec(
+        gridder,
+        cache,
+        group_index,
+        second_key,
+        AwProjectCompactKernelKind::Weight,
+        uvw_lambda,
+    ) {
+        Ok(spec) => spec,
+        Err(reason) => {
+            return Ok(Err(AwProjectCompactSourceRejection::SecondPsf(reason)));
+        }
+    };
+    let first_weight = awproject_compact_tap_spec(
+        gridder,
+        cache,
+        group_index,
+        first_zero_w_key,
+        AwProjectCompactKernelKind::Weight,
+        [0.0, 0.0, 0.0],
+    )
+    .map_err(|reason| {
+        ImagingError::Normalization(format!(
+            "RR AWProject weight CF failed centered placement: {reason:?}"
+        ))
+    })?;
+    let second_weight = awproject_compact_tap_spec(
+        gridder,
+        cache,
+        group_index,
+        second_zero_w_key,
+        AwProjectCompactKernelKind::Weight,
+        [0.0, 0.0, 0.0],
+    )
+    .map_err(|reason| {
+        ImagingError::Normalization(format!(
+            "LL AWProject weight CF failed centered placement: {reason:?}"
+        ))
+    })?;
+    Ok(Ok([
+        first_imaging,
+        second_imaging,
+        first_psf,
+        second_psf,
+        first_weight,
+        second_weight,
+    ]))
+}
+
+fn observe_awproject_compact_source_rejection(
+    rejection: AwProjectCompactSourceRejection,
+    accumulation: &mut MosaicMtmfsStreamGridAccumulation,
+) {
+    accumulation.skipped_samples += 1;
+    match rejection {
+        AwProjectCompactSourceRejection::NotGridable => {
+            accumulation.aw_sample_census.rejected_not_gridable += 1;
+        }
+        AwProjectCompactSourceRejection::InvalidInput => {
+            accumulation.aw_sample_census.rejected_invalid_input += 1;
+        }
+        AwProjectCompactSourceRejection::FirstImaging(reason) => {
+            accumulation.aw_sample_census.rejected_rr_imaging_plan += 1;
+            accumulation.aw_sample_census.observe_plan_rejection(reason);
+        }
+        AwProjectCompactSourceRejection::SecondImaging(reason) => {
+            accumulation.aw_sample_census.rejected_ll_imaging_plan += 1;
+            accumulation.aw_sample_census.observe_plan_rejection(reason);
+        }
+        AwProjectCompactSourceRejection::FirstPsf(reason) => {
+            accumulation.aw_sample_census.rejected_rr_psf_plan += 1;
+            accumulation.aw_sample_census.observe_plan_rejection(reason);
+        }
+        AwProjectCompactSourceRejection::SecondPsf(reason) => {
+            accumulation.aw_sample_census.rejected_ll_psf_plan += 1;
+            accumulation.aw_sample_census.observe_plan_rejection(reason);
+        }
+    }
+}
+
+fn awproject_compact_plan(
+    geometry: gridder::AwProjectSampleGeometry,
+    tap_bundle: usize,
+) -> AwProjectCompactSamplePlan {
+    AwProjectCompactSamplePlan {
+        loc_x: geometry.loc_x,
+        loc_y: geometry.loc_y,
+        tap_bundle,
+    }
+}
+
+fn awproject_compact_candidate_tap_bytes(
+    specs: &[AwProjectCompactTapSpec; 6],
+    existing: &BTreeMap<AwProjectCompactTapKey, usize>,
+) -> Result<usize, ImagingError> {
+    let mut candidate_keys = BTreeSet::new();
+    let mut additional_tap_bytes = 0usize;
+    for spec in specs {
+        if !existing.contains_key(&spec.request.key) && candidate_keys.insert(spec.request.key) {
+            additional_tap_bytes = additional_tap_bytes
+                .checked_add(spec.tap_bytes)
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "compact AWProject candidate tap bytes overflowed".to_string(),
+                    )
+                })?;
+        }
+    }
+    Ok(additional_tap_bytes)
+}
+
+fn awproject_compact_window_tap_bytes(
+    current_tap_bytes: usize,
+    additional_tap_bytes: usize,
+) -> Result<usize, ImagingError> {
+    current_tap_bytes
+        .checked_add(additional_tap_bytes)
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "compact AWProject window tap bytes overflowed".to_string(),
+            )
+        })
+}
+
+fn materialize_awproject_compact_taps(
+    request: &MtmfsRequest,
+    mosaic: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    groups: &[GroupedVisibilityMetadata],
+    cache: &AwConvolutionFunctionResidentCache,
+    requests: &[AwProjectCompactTapRequest],
+    tap_budget_bytes: usize,
+) -> Result<(Vec<AwProjectCompactMaterializedTap>, usize), ImagingError> {
+    let mut by_cell = BTreeMap::<AwProjectStableCellKey, Vec<usize>>::new();
+    for (bundle_index, bundle_request) in requests.iter().enumerate() {
+        by_cell
+            .entry(bundle_request.key.cell)
+            .or_default()
+            .push(bundle_index);
+    }
+    let mut bundles = (0..requests.len())
+        .map(|_| None)
+        .collect::<Vec<Option<AwProjectCompactMaterializedTap>>>();
+    let mut actual_tap_bytes = 0usize;
+    for bundle_indices in by_cell.into_values() {
+        let first_request = requests[bundle_indices[0]];
+        let cell = cache.get(first_request.cell_key)?;
+        for bundle_index in bundle_indices {
+            let bundle_request = requests[bundle_index];
+            debug_assert_eq!(
+                awproject_stable_cell_key(bundle_request.cell_key),
+                bundle_request.key.cell
+            );
+            let group = &groups[bundle_request.key.group_index];
+            let (metadata, kernel) = match bundle_request.key.kernel_kind {
+                AwProjectCompactKernelKind::Imaging => (&cell.metadata.imaging, &cell.imaging),
+                AwProjectCompactKernelKind::Weight => (&cell.metadata.weight, &cell.weight),
+            };
+            let phase_gradient = mosaic_projector_phase_gradient_rad_per_sample(
+                request.geometry,
+                mosaic.phase_center_direction_rad,
+                group.pointing_direction_rad,
+                metadata.sampling,
+            );
+            let projector = AwProjector::new(gridder, metadata, kernel, phase_gradient)?;
+            let [u_lambda, v_lambda, w_lambda] = bundle_request.representative_uvw_lambda;
+            let planned = match projector.plan_sample_detailed(u_lambda, v_lambda, w_lambda) {
+                Ok(plan) => {
+                    debug_assert_eq!(plan.off_x, bundle_request.key.off_x);
+                    debug_assert_eq!(plan.off_y, bundle_request.key.off_y);
+                    debug_assert_eq!(
+                        plan.conjugate_for_grid,
+                        bundle_request.key.conjugate_for_grid
+                    );
+                    let packed = projector.packed_taps(&plan);
+                    actual_tap_bytes = actual_tap_bytes
+                        .checked_add(
+                            packed
+                                .values
+                                .len()
+                                .checked_mul(std::mem::size_of::<Complex32>())
+                                .ok_or_else(|| {
+                                    ImagingError::InvalidRequest(
+                                        "compact AWProject tap bytes overflowed".to_string(),
+                                    )
+                                })?,
+                        )
+                        .ok_or_else(|| {
+                            ImagingError::InvalidRequest(
+                                "compact AWProject tap arena overflowed".to_string(),
+                            )
+                        })?;
+                    AwProjectCompactMaterializedTap::Ready(AwProjectCompactTapBundle {
+                        values: packed.values,
+                        x_support: packed.x_support,
+                        y_support: packed.y_support,
+                        normalization: plan.normalization,
+                    })
+                }
+                Err(reason) => AwProjectCompactMaterializedTap::Rejected(reason),
+            };
+            bundles[bundle_index] = Some(planned);
+        }
+        drop(cell);
+    }
+    if actual_tap_bytes > tap_budget_bytes {
+        return Err(ImagingError::InvalidRequest(format!(
+            "compact AWProject tap arena used {actual_tap_bytes} bytes above its {tap_budget_bytes}-byte admitted ceiling"
+        )));
+    }
+    Ok((
+        bundles
+            .into_iter()
+            .map(|bundle| bundle.expect("every compact AWProject bundle must be materialized"))
+            .collect(),
+        actual_tap_bytes,
+    ))
+}
+
+fn awproject_compact_tap_rejection(
+    bundles: &[AwProjectCompactMaterializedTap],
+    plan: AwProjectCompactSamplePlan,
+) -> Option<gridder::AwProjectSamplePlanRejection> {
+    match bundles[plan.tap_bundle] {
+        AwProjectCompactMaterializedTap::Ready(_) => None,
+        AwProjectCompactMaterializedTap::Rejected(reason) => Some(reason),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_awproject_compact_planned_samples(
+    request: &MtmfsRequest,
+    batch: &VisibilityBatch,
+    parallel_hands: &AwParallelHandVisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    source_samples: &[AwProjectCompactSourceSample],
+    tap_requests: &[AwProjectCompactTapRequest],
+    bundles: &[AwProjectCompactMaterializedTap],
+    model_grids: Option<&[Array2<Complex32>]>,
+    accumulation: &mut MosaicMtmfsStreamGridAccumulation,
+    taylor_weights: &mut Vec<f32>,
+) -> Result<Vec<AwProjectCompactPlannedSample>, ImagingError> {
+    let mut planned_samples = Vec::with_capacity(source_samples.len());
+    for sample in source_samples {
+        let mut rejected = None;
+        for (role, plan) in [
+            sample.first_imaging_plan,
+            sample.second_imaging_plan,
+            sample.first_psf_plan,
+            sample.second_psf_plan,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if let Some(reason) = awproject_compact_tap_rejection(bundles, plan) {
+                rejected = Some(match role {
+                    0 => AwProjectCompactSourceRejection::FirstImaging(reason),
+                    1 => AwProjectCompactSourceRejection::SecondImaging(reason),
+                    2 => AwProjectCompactSourceRejection::FirstPsf(reason),
+                    3 => AwProjectCompactSourceRejection::SecondPsf(reason),
+                    _ => unreachable!("compact AWProject role index is bounded by four plans"),
+                });
+                break;
+            }
+        }
+        if let Some(rejection) = rejected {
+            observe_awproject_compact_source_rejection(rejection, accumulation);
+            continue;
+        }
+        for (label, plan) in [
+            ("RR", sample.first_weight_plan),
+            ("LL", sample.second_weight_plan),
+        ] {
+            if let Some(reason) = awproject_compact_tap_rejection(bundles, plan) {
+                return Err(ImagingError::Normalization(format!(
+                    "{label} AWProject compact weight tap failed centered placement: {reason:?}"
+                )));
+            }
+        }
+
+        let sample_index = sample.sample_index;
+        let frequency_hz = sample_frequencies_hz[sample_index];
+        let weight = batch.weight[sample_index];
+        let direct_first_visibility = parallel_hands.first_visibility[sample_index];
+        let direct_second_visibility = parallel_hands.second_visibility[sample_index];
+        let first_visibility = aw_stokes_i_visibility_for_mueller(
+            tap_requests[sample.first_imaging_plan.tap_bundle]
+                .cell_key
+                .mueller_element,
+            direct_first_visibility,
+            direct_second_visibility,
+        )?;
+        let second_visibility = aw_stokes_i_visibility_for_mueller(
+            tap_requests[sample.second_imaging_plan.tap_bundle]
+                .cell_key
+                .mueller_element,
+            direct_first_visibility,
+            direct_second_visibility,
+        )?;
+        let first_imaging =
+            awproject_ready_compact_tap(bundles, sample.first_imaging_plan.tap_bundle);
+        let second_imaging =
+            awproject_ready_compact_tap(bundles, sample.second_imaging_plan.tap_bundle);
+        let first_psf = awproject_ready_compact_tap(bundles, sample.first_psf_plan.tap_bundle);
+        let second_psf = awproject_ready_compact_tap(bundles, sample.second_psf_plan.tap_bundle);
+        let residual_norm_sum = f64::from(first_imaging.normalization.norm())
+            + f64::from(second_imaging.normalization.norm());
+        let psf_norm_sum =
+            f64::from(first_psf.normalization.norm()) + f64::from(second_psf.normalization.norm());
+        if !(residual_norm_sum.is_finite()
+            && residual_norm_sum > 0.0
+            && psf_norm_sum.is_finite()
+            && psf_norm_sum > 0.0)
+        {
+            accumulation.skipped_samples += 1;
+            accumulation.aw_sample_census.rejected_invalid_input += 1;
+            continue;
+        }
+        fill_mtmfs_taylor_weights(
+            taylor_weights,
+            frequency_hz,
+            request.reffreq_hz,
+            2 * request.nterms - 1,
+        );
+        for (order, &taylor_weight) in taylor_weights
+            .iter()
+            .enumerate()
+            .take(2 * request.nterms - 1)
+        {
+            let term_weight = weight * taylor_weight;
+            accumulation.reported_sumwt_terms[order] += f64::from(term_weight) * residual_norm_sum;
+            accumulation.aw_psf_sumwt_terms[order] += f64::from(term_weight) * psf_norm_sum;
+        }
+
+        let mut first_prediction = Complex32::new(0.0, 0.0);
+        let mut second_prediction = Complex32::new(0.0, 0.0);
+        if let Some(model_grids) = model_grids {
+            for (model_order, model_grid) in model_grids.iter().enumerate().take(request.nterms) {
+                let taylor_weight = taylor_weights[model_order];
+                first_prediction += awproject_compact_degrid_sample(
+                    model_grid,
+                    sample.first_imaging_plan,
+                    first_imaging,
+                ) * taylor_weight;
+                second_prediction += awproject_compact_degrid_sample(
+                    model_grid,
+                    sample.second_imaging_plan,
+                    second_imaging,
+                ) * taylor_weight;
+            }
+        }
+        planned_samples.push(AwProjectCompactPlannedSample {
+            first_imaging_plan: sample.first_imaging_plan,
+            second_imaging_plan: sample.second_imaging_plan,
+            first_psf_plan: sample.first_psf_plan,
+            second_psf_plan: sample.second_psf_plan,
+            first_weight_plan: sample.first_weight_plan,
+            second_weight_plan: sample.second_weight_plan,
+            frequency_hz,
+            weight,
+            first_residual: first_visibility - first_prediction,
+            second_residual: second_visibility - second_prediction,
+        });
+        accumulation.normalization_sumwt += f64::from(weight) * residual_norm_sum;
+        accumulation.gridded_samples += 1;
+        accumulation.aw_sample_census.accepted_samples += 1;
+    }
+    Ok(planned_samples)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_compact_metal_plan(
+    plan: AwProjectCompactSamplePlan,
+    bundles: &[AwProjectCompactMaterializedTap],
+    kernel_bases: &[Option<u32>],
+) -> Result<AwProjectMetalPlan, ImagingError> {
+    let bundle = awproject_ready_compact_tap(bundles, plan.tap_bundle);
+    Ok(AwProjectMetalPlan {
+        loc_x: i32::try_from(plan.loc_x).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject Metal planned x coordinate exceeds i32".to_string(),
+            )
+        })?,
+        loc_y: i32::try_from(plan.loc_y).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject Metal planned y coordinate exceeds i32".to_string(),
+            )
+        })?,
+        x_support: u32::try_from(bundle.x_support).map_err(|_| {
+            ImagingError::InvalidRequest("AWProject Metal x support exceeds u32".to_string())
+        })?,
+        y_support: u32::try_from(bundle.y_support).map_err(|_| {
+            ImagingError::InvalidRequest("AWProject Metal y support exceeds u32".to_string())
+        })?,
+        kernel_base: kernel_bases[plan.tap_bundle]
+            .expect("replayed AWProject Metal plan must have packed taps"),
+        _pad0: 0,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn pack_awproject_compact_metal_batch(
+    samples: &[AwProjectCompactPlannedSample],
+    bundles: &[AwProjectCompactMaterializedTap],
+    reffreq_hz: f64,
+) -> Result<AwProjectMetalBatch, ImagingError> {
+    let started = Instant::now();
+    let mut batch = AwProjectMetalBatch::default();
+    let mut kernel_bases = vec![None; bundles.len()];
+    for (bundle_index, bundle) in bundles.iter().enumerate() {
+        let AwProjectCompactMaterializedTap::Ready(bundle) = bundle else {
+            continue;
+        };
+        let base = u32::try_from(batch.kernels.len()).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject Metal compact tap offset exceeds u32".to_string(),
+            )
+        })?;
+        batch
+            .kernels
+            .extend(bundle.values.iter().map(|value| WProjectMetalComplex {
+                re: value.re,
+                im: value.im,
+            }));
+        kernel_bases[bundle_index] = Some(base);
+    }
+    batch.samples.reserve(samples.len());
+    for sample in samples {
+        batch.samples.push(AwProjectMetalSample {
+            first_imaging: awproject_compact_metal_plan(
+                sample.first_imaging_plan,
+                bundles,
+                &kernel_bases,
+            )?,
+            second_imaging: awproject_compact_metal_plan(
+                sample.second_imaging_plan,
+                bundles,
+                &kernel_bases,
+            )?,
+            first_psf: awproject_compact_metal_plan(sample.first_psf_plan, bundles, &kernel_bases)?,
+            second_psf: awproject_compact_metal_plan(
+                sample.second_psf_plan,
+                bundles,
+                &kernel_bases,
+            )?,
+            first_weight: awproject_compact_metal_plan(
+                sample.first_weight_plan,
+                bundles,
+                &kernel_bases,
+            )?,
+            second_weight: awproject_compact_metal_plan(
+                sample.second_weight_plan,
+                bundles,
+                &kernel_bases,
+            )?,
+            taylor_x: mtmfs_casa_taylor_x(sample.frequency_hz, reffreq_hz),
+            weight: sample.weight,
+            first_residual_re: sample.first_residual.re,
+            first_residual_im: sample.first_residual.im,
+            second_residual_re: sample.second_residual.re,
+            second_residual_im: sample.second_residual.im,
+        });
+    }
+    batch.kernel_pack = started.elapsed();
+    Ok(batch)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn accumulate_awproject_mtmfs_metadata_batch(
     request: &MtmfsRequest,
     mosaic: &MosaicGridderConfig,
     gridder: &StandardGridder,
     batch: &VisibilityBatch,
     parallel_hands: &AwParallelHandVisibilityBatch,
     sample_frequencies_hz: &[f64],
-    group: &GroupedVisibilityMetadata,
+    groups: &[GroupedVisibilityMetadata],
     model_grids: Option<&[Array2<Complex32>]>,
     cache: &AwConvolutionFunctionResidentCache,
     controls: &AwProjectControls,
@@ -8810,447 +9447,128 @@ fn accumulate_awproject_mtmfs_metadata_group(
                 "validated AWProject cache has no parallactic-angle bin".to_string(),
             )
         })?;
-    // CASA CF cells are much larger than their convolution support. Visiting
-    // samples in raw MS order can therefore cycle a bounded resident cache
-    // through the same cells thousands of times. Build a compact per-block
-    // locality index (one usize per accepted sample) and process every exact
-    // RR/LL imaging/weight quartet together. This preserves bounded source
-    // streaming and deterministic accumulation while loading each useful CF
-    // quartet once per pointing group.
-    let mut locality_groups =
-        BTreeMap::<AwProjectMtmfsLocalityKey, AwProjectMtmfsLocalityGroup>::new();
-    for range in &group.sample_ranges {
-        if range.end > batch.len() || range.start > range.end {
-            return Err(ImagingError::InvalidRequest(
-                "grouped AWProject MT-MFS metadata range exceeds visibility batch".to_string(),
-            ));
-        }
-        for (sample_index, &frequency_hz) in sample_frequencies_hz
-            .iter()
-            .enumerate()
-            .take(range.end)
-            .skip(range.start)
-        {
-            accumulation.aw_sample_census.attempted_samples += 1;
-            if !batch.gridable[sample_index] {
-                accumulation.skipped_samples += 1;
-                accumulation.aw_sample_census.rejected_not_gridable += 1;
-                continue;
-            }
-            let weight = batch.weight[sample_index];
-            let direct_first_visibility = parallel_hands.first_visibility[sample_index];
-            let direct_second_visibility = parallel_hands.second_visibility[sample_index];
-            if !(frequency_hz.is_finite()
-                && frequency_hz > 0.0
-                && weight.is_finite()
-                && weight > 0.0
-                && direct_first_visibility.re.is_finite()
-                && direct_first_visibility.im.is_finite()
-                && direct_second_visibility.re.is_finite()
-                && direct_second_visibility.im.is_finite())
-            {
-                accumulation.skipped_samples += 1;
-                accumulation.aw_sample_census.rejected_invalid_input += 1;
-                continue;
-            }
+    let source_group_route = awproject_source_group_route(batch.len(), groups)?;
+    let tap_budget_bytes = controls.cf_resident_bytes;
+    let mut cursor = 0usize;
+    let mut replay_stats = AwProjectCompactReplayStats::default();
+    while cursor < batch.len() {
+        let mut tap_indices = BTreeMap::<AwProjectCompactTapKey, usize>::new();
+        let mut tap_requests = Vec::<AwProjectCompactTapRequest>::new();
+        let mut source_samples = Vec::<AwProjectCompactSourceSample>::new();
+        let mut planned_tap_bytes = 0usize;
 
-            let w_lambda = batch.w_lambda[sample_index];
-            let first_key = cache
-                .cache()
-                .select_key_for_sample(
-                    frequency_hz,
-                    request.reffreq_hz,
-                    w_lambda,
-                    0,
-                    pa_deg,
-                    controls.conjugate_beams,
-                )
-                .ok_or_else(|| {
-                    ImagingError::ConvolutionFunctionCache(format!(
-                        "no RR AWProject CF cell for frequency {frequency_hz} Hz, W {w_lambda} lambda"
-                    ))
-                })?;
-            let second_key = cache
-                .cache()
-                .select_key_for_sample(
-                    frequency_hz,
-                    request.reffreq_hz,
-                    w_lambda,
-                    15,
-                    pa_deg,
-                    controls.conjugate_beams,
-                )
-                .ok_or_else(|| {
-                    ImagingError::ConvolutionFunctionCache(format!(
-                        "no LL AWProject CF cell for frequency {frequency_hz} Hz, W {w_lambda} lambda"
-                    ))
-                })?;
-            let first_zero_w_key = cache
-                .cache()
-                .select_key_for_sample(
-                    frequency_hz,
-                    request.reffreq_hz,
-                    0.0,
-                    0,
-                    pa_deg,
-                    controls.conjugate_beams,
-                )
-                .ok_or_else(|| {
-                    ImagingError::ConvolutionFunctionCache(format!(
-                        "no W=0 RR AWProject weight CF cell for frequency {frequency_hz} Hz"
-                    ))
-                })?;
-            let second_zero_w_key = cache
-                .cache()
-                .select_key_for_sample(
-                    frequency_hz,
-                    request.reffreq_hz,
-                    0.0,
-                    15,
-                    pa_deg,
-                    controls.conjugate_beams,
-                )
-                .ok_or_else(|| {
-                    ImagingError::ConvolutionFunctionCache(format!(
-                        "no W=0 LL AWProject weight CF cell for frequency {frequency_hz} Hz"
-                    ))
-                })?;
-            let locality_key = AwProjectMtmfsLocalityKey {
-                first_imaging: awproject_stable_cell_key(first_key),
-                second_imaging: awproject_stable_cell_key(second_key),
-                first_weight: awproject_stable_cell_key(first_zero_w_key),
-                second_weight: awproject_stable_cell_key(second_zero_w_key),
-            };
-            locality_groups
-                .entry(locality_key)
-                .or_insert_with(|| AwProjectMtmfsLocalityGroup {
-                    first_imaging: first_key,
-                    second_imaging: second_key,
-                    first_weight: first_zero_w_key,
-                    second_weight: second_zero_w_key,
-                    sample_indices: Vec::new(),
-                })
-                .sample_indices
-                .push(sample_index);
-        }
-    }
-
-    if profile::standard_mfs_profile_detail_enabled() {
-        let indexed_samples = locality_groups
-            .values()
-            .map(|group| group.sample_indices.len())
-            .sum::<usize>();
-        let largest_group = locality_groups
-            .values()
-            .map(|group| group.sample_indices.len())
-            .max()
-            .unwrap_or(0);
-        eprintln!(
-            "awproject_cf_locality groups={} indexed_samples={} largest_group={} index_bytes={} pointing_ra_rad={:.17e} pointing_dec_rad={:.17e}",
-            locality_groups.len(),
-            indexed_samples,
-            largest_group,
-            indexed_samples.saturating_mul(std::mem::size_of::<usize>()),
-            group.pointing_direction_rad[0],
-            group.pointing_direction_rad[1],
-        );
-    }
-
-    #[cfg(all(target_os = "macos", not(coverage)))]
-    let mut metal_batch = AwProjectMetalBatch::default();
-    let profile_compact_source_order = profile::standard_mfs_profile_detail_enabled();
-    let mut compact_source_order_samples = 0usize;
-    let mut compact_source_order_tap_bundles = 0usize;
-    let mut compact_source_order_tap_bytes_upper_bound = 0usize;
-    for locality_group in locality_groups.into_values() {
-        let first_key = locality_group.first_imaging;
-        let second_key = locality_group.second_imaging;
-        let first_cell = cache.get(first_key)?;
-        let second_cell = cache.get(second_key)?;
-        let first_zero_w_cell = cache.get(locality_group.first_weight)?;
-        let second_zero_w_cell = cache.get(locality_group.second_weight)?;
-        let phase_gradient = mosaic_projector_phase_gradient_rad_per_sample(
-            request.geometry,
-            mosaic.phase_center_direction_rad,
-            group.pointing_direction_rad,
-            first_cell.metadata.imaging.sampling,
-        );
-        let first_imaging_projector = AwProjector::new(
-            gridder,
-            &first_cell.metadata.imaging,
-            &first_cell.imaging,
-            phase_gradient,
-        )?;
-        let second_imaging_projector = AwProjector::new(
-            gridder,
-            &second_cell.metadata.imaging,
-            &second_cell.imaging,
-            phase_gradient,
-        )?;
-        let first_psf_projector = AwProjector::new(
-            gridder,
-            &first_cell.metadata.weight,
-            &first_cell.weight,
-            phase_gradient,
-        )?;
-        let second_psf_projector = AwProjector::new(
-            gridder,
-            &second_cell.metadata.weight,
-            &second_cell.weight,
-            phase_gradient,
-        )?;
-        let first_weight_projector = AwProjector::new(
-            gridder,
-            &first_zero_w_cell.metadata.weight,
-            &first_zero_w_cell.weight,
-            phase_gradient,
-        )?;
-        let second_weight_projector = AwProjector::new(
-            gridder,
-            &second_zero_w_cell.metadata.weight,
-            &second_zero_w_cell.weight,
-            phase_gradient,
-        )?;
-        let first_weight_plan = first_weight_projector
-            .plan_sample(0.0, 0.0, 0.0)
-            .ok_or_else(|| {
-                ImagingError::Normalization(
-                    "RR AWProject weight CF failed centered placement".to_string(),
-                )
-            })?;
-        let second_weight_plan = second_weight_projector
-            .plan_sample(0.0, 0.0, 0.0)
-            .ok_or_else(|| {
-                ImagingError::Normalization(
-                    "LL AWProject weight CF failed centered placement".to_string(),
-                )
-            })?;
-
-        let mut planned_samples =
-            Vec::<AwProjectMtmfsPlannedSample>::with_capacity(locality_group.sample_indices.len());
-        for sample_index in locality_group.sample_indices {
-            let frequency_hz = sample_frequencies_hz[sample_index];
-            let weight = batch.weight[sample_index];
-            let direct_first_visibility = parallel_hands.first_visibility[sample_index];
-            let direct_second_visibility = parallel_hands.second_visibility[sample_index];
-            // AWVisResampler selects the visibility-vector element from the
-            // physical Mueller element returned by the selected CF cell. For
-            // non-positive W, `select_key_for_sample` uses the conjugate
-            // Mueller row, so the RR/LL data hand must move with the kernel.
-            // Swapping only the kernel silently couples RR data to the LL
-            // aperture illumination (and vice versa).
-            let first_visibility = aw_stokes_i_visibility_for_mueller(
-                first_key.mueller_element,
-                direct_first_visibility,
-                direct_second_visibility,
+        while cursor < batch.len() {
+            let group_index = source_group_route[cursor];
+            let outcome = classify_awproject_compact_source_sample(
+                request,
+                gridder,
+                batch,
+                parallel_hands,
+                sample_frequencies_hz,
+                group_index,
+                cursor,
+                cache,
+                controls,
+                pa_deg,
             )?;
-            let second_visibility = aw_stokes_i_visibility_for_mueller(
-                second_key.mueller_element,
-                direct_first_visibility,
-                direct_second_visibility,
-            )?;
-            let u_lambda = batch.u_lambda[sample_index];
-            let v_lambda = batch.v_lambda[sample_index];
-            let w_lambda = batch.w_lambda[sample_index];
-            let first_imaging_plan =
-                match first_imaging_projector.plan_sample_detailed(u_lambda, v_lambda, w_lambda) {
-                    Ok(plan) => plan,
-                    Err(reason) => {
-                        accumulation.skipped_samples += 1;
-                        accumulation.aw_sample_census.rejected_rr_imaging_plan += 1;
-                        accumulation.aw_sample_census.observe_plan_rejection(reason);
-                        continue;
-                    }
-                };
-            let second_imaging_plan =
-                match second_imaging_projector.plan_sample_detailed(u_lambda, v_lambda, w_lambda) {
-                    Ok(plan) => plan,
-                    Err(reason) => {
-                        accumulation.skipped_samples += 1;
-                        accumulation.aw_sample_census.rejected_ll_imaging_plan += 1;
-                        accumulation.aw_sample_census.observe_plan_rejection(reason);
-                        continue;
-                    }
-                };
-            let first_psf_plan =
-                match first_psf_projector.plan_sample_detailed(u_lambda, v_lambda, w_lambda) {
-                    Ok(plan) => plan,
-                    Err(reason) => {
-                        accumulation.skipped_samples += 1;
-                        accumulation.aw_sample_census.rejected_rr_psf_plan += 1;
-                        accumulation.aw_sample_census.observe_plan_rejection(reason);
-                        continue;
-                    }
-                };
-            let second_psf_plan =
-                match second_psf_projector.plan_sample_detailed(u_lambda, v_lambda, w_lambda) {
-                    Ok(plan) => plan,
-                    Err(reason) => {
-                        accumulation.skipped_samples += 1;
-                        accumulation.aw_sample_census.rejected_ll_psf_plan += 1;
-                        accumulation.aw_sample_census.observe_plan_rejection(reason);
-                        continue;
-                    }
-                };
-            fill_mtmfs_taylor_weights(
-                taylor_weights,
-                frequency_hz,
-                request.reffreq_hz,
-                2 * request.nterms - 1,
-            );
-            let residual_norm_sum = f64::from(first_imaging_plan.normalization.norm())
-                + f64::from(second_imaging_plan.normalization.norm());
-            let psf_norm_sum = f64::from(first_psf_plan.normalization.norm())
-                + f64::from(second_psf_plan.normalization.norm());
-            if !(residual_norm_sum.is_finite()
-                && residual_norm_sum > 0.0
-                && psf_norm_sum.is_finite()
-                && psf_norm_sum > 0.0)
-            {
-                accumulation.skipped_samples += 1;
-                accumulation.aw_sample_census.rejected_invalid_input += 1;
-                continue;
-            }
-            for (order, &taylor_weight) in taylor_weights
-                .iter()
-                .enumerate()
-                .take(2 * request.nterms - 1)
-            {
-                let term_weight = weight * taylor_weight;
-                accumulation.reported_sumwt_terms[order] +=
-                    f64::from(term_weight) * residual_norm_sum;
-                accumulation.aw_psf_sumwt_terms[order] += f64::from(term_weight) * psf_norm_sum;
-            }
-
-            let mut first_prediction = Complex32::new(0.0, 0.0);
-            let mut second_prediction = Complex32::new(0.0, 0.0);
-            if let Some(model_grids) = model_grids {
-                for (model_order, model_grid) in model_grids.iter().enumerate().take(request.nterms)
-                {
-                    let taylor_weight = taylor_weights[model_order];
-                    first_prediction += first_imaging_projector
-                        .degrid_sample_planned(model_grid, &first_imaging_plan)
-                        * taylor_weight;
-                    second_prediction += second_imaging_projector
-                        .degrid_sample_planned(model_grid, &second_imaging_plan)
-                        * taylor_weight;
+            let specs = match outcome {
+                Err(rejection) => {
+                    accumulation.aw_sample_census.attempted_samples += 1;
+                    observe_awproject_compact_source_rejection(rejection, accumulation);
+                    cursor += 1;
+                    continue;
                 }
-            }
-            let first_residual = first_visibility - first_prediction;
-            let second_residual = second_visibility - second_prediction;
-            planned_samples.push(AwProjectMtmfsPlannedSample {
-                first_imaging_plan,
-                second_imaging_plan,
-                first_psf_plan,
-                second_psf_plan,
-                frequency_hz,
-                weight,
-                first_residual,
-                second_residual,
-            });
-            accumulation.normalization_sumwt += f64::from(weight) * residual_norm_sum;
-            accumulation.gridded_samples += 1;
-            accumulation.aw_sample_census.accepted_samples += 1;
-        }
-        if profile_compact_source_order {
-            let unique_plans =
-                |plans: &mut BTreeSet<(isize, isize, bool)>,
-                 plan: &gridder::AwProjectSamplePlan| {
-                    plans.insert((plan.off_x, plan.off_y, plan.conjugate_for_grid));
-                };
-            let compact_bytes = |plan_count: usize, x_support: usize, y_support: usize| -> usize {
-                plan_count
-                    .saturating_mul(2usize.saturating_mul(x_support).saturating_add(1))
-                    .saturating_mul(2usize.saturating_mul(y_support).saturating_add(1))
-                    .saturating_mul(std::mem::size_of::<Complex32>())
+                Ok(specs) => specs,
             };
-            let mut first_imaging_plans = BTreeSet::new();
-            let mut second_imaging_plans = BTreeSet::new();
-            let mut first_psf_plans = BTreeSet::new();
-            let mut second_psf_plans = BTreeSet::new();
-            for sample in &planned_samples {
-                unique_plans(&mut first_imaging_plans, &sample.first_imaging_plan);
-                unique_plans(&mut second_imaging_plans, &sample.second_imaging_plan);
-                unique_plans(&mut first_psf_plans, &sample.first_psf_plan);
-                unique_plans(&mut second_psf_plans, &sample.second_psf_plan);
+            let additional_tap_bytes = awproject_compact_candidate_tap_bytes(&specs, &tap_indices)?;
+            let next_tap_bytes =
+                awproject_compact_window_tap_bytes(planned_tap_bytes, additional_tap_bytes)?;
+            if next_tap_bytes > tap_budget_bytes {
+                if source_samples.is_empty() {
+                    return Err(ImagingError::InvalidRequest(format!(
+                        "one AWProject source sample needs {next_tap_bytes} compact tap bytes, above the admitted {tap_budget_bytes}-byte replay ceiling"
+                    )));
+                }
+                break;
             }
-            compact_source_order_samples =
-                compact_source_order_samples.saturating_add(planned_samples.len());
-            compact_source_order_tap_bundles = compact_source_order_tap_bundles
-                .saturating_add(first_imaging_plans.len())
-                .saturating_add(second_imaging_plans.len())
-                .saturating_add(first_psf_plans.len())
-                .saturating_add(second_psf_plans.len())
-                .saturating_add(2);
-            compact_source_order_tap_bytes_upper_bound = compact_source_order_tap_bytes_upper_bound
-                .saturating_add(compact_bytes(
-                    first_imaging_plans.len(),
-                    first_cell.metadata.imaging.x_support,
-                    first_cell.metadata.imaging.y_support,
-                ))
-                .saturating_add(compact_bytes(
-                    second_imaging_plans.len(),
-                    second_cell.metadata.imaging.x_support,
-                    second_cell.metadata.imaging.y_support,
-                ))
-                .saturating_add(compact_bytes(
-                    first_psf_plans.len(),
-                    first_cell.metadata.weight.x_support,
-                    first_cell.metadata.weight.y_support,
-                ))
-                .saturating_add(compact_bytes(
-                    second_psf_plans.len(),
-                    second_cell.metadata.weight.x_support,
-                    second_cell.metadata.weight.y_support,
-                ))
-                .saturating_add(compact_bytes(
-                    1,
-                    first_zero_w_cell.metadata.weight.x_support,
-                    first_zero_w_cell.metadata.weight.y_support,
-                ))
-                .saturating_add(compact_bytes(
-                    1,
-                    second_zero_w_cell.metadata.weight.x_support,
-                    second_zero_w_cell.metadata.weight.y_support,
-                ));
+
+            let mut bundle_indices = [0usize; 6];
+            for (role_index, spec) in specs.into_iter().enumerate() {
+                let bundle_index = if let Some(&index) = tap_indices.get(&spec.request.key) {
+                    index
+                } else {
+                    let index = tap_requests.len();
+                    tap_requests.push(spec.request);
+                    tap_indices.insert(spec.request.key, index);
+                    index
+                };
+                bundle_indices[role_index] = bundle_index;
+            }
+            source_samples.push(AwProjectCompactSourceSample {
+                sample_index: cursor,
+                first_imaging_plan: awproject_compact_plan(specs[0].geometry, bundle_indices[0]),
+                second_imaging_plan: awproject_compact_plan(specs[1].geometry, bundle_indices[1]),
+                first_psf_plan: awproject_compact_plan(specs[2].geometry, bundle_indices[2]),
+                second_psf_plan: awproject_compact_plan(specs[3].geometry, bundle_indices[3]),
+                first_weight_plan: awproject_compact_plan(specs[4].geometry, bundle_indices[4]),
+                second_weight_plan: awproject_compact_plan(specs[5].geometry, bundle_indices[5]),
+            });
+            planned_tap_bytes = next_tap_bytes;
+            accumulation.aw_sample_census.attempted_samples += 1;
+            cursor += 1;
         }
+
+        if source_samples.is_empty() {
+            continue;
+        }
+        let (bundles, actual_tap_bytes) = materialize_awproject_compact_taps(
+            request,
+            mosaic,
+            gridder,
+            groups,
+            cache,
+            &tap_requests,
+            tap_budget_bytes,
+        )?;
+        debug_assert_eq!(actual_tap_bytes, planned_tap_bytes);
+        let planned_samples = prepare_awproject_compact_planned_samples(
+            request,
+            batch,
+            parallel_hands,
+            sample_frequencies_hz,
+            &source_samples,
+            &tap_requests,
+            &bundles,
+            model_grids,
+            accumulation,
+            taylor_weights,
+        )?;
         match &mut accumulation.storage {
             MosaicMtmfsStreamGridStorage::HostF32(grids) => {
-                grid_awproject_mtmfs_planned_samples_host_f32(
+                grid_awproject_compact_samples_host_f32(
                     grids,
                     &planned_samples,
+                    &bundles,
                     request.reffreq_hz,
-                    &first_imaging_projector,
-                    &second_imaging_projector,
-                    &first_psf_projector,
-                    &second_psf_projector,
-                    &first_weight_projector,
-                    &second_weight_projector,
-                    &first_weight_plan,
-                    &second_weight_plan,
                     requested_threads,
                 )?;
             }
             MosaicMtmfsStreamGridStorage::HostF64(grids) => {
-                grid_awproject_mtmfs_planned_samples_host(
+                grid_awproject_compact_samples_host_f64(
                     grids,
                     &planned_samples,
+                    &bundles,
                     request.reffreq_hz,
-                    &first_imaging_projector,
-                    &second_imaging_projector,
-                    &first_psf_projector,
-                    &second_psf_projector,
-                    &first_weight_projector,
-                    &second_weight_projector,
-                    &first_weight_plan,
-                    &second_weight_plan,
                     requested_threads,
                 )?;
             }
             #[cfg(all(target_os = "macos", not(coverage)))]
             MosaicMtmfsStreamGridStorage::MetalSharedF32 {
+                grid,
+                aw_compensation,
                 psf_term_count,
                 residual_term_count,
+                scratch_budget_bytes,
                 ..
             } => {
                 if *psf_term_count != 2 * *residual_term_count - 1 {
@@ -9259,52 +9577,42 @@ fn accumulate_awproject_mtmfs_metadata_group(
                             .to_string(),
                     ));
                 }
-                pack_awproject_mtmfs_metal_samples(
-                    &mut metal_batch,
+                let metal_batch = pack_awproject_compact_metal_batch(
                     &planned_samples,
+                    &bundles,
                     request.reffreq_hz,
-                    &first_imaging_projector,
-                    &second_imaging_projector,
-                    &first_psf_projector,
-                    &second_psf_projector,
-                    &first_weight_projector,
-                    &second_weight_projector,
-                    &first_weight_plan,
-                    &second_weight_plan,
                 )?;
+                if !metal_batch.samples.is_empty() {
+                    let stats = dispatch_awproject_mtmfs_metal_batch(
+                        grid,
+                        aw_compensation,
+                        metal_batch,
+                        *residual_term_count,
+                        *scratch_budget_bytes,
+                    )?;
+                    accumulation.aw_metal_stats.add_assign(stats);
+                }
             }
         }
+        replay_stats.windows += 1;
+        replay_stats.largest_window_samples = replay_stats
+            .largest_window_samples
+            .max(source_samples.len());
+        replay_stats.largest_window_tap_bundles = replay_stats
+            .largest_window_tap_bundles
+            .max(tap_requests.len());
+        replay_stats.peak_tap_bytes = replay_stats.peak_tap_bytes.max(actual_tap_bytes);
     }
-    if profile_compact_source_order {
+    if profile::standard_mfs_profile_detail_enabled() {
         eprintln!(
-            "awproject_compact_source_order_estimate planned_samples={} planned_sample_bytes={} tap_bundles={} tap_bytes_upper_bound={} pointing_ra_rad={:.17e} pointing_dec_rad={:.17e}",
-            compact_source_order_samples,
-            compact_source_order_samples
-                .saturating_mul(std::mem::size_of::<AwProjectMtmfsPlannedSample>()),
-            compact_source_order_tap_bundles,
-            compact_source_order_tap_bytes_upper_bound,
-            group.pointing_direction_rad[0],
-            group.pointing_direction_rad[1],
+            "awproject_compact_source_order windows={} largest_window_samples={} largest_window_tap_bundles={} peak_tap_bytes={} tap_budget_bytes={} routed_samples={}",
+            replay_stats.windows,
+            replay_stats.largest_window_samples,
+            replay_stats.largest_window_tap_bundles,
+            replay_stats.peak_tap_bytes,
+            tap_budget_bytes,
+            source_group_route.len(),
         );
-    }
-    #[cfg(all(target_os = "macos", not(coverage)))]
-    if !metal_batch.samples.is_empty()
-        && let MosaicMtmfsStreamGridStorage::MetalSharedF32 {
-            grid,
-            aw_compensation,
-            residual_term_count,
-            scratch_budget_bytes,
-            ..
-        } = &mut accumulation.storage
-    {
-        let stats = dispatch_awproject_mtmfs_metal_batch(
-            grid,
-            aw_compensation,
-            metal_batch,
-            *residual_term_count,
-            *scratch_budget_bytes,
-        )?;
-        accumulation.aw_metal_stats.add_assign(stats);
     }
     Ok(())
 }
@@ -38228,6 +38536,203 @@ mod tests {
         run_multiscale_minor_cycle_metal, run_standard_mfs_dirty_grid_plan,
         standard_mfs_metal_device_available,
     };
+
+    fn aw_route_test_group(ranges: &[(usize, usize)]) -> GroupedVisibilityMetadata {
+        GroupedVisibilityMetadata {
+            beam_frequency_hz: 2.0e9,
+            primary_beam_model: PrimaryBeamModel::Airy {
+                dish_diameter_m: 25.0,
+                blockage_diameter_m: 0.0,
+            },
+            pointing_direction_rad: [0.0, 0.0],
+            sample_ranges: ranges
+                .iter()
+                .map(|&(start, end)| VisibilitySampleRange { start, end })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn awproject_source_group_route_preserves_interleaved_source_order() {
+        let groups = vec![
+            aw_route_test_group(&[(0, 1), (2, 3), (4, 5)]),
+            aw_route_test_group(&[(1, 2), (3, 4)]),
+        ];
+        assert_eq!(
+            super::awproject_source_group_route(5, &groups).unwrap(),
+            vec![0, 1, 0, 1, 0]
+        );
+
+        let overlap = vec![
+            aw_route_test_group(&[(0, 2)]),
+            aw_route_test_group(&[(1, 3)]),
+        ];
+        assert!(
+            super::awproject_source_group_route(3, &overlap)
+                .unwrap_err()
+                .to_string()
+                .contains("both groups")
+        );
+        let gap = vec![aw_route_test_group(&[(0, 1), (2, 3)])];
+        assert!(
+            super::awproject_source_group_route(3, &gap)
+                .unwrap_err()
+                .to_string()
+                .contains("does not assign source sample 1")
+        );
+    }
+
+    fn compact_budget_test_specs(
+        frequency_hz: f64,
+        tap_bytes: usize,
+    ) -> [super::AwProjectCompactTapSpec; 6] {
+        let cell_key = super::AwConvolutionFunctionKey {
+            frequency_hz,
+            w_value_lambda: 0.0,
+            mueller_element: 0,
+            parallactic_angle_deg: 0.0,
+        };
+        let geometry = super::gridder::AwProjectSampleGeometry {
+            loc_x: 2,
+            loc_y: 2,
+            off_x: 0,
+            off_y: 0,
+            conjugate_for_grid: false,
+        };
+        let spec = super::AwProjectCompactTapSpec {
+            request: super::AwProjectCompactTapRequest {
+                key: super::AwProjectCompactTapKey {
+                    group_index: 0,
+                    cell: super::awproject_stable_cell_key(cell_key),
+                    kernel_kind: super::AwProjectCompactKernelKind::Imaging,
+                    off_x: 0,
+                    off_y: 0,
+                    conjugate_for_grid: false,
+                },
+                cell_key,
+                representative_uvw_lambda: [0.0; 3],
+            },
+            geometry,
+            tap_bytes,
+        };
+        [spec; 6]
+    }
+
+    #[test]
+    fn awproject_compact_tap_budget_segments_only_at_source_boundaries() {
+        let candidates = [
+            compact_budget_test_specs(1.0e9, 40),
+            compact_budget_test_specs(2.0e9, 40),
+            compact_budget_test_specs(2.0e9, 40),
+        ];
+        let budget = 64usize;
+        let mut windows = Vec::new();
+        let mut indices = std::collections::BTreeMap::new();
+        let mut current_bytes = 0usize;
+        let mut current_samples = 0usize;
+        for specs in candidates {
+            let additional =
+                super::awproject_compact_candidate_tap_bytes(&specs, &indices).unwrap();
+            let next =
+                super::awproject_compact_window_tap_bytes(current_bytes, additional).unwrap();
+            if next > budget && current_samples > 0 {
+                windows.push((current_samples, current_bytes));
+                indices.clear();
+                current_bytes = 0;
+                current_samples = 0;
+            }
+            let additional =
+                super::awproject_compact_candidate_tap_bytes(&specs, &indices).unwrap();
+            current_bytes =
+                super::awproject_compact_window_tap_bytes(current_bytes, additional).unwrap();
+            assert!(current_bytes <= budget);
+            for spec in specs {
+                let next_index = indices.len();
+                indices.entry(spec.request.key).or_insert(next_index);
+            }
+            current_samples += 1;
+        }
+        windows.push((current_samples, current_bytes));
+        assert_eq!(windows, vec![(1, 40), (2, 40)]);
+    }
+
+    fn compact_replay_test_grids() -> super::MosaicMtmfsHostGrids {
+        super::MosaicMtmfsHostGrids {
+            psf_grids: vec![Array2::zeros((5, 5))],
+            residual_grids: vec![Array2::zeros((5, 5))],
+            weight_grids: vec![Array2::zeros((5, 5))],
+        }
+    }
+
+    #[test]
+    fn compact_aw_replay_is_bit_identical_across_windows_and_preserves_source_order() {
+        let bundles = vec![super::AwProjectCompactMaterializedTap::Ready(
+            super::AwProjectCompactTapBundle {
+                values: vec![Complex32::new(1.0, 0.0)],
+                x_support: 0,
+                y_support: 0,
+                normalization: Complex32::new(1.0, 0.0),
+            },
+        )];
+        let plan = super::AwProjectCompactSamplePlan {
+            loc_x: 2,
+            loc_y: 2,
+            tap_bundle: 0,
+        };
+        let make_sample = |residual_re| super::AwProjectCompactPlannedSample {
+            first_imaging_plan: plan,
+            second_imaging_plan: plan,
+            first_psf_plan: plan,
+            second_psf_plan: plan,
+            first_weight_plan: plan,
+            second_weight_plan: plan,
+            frequency_hz: 2.0e9,
+            weight: 1.0,
+            first_residual: Complex32::new(residual_re, 0.0),
+            second_residual: Complex32::new(residual_re, 0.0),
+        };
+        let samples = [make_sample(1.0e20), make_sample(-1.0e20), make_sample(1.0)];
+
+        let mut one_window = compact_replay_test_grids();
+        super::grid_awproject_compact_samples_host_f64(
+            &mut one_window,
+            &samples,
+            &bundles,
+            2.0e9,
+            1,
+        )
+        .unwrap();
+        let mut segmented = compact_replay_test_grids();
+        for window in [&samples[..1], &samples[1..]] {
+            super::grid_awproject_compact_samples_host_f64(
+                &mut segmented,
+                window,
+                &bundles,
+                2.0e9,
+                3,
+            )
+            .unwrap();
+        }
+        assert_eq!(one_window.psf_grids, segmented.psf_grids);
+        assert_eq!(one_window.residual_grids, segmented.residual_grids);
+        assert_eq!(one_window.weight_grids, segmented.weight_grids);
+        assert_eq!(one_window.residual_grids[0][(2, 2)].re, 2.0);
+
+        let mut reordered = compact_replay_test_grids();
+        let reordered_samples = [samples[0], samples[2], samples[1]];
+        super::grid_awproject_compact_samples_host_f64(
+            &mut reordered,
+            &reordered_samples,
+            &bundles,
+            2.0e9,
+            1,
+        )
+        .unwrap();
+        assert_ne!(
+            one_window.residual_grids[0][(2, 2)],
+            reordered.residual_grids[0][(2, 2)]
+        );
+    }
 
     #[cfg(all(target_os = "macos", not(coverage)))]
     struct SharedMetalFailureGuard;

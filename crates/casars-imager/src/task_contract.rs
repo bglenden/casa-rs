@@ -1767,7 +1767,7 @@ impl From<ImagerAwProjectNormalization> for AwProjectNormalization {
 pub struct ImagerAwProjectConfig {
     /// Existing CASA `CFS_`/`WTCFS_` convolution-function cache directory.
     pub cf_cache: PathBuf,
-    /// Maximum paired-CF pixel residency in MiB.
+    /// Per-allocation full-cell LRU and compact source-order tap ceiling in MiB.
     #[serde(default = "default_aw_cf_resident_mb")]
     pub cf_resident_mb: usize,
     /// CASA facet count.

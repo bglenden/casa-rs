@@ -283,7 +283,11 @@ pub enum AwProjectNormalization {
 pub struct AwProjectControls {
     /// Existing standard CASA convolution-function cache directory.
     pub cf_cache: PathBuf,
-    /// Maximum resident CF pixel bytes retained by the bounded LRU.
+    /// Shared AW working-memory ceiling.
+    ///
+    /// The runtime applies this ceiling independently to the bounded full-cell
+    /// LRU and to the compact exact-source-order tap arena; the application
+    /// planner charges both allocations.
     pub cf_resident_bytes: usize,
     /// CASA `facets`; only one facet is supported by this execution slice.
     pub facets: usize,
@@ -370,7 +374,7 @@ impl AwProjectControls {
         }
         if self.cf_resident_bytes == 0 {
             return Err(ImagingError::InvalidRequest(
-                "awproject CF-residency budget must be positive".to_string(),
+                "awproject CF/tap working-memory ceiling must be positive".to_string(),
             ));
         }
         if self.facets != 1 {

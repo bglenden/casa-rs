@@ -8975,8 +8975,8 @@
       "unit_dimension": "data_size",
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Maximum resident AW convolution-function pixels in MiB",
-        "details": "This bounds the shared CF LRU and does not copy a full cache per worker.",
+        "summary": "AW convolution-function working-memory ceiling in MiB",
+        "details": "This bounds both the shared full-cell LRU and the compact exact-source-order tap arena per allocation. The runtime planner charges the two bounded allocations independently; neither is copied per worker.",
         "examples": [
           "256"
         ]

@@ -2077,8 +2077,14 @@ mod tests {
         assert_eq!(diagnostics.samples.accepted_samples, 6);
         assert_eq!(diagnostics.samples.rejected_not_gridable, 0);
         assert_eq!(diagnostics.samples.rejected_invalid_input, 0);
-        assert!(diagnostics.resident.loads > 0);
-        assert!(diagnostics.resident.hits > 0);
+        assert_eq!(
+            diagnostics.resident.loads, 8,
+            "compact source-order replay loads each unique full cell once while packing taps"
+        );
+        assert_eq!(
+            diagnostics.resident.hits, 0,
+            "the one-window fixture must not revisit full cells after compact tap packing"
+        );
         assert!(diagnostics.resident.evictions > 0);
         assert!(diagnostics.resident.resident_bytes <= diagnostics.resident_budget_bytes);
 
@@ -2122,7 +2128,11 @@ mod tests {
         let clean_diagnostics = clean_result.awproject.expect("clean AWProject diagnostics");
         assert_eq!(clean_diagnostics.samples.attempted_samples, 6);
         assert_eq!(clean_diagnostics.samples.accepted_samples, 6);
-        assert!(clean_diagnostics.resident.hits > 0);
+        assert_eq!(
+            clean_diagnostics.resident.loads, 24,
+            "three clean passes each pack the fixture's eight unique cells once"
+        );
+        assert_eq!(clean_diagnostics.resident.hits, 0);
         assert!(
             clean_diagnostics.resident.resident_bytes <= clean_diagnostics.resident_budget_bytes
         );

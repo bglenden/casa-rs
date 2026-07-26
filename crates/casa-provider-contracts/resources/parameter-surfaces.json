@@ -11820,7 +11820,7 @@
               "value": "awproject"
             }
           },
-          "surface_note": "Bounded shared CF residency in MiB; the runtime rejects zero.",
+          "surface_note": "Per-allocation full-cell LRU and compact source-order tap ceiling in MiB; the runtime charges both and rejects zero.",
           "projections": {
             "cli": {
               "flags": [
@@ -11836,7 +11836,7 @@
               "name": "cf_resident_mb"
             },
             "presentation": {
-              "label": "CF Resident Memory (MiB)",
+              "label": "CF/Tap Ceiling (MiB)",
               "group": "Advanced Wide-Field",
               "advanced": true,
               "hidden": false
