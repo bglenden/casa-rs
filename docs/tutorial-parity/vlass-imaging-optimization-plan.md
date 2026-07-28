@@ -2171,26 +2171,86 @@ coarse candidates rather than a machine-specific answer; on this host the
 general formula produces `4,6,8,10`. The coarse winner's immediate untested
 neighbors are then considered, and measured ties select the smaller count.
 
-The calibration is a bounded startup decision, not continuous retuning. The
-first eligible pristine sparse-tile window supplies a deterministic,
-weight-stratified task subset with at least two waves at the largest
-candidate. Every candidate uses identical tile geometry, scalar/NEON role mix,
-thread QoS, dynamic scheduler, and output storage. Trial writes are discarded
-before the real replay, the best two candidates are repeated in reverse order,
-and one resolved count is fixed for the rest of the run. Timeout, insufficient
-representative work, or non-pristine storage uses a recorded conservative
-fallback; arithmetic, tile ownership, lock, or replay-invariant failures still
-fail the run.
+The calibration is a bounded startup decision, not continuous retuning.
+Topology supplies at most four coarse anchors, and the planner expands their
+adjacent integers within the admitted CPU range. Each candidate executes four
+complete source-order windows in forward/reverse counterbalanced order. These
+are authoritative production updates: no visibility, tile, or output write is
+replayed solely for calibration. Window time is normalized by the schedule's
+deterministic tap-read plus plane-update traffic. Empirical overlap excludes
+unsupported counts; when intervals overlap, the tie-break prior is the
+highest-capacity CPU class plus half of the remaining assigned CPU capacity.
+Empirical overlap uses a two-sided 95% Student-t interval, so four-window
+samples retain the uncertainty their small sample size warrants. The
+resulting count is fixed for all later windows. Arithmetic, tile ownership,
+lock, or replay-invariant failures still fail the run.
 
 The accepted UI remains one canonical field:
 `standard_mfs_grid_threads = auto | positive integer`. There is no scheduler
 selector, P/E-core control, or machine-specific worker option. Explicit
 positive values bypass calibration and remain the correct control for current
-evidence runs. Six is therefore retained in the full-band experiment manifest,
-not encoded as a production default. The next bounded laptop experiment is the
-counterbalanced warm sequence `6` (unmeasured warm-up), then measured
-`5,6,7,7,6,5` over the same two blocks, scoring total block time rather than
-tile replay alone.
+evidence runs.
+
+The bounded laptop neighborhood experiment is complete. It used the same first
+two `InitialDirty` source blocks, exact-f64 replay, 192-pixel tiles, unchanged
+QoS and memory plan, and the counterbalanced order `5,6,7,7,6,5`. The measured
+two-block wall times were:
+
+- five workers: `50.838` and `44.569` seconds, mean `47.704`;
+- six workers: `45.512` and `44.943` seconds, mean `45.228`; and
+- seven workers: `44.025` and `43.559` seconds, mean `43.792`.
+
+Seven workers won both replicates. Its mean is `3.18%` faster than six and
+`8.20%` faster than five. This supersedes six as the explicit setting for the
+next full-band experiments, but it does not encode seven as a production
+default.
+
+The first experiment-gated automatic calibrator did not reproduce that result.
+It replayed a deterministic 32-task weight-stratified subset and resolved four
+workers:
+
+`standard_mfs_parallel_worker_plan requested=auto resolved=4
+source=auto-calibrated hard_cap=10 candidates=3,4,5,6,8,10
+calibration_tasks=32 calibration_elapsed_ms=5861.900`
+
+The resulting two-block wall time was `52.443` seconds including calibration,
+materially slower than explicit seven. Replaying even the complete first
+sparse window still resolved four, proving that sample size within the first
+window was not the problem. Its interrupted evidence receipt is:
+
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260728T023605Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-4430758b.json`
+
+The first and second source blocks contain 2,623 and 5,910 tile tasks across
+12 and 19 source-order windows. Their different spatial concurrency makes the
+first window non-representative of the two-block optimum.
+
+The next online experiment executed each trial window exactly once as
+production work. A coarse-then-neighborhood version still biased the search:
+early `4,6,8,10` windows selected the later bracket, and only two later windows
+per integer resolved five. Its two-block wall was `39.899` seconds and its
+receipt is:
+
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260728T025124Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-a0e1448f.json`
+
+The full-bracket revision tested every integer `4..10` over 28
+counterbalanced production windows. Its normalized means ranked
+`5,9,6,8,10,4,7`; repeated runs also moved the raw min/max overlap boundary by
+less than one percent. Selecting the lowest noisy mean or treating four raw
+extrema as a confidence interval would therefore be false precision. The
+final resolver uses the 95% small-sample interval, then chooses seven from the
+measured overlap on this `4P+6E` host; the same formula predicts six on a
+`4P+4E` host. The interrupted receipt containing the first 28-observation
+full-bracket run is:
+
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260728T025416Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-c5726fef.json`
+
+The repeat whose raw extrema excluded seven by only `0.75%`, motivating the
+Student-t correction, is:
+
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260728T030425Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-ea8a4032.json`
+
+Production `auto` remains gated pending a fresh run of the final resolver,
+Mac-mini topology evidence, and full-band correctness/performance evidence.
 
 The first implementation slice is behind
 `CASA_RS_STANDARD_MFS_WORKER_PLANNER_EXPERIMENT` in addition to the existing

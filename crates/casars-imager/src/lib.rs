@@ -36778,14 +36778,16 @@ fn standard_mfs_parallel_worker_calibration_request(
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
-        .unwrap_or(10_000);
+        .unwrap_or(20_000);
+    let reverse_calibration_order =
+        env::var_os("CASA_RS_STANDARD_MFS_WORKER_CALIBRATION_REVERSE_EXPERIMENT").is_some();
     ParallelWorkerCalibrationRequest::new(
         candidates,
         assigned_parallelism,
         highest_capacity_class_boundary,
         Duration::from_millis(maximum_elapsed_ms),
-        20_000,
     )
+    .map(|request| request.with_reversed_calibration_order(reverse_calibration_order))
     .ok()
 }
 

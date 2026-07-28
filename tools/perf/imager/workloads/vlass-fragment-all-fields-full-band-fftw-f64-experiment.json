@@ -70,7 +70,7 @@
     "calcpsf": true,
     "parallel": true,
     "standard_mfs_acceleration": "cpu",
-    "standard_mfs_grid_threads": 6,
+    "standard_mfs_grid_threads": 7,
     "imaging_prepare_workers": 1,
     "imaging_read_ahead_blocks": 1,
     "imaging_fft_precision": "f64",

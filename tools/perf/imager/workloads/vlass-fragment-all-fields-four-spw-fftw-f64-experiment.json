@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "vlass-fragment-all-fields-four-spw-fftw-f64-experiment",
   "mode_id": "vlass-awproject-mtmfs-raster-patch",
-  "description": "Full-geometry connected-63-field VLASS fragment four-SPW turnaround using the measured six-worker dynamic sparse-tile candidate. This is casa-rs-only worker-planner development evidence, never final correctness or 10x evidence.",
+  "description": "Full-geometry connected-63-field VLASS fragment four-SPW turnaround using the measured seven-worker dynamic sparse-tile candidate. This is casa-rs-only worker-planner development evidence, never final correctness or 10x evidence.",
   "dataset": {
     "key": "vlass-fragment-b80d5e87487a",
     "relative_path": "VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms",
@@ -70,7 +70,7 @@
     "calcpsf": true,
     "parallel": true,
     "standard_mfs_acceleration": "cpu",
-    "standard_mfs_grid_threads": 6,
+    "standard_mfs_grid_threads": 7,
     "imaging_prepare_workers": 1,
     "imaging_read_ahead_blocks": 1,
     "imaging_fft_precision": "f64",

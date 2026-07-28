@@ -1788,8 +1788,11 @@ image_product_write suffix=.image.pbcor role=image.pbcor shape=1024x1024x1x1 ele
     def test_parallel_worker_plan_is_retained_in_backend_receipt(self) -> None:
         parsed = run_workload.parse_backend_plan_logs(
             "standard_mfs_parallel_worker_plan requested=auto resolved=6 "
-            "source=auto-calibrated hard_cap=10 candidates=4,6,8,10 "
-            "topology_high_capacity_boundary=4 calibration_tasks=32 "
+            "source=auto-calibrated hard_cap=10 candidates=4,5,6,7,8,9,10 "
+            "topology_high_capacity_boundary=4 calibration_windows=28 "
+            "calibration_mode=production-windows "
+            "calibration_stage=full-bracket "
+            "uncertainty=6,7 "
             "calibration_elapsed_ms=987.500 "
             "scores=4:1.20,6:1.00,8:1.15,10:1.30\n"
         )
@@ -1799,14 +1802,27 @@ image_product_write suffix=.image.pbcor role=image.pbcor shape=1024x1024x1x1 ele
         self.assertEqual(6, summary["resolved_parallel_workers"])
         self.assertEqual("auto-calibrated", summary["parallel_worker_plan_source"])
         self.assertEqual(10, summary["parallel_worker_plan_hard_cap"])
-        self.assertEqual("4,6,8,10", summary["parallel_worker_plan_candidates"])
+        self.assertEqual(
+            "4,5,6,7,8,9,10", summary["parallel_worker_plan_candidates"]
+        )
         self.assertEqual(
             4, summary["parallel_worker_plan_topology_high_capacity_boundary"]
         )
-        self.assertEqual(32, summary["parallel_worker_plan_calibration_tasks"])
+        self.assertIsNone(summary["parallel_worker_plan_calibration_tasks"])
+        self.assertEqual(28, summary["parallel_worker_plan_calibration_windows"])
         self.assertEqual(
             987.5, summary["parallel_worker_plan_calibration_elapsed_ms"]
         )
+        self.assertEqual(
+            "production-windows",
+            summary["parallel_worker_plan_calibration_mode"],
+        )
+        self.assertEqual(
+            "full-bracket",
+            summary["parallel_worker_plan_calibration_stage"],
+        )
+        self.assertIsNone(summary["parallel_worker_plan_calibration_sample_phase"])
+        self.assertEqual("6,7", summary["parallel_worker_plan_uncertainty"])
         self.assertEqual(
             "4:1.20,6:1.00,8:1.15,10:1.30",
             summary["parallel_worker_plan_scores"],

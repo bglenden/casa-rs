@@ -1750,9 +1750,22 @@ def summarize_backend_plan_logs(
         "parallel_worker_plan_calibration_tasks": parallel_worker_plan.get(
             "calibration_tasks"
         ),
+        "parallel_worker_plan_calibration_windows": parallel_worker_plan.get(
+            "calibration_windows"
+        ),
         "parallel_worker_plan_calibration_elapsed_ms": parallel_worker_plan.get(
             "calibration_elapsed_ms"
         ),
+        "parallel_worker_plan_calibration_mode": parallel_worker_plan.get(
+            "calibration_mode"
+        ),
+        "parallel_worker_plan_calibration_stage": parallel_worker_plan.get(
+            "calibration_stage"
+        ),
+        "parallel_worker_plan_calibration_sample_phase": parallel_worker_plan.get(
+            "calibration_sample_phase"
+        ),
+        "parallel_worker_plan_uncertainty": parallel_worker_plan.get("uncertainty"),
         "parallel_worker_plan_scores": parallel_worker_plan.get("scores"),
         "parallel_worker_plan_reason": parallel_worker_plan.get("reason"),
         "resolved_tile_anchor": runtime.get("tile_anchor"),

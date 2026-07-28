@@ -1231,10 +1231,22 @@ struct ParallelWorkerResolution {
     explanation: String,
 }
 
+#[derive(Debug)]
+struct ParallelWorkerOnlineCalibrationState {
+    candidates: Vec<usize>,
+    sequence: Vec<usize>,
+    cursor: usize,
+    observations: Vec<parallel_worker::ParallelWorkerTimingObservation>,
+    elapsed: Duration,
+    windows: usize,
+    extension_rounds: usize,
+}
+
 #[derive(Clone, Debug)]
 struct ParallelWorkerCalibrationControl {
     request: ParallelWorkerCalibrationRequest,
     resolution: Arc<OnceLock<ParallelWorkerResolution>>,
+    online: Arc<Mutex<Option<ParallelWorkerOnlineCalibrationState>>>,
 }
 
 /// Runtime execution knobs for standard-MFS backends.
@@ -1281,9 +1293,10 @@ pub struct StandardMfsExecutionPlan {
     pub observability_callback: Option<StandardMfsObservabilityCallback>,
     /// Optional frontend-supplied, resource-bounded worker calibration.
     ///
-    /// The request contains no host discovery. The first eligible exact
-    /// weighted-task replay resolves it once and all later windows reuse the
-    /// same admitted worker count.
+    /// The request contains no host discovery. Initial production windows run
+    /// a deterministic counterbalanced worker trial; no visibility or output
+    /// update is replayed solely for calibration. Once resolved, all later
+    /// windows reuse the admitted worker count.
     parallel_worker_calibration: Option<ParallelWorkerCalibrationControl>,
 }
 
@@ -1317,6 +1330,7 @@ impl StandardMfsExecutionPlan {
         self.parallel_worker_calibration = Some(ParallelWorkerCalibrationControl {
             request,
             resolution: Arc::new(OnceLock::new()),
+            online: Arc::new(Mutex::new(None)),
         });
         self
     }
@@ -9946,26 +9960,21 @@ fn execute_awproject_compact_sparse_f64_dynamic_tiles(
     neon_2x2: bool,
     reverse_task_order: bool,
     calibration: Option<&ParallelWorkerCalibrationControl>,
-    calibration_storage_is_pristine: bool,
+    _calibration_storage_is_pristine: bool,
 ) -> Result<AwProjectCompactDynamicTileResult, ImagingError> {
     let schedule = build_awproject_compact_sparse_f64_dynamic_tile_schedule(
         grids,
         tile_plan,
         reverse_task_order,
     )?;
-    let resolved_threads = resolve_awproject_parallel_worker_count(
-        calibration,
-        calibration_storage_is_pristine,
-        grids,
-        tile_plan,
-        &schedule.tasks,
-        samples,
-        bundles,
-        phase_tables,
-        reffreq_hz,
-        requested_threads,
-        neon_2x2,
-    )?;
+    let worker_decision =
+        select_awproject_parallel_worker_count(calibration, &schedule.tasks, requested_threads)?;
+    let calibration_work_units = schedule
+        .tasks
+        .iter()
+        .map(|task| u128::from(task.estimated_bytes))
+        .fold(0u128, u128::saturating_add);
+    let execution_started = Instant::now();
     let counters = execute_awproject_compact_sparse_f64_scheduled_tiles(
         grids,
         tile_plan,
@@ -9974,104 +9983,22 @@ fn execute_awproject_compact_sparse_f64_dynamic_tiles(
         bundles,
         phase_tables,
         reffreq_hz,
-        resolved_threads,
+        worker_decision.workers,
         neon_2x2,
     )?;
+    if worker_decision.observe_production_window {
+        observe_awproject_parallel_production_window(
+            calibration.expect("an observed production window has calibration control"),
+            worker_decision.workers,
+            execution_started.elapsed(),
+            calibration_work_units,
+        )?;
+    }
     Ok(AwProjectCompactDynamicTileResult {
         counters,
         build_elapsed: schedule.build_elapsed,
         sort_elapsed: schedule.sort_elapsed,
         task_estimated_bytes_max: schedule.task_estimated_bytes_max,
-    })
-}
-
-fn awproject_parallel_calibration_task_subset(
-    tasks: &[AwProjectCompactSparseF64TileTask],
-    maximum_workers: usize,
-) -> Option<Vec<AwProjectCompactSparseF64TileTask>> {
-    let minimum_count = maximum_workers.checked_mul(2)?;
-    if maximum_workers == 0 || tasks.len() < minimum_count {
-        return None;
-    }
-    let target_count = tasks.len().min(minimum_count.max(32));
-    if target_count == tasks.len() {
-        return Some(tasks.to_vec());
-    }
-    let denominator = target_count - 1;
-    Some(
-        (0..target_count)
-            .map(|index| {
-                let source_index = index * (tasks.len() - 1) / denominator;
-                tasks[source_index]
-            })
-            .collect(),
-    )
-}
-
-fn zero_awproject_compact_sparse_f64_tasks(
-    grids: &MosaicMtmfsSparseHostGrids,
-    tasks: &[AwProjectCompactSparseF64TileTask],
-) -> Result<(), ImagingError> {
-    for task in tasks {
-        let tile_lock = grids
-            .slots
-            .get(task.tile_index)
-            .and_then(Option::as_ref)
-            .ok_or_else(|| {
-                ImagingError::InvalidRequest(format!(
-                    "parallel worker calibration lost tile {} while discarding scratch output",
-                    task.tile_index
-                ))
-            })?;
-        let mut tile = tile_lock.lock().map_err(|_| {
-            ImagingError::InvalidRequest(format!(
-                "parallel worker calibration tile {} was poisoned while discarding scratch output",
-                task.tile_index
-            ))
-        })?;
-        let zero_planes = |planes: &mut [Option<Box<[Complex64]>>]| {
-            for plane in planes.iter_mut().flatten() {
-                plane.fill(Complex64::new(0.0, 0.0));
-            }
-        };
-        zero_planes(&mut tile.psf_planes);
-        zero_planes(&mut tile.residual_planes);
-        zero_planes(&mut tile.weight_planes);
-    }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn observe_awproject_parallel_worker_candidate(
-    grids: &MosaicMtmfsSparseHostGrids,
-    tile_plan: &AwProjectCompactTilePlan,
-    tasks: &[AwProjectCompactSparseF64TileTask],
-    samples: &[AwProjectCompactPlannedSample],
-    bundles: &[AwProjectCompactMaterializedTap],
-    phase_tables: Option<&AwProjectPhaseTables>,
-    reffreq_hz: f64,
-    workers: usize,
-    neon_2x2: bool,
-) -> Result<parallel_worker::ParallelWorkerTimingObservation, ImagingError> {
-    let started = Instant::now();
-    let replay = execute_awproject_compact_sparse_f64_scheduled_tiles(
-        grids,
-        tile_plan,
-        tasks,
-        samples,
-        bundles,
-        phase_tables,
-        reffreq_hz,
-        workers,
-        neon_2x2,
-    );
-    let elapsed_ns = started.elapsed().as_nanos().max(1);
-    let discard = zero_awproject_compact_sparse_f64_tasks(grids, tasks);
-    replay?;
-    discard?;
-    Ok(parallel_worker::ParallelWorkerTimingObservation {
-        workers,
-        elapsed_ns,
     })
 }
 
@@ -10091,6 +10018,25 @@ fn parallel_worker_candidate_log_value(candidates: &[usize]) -> String {
     candidates
         .iter()
         .map(usize::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn parallel_worker_score_log_value(
+    scores: &[parallel_worker::ParallelWorkerCandidateScore],
+) -> String {
+    scores
+        .iter()
+        .map(|score| {
+            format!(
+                "{}:{}ns:{}:{}-{}",
+                score.workers,
+                score.mean_elapsed_ns,
+                score.combined_score,
+                score.interval_min_score,
+                score.interval_max_score
+            )
+        })
         .collect::<Vec<_>>()
         .join(",")
 }
@@ -10116,18 +10062,16 @@ fn parallel_worker_fallback_resolution(
     )
     .max(1);
     let explanation = reason.into();
-    let candidate_log_value = parallel_worker_candidate_log_value(candidates);
-    let reason_log_value = parallel_worker_reason_log_value(&explanation);
     eprintln!(
         "standard_mfs_parallel_worker_plan requested=auto resolved={} source=auto-conservative-fallback hard_cap={} candidates={} topology_high_capacity_boundary={} reason={}",
         workers,
         control.request.hard_cap(),
-        candidate_log_value,
+        parallel_worker_candidate_log_value(candidates),
         control
             .request
             .highest_capacity_class_boundary()
             .unwrap_or(0),
-        reason_log_value,
+        parallel_worker_reason_log_value(&explanation),
     );
     record_parallel_worker_resolution(
         control,
@@ -10139,231 +10083,261 @@ fn parallel_worker_fallback_resolution(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-fn resolve_awproject_parallel_worker_count(
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ParallelWorkerWindowDecision {
+    workers: usize,
+    observe_production_window: bool,
+}
+
+fn select_awproject_parallel_worker_count(
     calibration: Option<&ParallelWorkerCalibrationControl>,
-    calibration_storage_is_pristine: bool,
-    grids: &MosaicMtmfsSparseHostGrids,
-    tile_plan: &AwProjectCompactTilePlan,
     tasks: &[AwProjectCompactSparseF64TileTask],
-    samples: &[AwProjectCompactPlannedSample],
-    bundles: &[AwProjectCompactMaterializedTap],
-    phase_tables: Option<&AwProjectPhaseTables>,
-    reffreq_hz: f64,
     requested_threads: usize,
-    neon_2x2: bool,
-) -> Result<usize, ImagingError> {
+) -> Result<ParallelWorkerWindowDecision, ImagingError> {
     let Some(control) = calibration else {
-        return Ok(requested_threads.max(1).min(tasks.len().max(1)));
+        return Ok(ParallelWorkerWindowDecision {
+            workers: requested_threads.max(1).min(tasks.len().max(1)),
+            observe_production_window: false,
+        });
     };
     if let Some(resolution) = control.resolution.get() {
-        return Ok(resolution.workers.max(1).min(tasks.len().max(1)));
+        return Ok(ParallelWorkerWindowDecision {
+            workers: resolution.workers.max(1).min(tasks.len().max(1)),
+            observe_production_window: false,
+        });
     }
     let actual_weights = tasks
         .iter()
         .map(|task| task.estimated_bytes)
         .collect::<Vec<_>>();
     if actual_weights.is_empty() {
-        return Ok(record_parallel_worker_resolution(
+        let workers = record_parallel_worker_resolution(
             control,
             ParallelWorkerResolution {
                 workers: 1,
                 source: ParallelWorkerSelectionSource::AutoConservativeFallback,
                 explanation: "no weighted tile tasks".to_string(),
             },
-        ));
+        );
+        return Ok(ParallelWorkerWindowDecision {
+            workers,
+            observe_production_window: false,
+        });
     }
+
     let hard_cap = control.request.hard_cap().min(actual_weights.len()).max(1);
-    let mut candidates = control
-        .request
-        .coarse_candidates()
-        .iter()
-        .copied()
-        .map(|workers| workers.min(hard_cap))
-        .filter(|workers| *workers > 0)
-        .collect::<Vec<_>>();
-    candidates.sort_unstable();
-    candidates.dedup();
-    if !calibration_storage_is_pristine {
-        return Ok(parallel_worker_fallback_resolution(
-            control,
-            &actual_weights,
-            &candidates,
-            "the first eligible sparse tile window did not have pristine output storage",
-        ));
-    }
-    let maximum_workers = candidates.iter().copied().max().unwrap_or(1);
-    let Some(calibration_tasks) =
-        awproject_parallel_calibration_task_subset(tasks, maximum_workers)
-    else {
-        return Ok(parallel_worker_fallback_resolution(
-            control,
-            &actual_weights,
-            &candidates,
-            "the weighted task set cannot supply two calibration waves at the hard cap",
-        ));
-    };
-    let calibration_weights = calibration_tasks
-        .iter()
-        .map(|task| task.estimated_bytes)
-        .collect::<Vec<_>>();
-    let calibration_started = Instant::now();
-    let mut observations = Vec::new();
-    for workers in candidates.iter().copied() {
-        observations.push(observe_awproject_parallel_worker_candidate(
-            grids,
-            tile_plan,
-            &calibration_tasks,
-            samples,
-            bundles,
-            phase_tables,
-            reffreq_hz,
-            workers,
-            neon_2x2,
-        )?);
-        if calibration_started.elapsed() >= control.request.maximum_elapsed() {
-            return Ok(parallel_worker_fallback_resolution(
+    let mut online = control.online.lock().map_err(|_| {
+        ImagingError::InvalidRequest(
+            "parallel worker production-window calibration state was poisoned".to_string(),
+        )
+    })?;
+    if online.is_none() {
+        let coarse_candidates = control
+            .request
+            .coarse_candidates()
+            .iter()
+            .copied()
+            .filter(|workers| *workers > 0 && *workers <= hard_cap)
+            .collect::<Vec<_>>();
+        let mut candidates =
+            parallel_worker::adjacent_parallel_worker_candidates(&coarse_candidates, hard_cap);
+        if let Some(boundary) = control.request.highest_capacity_class_boundary() {
+            candidates.retain(|workers| *workers >= boundary);
+        }
+        candidates.sort_unstable();
+        candidates.dedup();
+        if candidates.is_empty() {
+            drop(online);
+            let workers = parallel_worker_fallback_resolution(
                 control,
                 &actual_weights,
-                &candidates,
-                "coarse exact-kernel calibration exhausted its elapsed-time budget",
-            ));
+                &[hard_cap],
+                "no topology candidate fits the production tile window",
+            );
+            return Ok(ParallelWorkerWindowDecision {
+                workers,
+                observe_production_window: false,
+            });
         }
-    }
-    let coarse_scores = parallel_worker::score_parallel_worker_candidates(
-        &actual_weights,
-        &calibration_weights,
-        &observations,
-    );
-    let Some(coarse_winner) = parallel_worker::choose_parallel_worker_score(
-        &coarse_scores,
-        control.request.score_tie_tolerance_ppm(),
-    ) else {
-        return Ok(parallel_worker_fallback_resolution(
-            control,
-            &actual_weights,
-            &candidates,
-            "coarse exact-kernel calibration produced no score",
-        ));
-    };
-    let mut neighbor_candidates = [
-        coarse_winner.workers.saturating_sub(1),
-        coarse_winner.workers.saturating_add(1).min(hard_cap),
-    ]
-    .into_iter()
-    .filter(|workers| *workers > 0 && !candidates.contains(workers))
-    .collect::<Vec<_>>();
-    neighbor_candidates.sort_unstable();
-    neighbor_candidates.dedup();
-    for workers in neighbor_candidates {
-        observations.push(observe_awproject_parallel_worker_candidate(
-            grids,
-            tile_plan,
-            &calibration_tasks,
-            samples,
-            bundles,
-            phase_tables,
-            reffreq_hz,
-            workers,
-            neon_2x2,
-        )?);
-        candidates.push(workers);
-        if calibration_started.elapsed() >= control.request.maximum_elapsed() {
-            return Ok(parallel_worker_fallback_resolution(
+        if candidates.len() == 1 {
+            let workers = candidates[0];
+            drop(online);
+            let workers = record_parallel_worker_resolution(
                 control,
-                &actual_weights,
-                &candidates,
-                "neighbor exact-kernel calibration exhausted its elapsed-time budget",
-            ));
+                ParallelWorkerResolution {
+                    workers,
+                    source: ParallelWorkerSelectionSource::AutoCalibrated,
+                    explanation: "the resource slice admits one worker candidate".to_string(),
+                },
+            );
+            eprintln!(
+                "standard_mfs_parallel_worker_plan requested=auto resolved={} source=auto-calibrated hard_cap={} candidates={} topology_high_capacity_boundary={} calibration_mode=production-windows calibration_stage=single-candidate calibration_windows=0 calibration_elapsed_ms=0.000 uncertainty={} scores=",
+                workers,
+                hard_cap,
+                workers,
+                control
+                    .request
+                    .highest_capacity_class_boundary()
+                    .unwrap_or(0),
+                workers,
+            );
+            return Ok(ParallelWorkerWindowDecision {
+                workers,
+                observe_production_window: false,
+            });
         }
+        let sequence = parallel_worker::counterbalanced_parallel_worker_sequence(
+            &candidates,
+            2,
+            control.request.reverse_calibration_order(),
+        );
+        eprintln!(
+            "standard_mfs_parallel_worker_calibration_stage stage=full-bracket-production-windows candidates={} sequence={}",
+            parallel_worker_candidate_log_value(&candidates),
+            parallel_worker_candidate_log_value(&sequence),
+        );
+        *online = Some(ParallelWorkerOnlineCalibrationState {
+            candidates,
+            sequence,
+            cursor: 0,
+            observations: Vec::new(),
+            elapsed: Duration::ZERO,
+            windows: 0,
+            extension_rounds: 0,
+        });
     }
-    candidates.sort_unstable();
-    candidates.dedup();
-    let refined_scores = parallel_worker::score_parallel_worker_candidates(
-        &actual_weights,
-        &calibration_weights,
-        &observations,
+    let state = online
+        .as_ref()
+        .expect("online worker calibration was initialized");
+    let workers = state.sequence[state.cursor];
+    if tasks.len() < workers {
+        return Ok(ParallelWorkerWindowDecision {
+            workers: requested_threads.max(1).min(tasks.len()),
+            observe_production_window: false,
+        });
+    }
+    Ok(ParallelWorkerWindowDecision {
+        workers,
+        observe_production_window: true,
+    })
+}
+
+fn observe_awproject_parallel_production_window(
+    control: &ParallelWorkerCalibrationControl,
+    workers: usize,
+    elapsed: Duration,
+    work_units: u128,
+) -> Result<(), ImagingError> {
+    let mut online = control.online.lock().map_err(|_| {
+        ImagingError::InvalidRequest(
+            "parallel worker production-window calibration state was poisoned".to_string(),
+        )
+    })?;
+    let state = online.as_mut().ok_or_else(|| {
+        ImagingError::InvalidRequest(
+            "parallel worker production-window observation has no active calibration".to_string(),
+        )
+    })?;
+    let expected_workers = state.sequence.get(state.cursor).copied().ok_or_else(|| {
+        ImagingError::InvalidRequest(
+            "parallel worker production-window calibration cursor exceeded its sequence"
+                .to_string(),
+        )
+    })?;
+    if workers != expected_workers {
+        return Err(ImagingError::InvalidRequest(format!(
+            "parallel worker production-window observation used {workers} workers, expected {expected_workers}"
+        )));
+    }
+    let elapsed_ns = elapsed.as_nanos().max(1);
+    let work_units = work_units.max(1);
+    state
+        .observations
+        .push(parallel_worker::ParallelWorkerTimingObservation {
+            workers,
+            elapsed_ns,
+            work_units,
+        });
+    state.elapsed += elapsed;
+    state.windows += 1;
+    state.cursor += 1;
+    eprintln!(
+        "standard_mfs_parallel_worker_calibration_window stage=full-bracket window={} workers={} elapsed_ms={:.3} work_units={}",
+        state.windows,
+        workers,
+        profile::millis(elapsed),
+        work_units,
     );
-    let mut repeat_candidates = refined_scores
+    if state.cursor < state.sequence.len() {
+        return Ok(());
+    }
+
+    let scores = parallel_worker::score_parallel_worker_candidates(&state.observations);
+    let uncertainty = parallel_worker::parallel_worker_uncertainty_scores(&scores)
         .iter()
-        .take(2)
         .map(|score| score.workers)
         .collect::<Vec<_>>();
-    repeat_candidates.reverse();
-    for workers in repeat_candidates {
-        observations.push(observe_awproject_parallel_worker_candidate(
-            grids,
-            tile_plan,
-            &calibration_tasks,
-            samples,
-            bundles,
-            phase_tables,
-            reffreq_hz,
-            workers,
-            neon_2x2,
-        )?);
-        if calibration_started.elapsed() >= control.request.maximum_elapsed() {
-            return Ok(parallel_worker_fallback_resolution(
-                control,
-                &actual_weights,
-                &candidates,
-                "counterbalanced exact-kernel repeats exhausted their elapsed-time budget",
-            ));
-        }
-    }
-    let final_scores = parallel_worker::score_parallel_worker_candidates(
-        &actual_weights,
-        &calibration_weights,
-        &observations,
-    );
-    let Some(selected) = parallel_worker::choose_parallel_worker_score(
-        &final_scores,
-        control.request.score_tie_tolerance_ppm(),
-    ) else {
-        return Ok(parallel_worker_fallback_resolution(
-            control,
-            &actual_weights,
-            &candidates,
-            "exact-kernel calibration produced no final score",
-        ));
-    };
-    let scores = final_scores
-        .iter()
-        .map(|score| {
-            format!(
-                "{}:{}ns:{}",
-                score.workers, score.mean_elapsed_ns, score.combined_score
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-    let explanation = format!(
-        "calibrated {} deterministic weighted tiles with scores [{}]",
-        calibration_tasks.len(),
-        scores
-    );
-    let candidate_log_value = parallel_worker_candidate_log_value(&candidates);
     eprintln!(
-        "standard_mfs_parallel_worker_plan requested=auto resolved={} source=auto-calibrated hard_cap={} candidates={} topology_high_capacity_boundary={} calibration_tasks={} calibration_elapsed_ms={:.3} scores={}",
+        "standard_mfs_parallel_worker_calibration_stage stage=full-bracket-production-windows calibration_windows={} candidates={} uncertainty={} scores={}",
+        state.windows,
+        parallel_worker_candidate_log_value(&state.candidates),
+        parallel_worker_candidate_log_value(&uncertainty),
+        parallel_worker_score_log_value(&scores),
+    );
+
+    if uncertainty.len() > 2
+        && state.extension_rounds == 0
+        && state.elapsed < control.request.maximum_elapsed()
+    {
+        let extension = parallel_worker::counterbalanced_parallel_worker_sequence(
+            &uncertainty,
+            1,
+            !control.request.reverse_calibration_order(),
+        );
+        state.sequence.extend(extension);
+        state.extension_rounds += 1;
+        return Ok(());
+    }
+    let (selected, uncertainty) = parallel_worker::choose_parallel_worker_with_topology_prior(
+        &scores,
+        control.request.highest_capacity_class_boundary(),
+        control.request.hard_cap(),
+    )
+    .ok_or_else(|| {
+        ImagingError::InvalidRequest(
+            "production-window worker calibration produced no score".to_string(),
+        )
+    })?;
+    let score_log = parallel_worker_score_log_value(&scores);
+    let uncertainty_log = parallel_worker_candidate_log_value(&uncertainty);
+    let candidate_log = parallel_worker_candidate_log_value(&state.candidates);
+    let explanation = format!(
+        "calibrated {} authoritative production windows with uncertainty [{}] and \
+         normalized scores [{}]",
+        state.windows, uncertainty_log, score_log
+    );
+    eprintln!(
+        "standard_mfs_parallel_worker_plan requested=auto resolved={} source=auto-calibrated hard_cap={} candidates={} topology_high_capacity_boundary={} calibration_mode=production-windows calibration_stage=full-bracket calibration_windows={} calibration_elapsed_ms={:.3} uncertainty={} scores={}",
         selected.workers,
-        hard_cap,
-        candidate_log_value,
+        control.request.hard_cap(),
+        candidate_log,
         control
             .request
             .highest_capacity_class_boundary()
             .unwrap_or(0),
-        calibration_tasks.len(),
-        profile::millis(calibration_started.elapsed()),
-        scores,
+        state.windows,
+        profile::millis(state.elapsed),
+        uncertainty_log,
+        score_log,
     );
-    Ok(record_parallel_worker_resolution(
-        control,
-        ParallelWorkerResolution {
-            workers: selected.workers,
-            source: ParallelWorkerSelectionSource::AutoCalibrated,
-            explanation,
-        },
-    ))
+    let resolution = ParallelWorkerResolution {
+        workers: selected.workers,
+        source: ParallelWorkerSelectionSource::AutoCalibrated,
+        explanation,
+    };
+    drop(online);
+    record_parallel_worker_resolution(control, resolution);
+    Ok(())
 }
 
 enum AwProjectCompactF64PlaneTask<'a> {
@@ -42998,7 +42972,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_kernel_worker_calibration_discards_trials_and_reuses_one_resolution() {
+    fn production_window_worker_calibration_updates_each_window_once_and_resolves() {
         let (fixture_samples, bundles) = compact_sparse_scheduler_fixture();
         let base = fixture_samples[0];
         let samples = (0..40)
@@ -43018,51 +42992,55 @@ mod tests {
             .collect::<Vec<_>>();
 
         let mut baseline = super::MosaicMtmfsSparseHostGrids::new(24, 32, 4, 1, 1).unwrap();
-        super::grid_awproject_compact_samples_sparse_host_f64(
-            &mut baseline,
-            &samples,
-            &bundles,
-            None,
-            cfg!(target_arch = "aarch64"),
-            true,
-            false,
-            2.0e9,
-            3,
-            None,
-        )
-        .unwrap();
-
         let request = super::ParallelWorkerCalibrationRequest::new(
-            vec![1, 2, 4],
+            vec![2, 3, 4],
             4,
             Some(2),
             Duration::from_secs(5),
-            20_000,
         )
         .unwrap();
         let control = super::ParallelWorkerCalibrationControl {
             request,
             resolution: std::sync::Arc::new(std::sync::OnceLock::new()),
+            online: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
         let mut calibrated = super::MosaicMtmfsSparseHostGrids::new(24, 32, 4, 1, 1).unwrap();
-        super::grid_awproject_compact_samples_sparse_host_f64(
-            &mut calibrated,
-            &samples,
-            &bundles,
-            None,
-            cfg!(target_arch = "aarch64"),
-            true,
-            false,
-            2.0e9,
-            1,
-            Some(&control),
-        )
-        .unwrap();
+        for _ in 0..32 {
+            super::grid_awproject_compact_samples_sparse_host_f64(
+                &mut baseline,
+                &samples,
+                &bundles,
+                None,
+                cfg!(target_arch = "aarch64"),
+                true,
+                false,
+                2.0e9,
+                3,
+                None,
+            )
+            .unwrap();
+            super::grid_awproject_compact_samples_sparse_host_f64(
+                &mut calibrated,
+                &samples,
+                &bundles,
+                None,
+                cfg!(target_arch = "aarch64"),
+                true,
+                false,
+                2.0e9,
+                1,
+                Some(&control),
+            )
+            .unwrap();
+            if control.resolution.get().is_some() {
+                break;
+            }
+        }
         let resolution = control
             .resolution
             .get()
-            .expect("the first pristine window resolves worker calibration");
-        assert!((1..=4).contains(&resolution.workers));
+            .expect("counterbalanced production windows resolve worker calibration");
+        assert!((2..=4).contains(&resolution.workers));
 
         for kind in [
             super::MosaicMtmfsSparsePlaneKind::Psf,
@@ -43081,6 +43059,18 @@ mod tests {
         assert_eq!(
             super::parallel_worker_candidate_log_value(&[4, 6, 8, 10]),
             "4,6,8,10"
+        );
+        assert_eq!(
+            super::parallel_worker_score_log_value(&[
+                super::parallel_worker::ParallelWorkerCandidateScore {
+                    workers: 6,
+                    mean_elapsed_ns: 9,
+                    interval_min_score: 10,
+                    interval_max_score: 11,
+                    combined_score: 10,
+                }
+            ]),
+            "6:9ns:10:10-11"
         );
         assert_eq!(
             super::parallel_worker_reason_log_value(
