@@ -582,6 +582,83 @@ class PublicationRecoveryWorkflowTests(unittest.TestCase):
 
 
 class CompletedOuterPublicationRecoveryTests(unittest.TestCase):
+    def test_repeatability_recovery_removes_exact_accepted_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            comparison_root = root / "comparisons"
+            comparison_root.mkdir()
+            workspace = comparison_root / "casa-measured-001-structure-workspace"
+            workspace.mkdir()
+            suffix = ".image.tt0"
+            safe_suffix = suffix.strip(".").replace(".", "_")
+            digest = hashlib.sha256(suffix.encode("utf-8")).hexdigest()[:12]
+            product_workspace = workspace / f"{safe_suffix}-{digest}"
+            product_workspace.mkdir()
+            for name in ("left.f64", "right.f64", "diff.f64", "coverage.u8"):
+                (product_workspace / name).write_bytes(b"")
+
+            request = {
+                "mode": "full",
+                "products": [suffix],
+                "structure_workspace_dir": str(workspace),
+                "panel_dir": str(comparison_root / "panels"),
+            }
+            raw_output = {
+                "status": "completed",
+                "products": {
+                    suffix: {
+                        "structured_difference": {"review": {"label": "good"}}
+                    }
+                },
+            }
+            artifact_prefix = comparison_root / "casa-measured-001"
+            artifact_prefix.with_suffix(".comparison-input.json").write_text(
+                json.dumps(request), encoding="utf-8"
+            )
+            artifact_prefix.with_suffix(".comparison.json").write_text(
+                json.dumps(raw_output), encoding="utf-8"
+            )
+            artifact_prefix.with_suffix(".comparison.log").write_text(
+                "completed\n", encoding="utf-8"
+            )
+            plan = {"artifacts": {"comparison_root": str(comparison_root)}}
+            measured = [{"name": "measured-001"}]
+
+            with (
+                mock.patch.object(
+                    casa_tclean_workflow,
+                    "casa_repeatability_comparison_request",
+                    return_value=request,
+                ),
+                mock.patch.object(
+                    casa_tclean_workflow,
+                    "normalize_comparison_request",
+                    return_value=request,
+                ),
+                mock.patch.object(
+                    casa_tclean_workflow, "validate_comparison_output"
+                ),
+                mock.patch.object(
+                    casa_tclean_workflow,
+                    "apply_tolerance_contract",
+                    side_effect=lambda output, _request: output,
+                ),
+                mock.patch.object(
+                    casa_tclean_workflow,
+                    "summarize_casa_repeatability",
+                    side_effect=lambda _plan, _measured, comparisons: {
+                        "status": "completed",
+                        "comparisons": comparisons,
+                    },
+                ),
+            ):
+                recovered = casa_tclean_workflow.recover_casa_repeatability(
+                    plan, measured
+                )
+
+            self.assertEqual("completed", recovered["status"])
+            self.assertFalse(workspace.exists())
+
     def test_recovery_rebinds_existing_artifacts_without_reinvocation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

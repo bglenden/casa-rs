@@ -626,14 +626,22 @@ def _validate_source_region_measurement(
     value_sum = _finite_number(
         measurement.get("integrated_pixel_sum"), label=f"{label} pixel sum"
     )
-    beam_area = _finite_number(
-        measurement.get("beam_area_pixels"), label=f"{label} beam area"
-    )
-    integrated_flux = _finite_number(
-        measurement.get("integrated_flux"), label=f"{label} integrated flux"
-    )
-    if beam_area <= 0.0 or not _numbers_close(integrated_flux, value_sum / beam_area):
-        raise ValueError(f"{label} integrated flux is not derived")
+    beam_area_value = measurement.get("beam_area_pixels")
+    integrated_flux_value = measurement.get("integrated_flux")
+    if beam_area_value is None or integrated_flux_value is None:
+        if beam_area_value is not None or integrated_flux_value is not None:
+            raise ValueError(
+                f"{label} beam area and integrated flux must be null together"
+            )
+    else:
+        beam_area = _finite_number(beam_area_value, label=f"{label} beam area")
+        integrated_flux = _finite_number(
+            integrated_flux_value, label=f"{label} integrated flux"
+        )
+        if beam_area <= 0.0 or not _numbers_close(
+            integrated_flux, value_sum / beam_area
+        ):
+            raise ValueError(f"{label} integrated flux is not derived")
     centroid = measurement.get("centroid_pixels")
     if (
         not isinstance(centroid, list)
@@ -2339,7 +2347,7 @@ def compare_products(
             )
         else:
             try:
-                _remove_accepted_structure_workspace(request)
+                remove_accepted_structure_workspace(comparison, request)
             except ValueError as error:
                 reason = f"accepted comparison workspace cleanup failed: {error}"
                 comparison["status"] = "workspace_cleanup_failed"
@@ -2410,7 +2418,14 @@ def _record_structure_workspace_failure(request: dict[str, Any], reason: str) ->
     )
 
 
-def _remove_accepted_structure_workspace(request: dict[str, Any]) -> None:
+def remove_accepted_structure_workspace(
+    comparison: dict[str, Any], request: dict[str, Any]
+) -> None:
+    """Delete an accepted full-comparison workspace after exact safety checks."""
+
+    rejected = _full_comparison_rejection(comparison)
+    if rejected is not None:
+        raise ValueError(f"full comparison is not accepted: {rejected}")
     root = pathlib.Path(request["structure_workspace_dir"])
     if not root.is_absolute() or not root.is_dir() or root.is_symlink():
         raise ValueError("structure workspace is missing, non-directory, or a symlink")
