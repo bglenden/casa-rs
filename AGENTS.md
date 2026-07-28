@@ -74,6 +74,24 @@ the smallest local patch, even when that means changing more in-repo code now.
 - Do not add backlog-style `TODO`, `FIXME`, `XXX`, or `HACK` comments unless
   they reference a GitHub issue.
 
+## Plan First And Anti-Slop
+
+For substantial code changes, plan the target structure before editing. Identify
+existing behavior to reuse, the canonical ownership boundary, the
+migration/deletion path, and the affected verification. A small local change
+needs only a proportionate plan; do not add ceremony for its own sake.
+
+- Prefer the simplest coherent architecture, not the smallest patch or the
+  fewest lines.
+- Avoid unnecessary defensive handling, type-system escapes, one-use
+  scaffolding, narration comments, trivial wrappers, speculative abstractions,
+  helper proliferation, deep nesting, and repeated conditional ladders.
+- Do not keep appending unrelated decisions to an existing complexity hotspot.
+  Redistribute responsibility along real domain or ownership boundaries.
+- After correctness, perform a bounded anti-slop pass over touched and directly
+  exposed code. Simplify findings inside the approved scope and report larger
+  adjacent erosion instead of silently expanding the wave.
+
 ## WDAD
 
 This repo uses Scaled WDAD v0.4.
