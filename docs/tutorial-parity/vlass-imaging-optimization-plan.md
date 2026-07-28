@@ -2249,8 +2249,22 @@ Student-t correction, is:
 
 `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260728T030425Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-ea8a4032.json`
 
-Production `auto` remains gated pending a fresh run of the final resolver,
-Mac-mini topology evidence, and full-band correctness/performance evidence.
+The final laptop resolver retained `4,5,6,7,8,9,10` in the two-sided 95%
+overlap, selected seven from the `4P+6E` topology prior, and completed the
+first two source blocks in `40.006` seconds. This agrees with the independently
+measured explicit neighborhood and is faster than the explicit-seven mean of
+`43.792` seconds:
+
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260728T031448Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-17c57a43.json`
+
+The pushed checkpoint also passed the focused planner and authoritative
+single-update exact-output tests on the `4P+4E`, 24-GiB Mac mini. Its topology
+produces coarse candidates `4,5,7,8`, expands to `4..8`, and uses six as the
+overlap prior. The mini did not contain the VLASS MS or 23-GiB packed-CF cache,
+so no dataset timing was fabricated or transferred for this check.
+
+Production `auto` remains gated pending full-band correctness/performance
+evidence and Brian's explicit incorporation approval.
 
 The first implementation slice is behind
 `CASA_RS_STANDARD_MFS_WORKER_PLANNER_EXPERIMENT` in addition to the existing
