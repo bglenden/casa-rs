@@ -45282,17 +45282,7 @@ fn run_products_to_image_product_set<'a>(
             products.mosaic_weight.clone(),
         )
         .map_err(|error| error.to_string())?,
-        RunProducts::Mtmfs(products) => {
-            let mut set = mtmfs_image_product_set(&products.result);
-            append_mtmfs_primary_beam_products(
-                config,
-                coords,
-                &mut set,
-                products,
-                single_field_pb_context,
-            )?;
-            return Ok(set);
-        }
+        RunProducts::Mtmfs(products) => mtmfs_image_product_set(&products.result),
     };
 
     if let Some(clean_mask) = clean_mask {
@@ -45309,12 +45299,21 @@ fn run_products_to_image_product_set<'a>(
             }
         }
     }
-    append_single_plane_primary_beam_products(
-        config,
-        coords,
-        &mut product_set,
-        single_field_pb_context,
-    )?;
+    match result {
+        RunProducts::Mtmfs(products) => append_mtmfs_primary_beam_products(
+            config,
+            coords,
+            &mut product_set,
+            products,
+            single_field_pb_context,
+        )?,
+        RunProducts::Mfs(_) | RunProducts::Cube(_) => append_single_plane_primary_beam_products(
+            config,
+            coords,
+            &mut product_set,
+            single_field_pb_context,
+        )?,
+    }
     Ok(product_set)
 }
 
@@ -59428,9 +59427,17 @@ mod tests {
             None,
         );
 
-        let product_set =
-            run_products_to_image_product_set(&config, &coords, &run_products, None, None)
-                .expect("assemble mosaic MT-MFS PB products");
+        let clean_mask = EffectiveCleanMask::Plane(
+            Array2::from_shape_vec((2, 2), vec![true, false, true, false]).unwrap(),
+        );
+        let product_set = run_products_to_image_product_set(
+            &config,
+            &coords,
+            &run_products,
+            Some(&clean_mask),
+            None,
+        )
+        .expect("assemble mosaic MT-MFS PB products");
         let suffixes = product_set
             .products()
             .iter()
@@ -59444,6 +59451,20 @@ mod tests {
         assert!(suffixes.contains(&".image.tt0.pbcor".to_string()));
         assert!(suffixes.contains(&".image.tt1.pbcor".to_string()));
         assert!(!suffixes.contains(&".alpha.pbcor".to_string()));
+        assert!(suffixes.contains(&".mask".to_string()));
+        let clean_mask_product = product_set
+            .products()
+            .iter()
+            .find(|product| product.suffix() == ".mask")
+            .expect("MT-MFS user clean mask product");
+        assert_eq!(
+            clean_mask_product
+                .data()
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![1.0, 0.0, 1.0, 0.0],
+        );
         for product in product_set.products().iter().filter(|product| {
             product.suffix().starts_with(".residual.tt")
                 || product.suffix().starts_with(".image.tt")

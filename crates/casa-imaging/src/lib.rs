@@ -4697,6 +4697,14 @@ where
         clean_request.clean.niter,
         &mut warnings,
     )?;
+    if profile::standard_mfs_profile_detail_enabled() {
+        for scale_hessian in &scale_hessians {
+            eprintln!(
+                "mosaic_mtmfs_scale_hessian scale_pixels={} hessian={:?} inverse={:?}",
+                scale_hessian.scale_size, scale_hessian.hessian, scale_hessian.inverse,
+            );
+        }
+    }
     let principal_hessian = &scale_hessians[0];
     let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
         &psf_state.psf_terms[0],
@@ -4771,6 +4779,27 @@ where
             &model_terms[0],
             probe,
         ));
+        if profile::standard_mfs_profile_detail_enabled() {
+            let trace = minor_cycle_traces
+                .last()
+                .expect("the just-recorded MT-MFS minor-cycle trace must exist");
+            eprintln!(
+                "mosaic_mtmfs_minor_cycle cycle={} start_iteration={} reported_updates={} actual_updates={} start_peak={} approximate_end_peak={} cycle_threshold={} nsigma_threshold={} model_flux={} initial_scale_pixels={:?} initial_candidate_strength={:?} initial_candidate_position={:?} stop_reason={:?}",
+                trace.cycle_index,
+                trace.start_reported_iteration,
+                trace.reported_updates,
+                trace.actual_updates,
+                trace.start_peak_residual_jy_per_beam,
+                trace.end_peak_residual_jy_per_beam,
+                trace.cycle_threshold_jy_per_beam,
+                trace.nsigma_threshold_jy_per_beam,
+                trace.model_flux_jy,
+                trace.initial_scale_pixels,
+                trace.initial_candidate_strength_jy_per_beam,
+                trace.initial_candidate_position,
+                trace.clean_stop_reason,
+            );
+        }
         reported_minor_iterations += outcome.reported_updates;
         final_cycle_threshold_jy_per_beam = outcome.final_cycle_threshold_jy_per_beam;
         let mut stop_after_refresh = None::<CleanStopReason>;
@@ -4839,6 +4868,15 @@ where
         refresh_latest_minor_cycle_trace_residual(&mut minor_cycle_traces, &residual_terms[0]);
         let refreshed_peak =
             peak_abs_value_masked(&residual_terms[0], clean_request.clean_mask.as_ref());
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "mosaic_mtmfs_residual_refresh major_cycle={} reported_iterations={} refreshed_peak={} model_flux={}",
+                major_cycles,
+                reported_minor_iterations,
+                refreshed_peak,
+                model_terms[0].iter().copied().sum::<f32>(),
+            );
+        }
         let refreshed_nsigma_threshold_jy_per_beam = nsigma_threshold_jy_per_beam(
             &residual_terms[0],
             clean_request.clean_mask.as_ref(),
@@ -4882,6 +4920,14 @@ where
             None,
         )?;
         refresh_latest_minor_cycle_trace_residual(&mut minor_cycle_traces, &residual_terms[0]);
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "mosaic_mtmfs_final_residual_refresh reported_iterations={} refreshed_peak={} model_flux={}",
+                reported_minor_iterations,
+                peak_abs_value_masked(&residual_terms[0], clean_request.clean_mask.as_ref()),
+                model_terms[0].iter().copied().sum::<f32>(),
+            );
+        }
     }
     let accounted = stage_timings
         .minor_cycle_solve
@@ -7576,6 +7622,8 @@ struct AwProjectCompactSourceSample {
     group_index: usize,
     first_imaging_plan: AwProjectCompactSamplePlan,
     second_imaging_plan: AwProjectCompactSamplePlan,
+    first_prediction_plan: AwProjectCompactSamplePlan,
+    second_prediction_plan: AwProjectCompactSamplePlan,
     first_psf_plan: AwProjectCompactSamplePlan,
     second_psf_plan: AwProjectCompactSamplePlan,
     first_weight_plan: AwProjectCompactSamplePlan,
@@ -7590,13 +7638,15 @@ struct AwProjectCompactTapSpec {
 }
 
 type AwProjectCompactSourceOutcome =
-    Result<[AwProjectCompactTapSpec; 6], AwProjectCompactSourceRejection>;
+    Result<[AwProjectCompactTapSpec; 8], AwProjectCompactSourceRejection>;
 
 enum AwProjectCompactSourceRejection {
     NotGridable,
     InvalidInput,
     FirstImaging(gridder::AwProjectSamplePlanRejection),
     SecondImaging(gridder::AwProjectSamplePlanRejection),
+    FirstPrediction(gridder::AwProjectSamplePlanRejection),
+    SecondPrediction(gridder::AwProjectSamplePlanRejection),
     FirstPsf(gridder::AwProjectSamplePlanRejection),
     SecondPsf(gridder::AwProjectSamplePlanRejection),
 }
@@ -12079,6 +12129,7 @@ fn classify_awproject_compact_source_sample(
     cache: &AwConvolutionFunctionResidentCache,
     controls: &AwProjectControls,
     pa_deg: f64,
+    model_prediction: bool,
 ) -> Result<AwProjectCompactSourceOutcome, ImagingError> {
     if !batch.gridable[sample_index] {
         return Ok(Err(AwProjectCompactSourceRejection::NotGridable));
@@ -12125,6 +12176,22 @@ fn classify_awproject_compact_source_sample(
     let second_key = select_key(uvw_lambda[2], 15, "LL")?;
     let first_zero_w_key = select_key(0.0, 0, "W=0 RR weight")?;
     let second_zero_w_key = select_key(0.0, 15, "W=0 LL weight")?;
+    let select_prediction_key = |mueller_element, label: &str| {
+        cache
+            .cache()
+            .select_key_for_prediction_sample(
+                frequency_hz,
+                uvw_lambda[2],
+                mueller_element,
+                pa_deg,
+            )
+            .ok_or_else(|| {
+                ImagingError::ConvolutionFunctionCache(format!(
+                    "no {label} AWProject prediction CF cell for frequency {frequency_hz} Hz, W {} lambda",
+                    uvw_lambda[2],
+                ))
+            })
+    };
 
     let first_imaging = match awproject_compact_tap_spec(
         gridder,
@@ -12151,6 +12218,49 @@ fn classify_awproject_compact_source_sample(
         Err(reason) => {
             return Ok(Err(AwProjectCompactSourceRejection::SecondImaging(reason)));
         }
+    };
+    // CASA GridToData selects a distinct prediction CF: normal frequency and
+    // the inverse direct/conjugate Mueller mapping. Reusing and conjugating
+    // the forward gridding bundle is only valid for a scalar symmetric CF.
+    let first_prediction = if model_prediction {
+        let key = select_prediction_key(0, "RR")?;
+        match awproject_compact_tap_spec(
+            gridder,
+            cache,
+            group_index,
+            key,
+            AwProjectCompactKernelKind::Imaging,
+            uvw_lambda,
+        ) {
+            Ok(spec) => spec,
+            Err(reason) => {
+                return Ok(Err(AwProjectCompactSourceRejection::FirstPrediction(
+                    reason,
+                )));
+            }
+        }
+    } else {
+        first_imaging
+    };
+    let second_prediction = if model_prediction {
+        let key = select_prediction_key(15, "LL")?;
+        match awproject_compact_tap_spec(
+            gridder,
+            cache,
+            group_index,
+            key,
+            AwProjectCompactKernelKind::Imaging,
+            uvw_lambda,
+        ) {
+            Ok(spec) => spec,
+            Err(reason) => {
+                return Ok(Err(AwProjectCompactSourceRejection::SecondPrediction(
+                    reason,
+                )));
+            }
+        }
+    } else {
+        second_imaging
     };
     let first_psf = match awproject_compact_tap_spec(
         gridder,
@@ -12207,6 +12317,8 @@ fn classify_awproject_compact_source_sample(
     Ok(Ok([
         first_imaging,
         second_imaging,
+        first_prediction,
+        second_prediction,
         first_psf,
         second_psf,
         first_weight,
@@ -12231,6 +12343,14 @@ fn observe_awproject_compact_source_rejection(
             accumulation.aw_sample_census.observe_plan_rejection(reason);
         }
         AwProjectCompactSourceRejection::SecondImaging(reason) => {
+            accumulation.aw_sample_census.rejected_ll_imaging_plan += 1;
+            accumulation.aw_sample_census.observe_plan_rejection(reason);
+        }
+        AwProjectCompactSourceRejection::FirstPrediction(reason) => {
+            accumulation.aw_sample_census.rejected_rr_imaging_plan += 1;
+            accumulation.aw_sample_census.observe_plan_rejection(reason);
+        }
+        AwProjectCompactSourceRejection::SecondPrediction(reason) => {
             accumulation.aw_sample_census.rejected_ll_imaging_plan += 1;
             accumulation.aw_sample_census.observe_plan_rejection(reason);
         }
@@ -12404,6 +12524,7 @@ fn classify_awproject_compact_source_chunk(
     start: usize,
     end: usize,
     requested_workers: usize,
+    model_prediction: bool,
 ) -> Result<Vec<Result<AwProjectCompactSourceOutcome, ImagingError>>, ImagingError> {
     let sample_count = end.saturating_sub(start);
     let worker_count = requested_workers.max(1).min(sample_count.max(1));
@@ -12421,6 +12542,7 @@ fn classify_awproject_compact_source_chunk(
                     cache,
                     controls,
                     pa_deg,
+                    model_prediction,
                 )
             })
             .collect());
@@ -12448,6 +12570,7 @@ fn classify_awproject_compact_source_chunk(
                             cache,
                             controls,
                             pa_deg,
+                            model_prediction,
                         )
                     })
                     .collect::<Vec<_>>()
@@ -12477,10 +12600,10 @@ fn awproject_compact_plan(
 }
 
 fn awproject_compact_candidate_tap_bytes(
-    specs: &[AwProjectCompactTapSpec; 6],
+    specs: &[AwProjectCompactTapSpec],
     existing: &AwProjectCompactTapIndex,
 ) -> Result<usize, ImagingError> {
-    let mut candidate_keys = [None; 6];
+    let mut candidate_keys = [None; 8];
     let mut candidate_count = 0usize;
     let mut additional_tap_bytes = 0usize;
     for spec in specs {
@@ -12823,6 +12946,8 @@ fn prepare_awproject_compact_planned_samples(
         for (role, plan) in [
             sample.first_imaging_plan,
             sample.second_imaging_plan,
+            sample.first_prediction_plan,
+            sample.second_prediction_plan,
             sample.first_psf_plan,
             sample.second_psf_plan,
         ]
@@ -12833,9 +12958,11 @@ fn prepare_awproject_compact_planned_samples(
                 rejected = Some(match role {
                     0 => AwProjectCompactSourceRejection::FirstImaging(reason),
                     1 => AwProjectCompactSourceRejection::SecondImaging(reason),
-                    2 => AwProjectCompactSourceRejection::FirstPsf(reason),
-                    3 => AwProjectCompactSourceRejection::SecondPsf(reason),
-                    _ => unreachable!("compact AWProject role index is bounded by four plans"),
+                    2 => AwProjectCompactSourceRejection::FirstPrediction(reason),
+                    3 => AwProjectCompactSourceRejection::SecondPrediction(reason),
+                    4 => AwProjectCompactSourceRejection::FirstPsf(reason),
+                    5 => AwProjectCompactSourceRejection::SecondPsf(reason),
+                    _ => unreachable!("compact AWProject role index is bounded by six plans"),
                 });
                 break;
             }
@@ -12878,6 +13005,10 @@ fn prepare_awproject_compact_planned_samples(
             awproject_ready_compact_tap(bundles, sample.first_imaging_plan.tap_bundle);
         let second_imaging =
             awproject_ready_compact_tap(bundles, sample.second_imaging_plan.tap_bundle);
+        let first_prediction_tap =
+            awproject_ready_compact_tap(bundles, sample.first_prediction_plan.tap_bundle);
+        let second_prediction_tap =
+            awproject_ready_compact_tap(bundles, sample.second_prediction_plan.tap_bundle);
         let first_psf = awproject_ready_compact_tap(bundles, sample.first_psf_plan.tap_bundle);
         let second_psf = awproject_ready_compact_tap(bundles, sample.second_psf_plan.tap_bundle);
         let residual_norm_sum = f64::from(first_imaging.normalization.norm())
@@ -12913,15 +13044,15 @@ fn prepare_awproject_compact_planned_samples(
                 let taylor_weight = taylor_weights[model_order];
                 first_prediction += awproject_compact_degrid_sample(
                     model_grid,
-                    sample.first_imaging_plan,
-                    first_imaging,
+                    sample.first_prediction_plan,
+                    first_prediction_tap,
                     sample.group_index,
                     phase_tables,
                 ) * taylor_weight;
                 second_prediction += awproject_compact_degrid_sample(
                     model_grid,
-                    sample.second_imaging_plan,
-                    second_imaging,
+                    sample.second_prediction_plan,
+                    second_prediction_tap,
                     sample.group_index,
                     phase_tables,
                 ) * taylor_weight;
@@ -13189,6 +13320,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                     cursor,
                     plan_end,
                     plan_workers,
+                    model_grids.is_some(),
                 )?);
             }
             let outcome = pending_outcomes
@@ -13235,7 +13367,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                 break;
             }
 
-            let mut bundle_indices = [0usize; 6];
+            let mut bundle_indices = [0usize; 8];
             for (role_index, spec) in specs.into_iter().enumerate() {
                 let bundle_index = if let Some(&index) = tap_indices.get(&spec.request.key) {
                     index
@@ -13252,10 +13384,15 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                 group_index: source_group_route[cursor],
                 first_imaging_plan: awproject_compact_plan(specs[0].geometry, bundle_indices[0]),
                 second_imaging_plan: awproject_compact_plan(specs[1].geometry, bundle_indices[1]),
-                first_psf_plan: awproject_compact_plan(specs[2].geometry, bundle_indices[2]),
-                second_psf_plan: awproject_compact_plan(specs[3].geometry, bundle_indices[3]),
-                first_weight_plan: awproject_compact_plan(specs[4].geometry, bundle_indices[4]),
-                second_weight_plan: awproject_compact_plan(specs[5].geometry, bundle_indices[5]),
+                first_prediction_plan: awproject_compact_plan(specs[2].geometry, bundle_indices[2]),
+                second_prediction_plan: awproject_compact_plan(
+                    specs[3].geometry,
+                    bundle_indices[3],
+                ),
+                first_psf_plan: awproject_compact_plan(specs[4].geometry, bundle_indices[4]),
+                second_psf_plan: awproject_compact_plan(specs[5].geometry, bundle_indices[5]),
+                first_weight_plan: awproject_compact_plan(specs[6].geometry, bundle_indices[6]),
+                second_weight_plan: awproject_compact_plan(specs[7].geometry, bundle_indices[7]),
             });
             planned_tap_bytes = next_tap_bytes;
             accumulation.aw_sample_census.attempted_samples += 1;
