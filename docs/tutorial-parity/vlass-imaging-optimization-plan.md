@@ -2829,6 +2829,33 @@ Until the post-hardening smokes and exact fiducials exist, #446 stays open and
 the implementation PR stays draft. Do not use `Closes #446` or treat the
 capacity-stop partial as accepted evidence.
 
+### 2026-07-28 AW prediction-CF correctness checkpoint
+
+The first full-size serial clean run preserved dirty PSF, residual, PB, weight,
+and sum-weight parity but diverged during model prediction. A 4,096-pixel,
+four-SPW, one-component diagnostic isolated the failure to the first major
+cycle: the initial masked peak was `0.026857983 Jy/beam`, a positive
+`0.0025252474 Jy` TT0 component was selected, and the exact refresh incorrectly
+flipped the source negative and raised the masked peak to
+`0.049207516 Jy/beam`.
+
+CASA `AWVisResampler::GridToData` does not reuse the forward-gridding CF. It
+selects the normal-frequency CF and reverses the direct/conjugate Mueller
+mapping before applying W-sign and POINTING-phase conjugation. The compact
+casa-rs replay had reused the forward gridding bundle and conjugated its taps.
+Commit `c1f7a061d` adds the dedicated prediction selection and source-order
+prediction bundles. With otherwise identical diagnostic parameters, the exact
+refresh reduced the masked peak to `0.021109872 Jy/beam`, accepted all `98,239`
+samples, and emitted no divergence warning.
+
+The same commit removes an MT-MFS frontend early return that bypassed the
+already-shared clean-mask product writer. The `mask-image` and `mask-box`
+parameters now produce the required `.mask` product for MT-MFS as they already
+did for the other imaging families. Focused selector, synthetic AW clean, and
+MT-MFS product-inventory tests pass. Full `12,150`-pixel serial clean parity
+remains the next correctness gate; the reduced diagnostic is not acceptance
+evidence.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
