@@ -59,6 +59,7 @@ from .image_compare import (
     apply_tolerance_contract,
     compare_products as compare_image_products,
     normalize_comparison_request,
+    remove_accepted_structure_workspace,
     validate_comparison_output,
 )
 from .host_telemetry import (
@@ -2273,10 +2274,13 @@ def recover_casa_repeatability(
             )
         structure_workspace = pathlib.Path(request["structure_workspace_dir"])
         if request["mode"] == "full" and structure_workspace.exists():
-            raise ProtocolError(
-                f"recovered accepted comparison retained workspace: "
-                f"{structure_workspace}"
-            )
+            try:
+                remove_accepted_structure_workspace(comparison, request)
+            except ValueError as error:
+                raise ProtocolError(
+                    "recovered accepted comparison workspace cleanup failed: "
+                    f"{error}"
+                ) from error
         comparison.update(
             {
                 "input": str(input_path),

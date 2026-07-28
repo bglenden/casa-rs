@@ -452,6 +452,20 @@ class ImageComparisonProtocolTests(unittest.TestCase):
     def test_nested_product_results_are_rederived_before_acceptance(self) -> None:
         request = normalize_comparison_request(comparison_request())
 
+        beamless = comparison_output(request)
+        beamless_region = beamless["products"][".image.tt0"]["source_regions"][0]
+        for side in ("left", "right"):
+            beamless_region[side]["beam_area_pixels"] = None
+            beamless_region[side]["integrated_flux"] = None
+        validate_comparison_output(beamless, request)
+
+        half_beamless = copy.deepcopy(beamless)
+        half_beamless["products"][".image.tt0"]["source_regions"][0]["left"][
+            "beam_area_pixels"
+        ] = 1.0
+        with self.assertRaisesRegex(ValueError, "must be null together"):
+            validate_comparison_output(half_beamless, request)
+
         bad_metadata = comparison_output(request)
         bad_metadata["products"][".image.tt0"]["metadata"]["right"]["unit"] = "K"
         with self.assertRaisesRegex(ValueError, "metadata parity is not derived"):
