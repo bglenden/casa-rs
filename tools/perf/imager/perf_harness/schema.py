@@ -3139,6 +3139,7 @@ def _validate_backend_plan_logs(value: Any, *, source: str) -> None:
     bucket_names = {
         "single_plane_execution_plan",
         "standard_mfs_runtime_plan",
+        "standard_mfs_parallel_worker_plan",
         "source_stream_memory_plan",
         "imaging_source_read_ahead",
         "standard_mfs_source_read_ahead",

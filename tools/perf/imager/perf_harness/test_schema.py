@@ -259,7 +259,7 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(12150, manifest["imaging"]["imsize"])
         self.assertTrue(manifest["imaging"]["parallel"])
         self.assertEqual("cpu", manifest["imaging"]["standard_mfs_acceleration"])
-        self.assertEqual(1, manifest["imaging"]["standard_mfs_grid_threads"])
+        self.assertEqual(4, manifest["imaging"]["standard_mfs_grid_threads"])
         self.assertEqual(1, manifest["imaging"]["imaging_prepare_workers"])
         self.assertEqual(1, manifest["imaging"]["imaging_read_ahead_blocks"])
         self.assertEqual("f64", manifest["imaging"]["imaging_fft_precision"])
@@ -418,6 +418,36 @@ class SchemaTests(unittest.TestCase):
                 protocol_variant=schema_contract.COMPARISON_SCHEMA_VERSION,
                 source="malformed missing product",
             )
+
+    def test_backend_plan_logs_accept_parallel_worker_planner_telemetry(self) -> None:
+        entry = {
+            "name": "standard_mfs_parallel_worker_plan",
+            "raw": (
+                "standard_mfs_parallel_worker_plan requested=auto resolved=7 "
+                "source=auto-calibrated"
+            ),
+            "fields": {
+                "requested": "auto",
+                "resolved": 7,
+                "source": "auto-calibrated",
+            },
+        }
+        logs = {
+            "schema_version": 1,
+            "summary": {"resolved_parallel_workers": 7},
+            "standard_mfs_parallel_worker_plan": [entry],
+            "collection_stats": {
+                "standard_mfs_parallel_worker_plan": {
+                    "observed_count": 1,
+                    "retained_count": 1,
+                    "truncated": False,
+                }
+            },
+        }
+
+        schema_contract._validate_backend_plan_logs(
+            logs, source="parallel worker planner"
+        )
 
     def test_workload_rejects_unknown_and_unversioned_shapes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

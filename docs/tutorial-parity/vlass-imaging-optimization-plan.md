@@ -2263,8 +2263,49 @@ produces coarse candidates `4,5,7,8`, expands to `4..8`, and uses six as the
 overlap prior. The mini did not contain the VLASS MS or 23-GiB packed-CF cache,
 so no dataset timing was fabricated or transferred for this check.
 
-Production `auto` remains gated pending full-band correctness/performance
-evidence and Brian's explicit incorporation approval.
+The planner-selected full-band run then resolved seven workers in both the
+warmup and measured invocations. The warmup completed in `520.892325` seconds;
+the measured invocation completed in `696.643812` seconds. Against the frozen
+`8,183.264`-second CASA all-fields baseline, the measured result is `11.746x`
+faster and clears the `818.326`-second 10x boundary by `121.682` seconds
+(`14.9%`). All `25,030,848` attempted samples were accepted, all eighteen
+products were written, and every numerical, shape, unit, coordinate, mask,
+inventory, source-region, and structured-difference tolerance passed. The
+unchanged exact restoring-beam metadata defect remains on `.alpha`,
+`.alpha.error`, `.image.tt0`, `.image.tt1`, and `.psf.tt0`: casa-rs stored
+`2.955340623855591` by `2.0842981338500977` arcsec at
+`71.11363220214844` degrees, while CASA stored
+`2.95534086227417` by `2.0842983722686768` arcsec at
+`71.11363983154297` degrees.
+
+The harness completed that comparison but rejected the final receipt because
+its telemetry schema had not yet admitted the new
+`standard_mfs_parallel_worker_plan` log bucket. The products and raw evidence
+were preserved rather than rerunning imaging. The log is
+`/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260728T031849Z-vlass-fragment-all-fields-full-band-fftw-f64-experiment-d40678d6.log`
+(`557374e36ab5053ec715e63d67381cc5e712b1a2e1391286ed8e2b53fe49c1b3`);
+the comparison is the adjacent `.comparison.json`
+(`20e2c15424fcefcdc515836b6a7ed028a07c5d22968bc5640234c968f3b0047d`).
+The strict schema now recognizes that bounded telemetry collection, with a
+focused regression test.
+
+This run also exposed the remaining performance variability. Warmup compact
+tap planning, materialization, packing, and sparse-tile replay totaled
+`44.626`, `194.986`, `192.725`, and `226.517` seconds, respectively. The
+measured invocation spent `44.996`, `347.126`, `344.903`, and `239.504`
+seconds in the same owners. A bounded attempt to turn the existing mapped-CF
+descriptor prefetch into actual range-specific `MADV_WILLNEED` page prefetch
+was negative: the first two four-SPW blocks took `50.379` seconds versus the
+retained planner path's approximately `40.006` seconds, with the second block
+alone spending `11.990` seconds in materialization. The run was stopped and
+the code was removed. Its interrupted receipt is
+`/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260728T035859Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-29a13398.json`
+(`5a953169f3caac7a28ef4287e38738767114a91a6c9e94894e63036f6aef831c`).
+
+Production `auto` now has the required dirty full-band
+correctness/performance evidence, but remains experiment-gated pending Brian's
+explicit incorporation approval. The exact restoring-beam defect remains a
+wave-closeout blocker.
 
 The first implementation slice is behind
 `CASA_RS_STANDARD_MFS_WORKER_PLANNER_EXPERIMENT` in addition to the existing
