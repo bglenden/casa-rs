@@ -10087,6 +10087,22 @@ fn record_parallel_worker_resolution(
         .workers
 }
 
+fn parallel_worker_candidate_log_value(candidates: &[usize]) -> String {
+    candidates
+        .iter()
+        .map(usize::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn parallel_worker_reason_log_value(reason: &str) -> String {
+    reason
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("_")
+        .replace('=', ":")
+}
+
 fn parallel_worker_fallback_resolution(
     control: &ParallelWorkerCalibrationControl,
     actual_weights: &[u64],
@@ -10100,16 +10116,18 @@ fn parallel_worker_fallback_resolution(
     )
     .max(1);
     let explanation = reason.into();
+    let candidate_log_value = parallel_worker_candidate_log_value(candidates);
+    let reason_log_value = parallel_worker_reason_log_value(&explanation);
     eprintln!(
-        "standard_mfs_parallel_worker_plan requested=auto resolved={} source=auto-conservative-fallback hard_cap={} candidates={:?} topology_high_capacity_boundary={} reason={}",
+        "standard_mfs_parallel_worker_plan requested=auto resolved={} source=auto-conservative-fallback hard_cap={} candidates={} topology_high_capacity_boundary={} reason={}",
         workers,
         control.request.hard_cap(),
-        candidates,
+        candidate_log_value,
         control
             .request
             .highest_capacity_class_boundary()
             .unwrap_or(0),
-        explanation,
+        reason_log_value,
     );
     record_parallel_worker_resolution(
         control,
@@ -10324,11 +10342,12 @@ fn resolve_awproject_parallel_worker_count(
         calibration_tasks.len(),
         scores
     );
+    let candidate_log_value = parallel_worker_candidate_log_value(&candidates);
     eprintln!(
-        "standard_mfs_parallel_worker_plan requested=auto resolved={} source=auto-calibrated hard_cap={} candidates={:?} topology_high_capacity_boundary={} calibration_tasks={} calibration_elapsed_ms={:.3} scores={}",
+        "standard_mfs_parallel_worker_plan requested=auto resolved={} source=auto-calibrated hard_cap={} candidates={} topology_high_capacity_boundary={} calibration_tasks={} calibration_elapsed_ms={:.3} scores={}",
         selected.workers,
         hard_cap,
-        candidates,
+        candidate_log_value,
         control
             .request
             .highest_capacity_class_boundary()
@@ -43055,6 +43074,20 @@ mod tests {
                 calibrated.take_dense_plane(kind, 0).unwrap(),
             );
         }
+    }
+
+    #[test]
+    fn parallel_worker_receipt_values_are_single_token_key_values() {
+        assert_eq!(
+            super::parallel_worker_candidate_log_value(&[4, 6, 8, 10]),
+            "4,6,8,10"
+        );
+        assert_eq!(
+            super::parallel_worker_reason_log_value(
+                "the exact-kernel calibration = elapsed budget"
+            ),
+            "the_exact-kernel_calibration_:_elapsed_budget"
+        );
     }
 
     #[test]
