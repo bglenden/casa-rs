@@ -4697,6 +4697,16 @@ where
         clean_request.clean.niter,
         &mut warnings,
     )?;
+    let multiscale_basis = if clean_request.clean.niter == 0
+        || clean_request.multiscale_scales.is_empty()
+    {
+        None
+    } else {
+        let setup_started = Instant::now();
+        let basis = MtmfsMultiscaleBasis::new(&clean_request, &psf_state.psf_terms, &scale_sizes);
+        stage_timings.deconvolver_setup += setup_started.elapsed();
+        Some(basis)
+    };
     if profile::standard_mfs_profile_detail_enabled() {
         for scale_hessian in &scale_hessians {
             eprintln!(
@@ -4762,6 +4772,7 @@ where
             &clean_request,
             &psf_state.psf_terms,
             &scale_hessians,
+            multiscale_basis.as_ref(),
             &mut model_terms,
             &mut residual_terms,
             cycle_reported_niter,
@@ -8395,6 +8406,7 @@ fn awproject_ready_compact_tap(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn awproject_compact_sample_tile_ids(
     sample: AwProjectCompactPlannedSample,
     bundles: &[AwProjectCompactMaterializedTap],
@@ -8526,6 +8538,7 @@ fn awproject_compact_sample_tile_ids(
     Ok(tap_pixel_updates)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn plan_awproject_compact_tiles(
     samples: &[AwProjectCompactPlannedSample],
     bundles: &[AwProjectCompactMaterializedTap],
@@ -8902,6 +8915,7 @@ impl AwProjectCompactTileReplayCounters {
 }
 
 #[inline(always)]
+#[allow(clippy::too_many_arguments)]
 fn awproject_compact_accumulate_role_scalar(
     role: AwProjectCompactTileFragmentRole,
     sample: AwProjectCompactPlannedSample,
@@ -9107,6 +9121,7 @@ unsafe fn awproject_compact_accumulate_y_pair_neon(
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
+#[allow(clippy::too_many_arguments)]
 unsafe fn awproject_compact_accumulate_role_2x2_neon(
     role: AwProjectCompactTileFragmentRole,
     sample: AwProjectCompactPlannedSample,
@@ -9446,6 +9461,7 @@ fn execute_awproject_compact_f64_tile_stripe(
     counters
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_awproject_compact_f64_tiles(
     grids: &mut MosaicMtmfsHostGrids,
     tile_plan: &AwProjectCompactTilePlan,
@@ -9632,6 +9648,7 @@ fn execute_awproject_compact_sparse_f64_tile_stripe(
     counters
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_awproject_compact_sparse_f64_tiles(
     grids: &mut MosaicMtmfsSparseHostGrids,
     tile_plan: &AwProjectCompactTilePlan,
@@ -9894,7 +9911,7 @@ fn execute_awproject_compact_sparse_f64_scheduled_tiles(
     let counters = thread::scope(|scope| {
         let mut handles = Vec::with_capacity(worker_count);
         for _worker_index in 0..worker_count {
-            let tasks = tasks;
+            let task_slice = tasks;
             let slots = grids.slots.as_slice();
             let next_task = &next_task;
             let cancelled = &cancelled;
@@ -9909,7 +9926,7 @@ fn execute_awproject_compact_sparse_f64_scheduled_tiles(
                     let claim_started = Instant::now();
                     let task_index = next_task.fetch_add(1, Ordering::Relaxed);
                     worker_counters.scheduler_claim_elapsed += claim_started.elapsed();
-                    let Some(task) = tasks.get(task_index) else {
+                    let Some(task) = task_slice.get(task_index) else {
                         worker_counters.scheduler_empty_claims += 1;
                         break;
                     };
@@ -10491,6 +10508,7 @@ fn execute_awproject_compact_f64_plane_tasks(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn grid_awproject_compact_samples_host_f64(
     grids: &mut MosaicMtmfsHostGrids,
     samples: &[AwProjectCompactPlannedSample],
@@ -10628,6 +10646,7 @@ fn grid_awproject_compact_samples_host_f64(
     Ok(None)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn grid_awproject_compact_samples_sparse_host_f64(
     grids: &mut MosaicMtmfsSparseHostGrids,
     samples: &[AwProjectCompactPlannedSample],
@@ -12608,9 +12627,7 @@ fn awproject_compact_candidate_tap_bytes(
     let mut additional_tap_bytes = 0usize;
     for spec in specs {
         let key = spec.request.key;
-        let already_candidate = candidate_keys[..candidate_count]
-            .iter()
-            .any(|candidate| *candidate == Some(key));
+        let already_candidate = candidate_keys[..candidate_count].contains(&Some(key));
         if !existing.contains_key(&key) && !already_candidate {
             candidate_keys[candidate_count] = Some(key);
             candidate_count += 1;
@@ -18942,6 +18959,14 @@ pub fn run_mtmfs(
         request.clean.niter,
         &mut warnings,
     )?;
+    let multiscale_basis = if request.clean.niter == 0 || request.multiscale_scales.is_empty() {
+        None
+    } else {
+        let setup_started = Instant::now();
+        let basis = MtmfsMultiscaleBasis::new(request, &psf_state.psf_terms, &scale_sizes);
+        stage_timings.deconvolver_setup += setup_started.elapsed();
+        Some(basis)
+    };
     let principal_hessian = &scale_hessians[0];
 
     let controller_started = Instant::now();
@@ -18992,6 +19017,7 @@ pub fn run_mtmfs(
             request,
             &psf_state.psf_terms,
             &scale_hessians,
+            multiscale_basis.as_ref(),
             &mut model_terms,
             &mut residual_terms,
             cycle_reported_niter,
@@ -35087,6 +35113,7 @@ fn run_mtmfs_minor_cycle(
     request: &MtmfsRequest,
     psf_terms: &[Array2<f32>],
     scale_hessians: &[MtmfsScaleHessian],
+    multiscale_basis: Option<&MtmfsMultiscaleBasis>,
     model_terms: &mut [Array2<f32>],
     residual_terms: &mut [Array2<f32>],
     cycle_reported_niter: usize,
@@ -35098,8 +35125,8 @@ fn run_mtmfs_minor_cycle(
     if !request.multiscale_scales.is_empty() {
         return run_mtmfs_multiscale_minor_cycle(
             request,
-            psf_terms,
             scale_hessians,
+            multiscale_basis.expect("MT-MFS multiscale requests must prepare a scale basis"),
             model_terms,
             residual_terms,
             cycle_reported_niter,
@@ -35180,8 +35207,8 @@ fn run_mtmfs_minor_cycle(
 #[allow(clippy::too_many_arguments)]
 fn run_mtmfs_multiscale_minor_cycle(
     request: &MtmfsRequest,
-    psf_terms: &[Array2<f32>],
     scale_hessians: &[MtmfsScaleHessian],
+    basis: &MtmfsMultiscaleBasis,
     model_terms: &mut [Array2<f32>],
     residual_terms: &mut [Array2<f32>],
     cycle_reported_niter: usize,
@@ -35191,37 +35218,21 @@ fn run_mtmfs_multiscale_minor_cycle(
 ) -> (HogbomMinorCycleOutcome, MinorCycleProbe) {
     let scale_sizes = effective_mtmfs_multiscale_scales(request);
     debug_assert_eq!(scale_sizes.len(), scale_hessians.len());
+    debug_assert_eq!(scale_sizes, basis.scale_sizes);
     debug_assert!(
         scale_sizes
             .iter()
             .zip(scale_hessians)
             .all(|(size, hessian)| *size == hessian.scale_size)
     );
-    let compact_scale_kernels = scale_sizes
-        .iter()
-        .map(|scale| make_compact_multiscale_kernel(*scale))
-        .collect::<Vec<_>>();
-    let scale_masks = request
-        .clean_mask
-        .as_ref()
-        .map(|mask| build_mtmfs_scale_masks(mask, &compact_scale_kernels, &scale_sizes));
-    let max_scale = scale_sizes.iter().copied().fold(0.0f32, f32::max);
-    let scale_bias = if max_scale > 0.0 && scale_sizes.len() > 1 {
-        scale_sizes
-            .iter()
-            .map(|scale| 1.0 - request.small_scale_bias * (*scale / max_scale))
-            .collect::<Vec<_>>()
-    } else {
-        vec![1.0; scale_sizes.len()]
-    };
-    let Some(first_candidate) = find_mtmfs_multiscale_component(
-        residual_terms,
-        &compact_scale_kernels,
-        scale_hessians,
-        &scale_bias,
-        scale_masks.as_deref(),
-        request.clean_mask.as_ref(),
-    ) else {
+    let minor_started = Instant::now();
+    let mut scale_rhs_terms = basis.convolve_residual_terms(residual_terms);
+    let Some(first_candidate) =
+        find_mtmfs_multiscale_component(&scale_rhs_terms, basis, scale_hessians)
+    else {
+        let minor_elapsed = minor_started.elapsed();
+        stage_timings.minor_cycle += minor_elapsed;
+        stage_timings.minor_cycle_solve += minor_elapsed;
         return (
             HogbomMinorCycleOutcome {
                 updated_model: false,
@@ -35244,14 +35255,17 @@ fn run_mtmfs_multiscale_minor_cycle(
         initial_candidate_position: Some([first_candidate.position.0, first_candidate.position.1]),
     };
     let principal_hessian_peak = scale_hessians[0].hessian[0][0];
-    let initial_cycle_peak = peak_abs_value_masked(&residual_terms[0], request.clean_mask.as_ref())
-        / principal_hessian_peak;
+    let initial_cycle_peak =
+        basis.peak_abs_scale_zero(&scale_rhs_terms[0][0]) / principal_hessian_peak;
     if let Some(reason) = minor_cycle_stop_reason(
         initial_cycle_peak,
         request.clean.threshold_jy_per_beam,
         cycle_threshold_jy_per_beam,
         nsigma_threshold_jy_per_beam,
     ) {
+        let minor_elapsed = minor_started.elapsed();
+        stage_timings.minor_cycle += minor_elapsed;
+        stage_timings.minor_cycle_solve += minor_elapsed;
         return (
             HogbomMinorCycleOutcome {
                 updated_model: false,
@@ -35269,21 +35283,16 @@ fn run_mtmfs_multiscale_minor_cycle(
     let mut cycle_component_updates = 0usize;
     let mut updated_model = false;
     let mut stop_reason = None;
-    let minor_started = Instant::now();
+    let mut next_candidate = Some(first_candidate);
     while cycle_component_updates < cycle_component_budget {
-        let Some(candidate) = find_mtmfs_multiscale_component(
-            residual_terms,
-            &compact_scale_kernels,
-            scale_hessians,
-            &scale_bias,
-            scale_masks.as_deref(),
-            request.clean_mask.as_ref(),
-        ) else {
+        let Some(candidate) = next_candidate
+            .take()
+            .or_else(|| find_mtmfs_multiscale_component(&scale_rhs_terms, basis, scale_hessians))
+        else {
             stop_reason = Some(CleanStopReason::NoCleanablePixels);
             break;
         };
-        let peak_abs = peak_abs_value_masked(&residual_terms[0], request.clean_mask.as_ref())
-            / principal_hessian_peak;
+        let peak_abs = basis.peak_abs_scale_zero(&scale_rhs_terms[0][0]) / principal_hessian_peak;
         if let Some(reason) = minor_cycle_stop_reason(
             peak_abs,
             request.clean.threshold_jy_per_beam,
@@ -35303,21 +35312,27 @@ fn run_mtmfs_multiscale_minor_cycle(
             let component = request.clean.gain * *coefficient;
             add_shifted_kernel(
                 &mut model_terms[term_index],
-                &compact_scale_kernels[candidate.scale_index],
+                &basis.compact_scale_kernels[candidate.scale_index],
                 candidate.position,
                 component,
             );
         }
-        subtract_mtmfs_multiscale_component(
-            residual_terms,
-            psf_terms,
-            &compact_scale_kernels[candidate.scale_index],
+        basis.subtract_rhs_component(
+            &mut scale_rhs_terms,
+            candidate.scale_index,
             candidate.position,
             request.clean.gain,
             &coeffs,
         );
         cycle_component_updates += 1;
         updated_model = true;
+    }
+    if updated_model {
+        for (residual_term, scale_zero_rhs) in
+            residual_terms.iter_mut().zip(scale_rhs_terms[0].iter_mut())
+        {
+            std::mem::swap(residual_term, scale_zero_rhs);
+        }
     }
     let minor_elapsed = minor_started.elapsed();
     stage_timings.minor_cycle += minor_elapsed;
@@ -35347,9 +35362,212 @@ struct MtmfsMultiscaleCandidate {
     coefficients: Vec<f32>,
 }
 
+struct MtmfsMultiscaleBasis {
+    scale_sizes: Vec<f32>,
+    compact_scale_kernels: Vec<Array2<f32>>,
+    scale_bias: Vec<f32>,
+    scale_masks: Option<Vec<Array2<bool>>>,
+    scale_search_positions: Vec<Option<Vec<(usize, usize)>>>,
+    psf_pair_patches: Vec<Vec<Array2<f32>>>,
+}
+
+impl MtmfsMultiscaleBasis {
+    fn new(request: &MtmfsRequest, psf_terms: &[Array2<f32>], scale_sizes: &[f32]) -> Self {
+        let compact_scale_kernels = scale_sizes
+            .iter()
+            .map(|scale| make_compact_multiscale_kernel(*scale))
+            .collect::<Vec<_>>();
+        let max_scale = scale_sizes.iter().copied().fold(0.0f32, f32::max);
+        let scale_bias = if max_scale > 0.0 && scale_sizes.len() > 1 {
+            scale_sizes
+                .iter()
+                .map(|scale| 1.0 - request.small_scale_bias * (*scale / max_scale))
+                .collect::<Vec<_>>()
+        } else {
+            vec![1.0; scale_sizes.len()]
+        };
+        let scale_masks = request
+            .clean_mask
+            .as_ref()
+            .map(|mask| build_mtmfs_scale_masks(mask, &compact_scale_kernels, scale_sizes));
+        let image_pixels =
+            request.geometry.image_shape[0].saturating_mul(request.geometry.image_shape[1]);
+        let scale_search_positions = scale_masks
+            .as_ref()
+            .map(|masks| {
+                masks
+                    .iter()
+                    .map(|mask| {
+                        let positions = mask
+                            .indexed_iter()
+                            .filter_map(|(position, cleanable)| cleanable.then_some(position))
+                            .collect::<Vec<_>>();
+                        (positions.len().saturating_mul(8) <= image_pixels).then_some(positions)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| vec![None; scale_sizes.len()]);
+
+        let psf_peak_position =
+            casa_mtmfs_psf_peak_position(psf_terms.first().expect("PSF term"), max_scale);
+        let psf_support = casa_mtmfs_psf_patch_support(psf_terms[0].dim(), max_scale);
+        let mut psf_pair_patches =
+            Vec::with_capacity(scale_sizes.len() * (scale_sizes.len() + 1) / 2);
+        for high_scale in 0..scale_sizes.len() {
+            for low_scale in 0..=high_scale {
+                let combined_kernel = convolve_compact_scale_kernels(
+                    &compact_scale_kernels[high_scale],
+                    &compact_scale_kernels[low_scale],
+                );
+                psf_pair_patches.push(
+                    psf_terms
+                        .iter()
+                        .map(|psf| {
+                            bounded_circular_convolution_patch(
+                                psf,
+                                &combined_kernel,
+                                psf_peak_position,
+                                psf_support,
+                            )
+                        })
+                        .collect(),
+                );
+            }
+        }
+
+        Self {
+            scale_sizes: scale_sizes.to_vec(),
+            compact_scale_kernels,
+            scale_bias,
+            scale_masks,
+            scale_search_positions,
+            psf_pair_patches,
+        }
+    }
+
+    fn convolve_residual_terms(&self, residual_terms: &[Array2<f32>]) -> Vec<Vec<Array2<f32>>> {
+        self.compact_scale_kernels
+            .iter()
+            .map(|kernel| convolve_mtmfs_terms_for_scale(residual_terms, kernel))
+            .collect()
+    }
+
+    fn peak_abs_scale_zero(&self, image: &Array2<f32>) -> f32 {
+        if let Some(positions) = &self.scale_search_positions[0] {
+            return positions
+                .iter()
+                .map(|position| image[*position].abs())
+                .fold(0.0f32, f32::max);
+        }
+        peak_abs_value_masked(
+            image,
+            self.scale_masks.as_ref().map(|scale_masks| &scale_masks[0]),
+        )
+    }
+
+    fn psf_pair_patch(
+        &self,
+        left_scale: usize,
+        right_scale: usize,
+        psf_order: usize,
+    ) -> &Array2<f32> {
+        let high = left_scale.max(right_scale);
+        let low = left_scale.min(right_scale);
+        &self.psf_pair_patches[high * (high + 1) / 2 + low][psf_order]
+    }
+
+    fn subtract_rhs_component(
+        &self,
+        scale_rhs_terms: &mut [Vec<Array2<f32>>],
+        selected_scale: usize,
+        position: (usize, usize),
+        gain: f32,
+        coefficients: &[f32],
+    ) {
+        let nterms = coefficients.len();
+        for (target_scale, rhs_terms) in scale_rhs_terms.iter_mut().enumerate() {
+            for (residual_order, rhs_term) in rhs_terms.iter_mut().enumerate() {
+                for (model_order, coefficient) in coefficients.iter().copied().enumerate() {
+                    let psf_order = residual_order + model_order;
+                    debug_assert!(psf_order < 2 * nterms - 1);
+                    subtract_shifted_kernel(
+                        rhs_term,
+                        self.psf_pair_patch(target_scale, selected_scale, psf_order),
+                        position,
+                        gain * coefficient,
+                    );
+                }
+            }
+        }
+    }
+}
+
 fn make_compact_multiscale_kernel(scale_size: f32) -> Array2<f32> {
     let radius = scale_size.ceil().max(0.0) as usize;
     make_multiscale_kernel((2 * radius + 1, 2 * radius + 1), scale_size)
+}
+
+fn convolve_compact_scale_kernels(left: &Array2<f32>, right: &Array2<f32>) -> Array2<f32> {
+    let output_shape = (
+        left.dim().0 + right.dim().0 - 1,
+        left.dim().1 + right.dim().1 - 1,
+    );
+    let mut output = Array2::<f32>::zeros(output_shape);
+    for ((left_x, left_y), left_value) in left.indexed_iter() {
+        if *left_value == 0.0 {
+            continue;
+        }
+        for ((right_x, right_y), right_value) in right.indexed_iter() {
+            if *right_value != 0.0 {
+                output[(left_x + right_x, left_y + right_y)] += *left_value * *right_value;
+            }
+        }
+    }
+    output
+}
+
+fn casa_mtmfs_psf_patch_support(image_shape: (usize, usize), max_scale_size: f32) -> usize {
+    let mut support = ((4.0f32 * 4.0 + max_scale_size * max_scale_size).sqrt() * 20.0) as usize;
+    support = support.max(80).min(image_shape.0).min(image_shape.1);
+    if support % 2 != 0 {
+        support -= 1;
+    }
+    support
+}
+
+fn bounded_circular_convolution_patch(
+    image: &Array2<f32>,
+    compact_kernel: &Array2<f32>,
+    center: (usize, usize),
+    support: usize,
+) -> Array2<f32> {
+    let (nx, ny) = image.dim();
+    let patch_center = support / 2;
+    let kernel_center = (compact_kernel.dim().0 / 2, compact_kernel.dim().1 / 2);
+    let taps = compact_kernel
+        .indexed_iter()
+        .filter_map(|((x, y), value)| {
+            (*value != 0.0).then_some((
+                x as isize - kernel_center.0 as isize,
+                y as isize - kernel_center.1 as isize,
+                *value,
+            ))
+        })
+        .collect::<Vec<_>>();
+    let mut patch = Array2::<f32>::zeros((support, support));
+    for (offset_x, offset_y, value) in taps {
+        for patch_x in 0..support {
+            let image_x = (center.0 as isize + patch_x as isize - patch_center as isize - offset_x)
+                .rem_euclid(nx as isize) as usize;
+            for patch_y in 0..support {
+                let image_y =
+                    (center.1 as isize + patch_y as isize - patch_center as isize - offset_y)
+                        .rem_euclid(ny as isize) as usize;
+                patch[(patch_x, patch_y)] += value * image[(image_x, image_y)];
+            }
+        }
+    }
+    patch
 }
 
 fn materialize_centered_compact_kernel(
@@ -35414,58 +35632,67 @@ fn build_mtmfs_scale_masks(
     compact_kernels
         .iter()
         .zip(scale_sizes.iter().copied())
-        .map(|(compact_kernel, scale_size)| {
+        .enumerate()
+        .map(|(scale_index, (compact_kernel, scale_size))| {
             let convolved = fft_convolve_real_compact(&mask_values, compact_kernel);
-            let mut scale_mask = convolved.mapv(|value| value > 0.9);
-            apply_casa_multiscale_edge_mask(&mut scale_mask, scale_size);
+            // MultiTermMatrixCleaner::setupUserMask uses a fixed 0.1
+            // threshold here (independent of MatrixCleaner's 0.9 default).
+            let mut scale_mask = convolved.mapv(|value| value > 0.1);
+            if scale_index > 0 {
+                apply_casa_multiscale_edge_mask(&mut scale_mask, scale_size);
+            }
             scale_mask
         })
         .collect()
 }
 
 fn find_mtmfs_multiscale_component(
-    residual_terms: &[Array2<f32>],
-    compact_scale_kernels: &[Array2<f32>],
+    scale_rhs_terms: &[Vec<Array2<f32>>],
+    basis: &MtmfsMultiscaleBasis,
     scale_hessians: &[MtmfsScaleHessian],
-    scale_bias: &[f32],
-    scale_masks: Option<&[Array2<bool>]>,
-    clean_mask: Option<&Array2<bool>>,
 ) -> Option<MtmfsMultiscaleCandidate> {
     let mut best = None::<(MtmfsMultiscaleCandidate, f32)>;
-    for (scale_index, (compact_kernel, scale_hessian)) in
-        compact_scale_kernels.iter().zip(scale_hessians).enumerate()
+    for (scale_index, (rhs_terms, scale_hessian)) in
+        scale_rhs_terms.iter().zip(scale_hessians).enumerate()
     {
-        let rhs_terms = convolve_mtmfs_terms_for_scale(residual_terms, compact_kernel);
         let (nx, ny) = rhs_terms.first()?.dim();
-        let search_mask = scale_masks.map(|masks| &masks[scale_index]).or(clean_mask);
+        let mut consider_position = |position: (usize, usize)| {
+            let rhs = rhs_terms
+                .iter()
+                .map(|term| term[position])
+                .collect::<Vec<_>>();
+            let coefficients = solve_mtmfs_coefficients(&rhs, &scale_hessian.inverse);
+            let score = coefficients
+                .iter()
+                .zip(rhs.iter())
+                .map(|(coefficient, value)| coefficient * value)
+                .sum::<f32>();
+            let biased_score = score.abs() * basis.scale_bias[scale_index];
+            if best
+                .as_ref()
+                .is_none_or(|(_, best_score)| biased_score > *best_score)
+            {
+                best = Some((
+                    MtmfsMultiscaleCandidate {
+                        scale_index,
+                        position,
+                        coefficients,
+                    },
+                    biased_score,
+                ));
+            }
+        };
+        if let Some(positions) = &basis.scale_search_positions[scale_index] {
+            for &position in positions {
+                consider_position(position);
+            }
+            continue;
+        }
+        let search_mask = basis.scale_masks.as_ref().map(|masks| &masks[scale_index]);
         for x in 0..nx {
             for y in 0..ny {
-                if search_mask.is_some_and(|mask| !mask[(x, y)]) {
-                    continue;
-                }
-                let rhs = rhs_terms
-                    .iter()
-                    .map(|term| term[(x, y)])
-                    .collect::<Vec<_>>();
-                let coefficients = solve_mtmfs_coefficients(&rhs, &scale_hessian.inverse);
-                let score = coefficients
-                    .iter()
-                    .zip(rhs.iter())
-                    .map(|(coefficient, value)| coefficient * value)
-                    .sum::<f32>();
-                let biased_score = score.abs() * scale_bias[scale_index];
-                if best
-                    .as_ref()
-                    .is_none_or(|(_, best_score)| biased_score > *best_score)
-                {
-                    best = Some((
-                        MtmfsMultiscaleCandidate {
-                            scale_index,
-                            position: (x, y),
-                            coefficients,
-                        },
-                        biased_score,
-                    ));
+                if search_mask.is_none_or(|mask| mask[(x, y)]) {
+                    consider_position((x, y));
                 }
             }
         }
@@ -35473,6 +35700,7 @@ fn find_mtmfs_multiscale_component(
     best.map(|(candidate, _)| candidate)
 }
 
+#[cfg(test)]
 fn subtract_mtmfs_multiscale_component(
     residual_terms: &mut [Array2<f32>],
     psf_terms: &[Array2<f32>],
@@ -50158,15 +50386,20 @@ mod tests {
                 inverse: vec![vec![100.0]],
             },
         ];
-        let candidate = super::find_mtmfs_multiscale_component(
-            &[residual],
-            &compact_kernels,
-            &hessians,
-            &[1.0, 1.0],
-            None,
-            None,
-        )
-        .expect("select component");
+        let scale_rhs_terms = compact_kernels
+            .iter()
+            .map(|kernel| super::convolve_mtmfs_terms_for_scale(&[residual.clone()], kernel))
+            .collect::<Vec<_>>();
+        let basis = super::MtmfsMultiscaleBasis {
+            scale_sizes: vec![0.0, 3.0],
+            compact_scale_kernels: compact_kernels,
+            scale_bias: vec![1.0, 1.0],
+            scale_masks: None,
+            scale_search_positions: vec![None, None],
+            psf_pair_patches: Vec::new(),
+        };
+        let candidate = super::find_mtmfs_multiscale_component(&scale_rhs_terms, &basis, &hessians)
+            .expect("select component");
 
         assert_eq!(candidate.scale_index, 1);
         assert_eq!(candidate.position, (8, 8));
@@ -50188,6 +50421,122 @@ mod tests {
 
         for (actual, expected) in actual.iter().zip(expected.iter()) {
             assert!((actual - expected).abs() < 3.0e-5);
+        }
+    }
+
+    #[test]
+    fn mtmfs_bounded_cross_scale_psf_patch_matches_full_image_convolution() {
+        let shape = (128, 120);
+        let center = (61, 58);
+        let image = Array2::from_shape_fn(shape, |(x, y)| {
+            ((x * 17 + y * 11) as f32 * 0.021).sin() + ((x * 3 + y * 5) as f32 * 0.013).cos()
+        });
+        let left = super::make_compact_multiscale_kernel(3.0);
+        let right = super::make_compact_multiscale_kernel(5.0);
+        let combined = super::convolve_compact_scale_kernels(&left, &right);
+        let support = super::casa_mtmfs_psf_patch_support(shape, 5.0);
+        let actual = super::bounded_circular_convolution_patch(&image, &combined, center, support);
+        let expected = super::fft_convolve_real_compact(&image, &combined);
+        let patch_center = support / 2;
+
+        for x in 0..support {
+            for y in 0..support {
+                let expected_x = (center.0 + shape.0 + x - patch_center) % shape.0;
+                let expected_y = (center.1 + shape.1 + y - patch_center) % shape.1;
+                assert!(
+                    (actual[(x, y)] - expected[(expected_x, expected_y)]).abs() < 5.0e-4,
+                    "mismatch at ({x}, {y}): actual={} expected={}",
+                    actual[(x, y)],
+                    expected[(expected_x, expected_y)]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mtmfs_cached_cross_scale_rhs_update_matches_full_image_reference() {
+        let shape = (64, 64);
+        let center = (shape.0 / 2, shape.1 / 2);
+        let compact_scale_kernels = vec![
+            super::make_compact_multiscale_kernel(0.0),
+            super::make_compact_multiscale_kernel(3.0),
+        ];
+        let psf_terms = (0..3)
+            .map(|order| {
+                Array2::from_shape_fn(shape, |(x, y)| {
+                    let radius2 =
+                        (x as f32 - center.0 as f32).powi(2) + (y as f32 - center.1 as f32).powi(2);
+                    (1.0 + order as f32 * 0.1) * (-radius2 / 24.0).exp()
+                })
+            })
+            .collect::<Vec<_>>();
+        let support = super::casa_mtmfs_psf_patch_support(shape, 3.0);
+        let mut psf_pair_patches = Vec::new();
+        for high_scale in 0..2 {
+            for low_scale in 0..=high_scale {
+                let combined = super::convolve_compact_scale_kernels(
+                    &compact_scale_kernels[high_scale],
+                    &compact_scale_kernels[low_scale],
+                );
+                psf_pair_patches.push(
+                    psf_terms
+                        .iter()
+                        .map(|psf| {
+                            super::bounded_circular_convolution_patch(
+                                psf, &combined, center, support,
+                            )
+                        })
+                        .collect(),
+                );
+            }
+        }
+        let basis = super::MtmfsMultiscaleBasis {
+            scale_sizes: vec![0.0, 3.0],
+            compact_scale_kernels,
+            scale_bias: vec![1.0, 1.0],
+            scale_masks: None,
+            scale_search_positions: vec![None, None],
+            psf_pair_patches,
+        };
+        let residual_terms = vec![
+            Array2::from_shape_fn(shape, |(x, y)| (x * 7 + y * 11) as f32 * 0.001),
+            Array2::from_shape_fn(shape, |(x, y)| (x * 3 + y * 5) as f32 * -0.002),
+        ];
+        let mut actual = basis.convolve_residual_terms(&residual_terms);
+        let mut expected = actual.clone();
+        let selected_scale = 1;
+        let position = (29, 37);
+        let gain = 0.1;
+        let coefficients = [0.8, -0.35];
+
+        basis.subtract_rhs_component(&mut actual, selected_scale, position, gain, &coefficients);
+        for (target_scale, rhs_terms) in expected.iter_mut().enumerate() {
+            let combined = super::convolve_compact_scale_kernels(
+                &basis.compact_scale_kernels[target_scale],
+                &basis.compact_scale_kernels[selected_scale],
+            );
+            for (residual_order, rhs_term) in rhs_terms.iter_mut().enumerate() {
+                for (model_order, coefficient) in coefficients.iter().copied().enumerate() {
+                    let convolved_psf = super::fft_convolve_real_compact(
+                        &psf_terms[residual_order + model_order],
+                        &combined,
+                    );
+                    super::subtract_shifted_kernel(
+                        rhs_term,
+                        &convolved_psf,
+                        position,
+                        gain * coefficient,
+                    );
+                }
+            }
+        }
+
+        for (actual_scale, expected_scale) in actual.iter().zip(expected.iter()) {
+            for (actual_term, expected_term) in actual_scale.iter().zip(expected_scale.iter()) {
+                for (actual, expected) in actual_term.iter().zip(expected_term.iter()) {
+                    assert!((actual - expected).abs() < 8.0e-4);
+                }
+            }
         }
     }
 

@@ -47077,6 +47077,7 @@ fn chunk_mfs_mosaic_metadata_batches_from_explicit_beam_frequencies(
     Ok(batches)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn chunk_mfs_mosaic_metadata_batches_from_beam_lookup(
     sample_frequency_hz: &[f64],
     sample_spw_ids: &[usize],
@@ -47191,6 +47192,7 @@ fn constant_beam_frequency_by_spw(
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn try_chunk_mfs_mosaic_metadata_batches_with_constant_beam_frequency(
     sample_frequency_hz: &[f64],
     sample_spw_ids: &[usize],

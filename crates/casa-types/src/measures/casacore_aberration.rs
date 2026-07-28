@@ -354,63 +354,6 @@ const MUL_EARTH_ABER: [[i16; 3]; 17] = [
     [0, 0, -1],
 ];
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn analytic_velocity_derivative_matches_centered_difference() {
-        let epoch_mjd = 58_574.453_934_895_835;
-        let step_days = 1.0e-5;
-        let before = earth_barycentric_velocity_ms(epoch_mjd - step_days);
-        let after = earth_barycentric_velocity_ms(epoch_mjd + step_days);
-        let numeric: [f64; 3] =
-            std::array::from_fn(|axis| (after[axis] - before[axis]) / (2.0 * step_days));
-        let analytic = earth_barycentric_velocity_derivative_ms_per_day(epoch_mjd);
-
-        for axis in 0..3 {
-            let error = (analytic[axis] - numeric[axis]).abs();
-            assert!(
-                error < 1.0e-3,
-                "axis {axis}: analytic={} numeric={} error={error}",
-                analytic[axis],
-                numeric[axis]
-            );
-        }
-    }
-
-    #[test]
-    fn vlass_epoch_value_and_derivative_match_casacore_standard() {
-        let epoch_mjd = 5_060_832_454.125 / DAY_S;
-        let velocity = earth_barycentric_velocity_ms(epoch_mjd);
-        let derivative = earth_barycentric_velocity_derivative_ms_per_day(epoch_mjd);
-        let expected_velocity = [
-            5_261.670_144_560_937,
-            -26_924.829_152_160_273,
-            -11_670.562_910_349_39,
-        ];
-        let expected_derivative = [
-            505.619_637_024_065_87,
-            89.909_565_479_466_96,
-            38.829_128_143_600_03,
-        ];
-        for axis in 0..3 {
-            assert!(
-                (velocity[axis] - expected_velocity[axis]).abs() < 1.0e-9,
-                "velocity axis {axis}: actual={} expected={}",
-                velocity[axis],
-                expected_velocity[axis],
-            );
-            assert!(
-                (derivative[axis] - expected_derivative[axis]).abs() < 1.0e-9,
-                "derivative axis {axis}: actual={} expected={}",
-                derivative[axis],
-                expected_derivative[axis],
-            );
-        }
-    }
-}
-
 const MUL_ABER_TD: [[i64; 18]; 3] = [
     [
         -1719919, -2, 0, -25, 0, 0, 25, -13, -1, 1578094, 156, 0, 10, 32, 1, 684187, -358, 0,
@@ -505,3 +448,60 @@ const MUL_ABER: [[i16; 6]; 80] = [
     [0, 0, 0, 1, 0, 0],
     [0, 0, 0, -1, 0, 0],
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn analytic_velocity_derivative_matches_centered_difference() {
+        let epoch_mjd = 58_574.453_934_895_835;
+        let step_days = 1.0e-5;
+        let before = earth_barycentric_velocity_ms(epoch_mjd - step_days);
+        let after = earth_barycentric_velocity_ms(epoch_mjd + step_days);
+        let numeric: [f64; 3] =
+            std::array::from_fn(|axis| (after[axis] - before[axis]) / (2.0 * step_days));
+        let analytic = earth_barycentric_velocity_derivative_ms_per_day(epoch_mjd);
+
+        for axis in 0..3 {
+            let error = (analytic[axis] - numeric[axis]).abs();
+            assert!(
+                error < 1.0e-3,
+                "axis {axis}: analytic={} numeric={} error={error}",
+                analytic[axis],
+                numeric[axis]
+            );
+        }
+    }
+
+    #[test]
+    fn vlass_epoch_value_and_derivative_match_casacore_standard() {
+        let epoch_mjd = 5_060_832_454.125 / DAY_S;
+        let velocity = earth_barycentric_velocity_ms(epoch_mjd);
+        let derivative = earth_barycentric_velocity_derivative_ms_per_day(epoch_mjd);
+        let expected_velocity = [
+            5_261.670_144_560_937,
+            -26_924.829_152_160_273,
+            -11_670.562_910_349_39,
+        ];
+        let expected_derivative = [
+            505.619_637_024_065_87,
+            89.909_565_479_466_96,
+            38.829_128_143_600_03,
+        ];
+        for axis in 0..3 {
+            assert!(
+                (velocity[axis] - expected_velocity[axis]).abs() < 1.0e-9,
+                "velocity axis {axis}: actual={} expected={}",
+                velocity[axis],
+                expected_velocity[axis],
+            );
+            assert!(
+                (derivative[axis] - expected_derivative[axis]).abs() < 1.0e-9,
+                "derivative axis {axis}: actual={} expected={}",
+                derivative[axis],
+                expected_derivative[axis],
+            );
+        }
+    }
+}

@@ -26,7 +26,7 @@ pub(crate) fn build_single_plane_execution_plan(
     let spectral = spectral_plan(config.spectral_mode, output_channel_count);
     let projection = projection_plan(config, force_standard_gridder);
     let primary_beam_products = needs_single_field_primary_beam_products(config);
-    build_core_plan(SinglePlaneExecutionPlanInput::new(
+    let mut plan = build_core_plan(SinglePlaneExecutionPlanInput::new(
         spectral,
         projection,
         SinglePlaneDeconvolverPlan::from_deconvolver(config.deconvolver),
@@ -50,7 +50,14 @@ pub(crate) fn build_single_plane_execution_plan(
         config.use_pointing,
         config.use_mask == CleanMaskMode::User,
         config.w_term_mode,
-    ))
+    ));
+    if config.use_mask == CleanMaskMode::User
+        || !config.mask_boxes.is_empty()
+        || config.mask_image.is_some()
+    {
+        plan.output_products.push(".mask".to_string());
+    }
+    plan
 }
 
 fn output_channel_count(config: &CliConfig) -> usize {
@@ -422,6 +429,33 @@ mod tests {
         let log = plan.log_line();
         assert!(log.contains("projection=awproject"));
         assert!(log.contains("pb_requirement=awprojection"));
+    }
+
+    #[test]
+    fn explicit_clean_mask_is_reported_as_an_output_product() {
+        let config = parse([
+            "--gridder",
+            "awproject",
+            "--cfcache",
+            "/tmp/casa-aw-cache",
+            "--usepointing",
+            "--deconvolver",
+            "mtmfs",
+            "--nterms",
+            "2",
+            "--mask-box",
+            "1,2,3,4",
+        ]);
+        let plan = build_single_plane_execution_plan(&config, false, 1);
+
+        assert_eq!(
+            plan.output_products.last().map(String::as_str),
+            Some(".mask")
+        );
+        assert!(
+            plan.log_line()
+                .contains(".weight.tt2,.alpha,.alpha.error,.mask")
+        );
     }
 
     #[test]

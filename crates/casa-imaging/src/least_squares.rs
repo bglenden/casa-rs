@@ -13,18 +13,19 @@ pub(crate) fn solve_symmetric_ldlt_casacore<const N: usize>(
 ) -> Option<[f64; N]> {
     for row in 0..N {
         let mut diagonal = normal[row][row];
-        for prior in 0..row {
-            diagonal -= normal[prior][row] * normal[prior][row] / normal[prior][prior];
+        for (prior, prior_row) in normal.iter().enumerate().take(row) {
+            diagonal -= prior_row[row] * prior_row[row] / prior_row[prior];
         }
         if !diagonal.is_finite() || diagonal * diagonal / normal[row][row] <= 1.0e-12 {
             return None;
         }
         normal[row][row] = diagonal;
         for column in row + 1..N {
-            for prior in 0..row {
-                normal[row][column] -=
-                    normal[prior][row] * normal[prior][column] / normal[prior][prior];
+            let mut value = normal[row][column];
+            for (prior, prior_row) in normal.iter().enumerate().take(row) {
+                value -= prior_row[row] * prior_row[column] / prior_row[prior];
             }
+            normal[row][column] = value;
         }
     }
 

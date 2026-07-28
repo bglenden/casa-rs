@@ -9421,7 +9421,8 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
                     || line.starts_with("single_plane_execution_plan ")
                     || line.starts_with("standard_one_channel_cube_acceleration ")
                     || line.starts_with("imaging_source_read_ahead_summary ")
-                    || line.starts_with("image_product_write ")),
+                    || line.starts_with("image_product_write ")
+                    || (line.contains("WARN casars_imager") && line.ends_with("imager warning"))),
         "status={} stderr={}",
         app.status_line_for_test(),
         stderr
@@ -9438,6 +9439,7 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
         "residual",
         "model",
         "image",
+        "mask",
         "psf.png",
         "residual.png",
         "model.png",
@@ -9462,6 +9464,10 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
     assert!(products.contains("Imaging Products"));
     assert!(products.contains("PSF"));
     assert!(products.contains("Residual"));
+    assert!(
+        products.contains("Clean Mask"),
+        "products tab did not render the written clean mask:\n{products}"
+    );
 }
 
 #[test]
