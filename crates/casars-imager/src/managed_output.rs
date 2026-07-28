@@ -919,7 +919,7 @@ mod tests {
         );
         assert!(!output.run.channels[0].beam_fit_available);
 
-        assert_eq!(output.artifacts.len(), 14);
+        assert_eq!(output.artifacts.len(), 15);
         let psf_tt0 = output
             .artifacts
             .iter()
@@ -990,7 +990,7 @@ mod tests {
 
         assert_eq!(output.request.gridder, "awproject");
         assert_eq!(output.request.w_term_mode, "awproject");
-        assert_eq!(output.artifacts.len(), 18);
+        assert_eq!(output.artifacts.len(), 19);
         assert!(
             output
                 .artifacts
@@ -1254,13 +1254,13 @@ mod tests {
         config.write_preview_pngs = true;
 
         let artifacts = imaging_artifacts(&config);
-        assert_eq!(artifacts.len(), 5);
+        assert_eq!(artifacts.len(), 6);
         assert_eq!(
             artifacts
                 .iter()
                 .map(|artifact| artifact.kind.as_str())
                 .collect::<Vec<_>>(),
-            vec!["image", "residual", "model", "psf", "sumwt"]
+            vec!["image", "residual", "model", "psf", "sumwt", "mask"]
         );
         assert_eq!(artifacts[0].label, "Restored Image");
         assert!(artifacts[0].exists);

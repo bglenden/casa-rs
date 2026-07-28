@@ -4149,7 +4149,7 @@ mod tests {
         assert_eq!(standard_config.correlation.as_deref(), Some("XX"));
 
         let standard_artifacts = super::build_artifacts(&standard);
-        assert_eq!(standard_artifacts.len(), 5);
+        assert_eq!(standard_artifacts.len(), 6);
         let standard_psf = standard_artifacts
             .iter()
             .find(|artifact| artifact.kind == ImagerArtifactKind::Psf)
@@ -4170,7 +4170,7 @@ mod tests {
             ..standard
         };
         let mtmfs_artifacts = super::build_artifacts(&mtmfs);
-        assert_eq!(mtmfs_artifacts.len(), 14);
+        assert_eq!(mtmfs_artifacts.len(), 15);
         assert_eq!(
             mtmfs_artifacts
                 .iter()
@@ -4220,7 +4220,7 @@ mod tests {
             ..mtmfs
         };
         let awproject_artifacts = super::build_artifacts(&awproject);
-        assert_eq!(awproject_artifacts.len(), 18);
+        assert_eq!(awproject_artifacts.len(), 19);
         assert_eq!(
             awproject_artifacts
                 .iter()

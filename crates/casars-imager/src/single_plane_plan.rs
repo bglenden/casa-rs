@@ -179,14 +179,14 @@ mod tests {
         );
         assert_eq!(
             products(&plan),
-            vec![".image", ".residual", ".model", ".psf", ".sumwt"]
+            vec![".image", ".residual", ".model", ".psf", ".sumwt", ".mask"]
         );
         assert!(
             plan.gpu_metal.reason.contains("standard-mfs")
                 || plan.gpu_metal.reason == "metal-device-unavailable"
         );
         let log = plan.log_line();
-        assert!(log.contains("output_products=.image,.residual,.model,.psf,.sumwt"));
+        assert!(log.contains("output_products=.image,.residual,.model,.psf,.sumwt,.mask"));
         assert!(log.contains("source_stream=bounded"));
         assert!(log.contains("stage_timing_attribution=frontend-core-product-stages"));
     }
@@ -232,7 +232,7 @@ mod tests {
         assert!(plan.cpu_multi_worker.eligible);
         assert_eq!(
             products(&plan),
-            vec![".image", ".residual", ".model", ".psf", ".sumwt"]
+            vec![".image", ".residual", ".model", ".psf", ".sumwt", ".mask"]
         );
         assert!(
             plan.cpu_multi_worker
@@ -293,7 +293,7 @@ mod tests {
         );
         assert_eq!(
             products(&plan),
-            vec![".image", ".residual", ".model", ".psf", ".sumwt"]
+            vec![".image", ".residual", ".model", ".psf", ".sumwt", ".mask"]
         );
         assert!(
             plan.gpu_metal.reason == "standard-cube-like-one-channel-grouped-metal"
@@ -357,7 +357,8 @@ mod tests {
                 ".psf",
                 ".sumwt",
                 ".pb",
-                ".image.pbcor"
+                ".image.pbcor",
+                ".mask"
             ]
         );
         assert!(
@@ -424,6 +425,7 @@ mod tests {
                 ".alpha",
                 ".alpha.error",
                 ".pb.tt0",
+                ".mask",
             ]
         );
         let log = plan.log_line();
@@ -495,7 +497,8 @@ mod tests {
                 ".psf.tt2",
                 ".sumwt.tt2",
                 ".alpha",
-                ".alpha.error"
+                ".alpha.error",
+                ".mask"
             ]
         );
     }
@@ -560,13 +563,14 @@ mod tests {
                 ".sumwt",
                 ".weight",
                 ".pb",
-                ".image.pbcor"
+                ".image.pbcor",
+                ".mask"
             ]
         );
         let log = plan.log_line();
         assert!(log.contains("pb_requirement=mosaic-projection"));
         assert!(log.contains(
-            "output_products=.image,.residual,.model,.psf,.sumwt,.weight,.pb,.image.pbcor"
+            "output_products=.image,.residual,.model,.psf,.sumwt,.weight,.pb,.image.pbcor,.mask"
         ));
     }
 
