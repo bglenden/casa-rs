@@ -3024,6 +3024,51 @@ CASA tclean timings (seconds):
             self.assertTrue(request["require_metadata_parity"])
             self.assertEqual("single_call_product_contract", result["comparison_kind"])
 
+    def test_comparator_validation_failure_closes_to_strict_terminal_summary(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            plan = {
+                "artifacts": {"comparison_root": str(root / "comparisons")},
+                "comparison": {
+                    "products": [".image.tt0"],
+                    "max_elements_per_product": 100,
+                    "mode": "sampled",
+                    "full_chunk_elements": 50,
+                    "require_exact_product_inventory": True,
+                    "require_metadata_parity": True,
+                },
+                "command": {"casa": {"python": "/casa/python"}},
+            }
+            call = {"name": "measured-001", "prefix": "/products/1"}
+            compare = mock.Mock(
+                return_value={
+                    "status": "failed_validation",
+                    "reason": "non-finite source-region beam area",
+                    "failure": {"kind": "comparison_protocol_binding"},
+                    "products": {},
+                    "input": "/comparison/input.json",
+                }
+            )
+
+            result = run_workload.casa_tclean_workflow.compare_casa_repeatability(
+                plan,
+                [call],
+                root / "run.log",
+                comparison_runner=compare,
+            )
+
+            self.assertEqual("failed_validation", result["status"])
+            self.assertEqual(
+                {
+                    "status": "failed_validation",
+                    "reason": "non-finite source-region beam area",
+                    "products": {},
+                },
+                result["comparisons"][0],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

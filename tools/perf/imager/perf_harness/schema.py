@@ -34,6 +34,7 @@ LIVE_UNVERSIONED_COMPARISON_VARIANT = "live_unversioned"
 LEGACY_UNVERSIONED_COMPARISON_VARIANT = "legacy_unversioned"
 LIVE_UNVERSIONED_COMPARISON_STATUSES = {
     "failed_execution",
+    "failed_validation",
     "skipped",
     "unavailable",
 }
@@ -157,6 +158,7 @@ RUN_FIELDS = {
     "ms_staging",
     "phase_probe",
     "profile_repeats",
+    "preverified_warm_cache",
     "repeats",
     "reuse_casa_prefix",
     "reuse_rust_prefix",
@@ -320,6 +322,7 @@ RESULT_RUN_FIELDS = {
     "env",
     "stream_log",
     "profile_repeats",
+    "preverified_warm_cache",
     "warmups",
     "cf_cache_role",
     "evidence_role",
@@ -1442,12 +1445,20 @@ def _validate_result_run(value: Any, *, source: str) -> None:
     for key in ("repeats", "profile_repeats", "warmups"):
         if key in run:
             _optional_integer(run[key], f"{source}: {key}", optional=False)
-    if "stream_log" in run and not isinstance(run["stream_log"], bool):
-        raise ContractError(f"{source}: stream_log must be a boolean")
+    for key in ("preverified_warm_cache", "stream_log"):
+        if key in run and not isinstance(run[key], bool):
+            raise ContractError(f"{source}: {key} must be a boolean")
     if "env" in run:
         _validate_string_map(run["env"], f"{source}: env")
     nullable = {"reuse_rust_prefix", "reuse_casa_prefix"}
-    special = {"repeats", "profile_repeats", "warmups", "stream_log", "env"} | nullable
+    special = {
+        "repeats",
+        "profile_repeats",
+        "preverified_warm_cache",
+        "warmups",
+        "stream_log",
+        "env",
+    } | nullable
     for key in set(run) - special:
         _nonempty_string(run, key, source)
     for key in nullable & set(run):
@@ -4080,8 +4091,9 @@ def _validate_run_types(run: dict[str, Any], source: str) -> None:
     for key in ("profile_repeats", "repeats", "warmups"):
         if key in run:
             _integer(run, key, f"{source}: run")
-    if "stream_log" in run and not isinstance(run["stream_log"], bool):
-        raise ContractError(f"{source}: run.stream_log must be a boolean")
+    for key in ("preverified_warm_cache", "stream_log"):
+        if key in run and not isinstance(run[key], bool):
+            raise ContractError(f"{source}: run.{key} must be a boolean")
     if "env" in run:
         env = run["env"]
         if not isinstance(env, dict) or not all(
@@ -4099,6 +4111,7 @@ def _validate_run_types(run: dict[str, Any], source: str) -> None:
     for key in set(run) - {
         "cf_cache_role",
         "profile_repeats",
+        "preverified_warm_cache",
         "repeats",
         "stream_log",
         "warmups",
@@ -4118,9 +4131,19 @@ def _validate_cross_fields(
     if warmups < 0:
         raise ContractError(f"{source}: run.warmups must be >= 0")
     cache_role = run.get("cf_cache_role", "none")
-    if cache_role == "warm" and warmups < 1:
+    preverified_warm_cache = run.get("preverified_warm_cache", False)
+    if preverified_warm_cache and cache_role != "warm":
         raise ContractError(
-            f"{source}: run.cf_cache_role=warm requires run.warmups >= 1"
+            f"{source}: run.preverified_warm_cache=true requires run.cf_cache_role=warm"
+        )
+    if preverified_warm_cache and warmups != 0:
+        raise ContractError(
+            f"{source}: run.preverified_warm_cache=true requires run.warmups=0"
+        )
+    if cache_role == "warm" and warmups < 1 and not preverified_warm_cache:
+        raise ContractError(
+            f"{source}: run.cf_cache_role=warm requires run.warmups >= 1 "
+            "or run.preverified_warm_cache=true"
         )
     if cache_role in {"none", "cold"} and warmups != 0:
         raise ContractError(

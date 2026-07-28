@@ -1903,12 +1903,29 @@ def compare_casa_repeatability(
             artifact_prefix=comparison_root / f"casa-{target_name}",
             cwd=REPO_ROOT,
         )
-        comparison["panel_dir"] = request["panel_dir"]
-        comparison["left_call"] = str(baseline["name"])
-        comparison["right_call"] = target_name
-        comparison["comparison_kind"] = (
-            "single_call_product_contract" if self_contract else "repeatability"
-        )
+        if (
+            "schema_version" not in comparison
+            and comparison.get("status") != "completed"
+        ):
+            # The comparator's unavailable/execution/validation failures are
+            # deliberately unversioned terminal summaries.  Do not decorate
+            # them with successful-protocol metadata: strict run-result v3
+            # accepts only their closed status/reason/empty-products shape.
+            comparison = {
+                "status": str(comparison.get("status", "failed_execution")),
+                "reason": str(
+                    comparison.get("reason")
+                    or "CASA image-product comparison did not complete"
+                ),
+                "products": {},
+            }
+        else:
+            comparison["panel_dir"] = request["panel_dir"]
+            comparison["left_call"] = str(baseline["name"])
+            comparison["right_call"] = target_name
+            comparison["comparison_kind"] = (
+                "single_call_product_contract" if self_contract else "repeatability"
+            )
         comparisons.append(comparison)
 
     return summarize_casa_repeatability(plan, measured_calls, comparisons)
