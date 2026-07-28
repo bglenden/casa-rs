@@ -2109,7 +2109,24 @@ pub(crate) enum AwProjectSamplePlanRejection {
 }
 
 /// Borrowed CASA AWProject convolution-function cell resampler.
-pub(crate) struct AwProjector<'a> {
+pub(crate) trait AwProjectKernelPixels {
+    fn shape(&self) -> [usize; 2];
+
+    fn get_pixel(&self, index: (usize, usize)) -> Option<Complex32>;
+}
+
+impl AwProjectKernelPixels for Array2<Complex32> {
+    fn shape(&self) -> [usize; 2] {
+        [self.shape()[0], self.shape()[1]]
+    }
+
+    fn get_pixel(&self, index: (usize, usize)) -> Option<Complex32> {
+        self.get(index).copied()
+    }
+}
+
+/// Borrowed CASA AWProject convolution-function cell resampler.
+pub(crate) struct AwProjector<'a, K: AwProjectKernelPixels + ?Sized> {
     grid_shape: [usize; 2],
     du_lambda: f64,
     dv_lambda: f64,
@@ -2117,7 +2134,7 @@ pub(crate) struct AwProjector<'a> {
     x_support: usize,
     y_support: usize,
     kernel_center: [usize; 2],
-    kernel: &'a Array2<Complex32>,
+    kernel: &'a K,
     phase_gradient_rad_per_sample: [f64; 2],
 }
 
@@ -2128,18 +2145,18 @@ pub(crate) struct AwProjectorPackedTaps {
     pub(crate) y_support: usize,
 }
 
-impl<'a> AwProjector<'a> {
+impl<'a, K: AwProjectKernelPixels + ?Sized> AwProjector<'a, K> {
     pub(crate) fn new(
         gridder: &StandardGridder,
         metadata: &AwConvolutionFunctionKernelMetadata,
-        kernel: &'a Array2<Complex32>,
+        kernel: &'a K,
         phase_gradient_rad_per_sample: [f64; 2],
     ) -> Result<Self, ImagingError> {
-        if kernel.dim() != (metadata.shape[0], metadata.shape[1]) {
+        if kernel.shape() != metadata.shape {
             return Err(ImagingError::ConvolutionFunctionCache(format!(
                 "{}: loaded kernel shape {:?} does not match indexed shape {:?}",
                 metadata.path.display(),
-                kernel.dim(),
+                kernel.shape(),
                 metadata.shape
             )));
         }
@@ -2202,7 +2219,7 @@ impl<'a> AwProjector<'a> {
             self.x_support,
             self.y_support,
             self.kernel_center,
-            [self.kernel.shape()[0], self.kernel.shape()[1]],
+            self.kernel.shape(),
             u_lambda,
             v_lambda,
             w_lambda,
@@ -2220,9 +2237,9 @@ impl<'a> AwProjector<'a> {
                     self.kernel_center[0] as isize + ix * self.sampling as isize + geometry.off_x,
                 )
                 .map_err(|_| AwProjectSamplePlanRejection::KernelIndexOutsideCell)?;
-                let mut tap = *self
+                let mut tap = self
                     .kernel
-                    .get((kernel_x, kernel_y))
+                    .get_pixel((kernel_x, kernel_y))
                     .ok_or(AwProjectSamplePlanRejection::KernelIndexOutsideCell)?;
                 if geometry.conjugate_for_grid {
                     tap = tap.conj();
@@ -2346,15 +2363,70 @@ impl<'a> AwProjector<'a> {
                     self.kernel_center[0] as isize + ix * self.sampling as isize + geometry.off_x,
                 )
                 .map_err(|_| AwProjectSamplePlanRejection::KernelIndexOutsideCell)?;
-                let mut tap = *self
+                let mut tap = self
                     .kernel
-                    .get((kernel_x, kernel_y))
+                    .get_pixel((kernel_x, kernel_y))
                     .ok_or(AwProjectSamplePlanRejection::KernelIndexOutsideCell)?;
                 if geometry.conjugate_for_grid {
                     tap = tap.conj();
                 }
                 normalization += tap;
                 tap *= casa_aw_phase_gradient_from_axes(x_phases[ix_index], y_phases[iy_index]);
+                values.push(tap);
+            }
+        }
+        if !(normalization.re.is_finite()
+            && normalization.im.is_finite()
+            && normalization.norm() > 0.0)
+        {
+            return Err(AwProjectSamplePlanRejection::InvalidNormalization);
+        }
+        Ok((
+            AwProjectSamplePlan {
+                loc_x: geometry.loc_x,
+                loc_y: geometry.loc_y,
+                off_x: geometry.off_x,
+                off_y: geometry.off_y,
+                conjugate_for_grid: geometry.conjugate_for_grid,
+                normalization,
+            },
+            AwProjectorPackedTaps {
+                values,
+                x_support: self.x_support,
+                y_support: self.y_support,
+            },
+        ))
+    }
+
+    pub(crate) fn plan_and_pack_geometry_with_phase_lookup(
+        &self,
+        geometry: AwProjectSampleGeometry,
+        x_phase: impl Fn(isize) -> Complex32,
+        y_phase: impl Fn(isize) -> Complex32,
+    ) -> Result<(AwProjectSamplePlan, AwProjectorPackedTaps), AwProjectSamplePlanRejection> {
+        let x_support = self.x_support as isize;
+        let y_support = self.y_support as isize;
+        let mut normalization = Complex32::new(0.0, 0.0);
+        let mut values =
+            Vec::with_capacity((2 * self.x_support + 1).saturating_mul(2 * self.y_support + 1));
+        for iy in -y_support..=y_support {
+            let y_coordinate = iy * self.sampling as isize + geometry.off_y;
+            let kernel_y = usize::try_from(self.kernel_center[1] as isize + y_coordinate)
+                .map_err(|_| AwProjectSamplePlanRejection::KernelIndexOutsideCell)?;
+            let phase_y = y_phase(y_coordinate);
+            for ix in -x_support..=x_support {
+                let x_coordinate = ix * self.sampling as isize + geometry.off_x;
+                let kernel_x = usize::try_from(self.kernel_center[0] as isize + x_coordinate)
+                    .map_err(|_| AwProjectSamplePlanRejection::KernelIndexOutsideCell)?;
+                let mut tap = self
+                    .kernel
+                    .get_pixel((kernel_x, kernel_y))
+                    .ok_or(AwProjectSamplePlanRejection::KernelIndexOutsideCell)?;
+                if geometry.conjugate_for_grid {
+                    tap = tap.conj();
+                }
+                normalization += tap;
+                tap *= casa_aw_phase_gradient_from_axes(x_phase(x_coordinate), phase_y);
                 values.push(tap);
             }
         }
@@ -2396,7 +2468,10 @@ impl<'a> AwProjector<'a> {
                 let kernel_x = (self.kernel_center[0] as isize
                     + ix * self.sampling as isize
                     + plan.off_x) as usize;
-                let mut tap = self.kernel[(kernel_x, kernel_y)];
+                let mut tap = self
+                    .kernel
+                    .get_pixel((kernel_x, kernel_y))
+                    .expect("validated AWProject plan must remain inside its kernel");
                 if plan.conjugate_for_grid {
                     tap = tap.conj();
                 }
@@ -2501,11 +2576,11 @@ fn casa_aw_phase_gradient(phase_x: f64, phase_y: f64) -> Complex32 {
     casa_aw_phase_gradient_from_axes(casa_aw_axis_phase(phase_x), casa_aw_axis_phase(phase_y))
 }
 
-fn casa_aw_axis_phase(phase: f64) -> Complex32 {
+pub(crate) fn casa_aw_axis_phase(phase: f64) -> Complex32 {
     Complex32::new(phase.cos() as f32, phase.sin() as f32)
 }
 
-fn casa_aw_phase_gradient_from_axes(x: Complex32, y: Complex32) -> Complex32 {
+pub(crate) fn casa_aw_phase_gradient_from_axes(x: Complex32, y: Complex32) -> Complex32 {
     let product = Complex64::new(f64::from(x.re), f64::from(x.im))
         * Complex64::new(f64::from(y.re), f64::from(y.im));
     Complex32::new(product.re as f32, product.im as f32)
@@ -4068,7 +4143,23 @@ mod tests {
         );
         let (fused_plan, fused_packed) =
             projector.plan_and_pack_geometry(indexed_geometry).unwrap();
+        let (lookup_plan, lookup_packed) = projector
+            .plan_and_pack_geometry_with_phase_lookup(
+                indexed_geometry,
+                |coordinate| super::casa_aw_axis_phase(coordinate as f64 * phase_gradient[0]),
+                |coordinate| super::casa_aw_axis_phase(coordinate as f64 * phase_gradient[1]),
+            )
+            .unwrap();
         let separately_packed = projector.packed_taps(&plan);
+        assert_eq!(
+            lookup_plan.normalization.re.to_bits(),
+            fused_plan.normalization.re.to_bits()
+        );
+        assert_eq!(
+            lookup_plan.normalization.im.to_bits(),
+            fused_plan.normalization.im.to_bits()
+        );
+        assert_eq!(lookup_packed.values, fused_packed.values);
         assert_eq!(
             (
                 fused_plan.loc_x,

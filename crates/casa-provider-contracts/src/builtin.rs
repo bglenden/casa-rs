@@ -355,7 +355,7 @@ mod tests {
     fn imager_vlass_controls_share_one_catalog_owned_awproject_surface() {
         let catalog = builtin_surface_catalog().unwrap();
         let surface = catalog.surface("imager").unwrap();
-        assert_eq!(surface.contract_version(), 5);
+        assert_eq!(surface.contract_version(), 6);
 
         let awproject = Predicate::Equals {
             parameter: "gridder".to_string(),
@@ -426,6 +426,7 @@ mod tests {
             "imaging_prepare_buffer_mb",
             "imaging_row_block_rows",
             "imaging_prepare_workers",
+            "standard_mfs_grid_threads",
             "imaging_fft_precision",
         ] {
             let binding = surface

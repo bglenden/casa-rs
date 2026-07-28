@@ -141,6 +141,25 @@ class CasaProtocolTests(unittest.TestCase):
             self.assertEqual("completed", completed.status)
             self.assertEqual({"schema_version": 1}, completed.output["echo"])
 
+            script.write_text(
+                "import json, pathlib, sys\n"
+                "print('protocol progress', flush=True)\n"
+                "request = json.loads(pathlib.Path(sys.argv[1]).read_text())\n"
+                "pathlib.Path(sys.argv[2]).write_text(json.dumps({'echo': request}))\n",
+                encoding="utf-8",
+            )
+            visible = io.StringIO()
+            with contextlib.redirect_stdout(visible):
+                streamed = run_json_file_protocol(
+                    casa_python=sys.executable,
+                    script=script,
+                    stream_stdout=True,
+                    **common,
+                )
+            self.assertEqual("completed", streamed.status)
+            self.assertEqual("protocol progress\n", visible.getvalue())
+            self.assertEqual("protocol progress\n", common["log_path"].read_text())
+
     def test_shared_process_runner_supports_stdin_and_separate_stderr(self) -> None:
         completed = run_command(
             [

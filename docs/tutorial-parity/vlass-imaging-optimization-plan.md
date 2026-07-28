@@ -440,8 +440,11 @@ seconds, but AW gridding remained dominant at 124.64 seconds. The result is
 127.6157-second boundary. Its immutable receipt is
 `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T113847Z-vlass-fragment-single-field-fftw-f64-experiment-ccedb70a.json`
 (`757f8397120b7a995e3d4f9eb337bc99817a80d34e0266d99ae8a7b6448ef252`).
-The temporary local FFTW dependency remains experimental pending an explicit
-incorporation decision.
+Brian subsequently approved adding an f64 FFTW backend. That closes the
+algorithm/dependency choice gate, but not the packaging gate: the current
+`fftw-local-bench` loader points at a workstation CASA application bundle and
+must become a portable, licensed production dependency/backend before final
+`auto` integration.
 
 A full 325-group diagnostic also falsified the suspected POINTING
 pixel-to-direction-to-pixel round trip as the residual owner. The maximum
@@ -949,8 +952,1262 @@ immutable receipt is
 `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T210158Z-vlass-fragment-single-field-fftw-f64-experiment-7dc431a7.json`
 (`694d3a255c5e67b589adbef77ff8570324c4a0534f6749c8783b9efd92c63ff9`).
 This supplies the full-product correctness evidence for the combined
-lookahead, four-plane-worker, and phase-factorized AW replay experiment; human
-panel acceptance and final incorporation approval remain separate gates.
+lookahead, four-plane-worker, and phase-factorized AW replay experiment. Brian
+explicitly approved incorporating the compact exact-source-order replay,
+adaptive segmentation, and production runtime change on 2026-07-26; commits
+`86a57a2e4` and `175c122f4` contain that implementation. Human panel
+acceptance and the remaining portable FFTW/resource-control integration stay
+separate gates.
+
+A more aggressive factorization that shared unphased raw taps across POINTING
+groups was negative on CPU and was removed. It preserved exact source order
+and CASA's phase-product rounding, charged one raw-tap array plus every
+per-group axis vector, and passed all 290 active `casa-imaging` tests. On the
+four-SPW all-fields first block it reduced source-order windows from 63 to 47,
+materialization from 29.517 to 25.784 seconds, and tap packing from 15.078 to
+11.072 seconds. Reconstructing each phase-applied tap during every grid
+contribution, however, increased grid work from 11.586 to 26.221 seconds and
+raised the block from 58.814 to 72.957 seconds (24.05 percent slower). The run
+was stopped after the first block and the factorized runtime representation
+was fully removed. Its interrupted receipt and 2,333,777-byte log are
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T212748Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-3eaaba72.json`
+(`229503d42a59563108011b26a2f17c655989c3f9c70ab5aa5578340f0d09cf82`).
+The result suggests raw-tap sharing is useful only if a GPU or another fused
+consumer can absorb the extra phase multiply more cheaply than the CPU path.
+
+A direct Float32 Metal-atomic experiment then removed fixed-grid plane
+segmentation and accumulated all eight resident output planes across every
+source-order window. It retained the f64 FFTW finish and zero compensation
+readback, so the experiment isolated unordered Float32 grid summation. All
+385,862 samples were accepted. The measured complete invocation took
+137.660846 seconds, while its initial-dirty pass took 96.915 seconds. The
+actual GPU accumulation across 114 windows took only 7.487 seconds, but the
+path still packed 3,610,756,844 phase-applied Complex32 kernel values;
+materialization and transfer, not the atomic kernel, owned the wall clock.
+The redundant profile invocation was interrupted after the completed measured
+products were retained. Its receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T214047Z-vlass-fragment-single-field-metal-fftw-f64-experiment-c17cc14c.json`
+(`9e0c755ad6475bcf46c54cb0a1b75642d63822dfd6913d122939bce797137f63`).
+
+The frozen full-array comparator rejected those products. Direct Float32
+summation changed 39,703 mask pixels in the image, residual, and PB products
+and 1,419,558 pixels in each alpha mask. PSF Taylor terms remained close, but
+the weight-term structured-difference reviews were `investigate`,
+`investigate`, and `bad`; weight TT2 had relative RMS
+`1.846013502377971e-4`. Normalization amplified the weight-grid error in the
+residual and image terms, whose relative RMS differences exceeded 0.82.
+The bound comparator output is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/vlass-fragment-single-field-metal-fftw-f64-experiment/experimental_metal_grid_fftw_f64/20260726T214047Z-vlass-fragment-single-field-metal-fftw-f64-experiment-c17cc14c.partial/comparisons/direct-f32-measured/frozen-casa.comparison.json`
+(`9cedb040e9aacfde9aa9e1fddf61e239fdcffc6b08c60f85467bc06b0c2517b8`).
+Direct Float32 accumulation is therefore rejected. The useful result is
+architectural: a viable GPU path must eliminate phase-applied tap packing
+while retaining deterministic fixed64 accumulation.
+
+A subsequent Metal experiment did exactly that while retaining the existing
+full-grid fixed64 accumulator. Raw CF taps were shared by cell/kind/offset and
+exact precomputed Complex32 phase tables were shared by
+POINTING/support/offset; a focused Metal test proved the GPU factor multiply
+bit-identical to the pre-phased fixed64 dispatch. All 291 active
+`casa-imaging` tests passed. The full 12,150-square probe nevertheless failed
+the performance stop rule. Each source-order window carried about ten million
+raw taps and five million shared phase values within the 121,670,694-byte
+packed ceiling, but the 2,361,960,000-byte fixed accumulator admitted only one
+output plane. Every window therefore cleared, dispatched, and finalized eight
+full-image segments. The first three of sixteen SPW blocks reached 26.282,
+14.675, and 14.444 seconds respectively, or 55.406 seconds before one fifth
+of the input, so the run was interrupted rather than spend most of another
+baseline on a known loss. Its retained receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T221329Z-vlass-fragment-single-field-metal-fftw-f64-experiment-a4a1b516.json`
+(`a417d9af30540aaafab35dfce1a8dbec23550d60a65e809c679c40e98bd86889`).
+The next bounded Metal candidate must compact the fixed64 accumulator to
+touched tiles (or otherwise eliminate full-image clear/finalize per window);
+further tap-packing changes cannot own the missing speedup while every window
+streams 18.9 GB of fixed-grid limbs.
+
+A touched-tile fixed64 experiment then replaced that full-image accumulator
+with deterministic 128 by 128 tiles selected from the exact support of every
+source-order window. A focused Metal replay test was bit-identical to the
+pre-phased full-grid fixed64 result. On the full 12,150-square workload, the
+windows touched only 20 to 122 of roughly 9,000 image tiles. All eight Taylor
+planes consequently fit in one segment, with 42 to 256 MB of fixed limbs per
+window, and steady-state Metal dispatch fell to approximately 85 to 121 ms.
+The old full-plane reservation nevertheless continued to cap packed taps at
+121,670,694 bytes. CF loading and exact raw/phase materialization therefore
+dominated: the initial-dirty pass had reached 153.366 seconds at 7,800 of
+10,400 rows, already beyond the independent 127.616-second 10x boundary, so it
+was stopped before a redundant measured invocation. Its retained interrupt
+receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T222223Z-vlass-fragment-single-field-metal-fftw-f64-experiment-83235e87.json`
+(`b86a6ecedb4dc07ba8990202bf14356cb9152dd3c92eb10a5f44f43eedc16852`).
+The next experiment may reclaim the obsolete full-plane reservation for a
+larger packed window, but must charge exact tile metadata and fixed-limb
+residency before final incorporation.
+
+Reclaiming that reservation while retaining the existing 256 MB tap ceiling
+was positive but insufficient. Windows fell from 16--28 per SPW block to
+4--12, and the first block fell from 10.387 to 7.863 seconds despite including
+the one-time Metal pipeline setup. Later CF materialization still dominated:
+the initial-dirty pass reached 92.845 seconds at 7,150 of 10,400 rows, leaving
+less than the 127.616-second boundary for five remaining blocks plus all FFT
+and product finishing. The run was stopped before the redundant measured
+invocation. Its retained receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T222925Z-vlass-fragment-single-field-metal-fftw-f64-experiment-31149613.json`
+(`0dba1982587112d311b3ef62a8be032cc8edea7fe77090a2ab833dc2e4c0a171`).
+The follow-up planner therefore grows the experimental tap window beyond the
+CF-resident ceiling only while charging exact active-tile lookup/list bytes,
+packed sample and Taylor weights, and fixed64 high/low limbs for all eight
+planes against the admitted Metal scratch budget.
+
+An adaptive 768 MiB packed-tap window then completed the full-geometry f64
+Metal warmup in 142.744412 seconds. Exact replay took 102.193344 seconds,
+the Metal grid summary charged 40.982 seconds, and the f64 finish took 19.094
+seconds; the run-imaging and product-write stages were 134.46 and 5.777
+seconds. This proved the compact tiled fixed64 topology is viable at full
+geometry but still misses the independent 127.6157-second target. Its receipt
+is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T223806Z-vlass-fragment-single-field-metal-fftw-f64-experiment-ee901572.json`
+(`1022016a1f13513e74257eb2d7421603ee71c8be9b7cde5201a266834526b5fc`).
+
+Reusing the CPU path's 1 GiB CF and 1 GiB tap requests was negative under the
+shared 32 GiB Metal ledger. Charging 1 GiB of resident CF pixels reduced the
+actually admitted tap window to 873,017,958 bytes, increased each SPW block
+to six through eight exact windows, and reached 121.441 seconds at only
+9,750 of 10,400 rows. The run was interrupted before completing a known loss,
+and the Metal manifest was restored to 256 MiB CF residency and a 768 MiB tap
+request. Its receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T233319Z-vlass-fragment-single-field-metal-fftw-f64-experiment-97abc283.json`
+(`907930fd7de4e7da4824d015dff8bd39d7cc4152774150ce12e427b9731ce3b8`).
+
+The approved Float32 Metal FFT experiment retained deterministic fixed64
+gridding and rounded the high-plus-low compensation limbs exactly once before
+MPSGraph. Direct eight-plane execution produced non-finite or zero PSF
+normalization both on the complete 16-SPW workload and on a same-geometry
+SPW-9 probe. Segmenting the merge dispatch did not change that result, which
+isolated the failure to the downstream large-batch MPSGraph topology rather
+than replay or the compensated merge. The retained receipts are
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T224941Z-vlass-fragment-single-field-metal-fft-f32-experiment-09a2d0cb.json`
+(`ab6bc35b1d9dfa896121d66af5f00da7ef79946fe2be29c2fcee0058b4badee2`)
+and
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T225916Z-vlass-fragment-single-field-spw9-metal-fft-f32-segmented-probe-9f676c33.json`
+(`07921a073fbd149ca8a9bcda6fc91942954e25a71338a1b85ac3554b41d3d1fa`).
+
+Executing one 12,150-square plane at a time bounded MPSGraph memory and
+produced all eighteen finite products. The non-fiducial SPW-9 diagnostic took
+48.467369 seconds measured, including 9.244 seconds in the plane-chunk FFT;
+its expected comparison failure reflects the intentional one-SPW selection.
+Its receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T230344Z-vlass-fragment-single-field-spw9-metal-fft-f32-segmented-probe-8631bbbc.json`
+(`0e48cb15941c33e688a966ed185a09c5cc9f278b751ac4b37f6d0d8e59bc995c`).
+
+The scientific 16-SPW run then measured 132.570199 seconds, 9.626x faster
+than CASA and only 4.9545 seconds outside the 10x boundary. It nevertheless
+failed correctness: residual TT0 and TT1 differed by 0.4156 and 0.4182
+percent RMS against a 0.1 percent ceiling, and by 2.797 and 3.000 percent at
+peak against a 0.5 percent ceiling. PSF Taylor terms, sumweights, and weight
+terms remained numerically close, but the residual error propagated to image,
+alpha, and mask products. Float32 FFT is therefore rejected for frozen CASA
+parity despite its performance; further cache or unpack tuning on that path is
+not justified. The immutable receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T231427Z-vlass-fragment-single-field-metal-fft-f32-experiment-3d594222.json`
+(`37987401918c28ac8f29da8172e53727c27fc31f535956c4f05fc8e5430ea286`).
+
+The next exact-f64 Metal family removed raw-tap extraction entirely. It packed
+the underlying CASA CF pixels into a direct-cell arena, retained the exact
+CASA-rounded POINTING phase tables and fixed64 touched-tile accumulation, and
+looked up each source-ordered tap on the GPU from support, sampling, offset, and
+conjugation metadata. Rebuilding an arena from every window's complete cells
+was immediately negative: repeated 90--97-million-pixel arenas reached 87.935
+seconds at only 3,250 rows. The operator stopped that noncompetitive run; its
+receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T235102Z-vlass-fragment-single-field-metal-fftw-f64-experiment-f2b65a8e.json`
+(`1f775b30469e9db87dd0fe6f5da8bed07b54519534c2f37950282527a867d4b8`).
+
+Retaining one dense direct-cell arena for each source block made the low-SPW
+blocks fast but exposed the exact memory boundary at high frequency. The first
+three arenas were 1.619 GB, 0.814 GB, and 2.434 GB; the later 2,519,007,236-byte
+arena exceeded the 2,483,630,694-byte scratch ledger. Cropping every resident
+cell to the exact support/sampling/offset bounding box reduced traffic and
+reached 7,150 rows in 70.339 seconds, but a later 2,658,753,988-byte crop still
+required 2,671,373,040 bytes with six active tiles. The dense and cropped
+capacity-failure receipts are
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T000309Z-vlass-fragment-single-field-metal-fftw-f64-experiment-19ec9bc5.json`
+(`8996ba70524ff318d7f59c6c22ecc1036f2a84afc0d819b3847415bc5ef0a65d`)
+and
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T001121Z-vlass-fragment-single-field-metal-fftw-f64-experiment-ad3cbbdf.json`
+(`34742387b96b1fc78441b1ffc46a72de0c8eadcdbbf49d5699d8793cccb6ee00`).
+
+Adaptive exact-source-order segmentation then binary-searched the largest
+source prefix whose cropped arena fit a planner-selected target. A 60-percent
+scratch target was too conservative: it split normal blocks into six through
+eight arenas, repeated CF loading, and reached 3,900 and 4,550 rows in 42.014
+and 60.200 seconds. That known loss was stopped and retained at
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T001824Z-vlass-fragment-single-field-metal-fftw-f64-experiment-fe288255.json`
+(`131765d31c74d2752750e6234cdb80f5924a2fafcdd1ef34671a3550021b45d7`).
+The final bounded experiment instead reserved 64 MiB for packed samples, phase
+tables, descriptors, tile metadata, and fixed limbs, leaving a
+2,416,521,830-byte direct-cell target inside the 2,483,630,694-byte scratch
+budget. Normal blocks stayed whole; only oversized blocks split, including an
+exact 16,523/10,310/254-source partition with 2.371 GB and 1.102 GB later
+arenas.
+
+That capacity-only adaptive run completed both warmup and measured invocations,
+accepted all 385,862 samples, and passed the full eighteen-product frozen CASA
+comparison. The measured complete invocation was 144.135067 seconds, or 8.854x
+faster than CASA: scientifically green but slower than the 66.378748-second CPU
+winner and still above the 127.6157-second gate. The worst full-array RMS ratio
+was `3.7653703972780365e-7`, the worst peak-normalized absolute difference was
+`6.0261272215318e-7`, every topology and source check passed, and the overall
+structured-difference label was `good`. This proves that cropped adaptive
+direct-cell replay is correct and memory-safe, but not that it should replace
+the production CPU path on this workload. Its immutable receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T002108Z-vlass-fragment-single-field-metal-fftw-f64-experiment-c8404d26.json`
+(`d2b911610981bbb611cb4bc381daf00b78389044083032df0f8d10d3add36d87`).
+
+The corresponding 63-field/four-SPW turnaround was rejected even earlier.
+Its first source block contained 1,031,284 samples and a 1,616,737,792-byte
+cropped arena, but exact active-tile scratch admitted only roughly 8,200 to
+11,000 samples per dispatch. Forty-three completed dispatches consumed 0.67
+to 0.88 seconds each in the steady sequence, with one 1.62-second outlier;
+the 103-dispatch lower bound for GPU work alone was therefore already about
+70--80 seconds. That exceeds the retained CPU path's 58.814-second complete
+first block before adding arena planning, FFT, derived products, or writes.
+The run was stopped at the 30-second progress marker, the temporary manifest
+was restored, and the negative receipt was preserved at
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T003908Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-748d541b.json`
+(`c0be9a46eb998739100a57a5c280510c9730180e774170968a64bd6606ce983e`).
+Direct-cell fixed64 Metal is consequently neither the single-field nor the
+all-fields winner on this M1 Max; further work should improve the exact CPU
+path or remove the GPU's per-window fixed-scale/tile-finalization ownership
+before another full-size launch.
+
+A 64-pixel touched-tile follow-up confirmed that simply shrinking tiles does
+not remove that ownership. It approximately doubled admitted windows to
+15,000--24,000 samples and reduced fixed limbs from roughly 650 MB to
+516--543 MB, but raised active-tile metadata from about 310 to 984--1,036
+tiles. Steady dispatches consequently took 1.34--1.83 seconds instead of
+roughly 0.7--0.8 seconds, implying an approximately 90-second first-block GPU
+lower bound. The experiment-only control and temporary manifest change were
+removed after the stop. Its receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T004439Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-5223e536.json`
+(`d208c3f5ca4bc06cd191ba58395f7c9ffa28236716547863867f4e1b2dcef686`).
+
+A compensated Float32 atomic experiment then captured each atomic addition's
+TwoSum rounding error in the existing compensation grid. It reduced the
+residual and image RMS ratios by about fiftyfold from the uncompensated
+Float32 path: residual TT0/TT1 measured
+`8.416465006765291e-5`/`8.325405172424891e-5`, image TT0/TT1 measured
+`8.54432734743225e-5`/`8.353511140650134e-5`, and all numeric product ceilings
+passed. The 144.919723-second measured invocation still missed 10x, and 113
+alpha-domain pixels changed mask topology even though overlap-domain alpha
+error was only about `1.74e-7`. The pure compensated path is therefore rejected
+for residual, image, and alpha parity, but its PSF and weight accuracy supports
+the next bounded hybrid: compensated Float32 PSF/weight accumulation with
+deterministic touched-tile fixed64 accumulation retained for the two residual
+planes. The immutable receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T005241Z-vlass-fragment-single-field-metal-fftw-f64-experiment-69ff62b0.json`
+(`902e0dbe75190c8337dbe3e4e32a2d6327513919eb2a8d608336dfbe5bfd26eb`).
+
+A hybrid follow-up retained deterministic touched-tile fixed64 accumulation
+for both residual Taylor planes while using compensated Float32 atomics for
+the three PSF and three weight planes. This cut the maximum fixed scratch from
+the eight-plane path to 392,167,424 bytes and reduced the measured complete
+invocation to 124.648980 seconds, 10.237x faster than the frozen CASA row and
+2.966720 seconds inside the independent 10x boundary. All 385,862 samples were
+accepted; measured grid replay took 85.745860 seconds, including 48.788 seconds
+of Metal grid work and 22.937 seconds of dispatch wait across 95 windows.
+
+The full eighteen-product comparator nevertheless rejected the candidate.
+Every enforceable numeric ceiling passed and the overlapping alpha domain had
+a relative RMS difference of only `1.739239766968442e-7`, but the compensated
+weight path changed the PB-derived mask at 109 pixels. Both `.alpha` and
+`.alpha.error` therefore had topology mismatch status. The hybrid is the first
+Metal path to cross the timing boundary, but it is not correctness-green and
+cannot be incorporated as production behavior in this form. The next bounded
+experiment should make the mask-owning weight TT0 accumulation deterministic
+without restoring all eight fixed64 planes. The immutable receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T012035Z-vlass-fragment-single-field-metal-fftw-f64-experiment-84fff6a2.json`
+(`9d00ad781ec28b57d4796d4a09903692118a05edfbe6ff0c57719925da2d5ab0`).
+The run used a temporary 960-GiB experimental storage floor because the
+evidence volume was 47 GB below the normal one-TiB free-space precondition;
+the checked-in one-TiB policy was restored immediately after the receipt was
+published.
+
+A second hybrid made weight TT0 deterministic along with both residual Taylor
+planes, while retaining compensated Float32 accumulation for all PSF planes
+and weight TT1/TT2. The focused Metal equivalence test still matched the
+all-fixed64 planes exactly and all nine focused Metal tests passed. Its warmup
+was 168.427768 seconds, but the measured invocation benefited from the warm CF
+cache and completed in 124.475033 seconds: 10.252x faster than CASA and
+3.140667 seconds inside the independent 10x boundary. All 385,862 samples were
+accepted. The measured dirty replay took 85.768024 seconds; the Metal summary
+reported 115 windows, a maximum 588,251,136-byte fixed grid, 49.475668 seconds
+of grid work, and 22.988926 seconds of dispatch wait.
+
+This candidate passed the complete frozen CASA contract. The eighteen-product
+inventory matched; all numerical, topology, metadata, beam, source-region,
+and structured-difference checks passed with no failed or incomplete checks;
+and the overall structured-difference label was `good`. This confirms that
+weight TT0 owned the remaining PB/alpha mask topology. The immutable receipt
+is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T013841Z-vlass-fragment-single-field-metal-fftw-f64-experiment-3ec9be66.json`
+(`370d3c80a44cd2439d2f04730526e75aeec185c4a52e5af3eaed6e4205bbb88b`).
+The experiment used a temporary 850-GiB free-space floor after retained
+negative artifacts lowered available space below 960 GiB; the checked-in
+one-TiB production evidence policy was restored immediately afterward.
+Although this is the first Metal candidate to pass both independent gates, the
+66.378748-second exact CPU path remains the single-field performance winner.
+Metal incorporation therefore still requires all-fields evidence and the
+separate production-incorporation approval.
+
+The matching 63-field/four-SPW turnaround rejects that incorporation. Its
+first 25,416-row source block contained 1,031,284 samples and completed in
+105.063 seconds, including 11.667 seconds of planning, 4.209 seconds of
+materialization, and 86.772 seconds of Metal gridding across 32 exact-order
+windows. The retained four-worker CPU path completed the same entire block in
+58.814 seconds. Because Metal was already 78.64 percent slower before the
+second of roughly seven blocks, the run was stopped rather than spend a full
+warmup on a known loss. Its interrupted receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T015348Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-78b798b4.json`
+(`7dcd49776e7bbb120d842f5579b729c7e605cc68ce6b58fb25fb7796678737ff`);
+the streamed log hash is
+`7a464e723506075850c4e4b0fc01bf5cffddacdc7f04d8944ebaa57839445142`.
+The temporary Metal manifest and 800-GiB evidence-storage floor were restored
+immediately. The three-plane hybrid remains useful experimental evidence, but
+it is not a production candidate for this VLASS wave: the exact CPU compact
+replay is faster on both the single-field and raster-patch cases.
+
+A first full-band CPU baseline then selected all sixteen used SPWs (`2~17`)
+with the retained exact compact replay, four disjoint plane workers, 1-GiB CF
+residency, 1-GiB compact-tap arena, and local f64 FFTW backend. The complete
+warmup wrote all eighteen products in 1,632.017 seconds: the initial-dirty
+replay took 1,589.374 seconds, `run_imaging` took 1,621.602 seconds, and
+product writing took 7.586 seconds. All 25,030,848 visibility samples were
+accepted with zero rejection. The CF cache reported 80,839 loads, 77,187
+hits, 80,811 evictions, 28 resident cells, and 1,055,645,696 resident bytes.
+Against the frozen 8,183.264-second CASA all-fields row, this is approximately
+5.014x faster and misses the 818.326-second 10x boundary by 813.691 seconds.
+The measured repetition was stopped after its first block reached 54.374
+seconds because statistical repetition is not the current objective. The
+retained interrupted receipt and streamed log are
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T020345Z-vlass-fragment-all-fields-full-band-fftw-f64-experiment-cc64c85a.json`
+(`8f38247cdcba6717878816603666405a028918313d0004054f01d7b12a1a542f`)
+and the adjacent `.log`. Peak process RSS was approximately 17.22 GB and
+system-wide swap use was 4.56 GB without throttled pages; this was not
+pathological swapping. The block growth and cache counters instead identify
+serialized CF-cell loading and decode as the principal full-band limiter.
+
+The first compact-cache experiment replaced the hot exact-key `BTreeMap`
+lookup with the existing deterministic hash policy and wrote all 1,024
+validated imaging/weight CF pairs to one fingerprint-bound source-order pack.
+The 23,079,466,528-byte pack was produced in 47.154 seconds with metadata
+fingerprint `f24a584cbe2dd782` and SHA-256
+`002f2a8d3252f7357c3faa1a6592dee19b2a43561df3d566ca219beec123201f`.
+On the four-SPW turnaround the complete warmup fell from 492.692 to 294.391
+seconds and replay fell from 452.208 to 249.483 seconds, improvements of 40.25
+and 44.83 percent respectively. The immutable receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T024128Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-6cb16a5b.json`
+(`940ed28483272e03c5a2c5c0771677cd4e775dbd0f0c92a4e597947b210b52ab`).
+
+The same copy-backed pack reduced the full-band warmup from 1,632.017 to
+1,163.022 seconds and replay from 1,589.374 to 1,092.236 seconds. This raised
+the all-fields speedup from 5.014x to 7.036x, still 344.696 seconds outside
+the 818.326-second boundary. The retained products have immutable receipt
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T024923Z-vlass-fragment-all-fields-full-band-fftw-f64-experiment-b173bdd9.json`
+(`c163d4566dbcb44e811ef56aae3b556a54fbc9173cb17ca1b3cd00ff3e5d4922`).
+A comparison-only invocation reused those products and the frozen CASA prefix.
+All eighteen numerical and topology comparisons passed, including exact-zero
+model planes and an overall structured-difference label of `good`. Strict
+metadata parity remained incomplete: all products shared a
+`3.6716461181640625e-5` Hz spectral-reference difference, and the four
+beam-bearing image products plus `psf.tt0` were one Float32 ULP below CASA in
+major axis, minor axis, and position angle. That receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T034034Z-vlass-fragment-all-fields-full-band-fftw-f64-experiment-399a92a4.json`
+(`594c19ad95f168101a8ea18f0f1df5aeeaecd446d624355754193ee444c139d3`).
+These are real metadata defects to close; they are not grounds to weaken the
+full-product comparator.
+
+A read-only memory map then removed per-cell heap copies while preserving the
+same fingerprint, shape, length, finite-value, and exact-key validation, and a
+per-source-block phase table removed repeated trigonometric evaluation. On the
+four-SPW turnaround this reduced replay to 217.683 seconds, 12.7 percent below
+the copy-backed pack; its interrupted diagnostic receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T033324Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-25ca332b.json`
+(`4a59152ec05163d2185a1d531c113f720053421c3e4c96586845411770753245`).
+The phase table itself costs only 4 to 11 milliseconds per block and is not a
+remaining owner.
+
+The next experiment used the cache's already validated complete Cartesian
+axes to compute CASA's nearest frequency, quadratic W-plane, conjugate
+frequency/Mueller, and PA-bin key directly. It retained the scanned selector
+as an oracle and compared the two across frequency, signed W, conjugate-beam,
+and Mueller cases. The four-SPW warmup completed in 242.242 seconds and replay
+in 170.992 seconds. Relative to the copy-backed pack, wall time improved 17.7
+percent and replay 31.5 percent; relative to the mapped/phase-table run, replay
+improved 21.4 percent. All 6,416,526 samples were accepted with unchanged CF
+cache counters. The immutable receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T034843Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-4278cbb1.json`
+(`aec91569a0f47754da5c62cfcaa1c1c5b38cc629808d0fe560e0932acfc6ebcb`).
+This establishes direct selection as a genuine hot-path win; full-band
+evidence and final incorporation review remain required.
+
+The corresponding full-band direct-selection/mapped/phase-table warmup reached
+`827.969462` seconds at the harness boundary (`819.427` seconds through the
+frontend and `816.506` seconds in `run_imaging`). That is `9.884x` faster than
+the frozen CASA row and only `9.643` seconds outside the `818.326`-second
+boundary. Its initial-dirty replay took `884.315` seconds in the measured
+invocation, which completed in `946.335376` seconds at the harness boundary;
+the block-to-block variation was mapped-page locality rather than memory
+pressure, with `memory_pressure -Q` reporting 89 percent free. All
+`25,030,848` samples were accepted. After products and timing had been
+preserved, the full comparator remained silent for more than three minutes and
+was interrupted under the opaque-run stop rule. The immutable interrupted
+receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T035753Z-vlass-fragment-all-fields-full-band-fftw-f64-experiment-c552474b.json`
+(`0fce7dcd3a395a9b018e2ea757a942fe223443ab3249aef2e593835cae491582`);
+the adjacent log hash is
+`b1a5a91eed1260c5d767b4b3967c40fa5a2908bd07883b1eb936f84dfa2029a1`.
+The receipt is typed as interrupted because the harness had not reached final
+publication, so these timings are taken from the preserved streamed log rather
+than its empty result fields.
+
+An x-contiguous packed-file counter-experiment tested whether matching the
+projector's inner x loop would improve mapped-page locality. The
+`23,079,466,528`-byte v2 pack had SHA-256
+`320f954406dab154d9af1e682d166876e62eaed8649b9ddea4d9f396ade2491f`.
+Its first four-SPW block improved to `24.152` seconds, but later blocks took
+`37.557`, `76.646`, and `51.008` seconds as page locality deteriorated. The
+complete replay was therefore `189.363` seconds and the frontend completed in
+`257.238` seconds, both slower than the prior mapped-layout result of
+`170.992` and `242.242` seconds. The measured repetition was stopped during
+setup. The rejected experiment's interrupted receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T043941Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-d7c82e4f.json`
+(`61a240b01dd9887e7355e2c49ab717277d3e92d2e665002ee28f4ceae9a57ea8`);
+the adjacent log hash is
+`448138b6e40941ff78f6f1b479bece6dd96f4d0dff7bb84210ccff1cab7f6ac1`.
+The v2 layout was reverted; the fingerprint-bound v1 layout remains the
+experimental candidate.
+
+Doubling only the v1 tap-pack worker count from four to eight was also a clear
+loss. The first identical four-SPW block increased from `24.393` to `31.404`
+seconds; materialization increased from `11.758` to `17.019` seconds and grid
+time from `10.758` to `12.216` seconds. The run was stopped at that bounded
+decision point and the four-worker setting restored. The interrupted receipt
+is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T044756Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-bbca868b.json`
+(`83ca5d8b6465e4cd9512b15d9c0e1a3fd8ff9d101631ba0ea01640914dca87c4`);
+the adjacent log hash is
+`5aa8b346c2edab4ac22b3cbef3d0f15b9f9cbff79916bcbfe11a992b749ec000`.
+
+The next bounded experiment kept the accepted v1 packed layout and four pack
+workers but trusted its already fingerprint-bound payload instead of scanning
+all `23,079,466,528` bytes for finite values on every open. The four-SPW
+warmup completed in `201.378130` seconds at the harness boundary, `200.293`
+seconds through the frontend, and `166.606` seconds in initial-dirty replay.
+Compared with the otherwise equivalent finite-scan result (`242.242` seconds
+frontend, `170.992` seconds replay), this isolates about 42 seconds of
+redundant open-time validation while leaving replay arithmetic unchanged. All
+`6,416,526` samples were accepted; POINTING diagnostics were quiet under their
+new narrow trace control. The measured repetition was stopped after its first
+block because the warmup had already answered the experiment. The immutable
+interrupted receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T050039Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-1c2abfa1.json`
+(`47d72a7f044f2514f538854323c5d4e3122fdc147d74a19615cdaec1295df57c`);
+the adjacent log hash is
+`35ad3f62852878ed87ac53ca9204ae1a09f94b15a61ee233c929774deee9210c`.
+This saving is larger than the full-band warmup's remaining `9.643`-second
+10x gap, so the next full-band run will verify the boundary before production
+incorporation is proposed.
+
+The full-band trusted-open counterexample showed why the four-SPW projection
+was insufficient. With the eager scan removed, cold mapped pages moved into
+the source-order replay: initial dirty took `812.783` seconds, `run_imaging`
+took `849.950` seconds, the frontend took `864.281` seconds, and the harness
+wall time was `865.952824` seconds. That is `9.450x` the frozen CASA baseline
+and misses 10x by `47.627` seconds. All `25,030,848` samples were accepted,
+system-wide memory remained 91 percent free, and no swapping or admission
+failure occurred. The measured invocation was retained only through six dirty
+blocks: it took `194.718` seconds versus `188.790` seconds at the same warmup
+checkpoint, proving that the 20+ GiB grid working set evicts enough mapped
+pages that a second completion would not establish a resident-cache win. The
+run was then stopped under the non-repetition rule. Its immutable interrupted
+receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T050557Z-vlass-fragment-all-fields-full-band-fftw-f64-experiment-ea7c49f9.json`
+(`5f84599b4d317fcfb822486cae6b7e28882bd4a9110f75cf9408ce82a2c09922`);
+the adjacent log hash is
+`29a255996b8281df08acfac888b6c43695da0e35fb0007d87cac93b87317b2bb`.
+The next experiment therefore makes the existing one-cell lookahead perform
+real page-aligned `WILLNEED` advice for the next mapped cell, rather than
+merely constructing its zero-copy view.
+
+The first advice experiment deliberately tested both whole-map and exact-cell
+advice so that a large kernel read-ahead opportunity would not be missed. It
+was a decisive loss. Cold whole-map `MADV_WILLNEED` blocked for `62.485`
+seconds, and the four dirty blocks then took `25.535`, `41.594`, `58.690`, and
+`51.515` seconds (`177.335` seconds total replay). The complete warmup took
+`283.212503` seconds at the harness boundary and `282.222` seconds through the
+frontend, substantially worse than the trusted-open control's `201.378130`
+and `200.293` seconds. The measured invocation was stopped after its first
+block. The interrupted receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T052927Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-78f4d1ac.json`
+(`3a07d9c4977787686d204e87b9ae6f84850597766cacebe586c867bd87170199`);
+the adjacent log hash is
+`02e18759d4b0fef84d5bdab7f04959e4057e63ba64d1a214472d173e1bdc7841`.
+Whole-map advice is rejected. The next bounded run isolates source-order
+exact-cell advice on a cold v1 mapping.
+
+Exact-cell advice was also rejected at its first bounded decision point. After
+re-evicting the v1 mapping, the first dirty block took `28.973` seconds versus
+`25.620` seconds in the cold trusted-open control. Cache-load-worker time rose
+to `3.825` seconds; the kernel advice did not overlap enough useful I/O with
+tap packing to offset its cost. The run was stopped after that block. Its
+interrupted receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T053630Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-1f7cec09.json`
+(`7346ce9932e0f6f12822739e1f8540b8b88d9aede7d9592a88737920af0cedc9`);
+the adjacent log hash is
+`9c0101066d7e6967a73151f86ad6e6f72a2126030e27d1e8bbd8ec6ae5a0ef46`.
+Both advice controls and their dependency were removed from the candidate.
+
+Repartitioning the same admitted 2 GiB AW working-memory sum from 1 GiB mapped
+CF residency plus 1 GiB taps to 256 MiB plus 1.75 GiB was a small end-to-end
+win. It reduced the four per-block adaptive-window counts from
+`63,90,128,121` to `38,50,64,63`; initial-dirty replay fell from `166.606` to
+`160.783` seconds. The complete warmup took `199.716744` seconds at the harness
+boundary and `198.597` seconds through the frontend, versus `201.378130` and
+`200.293` seconds for the trusted-open control. The measured invocation was
+stopped during setup. The interrupted receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T054307Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-793c4ac5.json`
+(`0b02f68d1d3e21758e376412bf40d305ea1f8fd97a1b56acc49f2a5f24b0d1a6`);
+the adjacent log hash is
+`8e4379111a8993134ecbb874bc876283b16150243eac28c6f373dca8bef05bcb`.
+This candidate remains benchmark-only until its full-band effect and a
+resource-adaptive production formula are established.
+
+Eight requested grid workers did not expose more parallel work on this M4
+host: the execution plan still admitted four effective disjoint plane owners.
+The first otherwise identical block took `25.554` seconds with `11.290`
+seconds in gridding, statistically indistinguishable from the four-worker
+candidate's `26.036` and `11.332` seconds. The run was stopped after that
+block and four requested workers restored. Its interrupted receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T054850Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-e1fec56d.json`
+(`5e4306a1a30c74c39d768576251eff248c6affd730584ebc69fdbf5e54d05b17`);
+the adjacent log hash is
+`b7b9547d95137e9ac2814b06af44e575eefae32cc9e697e859cbd347bd0c5f62`.
+
+The full-band 256 MiB mapped-CF plus 1.75 GiB tap repartition cleared the dirty
+10x gate while retaining the 32 GiB admitted peak. All `25,030,848` samples
+were accepted. Initial-dirty replay fell from the trusted-open control's
+`812.783` to `670.987` seconds; `run_imaging` completed in `701.639` seconds,
+the frontend in `710.925` seconds, and the harness boundary in `712.571613`
+seconds. Relative to the frozen `8,183.264`-second CASA baseline this is
+`11.484x`, with `105.754` seconds of margin below the `818.326`-second gate.
+The measured repetition was stopped during setup. The immutable interrupted
+receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T055104Z-vlass-fragment-all-fields-full-band-fftw-f64-experiment-df685944.json`
+(`715ab4cf08f85f2e731e5138935f08a92acd23484a067f29d7f3e2fd73ca721f`);
+the adjacent log hash is
+`db88b4b333072bcbfcbb683fbe21863e621aa6727f5a0f145cb73f713e03e63e`.
+This establishes the first full-size casa-rs all-fields dirty performance
+pass; product parity and a resource-adaptive production expression remain
+required before incorporation.
+
+The next correctness pass removed the remaining spectral-coordinate defect.
+The casacore-compatible frequency converter now preserves CASA's multi-SPW
+`MSUtil` ordering and lifecycle, and the MeasurementSet engine loads scalar
+metadata columns in bulk without changing row semantics. Focused ignored
+casacore interoperability tests passed for both the single-field and
+all-fields selections. The retained full-band run then completed in
+`677.269094` seconds, or `12.083x` the frozen CASA baseline, with
+`665.626` seconds in imaging and `7.724` seconds in product writing. All
+eighteen full arrays, masks, finite topology, exact coordinates, numerical
+ceilings, source-region checks, and structured-difference checks passed. The
+only incomplete checks were the restoring-beam metadata on `.alpha`,
+`.alpha.error`, `.image.tt0`, `.image.tt1`, and `.psf.tt0`.
+
+That run also uses the shared CASA-order nonlinear beam fitter and CASA's
+AWProject PSF scalar placement. Its fitted Float64 beam is
+`2.955340630794701` by `2.084298237704540` arcsec at
+`71.11363515754748` degrees, while the stored Float32 beam remains
+`2.955340623855591` by `2.0842981338500977` arcsec at
+`71.11363220214844` degrees. CASA stores `2.95534086227417` by
+`2.0842983722686768` arcsec at `71.11363983154297` degrees. The immutable
+receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T080701Z-vlass-fragment-all-fields-full-band-fftw-f64-experiment-26e694e4.json`
+(`2675f857f66bb468532d851b154ee7af71e26f84a4ce682c4d7f8ea2f71193fe`).
+This is the current retained full-band dirty candidate: it clears the
+performance gate and has complete scientific-array parity, but exact beam
+keyword parity is still open.
+
+A compact split-polarization PSF experiment tested whether CASA forms Stokes I
+by Fourier transforming RR and LL separately before their Float32 average. It
+added one full grid, independently admitted gridding and FFT lifetimes, and
+reduced the tap arena to 512 MiB. The run accepted all `25,030,848` samples
+and completed in `784.811048` seconds (`10.427x`), but it decisively failed
+correctness. PSF TT1 and TT2 differed by approximately 100 percent RMS,
+residual TT0 and TT1 by `1.487` and `2.007` percent RMS, and weight/PB
+products by roughly `0.25` percent RMS. Its fitted beam moved farther from
+CASA to `2.955338770096156` by `2.084299040603960` arcsec at
+`71.11361789971096` degrees. This falsifies the split-hand/lifetime hypothesis
+as a unit; the experimental runtime and planner code were removed, and the
+combined-hand candidate above remains authoritative. The immutable rejected
+receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T084434Z-vlass-fragment-all-fields-full-band-fftw-f64-experiment-f6f3303d.json`
+(`33a3cece5c98ebf104d01737c77119625a5c44521c9b798711d14eae130ae086`).
+
+Three narrower probes then ruled out ordering and Briggs density as the
+remaining exact-beam cause. CASA constructs its VI2 with default sort columns;
+because this MeasurementSet has no `SORT_COLUMNS` keyword, those columns are
+`ARRAY_ID,FIELD_ID,DATA_DESC_ID,TIME`. TaQL dumps of all 585,000 rows in the
+relevant selected domain showed that physical row order is already exactly
+that canonical order. The compact replay processes each source-order window
+serially within each disjoint plane owner, so window boundaries cannot alter
+the per-plane floating-point reduction order; the focused cross-window
+bit-parity test remains green.
+
+Finally, a weighting-only CASA probe mirrored `task_tclean.py`'s effective MFS
+behavior, including its reset of public `perchanweightdensity=true` to false,
+and exposed the pre-robust grid through uniform weighting because CASA's
+`getweightdensity()` only writes that representation. CASA and casa-rs both
+produced exactly `8,114,596` occupied cells at identical coordinates with zero
+Float32-bit value mismatches. The comparison is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/weight-density-all-fields-20260726/comparison.json`
+(`f177a9917a2faecdaf4d85274a6dc6f0c0a7ccb08c957801bc895f9635a78458`);
+the same directory retains the exact sparse inputs and probe scripts. This
+rules out MAIN-row sorting, compact-window segmentation, and Briggs density
+construction. The open exactness investigation therefore remains inside
+AWProject contribution arithmetic before the FFT and beam fit.
+
+An exact-source-pixel experiment then tested one remaining AW phase
+construction difference directly. CASA accumulates each POINTING group's image
+pixel in Float32 before deriving the phase gradient, whereas the retained
+casa-rs path converted the accumulated group direction back to a pixel. The
+experiment propagated the exact CASA-order group pixel alongside the
+authoritative direction and used it only for compact phase replay. The
+`casa-imaging` library suite passed with 295 tests and 2 ignored; the
+`casars-imager` library suite passed with 323 tests and 13 ignored.
+
+The full-size run falsified this as the restoring-beam fix. The stored beam was
+bit-for-bit unchanged at `2.955340623855591` by `2.0842981338500977` arcsec
+and `71.11363220214844` degrees, versus CASA's
+`2.95534086227417` by `2.0842983722686768` arcsec and
+`71.11363983154297` degrees. All scientific arrays remained within the frozen
+ceilings, including `.psf.tt0` maximum absolute error
+`1.1920928955078125e-7` and RMS error `6.516492097443304e-10`; both model
+planes remained exactly zero.
+
+This invocation also exposed a distinct replay-locality failure and is not
+evidence that carrying two pixel scalars caused the slowdown. Its measured
+wall time was `941.899761` seconds, or `8.688x` the frozen CASA baseline, with
+`895.071` seconds in dirty replay, `929.413` seconds in frontend imaging, and
+`7.576` seconds in product writing. The 256 MiB CF residency held only seven
+cells and recorded 69,629 loads, 15,601 hits, and 69,622 evictions; per-block
+phase-table construction remained only about 4--11 ms. A cold warmup spent
+`432.372` seconds scanning 3,335,002 POINTING rows and retaining 105,963,
+while the measured invocation's warm preparation took `3.58` seconds. This
+run and the retained 677.269-second candidate formed the same 891 adaptive
+windows and routed the same 25,030,848 samples. Their aggregate grid times
+were nearly unchanged at `245.572` versus `240.848` seconds, while tap
+materialization increased from `363.152` to `603.789` seconds. This localizes
+the regression to mapped-page/tap-pack residency rather than the new phase
+arithmetic. It strengthens the case for tapless replay, a smaller exact CF
+representation, and a persistent fingerprinted POINTING index.
+
+The immutable receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T102552Z-vlass-fragment-all-fields-full-band-fftw-f64-experiment-fa0e5091.json`
+(`685d2cc7abe9e8361cda9473726d2dc3a59947bb4211ea399e2ca320136966e5`).
+The exact-pixel addition remains experimental pending the required
+production-incorporation decision; regardless of that decision, it is rejected
+as an explanation for the remaining beam-keyword mismatch.
+
+The first scalar tapless CPU experiment removed POINTING group identity from
+the compact tap key, retained each exact unphased CF/offset/conjugation bundle,
+and applied the precomputed CASA axis phases inside the existing source-order
+grid loop. A focused test proved bit identity against prephased compact taps,
+and the complete `casa-imaging` library suite passed with 296 tests and 2
+ignored. The reduced four-SPW run then provided a bounded negative performance
+result. Through three identical source blocks, tapless replay reduced adaptive
+windows from 152 to 73 and tap materialization from `61.017` to `38.033`
+seconds. Exact scalar phase multiplication in every Taylor-plane tap increased
+grid time from `45.314` to `105.032` seconds and planning from `2.504` to
+`7.803` seconds; elapsed dirty replay at the same third-block checkpoint rose
+from `111.643` to `153.231` seconds. The run was stopped before the fourth
+block because the `37.3%` checkpoint loss already falsified scalar tapless
+replay as a production win.
+
+The interrupted receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T114423Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-1d853775.json`
+(`1fb1b19dd9c13fb294d48fe17878ab99ebf798c50fc5d057f67301de23ee7303`);
+the adjacent log hash is
+`8ffbb8f44d7fcfe2f36cdf8186ceebace3645b73cbc0ddac59393d534aaa801c`.
+The experiment remains useful as the required group-independent dataflow
+foundation for explicit SIMD/NEON and fused Metal measurements, but scalar
+tapless execution is rejected and cannot become a default.
+
+A tap-order counter-experiment tested whether changing only the grid-update
+traversal could recover the scalar tapless arithmetic cost. CASA and compact
+tap packing use Y-outer/X-inner order; casacore's first array axis is
+contiguous, while the current ndarray grid's second axis is contiguous. The
+experiment therefore kept packed-tap indexing and every contribution value
+bit-identical but traversed X-outer/Y-inner for contiguous grid writes. The
+focused output test passed bit-for-bit. On the first identical four-SPW block,
+however, grid time increased from `24.886` to `28.907` seconds and checkpoint
+wall time increased from `34.079` to `36.045` seconds. The loss is consistent
+with replacing contiguous packed-tap reads with strided reads without enough
+grid-store benefit. The run was stopped after that block and this traversal is
+rejected.
+
+The interrupted receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T115307Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-89eee1a4.json`
+(`f000fd838d75e15c9e4dfdcb1a51037bf0f2c5c3a59775741a5a8cc4b4358bd6`);
+the adjacent log hash is
+`7e8be21a59ac07114c97aaa3588a1bcfaef7032355e4074c356a73d0884a05d5`.
+
+The Oracle follow-up adopted spatial ownership as the next bounded hypothesis:
+source rows and adaptive windows remain the exact ingestion order, but every
+accepted footprint is indexed into spatial tiles, each tile owns disjoint
+authoritative-grid views for all Taylor planes, and each pixel still receives
+contributions in exact source order. The review rejected tile scratch/copy-back
+because it would either change accumulation grouping or copy large grid regions
+per window. It also rejected a new CF format, SIMD, Metal, FFT-layout changes,
+planner integration, and public parameters in this first slice. The initial
+candidate set is 128, 192, and 256 pixels, with 192 primary, measured rather
+than encoded as a machine constant. Advancement requires bit-identical pre-FFT
+grids, no worker-count dependence, at most 2.0 sample--tile fragments per
+accepted sample, at most 64 new metadata bytes per sample and 256 MiB peak, and
+a three-block wall time no greater than `94.897` seconds for a clean win
+(`100.479` seconds is the absolute refinement ceiling).
+
+The first executable 256-pixel prototype intentionally proved that disjoint
+views of the existing ndarray grids can be expressed safely by partitioning
+every plane into non-overlapping X stripes and processing the contained 2D
+tiles with four workers. Focused tests were bit-identical, including a
+cancellation-sensitive source-order fixture. Its first runtime formulation was
+nevertheless invalid for advancement because it emitted a separate fragment
+for each of six AW roles and also used X-outer/Y-inner traversal inside each
+fragment. It reached `61.316` seconds after one block and `134.698` seconds
+after two, already beyond the three-block stop threshold; p95 fragments per
+sample were 10 and then 12. The run was killed immediately. Its interrupted
+receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T120953Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-040a871f.json`
+(`20c6f1dacb19675f6c8649f23fe324395ebee97d8d10ede6981ceb03c94c3fce`);
+the adjacent log hash is
+`b85abce5a8fff0af9350344ef646b8827a51af8dc51672de66d2dcc89d43fa78`.
+The corrected slice coalesces all six roles into one sample--tile record,
+constructs a deterministic two-pass window-local directory with a 256 MiB hard
+cap, restores CASA Y-outer/X-inner tap traversal, and starts with 192-pixel
+tiles. Production incorporation remains unapproved.
+
+The corrected 192-pixel run demonstrated that spatial ownership is useful but
+not sufficient by itself. At the first block it improved wall time from the
+scalar tapless `34.079` seconds to `30.548` seconds, with `0.126` seconds of
+tile planning and `22.360` seconds for tile planning plus replay versus
+`24.886` seconds for scalar tapless gridding. At the identical three-block
+checkpoint it reached `126.843` seconds: substantially better than scalar
+tapless's `153.231` seconds, and about `82.463` seconds of total tile
+planning/replay versus `105.032` seconds of scalar tapless gridding, but still
+worse than the retained `111.643`-second materialized-tap control and above the
+`100.479`-second absolute ceiling. Peak fragment storage was only about
+2.0 MiB and planning stayed below 0.15 seconds per block. The run was stopped
+at the checkpoint. Its interrupted receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T122100Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-ced674a9.json`
+(`0b0c074f46cae477356302a0e867e971b0b342edc12cac2acf1339bd3a9fbac4`);
+the adjacent log hash is
+`e0c9b24d35e7530f763aee900d1598ded1d4050aef7e22852fdb5c2c681d0cab`.
+This rejects tile ownership alone, not the coupled Oracle A+B architecture:
+the next bounded factor is a byte-bounded, group-independent compact-slice LRU
+that reuses exact unphased bundles across adaptive windows without copying
+their pixels or changing any tap arithmetic.
+
+That first persistent compact-slice formulation was also falsified quickly.
+It used a `1,792` MiB byte-bounded hash-map LRU and shared exact unphased
+bundles through `Arc`. The first block recorded `1,013,126` hits, `291,982`
+misses, `185,843` evictions, `106,139` resident entries, and
+`1,879,034,904` resident bytes, so reuse across adaptive windows is real.
+However, per-key hash-map lookup, recency-queue maintenance, allocation, and
+eviction increased tap packing from the corrected tile-only run's `3.679`
+seconds to `32.112` seconds. Materialization reached `32.241` seconds and the
+first-block wall time reached `58.962` seconds, versus `30.548` seconds for
+tile-only. Tile planning plus replay remained effectively unchanged at
+`22.541` seconds. The run was killed after the first block, and the general
+LRU representation is rejected rather than tuned. Its interrupted receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T123207Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-85103d23.json`
+(`371b5f053dd7f510455ad761e7a7a6fb9f7013bdf07a5432bc2374d4b05e3adc`);
+the adjacent log hash is
+`044b699626596c419011cbb7f2a887ae3cc12b0c57b7776d85ec9f22db3cfc4d`.
+
+The next bounded representation keeps the same exact bundle pixels and
+source-order tile replay but replaces the hash-map LRU with a fixed-slot,
+direct-mapped arena. A key probes one slot, a collision replaces that slot,
+and an independent byte ceiling evicts only if variable support sizes would
+otherwise exceed the admitted tap budget. The initial `16,384`-slot screen has
+a worst-case retained-payload footprint below the `1,792` MiB experiment
+budget for the measured support range. This isolates whether reuse is valuable
+when the cache lookup and replacement policy is deliberately trivial; it is
+still private experiment code and does not authorize production incorporation.
+
+The `16,384`-slot screen removed the LRU implementation cost but did not retain
+enough of the working set. At block one it recorded `130,688` hits,
+`1,174,420` misses, `1,158,268` replacements, `16,152` resident entries, and
+`224,684,864` resident bytes. Materialization returned to `3.594` seconds and
+tile planning plus replay was `24.480` seconds, but the block reached `32.574`
+seconds versus `30.548` seconds for tile-only. At block two cumulative time was
+`72.195` seconds versus tile-only's `68.437`; the run was then stopped. This
+rejects the undersized direct arena, while distinguishing it from the general
+LRU failure: cheap lookup is viable, but a collision/replacement rate near the
+miss count cannot deliver useful reuse. Its interrupted receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T124123Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-66c1888f.json`
+(`3838c62fc276e85068a2968bfe9314df729e0329d5f3d3f365324569ae29c29e`);
+the adjacent log hash is
+`d165dcc162f547b7571161838666a347113099ec1a07abe07f09fb49cd3c0f74`.
+A same-conversation Oracle evidence-delta review now owns the choice between
+one capacity-matched cheap arena, dense stable tap identity, and proceeding
+directly to SIMD tile replay.
+
+The completed evidence-delta review selected exactly one final cache
+experiment: a capacity-faithful dense identity directory feeding a
+`131,072`-slot, byte-bounded CLOCK arena. It rejected a separate large direct
+or four-way hash screen because a negative result at roughly 81% occupancy
+would still confound reuse with set conflicts. The dense ID is derived without
+a hot-path hash from CF-cell ordinal, imaging/weight kind, oversampling X/Y
+offsets, and conjugation; the directory maps that ID directly to an arena
+slot. CLOCK reference bits approximate recency without an LRU queue, and
+bundles still held by the current adaptive window cannot be evicted. The
+`1,792` MiB byte ceiling remains authoritative.
+
+This is the last persistent-tap-cache experiment. It must be bit exact, finish
+the first block in at most `27.5` seconds, reach at least a 70% hit rate, spend
+at most `1.5` seconds in cache management, keep CLOCK p95 scan length at most
+64, bypass at most 2% of admissions, and cause no swap. Any failed gate ends
+persistent caching and advances directly to SIMD/NEON tile replay. If it
+survives, three-block totals above `111.643` seconds reject it, `106`--`111`
+seconds are not worth further cache work, at most about `106` seconds is
+marginal, and at most `100.479` seconds is the strong advancement threshold.
+
+The dense-ID CLOCK result cleanly ends persistent tap caching. At block one it
+held `106,646` entries (`119,175` peak), reached the exact `1,792` MiB payload
+ceiling, and used only `7,451,136` bytes for the identity directory and seen-ID
+bits. It delivered `1,013,131` hits and `291,977` misses (`77.6%` hits),
+`185,331` evictions, zero admission bypasses, CLOCK p95 scan length 24, and
+only `93.085` ms of measured cache management. Materialization fell to
+`1.512` seconds. The first block nevertheless took `28.799` seconds, above the
+predeclared `27.5`-second gate; tile planning plus replay was still
+`22.910` seconds. The run was stopped immediately. Its interrupted receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T125800Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-f2699d44.json`
+(`d6b4aa57e850d7407424491e714723a4e3e3dbe8ee3023fe45af3572f8ddfce8`);
+the adjacent log hash is
+`a63d6d5d4897bd3e44eb060c93e546239a811a5c0cd5112f5b095c1e4017c242`.
+Because hit rate and cache-management gates passed, the remaining loss is not
+an ambiguous hash/LRU-container failure. Per the signed-off stop rule, no more
+persistent tap-cache variants will be tested; rejected cache machinery is
+removed from the executable path and the next bounded experiment is
+SIMD/NEON tile replay.
+
+The first SIMD screen vectorized one exact complex-f32 contribution and its
+complex-f64 grid accumulation with a two-lane AArch64 NEON helper. It avoided
+FMA and reassociation, and its focused cases matched the scalar result
+bit-for-bit. That granularity was nevertheless too narrow: on the first
+identical four-SPW block, tile planning plus replay increased from the scalar
+tile result's `22.360` seconds to `24.853` seconds. The block reached `43.990`
+seconds, with `14.718` seconds of materialization because the rejected cache
+experiment's shared-`Arc` bundle representation was still present even though
+caching was disabled. The run was stopped immediately. Its interrupted
+receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T130634Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-f9435c6b.json`
+(`26187368dd7fb95abf11c7aa8e613180699d8620780de66ed83e50409f024a411`);
+the adjacent log hash is
+`688a1979a3e311c5f2a6633f71d80b4be3bbebbbcf2789834ecf68a3dc1a7c3f`.
+This rejects only the per-contribution two-lane formulation. Both that helper
+and the cache representation are removed before establishing a fresh scalar
+tile control; any subsequent SIMD experiment must amortize vector setup across
+multiple taps, pixels, or Taylor planes.
+
+After removing both rejected implementations, the fresh scalar 192-pixel tile
+control restored the intended representation and slightly improved the earlier
+tile baseline. Its first block reached `29.378` seconds, with `3.573` seconds
+of materialization and `21.431` seconds for tile planning plus replay. At the
+second checkpoint it reached `65.481` seconds, with cumulative materialization
+`6.618` seconds and tile planning plus replay `25.758` seconds for that block.
+This confirms that the prior `14.718`-second materialization regression came
+from the cache experiment's shared-`Arc` representation, while the narrow NEON
+replay itself remained slower than scalar. The run was stopped after that
+control checkpoint. Its interrupted receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T131951Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-1bbf0e55.json`
+(`952ac20c3a04464e12f17bab10436acae82bdb3c23f699cc0bfd150b8ea39762`);
+the adjacent log hash is
+`a91e96af540c1f0a1efb6cb9ab531a5e822294e9201982e7b9bfe95d02a9cd75`.
+
+The same Oracle conversation selected exactly one wider SIMD experiment from
+that clean delta: a 2-by-2 register-transposed AArch64 NEON spatial kernel.
+For two adjacent X taps in each of two tap rows, it keeps both packed-tap reads
+contiguous, transposes the four values in registers, and updates the two
+contiguous Y grid pixels for each X. There is no tile copy, cross-plane packing,
+role fusion, FMA, reassociation, or persistent layout change. Source-window,
+fragment, role, and per-pixel contribution order remain unchanged; only the
+order in which distinct pixels receive one source contribution changes.
+
+The implementation tightens one detail in the review pseudocode to match the
+actual scalar contract: the two stored `f32` axis phasors are promoted and
+multiplied as complex `f64`, the gradient is rounded back to `f32`, and both
+tap-times-gradient and coefficient-times-tap then use `f32` in the same
+multiply/add-sub order. Only the final complex contribution is promoted to
+`f64` before adding it to the authoritative grid. The hard first-block gates are
+tile-plan-plus-replay at most `17.48` seconds and total at most `25.43`
+seconds, with at least 80% SIMD pixel coverage and no bit mismatch. A surviving
+three-block run must not exceed the retained `111.643`-second control;
+`106.061` seconds is the pass threshold and `100.479` seconds is a strong pass.
+
+The 2-by-2 kernel passed its replay hypothesis but exposed a new memory
+interaction. Focused tapless, tiled, and cancellation-sensitive source-order
+tests were bit-identical. Its first block reached `22.838` seconds total with
+`14.832` seconds of tile planning plus replay, beating both strong thresholds,
+and vectorized `95.1%` of role-pixel updates. Across the first three blocks,
+tile planning plus replay totaled `52.641` seconds, also inside the
+`61.681`-second component pass budget, while SIMD coverage rose above 95%.
+
+The three-block end-to-end result nevertheless reached `136.051` seconds
+because tap materialization grew from `3.578` seconds in block one to `14.433`
+and then `53.546` seconds. The fourth block showed the same failure mode before
+the interrupt. The 23 GiB mapped packed-CF archive, roughly 1.8 GiB live tap
+window, and 18.9 GiB authoritative grids now form the dominant 32 GiB residency
+conflict; the SIMD loop itself is retained only as an experimental replay win
+while memory/page residency is measured next. The first worker-spread counters
+also compared extrema from different adaptive windows, so they are diagnostic
+only and will be replaced by a per-window imbalance ratio. The interrupted
+receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T133805Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-97518f59.json`
+(`bc0cbd6e637db531a793b26c7dabed661bf8cb62a18fc22abcabd867ce0ef6a4`);
+the adjacent log hash is
+`13056e8987c5aa44f084842d61c975adb74c40164c1b69d0be28a7bb5e645f95`.
+
+The Oracle memory evidence-delta review ranked sparse authoritative tiles
+first, genuinely owned exact CF residency second, and a persisted compact
+tap-slice artifact third. The selected experiment allocates all eight
+`Complex64` planes only for the cumulative union of touched 192-pixel tiles,
+serially before parallel replay. Each tile retains Y-contiguous storage and
+the existing exact 2-by-2 kernel; there are no atomics or new reductions. At
+finish, one plane is zero-filled densely, populated by bitwise tile-row copies,
+passed through the unchanged f64 FFT/product path, and released before the next
+plane is densified.
+
+One full plane is `2,361,960,000` bytes, while one 192-by-192 tile across eight
+planes is `4,718,592` bytes. Accumulation therefore replaces the fixed
+`18,895,680,000`-byte grid residency with
+`4,718,592 * cumulative_active_tiles`, plus the existing tap and actually
+resident CF pages. The first checkpoint is the same first three four-SPW
+blocks. It requires no bit mismatch or swap, no more than 8 GiB sparse
+residency (about 1,800 tiles), block-three tap-materialization cost per byte no
+more than 1.25 times block one, tile replay no more than 55.273 seconds, and
+total time no more than `100.479` seconds. This remains an experiment, not
+approval to incorporate a new storage/runtime default.
+
+The experiment now implements that storage contract behind
+`CASA_RS_AWPROJECT_SPARSE_TILES_EXPERIMENT`. Active tiles are allocated
+serially, replayed by disjoint X-stripe owners through the same scalar or exact
+2-by-2 NEON arithmetic, and consumed one plane at a time into the existing f64
+finish path. A focused dense-versus-sparse source-order test checks every grid
+element after densification and is bit-identical with both scalar replay and,
+where available, the NEON kernel. The experimental implementation refuses the
+legacy per-sample grid methods, caps sparse residency at 8 GiB, and records
+new, resident, and peak tile counts and bytes plus allocation and per-window
+worker-imbalance timings.
+
+The first cold checkpoint after remounting GLENDENNING reached `131.448`
+seconds for three blocks, with `611` tiles and `2,883,059,712` bytes resident.
+It retained the expected cold CF materialization cost and is useful cold-cache
+evidence, but it missed the timing gate. Its receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T140213Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-80dc14ef.json`
+(`0d55024c6d40b4b16deb49e681e0baadb0fb4c48131b564d1d18ada09a438c8e`);
+the adjacent log hash is
+`d3623ac814db49c61a30a80e2071abd120329e713d4f7a57f07685e23a909ec3`.
+
+The immediate identical warm checkpoint reached `22.364`, `56.537`, and
+`100.250` cumulative seconds after blocks one through three. It therefore
+passed the Oracle strong `100.479`-second total gate by `0.229` seconds. Sparse
+residency again ended at `2.883` GB, while tile-plan-plus-replay summed
+`57.983` seconds, slightly above the `55.273`-second component target. Its
+receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T140611Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-81975a58.json`
+(`c7a140422cb61a747b74619a565b0cff1b55cc0d22d3350b70a2193016abf8ff`);
+the adjacent log hash is
+`29207ddef4322de5083407c90c7b102fc273aa758026b9578d19bfdc8eeab4bb`.
+
+A complete four-SPW sparse run then finished in `180.037461` seconds, with
+`804` tiles and `3,793,747,968` bytes at peak. Its receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T140944Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-b2e31114.json`
+(`d6a5e2d217b5263eff9520ceedf9594430a45b8ff3da1dfdb652c4f9b617fa49`);
+the adjacent log hash is
+`a550d1a5028424ac61b24e8b365efcaf5caa982c0b8e7ebe43d468d5f9d36a82`.
+The harness had no matched four-SPW CASA prefix and incorrectly compared this
+result with the full-band CASA reference; that comparison is rejected as
+invalid scientific evidence. A direct diagnostic against the prior completed
+four-SPW dense casa-rs products found exact sum weights, weight planes, and
+masks. PSF and residual values differed only at `1.46e-11` through `1.40e-9`
+absolute scale because the retained dense result predates the exact POINTING
+change. The focused current-code dense-versus-sparse test remains the
+bit-exact storage-isolation evidence.
+
+The corrected full 16-SPW sparse run finished in `745.145443` seconds
+end-to-end, below the frozen `818.326`-second 10x boundary by `73.181` seconds.
+The CLI core took `743.479` seconds, including `9.240` seconds to write all 18
+products. Full replay took `681.778` seconds; exact tap materialization summed
+`284.935` seconds and tile planning plus replay summed `345.089` seconds. Peak
+sparse residency was `871` tiles or `4,109,893,632` bytes. This is slower than
+the retained `677.269094`-second dense full-band run on the 32 GiB acceptance
+host, but removes `14.786` GB of authoritative-grid residency and still passes
+the runtime target. That tradeoff makes dense versus sparse selection a
+resource-adaptive planner decision rather than a universal default.
+
+The exhaustive full-array comparison scanned every pixel of all 18 frozen
+CASA products. It has zero failed tolerance checks. Thirteen products have
+exact metadata parity; five are incomplete only because the current strict
+metadata comparator requires bit-equal restoring-beam values. Their
+major/minor beam values differ by `2.384e-7` arcsec and their position angle by
+`7.629e-6` degrees. The scientific tolerances, topology checks, masks, shapes,
+units, coordinates, product inventory, and all other metadata fields pass.
+The remaining defect is therefore the already-owned exact restoring-beam
+metadata parity, not sparse-grid arithmetic. The receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T142836Z-vlass-fragment-all-fields-full-band-fftw-f64-experiment-bae45401.json`
+(`22344295498bba1eb8505ceb126735803b2538d04ca8508ba87b184c2098a1b3`);
+the adjacent log hash is
+`ff683674919c98343f405a0bd9270a3926b53ae91fff625476d4c0a27115b506`.
+The comparison JSON hash is
+`82f8c32db31f06362d1c9cf8ca7e2a803fae319edf4532e93fbdb6eb523e23ee`
+and its log hash is
+`e9ff84d3f3d477c4599d923e9d5e2a729c69a9ed6950e223aa54616fe1a5a518`.
+
+The next same-conversation Oracle evidence-delta review selected dynamic
+spatial-tile tasks rather than source-row partitioning. Each active
+192-by-192 tile is one indivisible task for one adaptive source window. The
+deterministic work estimate is
+`8 * tap_pixel_reads + 32 * plane_pixel_updates`; tasks are sorted heaviest
+first with tile ID as the tie breaker, then claimed through one atomic cursor
+by the existing four scoped workers. A worker locks one authoritative sparse
+tile, replays every fragment for that tile in exact source order and the
+existing six-role order, and releases it before claiming another task. The
+source-window barrier, tap arithmetic, and exact scalar/NEON paths are
+unchanged. Scheduler build, sort, and claim counters plus a hard lock-failure
+path make the experiment auditable.
+
+The focused test now compares the fixed sparse path with dynamic one- through
+ten-worker runs in both normal and reverse task order, covering every hardware
+thread on the 10-core acceptance host. Densified planes are bit-identical in
+every case, including the cancellation-sensitive fixture.
+The first bounded four-SPW checkpoint reached `90.752` seconds after three
+blocks, with `45.097` seconds of tile planning plus replay and `35.482`
+seconds of materialization. Replay passed the Oracle advancement threshold,
+but materialization exceeded its five-percent variance guard. An identical
+repeat resolved that as page-state variance: the same checkpoint reached
+`80.464` seconds, with `43.067` seconds of tile planning plus replay and
+`26.789` seconds of materialization. It therefore passed all three
+advancement gates. The repeat had already begun the fourth block before the
+operator interrupt took effect, so it was allowed to finish in `172.399673`
+seconds and preserve complete evidence.
+
+The first interrupted receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T151219Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-ac58a2b5.json`
+(`4a54cd4933455f472a45245222a557d236d161c65b1d433d1031efb7b2fff746`);
+its adjacent log hash is
+`64dac9f0766c2223763251b19823c94a024f43424f598a706a90b44b6a7b2891`.
+The complete repeat receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T151548Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-72af7d8f.json`
+(`b7ced5288fe98f1dae46ceaa9dd7f82aa024d01de38a360d265e9d1f6a931245`);
+its adjacent log hash is
+`40860c38b251f8e561768133b8b92647403ebcb93a2bfe9d61b1f19cf8256397`.
+As with the earlier reduced run, the automatic four-SPW comparison has no
+matched CASA prefix and is not scientific parity evidence.
+
+The dynamic full-band run then finished in `635.628674` seconds end-to-end.
+That is `109.517` seconds (`14.7%`) faster than the prior sparse run,
+`41.640` seconds faster than the retained dense candidate, `12.87x` faster
+than the frozen `8183.264`-second CASA baseline, and `182.697` seconds inside
+the `818.326`-second target. Full source replay took `591.224` seconds.
+Aggregate tile planning plus replay was `288.784` seconds, passing Oracle's
+`293.326`-second meaningful-improvement threshold; exact tap materialization
+was `238.025` seconds. Across all sixteen blocks, scheduler construction,
+sorting, and atomic claims together cost only `12.937` ms. Peak sparse
+residency remained `871` tiles or `4,109,893,632` bytes. The scheduler
+reported minimum critical-path efficiency `1.000`. One adaptive window still
+reported `4.523x` between the shortest and longest dynamic worker elapsed
+times because one indivisible heavy tile dominated that window; this is not a
+counterfactual fixed-stripe measurement, and the two counters should retain
+those distinct meanings in production diagnostics.
+
+The exhaustive frozen-CASA comparison again scanned every pixel of all 18
+products and reported zero failed tolerance checks. All scientific arrays,
+topology, masks, shapes, units, coordinates, inventory, and non-beam metadata
+pass. The same five products remain incomplete solely because the exact
+restoring-beam metadata values differ at the last stored digits; the values
+and affected products are unchanged from the prior sparse run. The immutable
+receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T152033Z-vlass-fragment-all-fields-full-band-fftw-f64-experiment-66ab1c03.json`
+(`1ff2820468668a783d4d84fc52d4c1b3d2b716f9ca70e6268eaf72a0b5bb84ce`);
+the adjacent log hash is
+`1fed3705a62b26ef623d380432f4443c67f74e1fb7c30658aee6a0fa8cd7a0a5`.
+The comparison JSON hash is
+`0b85496584dfc87072671b30c79530bf3b7de542e7123fc5c3743f32da444c18`
+and its log hash is
+`00bab38d418cabb6fb766453159b62d9f7de3040de517903e1827f690556f0c1`.
+These results advance dynamic spatial-tile scheduling as the measured
+production candidate, but final incorporation still requires the user's
+explicit approval.
+
+The final same-conversation Oracle synthesis accepts the scheduler candidate
+without changing dense-grid replay, tile size, worker-count policy, CF/tap
+representation, FFT finishing, or public controls. Its minimal incorporation
+rule is: retain the planner's current dense-versus-sparse storage decision;
+when sparse authoritative tiles are selected, traverse weighted tiles
+serially for one worker and use dynamic weighted tile claims for more than one
+worker. Fixed X stripes remain only as a test oracle and benchmark control.
+
+Before removing the experiment gate, the candidate must add an exact
+active-tile/task bijection check, first-error cancellation and worker joining,
+bit-exact fixtures for admitted worker counts one through four in normal and
+reversed task order, and failure-injection coverage for duplicate/missing
+tasks, invalid fragment spans, replay errors, and occupied/poisoned tile
+locks. Production telemetry must distinguish measured dynamic-worker elapsed
+imbalance from the non-preemptive lower-bound efficiency. The observed
+`4.523x` value is the former: maximum worker elapsed divided by minimum worker
+elapsed for one dynamic window. Efficiency `1.000` means a single heavy tile
+established the indivisible-task lower bound, not that all workers had equal
+elapsed time. Add worker utilization, busy-time dispersion, and heavy-task
+dominance counters and report the lower-bound efficiency with greater
+precision.
+
+That scheduler hardening is now implemented behind the experiment gate. Task
+construction validates the active-tile bijection, allocated sparse storage,
+fragment-directory bounds and monotonicity, exact traffic weights, unique
+tiles, and the total scheduled fragment count before any worker starts.
+Workers stop claiming new tasks after the first error, every scoped worker is
+joined, and partial replay is rejected. Focused tests cover duplicate,
+missing, out-of-range, wrong-weight, and invalid-directory tasks; occupied and
+poisoned tile locks; an injected replay panic; zero work; fewer tasks than
+requested workers; and bit-exact normal/reversed execution with one through
+ten workers. Telemetry now reports dynamic-worker elapsed imbalance
+separately from non-preemptive lower-bound efficiency in parts per million,
+worker utilization, ideal lower bound and tail, task elapsed sum/maximum,
+worker busy minimum/maximum, and empty claims. Debug assertions reject timing
+ratios materially above their mathematical bounds.
+
+The prior eight-worker losses belong to disjoint Taylor-plane ownership and
+tap packing, not to this dynamic spatial-tile scheduler. Before the two warm
+full-band confirmations, run a bounded 4/6/8/10-worker spatial-tile sweep on
+the four-SPW development row. Select by total replay wall time while retaining
+the per-window task distribution, lower-bound efficiency, utilization,
+worker-busy dispersion, and memory-pressure evidence. Feed the selected count
+and the negative candidates into the resource-adaptive planner work; do not
+encode four as a universal constant.
+
+The bounded sweep confirms that distinction. An initial six-worker run reached
+`196.182` seconds after three blocks versus `160.803` seconds for its
+four-worker counterbalance, but the difference was dominated by mapped
+23-GB packed-CF page state: materialization was `140.158` versus `88.457`
+seconds while tile planning plus replay was `43.161` versus `56.955` seconds.
+The sequence therefore continued only after warming the mapped pages and
+counterbalanced six and four again.
+
+On the comparable warm first block, six workers are the winner on this 10-core
+M4 MacBook Air: `22.766` seconds total and `14.917` seconds of tile planning
+plus replay, versus four workers at `25.427` and `16.731` seconds, eight at
+`27.189` and `17.406` seconds, and ten at `28.575` and `18.469` seconds.
+The warm two-block comparison confirms six over four: `56.795` versus
+`60.705` seconds total and `34.315` versus `36.862` seconds of tile planning
+plus replay. Thus more than four workers does help the new spatial scheduler,
+but using all available logical cores does not. The full-band experiment
+manifest advances to six workers; four remains the retained fallback evidence,
+and eight and ten are rejected on this host.
+
+The warm six-worker receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T162828Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-f33a2900.json`
+(`06dde24c1b55a0e8c64076070d3c65dbb9b8e406351251c18d5e8424cacbf5f9`);
+its log hash is
+`21efdb0764ec0718ee5d18be938b08f2bcae40d6b7f747996b12cfc408dd2435`.
+The warm four-worker counterbalance is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T162954Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-d1f6d7a8.json`
+(`bf663944a07cc952e497025915793d32a435f32e4e9f645f2d97556c81b192ae`);
+its log hash is
+`a57bc669c130e20d5ffdc0edb904dd282ecdcbf275bbaecb731ef2a259b474ed`.
+The warm eight-worker receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T162145Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-fa115420.json`
+(`80f2dcedea5597a12f9a5236fdd5c1d84bd7346ae441b16e2ef0e2c01b80eb57`);
+its log hash is
+`dc80a40f9f0944eb86f7d2db72c13285989e2dce930ed97bacb9b0353819241d`.
+The warm ten-worker receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260727T162552Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-12a20a9f.json`
+(`4455cb33f8da3e178fe9cc7a9ba3381f77e987a85b5f54c06de7c0dcac490457`);
+its log hash is
+`7776a76153d19c995317421cdd8deeb31838d4d9ae83e8ed420d0519f1214e4c`.
+All are intentionally interrupted experiment receipts; their streamed logs,
+not empty result fields, own the bounded checkpoint evidence.
+
+This result belongs in the resource planner. The current AWProject automatic
+path uses logical-core count alone and would select ten on this host, which the
+sweep disproves. The replacement must bound candidates by assigned CPU
+capacity and task count, model the weighted non-preemptive tile schedule,
+distinguish performance and efficiency cores where the platform reports them,
+and include mapped-CF/materialization bandwidth contention rather than
+optimizing tile time alone. Keep an explicit worker override for expert
+experiments and expose automatic versus numeric selection through the UI; do
+not expose the internal dynamic scheduler as a separate user knob.
+
+The aggregate telemetry labels are also corrected: ideal lower bound and tail
+are sums across adaptive windows, while worker-busy minimum and maximum are
+global extrema across window workers. Per-window minimum efficiency and
+utilization remain separate extrema and are not ratios of those aggregate
+fields.
+
+Oracle also recommends two more identical warm full-band casa-rs runs after
+that worker selection and before removing the gate, using the median of three
+dynamic observations, and the complete four-row matrix before wave closeout.
+No further CASA run is needed.
+
+The subsequent same-conversation Oracle evidence-delta review used the
+measured `4/6/8/10` results and the host's four-performance plus six-efficiency
+CPU topology to refine that advice. It rejects `available_parallelism()` as a
+worker selector for this stage: ten is the logical-core count and is materially
+slower than six. The adopted planner design combines three independent facts:
+hard admission from the assigned CPU/task/memory slice, a deterministic
+longest-processing-time model over the existing weighted tile tasks, and a
+bounded calibration of the exact sparse-tile replay kernel. Topology generates
+coarse candidates rather than a machine-specific answer; on this host the
+general formula produces `4,6,8,10`. The coarse winner's immediate untested
+neighbors are then considered, and measured ties select the smaller count.
+
+The calibration is a bounded startup decision, not continuous retuning. The
+first eligible pristine sparse-tile window supplies a deterministic,
+weight-stratified task subset with at least two waves at the largest
+candidate. Every candidate uses identical tile geometry, scalar/NEON role mix,
+thread QoS, dynamic scheduler, and output storage. Trial writes are discarded
+before the real replay, the best two candidates are repeated in reverse order,
+and one resolved count is fixed for the rest of the run. Timeout, insufficient
+representative work, or non-pristine storage uses a recorded conservative
+fallback; arithmetic, tile ownership, lock, or replay-invariant failures still
+fail the run.
+
+The accepted UI remains one canonical field:
+`standard_mfs_grid_threads = auto | positive integer`. There is no scheduler
+selector, P/E-core control, or machine-specific worker option. Explicit
+positive values bypass calibration and remain the correct control for current
+evidence runs. Six is therefore retained in the full-band experiment manifest,
+not encoded as a production default. The next bounded laptop experiment is the
+counterbalanced warm sequence `6` (unmeasured warm-up), then measured
+`5,6,7,7,6,5` over the same two blocks, scoring total block time rather than
+tile replay alone.
+
+The first implementation slice is behind
+`CASA_RS_STANDARD_MFS_WORKER_PLANNER_EXPERIMENT` in addition to the existing
+dynamic-sparse scheduler gate. The application detects the assigned topology
+and supplies bounded candidates; the reusable imaging layer receives only
+those explicit resource inputs, weighted tasks, and exact-kernel observations.
+Production `auto`, automatic calibration in ordinary jobs, removal of the
+dynamic scheduler gate, and any dense-versus-sparse preference change still
+require Brian's explicit incorporation approval after planner-selected
+full-band correctness and performance evidence. The Oracle conversation is
+`https://chatgpt.com/c/6a67424d-7f68-83e8-9d08-734a9cd4ef81`.
+
+The restoring-beam difference is not a scheduler-incorporation blocker because
+it is unchanged, but it remains a full VLASS metadata-parity closeout blocker.
+Memory/thread/GPU improvements and any change that makes sparse storage the
+planner-preferred path when dense also fits remain subsequent evidence-driven
+work rather than part of this scheduler incorporation.
 
 ## Outcome
 

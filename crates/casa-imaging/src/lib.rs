@@ -24,7 +24,7 @@
 //! - staged Hogbom major/minor-cycle CLEAN with explicit stop reasons
 //! - PSF-cutoff beam fitting with interpolation and retry semantics
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 use std::cell::RefCell;
@@ -41,6 +41,8 @@ pub mod fft_backend;
 mod fftw_local;
 mod gridder;
 mod image_product;
+mod least_squares;
+mod parallel_worker;
 mod profile;
 mod single_plane_plan;
 mod trace;
@@ -62,6 +64,7 @@ pub use execution_plan::{
     ImagingSpectralSchedule, ImagingTileAnchor, ImagingTilePlan, ImagingWorkloadShape,
     admit_imaging_execution, plan_imaging_execution,
 };
+pub use parallel_worker::{ParallelWorkerCalibrationRequest, topology_parallel_worker_candidates};
 
 use std::{
     env, fmt,
@@ -70,7 +73,7 @@ use std::{
     io::Write,
     sync::{
         Arc, Mutex, OnceLock,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread,
     time::{Duration, Instant},
@@ -85,7 +88,7 @@ use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::frequency::FrequencyRef;
 use libm::{erfc, j1};
 use nalgebra::DMatrix;
-use ndarray::{Array2, Array4, ArrayD, ShapeBuilder, Zip, s};
+use ndarray::{Array2, Array4, ArrayD, ArrayViewMut2, Axis, ShapeBuilder, Zip, s};
 use num_complex::{Complex32, Complex64};
 use rayon::prelude::*;
 
@@ -116,10 +119,10 @@ use fft_backend::{
     FftPrecisionChoice, FftTiming, FftUseCase, select_fft_backend,
 };
 use gridder::{
-    AwProjectSamplePlanRejection, AwProjector, PlannedSample, PositiveTapSet,
-    STANDARD_GRIDDER_TAP_COUNT, ScreenProjectSamplePlan, ScreenProjector, StandardGridder,
-    StandardMfsTapCensus, StandardMfsTapSkipReason, WProjectSamplePlan, WProjector,
-    hetarray_screen_conv_size,
+    AwProjectKernelPixels, AwProjectSamplePlanRejection, AwProjector, PlannedSample,
+    PositiveTapSet, STANDARD_GRIDDER_TAP_COUNT, ScreenProjectSamplePlan, ScreenProjector,
+    StandardGridder, StandardMfsTapCensus, StandardMfsTapSkipReason, WProjectSamplePlan,
+    WProjector, hetarray_screen_conv_size,
 };
 #[cfg(all(target_os = "macos", not(coverage)))]
 use gridder::{CenteredComplex32GridBatch, GridCorrectionDescriptor};
@@ -1215,6 +1218,25 @@ pub struct ImagingFftPlan {
     pub dirty_products: DirtyProductFftPolicy,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ParallelWorkerSelectionSource {
+    AutoCalibrated,
+    AutoConservativeFallback,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ParallelWorkerResolution {
+    workers: usize,
+    source: ParallelWorkerSelectionSource,
+    explanation: String,
+}
+
+#[derive(Clone, Debug)]
+struct ParallelWorkerCalibrationControl {
+    request: ParallelWorkerCalibrationRequest,
+    resolution: Arc<OnceLock<ParallelWorkerResolution>>,
+}
+
 /// Runtime execution knobs for standard-MFS backends.
 ///
 /// These values are deliberately separate from [`ImagingRequest`] so callers
@@ -1257,6 +1279,12 @@ pub struct StandardMfsExecutionPlan {
     /// queued bytes, worker activity, and backpressure. It must not emit
     /// per-visibility records.
     pub observability_callback: Option<StandardMfsObservabilityCallback>,
+    /// Optional frontend-supplied, resource-bounded worker calibration.
+    ///
+    /// The request contains no host discovery. The first eligible exact
+    /// weighted-task replay resolves it once and all later windows reuse the
+    /// same admitted worker count.
+    parallel_worker_calibration: Option<ParallelWorkerCalibrationControl>,
 }
 
 impl StandardMfsExecutionPlan {
@@ -1273,7 +1301,24 @@ impl StandardMfsExecutionPlan {
             w_project_max_abs_w_lambda: None,
             progress_callback: None,
             observability_callback: None,
+            parallel_worker_calibration: None,
         }
+    }
+
+    /// Adds a bounded exact-kernel worker calibration request.
+    ///
+    /// Frontends remain responsible for detecting assigned CPU resources and
+    /// generating topology-informed candidates. Explicit worker requests
+    /// should not use this builder.
+    pub fn with_parallel_worker_calibration(
+        mut self,
+        request: ParallelWorkerCalibrationRequest,
+    ) -> Self {
+        self.parallel_worker_calibration = Some(ParallelWorkerCalibrationControl {
+            request,
+            resolution: Arc::new(OnceLock::new()),
+        });
+        self
     }
 }
 
@@ -1306,6 +1351,10 @@ impl fmt::Debug for StandardMfsExecutionPlan {
             .field(
                 "observability_callback",
                 &self.observability_callback.is_some(),
+            )
+            .field(
+                "parallel_worker_calibration",
+                &self.parallel_worker_calibration.is_some(),
             )
             .finish()
     }
@@ -4449,6 +4498,7 @@ where
         )),
         dirty_product_fft_policy,
         standard_mfs_grid_threads(&execution_config),
+        execution_config.parallel_worker_calibration.as_ref(),
         aw_cache.is_none() || direct_metal_scratch_bytes.is_some(),
         direct_metal_scratch_bytes,
         aw_cache.as_ref(),
@@ -4531,6 +4581,7 @@ where
             )),
             dirty_product_fft_policy,
             standard_mfs_grid_threads(&execution_config),
+            execution_config.parallel_worker_calibration.as_ref(),
             false,
             direct_metal_scratch_bytes,
             aw_cache.as_ref(),
@@ -4753,6 +4804,7 @@ where
             &mut stage_timings,
             dirty_product_fft_policy,
             standard_mfs_grid_threads(&execution_config),
+            execution_config.parallel_worker_calibration.as_ref(),
             direct_metal_scratch_bytes,
             aw_cache.as_ref(),
             aw_controls.as_ref(),
@@ -4808,6 +4860,7 @@ where
             &mut stage_timings,
             dirty_product_fft_policy,
             standard_mfs_grid_threads(&execution_config),
+            execution_config.parallel_worker_calibration.as_ref(),
             direct_metal_scratch_bytes,
             aw_cache.as_ref(),
             aw_controls.as_ref(),
@@ -4934,6 +4987,216 @@ struct MosaicMtmfsHostGrids {
     weight_grids: Vec<Array2<Complex64>>,
 }
 
+#[derive(Clone, Copy)]
+enum MosaicMtmfsSparsePlaneKind {
+    Psf,
+    Residual,
+    Weight,
+}
+
+struct MosaicMtmfsSparseTile {
+    psf_planes: Vec<Option<Box<[Complex64]>>>,
+    residual_planes: Vec<Option<Box<[Complex64]>>>,
+    weight_planes: Vec<Option<Box<[Complex64]>>>,
+}
+
+struct MosaicMtmfsSparseHostGrids {
+    rows: usize,
+    columns: usize,
+    tile_side: usize,
+    tiles_x: usize,
+    tiles_y: usize,
+    psf_term_count: usize,
+    residual_term_count: usize,
+    slots: Vec<Option<Mutex<MosaicMtmfsSparseTile>>>,
+}
+
+impl MosaicMtmfsSparseHostGrids {
+    const MAX_EXPERIMENTAL_BYTES: usize = 8 * 1024 * 1024 * 1024;
+
+    fn new(
+        rows: usize,
+        columns: usize,
+        tile_side: usize,
+        psf_term_count: usize,
+        residual_term_count: usize,
+    ) -> Result<Self, ImagingError> {
+        if tile_side == 0 {
+            return Err(ImagingError::InvalidRequest(
+                "sparse AWProject tile side must be nonzero".to_string(),
+            ));
+        }
+        let tiles_x = rows.div_ceil(tile_side);
+        let tiles_y = columns.div_ceil(tile_side);
+        let tile_count = tiles_x.checked_mul(tiles_y).ok_or_else(|| {
+            ImagingError::InvalidRequest("sparse AWProject tile count overflowed".to_string())
+        })?;
+        Ok(Self {
+            rows,
+            columns,
+            tile_side,
+            tiles_x,
+            tiles_y,
+            psf_term_count,
+            residual_term_count,
+            slots: (0..tile_count).map(|_| None).collect(),
+        })
+    }
+
+    fn plane_count(&self) -> usize {
+        self.psf_term_count * 2 + self.residual_term_count
+    }
+
+    fn tile_plane_bytes(&self) -> Result<usize, ImagingError> {
+        self.tile_side
+            .checked_mul(self.tile_side)
+            .and_then(|pixels| pixels.checked_mul(std::mem::size_of::<Complex64>()))
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "sparse AWProject tile-plane bytes overflowed".to_string(),
+                )
+            })
+    }
+
+    fn tile_bytes(&self) -> Result<usize, ImagingError> {
+        self.tile_plane_bytes()?
+            .checked_mul(self.plane_count())
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest("sparse AWProject tile bytes overflowed".to_string())
+            })
+    }
+
+    fn resident_tiles(&self) -> usize {
+        self.slots.iter().filter(|slot| slot.is_some()).count()
+    }
+
+    fn resident_bytes(&self) -> Result<usize, ImagingError> {
+        self.resident_tiles()
+            .checked_mul(self.tile_bytes()?)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "sparse AWProject resident bytes overflowed".to_string(),
+                )
+            })
+    }
+
+    fn ensure_plan_tiles(
+        &mut self,
+        plan: &AwProjectCompactTilePlan,
+    ) -> Result<(usize, Duration), ImagingError> {
+        if plan.tile_width != self.tile_side
+            || plan.tile_height != self.tile_side
+            || plan.tiles_x != self.tiles_x
+            || plan.tiles_y != self.tiles_y
+        {
+            return Err(ImagingError::InvalidRequest(
+                "sparse AWProject storage and replay tile geometry differ".to_string(),
+            ));
+        }
+        let new_tiles = plan
+            .tile_fragment_offsets
+            .windows(2)
+            .enumerate()
+            .filter(|(tile_index, offsets)| {
+                offsets[0] != offsets[1] && self.slots[*tile_index].is_none()
+            })
+            .map(|(tile_index, _)| tile_index)
+            .collect::<Vec<_>>();
+        let projected_tiles = self
+            .resident_tiles()
+            .checked_add(new_tiles.len())
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "sparse AWProject resident tile count overflowed".to_string(),
+                )
+            })?;
+        let projected_bytes = projected_tiles
+            .checked_mul(self.tile_bytes()?)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "sparse AWProject projected bytes overflowed".to_string(),
+                )
+            })?;
+        if projected_bytes > Self::MAX_EXPERIMENTAL_BYTES {
+            return Err(ImagingError::Unsupported(format!(
+                "sparse AWProject grid needs {projected_bytes} bytes above the {}-byte experimental ceiling",
+                Self::MAX_EXPERIMENTAL_BYTES,
+            )));
+        }
+        let started = Instant::now();
+        let tile_pixels = self
+            .tile_side
+            .checked_mul(self.tile_side)
+            .expect("validated sparse tile pixel count");
+        for tile_index in &new_tiles {
+            let make_planes = |count| {
+                (0..count)
+                    .map(|_| Some(vec![Complex64::new(0.0, 0.0); tile_pixels].into_boxed_slice()))
+                    .collect::<Vec<_>>()
+            };
+            self.slots[*tile_index] = Some(Mutex::new(MosaicMtmfsSparseTile {
+                psf_planes: make_planes(self.psf_term_count),
+                residual_planes: make_planes(self.residual_term_count),
+                weight_planes: make_planes(self.psf_term_count),
+            }));
+        }
+        Ok((new_tiles.len(), started.elapsed()))
+    }
+
+    fn take_dense_plane(
+        &mut self,
+        kind: MosaicMtmfsSparsePlaneKind,
+        order: usize,
+    ) -> Result<Array2<Complex64>, ImagingError> {
+        let expected_terms = match kind {
+            MosaicMtmfsSparsePlaneKind::Psf | MosaicMtmfsSparsePlaneKind::Weight => {
+                self.psf_term_count
+            }
+            MosaicMtmfsSparsePlaneKind::Residual => self.residual_term_count,
+        };
+        if order >= expected_terms {
+            return Err(ImagingError::InvalidRequest(format!(
+                "sparse AWProject plane order {order} exceeds {expected_terms} terms"
+            )));
+        }
+        let mut dense = Array2::<Complex64>::zeros((self.rows, self.columns));
+        let dense_storage = dense
+            .as_slice_memory_order_mut()
+            .expect("new sparse AWProject dense plane is contiguous");
+        for (tile_index, slot) in self.slots.iter_mut().enumerate() {
+            let Some(tile) = slot.as_mut() else {
+                continue;
+            };
+            let tile = tile.get_mut().map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "sparse AWProject tile lock was poisoned before densification".to_string(),
+                )
+            })?;
+            let plane = match kind {
+                MosaicMtmfsSparsePlaneKind::Psf => &mut tile.psf_planes[order],
+                MosaicMtmfsSparsePlaneKind::Residual => &mut tile.residual_planes[order],
+                MosaicMtmfsSparsePlaneKind::Weight => &mut tile.weight_planes[order],
+            };
+            let Some(source) = plane.take() else {
+                continue;
+            };
+            let tile_x = tile_index / self.tiles_y;
+            let tile_y = tile_index % self.tiles_y;
+            let global_x = tile_x * self.tile_side;
+            let global_y = tile_y * self.tile_side;
+            let valid_width = self.tile_side.min(self.rows - global_x);
+            let valid_height = self.tile_side.min(self.columns - global_y);
+            for local_x in 0..valid_width {
+                let source_start = local_x * self.tile_side;
+                let destination_start = (global_x + local_x) * self.columns + global_y;
+                dense_storage[destination_start..destination_start + valid_height]
+                    .copy_from_slice(&source[source_start..source_start + valid_height]);
+            }
+        }
+        Ok(dense)
+    }
+}
+
 struct MosaicMtmfsHostF32Grids {
     psf_grids: Vec<Array2<Complex32>>,
     residual_grids: Vec<Array2<Complex32>>,
@@ -4943,6 +5206,7 @@ struct MosaicMtmfsHostF32Grids {
 enum MosaicMtmfsStreamGridStorage {
     HostF32(MosaicMtmfsHostF32Grids),
     HostF64(MosaicMtmfsHostGrids),
+    SparseHostF64(MosaicMtmfsSparseHostGrids),
     #[cfg(all(target_os = "macos", not(coverage)))]
     MetalSharedF32 {
         grid: crate::apple_fft::MetalSharedF32DirtyGridBatch,
@@ -5074,6 +5338,17 @@ impl MosaicMtmfsStreamGridStorage {
                     .collect(),
             }));
         }
+        if awproject_grid {
+            if let Some(tile_side) = awproject_compact_sparse_tile_side() {
+                return Ok(Self::SparseHostF64(MosaicMtmfsSparseHostGrids::new(
+                    rows,
+                    columns,
+                    tile_side,
+                    psf_term_count,
+                    residual_term_count,
+                )?));
+            }
+        }
         Ok(Self::HostF64(MosaicMtmfsHostGrids {
             psf_grids: (0..psf_term_count)
                 .map(|_| Array2::<Complex64>::zeros((rows, columns)))
@@ -5089,7 +5364,7 @@ impl MosaicMtmfsStreamGridStorage {
 
     fn is_metal_shared(&self) -> bool {
         match self {
-            Self::HostF32(_) | Self::HostF64(_) => false,
+            Self::HostF32(_) | Self::HostF64(_) | Self::SparseHostF64(_) => false,
             #[cfg(all(target_os = "macos", not(coverage)))]
             Self::MetalSharedF32 { .. } => true,
         }
@@ -5108,6 +5383,11 @@ impl MosaicMtmfsStreamGridStorage {
             }
             Self::HostF64(grids) => {
                 projector.grid_sample_planned_f64(&mut grids.psf_grids[order], plan, value);
+            }
+            Self::SparseHostF64(_) => {
+                return Err(ImagingError::Unsupported(
+                    "sparse AWProject grids require compact source-order replay".to_string(),
+                ));
             }
             #[cfg(all(target_os = "macos", not(coverage)))]
             Self::MetalSharedF32 { grid, .. } => {
@@ -5135,6 +5415,11 @@ impl MosaicMtmfsStreamGridStorage {
             }
             Self::HostF64(grids) => {
                 projector.grid_sample_planned_f64(&mut grids.residual_grids[order], plan, value);
+            }
+            Self::SparseHostF64(_) => {
+                return Err(ImagingError::Unsupported(
+                    "sparse AWProject grids require compact source-order replay".to_string(),
+                ));
             }
             #[cfg(all(target_os = "macos", not(coverage)))]
             Self::MetalSharedF32 {
@@ -5184,6 +5469,11 @@ impl MosaicMtmfsStreamGridStorage {
                 &mut grids.weight_grids[order],
                 support_sums,
             ),
+            Self::SparseHostF64(_) => {
+                return Err(ImagingError::Unsupported(
+                    "sparse AWProject grids require compact source-order replay".to_string(),
+                ));
+            }
             #[cfg(all(target_os = "macos", not(coverage)))]
             Self::MetalSharedF32 {
                 grid,
@@ -5351,14 +5641,32 @@ fn finish_mosaic_mtmfs_dirty_images(
     // normalization. AWProject's separate WTCF semantics affect the weight
     // products above, but not this shared dirty-image scale.
     let dirty_fft_scale = image_pixel_count / normalization_sumwt as f32;
+    // AWProjectFT::getImage(..., false) applies only Float(nx) * Float(ny)
+    // before ToStokesPSF and normalizePSF. The sumwt division belongs to
+    // residual normalization, and although the PSF peak later cancels the
+    // scalar mathematically, moving it earlier changes Float rounding in the
+    // fitted main lobe. Keep this as a bounded experiment until the retained
+    // VLASS products prove the exact CASA ordering.
+    let psf_fft_scale = if awproject_weight_semantics
+        && env::var_os("CASA_RS_AWPROJECT_CASA_PSF_SCALE_EXPERIMENT").is_some()
+    {
+        image_pixel_count
+    } else {
+        dirty_fft_scale
+    };
     match storage {
         MosaicMtmfsStreamGridStorage::HostF32(grids) => {
+            let MosaicMtmfsHostF32Grids {
+                psf_grids,
+                residual_grids,
+                weight_grids,
+            } = grids;
             let fft_started = Instant::now();
             let fft_policy = dirty_product_fft_policy;
             if !awproject_weight_semantics {
-                let mut inputs = grids.psf_grids;
-                inputs.extend(grids.residual_grids);
-                inputs.extend(grids.weight_grids);
+                let mut inputs = psf_grids;
+                inputs.extend(residual_grids);
+                inputs.extend(weight_grids);
                 let mut outputs = execute_dirty_product_host_f32_batch(&inputs, fft_policy)?;
                 let raw_weight_terms = outputs.split_off(psf_term_count + nterms);
                 let raw_residual_terms = outputs.split_off(psf_term_count);
@@ -5383,7 +5691,7 @@ fn finish_mosaic_mtmfs_dirty_images(
                     .map(|raw| {
                         let mut image =
                             gridder.corrected_mosaic_image_from_grid(raw, conv_sampling);
-                        image.mapv_inplace(|value| value * dirty_fft_scale);
+                        image.mapv_inplace(|value| value * psf_fft_scale);
                         image
                     })
                     .collect::<Vec<_>>();
@@ -5399,26 +5707,23 @@ fn finish_mosaic_mtmfs_dirty_images(
                     pb_limit,
                 );
             }
-            let mut psf_terms = grids
-                .psf_grids
+            let mut psf_terms = psf_grids
                 .into_iter()
                 .map(|grid| {
                     let raw = execute_dirty_product_host_f32_owned_single(grid, fft_policy)?;
                     let mut image = gridder.corrected_mosaic_image_from_grid(&raw, conv_sampling);
-                    image.mapv_inplace(|value| value * dirty_fft_scale);
+                    image.mapv_inplace(|value| value * psf_fft_scale);
                     Ok(image)
                 })
                 .collect::<Result<Vec<_>, ImagingError>>()?;
-            let corrected_residual_terms = grids
-                .residual_grids
+            let corrected_residual_terms = residual_grids
                 .into_iter()
                 .map(|grid| {
                     let raw = execute_dirty_product_host_f32_owned_single(grid, fft_policy)?;
                     Ok(gridder.corrected_mosaic_image_from_grid(&raw, conv_sampling))
                 })
                 .collect::<Result<Vec<_>, ImagingError>>()?;
-            let weight_terms = grids
-                .weight_grids
+            let weight_terms = weight_grids
                 .into_iter()
                 .zip(&weight_fft_scales)
                 .enumerate()
@@ -5455,11 +5760,16 @@ fn finish_mosaic_mtmfs_dirty_images(
             )
         }
         MosaicMtmfsStreamGridStorage::HostF64(grids) => {
+            let MosaicMtmfsHostGrids {
+                psf_grids,
+                residual_grids,
+                weight_grids,
+            } = grids;
             let fft_started = Instant::now();
             if !awproject_weight_semantics {
-                let mut inputs = grids.psf_grids;
-                inputs.extend(grids.residual_grids);
-                inputs.extend(grids.weight_grids);
+                let mut inputs = psf_grids;
+                inputs.extend(residual_grids);
+                inputs.extend(weight_grids);
                 let input_refs = inputs.iter().collect::<Vec<_>>();
                 let (mut outputs, _) =
                     execute_dirty_product_host_f64_batch(&input_refs, dirty_product_fft_policy)?;
@@ -5486,7 +5796,7 @@ fn finish_mosaic_mtmfs_dirty_images(
                     .map(|raw| {
                         let mut image =
                             gridder.corrected_mosaic_image_from_grid_f64(raw, conv_sampling);
-                        image.mapv_inplace(|value| value * dirty_fft_scale);
+                        image.mapv_inplace(|value| value * psf_fft_scale);
                         image
                     })
                     .collect::<Vec<_>>();
@@ -5502,8 +5812,7 @@ fn finish_mosaic_mtmfs_dirty_images(
                     pb_limit,
                 );
             }
-            let mut psf_terms = grids
-                .psf_grids
+            let mut psf_terms = psf_grids
                 .into_iter()
                 .map(|grid| {
                     let raw = execute_dirty_product_host_f64_owned_single(
@@ -5512,12 +5821,11 @@ fn finish_mosaic_mtmfs_dirty_images(
                     )?;
                     let mut image =
                         gridder.corrected_mosaic_image_from_grid_f64(&raw, conv_sampling);
-                    image.mapv_inplace(|value| value * dirty_fft_scale);
+                    image.mapv_inplace(|value| value * psf_fft_scale);
                     Ok(image)
                 })
                 .collect::<Result<Vec<_>, ImagingError>>()?;
-            let corrected_residual_terms = grids
-                .residual_grids
+            let corrected_residual_terms = residual_grids
                 .into_iter()
                 .map(|grid| {
                     let raw = execute_dirty_product_host_f64_owned_single(
@@ -5527,8 +5835,7 @@ fn finish_mosaic_mtmfs_dirty_images(
                     Ok(gridder.corrected_mosaic_image_from_grid_f64(&raw, conv_sampling))
                 })
                 .collect::<Result<Vec<_>, ImagingError>>()?;
-            let weight_terms = grids
-                .weight_grids
+            let weight_terms = weight_grids
                 .into_iter()
                 .zip(&weight_fft_scales)
                 .enumerate()
@@ -5569,6 +5876,78 @@ fn finish_mosaic_mtmfs_dirty_images(
                 pb_limit,
             )?;
             Ok(psf_peak)
+        }
+        MosaicMtmfsStreamGridStorage::SparseHostF64(mut grids) => {
+            if !awproject_weight_semantics {
+                return Err(ImagingError::Unsupported(
+                    "sparse f64 mosaic grids are currently specific to AWProject weight semantics"
+                        .to_string(),
+                ));
+            }
+            if grids.psf_term_count != psf_term_count || grids.residual_term_count != nterms {
+                return Err(ImagingError::Normalization(
+                    "sparse AWProject MT-MFS term topology changed before FFT".to_string(),
+                ));
+            }
+            let fft_started = Instant::now();
+            let mut psf_terms = (0..psf_term_count)
+                .map(|order| {
+                    let grid = grids.take_dense_plane(MosaicMtmfsSparsePlaneKind::Psf, order)?;
+                    let raw = execute_dirty_product_host_f64_owned_single(
+                        grid,
+                        dirty_product_fft_policy,
+                    )?;
+                    let mut image =
+                        gridder.corrected_mosaic_image_from_grid_f64(&raw, conv_sampling);
+                    image.mapv_inplace(|value| value * psf_fft_scale);
+                    Ok(image)
+                })
+                .collect::<Result<Vec<_>, ImagingError>>()?;
+            let corrected_residual_terms = (0..nterms)
+                .map(|order| {
+                    let grid =
+                        grids.take_dense_plane(MosaicMtmfsSparsePlaneKind::Residual, order)?;
+                    let raw = execute_dirty_product_host_f64_owned_single(
+                        grid,
+                        dirty_product_fft_policy,
+                    )?;
+                    Ok(gridder.corrected_mosaic_image_from_grid_f64(&raw, conv_sampling))
+                })
+                .collect::<Result<Vec<_>, ImagingError>>()?;
+            let weight_terms = (0..psf_term_count)
+                .zip(&weight_fft_scales)
+                .map(|(order, &scale)| {
+                    let grid = grids.take_dense_plane(MosaicMtmfsSparsePlaneKind::Weight, order)?;
+                    let raw = execute_dirty_product_host_f64_owned_single(
+                        grid,
+                        dirty_product_fft_policy,
+                    )?;
+                    dump_mosaic_complex_grid(&format!("aw_weight_tt{order}_postfft"), 0.0, &raw);
+                    let mut image = gridder.aw_weight_image_from_grid_f64(&raw, conv_sampling);
+                    if order == 0 {
+                        let sumwt = aw_weight_zero_sumwt
+                            .expect("AWProject weight semantics validated zeroth sumwt");
+                        image.mapv_inplace(|value| value / sumwt);
+                    } else {
+                        image.mapv_inplace(|value| value * scale);
+                    }
+                    Ok(image)
+                })
+                .collect::<Result<Vec<_>, ImagingError>>()?;
+            stage_timings.psf_fft += fft_started.elapsed();
+            let weight_image = weight_terms.first().cloned().ok_or_else(|| {
+                ImagingError::Normalization(
+                    "sparse AWProject MT-MFS produced no weight terms".to_string(),
+                )
+            })?;
+            normalize_mosaic_mtmfs_dirty_images(
+                &mut psf_terms,
+                &corrected_residual_terms,
+                weight_image,
+                weight_terms,
+                dirty_fft_scale,
+                pb_limit,
+            )
         }
         #[cfg(all(target_os = "macos", not(coverage)))]
         MosaicMtmfsStreamGridStorage::MetalSharedF32 {
@@ -5675,7 +6054,7 @@ fn finish_mosaic_mtmfs_dirty_images(
                 .iter()
                 .map(|raw| {
                     let mut image = gridder.corrected_mosaic_image_from_grid(raw, conv_sampling);
-                    image.mapv_inplace(|value| value * dirty_fft_scale);
+                    image.mapv_inplace(|value| value * psf_fft_scale);
                     image
                 })
                 .collect::<Vec<_>>();
@@ -5834,6 +6213,14 @@ fn finish_mosaic_mtmfs_residual_images(
                     .collect::<Result<Vec<_>, ImagingError>>()?
             }
         }
+        MosaicMtmfsStreamGridStorage::SparseHostF64(mut grids) => (0..nterms)
+            .map(|order| {
+                let grid = grids.take_dense_plane(MosaicMtmfsSparsePlaneKind::Residual, order)?;
+                let raw =
+                    execute_dirty_product_host_f64_owned_single(grid, dirty_product_fft_policy)?;
+                Ok(gridder.corrected_mosaic_image_from_grid_f64(&raw, conv_sampling))
+            })
+            .collect::<Result<Vec<_>, ImagingError>>()?,
         #[cfg(all(target_os = "macos", not(coverage)))]
         MosaicMtmfsStreamGridStorage::MetalSharedF32 {
             grid,
@@ -6868,6 +7255,7 @@ fn accumulate_mosaic_mtmfs_stream_grids<F>(
     progress_context: Option<StandardMfsProgressContext>,
     dirty_product_fft_policy: DirtyProductFftPolicy,
     requested_threads: usize,
+    parallel_worker_calibration: Option<&ParallelWorkerCalibrationControl>,
     allow_direct_metal: bool,
     direct_metal_scratch_bytes: Option<usize>,
     aw_cache: Option<&AwConvolutionFunctionResidentCache>,
@@ -7039,6 +7427,7 @@ where
                     cache,
                     controls,
                     requested_threads,
+                    parallel_worker_calibration,
                     &mut accumulation,
                     &mut taylor_weights,
                 )?;
@@ -7108,6 +7497,35 @@ struct AwProjectCompactTapKey {
     conjugate_for_grid: bool,
 }
 
+type AwProjectCompactTapIndex =
+    HashMap<AwProjectCompactTapKey, usize, BuildHasherDefault<MosaicMetalSampleHasher>>;
+
+struct AwProjectPhaseTable {
+    coordinate_radius: isize,
+    x: Vec<Complex32>,
+    y: Vec<Complex32>,
+}
+
+impl AwProjectPhaseTable {
+    #[inline]
+    fn x(&self, coordinate: isize) -> Complex32 {
+        self.x[self.index(coordinate)]
+    }
+
+    #[inline]
+    fn y(&self, coordinate: isize) -> Complex32 {
+        self.y[self.index(coordinate)]
+    }
+
+    #[inline]
+    fn index(&self, coordinate: isize) -> usize {
+        debug_assert!(coordinate.abs() <= self.coordinate_radius);
+        (coordinate + self.coordinate_radius) as usize
+    }
+}
+
+type AwProjectPhaseTables = BTreeMap<(usize, usize), AwProjectPhaseTable>;
+
 #[derive(Clone, Copy)]
 struct AwProjectCompactTapRequest {
     key: AwProjectCompactTapKey,
@@ -7120,6 +7538,10 @@ struct AwProjectCompactTapBundle {
     x_support: usize,
     y_support: usize,
     normalization: Complex32,
+    sampling: usize,
+    off_x: isize,
+    off_y: isize,
+    phase_applied: bool,
 }
 
 enum AwProjectCompactMaterializedTap {
@@ -7137,6 +7559,7 @@ struct AwProjectCompactSamplePlan {
 #[derive(Clone, Copy)]
 struct AwProjectCompactSourceSample {
     sample_index: usize,
+    group_index: usize,
     first_imaging_plan: AwProjectCompactSamplePlan,
     second_imaging_plan: AwProjectCompactSamplePlan,
     first_psf_plan: AwProjectCompactSamplePlan,
@@ -7166,6 +7589,7 @@ enum AwProjectCompactSourceRejection {
 
 #[derive(Clone, Copy)]
 struct AwProjectCompactPlannedSample {
+    group_index: usize,
     first_imaging_plan: AwProjectCompactSamplePlan,
     second_imaging_plan: AwProjectCompactSamplePlan,
     first_psf_plan: AwProjectCompactSamplePlan,
@@ -7178,18 +7602,229 @@ struct AwProjectCompactPlannedSample {
     second_residual: Complex32,
 }
 
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AwProjectCompactTileFragmentRole {
+    FirstImaging,
+    SecondImaging,
+    FirstPsf,
+    SecondPsf,
+    FirstWeight,
+    SecondWeight,
+}
+
+impl AwProjectCompactTileFragmentRole {
+    const ALL: [Self; 6] = [
+        Self::FirstImaging,
+        Self::SecondImaging,
+        Self::FirstPsf,
+        Self::SecondPsf,
+        Self::FirstWeight,
+        Self::SecondWeight,
+    ];
+
+    fn plan(self, sample: AwProjectCompactPlannedSample) -> AwProjectCompactSamplePlan {
+        match self {
+            Self::FirstImaging => sample.first_imaging_plan,
+            Self::SecondImaging => sample.second_imaging_plan,
+            Self::FirstPsf => sample.first_psf_plan,
+            Self::SecondPsf => sample.second_psf_plan,
+            Self::FirstWeight => sample.first_weight_plan,
+            Self::SecondWeight => sample.second_weight_plan,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AwProjectCompactTileFragment {
+    source_sample: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct AwProjectCompactTilePlanStats {
+    plan_elapsed: Duration,
+    tile_allocation_elapsed: Duration,
+    active_tiles: usize,
+    new_tiles: usize,
+    resident_tiles: usize,
+    resident_bytes: usize,
+    fragments: usize,
+    tap_pixel_updates: usize,
+    plane_pixel_updates: usize,
+    simd_pixel_updates: usize,
+    scalar_pixel_updates: usize,
+    worker_imbalance_milli: usize,
+    dynamic_tile_scheduler: bool,
+    tile_task_count: usize,
+    tile_task_estimated_bytes_max: u64,
+    scheduler_build_elapsed: Duration,
+    scheduler_sort_elapsed: Duration,
+    scheduler_claim_elapsed: Duration,
+    scheduler_empty_claims: usize,
+    scheduler_nonpreemptive_efficiency_ppm: usize,
+    scheduler_worker_utilization_ppm: usize,
+    scheduler_ideal_lower_bound_elapsed: Duration,
+    scheduler_tail_elapsed: Duration,
+    scheduler_task_elapsed_sum: Duration,
+    scheduler_task_elapsed_max: Duration,
+    scheduler_worker_busy_min: Duration,
+    scheduler_worker_busy_max: Duration,
+    fragment_metadata_bytes: usize,
+    tile_directory_bytes: usize,
+    fragments_per_sample_p95: usize,
+    fragments_per_sample_max: usize,
+}
+
+struct AwProjectCompactTilePlan {
+    grid_width: usize,
+    grid_height: usize,
+    tile_width: usize,
+    tile_height: usize,
+    tiles_x: usize,
+    tiles_y: usize,
+    tile_fragment_offsets: Vec<usize>,
+    fragments: Vec<AwProjectCompactTileFragment>,
+    tile_estimated_bytes: Vec<u64>,
+    stats: AwProjectCompactTilePlanStats,
+}
+
+impl AwProjectCompactTilePlan {
+    fn tile_fragments(&self, tile_index: usize) -> &[AwProjectCompactTileFragment] {
+        &self.fragments
+            [self.tile_fragment_offsets[tile_index]..self.tile_fragment_offsets[tile_index + 1]]
+    }
+
+    fn tile_estimated_bytes(&self, tile_index: usize) -> u64 {
+        self.tile_estimated_bytes[tile_index]
+    }
+}
+
 #[derive(Default)]
 struct AwProjectCompactReplayStats {
     windows: usize,
     largest_window_samples: usize,
     largest_window_tap_bundles: usize,
     peak_tap_bytes: usize,
+    phase_table_elapsed: Duration,
+    phase_table_bytes: usize,
     plan_elapsed: Duration,
     materialize_elapsed: Duration,
     cache_load_elapsed: Duration,
     tap_pack_elapsed: Duration,
     prepare_elapsed: Duration,
     grid_elapsed: Duration,
+    tile_plan_elapsed: Duration,
+    tile_allocation_elapsed: Duration,
+    tile_active_tiles: usize,
+    tile_new_tiles: usize,
+    tile_resident_tiles: usize,
+    tile_resident_bytes: usize,
+    tile_fragments: usize,
+    tile_tap_pixel_updates: usize,
+    tile_plane_pixel_updates: usize,
+    tile_simd_pixel_updates: usize,
+    tile_scalar_pixel_updates: usize,
+    tile_worker_imbalance_milli_max: usize,
+    dynamic_tile_scheduler: bool,
+    tile_task_count: usize,
+    tile_task_estimated_bytes_max: u64,
+    tile_scheduler_build_elapsed: Duration,
+    tile_scheduler_sort_elapsed: Duration,
+    tile_scheduler_claim_elapsed: Duration,
+    tile_scheduler_empty_claims: usize,
+    tile_scheduler_nonpreemptive_efficiency_ppm_min: usize,
+    tile_scheduler_worker_utilization_ppm_min: usize,
+    tile_scheduler_ideal_lower_bound_elapsed: Duration,
+    tile_scheduler_tail_elapsed: Duration,
+    tile_scheduler_task_elapsed_sum: Duration,
+    tile_scheduler_task_elapsed_max: Duration,
+    tile_scheduler_worker_busy_min: Duration,
+    tile_scheduler_worker_busy_max: Duration,
+    tile_fragment_metadata_bytes: usize,
+    tile_directory_bytes: usize,
+    tile_fragments_per_sample_p95: usize,
+    tile_fragments_per_sample_max: usize,
+}
+
+fn observe_awproject_compact_tile_stats(
+    replay_stats: &mut AwProjectCompactReplayStats,
+    tile_stats: AwProjectCompactTilePlanStats,
+) {
+    replay_stats.tile_plan_elapsed += tile_stats.plan_elapsed;
+    replay_stats.tile_allocation_elapsed += tile_stats.tile_allocation_elapsed;
+    replay_stats.tile_active_tiles = replay_stats.tile_active_tiles.max(tile_stats.active_tiles);
+    replay_stats.tile_new_tiles += tile_stats.new_tiles;
+    replay_stats.tile_resident_tiles = replay_stats
+        .tile_resident_tiles
+        .max(tile_stats.resident_tiles);
+    replay_stats.tile_resident_bytes = replay_stats
+        .tile_resident_bytes
+        .max(tile_stats.resident_bytes);
+    replay_stats.tile_fragments += tile_stats.fragments;
+    replay_stats.tile_tap_pixel_updates += tile_stats.tap_pixel_updates;
+    replay_stats.tile_plane_pixel_updates += tile_stats.plane_pixel_updates;
+    replay_stats.tile_simd_pixel_updates += tile_stats.simd_pixel_updates;
+    replay_stats.tile_scalar_pixel_updates += tile_stats.scalar_pixel_updates;
+    replay_stats.tile_worker_imbalance_milli_max = replay_stats
+        .tile_worker_imbalance_milli_max
+        .max(tile_stats.worker_imbalance_milli);
+    replay_stats.dynamic_tile_scheduler |= tile_stats.dynamic_tile_scheduler;
+    replay_stats.tile_task_count += tile_stats.tile_task_count;
+    replay_stats.tile_task_estimated_bytes_max = replay_stats
+        .tile_task_estimated_bytes_max
+        .max(tile_stats.tile_task_estimated_bytes_max);
+    replay_stats.tile_scheduler_build_elapsed += tile_stats.scheduler_build_elapsed;
+    replay_stats.tile_scheduler_sort_elapsed += tile_stats.scheduler_sort_elapsed;
+    replay_stats.tile_scheduler_claim_elapsed += tile_stats.scheduler_claim_elapsed;
+    replay_stats.tile_scheduler_empty_claims += tile_stats.scheduler_empty_claims;
+    if tile_stats.scheduler_nonpreemptive_efficiency_ppm > 0 {
+        if replay_stats.tile_scheduler_nonpreemptive_efficiency_ppm_min == 0 {
+            replay_stats.tile_scheduler_nonpreemptive_efficiency_ppm_min =
+                tile_stats.scheduler_nonpreemptive_efficiency_ppm;
+        } else {
+            replay_stats.tile_scheduler_nonpreemptive_efficiency_ppm_min = replay_stats
+                .tile_scheduler_nonpreemptive_efficiency_ppm_min
+                .min(tile_stats.scheduler_nonpreemptive_efficiency_ppm);
+        }
+    }
+    if tile_stats.scheduler_worker_utilization_ppm > 0 {
+        if replay_stats.tile_scheduler_worker_utilization_ppm_min == 0 {
+            replay_stats.tile_scheduler_worker_utilization_ppm_min =
+                tile_stats.scheduler_worker_utilization_ppm;
+        } else {
+            replay_stats.tile_scheduler_worker_utilization_ppm_min = replay_stats
+                .tile_scheduler_worker_utilization_ppm_min
+                .min(tile_stats.scheduler_worker_utilization_ppm);
+        }
+    }
+    replay_stats.tile_scheduler_ideal_lower_bound_elapsed +=
+        tile_stats.scheduler_ideal_lower_bound_elapsed;
+    replay_stats.tile_scheduler_tail_elapsed += tile_stats.scheduler_tail_elapsed;
+    replay_stats.tile_scheduler_task_elapsed_sum += tile_stats.scheduler_task_elapsed_sum;
+    replay_stats.tile_scheduler_task_elapsed_max = replay_stats
+        .tile_scheduler_task_elapsed_max
+        .max(tile_stats.scheduler_task_elapsed_max);
+    if replay_stats.tile_scheduler_worker_busy_min.is_zero()
+        || (!tile_stats.scheduler_worker_busy_min.is_zero()
+            && tile_stats.scheduler_worker_busy_min < replay_stats.tile_scheduler_worker_busy_min)
+    {
+        replay_stats.tile_scheduler_worker_busy_min = tile_stats.scheduler_worker_busy_min;
+    }
+    replay_stats.tile_scheduler_worker_busy_max = replay_stats
+        .tile_scheduler_worker_busy_max
+        .max(tile_stats.scheduler_worker_busy_max);
+    replay_stats.tile_fragment_metadata_bytes = replay_stats
+        .tile_fragment_metadata_bytes
+        .max(tile_stats.fragment_metadata_bytes);
+    replay_stats.tile_directory_bytes = replay_stats
+        .tile_directory_bytes
+        .max(tile_stats.tile_directory_bytes);
+    replay_stats.tile_fragments_per_sample_p95 = replay_stats
+        .tile_fragments_per_sample_p95
+        .max(tile_stats.fragments_per_sample_p95);
+    replay_stats.tile_fragments_per_sample_max = replay_stats
+        .tile_fragments_per_sample_max
+        .max(tile_stats.fragments_per_sample_max);
 }
 
 #[repr(C)]
@@ -7501,20 +8136,78 @@ thread_local! {
     };
 }
 
+#[inline]
+fn awproject_compact_phase_table<'a>(
+    bundle: &AwProjectCompactTapBundle,
+    group_index: usize,
+    phase_tables: Option<&'a AwProjectPhaseTables>,
+) -> Option<&'a AwProjectPhaseTable> {
+    if bundle.phase_applied {
+        None
+    } else {
+        Some(
+            phase_tables
+                .expect("tapless AW replay requires phase tables")
+                .get(&(group_index, bundle.sampling))
+                .expect("tapless AW replay phase table must cover every group and sampling"),
+        )
+    }
+}
+
+#[inline]
+fn awproject_compact_replay_tap(
+    bundle: &AwProjectCompactTapBundle,
+    phase_table: Option<&AwProjectPhaseTable>,
+    ix: isize,
+    iy: isize,
+    tap_index: usize,
+) -> Complex32 {
+    let tap = bundle.values[tap_index];
+    let Some(phases) = phase_table else {
+        return tap;
+    };
+    let x_coordinate = ix * bundle.sampling as isize + bundle.off_x;
+    let y_coordinate = iy * bundle.sampling as isize + bundle.off_y;
+    tap * gridder::casa_aw_phase_gradient_from_axes(phases.x(x_coordinate), phases.y(y_coordinate))
+}
+
 fn awproject_compact_grid_sample_f64(
     grid: &mut Array2<Complex64>,
     plan: AwProjectCompactSamplePlan,
     bundle: &AwProjectCompactTapBundle,
+    group_index: usize,
+    phase_tables: Option<&AwProjectPhaseTables>,
+    contiguous_grid_taps: bool,
     value: Complex32,
 ) {
     let columns = grid.shape()[1];
     let x_support = bundle.x_support as isize;
     let y_support = bundle.y_support as isize;
+    let phase_table = awproject_compact_phase_table(bundle, group_index, phase_tables);
     let mut tap_index = 0usize;
-    if let Some(storage) = grid.as_slice_memory_order_mut() {
+    if let Some(storage) = grid.as_slice_memory_order_mut()
+        && contiguous_grid_taps
+    {
+        let tap_width = 2 * bundle.x_support + 1;
+        for ix in -x_support..=x_support {
+            let x_index = (ix + x_support) as usize;
+            let grid_x = (plan.loc_x + ix) as usize;
+            for iy in -y_support..=y_support {
+                let y_index = (iy + y_support) as usize;
+                let packed_index = y_index * tap_width + x_index;
+                let tap = awproject_compact_replay_tap(bundle, phase_table, ix, iy, packed_index);
+                let contribution = value * tap;
+                let grid_y = (plan.loc_y + iy) as usize;
+                storage[grid_x * columns + grid_y] +=
+                    Complex64::new(f64::from(contribution.re), f64::from(contribution.im));
+            }
+        }
+        tap_index = bundle.values.len();
+    } else if let Some(storage) = grid.as_slice_memory_order_mut() {
         for iy in -y_support..=y_support {
             for ix in -x_support..=x_support {
-                let contribution = value * bundle.values[tap_index];
+                let tap = awproject_compact_replay_tap(bundle, phase_table, ix, iy, tap_index);
+                let contribution = value * tap;
                 let grid_x = (plan.loc_x + ix) as usize;
                 let grid_y = (plan.loc_y + iy) as usize;
                 storage[grid_x * columns + grid_y] +=
@@ -7525,7 +8218,8 @@ fn awproject_compact_grid_sample_f64(
     } else {
         for iy in -y_support..=y_support {
             for ix in -x_support..=x_support {
-                let contribution = value * bundle.values[tap_index];
+                let tap = awproject_compact_replay_tap(bundle, phase_table, ix, iy, tap_index);
+                let contribution = value * tap;
                 grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)] +=
                     Complex64::new(f64::from(contribution.re), f64::from(contribution.im));
                 tap_index += 1;
@@ -7539,18 +8233,39 @@ fn awproject_compact_grid_sample_f32(
     grid: &mut Array2<Complex32>,
     plan: AwProjectCompactSamplePlan,
     bundle: &AwProjectCompactTapBundle,
+    group_index: usize,
+    phase_tables: Option<&AwProjectPhaseTables>,
+    contiguous_grid_taps: bool,
     value: Complex32,
 ) {
     let columns = grid.shape()[1];
     let x_support = bundle.x_support as isize;
     let y_support = bundle.y_support as isize;
+    let phase_table = awproject_compact_phase_table(bundle, group_index, phase_tables);
     let mut tap_index = 0usize;
-    if let Some(storage) = grid.as_slice_memory_order_mut() {
+    if let Some(storage) = grid.as_slice_memory_order_mut()
+        && contiguous_grid_taps
+    {
+        let tap_width = 2 * bundle.x_support + 1;
+        for ix in -x_support..=x_support {
+            let x_index = (ix + x_support) as usize;
+            let grid_x = (plan.loc_x + ix) as usize;
+            for iy in -y_support..=y_support {
+                let y_index = (iy + y_support) as usize;
+                let packed_index = y_index * tap_width + x_index;
+                let grid_y = (plan.loc_y + iy) as usize;
+                storage[grid_x * columns + grid_y] +=
+                    value * awproject_compact_replay_tap(bundle, phase_table, ix, iy, packed_index);
+            }
+        }
+        tap_index = bundle.values.len();
+    } else if let Some(storage) = grid.as_slice_memory_order_mut() {
         for iy in -y_support..=y_support {
             for ix in -x_support..=x_support {
                 let grid_x = (plan.loc_x + ix) as usize;
                 let grid_y = (plan.loc_y + iy) as usize;
-                storage[grid_x * columns + grid_y] += value * bundle.values[tap_index];
+                storage[grid_x * columns + grid_y] +=
+                    value * awproject_compact_replay_tap(bundle, phase_table, ix, iy, tap_index);
                 tap_index += 1;
             }
         }
@@ -7558,7 +8273,7 @@ fn awproject_compact_grid_sample_f32(
         for iy in -y_support..=y_support {
             for ix in -x_support..=x_support {
                 grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)] +=
-                    value * bundle.values[tap_index];
+                    value * awproject_compact_replay_tap(bundle, phase_table, ix, iy, tap_index);
                 tap_index += 1;
             }
         }
@@ -7570,10 +8285,13 @@ fn awproject_compact_degrid_sample(
     grid: &Array2<Complex32>,
     plan: AwProjectCompactSamplePlan,
     bundle: &AwProjectCompactTapBundle,
+    group_index: usize,
+    phase_tables: Option<&AwProjectPhaseTables>,
 ) -> Complex32 {
     let columns = grid.shape()[1];
     let x_support = bundle.x_support as isize;
     let y_support = bundle.y_support as isize;
+    let phase_table = awproject_compact_phase_table(bundle, group_index, phase_tables);
     let mut tap_index = 0usize;
     let mut value = Complex32::new(0.0, 0.0);
     if let Some(storage) = grid.as_slice_memory_order() {
@@ -7581,14 +8299,17 @@ fn awproject_compact_degrid_sample(
             for ix in -x_support..=x_support {
                 let grid_x = (plan.loc_x + ix) as usize;
                 let grid_y = (plan.loc_y + iy) as usize;
-                value += bundle.values[tap_index].conj() * storage[grid_x * columns + grid_y];
+                value += awproject_compact_replay_tap(bundle, phase_table, ix, iy, tap_index)
+                    .conj()
+                    * storage[grid_x * columns + grid_y];
                 tap_index += 1;
             }
         }
     } else {
         for iy in -y_support..=y_support {
             for ix in -x_support..=x_support {
-                value += bundle.values[tap_index].conj()
+                value += awproject_compact_replay_tap(bundle, phase_table, ix, iy, tap_index)
+                    .conj()
                     * grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)];
                 tap_index += 1;
             }
@@ -7610,6 +8331,2022 @@ fn awproject_ready_compact_tap(
     }
 }
 
+fn awproject_compact_sample_tile_ids(
+    sample: AwProjectCompactPlannedSample,
+    bundles: &[AwProjectCompactMaterializedTap],
+    grid_width: usize,
+    grid_height: usize,
+    tile_width: usize,
+    tile_height: usize,
+    tiles_y: usize,
+    tile_ids: &mut Vec<usize>,
+    mut tile_work: Option<(&mut [usize], &mut [usize])>,
+    psf_term_count: usize,
+    residual_term_count: usize,
+) -> Result<usize, ImagingError> {
+    tile_ids.clear();
+    let mut tap_pixel_updates = 0usize;
+    for role in AwProjectCompactTileFragmentRole::ALL {
+        let plan = role.plan(sample);
+        let bundle = awproject_ready_compact_tap(bundles, plan.tap_bundle);
+        let x_support = isize::try_from(bundle.x_support).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject X support exceeds the spatial tile coordinate range".to_string(),
+            )
+        })?;
+        let y_support = isize::try_from(bundle.y_support).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject Y support exceeds the spatial tile coordinate range".to_string(),
+            )
+        })?;
+        let x_start = usize::try_from(plan.loc_x - x_support).map_err(|_| {
+            ImagingError::Normalization(
+                "accepted AWProject footprint starts before the grid".to_string(),
+            )
+        })?;
+        let y_start = usize::try_from(plan.loc_y - y_support).map_err(|_| {
+            ImagingError::Normalization(
+                "accepted AWProject footprint starts before the grid".to_string(),
+            )
+        })?;
+        let x_end = usize::try_from(plan.loc_x + x_support + 1).map_err(|_| {
+            ImagingError::Normalization(
+                "accepted AWProject footprint ends outside the grid".to_string(),
+            )
+        })?;
+        let y_end = usize::try_from(plan.loc_y + y_support + 1).map_err(|_| {
+            ImagingError::Normalization(
+                "accepted AWProject footprint ends outside the grid".to_string(),
+            )
+        })?;
+        if x_end > grid_width || y_end > grid_height {
+            return Err(ImagingError::Normalization(format!(
+                "accepted AWProject footprint [{x_start}, {x_end}) x [{y_start}, {y_end}) exceeds {grid_width} x {grid_height} grid"
+            )));
+        }
+        let footprint_updates =
+            (x_end - x_start)
+                .checked_mul(y_end - y_start)
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "AWProject spatial tile footprint size overflowed".to_string(),
+                    )
+                })?;
+        tap_pixel_updates = tap_pixel_updates
+            .checked_add(footprint_updates)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject spatial tile tap-pixel update count overflowed".to_string(),
+                )
+            })?;
+
+        let first_tile_x = x_start / tile_width;
+        let last_tile_x = (x_end - 1) / tile_width;
+        let first_tile_y = y_start / tile_height;
+        let last_tile_y = (y_end - 1) / tile_height;
+        let target_plane_count = match role {
+            AwProjectCompactTileFragmentRole::FirstImaging
+            | AwProjectCompactTileFragmentRole::SecondImaging => residual_term_count,
+            AwProjectCompactTileFragmentRole::FirstPsf
+            | AwProjectCompactTileFragmentRole::SecondPsf
+            | AwProjectCompactTileFragmentRole::FirstWeight
+            | AwProjectCompactTileFragmentRole::SecondWeight => psf_term_count,
+        };
+        for tile_x in first_tile_x..=last_tile_x {
+            for tile_y in first_tile_y..=last_tile_y {
+                let tile_index = tile_x * tiles_y + tile_y;
+                if let Some((tile_tap_pixel_reads, tile_plane_pixel_updates)) = tile_work.as_mut() {
+                    let tile_x_start = tile_x * tile_width;
+                    let tile_x_end = (tile_x_start + tile_width).min(grid_width);
+                    let tile_y_start = tile_y * tile_height;
+                    let tile_y_end = (tile_y_start + tile_height).min(grid_height);
+                    let clipped_width = x_end.min(tile_x_end) - x_start.max(tile_x_start);
+                    let clipped_height = y_end.min(tile_y_end) - y_start.max(tile_y_start);
+                    let clipped_area =
+                        clipped_width.checked_mul(clipped_height).ok_or_else(|| {
+                            ImagingError::InvalidRequest(
+                                "AWProject spatial tile clipped work overflowed".to_string(),
+                            )
+                        })?;
+                    tile_tap_pixel_reads[tile_index] = tile_tap_pixel_reads[tile_index]
+                        .checked_add(clipped_area)
+                        .ok_or_else(|| {
+                            ImagingError::InvalidRequest(
+                                "AWProject spatial tile tap-read count overflowed".to_string(),
+                            )
+                        })?;
+                    let plane_updates =
+                        clipped_area
+                            .checked_mul(target_plane_count)
+                            .ok_or_else(|| {
+                                ImagingError::InvalidRequest(
+                                    "AWProject spatial tile plane-update count overflowed"
+                                        .to_string(),
+                                )
+                            })?;
+                    tile_plane_pixel_updates[tile_index] = tile_plane_pixel_updates[tile_index]
+                        .checked_add(plane_updates)
+                        .ok_or_else(|| {
+                            ImagingError::InvalidRequest(
+                                "AWProject spatial tile plane-update sum overflowed".to_string(),
+                            )
+                        })?;
+                }
+                if !tile_ids.contains(&tile_index) {
+                    tile_ids.push(tile_index);
+                }
+            }
+        }
+    }
+    tile_ids.sort_unstable();
+    Ok(tap_pixel_updates)
+}
+
+fn plan_awproject_compact_tiles(
+    samples: &[AwProjectCompactPlannedSample],
+    bundles: &[AwProjectCompactMaterializedTap],
+    grid_width: usize,
+    grid_height: usize,
+    tile_width: usize,
+    tile_height: usize,
+    psf_term_count: usize,
+    residual_term_count: usize,
+) -> Result<AwProjectCompactTilePlan, ImagingError> {
+    const MAX_EXPERIMENTAL_TILE_METADATA_BYTES: usize = 256 * 1024 * 1024;
+
+    if tile_width == 0 || tile_height == 0 {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject spatial tile dimensions must be nonzero".to_string(),
+        ));
+    }
+    let tiles_x = grid_width.div_ceil(tile_width);
+    let tiles_y = grid_height.div_ceil(tile_height);
+    let tile_count = tiles_x.checked_mul(tiles_y).ok_or_else(|| {
+        ImagingError::InvalidRequest("AWProject spatial tile count overflowed".to_string())
+    })?;
+    let mut tile_counts = vec![0usize; tile_count];
+    let mut tile_tap_pixel_reads = vec![0usize; tile_count];
+    let mut tile_plane_pixel_updates = vec![0usize; tile_count];
+    let mut fragments_per_sample = vec![0usize; samples.len()];
+    let mut tap_pixel_updates = 0usize;
+    let mut sample_tile_ids = Vec::<usize>::with_capacity(24);
+
+    for (source_sample, &sample) in samples.iter().enumerate() {
+        tap_pixel_updates = tap_pixel_updates
+            .checked_add(awproject_compact_sample_tile_ids(
+                sample,
+                bundles,
+                grid_width,
+                grid_height,
+                tile_width,
+                tile_height,
+                tiles_y,
+                &mut sample_tile_ids,
+                Some((
+                    tile_tap_pixel_reads.as_mut_slice(),
+                    tile_plane_pixel_updates.as_mut_slice(),
+                )),
+                psf_term_count,
+                residual_term_count,
+            )?)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject spatial tile tap-pixel update count overflowed".to_string(),
+                )
+            })?;
+        fragments_per_sample[source_sample] = sample_tile_ids.len();
+        for &tile_index in &sample_tile_ids {
+            tile_counts[tile_index] = tile_counts[tile_index].checked_add(1).ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject spatial tile fragment count overflowed".to_string(),
+                )
+            })?;
+        }
+    }
+
+    let mut tile_fragment_offsets = Vec::<usize>::with_capacity(tile_count + 1);
+    tile_fragment_offsets.push(0);
+    for &count in &tile_counts {
+        tile_fragment_offsets.push(
+            tile_fragment_offsets
+                .last()
+                .copied()
+                .unwrap_or_default()
+                .checked_add(count)
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "AWProject spatial tile fragment arena overflowed".to_string(),
+                    )
+                })?,
+        );
+    }
+    let fragment_count = tile_fragment_offsets.last().copied().unwrap_or_default();
+    let mut fragments = vec![AwProjectCompactTileFragment { source_sample: 0 }; fragment_count];
+    let mut tile_cursors = tile_fragment_offsets[..tile_count].to_vec();
+    for (source_sample, &sample) in samples.iter().enumerate() {
+        let source_sample = u32::try_from(source_sample).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "one AWProject replay window exceeds the spatial tile sample index".to_string(),
+            )
+        })?;
+        awproject_compact_sample_tile_ids(
+            sample,
+            bundles,
+            grid_width,
+            grid_height,
+            tile_width,
+            tile_height,
+            tiles_y,
+            &mut sample_tile_ids,
+            None,
+            psf_term_count,
+            residual_term_count,
+        )?;
+        for &tile_index in &sample_tile_ids {
+            let destination = tile_cursors[tile_index];
+            fragments[destination] = AwProjectCompactTileFragment { source_sample };
+            tile_cursors[tile_index] += 1;
+        }
+    }
+    debug_assert!(
+        tile_cursors
+            .iter()
+            .zip(tile_fragment_offsets.iter().skip(1))
+            .all(|(cursor, end)| cursor == end)
+    );
+    let active_tiles = tile_counts.iter().filter(|&&count| count > 0).count();
+    let mut sorted_fragments_per_sample = fragments_per_sample;
+    sorted_fragments_per_sample.sort_unstable();
+    let fragments_per_sample_p95 = if sorted_fragments_per_sample.is_empty() {
+        0
+    } else {
+        let index = (sorted_fragments_per_sample.len() * 95).div_ceil(100) - 1;
+        sorted_fragments_per_sample[index]
+    };
+    let fragments_per_sample_max = sorted_fragments_per_sample
+        .last()
+        .copied()
+        .unwrap_or_default();
+    let plane_pixel_updates =
+        tile_plane_pixel_updates
+            .iter()
+            .try_fold(0usize, |total, &updates| {
+                total.checked_add(updates).ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "AWProject spatial tile plane-update total overflowed".to_string(),
+                    )
+                })
+            })?;
+    debug_assert_eq!(
+        tile_tap_pixel_reads.iter().copied().sum::<usize>(),
+        tap_pixel_updates
+    );
+    let tile_estimated_bytes = tile_tap_pixel_reads
+        .iter()
+        .zip(&tile_plane_pixel_updates)
+        .map(|(&tap_reads, &plane_updates)| {
+            let tap_reads = u64::try_from(tap_reads).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "AWProject spatial tile tap-read estimate exceeds u64".to_string(),
+                )
+            })?;
+            let plane_updates = u64::try_from(plane_updates).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "AWProject spatial tile plane-update estimate exceeds u64".to_string(),
+                )
+            })?;
+            tap_reads
+                .checked_mul(std::mem::size_of::<Complex32>() as u64)
+                .and_then(|bytes| {
+                    plane_updates
+                        .checked_mul((2 * std::mem::size_of::<Complex64>()) as u64)
+                        .and_then(|plane_bytes| bytes.checked_add(plane_bytes))
+                })
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "AWProject spatial tile traffic estimate overflowed".to_string(),
+                    )
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let fragment_metadata_bytes = fragments
+        .len()
+        .checked_mul(std::mem::size_of::<AwProjectCompactTileFragment>())
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject spatial tile fragment metadata size overflowed".to_string(),
+            )
+        })?;
+    let tile_directory_bytes = tile_fragment_offsets
+        .len()
+        .checked_mul(std::mem::size_of::<usize>())
+        .and_then(|bytes| {
+            tile_estimated_bytes
+                .len()
+                .checked_mul(std::mem::size_of::<u64>())
+                .and_then(|weights| bytes.checked_add(weights))
+        })
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject spatial tile directory size overflowed".to_string(),
+            )
+        })?;
+    if fragment_metadata_bytes + tile_directory_bytes > MAX_EXPERIMENTAL_TILE_METADATA_BYTES {
+        return Err(ImagingError::Unsupported(format!(
+            "AWProject spatial tile metadata needs {} bytes, above the {}-byte experimental ceiling",
+            fragment_metadata_bytes + tile_directory_bytes,
+            MAX_EXPERIMENTAL_TILE_METADATA_BYTES,
+        )));
+    }
+    Ok(AwProjectCompactTilePlan {
+        grid_width,
+        grid_height,
+        tile_width,
+        tile_height,
+        tiles_x,
+        tiles_y,
+        tile_fragment_offsets,
+        fragments,
+        tile_estimated_bytes,
+        stats: AwProjectCompactTilePlanStats {
+            plan_elapsed: Duration::ZERO,
+            tile_allocation_elapsed: Duration::ZERO,
+            active_tiles,
+            new_tiles: 0,
+            resident_tiles: 0,
+            resident_bytes: 0,
+            fragments: fragment_count,
+            tap_pixel_updates,
+            plane_pixel_updates,
+            simd_pixel_updates: 0,
+            scalar_pixel_updates: 0,
+            worker_imbalance_milli: 0,
+            dynamic_tile_scheduler: false,
+            tile_task_count: 0,
+            tile_task_estimated_bytes_max: 0,
+            scheduler_build_elapsed: Duration::ZERO,
+            scheduler_sort_elapsed: Duration::ZERO,
+            scheduler_claim_elapsed: Duration::ZERO,
+            scheduler_empty_claims: 0,
+            scheduler_nonpreemptive_efficiency_ppm: 0,
+            scheduler_worker_utilization_ppm: 0,
+            scheduler_ideal_lower_bound_elapsed: Duration::ZERO,
+            scheduler_tail_elapsed: Duration::ZERO,
+            scheduler_task_elapsed_sum: Duration::ZERO,
+            scheduler_task_elapsed_max: Duration::ZERO,
+            scheduler_worker_busy_min: Duration::ZERO,
+            scheduler_worker_busy_max: Duration::ZERO,
+            fragment_metadata_bytes,
+            tile_directory_bytes,
+            fragments_per_sample_p95,
+            fragments_per_sample_max,
+        },
+    })
+}
+
+struct AwProjectCompactF64TileStripe<'a> {
+    tile_x: usize,
+    psf_grids: Vec<ArrayViewMut2<'a, Complex64>>,
+    residual_grids: Vec<ArrayViewMut2<'a, Complex64>>,
+    weight_grids: Vec<ArrayViewMut2<'a, Complex64>>,
+}
+
+fn awproject_compact_f64_tile_stripes<'a>(
+    grids: &'a mut MosaicMtmfsHostGrids,
+    plan: &AwProjectCompactTilePlan,
+) -> Vec<AwProjectCompactF64TileStripe<'a>> {
+    let mut stripes = (0..plan.tiles_x)
+        .map(|tile_x| AwProjectCompactF64TileStripe {
+            tile_x,
+            psf_grids: Vec::with_capacity(grids.psf_grids.len()),
+            residual_grids: Vec::with_capacity(grids.residual_grids.len()),
+            weight_grids: Vec::with_capacity(grids.weight_grids.len()),
+        })
+        .collect::<Vec<_>>();
+    for grid in &mut grids.psf_grids {
+        for (tile_x, view) in grid
+            .axis_chunks_iter_mut(Axis(0), plan.tile_width)
+            .enumerate()
+        {
+            stripes[tile_x].psf_grids.push(view);
+        }
+    }
+    for grid in &mut grids.residual_grids {
+        for (tile_x, view) in grid
+            .axis_chunks_iter_mut(Axis(0), plan.tile_width)
+            .enumerate()
+        {
+            stripes[tile_x].residual_grids.push(view);
+        }
+    }
+    for grid in &mut grids.weight_grids {
+        for (tile_x, view) in grid
+            .axis_chunks_iter_mut(Axis(0), plan.tile_width)
+            .enumerate()
+        {
+            stripes[tile_x].weight_grids.push(view);
+        }
+    }
+    stripes
+}
+
+#[derive(Clone, Copy, Default)]
+struct AwProjectCompactTileReplayCounters {
+    simd_pixel_updates: usize,
+    scalar_pixel_updates: usize,
+    worker_busy_min: Duration,
+    worker_busy_max: Duration,
+    worker_busy_sum: Duration,
+    worker_count: usize,
+    scheduler_claim_elapsed: Duration,
+    scheduler_empty_claims: usize,
+    task_elapsed_sum: Duration,
+    task_elapsed_max: Duration,
+    task_count: usize,
+}
+
+impl AwProjectCompactTileReplayCounters {
+    fn add_assign(&mut self, other: Self) {
+        self.simd_pixel_updates += other.simd_pixel_updates;
+        self.scalar_pixel_updates += other.scalar_pixel_updates;
+        if self.worker_busy_min.is_zero()
+            || (!other.worker_busy_min.is_zero() && other.worker_busy_min < self.worker_busy_min)
+        {
+            self.worker_busy_min = other.worker_busy_min;
+        }
+        self.worker_busy_max = self.worker_busy_max.max(other.worker_busy_max);
+        self.worker_busy_sum += other.worker_busy_sum;
+        self.worker_count += other.worker_count;
+        self.scheduler_claim_elapsed += other.scheduler_claim_elapsed;
+        self.scheduler_empty_claims += other.scheduler_empty_claims;
+        self.task_elapsed_sum += other.task_elapsed_sum;
+        self.task_elapsed_max = self.task_elapsed_max.max(other.task_elapsed_max);
+        self.task_count += other.task_count;
+    }
+
+    fn observe_worker(&mut self, elapsed: Duration) {
+        if self.worker_busy_min.is_zero() || elapsed < self.worker_busy_min {
+            self.worker_busy_min = elapsed;
+        }
+        self.worker_busy_max = self.worker_busy_max.max(elapsed);
+        self.worker_busy_sum += elapsed;
+        self.worker_count += 1;
+    }
+
+    fn worker_imbalance_milli(self) -> usize {
+        if self.worker_busy_min.is_zero() {
+            return 0;
+        }
+        ((self.worker_busy_max.as_secs_f64() / self.worker_busy_min.as_secs_f64()) * 1000.0).round()
+            as usize
+    }
+
+    fn scheduler_ideal_lower_bound(self) -> Duration {
+        if self.worker_count == 0 {
+            return Duration::ZERO;
+        }
+        let average_task_work =
+            Duration::from_secs_f64(self.task_elapsed_sum.as_secs_f64() / self.worker_count as f64);
+        self.task_elapsed_max.max(average_task_work)
+    }
+
+    fn scheduler_nonpreemptive_efficiency_ppm(self) -> usize {
+        if self.worker_count == 0 || self.worker_busy_max.is_zero() {
+            return 0;
+        }
+        let efficiency =
+            self.scheduler_ideal_lower_bound().as_secs_f64() / self.worker_busy_max.as_secs_f64();
+        debug_assert!(
+            efficiency <= 1.001,
+            "dynamic sparse AWProject scheduler lower bound exceeded wall time: {efficiency}"
+        );
+        (efficiency * 1_000_000.0).round().clamp(0.0, 1_000_000.0) as usize
+    }
+
+    fn scheduler_worker_utilization_ppm(self) -> usize {
+        if self.worker_count == 0 || self.worker_busy_max.is_zero() {
+            return 0;
+        }
+        let utilization = self.worker_busy_sum.as_secs_f64()
+            / (self.worker_count as f64 * self.worker_busy_max.as_secs_f64());
+        debug_assert!(
+            utilization <= 1.001,
+            "dynamic sparse AWProject scheduler utilization exceeded one: {utilization}"
+        );
+        (utilization * 1_000_000.0).round().clamp(0.0, 1_000_000.0) as usize
+    }
+}
+
+#[inline(always)]
+fn awproject_compact_accumulate_role_scalar(
+    role: AwProjectCompactTileFragmentRole,
+    sample: AwProjectCompactPlannedSample,
+    term_weights: &[f32],
+    tap: Complex32,
+    grid_index: usize,
+    psf_storage: &mut [&mut [Complex64]],
+    residual_storage: &mut [&mut [Complex64]],
+    weight_storage: &mut [&mut [Complex64]],
+) {
+    match role {
+        AwProjectCompactTileFragmentRole::FirstImaging => {
+            for (order, grid) in residual_storage.iter_mut().enumerate() {
+                let contribution = (sample.first_residual * term_weights[order]) * tap;
+                grid[grid_index] +=
+                    Complex64::new(f64::from(contribution.re), f64::from(contribution.im));
+            }
+        }
+        AwProjectCompactTileFragmentRole::SecondImaging => {
+            for (order, grid) in residual_storage.iter_mut().enumerate() {
+                let contribution = (sample.second_residual * term_weights[order]) * tap;
+                grid[grid_index] +=
+                    Complex64::new(f64::from(contribution.re), f64::from(contribution.im));
+            }
+        }
+        AwProjectCompactTileFragmentRole::FirstPsf
+        | AwProjectCompactTileFragmentRole::SecondPsf => {
+            for (order, grid) in psf_storage.iter_mut().enumerate() {
+                let contribution = Complex32::new(term_weights[order], 0.0) * tap;
+                grid[grid_index] +=
+                    Complex64::new(f64::from(contribution.re), f64::from(contribution.im));
+            }
+        }
+        AwProjectCompactTileFragmentRole::FirstWeight
+        | AwProjectCompactTileFragmentRole::SecondWeight => {
+            for (order, grid) in weight_storage.iter_mut().enumerate() {
+                let contribution = Complex32::new(term_weights[order], 0.0) * tap;
+                grid[grid_index] +=
+                    Complex64::new(f64::from(contribution.re), f64::from(contribution.im));
+            }
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[derive(Clone, Copy)]
+struct AwProjectNeonComplexPair {
+    re: std::arch::aarch64::float32x2_t,
+    im: std::arch::aarch64::float32x2_t,
+}
+
+#[cfg(target_arch = "aarch64")]
+#[derive(Clone, Copy)]
+struct AwProjectNeonReplay2x2 {
+    x0: AwProjectNeonComplexPair,
+    x1: AwProjectNeonComplexPair,
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn awproject_neon_load_complex_pair(values: *const Complex32) -> AwProjectNeonComplexPair {
+    use std::arch::aarch64::vld2_f32;
+
+    let loaded = unsafe { vld2_f32(values.cast::<f32>()) };
+    AwProjectNeonComplexPair {
+        re: loaded.0,
+        im: loaded.1,
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn awproject_neon_complex_pair_mul(
+    lhs: AwProjectNeonComplexPair,
+    rhs: AwProjectNeonComplexPair,
+) -> AwProjectNeonComplexPair {
+    use std::arch::aarch64::{vadd_f32, vmul_f32, vsub_f32};
+
+    let ac = vmul_f32(lhs.re, rhs.re);
+    let bd = vmul_f32(lhs.im, rhs.im);
+    let ad = vmul_f32(lhs.re, rhs.im);
+    let bc = vmul_f32(lhs.im, rhs.re);
+    AwProjectNeonComplexPair {
+        re: vsub_f32(ac, bd),
+        im: vadd_f32(ad, bc),
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn awproject_neon_phase_gradient_pair(
+    x: AwProjectNeonComplexPair,
+    y: Complex32,
+) -> AwProjectNeonComplexPair {
+    use std::arch::aarch64::{
+        vaddq_f64, vcvt_f32_f64, vcvt_f64_f32, vdupq_n_f64, vmulq_f64, vsubq_f64,
+    };
+
+    let x_re = vcvt_f64_f32(x.re);
+    let x_im = vcvt_f64_f32(x.im);
+    let y_re = vdupq_n_f64(f64::from(y.re));
+    let y_im = vdupq_n_f64(f64::from(y.im));
+    let ac = vmulq_f64(x_re, y_re);
+    let bd = vmulq_f64(x_im, y_im);
+    let ad = vmulq_f64(x_re, y_im);
+    let bc = vmulq_f64(x_im, y_re);
+    AwProjectNeonComplexPair {
+        re: vcvt_f32_f64(vsubq_f64(ac, bd)),
+        im: vcvt_f32_f64(vaddq_f64(ad, bc)),
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn awproject_compact_replay_tap_2x2_neon(
+    bundle: &AwProjectCompactTapBundle,
+    phase_table: Option<&AwProjectPhaseTable>,
+    ix: isize,
+    iy: isize,
+    tap_index: usize,
+    tap_width: usize,
+) -> AwProjectNeonReplay2x2 {
+    use std::arch::aarch64::{vld1_f32, vzip1_f32, vzip2_f32};
+
+    let tap_row0 =
+        unsafe { awproject_neon_load_complex_pair(bundle.values.as_ptr().add(tap_index)) };
+    let tap_row1 = unsafe {
+        awproject_neon_load_complex_pair(bundle.values.as_ptr().add(tap_index + tap_width))
+    };
+    let (row0, row1) = if let Some(phases) = phase_table {
+        let sampling = bundle.sampling as isize;
+        let x0 = phases.x(ix * sampling + bundle.off_x);
+        let x1 = phases.x((ix + 1) * sampling + bundle.off_x);
+        let x_re = [x0.re, x1.re];
+        let x_im = [x0.im, x1.im];
+        let x = AwProjectNeonComplexPair {
+            re: unsafe { vld1_f32(x_re.as_ptr()) },
+            im: unsafe { vld1_f32(x_im.as_ptr()) },
+        };
+        let gradient0 = unsafe {
+            awproject_neon_phase_gradient_pair(x, phases.y(iy * sampling + bundle.off_y))
+        };
+        let gradient1 = unsafe {
+            awproject_neon_phase_gradient_pair(x, phases.y((iy + 1) * sampling + bundle.off_y))
+        };
+        (
+            unsafe { awproject_neon_complex_pair_mul(tap_row0, gradient0) },
+            unsafe { awproject_neon_complex_pair_mul(tap_row1, gradient1) },
+        )
+    } else {
+        (tap_row0, tap_row1)
+    };
+    AwProjectNeonReplay2x2 {
+        x0: AwProjectNeonComplexPair {
+            re: vzip1_f32(row0.re, row1.re),
+            im: vzip1_f32(row0.im, row1.im),
+        },
+        x1: AwProjectNeonComplexPair {
+            re: vzip2_f32(row0.re, row1.re),
+            im: vzip2_f32(row0.im, row1.im),
+        },
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn awproject_compact_accumulate_y_pair_neon(
+    grid: &mut [Complex64],
+    grid_index: usize,
+    coefficient: Complex32,
+    tap: AwProjectNeonComplexPair,
+) {
+    use std::arch::aarch64::{
+        float64x2x2_t, vadd_f32, vaddq_f64, vcvt_f64_f32, vdup_n_f32, vld2q_f64, vmul_f32,
+        vst2q_f64, vsub_f32,
+    };
+
+    let coefficient_re = vdup_n_f32(coefficient.re);
+    let coefficient_im = vdup_n_f32(coefficient.im);
+    let ac = vmul_f32(coefficient_re, tap.re);
+    let bd = vmul_f32(coefficient_im, tap.im);
+    let ad = vmul_f32(coefficient_re, tap.im);
+    let bc = vmul_f32(coefficient_im, tap.re);
+    let contribution_re = vcvt_f64_f32(vsub_f32(ac, bd));
+    let contribution_im = vcvt_f64_f32(vadd_f32(ad, bc));
+    let destination = unsafe { grid.as_mut_ptr().add(grid_index).cast::<f64>() };
+    let current = unsafe { vld2q_f64(destination.cast_const()) };
+    unsafe {
+        vst2q_f64(
+            destination,
+            float64x2x2_t(
+                vaddq_f64(current.0, contribution_re),
+                vaddq_f64(current.1, contribution_im),
+            ),
+        );
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn awproject_compact_accumulate_role_2x2_neon(
+    role: AwProjectCompactTileFragmentRole,
+    sample: AwProjectCompactPlannedSample,
+    term_weights: &[f32],
+    taps: AwProjectNeonReplay2x2,
+    grid_index_x0: usize,
+    grid_index_x1: usize,
+    psf_storage: &mut [&mut [Complex64]],
+    residual_storage: &mut [&mut [Complex64]],
+    weight_storage: &mut [&mut [Complex64]],
+) {
+    match role {
+        AwProjectCompactTileFragmentRole::FirstImaging => {
+            for (order, grid) in residual_storage.iter_mut().enumerate() {
+                let coefficient = sample.first_residual * term_weights[order];
+                unsafe {
+                    awproject_compact_accumulate_y_pair_neon(
+                        grid,
+                        grid_index_x0,
+                        coefficient,
+                        taps.x0,
+                    );
+                    awproject_compact_accumulate_y_pair_neon(
+                        grid,
+                        grid_index_x1,
+                        coefficient,
+                        taps.x1,
+                    );
+                }
+            }
+        }
+        AwProjectCompactTileFragmentRole::SecondImaging => {
+            for (order, grid) in residual_storage.iter_mut().enumerate() {
+                let coefficient = sample.second_residual * term_weights[order];
+                unsafe {
+                    awproject_compact_accumulate_y_pair_neon(
+                        grid,
+                        grid_index_x0,
+                        coefficient,
+                        taps.x0,
+                    );
+                    awproject_compact_accumulate_y_pair_neon(
+                        grid,
+                        grid_index_x1,
+                        coefficient,
+                        taps.x1,
+                    );
+                }
+            }
+        }
+        AwProjectCompactTileFragmentRole::FirstPsf
+        | AwProjectCompactTileFragmentRole::SecondPsf => {
+            for (order, grid) in psf_storage.iter_mut().enumerate() {
+                let coefficient = Complex32::new(term_weights[order], 0.0);
+                unsafe {
+                    awproject_compact_accumulate_y_pair_neon(
+                        grid,
+                        grid_index_x0,
+                        coefficient,
+                        taps.x0,
+                    );
+                    awproject_compact_accumulate_y_pair_neon(
+                        grid,
+                        grid_index_x1,
+                        coefficient,
+                        taps.x1,
+                    );
+                }
+            }
+        }
+        AwProjectCompactTileFragmentRole::FirstWeight
+        | AwProjectCompactTileFragmentRole::SecondWeight => {
+            for (order, grid) in weight_storage.iter_mut().enumerate() {
+                let coefficient = Complex32::new(term_weights[order], 0.0);
+                unsafe {
+                    awproject_compact_accumulate_y_pair_neon(
+                        grid,
+                        grid_index_x0,
+                        coefficient,
+                        taps.x0,
+                    );
+                    awproject_compact_accumulate_y_pair_neon(
+                        grid,
+                        grid_index_x1,
+                        coefficient,
+                        taps.x1,
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_awproject_compact_f64_tile(
+    tile_x: usize,
+    tile_y: usize,
+    tile_plan: &AwProjectCompactTilePlan,
+    samples: &[AwProjectCompactPlannedSample],
+    bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    reffreq_hz: f64,
+    neon_2x2: bool,
+    storage_x_start: usize,
+    storage_y_start: usize,
+    storage_columns: usize,
+    psf_storage: &mut [&mut [Complex64]],
+    residual_storage: &mut [&mut [Complex64]],
+    weight_storage: &mut [&mut [Complex64]],
+    term_weights: &mut [f32],
+) -> AwProjectCompactTileReplayCounters {
+    let mut counters = AwProjectCompactTileReplayCounters::default();
+    let tile_x_start = tile_x * tile_plan.tile_width;
+    let tile_x_end = (tile_x_start + tile_plan.tile_width).min(tile_plan.grid_width);
+    let tile_y_start = tile_y * tile_plan.tile_height;
+    let tile_y_end = (tile_y_start + tile_plan.tile_height).min(tile_plan.grid_height);
+    let tile_index = tile_x * tile_plan.tiles_y + tile_y;
+    for &fragment in tile_plan.tile_fragments(tile_index) {
+        let sample = samples[fragment.source_sample as usize];
+        for (order, term_weight) in term_weights.iter_mut().enumerate() {
+            *term_weight = mtmfs_casa_weighted_taylor_term(
+                sample.weight,
+                sample.frequency_hz,
+                reffreq_hz,
+                order,
+            );
+        }
+        for role in AwProjectCompactTileFragmentRole::ALL {
+            let plan = role.plan(sample);
+            let bundle = awproject_ready_compact_tap(bundles, plan.tap_bundle);
+            let phase_table =
+                awproject_compact_phase_table(bundle, sample.group_index, phase_tables);
+            let x_support = bundle.x_support as isize;
+            let y_support = bundle.y_support as isize;
+            let footprint_x_start = (plan.loc_x - x_support) as usize;
+            let footprint_x_end = (plan.loc_x + x_support + 1) as usize;
+            let footprint_y_start = (plan.loc_y - y_support) as usize;
+            let footprint_y_end = (plan.loc_y + y_support + 1) as usize;
+            let fragment_x_start = footprint_x_start.max(tile_x_start);
+            let fragment_x_end = footprint_x_end.min(tile_x_end);
+            let fragment_y_start = footprint_y_start.max(tile_y_start);
+            let fragment_y_end = footprint_y_end.min(tile_y_end);
+            if fragment_x_start >= fragment_x_end || fragment_y_start >= fragment_y_end {
+                continue;
+            }
+            let tap_width = 2 * bundle.x_support + 1;
+            #[cfg(target_arch = "aarch64")]
+            if neon_2x2 {
+                let paired_x_end = fragment_x_start + (fragment_x_end - fragment_x_start) / 2 * 2;
+                let paired_y_end = fragment_y_start + (fragment_y_end - fragment_y_start) / 2 * 2;
+                for grid_y in (fragment_y_start..paired_y_end).step_by(2) {
+                    let iy = grid_y as isize - plan.loc_y;
+                    let tap_y = (iy + y_support) as usize;
+                    for grid_x in (fragment_x_start..paired_x_end).step_by(2) {
+                        let local_x = grid_x - storage_x_start;
+                        let local_y = grid_y - storage_y_start;
+                        let ix = grid_x as isize - plan.loc_x;
+                        let tap_x = (ix + x_support) as usize;
+                        let tap_index = tap_y * tap_width + tap_x;
+                        let taps = unsafe {
+                            awproject_compact_replay_tap_2x2_neon(
+                                bundle,
+                                phase_table,
+                                ix,
+                                iy,
+                                tap_index,
+                                tap_width,
+                            )
+                        };
+                        unsafe {
+                            awproject_compact_accumulate_role_2x2_neon(
+                                role,
+                                sample,
+                                term_weights,
+                                taps,
+                                local_x * storage_columns + local_y,
+                                (local_x + 1) * storage_columns + local_y,
+                                psf_storage,
+                                residual_storage,
+                                weight_storage,
+                            );
+                        }
+                        counters.simd_pixel_updates += 4;
+                    }
+                    for grid_x in paired_x_end..fragment_x_end {
+                        let local_x = grid_x - storage_x_start;
+                        let local_y = grid_y - storage_y_start;
+                        let ix = grid_x as isize - plan.loc_x;
+                        let tap_x = (ix + x_support) as usize;
+                        for delta_y in 0..2 {
+                            let scalar_iy = iy + delta_y;
+                            let scalar_tap_y = tap_y + delta_y as usize;
+                            let tap_index = scalar_tap_y * tap_width + tap_x;
+                            let tap = awproject_compact_replay_tap(
+                                bundle,
+                                phase_table,
+                                ix,
+                                scalar_iy,
+                                tap_index,
+                            );
+                            awproject_compact_accumulate_role_scalar(
+                                role,
+                                sample,
+                                term_weights,
+                                tap,
+                                local_x * storage_columns + local_y + delta_y as usize,
+                                psf_storage,
+                                residual_storage,
+                                weight_storage,
+                            );
+                            counters.scalar_pixel_updates += 1;
+                        }
+                    }
+                }
+                for grid_y in paired_y_end..fragment_y_end {
+                    let iy = grid_y as isize - plan.loc_y;
+                    let tap_y = (iy + y_support) as usize;
+                    for grid_x in fragment_x_start..fragment_x_end {
+                        let local_x = grid_x - storage_x_start;
+                        let local_y = grid_y - storage_y_start;
+                        let ix = grid_x as isize - plan.loc_x;
+                        let tap_x = (ix + x_support) as usize;
+                        let tap_index = tap_y * tap_width + tap_x;
+                        let tap =
+                            awproject_compact_replay_tap(bundle, phase_table, ix, iy, tap_index);
+                        awproject_compact_accumulate_role_scalar(
+                            role,
+                            sample,
+                            term_weights,
+                            tap,
+                            local_x * storage_columns + local_y,
+                            psf_storage,
+                            residual_storage,
+                            weight_storage,
+                        );
+                        counters.scalar_pixel_updates += 1;
+                    }
+                }
+                continue;
+            }
+            #[cfg(not(target_arch = "aarch64"))]
+            let _ = neon_2x2;
+            for grid_y in fragment_y_start..fragment_y_end {
+                let iy = grid_y as isize - plan.loc_y;
+                let tap_y = (iy + y_support) as usize;
+                for grid_x in fragment_x_start..fragment_x_end {
+                    let local_x = grid_x - storage_x_start;
+                    let local_y = grid_y - storage_y_start;
+                    let ix = grid_x as isize - plan.loc_x;
+                    let tap_x = (ix + x_support) as usize;
+                    let tap_index = tap_y * tap_width + tap_x;
+                    let tap = awproject_compact_replay_tap(bundle, phase_table, ix, iy, tap_index);
+                    awproject_compact_accumulate_role_scalar(
+                        role,
+                        sample,
+                        term_weights,
+                        tap,
+                        local_x * storage_columns + local_y,
+                        psf_storage,
+                        residual_storage,
+                        weight_storage,
+                    );
+                    counters.scalar_pixel_updates += 1;
+                }
+            }
+        }
+    }
+    counters
+}
+
+fn execute_awproject_compact_f64_tile_stripe(
+    mut stripe: AwProjectCompactF64TileStripe<'_>,
+    tile_plan: &AwProjectCompactTilePlan,
+    samples: &[AwProjectCompactPlannedSample],
+    bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    reffreq_hz: f64,
+    neon_2x2: bool,
+) -> AwProjectCompactTileReplayCounters {
+    let stripe_x_start = stripe.tile_x * tile_plan.tile_width;
+    let columns = stripe
+        .psf_grids
+        .first()
+        .or_else(|| stripe.residual_grids.first())
+        .or_else(|| stripe.weight_grids.first())
+        .map(|grid| grid.shape()[1])
+        .expect("mosaic MT-MFS tile stripe must contain at least one plane");
+    let mut psf_storage = stripe
+        .psf_grids
+        .iter_mut()
+        .map(|grid| {
+            grid.as_slice_memory_order_mut()
+                .expect("mosaic MT-MFS tile stripe must be contiguous")
+        })
+        .collect::<Vec<_>>();
+    let mut residual_storage = stripe
+        .residual_grids
+        .iter_mut()
+        .map(|grid| {
+            grid.as_slice_memory_order_mut()
+                .expect("mosaic MT-MFS tile stripe must be contiguous")
+        })
+        .collect::<Vec<_>>();
+    let mut weight_storage = stripe
+        .weight_grids
+        .iter_mut()
+        .map(|grid| {
+            grid.as_slice_memory_order_mut()
+                .expect("mosaic MT-MFS tile stripe must be contiguous")
+        })
+        .collect::<Vec<_>>();
+    let max_term_count = psf_storage
+        .len()
+        .max(residual_storage.len())
+        .max(weight_storage.len());
+    let mut term_weights = vec![0.0_f32; max_term_count];
+    let mut counters = AwProjectCompactTileReplayCounters::default();
+    for tile_y in 0..tile_plan.tiles_y {
+        counters.add_assign(execute_awproject_compact_f64_tile(
+            stripe.tile_x,
+            tile_y,
+            tile_plan,
+            samples,
+            bundles,
+            phase_tables,
+            reffreq_hz,
+            neon_2x2,
+            stripe_x_start,
+            0,
+            columns,
+            &mut psf_storage,
+            &mut residual_storage,
+            &mut weight_storage,
+            &mut term_weights,
+        ));
+    }
+    counters
+}
+
+fn execute_awproject_compact_f64_tiles(
+    grids: &mut MosaicMtmfsHostGrids,
+    tile_plan: &AwProjectCompactTilePlan,
+    samples: &[AwProjectCompactPlannedSample],
+    bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    reffreq_hz: f64,
+    requested_threads: usize,
+    neon_2x2: bool,
+) -> Result<AwProjectCompactTileReplayCounters, ImagingError> {
+    let stripes = awproject_compact_f64_tile_stripes(grids, tile_plan);
+    let worker_count = requested_threads.max(1).min(stripes.len().max(1));
+    let mut worker_stripes = (0..worker_count)
+        .map(|_| Vec::<AwProjectCompactF64TileStripe<'_>>::new())
+        .collect::<Vec<_>>();
+    for (index, stripe) in stripes.into_iter().enumerate() {
+        worker_stripes[index % worker_count].push(stripe);
+    }
+    let mut counters = AwProjectCompactTileReplayCounters::default();
+    if worker_count == 1 {
+        let worker_started = Instant::now();
+        for stripe in worker_stripes.pop().expect("one AWProject tile worker") {
+            counters.add_assign(execute_awproject_compact_f64_tile_stripe(
+                stripe,
+                tile_plan,
+                samples,
+                bundles,
+                phase_tables,
+                reffreq_hz,
+                neon_2x2,
+            ));
+        }
+        counters.observe_worker(worker_started.elapsed());
+    } else {
+        counters = thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(worker_count);
+            for stripes in worker_stripes {
+                handles.push(scope.spawn(move || {
+                    let worker_started = Instant::now();
+                    let mut worker_counters = AwProjectCompactTileReplayCounters::default();
+                    for stripe in stripes {
+                        worker_counters.add_assign(execute_awproject_compact_f64_tile_stripe(
+                            stripe,
+                            tile_plan,
+                            samples,
+                            bundles,
+                            phase_tables,
+                            reffreq_hz,
+                            neon_2x2,
+                        ));
+                    }
+                    worker_counters.observe_worker(worker_started.elapsed());
+                    worker_counters
+                }));
+            }
+            let mut counters = AwProjectCompactTileReplayCounters::default();
+            for handle in handles {
+                counters.add_assign(handle.join().map_err(|_| {
+                    ImagingError::InvalidRequest(
+                        "compact AWProject spatial tile worker panicked".to_string(),
+                    )
+                })?);
+            }
+            Ok::<AwProjectCompactTileReplayCounters, ImagingError>(counters)
+        })?;
+    }
+    Ok(counters)
+}
+
+struct AwProjectCompactSparseF64TileStripe<'a> {
+    tile_x: usize,
+    tiles: &'a mut [Option<Mutex<MosaicMtmfsSparseTile>>],
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_awproject_compact_sparse_f64_tile(
+    tile_index: usize,
+    tile: &mut MosaicMtmfsSparseTile,
+    tile_plan: &AwProjectCompactTilePlan,
+    samples: &[AwProjectCompactPlannedSample],
+    bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    reffreq_hz: f64,
+    neon_2x2: bool,
+    term_weights: &mut [f32],
+) -> AwProjectCompactTileReplayCounters {
+    let tile_x = tile_index / tile_plan.tiles_y;
+    let tile_y = tile_index % tile_plan.tiles_y;
+    let mut psf_storage = tile
+        .psf_planes
+        .iter_mut()
+        .map(|plane| {
+            plane
+                .as_deref_mut()
+                .expect("sparse AWProject PSF plane was consumed before replay")
+        })
+        .collect::<Vec<_>>();
+    let mut residual_storage = tile
+        .residual_planes
+        .iter_mut()
+        .map(|plane| {
+            plane
+                .as_deref_mut()
+                .expect("sparse AWProject residual plane was consumed before replay")
+        })
+        .collect::<Vec<_>>();
+    let mut weight_storage = tile
+        .weight_planes
+        .iter_mut()
+        .map(|plane| {
+            plane
+                .as_deref_mut()
+                .expect("sparse AWProject weight plane was consumed before replay")
+        })
+        .collect::<Vec<_>>();
+    execute_awproject_compact_f64_tile(
+        tile_x,
+        tile_y,
+        tile_plan,
+        samples,
+        bundles,
+        phase_tables,
+        reffreq_hz,
+        neon_2x2,
+        tile_x * tile_plan.tile_width,
+        tile_y * tile_plan.tile_height,
+        tile_plan.tile_height,
+        &mut psf_storage,
+        &mut residual_storage,
+        &mut weight_storage,
+        term_weights,
+    )
+}
+
+fn execute_awproject_compact_sparse_f64_tile_stripe(
+    stripe: AwProjectCompactSparseF64TileStripe<'_>,
+    tile_plan: &AwProjectCompactTilePlan,
+    samples: &[AwProjectCompactPlannedSample],
+    bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    reffreq_hz: f64,
+    neon_2x2: bool,
+) -> AwProjectCompactTileReplayCounters {
+    let max_term_count = stripe
+        .tiles
+        .iter()
+        .flatten()
+        .next()
+        .map(|tile| {
+            let tile = tile
+                .lock()
+                .expect("sparse AWProject tile lock must not be poisoned");
+            tile.psf_planes
+                .len()
+                .max(tile.residual_planes.len())
+                .max(tile.weight_planes.len())
+        })
+        .unwrap_or_default();
+    let mut term_weights = vec![0.0_f32; max_term_count];
+    let mut counters = AwProjectCompactTileReplayCounters::default();
+    for (tile_y, slot) in stripe.tiles.iter_mut().enumerate() {
+        let tile_index = stripe.tile_x * tile_plan.tiles_y + tile_y;
+        if tile_plan.tile_fragments(tile_index).is_empty() {
+            continue;
+        }
+        let tile = slot
+            .as_mut()
+            .expect("sparse AWProject active tile must be allocated before replay");
+        let tile = tile
+            .get_mut()
+            .expect("exclusive sparse AWProject tile lock must not be poisoned");
+        counters.add_assign(execute_awproject_compact_sparse_f64_tile(
+            tile_index,
+            tile,
+            tile_plan,
+            samples,
+            bundles,
+            phase_tables,
+            reffreq_hz,
+            neon_2x2,
+            &mut term_weights,
+        ));
+    }
+    counters
+}
+
+fn execute_awproject_compact_sparse_f64_tiles(
+    grids: &mut MosaicMtmfsSparseHostGrids,
+    tile_plan: &AwProjectCompactTilePlan,
+    samples: &[AwProjectCompactPlannedSample],
+    bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    reffreq_hz: f64,
+    requested_threads: usize,
+    neon_2x2: bool,
+) -> Result<AwProjectCompactTileReplayCounters, ImagingError> {
+    let stripes = grids
+        .slots
+        .chunks_mut(grids.tiles_y)
+        .enumerate()
+        .map(|(tile_x, tiles)| AwProjectCompactSparseF64TileStripe { tile_x, tiles })
+        .collect::<Vec<_>>();
+    let worker_count = requested_threads.max(1).min(stripes.len().max(1));
+    let mut worker_stripes = (0..worker_count)
+        .map(|_| Vec::<AwProjectCompactSparseF64TileStripe<'_>>::new())
+        .collect::<Vec<_>>();
+    for (index, stripe) in stripes.into_iter().enumerate() {
+        worker_stripes[index % worker_count].push(stripe);
+    }
+    let mut counters = AwProjectCompactTileReplayCounters::default();
+    if worker_count == 1 {
+        let worker_started = Instant::now();
+        for stripe in worker_stripes
+            .pop()
+            .expect("one sparse AWProject tile worker")
+        {
+            counters.add_assign(execute_awproject_compact_sparse_f64_tile_stripe(
+                stripe,
+                tile_plan,
+                samples,
+                bundles,
+                phase_tables,
+                reffreq_hz,
+                neon_2x2,
+            ));
+        }
+        counters.observe_worker(worker_started.elapsed());
+    } else {
+        counters = thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(worker_count);
+            for stripes in worker_stripes {
+                handles.push(scope.spawn(move || {
+                    let worker_started = Instant::now();
+                    let mut worker_counters = AwProjectCompactTileReplayCounters::default();
+                    for stripe in stripes {
+                        worker_counters.add_assign(
+                            execute_awproject_compact_sparse_f64_tile_stripe(
+                                stripe,
+                                tile_plan,
+                                samples,
+                                bundles,
+                                phase_tables,
+                                reffreq_hz,
+                                neon_2x2,
+                            ),
+                        );
+                    }
+                    worker_counters.observe_worker(worker_started.elapsed());
+                    worker_counters
+                }));
+            }
+            let mut counters = AwProjectCompactTileReplayCounters::default();
+            for handle in handles {
+                counters.add_assign(handle.join().map_err(|_| {
+                    ImagingError::InvalidRequest(
+                        "compact sparse AWProject spatial tile worker panicked".to_string(),
+                    )
+                })?);
+            }
+            Ok::<AwProjectCompactTileReplayCounters, ImagingError>(counters)
+        })?;
+    }
+    Ok(counters)
+}
+
+#[derive(Clone, Copy)]
+struct AwProjectCompactSparseF64TileTask {
+    tile_index: usize,
+    estimated_bytes: u64,
+}
+
+struct AwProjectCompactDynamicTileResult {
+    counters: AwProjectCompactTileReplayCounters,
+    build_elapsed: Duration,
+    sort_elapsed: Duration,
+    task_estimated_bytes_max: u64,
+}
+
+struct AwProjectCompactDynamicTileSchedule {
+    tasks: Vec<AwProjectCompactSparseF64TileTask>,
+    build_elapsed: Duration,
+    sort_elapsed: Duration,
+    task_estimated_bytes_max: u64,
+}
+
+fn build_awproject_compact_sparse_f64_tile_tasks(
+    grids: &MosaicMtmfsSparseHostGrids,
+    tile_plan: &AwProjectCompactTilePlan,
+) -> Result<Vec<AwProjectCompactSparseF64TileTask>, ImagingError> {
+    let tasks = tile_plan
+        .tile_fragment_offsets
+        .windows(2)
+        .enumerate()
+        .filter(|(_, offsets)| offsets[0] != offsets[1])
+        .map(|(tile_index, _)| AwProjectCompactSparseF64TileTask {
+            tile_index,
+            estimated_bytes: tile_plan.tile_estimated_bytes(tile_index),
+        })
+        .collect::<Vec<_>>();
+    validate_awproject_compact_sparse_f64_tile_tasks(&tasks, grids, tile_plan)?;
+    Ok(tasks)
+}
+
+fn validate_awproject_compact_sparse_f64_tile_tasks(
+    tasks: &[AwProjectCompactSparseF64TileTask],
+    grids: &MosaicMtmfsSparseHostGrids,
+    tile_plan: &AwProjectCompactTilePlan,
+) -> Result<(), ImagingError> {
+    if tasks.len() != tile_plan.stats.active_tiles {
+        return Err(ImagingError::InvalidRequest(format!(
+            "dynamic sparse AWProject scheduled {} tasks for {} active tiles",
+            tasks.len(),
+            tile_plan.stats.active_tiles
+        )));
+    }
+    if grids.slots.len() + 1 != tile_plan.tile_fragment_offsets.len() {
+        return Err(ImagingError::InvalidRequest(format!(
+            "dynamic sparse AWProject storage has {} tile slots for {} plan tiles",
+            grids.slots.len(),
+            tile_plan.tile_fragment_offsets.len().saturating_sub(1)
+        )));
+    }
+    if tile_plan.tile_fragment_offsets.first().copied() != Some(0)
+        || tile_plan.tile_fragment_offsets.last().copied() != Some(tile_plan.fragments.len())
+        || tile_plan
+            .tile_fragment_offsets
+            .windows(2)
+            .any(|offsets| offsets[0] > offsets[1] || offsets[1] > tile_plan.fragments.len())
+    {
+        return Err(ImagingError::InvalidRequest(
+            "dynamic sparse AWProject tile fragment directory is invalid".to_string(),
+        ));
+    }
+    let mut scheduled_tiles = vec![false; grids.slots.len()];
+    let mut scheduled_fragments = 0usize;
+    for task in tasks {
+        let Some(slot) = grids.slots.get(task.tile_index) else {
+            return Err(ImagingError::InvalidRequest(format!(
+                "dynamic sparse AWProject task references out-of-range tile {}",
+                task.tile_index
+            )));
+        };
+        if slot.is_none() {
+            return Err(ImagingError::InvalidRequest(format!(
+                "dynamic sparse AWProject task references unallocated tile {}",
+                task.tile_index
+            )));
+        }
+        if std::mem::replace(&mut scheduled_tiles[task.tile_index], true) {
+            return Err(ImagingError::InvalidRequest(format!(
+                "dynamic sparse AWProject scheduled duplicate tile {}",
+                task.tile_index
+            )));
+        }
+        if task.estimated_bytes != tile_plan.tile_estimated_bytes(task.tile_index) {
+            return Err(ImagingError::InvalidRequest(format!(
+                "dynamic sparse AWProject task weight for tile {} does not match its plan",
+                task.tile_index
+            )));
+        }
+        let fragment_count = tile_plan.tile_fragments(task.tile_index).len();
+        if fragment_count == 0 {
+            return Err(ImagingError::InvalidRequest(format!(
+                "dynamic sparse AWProject scheduled inactive tile {}",
+                task.tile_index
+            )));
+        }
+        scheduled_fragments = scheduled_fragments
+            .checked_add(fragment_count)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "dynamic sparse AWProject scheduled fragment count overflowed".to_string(),
+                )
+            })?;
+    }
+    for (tile_index, offsets) in tile_plan.tile_fragment_offsets.windows(2).enumerate() {
+        if offsets[0] != offsets[1] && !scheduled_tiles[tile_index] {
+            return Err(ImagingError::InvalidRequest(format!(
+                "dynamic sparse AWProject omitted active tile {tile_index}"
+            )));
+        }
+    }
+    if scheduled_fragments != tile_plan.stats.fragments {
+        return Err(ImagingError::InvalidRequest(format!(
+            "dynamic sparse AWProject scheduled {scheduled_fragments} fragments for a {}-fragment plan",
+            tile_plan.stats.fragments
+        )));
+    }
+    Ok(())
+}
+
+fn build_awproject_compact_sparse_f64_dynamic_tile_schedule(
+    grids: &MosaicMtmfsSparseHostGrids,
+    tile_plan: &AwProjectCompactTilePlan,
+    reverse_task_order: bool,
+) -> Result<AwProjectCompactDynamicTileSchedule, ImagingError> {
+    let build_started = Instant::now();
+    let mut tasks = build_awproject_compact_sparse_f64_tile_tasks(grids, tile_plan)?;
+    let build_elapsed = build_started.elapsed();
+    let sort_started = Instant::now();
+    tasks.sort_unstable_by(|left, right| {
+        right
+            .estimated_bytes
+            .cmp(&left.estimated_bytes)
+            .then_with(|| left.tile_index.cmp(&right.tile_index))
+    });
+    if reverse_task_order {
+        tasks.reverse();
+    }
+    let sort_elapsed = sort_started.elapsed();
+    let task_estimated_bytes_max = tasks
+        .iter()
+        .map(|task| task.estimated_bytes)
+        .max()
+        .unwrap_or_default();
+    Ok(AwProjectCompactDynamicTileSchedule {
+        tasks,
+        build_elapsed,
+        sort_elapsed,
+        task_estimated_bytes_max,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_awproject_compact_sparse_f64_scheduled_tiles(
+    grids: &MosaicMtmfsSparseHostGrids,
+    tile_plan: &AwProjectCompactTilePlan,
+    tasks: &[AwProjectCompactSparseF64TileTask],
+    samples: &[AwProjectCompactPlannedSample],
+    bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    reffreq_hz: f64,
+    requested_threads: usize,
+    neon_2x2: bool,
+) -> Result<AwProjectCompactTileReplayCounters, ImagingError> {
+    if tasks.is_empty() {
+        return Ok(AwProjectCompactTileReplayCounters::default());
+    }
+    let worker_count = requested_threads.max(1).min(tasks.len().max(1));
+    let next_task = AtomicUsize::new(0);
+    let cancelled = AtomicBool::new(false);
+    let max_term_count = grids
+        .psf_term_count
+        .max(grids.residual_term_count)
+        .max(grids.psf_term_count);
+    let counters = thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(worker_count);
+        for _worker_index in 0..worker_count {
+            let tasks = tasks;
+            let slots = grids.slots.as_slice();
+            let next_task = &next_task;
+            let cancelled = &cancelled;
+            handles.push(scope.spawn(move || {
+                let worker_started = Instant::now();
+                let mut worker_counters = AwProjectCompactTileReplayCounters::default();
+                let mut term_weights = vec![0.0_f32; max_term_count];
+                loop {
+                    if cancelled.load(Ordering::Acquire) {
+                        break;
+                    }
+                    let claim_started = Instant::now();
+                    let task_index = next_task.fetch_add(1, Ordering::Relaxed);
+                    worker_counters.scheduler_claim_elapsed += claim_started.elapsed();
+                    let Some(task) = tasks.get(task_index) else {
+                        worker_counters.scheduler_empty_claims += 1;
+                        break;
+                    };
+                    let task_started = Instant::now();
+                    let task_result = (|| {
+                        let tile_lock = slots[task.tile_index].as_ref().ok_or_else(|| {
+                            ImagingError::InvalidRequest(format!(
+                                "dynamic sparse AWProject task lost tile {}",
+                                task.tile_index
+                            ))
+                        })?;
+                        let mut tile = tile_lock.try_lock().map_err(|reason| match reason {
+                            std::sync::TryLockError::WouldBlock => {
+                                ImagingError::InvalidRequest(format!(
+                                    "dynamic sparse AWProject scheduled tile {} concurrently",
+                                    task.tile_index
+                                ))
+                            }
+                            std::sync::TryLockError::Poisoned(_) => {
+                                ImagingError::InvalidRequest(format!(
+                                    "dynamic sparse AWProject tile {} lock was poisoned",
+                                    task.tile_index
+                                ))
+                            }
+                        })?;
+                        worker_counters.add_assign(execute_awproject_compact_sparse_f64_tile(
+                            task.tile_index,
+                            &mut tile,
+                            tile_plan,
+                            samples,
+                            bundles,
+                            phase_tables,
+                            reffreq_hz,
+                            neon_2x2,
+                            &mut term_weights,
+                        ));
+                        Ok::<(), ImagingError>(())
+                    })();
+                    if let Err(error) = task_result {
+                        cancelled.store(true, Ordering::Release);
+                        worker_counters.observe_worker(worker_started.elapsed());
+                        return Err(error);
+                    }
+                    let task_elapsed = task_started.elapsed();
+                    worker_counters.task_elapsed_sum += task_elapsed;
+                    worker_counters.task_elapsed_max =
+                        worker_counters.task_elapsed_max.max(task_elapsed);
+                    worker_counters.task_count += 1;
+                }
+                worker_counters.observe_worker(worker_started.elapsed());
+                Ok::<_, ImagingError>(worker_counters)
+            }));
+        }
+        let mut counters = AwProjectCompactTileReplayCounters::default();
+        let mut first_error = None;
+        for handle in handles {
+            match handle.join() {
+                Ok(Ok(worker_counters)) => counters.add_assign(worker_counters),
+                Ok(Err(error)) => {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                }
+                Err(_) => {
+                    cancelled.store(true, Ordering::Release);
+                    if first_error.is_none() {
+                        first_error = Some(ImagingError::InvalidRequest(
+                            "dynamic sparse AWProject tile worker panicked".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+        if let Some(error) = first_error {
+            return Err(error);
+        }
+        Ok::<_, ImagingError>(counters)
+    })?;
+    if counters.task_count != tasks.len() {
+        return Err(ImagingError::InvalidRequest(format!(
+            "dynamic sparse AWProject completed {} of {} tile tasks",
+            counters.task_count,
+            tasks.len()
+        )));
+    }
+    Ok(counters)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_awproject_compact_sparse_f64_dynamic_tiles(
+    grids: &MosaicMtmfsSparseHostGrids,
+    tile_plan: &AwProjectCompactTilePlan,
+    samples: &[AwProjectCompactPlannedSample],
+    bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    reffreq_hz: f64,
+    requested_threads: usize,
+    neon_2x2: bool,
+    reverse_task_order: bool,
+    calibration: Option<&ParallelWorkerCalibrationControl>,
+    calibration_storage_is_pristine: bool,
+) -> Result<AwProjectCompactDynamicTileResult, ImagingError> {
+    let schedule = build_awproject_compact_sparse_f64_dynamic_tile_schedule(
+        grids,
+        tile_plan,
+        reverse_task_order,
+    )?;
+    let resolved_threads = resolve_awproject_parallel_worker_count(
+        calibration,
+        calibration_storage_is_pristine,
+        grids,
+        tile_plan,
+        &schedule.tasks,
+        samples,
+        bundles,
+        phase_tables,
+        reffreq_hz,
+        requested_threads,
+        neon_2x2,
+    )?;
+    let counters = execute_awproject_compact_sparse_f64_scheduled_tiles(
+        grids,
+        tile_plan,
+        &schedule.tasks,
+        samples,
+        bundles,
+        phase_tables,
+        reffreq_hz,
+        resolved_threads,
+        neon_2x2,
+    )?;
+    Ok(AwProjectCompactDynamicTileResult {
+        counters,
+        build_elapsed: schedule.build_elapsed,
+        sort_elapsed: schedule.sort_elapsed,
+        task_estimated_bytes_max: schedule.task_estimated_bytes_max,
+    })
+}
+
+fn awproject_parallel_calibration_task_subset(
+    tasks: &[AwProjectCompactSparseF64TileTask],
+    maximum_workers: usize,
+) -> Option<Vec<AwProjectCompactSparseF64TileTask>> {
+    let minimum_count = maximum_workers.checked_mul(2)?;
+    if maximum_workers == 0 || tasks.len() < minimum_count {
+        return None;
+    }
+    let target_count = tasks.len().min(minimum_count.max(32));
+    if target_count == tasks.len() {
+        return Some(tasks.to_vec());
+    }
+    let denominator = target_count - 1;
+    Some(
+        (0..target_count)
+            .map(|index| {
+                let source_index = index * (tasks.len() - 1) / denominator;
+                tasks[source_index]
+            })
+            .collect(),
+    )
+}
+
+fn zero_awproject_compact_sparse_f64_tasks(
+    grids: &MosaicMtmfsSparseHostGrids,
+    tasks: &[AwProjectCompactSparseF64TileTask],
+) -> Result<(), ImagingError> {
+    for task in tasks {
+        let tile_lock = grids
+            .slots
+            .get(task.tile_index)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "parallel worker calibration lost tile {} while discarding scratch output",
+                    task.tile_index
+                ))
+            })?;
+        let mut tile = tile_lock.lock().map_err(|_| {
+            ImagingError::InvalidRequest(format!(
+                "parallel worker calibration tile {} was poisoned while discarding scratch output",
+                task.tile_index
+            ))
+        })?;
+        let zero_planes = |planes: &mut [Option<Box<[Complex64]>>]| {
+            for plane in planes.iter_mut().flatten() {
+                plane.fill(Complex64::new(0.0, 0.0));
+            }
+        };
+        zero_planes(&mut tile.psf_planes);
+        zero_planes(&mut tile.residual_planes);
+        zero_planes(&mut tile.weight_planes);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn observe_awproject_parallel_worker_candidate(
+    grids: &MosaicMtmfsSparseHostGrids,
+    tile_plan: &AwProjectCompactTilePlan,
+    tasks: &[AwProjectCompactSparseF64TileTask],
+    samples: &[AwProjectCompactPlannedSample],
+    bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    reffreq_hz: f64,
+    workers: usize,
+    neon_2x2: bool,
+) -> Result<parallel_worker::ParallelWorkerTimingObservation, ImagingError> {
+    let started = Instant::now();
+    let replay = execute_awproject_compact_sparse_f64_scheduled_tiles(
+        grids,
+        tile_plan,
+        tasks,
+        samples,
+        bundles,
+        phase_tables,
+        reffreq_hz,
+        workers,
+        neon_2x2,
+    );
+    let elapsed_ns = started.elapsed().as_nanos().max(1);
+    let discard = zero_awproject_compact_sparse_f64_tasks(grids, tasks);
+    replay?;
+    discard?;
+    Ok(parallel_worker::ParallelWorkerTimingObservation {
+        workers,
+        elapsed_ns,
+    })
+}
+
+fn record_parallel_worker_resolution(
+    control: &ParallelWorkerCalibrationControl,
+    resolution: ParallelWorkerResolution,
+) -> usize {
+    let _ = control.resolution.set(resolution);
+    control
+        .resolution
+        .get()
+        .expect("parallel worker resolution was set")
+        .workers
+}
+
+fn parallel_worker_fallback_resolution(
+    control: &ParallelWorkerCalibrationControl,
+    actual_weights: &[u64],
+    candidates: &[usize],
+    reason: impl Into<String>,
+) -> usize {
+    let workers = parallel_worker::conservative_parallel_worker_fallback(
+        actual_weights,
+        candidates,
+        control.request.highest_capacity_class_boundary(),
+    )
+    .max(1);
+    let explanation = reason.into();
+    eprintln!(
+        "standard_mfs_parallel_worker_plan requested=auto resolved={} source=auto-conservative-fallback hard_cap={} candidates={:?} topology_high_capacity_boundary={} reason={}",
+        workers,
+        control.request.hard_cap(),
+        candidates,
+        control
+            .request
+            .highest_capacity_class_boundary()
+            .unwrap_or(0),
+        explanation,
+    );
+    record_parallel_worker_resolution(
+        control,
+        ParallelWorkerResolution {
+            workers,
+            source: ParallelWorkerSelectionSource::AutoConservativeFallback,
+            explanation,
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_awproject_parallel_worker_count(
+    calibration: Option<&ParallelWorkerCalibrationControl>,
+    calibration_storage_is_pristine: bool,
+    grids: &MosaicMtmfsSparseHostGrids,
+    tile_plan: &AwProjectCompactTilePlan,
+    tasks: &[AwProjectCompactSparseF64TileTask],
+    samples: &[AwProjectCompactPlannedSample],
+    bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    reffreq_hz: f64,
+    requested_threads: usize,
+    neon_2x2: bool,
+) -> Result<usize, ImagingError> {
+    let Some(control) = calibration else {
+        return Ok(requested_threads.max(1).min(tasks.len().max(1)));
+    };
+    if let Some(resolution) = control.resolution.get() {
+        return Ok(resolution.workers.max(1).min(tasks.len().max(1)));
+    }
+    let actual_weights = tasks
+        .iter()
+        .map(|task| task.estimated_bytes)
+        .collect::<Vec<_>>();
+    if actual_weights.is_empty() {
+        return Ok(record_parallel_worker_resolution(
+            control,
+            ParallelWorkerResolution {
+                workers: 1,
+                source: ParallelWorkerSelectionSource::AutoConservativeFallback,
+                explanation: "no weighted tile tasks".to_string(),
+            },
+        ));
+    }
+    let hard_cap = control.request.hard_cap().min(actual_weights.len()).max(1);
+    let mut candidates = control
+        .request
+        .coarse_candidates()
+        .iter()
+        .copied()
+        .map(|workers| workers.min(hard_cap))
+        .filter(|workers| *workers > 0)
+        .collect::<Vec<_>>();
+    candidates.sort_unstable();
+    candidates.dedup();
+    if !calibration_storage_is_pristine {
+        return Ok(parallel_worker_fallback_resolution(
+            control,
+            &actual_weights,
+            &candidates,
+            "the first eligible sparse tile window did not have pristine output storage",
+        ));
+    }
+    let maximum_workers = candidates.iter().copied().max().unwrap_or(1);
+    let Some(calibration_tasks) =
+        awproject_parallel_calibration_task_subset(tasks, maximum_workers)
+    else {
+        return Ok(parallel_worker_fallback_resolution(
+            control,
+            &actual_weights,
+            &candidates,
+            "the weighted task set cannot supply two calibration waves at the hard cap",
+        ));
+    };
+    let calibration_weights = calibration_tasks
+        .iter()
+        .map(|task| task.estimated_bytes)
+        .collect::<Vec<_>>();
+    let calibration_started = Instant::now();
+    let mut observations = Vec::new();
+    for workers in candidates.iter().copied() {
+        observations.push(observe_awproject_parallel_worker_candidate(
+            grids,
+            tile_plan,
+            &calibration_tasks,
+            samples,
+            bundles,
+            phase_tables,
+            reffreq_hz,
+            workers,
+            neon_2x2,
+        )?);
+        if calibration_started.elapsed() >= control.request.maximum_elapsed() {
+            return Ok(parallel_worker_fallback_resolution(
+                control,
+                &actual_weights,
+                &candidates,
+                "coarse exact-kernel calibration exhausted its elapsed-time budget",
+            ));
+        }
+    }
+    let coarse_scores = parallel_worker::score_parallel_worker_candidates(
+        &actual_weights,
+        &calibration_weights,
+        &observations,
+    );
+    let Some(coarse_winner) = parallel_worker::choose_parallel_worker_score(
+        &coarse_scores,
+        control.request.score_tie_tolerance_ppm(),
+    ) else {
+        return Ok(parallel_worker_fallback_resolution(
+            control,
+            &actual_weights,
+            &candidates,
+            "coarse exact-kernel calibration produced no score",
+        ));
+    };
+    let mut neighbor_candidates = [
+        coarse_winner.workers.saturating_sub(1),
+        coarse_winner.workers.saturating_add(1).min(hard_cap),
+    ]
+    .into_iter()
+    .filter(|workers| *workers > 0 && !candidates.contains(workers))
+    .collect::<Vec<_>>();
+    neighbor_candidates.sort_unstable();
+    neighbor_candidates.dedup();
+    for workers in neighbor_candidates {
+        observations.push(observe_awproject_parallel_worker_candidate(
+            grids,
+            tile_plan,
+            &calibration_tasks,
+            samples,
+            bundles,
+            phase_tables,
+            reffreq_hz,
+            workers,
+            neon_2x2,
+        )?);
+        candidates.push(workers);
+        if calibration_started.elapsed() >= control.request.maximum_elapsed() {
+            return Ok(parallel_worker_fallback_resolution(
+                control,
+                &actual_weights,
+                &candidates,
+                "neighbor exact-kernel calibration exhausted its elapsed-time budget",
+            ));
+        }
+    }
+    candidates.sort_unstable();
+    candidates.dedup();
+    let refined_scores = parallel_worker::score_parallel_worker_candidates(
+        &actual_weights,
+        &calibration_weights,
+        &observations,
+    );
+    let mut repeat_candidates = refined_scores
+        .iter()
+        .take(2)
+        .map(|score| score.workers)
+        .collect::<Vec<_>>();
+    repeat_candidates.reverse();
+    for workers in repeat_candidates {
+        observations.push(observe_awproject_parallel_worker_candidate(
+            grids,
+            tile_plan,
+            &calibration_tasks,
+            samples,
+            bundles,
+            phase_tables,
+            reffreq_hz,
+            workers,
+            neon_2x2,
+        )?);
+        if calibration_started.elapsed() >= control.request.maximum_elapsed() {
+            return Ok(parallel_worker_fallback_resolution(
+                control,
+                &actual_weights,
+                &candidates,
+                "counterbalanced exact-kernel repeats exhausted their elapsed-time budget",
+            ));
+        }
+    }
+    let final_scores = parallel_worker::score_parallel_worker_candidates(
+        &actual_weights,
+        &calibration_weights,
+        &observations,
+    );
+    let Some(selected) = parallel_worker::choose_parallel_worker_score(
+        &final_scores,
+        control.request.score_tie_tolerance_ppm(),
+    ) else {
+        return Ok(parallel_worker_fallback_resolution(
+            control,
+            &actual_weights,
+            &candidates,
+            "exact-kernel calibration produced no final score",
+        ));
+    };
+    let scores = final_scores
+        .iter()
+        .map(|score| {
+            format!(
+                "{}:{}ns:{}",
+                score.workers, score.mean_elapsed_ns, score.combined_score
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let explanation = format!(
+        "calibrated {} deterministic weighted tiles with scores [{}]",
+        calibration_tasks.len(),
+        scores
+    );
+    eprintln!(
+        "standard_mfs_parallel_worker_plan requested=auto resolved={} source=auto-calibrated hard_cap={} candidates={:?} topology_high_capacity_boundary={} calibration_tasks={} calibration_elapsed_ms={:.3} scores={}",
+        selected.workers,
+        hard_cap,
+        candidates,
+        control
+            .request
+            .highest_capacity_class_boundary()
+            .unwrap_or(0),
+        calibration_tasks.len(),
+        profile::millis(calibration_started.elapsed()),
+        scores,
+    );
+    Ok(record_parallel_worker_resolution(
+        control,
+        ParallelWorkerResolution {
+            workers: selected.workers,
+            source: ParallelWorkerSelectionSource::AutoCalibrated,
+            explanation,
+        },
+    ))
+}
+
 enum AwProjectCompactF64PlaneTask<'a> {
     Psf {
         order: usize,
@@ -7629,6 +10366,8 @@ fn execute_awproject_compact_f64_plane_tasks(
     tasks: Vec<AwProjectCompactF64PlaneTask<'_>>,
     samples: &[AwProjectCompactPlannedSample],
     bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    contiguous_grid_taps: bool,
     reffreq_hz: f64,
 ) {
     for task in tasks {
@@ -7649,6 +10388,9 @@ fn execute_awproject_compact_f64_plane_tasks(
                             grid,
                             plan,
                             awproject_ready_compact_tap(bundles, plan.tap_bundle),
+                            sample.group_index,
+                            phase_tables,
+                            contiguous_grid_taps,
                             value,
                         );
                     }
@@ -7670,6 +10412,9 @@ fn execute_awproject_compact_f64_plane_tasks(
                             grid,
                             plan,
                             awproject_ready_compact_tap(bundles, plan.tap_bundle),
+                            sample.group_index,
+                            phase_tables,
+                            contiguous_grid_taps,
                             residual * term_weight,
                         );
                     }
@@ -7691,6 +10436,9 @@ fn execute_awproject_compact_f64_plane_tasks(
                             grid,
                             plan,
                             awproject_ready_compact_tap(bundles, plan.tap_bundle),
+                            sample.group_index,
+                            phase_tables,
+                            contiguous_grid_taps,
                             value,
                         );
                     }
@@ -7704,9 +10452,69 @@ fn grid_awproject_compact_samples_host_f64(
     grids: &mut MosaicMtmfsHostGrids,
     samples: &[AwProjectCompactPlannedSample],
     bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    contiguous_grid_taps: bool,
+    spatial_tile_side: Option<usize>,
+    neon_2x2: bool,
     reffreq_hz: f64,
     requested_threads: usize,
-) -> Result<(), ImagingError> {
+) -> Result<Option<AwProjectCompactTilePlanStats>, ImagingError> {
+    let tile_plan = if let Some(tile_side) = spatial_tile_side {
+        let (grid_width, grid_height, psf_term_count, residual_term_count) = {
+            let shape = grids
+                .psf_grids
+                .first()
+                .or_else(|| grids.residual_grids.first())
+                .or_else(|| grids.weight_grids.first())
+                .map(|grid| grid.shape())
+                .ok_or_else(|| {
+                    ImagingError::Normalization(
+                        "AWProject spatial tile replay has no host grid planes".to_string(),
+                    )
+                })?;
+            (
+                shape[0],
+                shape[1],
+                grids.psf_grids.len(),
+                grids.residual_grids.len(),
+            )
+        };
+        let plan_started = Instant::now();
+        let mut plan = plan_awproject_compact_tiles(
+            samples,
+            bundles,
+            grid_width,
+            grid_height,
+            tile_side,
+            tile_side,
+            psf_term_count,
+            residual_term_count,
+        )?;
+        plan.stats.plan_elapsed = plan_started.elapsed();
+        Some(plan)
+    } else {
+        None
+    };
+    if let Some(mut tile_plan) = tile_plan {
+        let counters = execute_awproject_compact_f64_tiles(
+            grids,
+            &tile_plan,
+            samples,
+            bundles,
+            phase_tables,
+            reffreq_hz,
+            requested_threads,
+            neon_2x2,
+        )?;
+        tile_plan.stats.simd_pixel_updates = counters.simd_pixel_updates;
+        tile_plan.stats.scalar_pixel_updates = counters.scalar_pixel_updates;
+        tile_plan.stats.worker_imbalance_milli = counters.worker_imbalance_milli();
+        debug_assert_eq!(
+            tile_plan.stats.simd_pixel_updates + tile_plan.stats.scalar_pixel_updates,
+            tile_plan.stats.tap_pixel_updates
+        );
+        return Ok(Some(tile_plan.stats));
+    }
     let MosaicMtmfsHostGrids {
         psf_grids,
         residual_grids,
@@ -7745,6 +10553,8 @@ fn grid_awproject_compact_samples_host_f64(
             worker_tasks.pop().expect("one compact AWProject worker"),
             samples,
             bundles,
+            phase_tables,
+            contiguous_grid_taps,
             reffreq_hz,
         );
     } else {
@@ -7752,7 +10562,14 @@ fn grid_awproject_compact_samples_host_f64(
             let mut handles = Vec::with_capacity(worker_count);
             for tasks in worker_tasks {
                 handles.push(scope.spawn(move || {
-                    execute_awproject_compact_f64_plane_tasks(tasks, samples, bundles, reffreq_hz);
+                    execute_awproject_compact_f64_plane_tasks(
+                        tasks,
+                        samples,
+                        bundles,
+                        phase_tables,
+                        contiguous_grid_taps,
+                        reffreq_hz,
+                    );
                 }));
             }
             for handle in handles {
@@ -7765,7 +10582,109 @@ fn grid_awproject_compact_samples_host_f64(
             Ok::<(), ImagingError>(())
         })?;
     }
-    Ok(())
+    Ok(None)
+}
+
+fn grid_awproject_compact_samples_sparse_host_f64(
+    grids: &mut MosaicMtmfsSparseHostGrids,
+    samples: &[AwProjectCompactPlannedSample],
+    bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    neon_2x2: bool,
+    dynamic_tile_scheduler: bool,
+    reverse_dynamic_task_order: bool,
+    reffreq_hz: f64,
+    requested_threads: usize,
+    calibration: Option<&ParallelWorkerCalibrationControl>,
+) -> Result<AwProjectCompactTilePlanStats, ImagingError> {
+    let plan_started = Instant::now();
+    let mut tile_plan = plan_awproject_compact_tiles(
+        samples,
+        bundles,
+        grids.rows,
+        grids.columns,
+        grids.tile_side,
+        grids.tile_side,
+        grids.psf_term_count,
+        grids.residual_term_count,
+    )?;
+    tile_plan.stats.plan_elapsed = plan_started.elapsed();
+    if tile_plan.tiles_x != grids.tiles_x || tile_plan.tiles_y != grids.tiles_y {
+        return Err(ImagingError::InvalidRequest(
+            "sparse AWProject storage and compact replay tile topology differ".to_string(),
+        ));
+    }
+    let (new_tiles, tile_allocation_elapsed) = grids.ensure_plan_tiles(&tile_plan)?;
+    let calibration_storage_is_pristine =
+        new_tiles == tile_plan.stats.active_tiles && grids.resident_tiles() == new_tiles;
+    let (counters, scheduler_build_elapsed, scheduler_sort_elapsed, tile_task_estimated_bytes_max) =
+        if dynamic_tile_scheduler {
+            let result = execute_awproject_compact_sparse_f64_dynamic_tiles(
+                grids,
+                &tile_plan,
+                samples,
+                bundles,
+                phase_tables,
+                reffreq_hz,
+                requested_threads,
+                neon_2x2,
+                reverse_dynamic_task_order,
+                calibration,
+                calibration_storage_is_pristine,
+            )?;
+            (
+                result.counters,
+                result.build_elapsed,
+                result.sort_elapsed,
+                result.task_estimated_bytes_max,
+            )
+        } else {
+            (
+                execute_awproject_compact_sparse_f64_tiles(
+                    grids,
+                    &tile_plan,
+                    samples,
+                    bundles,
+                    phase_tables,
+                    reffreq_hz,
+                    requested_threads,
+                    neon_2x2,
+                )?,
+                Duration::ZERO,
+                Duration::ZERO,
+                0,
+            )
+        };
+    tile_plan.stats.tile_allocation_elapsed = tile_allocation_elapsed;
+    tile_plan.stats.new_tiles = new_tiles;
+    tile_plan.stats.resident_tiles = grids.resident_tiles();
+    tile_plan.stats.resident_bytes = grids.resident_bytes()?;
+    tile_plan.stats.simd_pixel_updates = counters.simd_pixel_updates;
+    tile_plan.stats.scalar_pixel_updates = counters.scalar_pixel_updates;
+    tile_plan.stats.worker_imbalance_milli = counters.worker_imbalance_milli();
+    tile_plan.stats.dynamic_tile_scheduler = dynamic_tile_scheduler;
+    tile_plan.stats.tile_task_count = counters.task_count;
+    tile_plan.stats.tile_task_estimated_bytes_max = tile_task_estimated_bytes_max;
+    tile_plan.stats.scheduler_build_elapsed = scheduler_build_elapsed;
+    tile_plan.stats.scheduler_sort_elapsed = scheduler_sort_elapsed;
+    tile_plan.stats.scheduler_claim_elapsed = counters.scheduler_claim_elapsed;
+    tile_plan.stats.scheduler_empty_claims = counters.scheduler_empty_claims;
+    tile_plan.stats.scheduler_nonpreemptive_efficiency_ppm =
+        counters.scheduler_nonpreemptive_efficiency_ppm();
+    tile_plan.stats.scheduler_worker_utilization_ppm = counters.scheduler_worker_utilization_ppm();
+    tile_plan.stats.scheduler_ideal_lower_bound_elapsed = counters.scheduler_ideal_lower_bound();
+    tile_plan.stats.scheduler_tail_elapsed = counters
+        .worker_busy_max
+        .saturating_sub(counters.scheduler_ideal_lower_bound());
+    tile_plan.stats.scheduler_task_elapsed_sum = counters.task_elapsed_sum;
+    tile_plan.stats.scheduler_task_elapsed_max = counters.task_elapsed_max;
+    tile_plan.stats.scheduler_worker_busy_min = counters.worker_busy_min;
+    tile_plan.stats.scheduler_worker_busy_max = counters.worker_busy_max;
+    debug_assert_eq!(
+        tile_plan.stats.simd_pixel_updates + tile_plan.stats.scalar_pixel_updates,
+        tile_plan.stats.tap_pixel_updates
+    );
+    Ok(tile_plan.stats)
 }
 
 enum AwProjectCompactF32PlaneTask<'a> {
@@ -7787,6 +10706,8 @@ fn execute_awproject_compact_f32_plane_tasks(
     tasks: Vec<AwProjectCompactF32PlaneTask<'_>>,
     samples: &[AwProjectCompactPlannedSample],
     bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    contiguous_grid_taps: bool,
     reffreq_hz: f64,
 ) {
     for task in tasks {
@@ -7807,6 +10728,9 @@ fn execute_awproject_compact_f32_plane_tasks(
                             grid,
                             plan,
                             awproject_ready_compact_tap(bundles, plan.tap_bundle),
+                            sample.group_index,
+                            phase_tables,
+                            contiguous_grid_taps,
                             value,
                         );
                     }
@@ -7828,6 +10752,9 @@ fn execute_awproject_compact_f32_plane_tasks(
                             grid,
                             plan,
                             awproject_ready_compact_tap(bundles, plan.tap_bundle),
+                            sample.group_index,
+                            phase_tables,
+                            contiguous_grid_taps,
                             residual * term_weight,
                         );
                     }
@@ -7849,6 +10776,9 @@ fn execute_awproject_compact_f32_plane_tasks(
                             grid,
                             plan,
                             awproject_ready_compact_tap(bundles, plan.tap_bundle),
+                            sample.group_index,
+                            phase_tables,
+                            contiguous_grid_taps,
                             value,
                         );
                     }
@@ -7862,6 +10792,8 @@ fn grid_awproject_compact_samples_host_f32(
     grids: &mut MosaicMtmfsHostF32Grids,
     samples: &[AwProjectCompactPlannedSample],
     bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    contiguous_grid_taps: bool,
     reffreq_hz: f64,
     requested_threads: usize,
 ) -> Result<(), ImagingError> {
@@ -7905,6 +10837,8 @@ fn grid_awproject_compact_samples_host_f32(
                 .expect("one compact AWProject f32 worker"),
             samples,
             bundles,
+            phase_tables,
+            contiguous_grid_taps,
             reffreq_hz,
         );
     } else {
@@ -7912,7 +10846,14 @@ fn grid_awproject_compact_samples_host_f32(
             let mut handles = Vec::with_capacity(worker_count);
             for tasks in worker_tasks {
                 handles.push(scope.spawn(move || {
-                    execute_awproject_compact_f32_plane_tasks(tasks, samples, bundles, reffreq_hz);
+                    execute_awproject_compact_f32_plane_tasks(
+                        tasks,
+                        samples,
+                        bundles,
+                        phase_tables,
+                        contiguous_grid_taps,
+                        reffreq_hz,
+                    );
                 }));
             }
             for handle in handles {
@@ -9110,7 +12051,15 @@ fn awproject_compact_tap_spec(
     Ok(AwProjectCompactTapSpec {
         request: AwProjectCompactTapRequest {
             key: AwProjectCompactTapKey {
-                group_index,
+                // In the tapless phase experiment, POINTING phase is applied
+                // during exact source-order replay. The stored compact tap is
+                // therefore group-independent and can be shared across every
+                // POINTING group with the same CF/offset/conjugation tuple.
+                group_index: if awproject_compact_tapless_phase() {
+                    0
+                } else {
+                    group_index
+                },
                 cell: awproject_stable_cell_key(cell_key),
                 kernel_kind,
                 off_x: geometry.off_x,
@@ -9331,6 +12280,123 @@ fn awproject_compact_prefetch_cf_cell() -> bool {
     env::var_os("CASA_RS_AWPROJECT_PREFETCH_CF_CELL").is_some()
 }
 
+fn awproject_compact_tapless_phase() -> bool {
+    env::var_os("CASA_RS_AWPROJECT_TAPLESS_PHASE_EXPERIMENT").is_some()
+}
+
+fn awproject_compact_contiguous_grid_taps() -> bool {
+    env::var_os("CASA_RS_AWPROJECT_CONTIGUOUS_GRID_TAPS_EXPERIMENT").is_some()
+}
+
+fn awproject_compact_spatial_tile_side() -> Option<usize> {
+    env::var("CASA_RS_AWPROJECT_SPATIAL_TILE_SIDE_EXPERIMENT")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&value| value > 0)
+}
+
+fn awproject_compact_neon_2x2_enabled() -> bool {
+    cfg!(target_arch = "aarch64") && env::var_os("CASA_RS_AWPROJECT_NEON_2X2_EXPERIMENT").is_some()
+}
+
+fn awproject_compact_dynamic_sparse_tile_scheduler_enabled() -> bool {
+    env::var_os("CASA_RS_AWPROJECT_DYNAMIC_SPARSE_TILE_TASKS_EXPERIMENT").is_some()
+}
+
+fn awproject_compact_reverse_dynamic_sparse_tile_tasks_enabled() -> bool {
+    env::var_os("CASA_RS_AWPROJECT_REVERSE_DYNAMIC_SPARSE_TILE_TASKS_EXPERIMENT").is_some()
+}
+
+fn awproject_compact_sparse_tile_side() -> Option<usize> {
+    env::var_os("CASA_RS_AWPROJECT_SPARSE_TILES_EXPERIMENT")
+        .and_then(|_| awproject_compact_spatial_tile_side())
+}
+
+fn awproject_compact_tap_budget_bytes(default_bytes: usize) -> usize {
+    env::var("CASA_RS_AWPROJECT_TAP_BUDGET_MB_EXPERIMENT")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&value| value > 0)
+        .and_then(|mib| mib.checked_mul(1024 * 1024))
+        .unwrap_or(default_bytes)
+}
+
+fn build_awproject_phase_tables(
+    request: &MtmfsRequest,
+    mosaic: &MosaicGridderConfig,
+    groups: &[GroupedVisibilityMetadata],
+    cache: &AwConvolutionFunctionResidentCache,
+) -> Result<(AwProjectPhaseTables, usize), ImagingError> {
+    let identity = cache.cache().identity();
+    let max_support = identity
+        .imaging_supports
+        .iter()
+        .chain(identity.weight_supports.iter())
+        .flat_map(|support| support.iter())
+        .copied()
+        .max()
+        .ok_or_else(|| {
+            ImagingError::ConvolutionFunctionCache(
+                "validated AWProject cache has no support metadata".to_string(),
+            )
+        })?;
+    let mut tables = BTreeMap::new();
+    let mut bytes = 0usize;
+    for &sampling in &identity.sampling {
+        let radius = max_support
+            .checked_mul(sampling)
+            .and_then(|value| value.checked_add(sampling))
+            .and_then(|value| isize::try_from(value).ok())
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject phase-table coordinate range overflowed".to_string(),
+                )
+            })?;
+        let value_count = usize::try_from(radius)
+            .ok()
+            .and_then(|radius| radius.checked_mul(2))
+            .and_then(|value| value.checked_add(1))
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest("AWProject phase-table length overflowed".to_string())
+            })?;
+        for (group_index, group) in groups.iter().enumerate() {
+            let gradient = mosaic_projector_phase_gradient_rad_per_sample_for_group(
+                request.geometry,
+                mosaic.phase_center_direction_rad,
+                group.pointing_direction_rad,
+                group.pointing_pixel_position,
+                sampling,
+            );
+            let mut x = Vec::with_capacity(value_count);
+            let mut y = Vec::with_capacity(value_count);
+            for coordinate in -radius..=radius {
+                x.push(gridder::casa_aw_axis_phase(coordinate as f64 * gradient[0]));
+                y.push(gridder::casa_aw_axis_phase(coordinate as f64 * gradient[1]));
+            }
+            bytes = bytes
+                .checked_add(
+                    x.len()
+                        .saturating_add(y.len())
+                        .saturating_mul(std::mem::size_of::<Complex32>()),
+                )
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "AWProject phase-table byte count overflowed".to_string(),
+                    )
+                })?;
+            tables.insert(
+                (group_index, sampling),
+                AwProjectPhaseTable {
+                    coordinate_radius: radius,
+                    x,
+                    y,
+                },
+            );
+        }
+    }
+    Ok((tables, bytes))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn classify_awproject_compact_source_chunk(
     request: &MtmfsRequest,
@@ -9419,12 +12485,19 @@ fn awproject_compact_plan(
 
 fn awproject_compact_candidate_tap_bytes(
     specs: &[AwProjectCompactTapSpec; 6],
-    existing: &BTreeMap<AwProjectCompactTapKey, usize>,
+    existing: &AwProjectCompactTapIndex,
 ) -> Result<usize, ImagingError> {
-    let mut candidate_keys = BTreeSet::new();
+    let mut candidate_keys = [None; 6];
+    let mut candidate_count = 0usize;
     let mut additional_tap_bytes = 0usize;
     for spec in specs {
-        if !existing.contains_key(&spec.request.key) && candidate_keys.insert(spec.request.key) {
+        let key = spec.request.key;
+        let already_candidate = candidate_keys[..candidate_count]
+            .iter()
+            .any(|candidate| *candidate == Some(key));
+        if !existing.contains_key(&key) && !already_candidate {
+            candidate_keys[candidate_count] = Some(key);
+            candidate_count += 1;
             additional_tap_bytes = additional_tap_bytes
                 .checked_add(spec.tap_bytes)
                 .ok_or_else(|| {
@@ -9456,7 +12529,8 @@ fn materialize_awproject_compact_tap(
     mosaic: &MosaicGridderConfig,
     gridder: &StandardGridder,
     groups: &[GroupedVisibilityMetadata],
-    cell: &AwConvolutionFunctionCell,
+    cell: &awprojection::AwConvolutionFunctionReplayCell,
+    phase_tables: Option<&AwProjectPhaseTables>,
     requests: &[AwProjectCompactTapRequest],
     bundle_index: usize,
 ) -> Result<(usize, AwProjectCompactMaterializedTap, usize), ImagingError> {
@@ -9465,19 +12539,97 @@ fn materialize_awproject_compact_tap(
         awproject_stable_cell_key(bundle_request.cell_key),
         bundle_request.key.cell
     );
-    let group = &groups[bundle_request.key.group_index];
-    let (metadata, kernel) = match bundle_request.key.kernel_kind {
-        AwProjectCompactKernelKind::Imaging => (&cell.metadata.imaging, &cell.imaging),
-        AwProjectCompactKernelKind::Weight => (&cell.metadata.weight, &cell.weight),
+    match cell {
+        awprojection::AwConvolutionFunctionReplayCell::Owned(cell) => {
+            let (metadata, kernel) = match bundle_request.key.kernel_kind {
+                AwProjectCompactKernelKind::Imaging => (&cell.metadata.imaging, &cell.imaging),
+                AwProjectCompactKernelKind::Weight => (&cell.metadata.weight, &cell.weight),
+            };
+            materialize_awproject_compact_tap_from_kernel(
+                request,
+                mosaic,
+                gridder,
+                groups,
+                metadata,
+                kernel,
+                phase_tables,
+                requests,
+                bundle_index,
+            )
+        }
+        #[cfg(unix)]
+        awprojection::AwConvolutionFunctionReplayCell::Mapped(cell) => {
+            let (metadata, kernel) = match bundle_request.key.kernel_kind {
+                AwProjectCompactKernelKind::Imaging => (&cell.metadata.imaging, &cell.imaging),
+                AwProjectCompactKernelKind::Weight => (&cell.metadata.weight, &cell.weight),
+            };
+            materialize_awproject_compact_tap_from_kernel(
+                request,
+                mosaic,
+                gridder,
+                groups,
+                metadata,
+                kernel,
+                phase_tables,
+                requests,
+                bundle_index,
+            )
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn materialize_awproject_compact_tap_from_kernel<K: AwProjectKernelPixels + ?Sized>(
+    request: &MtmfsRequest,
+    mosaic: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    groups: &[GroupedVisibilityMetadata],
+    metadata: &AwConvolutionFunctionKernelMetadata,
+    kernel: &K,
+    phase_tables: Option<&AwProjectPhaseTables>,
+    requests: &[AwProjectCompactTapRequest],
+    bundle_index: usize,
+) -> Result<(usize, AwProjectCompactMaterializedTap, usize), ImagingError> {
+    let bundle_request = requests[bundle_index];
+    let tapless_phase = awproject_compact_tapless_phase();
+    let phase_gradient = if tapless_phase {
+        [0.0, 0.0]
+    } else {
+        let group = &groups[bundle_request.key.group_index];
+        mosaic_projector_phase_gradient_rad_per_sample_for_group(
+            request.geometry,
+            mosaic.phase_center_direction_rad,
+            group.pointing_direction_rad,
+            group.pointing_pixel_position,
+            metadata.sampling,
+        )
     };
-    let phase_gradient = mosaic_projector_phase_gradient_rad_per_sample(
-        request.geometry,
-        mosaic.phase_center_direction_rad,
-        group.pointing_direction_rad,
-        metadata.sampling,
-    );
     let projector = AwProjector::new(gridder, metadata, kernel, phase_gradient)?;
-    match projector.plan_and_pack_geometry(bundle_request.representative_geometry) {
+    let packed = if tapless_phase {
+        let identity = Complex32::new(1.0, 0.0);
+        projector.plan_and_pack_geometry_with_phase_lookup(
+            bundle_request.representative_geometry,
+            |_| identity,
+            |_| identity,
+        )
+    } else if let Some(phase_tables) = phase_tables {
+        let phases = phase_tables
+            .get(&(bundle_request.key.group_index, metadata.sampling))
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "AWProject phase table is missing group {} sampling {}",
+                    bundle_request.key.group_index, metadata.sampling
+                ))
+            })?;
+        projector.plan_and_pack_geometry_with_phase_lookup(
+            bundle_request.representative_geometry,
+            |coordinate| phases.x(coordinate),
+            |coordinate| phases.y(coordinate),
+        )
+    } else {
+        projector.plan_and_pack_geometry(bundle_request.representative_geometry)
+    };
+    match packed {
         Ok((plan, packed)) => {
             debug_assert_eq!(plan.off_x, bundle_request.key.off_x);
             debug_assert_eq!(plan.off_y, bundle_request.key.off_y);
@@ -9501,6 +12653,10 @@ fn materialize_awproject_compact_tap(
                     x_support: packed.x_support,
                     y_support: packed.y_support,
                     normalization: plan.normalization,
+                    sampling: metadata.sampling,
+                    off_x: bundle_request.key.off_x,
+                    off_y: bundle_request.key.off_y,
+                    phase_applied: !tapless_phase,
                 }),
                 tap_bytes,
             ))
@@ -9521,6 +12677,7 @@ fn materialize_awproject_compact_taps(
     groups: &[GroupedVisibilityMetadata],
     cache: &AwConvolutionFunctionResidentCache,
     requests: &[AwProjectCompactTapRequest],
+    phase_tables: Option<&AwProjectPhaseTables>,
     tap_budget_bytes: usize,
     reverse_cell_load_order: bool,
     prefetch_cf_cell: bool,
@@ -9528,6 +12685,10 @@ fn materialize_awproject_compact_taps(
     cache_load_elapsed: &mut Duration,
     tap_pack_elapsed: &mut Duration,
 ) -> Result<(Vec<AwProjectCompactMaterializedTap>, usize), ImagingError> {
+    let mut bundles = (0..requests.len())
+        .map(|_| None)
+        .collect::<Vec<Option<AwProjectCompactMaterializedTap>>>();
+    let mut actual_tap_bytes = 0usize;
     let mut by_cell = BTreeMap::<AwProjectStableCellKey, Vec<usize>>::new();
     for (bundle_index, bundle_request) in requests.iter().enumerate() {
         by_cell
@@ -9535,10 +12696,6 @@ fn materialize_awproject_compact_taps(
             .or_default()
             .push(bundle_index);
     }
-    let mut bundles = (0..requests.len())
-        .map(|_| None)
-        .collect::<Vec<Option<AwProjectCompactMaterializedTap>>>();
-    let mut actual_tap_bytes = 0usize;
     let mut cell_groups = by_cell.into_values().collect::<Vec<_>>();
     if reverse_cell_load_order {
         cell_groups.reverse();
@@ -9547,7 +12704,7 @@ fn materialize_awproject_compact_taps(
         thread::scope(|scope| {
             let first_request = requests[cell_groups[0][0]];
             let cache_load_started = Instant::now();
-            let mut cell = cache.get(first_request.cell_key)?;
+            let mut cell = cache.get_replay(first_request.cell_key)?;
             *cache_load_elapsed += cache_load_started.elapsed();
             for (cell_group_index, bundle_indices) in cell_groups.iter().enumerate() {
                 let next_load = if prefetch_cf_cell {
@@ -9555,7 +12712,7 @@ fn materialize_awproject_compact_taps(
                         let next_key = requests[next_indices[0]].cell_key;
                         scope.spawn(move || {
                             let started = Instant::now();
-                            let loaded = cache.get(next_key);
+                            let loaded = cache.get_replay(next_key);
                             (loaded, started.elapsed())
                         })
                     })
@@ -9574,6 +12731,7 @@ fn materialize_awproject_compact_taps(
                                     gridder,
                                     groups,
                                     &cell,
+                                    phase_tables,
                                     requests,
                                     bundle_index,
                                 )
@@ -9590,6 +12748,7 @@ fn materialize_awproject_compact_taps(
                                 gridder,
                                 groups,
                                 &cell,
+                                phase_tables,
                                 requests,
                                 bundle_index,
                             )
@@ -9619,7 +12778,7 @@ fn materialize_awproject_compact_taps(
                     } else {
                         let next_request = requests[next_indices[0]];
                         let cache_load_started = Instant::now();
-                        cell = cache.get(next_request.cell_key)?;
+                        cell = cache.get_replay(next_request.cell_key)?;
                         *cache_load_elapsed += cache_load_started.elapsed();
                     }
                 }
@@ -9660,6 +12819,7 @@ fn prepare_awproject_compact_planned_samples(
     source_samples: &[AwProjectCompactSourceSample],
     tap_requests: &[AwProjectCompactTapRequest],
     bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
     model_grids: Option<&[Array2<Complex32>]>,
     accumulation: &mut MosaicMtmfsStreamGridAccumulation,
     taylor_weights: &mut Vec<f32>,
@@ -9762,15 +12922,20 @@ fn prepare_awproject_compact_planned_samples(
                     model_grid,
                     sample.first_imaging_plan,
                     first_imaging,
+                    sample.group_index,
+                    phase_tables,
                 ) * taylor_weight;
                 second_prediction += awproject_compact_degrid_sample(
                     model_grid,
                     sample.second_imaging_plan,
                     second_imaging,
+                    sample.group_index,
+                    phase_tables,
                 ) * taylor_weight;
             }
         }
         planned_samples.push(AwProjectCompactPlannedSample {
+            group_index: sample.group_index,
             first_imaging_plan: sample.first_imaging_plan,
             second_imaging_plan: sample.second_imaging_plan,
             first_psf_plan: sample.first_psf_plan,
@@ -9915,6 +13080,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
     cache: &AwConvolutionFunctionResidentCache,
     controls: &AwProjectControls,
     requested_threads: usize,
+    parallel_worker_calibration: Option<&ParallelWorkerCalibrationControl>,
     accumulation: &mut MosaicMtmfsStreamGridAccumulation,
     taylor_weights: &mut Vec<f32>,
 ) -> Result<(), ImagingError> {
@@ -9949,7 +13115,9 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                 *scratch_budget_bytes,
             )?)
         }
-        MosaicMtmfsStreamGridStorage::HostF32(_) | MosaicMtmfsStreamGridStorage::HostF64(_) => None,
+        MosaicMtmfsStreamGridStorage::HostF32(_)
+        | MosaicMtmfsStreamGridStorage::HostF64(_)
+        | MosaicMtmfsStreamGridStorage::SparseHostF64(_) => None,
     };
     #[cfg(any(not(target_os = "macos"), coverage))]
     let metal_packed_batch_budget_bytes = None::<usize>;
@@ -9957,12 +13125,24 @@ fn accumulate_awproject_mtmfs_metadata_batch(
         .map(|_| awproject_metal_packed_sample_bytes(request.nterms))
         .transpose()?
         .unwrap_or(0);
-    let tap_budget_bytes = controls
-        .cf_resident_bytes
+    let tap_budget_bytes = awproject_compact_tap_budget_bytes(controls.cf_resident_bytes)
         .min(metal_packed_batch_budget_bytes.unwrap_or(usize::MAX));
     let plan_workers = awproject_compact_plan_workers();
     let plan_chunk_samples = awproject_compact_plan_chunk_samples();
     let pack_workers = awproject_compact_pack_workers();
+    let tapless_phase = awproject_compact_tapless_phase();
+    let contiguous_grid_taps = awproject_compact_contiguous_grid_taps();
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    if tapless_phase
+        && matches!(
+            &accumulation.storage,
+            MosaicMtmfsStreamGridStorage::MetalSharedF32 { .. }
+        )
+    {
+        return Err(ImagingError::Unsupported(
+            "the tapless AW phase experiment is currently CPU-only".to_string(),
+        ));
+    }
     let pack_pool = (pack_workers > 1)
         .then(|| {
             rayon::ThreadPoolBuilder::new()
@@ -9976,13 +13156,26 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                 })
         })
         .transpose()?;
+    let mut replay_stats = AwProjectCompactReplayStats::default();
+    let phase_tables =
+        if tapless_phase || env::var_os("CASA_RS_AWPROJECT_PHASE_TABLE_EXPERIMENT").is_some() {
+            let started = Instant::now();
+            let (tables, bytes) = build_awproject_phase_tables(request, mosaic, groups, cache)?;
+            replay_stats.phase_table_elapsed = started.elapsed();
+            replay_stats.phase_table_bytes = bytes;
+            Some(tables)
+        } else {
+            None
+        };
     let mut cursor = 0usize;
     let mut pending_outcomes =
         VecDeque::<Result<AwProjectCompactSourceOutcome, ImagingError>>::new();
-    let mut replay_stats = AwProjectCompactReplayStats::default();
     while cursor < batch.len() {
         let plan_started = Instant::now();
-        let mut tap_indices = BTreeMap::<AwProjectCompactTapKey, usize>::new();
+        let mut tap_indices = AwProjectCompactTapIndex::with_capacity_and_hasher(
+            65_536,
+            BuildHasherDefault::<MosaicMetalSampleHasher>::default(),
+        );
         let mut tap_requests = Vec::<AwProjectCompactTapRequest>::new();
         let mut source_samples = Vec::<AwProjectCompactSourceSample>::new();
         let mut planned_tap_bytes = 0usize;
@@ -10063,6 +13256,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
             }
             source_samples.push(AwProjectCompactSourceSample {
                 sample_index: cursor,
+                group_index: source_group_route[cursor],
                 first_imaging_plan: awproject_compact_plan(specs[0].geometry, bundle_indices[0]),
                 second_imaging_plan: awproject_compact_plan(specs[1].geometry, bundle_indices[1]),
                 first_psf_plan: awproject_compact_plan(specs[2].geometry, bundle_indices[2]),
@@ -10087,6 +13281,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
             groups,
             cache,
             &tap_requests,
+            phase_tables.as_ref(),
             tap_budget_bytes,
             env::var_os("CASA_RS_AWPROJECT_ALTERNATE_CF_LOAD_ORDER").is_some()
                 && replay_stats.windows % 2 == 1,
@@ -10106,6 +13301,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
             &source_samples,
             &tap_requests,
             &bundles,
+            phase_tables.as_ref(),
             model_grids,
             accumulation,
             taylor_weights,
@@ -10118,18 +13314,41 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                     grids,
                     &planned_samples,
                     &bundles,
+                    phase_tables.as_ref(),
+                    contiguous_grid_taps,
                     request.reffreq_hz,
                     requested_threads,
                 )?;
             }
             MosaicMtmfsStreamGridStorage::HostF64(grids) => {
-                grid_awproject_compact_samples_host_f64(
+                if let Some(tile_stats) = grid_awproject_compact_samples_host_f64(
                     grids,
                     &planned_samples,
                     &bundles,
+                    phase_tables.as_ref(),
+                    contiguous_grid_taps,
+                    awproject_compact_spatial_tile_side(),
+                    awproject_compact_neon_2x2_enabled(),
                     request.reffreq_hz,
                     requested_threads,
+                )? {
+                    observe_awproject_compact_tile_stats(&mut replay_stats, tile_stats);
+                }
+            }
+            MosaicMtmfsStreamGridStorage::SparseHostF64(grids) => {
+                let tile_stats = grid_awproject_compact_samples_sparse_host_f64(
+                    grids,
+                    &planned_samples,
+                    &bundles,
+                    phase_tables.as_ref(),
+                    awproject_compact_neon_2x2_enabled(),
+                    awproject_compact_dynamic_sparse_tile_scheduler_enabled(),
+                    awproject_compact_reverse_dynamic_sparse_tile_tasks_enabled(),
+                    request.reffreq_hz,
+                    requested_threads,
+                    parallel_worker_calibration,
                 )?;
+                observe_awproject_compact_tile_stats(&mut replay_stats, tile_stats);
             }
             #[cfg(all(target_os = "macos", not(coverage)))]
             MosaicMtmfsStreamGridStorage::MetalSharedF32 {
@@ -10176,7 +13395,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
     }
     if profile::standard_mfs_profile_detail_enabled() {
         eprintln!(
-            "awproject_compact_source_order windows={} largest_window_samples={} largest_window_tap_bundles={} peak_tap_bytes={} tap_budget_bytes={} metal_packed_batch_budget_bytes={} packed_sample_bytes={} routed_samples={} plan_workers={} plan_chunk_samples={} pack_workers={} prefetch_cf_cell={} plan_ms={:.3} materialize_ms={:.3} cache_load_worker_ms={:.3} tap_pack_ms={:.3} prepare_ms={:.3} grid_ms={:.3}",
+            "awproject_compact_source_order windows={} largest_window_samples={} largest_window_tap_bundles={} peak_tap_bytes={} tap_budget_bytes={} metal_packed_batch_budget_bytes={} packed_sample_bytes={} routed_samples={} plan_workers={} plan_chunk_samples={} pack_workers={} prefetch_cf_cell={} tapless_phase={} contiguous_grid_taps={} spatial_tile_side={} neon_2x2={} dynamic_tile_scheduler={} tile_active_tiles_peak={} tile_new_tiles={} tile_resident_tiles_peak={} tile_resident_bytes_peak={} tile_fragments={} tile_tap_pixel_updates={} tile_plane_pixel_updates={} tile_simd_pixel_updates={} tile_scalar_pixel_updates={} tile_worker_imbalance_milli_max={} tile_task_count={} tile_task_estimated_bytes_max={} tile_scheduler_empty_claims={} tile_scheduler_nonpreemptive_efficiency_ppm_min={} tile_scheduler_worker_utilization_ppm_min={} tile_scheduler_ideal_lower_bound_sum_ms={:.3} tile_scheduler_tail_sum_ms={:.3} tile_scheduler_task_elapsed_sum_ms={:.3} tile_scheduler_task_elapsed_max_ms={:.3} tile_scheduler_worker_busy_global_min_ms={:.3} tile_scheduler_worker_busy_global_max_ms={:.3} tile_fragment_metadata_bytes_peak={} tile_directory_bytes_peak={} tile_fragments_per_sample_p95={} tile_fragments_per_sample_max={} phase_table_bytes={} phase_table_ms={:.3} plan_ms={:.3} materialize_ms={:.3} cache_load_worker_ms={:.3} tap_pack_ms={:.3} prepare_ms={:.3} tile_plan_ms={:.3} tile_allocation_ms={:.3} tile_scheduler_build_ms={:.3} tile_scheduler_sort_ms={:.3} tile_scheduler_claim_ms={:.3} grid_including_tile_plan_ms={:.3}",
             replay_stats.windows,
             replay_stats.largest_window_samples,
             replay_stats.largest_window_tap_bundles,
@@ -10189,11 +13408,48 @@ fn accumulate_awproject_mtmfs_metadata_batch(
             plan_chunk_samples,
             pack_workers,
             awproject_compact_prefetch_cf_cell(),
+            tapless_phase,
+            contiguous_grid_taps,
+            awproject_compact_spatial_tile_side().unwrap_or(0),
+            awproject_compact_neon_2x2_enabled(),
+            replay_stats.dynamic_tile_scheduler,
+            replay_stats.tile_active_tiles,
+            replay_stats.tile_new_tiles,
+            replay_stats.tile_resident_tiles,
+            replay_stats.tile_resident_bytes,
+            replay_stats.tile_fragments,
+            replay_stats.tile_tap_pixel_updates,
+            replay_stats.tile_plane_pixel_updates,
+            replay_stats.tile_simd_pixel_updates,
+            replay_stats.tile_scalar_pixel_updates,
+            replay_stats.tile_worker_imbalance_milli_max,
+            replay_stats.tile_task_count,
+            replay_stats.tile_task_estimated_bytes_max,
+            replay_stats.tile_scheduler_empty_claims,
+            replay_stats.tile_scheduler_nonpreemptive_efficiency_ppm_min,
+            replay_stats.tile_scheduler_worker_utilization_ppm_min,
+            profile::millis(replay_stats.tile_scheduler_ideal_lower_bound_elapsed),
+            profile::millis(replay_stats.tile_scheduler_tail_elapsed),
+            profile::millis(replay_stats.tile_scheduler_task_elapsed_sum),
+            profile::millis(replay_stats.tile_scheduler_task_elapsed_max),
+            profile::millis(replay_stats.tile_scheduler_worker_busy_min),
+            profile::millis(replay_stats.tile_scheduler_worker_busy_max),
+            replay_stats.tile_fragment_metadata_bytes,
+            replay_stats.tile_directory_bytes,
+            replay_stats.tile_fragments_per_sample_p95,
+            replay_stats.tile_fragments_per_sample_max,
+            replay_stats.phase_table_bytes,
+            profile::millis(replay_stats.phase_table_elapsed),
             profile::millis(replay_stats.plan_elapsed),
             profile::millis(replay_stats.materialize_elapsed),
             profile::millis(replay_stats.cache_load_elapsed),
             profile::millis(replay_stats.tap_pack_elapsed),
             profile::millis(replay_stats.prepare_elapsed),
+            profile::millis(replay_stats.tile_plan_elapsed),
+            profile::millis(replay_stats.tile_allocation_elapsed),
+            profile::millis(replay_stats.tile_scheduler_build_elapsed),
+            profile::millis(replay_stats.tile_scheduler_sort_elapsed),
+            profile::millis(replay_stats.tile_scheduler_claim_elapsed),
             profile::millis(replay_stats.grid_elapsed),
         );
     }
@@ -10420,6 +13676,7 @@ fn compute_mosaic_mtmfs_residual_terms_streaming<F>(
     stage_timings: &mut ImagingStageTimings,
     dirty_product_fft_policy: DirtyProductFftPolicy,
     requested_threads: usize,
+    parallel_worker_calibration: Option<&ParallelWorkerCalibrationControl>,
     direct_metal_scratch_bytes: Option<usize>,
     aw_cache: Option<&AwConvolutionFunctionResidentCache>,
     aw_controls: Option<&AwProjectControls>,
@@ -10486,6 +13743,7 @@ where
         progress_context,
         dirty_product_fft_policy,
         requested_threads,
+        parallel_worker_calibration,
         aw_cache.is_none() || direct_metal_scratch_bytes.is_some(),
         direct_metal_scratch_bytes,
         aw_cache,
@@ -10544,6 +13802,7 @@ where
             progress_context,
             dirty_product_fft_policy,
             requested_threads,
+            parallel_worker_calibration,
             false,
             direct_metal_scratch_bytes,
             aw_cache,
@@ -22383,6 +25642,47 @@ fn mosaic_projector_phase_gradient_rad_per_sample(
 ) -> [f64; 2] {
     let pixel_offset =
         mosaic_pointing_pixel_offset(geometry, phase_center_direction_rad, pointing_direction_rad);
+    mosaic_projector_phase_gradient_rad_per_sample_from_pixel_offset(
+        geometry,
+        pixel_offset,
+        conv_sampling,
+    )
+}
+
+fn mosaic_projector_phase_gradient_rad_per_sample_for_group(
+    geometry: ImageGeometry,
+    phase_center_direction_rad: [f64; 2],
+    pointing_direction_rad: [f64; 2],
+    pointing_pixel_position: Option<[f64; 2]>,
+    conv_sampling: usize,
+) -> [f64; 2] {
+    let pixel_offset = pointing_pixel_position.map_or_else(
+        || {
+            mosaic_pointing_pixel_offset(
+                geometry,
+                phase_center_direction_rad,
+                pointing_direction_rad,
+            )
+        },
+        |pixel| {
+            [
+                pixel[0] - geometry.nx() as f64 / 2.0,
+                pixel[1] - geometry.ny() as f64 / 2.0,
+            ]
+        },
+    );
+    mosaic_projector_phase_gradient_rad_per_sample_from_pixel_offset(
+        geometry,
+        pixel_offset,
+        conv_sampling,
+    )
+}
+
+fn mosaic_projector_phase_gradient_rad_per_sample_from_pixel_offset(
+    geometry: ImageGeometry,
+    pixel_offset: [f64; 2],
+    conv_sampling: usize,
+) -> [f64; 2] {
     // CASA's HetArrayConvFunc applies the pointing phase ramp to the final
     // stored convolution function. MosaicFT passes mosaic.oversampling as
     // convSamp; the HetArray temporary lattice uses internal convSampling=1
@@ -39117,6 +42417,7 @@ mod tests {
                 blockage_diameter_m: 0.0,
             },
             pointing_direction_rad: [0.0, 0.0],
+            pointing_pixel_position: None,
             sample_ranges: ranges
                 .iter()
                 .map(|&(start, end)| VisibilitySampleRange { start, end })
@@ -39338,7 +42639,8 @@ mod tests {
         ];
         let budget = 64usize;
         let mut windows = Vec::new();
-        let mut indices = std::collections::BTreeMap::new();
+        let mut indices =
+            super::AwProjectCompactTapIndex::with_capacity_and_hasher(6, Default::default());
         let mut current_bytes = 0usize;
         let mut current_samples = 0usize;
         for specs in candidates {
@@ -39383,6 +42685,10 @@ mod tests {
                 x_support: 0,
                 y_support: 0,
                 normalization: Complex32::new(1.0, 0.0),
+                sampling: 1,
+                off_x: 0,
+                off_y: 0,
+                phase_applied: true,
             },
         )];
         let plan = super::AwProjectCompactSamplePlan {
@@ -39391,6 +42697,7 @@ mod tests {
             tap_bundle: 0,
         };
         let make_sample = |residual_re| super::AwProjectCompactPlannedSample {
+            group_index: 0,
             first_imaging_plan: plan,
             second_imaging_plan: plan,
             first_psf_plan: plan,
@@ -39409,16 +42716,38 @@ mod tests {
             &mut one_window,
             &samples,
             &bundles,
+            None,
+            false,
+            None,
+            false,
             2.0e9,
             1,
         )
         .unwrap();
+        let mut tiled = compact_replay_test_grids();
+        let tiled_stats = super::grid_awproject_compact_samples_host_f64(
+            &mut tiled,
+            &samples,
+            &bundles,
+            None,
+            false,
+            Some(2),
+            false,
+            2.0e9,
+            3,
+        )
+        .unwrap()
+        .expect("the spatial tile experiment must return its plan statistics");
         let mut segmented = compact_replay_test_grids();
         for window in [&samples[..1], &samples[1..]] {
             super::grid_awproject_compact_samples_host_f64(
                 &mut segmented,
                 window,
                 &bundles,
+                None,
+                false,
+                None,
+                false,
                 2.0e9,
                 3,
             )
@@ -39427,6 +42756,12 @@ mod tests {
         assert_eq!(one_window.psf_grids, segmented.psf_grids);
         assert_eq!(one_window.residual_grids, segmented.residual_grids);
         assert_eq!(one_window.weight_grids, segmented.weight_grids);
+        assert_eq!(one_window.psf_grids, tiled.psf_grids);
+        assert_eq!(one_window.residual_grids, tiled.residual_grids);
+        assert_eq!(one_window.weight_grids, tiled.weight_grids);
+        assert_eq!(tiled_stats.active_tiles, 1);
+        assert_eq!(tiled_stats.fragments, 3);
+        assert_eq!(tiled_stats.tap_pixel_updates, 18);
         assert_eq!(one_window.residual_grids[0][(2, 2)].re, 2.0);
 
         let mut reordered = compact_replay_test_grids();
@@ -39435,6 +42770,10 @@ mod tests {
             &mut reordered,
             &reordered_samples,
             &bundles,
+            None,
+            false,
+            None,
+            false,
             2.0e9,
             1,
         )
@@ -39442,6 +42781,562 @@ mod tests {
         assert_ne!(
             one_window.residual_grids[0][(2, 2)],
             reordered.residual_grids[0][(2, 2)]
+        );
+    }
+
+    fn compact_sparse_scheduler_fixture() -> (
+        Vec<super::AwProjectCompactPlannedSample>,
+        Vec<super::AwProjectCompactMaterializedTap>,
+    ) {
+        let bundles = vec![super::AwProjectCompactMaterializedTap::Ready(
+            super::AwProjectCompactTapBundle {
+                values: vec![Complex32::new(0.25, -0.125); 9],
+                x_support: 1,
+                y_support: 1,
+                normalization: Complex32::new(1.0, 0.0),
+                sampling: 1,
+                off_x: 0,
+                off_y: 0,
+                phase_applied: true,
+            },
+        )];
+        let plan = super::AwProjectCompactSamplePlan {
+            loc_x: 2,
+            loc_y: 2,
+            tap_bundle: 0,
+        };
+        let sample = super::AwProjectCompactPlannedSample {
+            group_index: 0,
+            first_imaging_plan: plan,
+            second_imaging_plan: plan,
+            first_psf_plan: plan,
+            second_psf_plan: plan,
+            first_weight_plan: plan,
+            second_weight_plan: plan,
+            frequency_hz: 2.0e9,
+            weight: 0.75,
+            first_residual: Complex32::new(0.5, -0.25),
+            second_residual: Complex32::new(-0.125, 0.75),
+        };
+        (vec![sample], bundles)
+    }
+
+    #[test]
+    fn dynamic_sparse_tile_tasks_validate_and_cancel_on_lock_failure() {
+        let (samples, bundles) = compact_sparse_scheduler_fixture();
+        let mut plan =
+            super::plan_awproject_compact_tiles(&samples, &bundles, 5, 5, 2, 2, 1, 1).unwrap();
+        let mut grids = super::MosaicMtmfsSparseHostGrids::new(5, 5, 2, 1, 1).unwrap();
+        grids.ensure_plan_tiles(&plan).unwrap();
+        let tasks = super::build_awproject_compact_sparse_f64_tile_tasks(&grids, &plan).unwrap();
+        assert_eq!(tasks.len(), 4);
+
+        let mut duplicate = tasks.clone();
+        duplicate[1] = duplicate[0];
+        assert!(
+            super::validate_awproject_compact_sparse_f64_tile_tasks(&duplicate, &grids, &plan)
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate tile")
+        );
+        assert!(
+            super::validate_awproject_compact_sparse_f64_tile_tasks(
+                &tasks[..tasks.len() - 1],
+                &grids,
+                &plan,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("tasks for")
+        );
+        let mut out_of_range = tasks.clone();
+        out_of_range[0].tile_index = grids.slots.len();
+        assert!(
+            super::validate_awproject_compact_sparse_f64_tile_tasks(&out_of_range, &grids, &plan,)
+                .unwrap_err()
+                .to_string()
+                .contains("out-of-range tile")
+        );
+        let mut wrong_weight = tasks.clone();
+        wrong_weight[0].estimated_bytes ^= 1;
+        assert!(
+            super::validate_awproject_compact_sparse_f64_tile_tasks(&wrong_weight, &grids, &plan,)
+                .unwrap_err()
+                .to_string()
+                .contains("weight")
+        );
+
+        let locked_tile = tasks[0].tile_index;
+        let locked_guard = grids.slots[locked_tile].as_ref().unwrap().lock().unwrap();
+        let started = std::time::Instant::now();
+        let occupied_error = match super::execute_awproject_compact_sparse_f64_dynamic_tiles(
+            &grids, &plan, &samples, &bundles, None, 2.0e9, 4, false, false, None, true,
+        ) {
+            Ok(_) => panic!("an occupied tile lock must fail the scheduler"),
+            Err(error) => error,
+        };
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(occupied_error.to_string().contains("concurrently"));
+        drop(locked_guard);
+
+        let original_source_sample = plan.fragments[0].source_sample;
+        plan.fragments[0].source_sample = u32::MAX;
+        let replay_panic_error = match super::execute_awproject_compact_sparse_f64_dynamic_tiles(
+            &grids, &plan, &samples, &bundles, None, 2.0e9, 4, false, false, None, true,
+        ) {
+            Ok(_) => panic!("an invalid replay sample must fail the scheduler"),
+            Err(error) => error,
+        };
+        assert!(replay_panic_error.to_string().contains("worker panicked"));
+        plan.fragments[0].source_sample = original_source_sample;
+
+        let original_offset = plan.tile_fragment_offsets[1];
+        plan.tile_fragment_offsets[1] = plan.fragments.len() + 1;
+        assert!(
+            super::validate_awproject_compact_sparse_f64_tile_tasks(&tasks, &grids, &plan)
+                .unwrap_err()
+                .to_string()
+                .contains("fragment directory")
+        );
+        plan.tile_fragment_offsets[1] = original_offset;
+
+        let mut poisoned_grids = super::MosaicMtmfsSparseHostGrids::new(5, 5, 2, 1, 1).unwrap();
+        poisoned_grids.ensure_plan_tiles(&plan).unwrap();
+        let poisoned_lock = poisoned_grids.slots[locked_tile].as_ref().unwrap();
+        std::thread::scope(|scope| {
+            let handle = scope.spawn(|| {
+                let _guard = poisoned_lock.lock().unwrap();
+                panic!("poison dynamic sparse tile lock for validation");
+            });
+            assert!(handle.join().is_err());
+        });
+        let poisoned_error = match super::execute_awproject_compact_sparse_f64_dynamic_tiles(
+            &poisoned_grids,
+            &plan,
+            &samples,
+            &bundles,
+            None,
+            2.0e9,
+            4,
+            false,
+            false,
+            None,
+            true,
+        ) {
+            Ok(_) => panic!("a poisoned tile lock must fail the scheduler"),
+            Err(error) => error,
+        };
+        assert!(poisoned_error.to_string().contains("poisoned"));
+    }
+
+    #[test]
+    fn dynamic_sparse_tile_tasks_handle_zero_work_and_fewer_tiles_than_workers() {
+        let (_, bundles) = compact_sparse_scheduler_fixture();
+        let empty_plan =
+            super::plan_awproject_compact_tiles(&[], &bundles, 5, 5, 2, 2, 1, 1).unwrap();
+        let mut empty_grids = super::MosaicMtmfsSparseHostGrids::new(5, 5, 2, 1, 1).unwrap();
+        empty_grids.ensure_plan_tiles(&empty_plan).unwrap();
+        let empty_result = super::execute_awproject_compact_sparse_f64_dynamic_tiles(
+            &empty_grids,
+            &empty_plan,
+            &[],
+            &bundles,
+            None,
+            2.0e9,
+            4,
+            false,
+            false,
+            None,
+            true,
+        )
+        .unwrap();
+        assert_eq!(empty_result.counters.task_count, 0);
+        assert_eq!(empty_result.counters.worker_count, 0);
+        assert_eq!(empty_result.counters.scheduler_empty_claims, 0);
+
+        let (samples, bundles) = compact_sparse_scheduler_fixture();
+        let one_tile_plan =
+            super::plan_awproject_compact_tiles(&samples, &bundles, 5, 5, 5, 5, 1, 1).unwrap();
+        let mut one_tile_grids = super::MosaicMtmfsSparseHostGrids::new(5, 5, 5, 1, 1).unwrap();
+        one_tile_grids.ensure_plan_tiles(&one_tile_plan).unwrap();
+        let one_tile_result = super::execute_awproject_compact_sparse_f64_dynamic_tiles(
+            &one_tile_grids,
+            &one_tile_plan,
+            &samples,
+            &bundles,
+            None,
+            2.0e9,
+            8,
+            false,
+            false,
+            None,
+            true,
+        )
+        .unwrap();
+        assert_eq!(one_tile_result.counters.task_count, 1);
+        assert_eq!(one_tile_result.counters.worker_count, 1);
+        assert_eq!(one_tile_result.counters.scheduler_empty_claims, 1);
+    }
+
+    #[test]
+    fn exact_kernel_worker_calibration_discards_trials_and_reuses_one_resolution() {
+        let (fixture_samples, bundles) = compact_sparse_scheduler_fixture();
+        let base = fixture_samples[0];
+        let samples = (0..40)
+            .map(|index| {
+                let mut sample = base;
+                let mut plan = base.first_imaging_plan;
+                plan.loc_x = ((index / 8) * 4 + 2) as isize;
+                plan.loc_y = ((index % 8) * 4 + 2) as isize;
+                sample.first_imaging_plan = plan;
+                sample.second_imaging_plan = plan;
+                sample.first_psf_plan = plan;
+                sample.second_psf_plan = plan;
+                sample.first_weight_plan = plan;
+                sample.second_weight_plan = plan;
+                sample
+            })
+            .collect::<Vec<_>>();
+
+        let mut baseline = super::MosaicMtmfsSparseHostGrids::new(24, 32, 4, 1, 1).unwrap();
+        super::grid_awproject_compact_samples_sparse_host_f64(
+            &mut baseline,
+            &samples,
+            &bundles,
+            None,
+            cfg!(target_arch = "aarch64"),
+            true,
+            false,
+            2.0e9,
+            3,
+            None,
+        )
+        .unwrap();
+
+        let request = super::ParallelWorkerCalibrationRequest::new(
+            vec![1, 2, 4],
+            4,
+            Some(2),
+            Duration::from_secs(5),
+            20_000,
+        )
+        .unwrap();
+        let control = super::ParallelWorkerCalibrationControl {
+            request,
+            resolution: std::sync::Arc::new(std::sync::OnceLock::new()),
+        };
+        let mut calibrated = super::MosaicMtmfsSparseHostGrids::new(24, 32, 4, 1, 1).unwrap();
+        super::grid_awproject_compact_samples_sparse_host_f64(
+            &mut calibrated,
+            &samples,
+            &bundles,
+            None,
+            cfg!(target_arch = "aarch64"),
+            true,
+            false,
+            2.0e9,
+            1,
+            Some(&control),
+        )
+        .unwrap();
+        let resolution = control
+            .resolution
+            .get()
+            .expect("the first pristine window resolves worker calibration");
+        assert!((1..=4).contains(&resolution.workers));
+
+        for kind in [
+            super::MosaicMtmfsSparsePlaneKind::Psf,
+            super::MosaicMtmfsSparsePlaneKind::Residual,
+            super::MosaicMtmfsSparsePlaneKind::Weight,
+        ] {
+            assert_eq!(
+                baseline.take_dense_plane(kind, 0).unwrap(),
+                calibrated.take_dense_plane(kind, 0).unwrap(),
+            );
+        }
+    }
+
+    #[test]
+    fn tapless_aw_phase_replay_is_bit_identical_to_prephased_compact_taps() {
+        let sampling = 2usize;
+        let off_x = 1isize;
+        let off_y = -1isize;
+        let gradient = [0.071_f64, -0.113_f64];
+        let radius = 4isize;
+        let phase_table = super::AwProjectPhaseTable {
+            coordinate_radius: radius,
+            x: (-radius..=radius)
+                .map(|coordinate| {
+                    super::gridder::casa_aw_axis_phase(coordinate as f64 * gradient[0])
+                })
+                .collect(),
+            y: (-radius..=radius)
+                .map(|coordinate| {
+                    super::gridder::casa_aw_axis_phase(coordinate as f64 * gradient[1])
+                })
+                .collect(),
+        };
+        let mut phase_tables = super::AwProjectPhaseTables::new();
+        phase_tables.insert((0, sampling), phase_table);
+
+        let base_values = (0..9)
+            .map(|index| {
+                Complex32::new(
+                    0.125 + index as f32 * 0.03125,
+                    -0.375 + index as f32 * 0.015625,
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut prephased_values = Vec::with_capacity(base_values.len());
+        let phases = phase_tables.get(&(0, sampling)).unwrap();
+        let mut tap_index = 0usize;
+        for iy in -1isize..=1 {
+            let y_coordinate = iy * sampling as isize + off_y;
+            for ix in -1isize..=1 {
+                let x_coordinate = ix * sampling as isize + off_x;
+                prephased_values.push(
+                    base_values[tap_index]
+                        * super::gridder::casa_aw_phase_gradient_from_axes(
+                            phases.x(x_coordinate),
+                            phases.y(y_coordinate),
+                        ),
+                );
+                tap_index += 1;
+            }
+        }
+
+        let make_bundle = |values: Vec<Complex32>, phase_applied: bool| {
+            vec![super::AwProjectCompactMaterializedTap::Ready(
+                super::AwProjectCompactTapBundle {
+                    values,
+                    x_support: 1,
+                    y_support: 1,
+                    normalization: Complex32::new(1.0, 0.0),
+                    sampling,
+                    off_x,
+                    off_y,
+                    phase_applied,
+                },
+            )]
+        };
+        let prephased = make_bundle(prephased_values, true);
+        let tapless = make_bundle(base_values, false);
+        let plan = super::AwProjectCompactSamplePlan {
+            loc_x: 2,
+            loc_y: 2,
+            tap_bundle: 0,
+        };
+        let sample = super::AwProjectCompactPlannedSample {
+            group_index: 0,
+            first_imaging_plan: plan,
+            second_imaging_plan: plan,
+            first_psf_plan: plan,
+            second_psf_plan: plan,
+            first_weight_plan: plan,
+            second_weight_plan: plan,
+            frequency_hz: 2.0e9,
+            weight: 0.75,
+            first_residual: Complex32::new(0.5, -0.25),
+            second_residual: Complex32::new(-0.125, 0.75),
+        };
+
+        let mut prephased_grids = compact_replay_test_grids();
+        super::grid_awproject_compact_samples_host_f64(
+            &mut prephased_grids,
+            &[sample],
+            &prephased,
+            None,
+            false,
+            None,
+            false,
+            2.0e9,
+            1,
+        )
+        .unwrap();
+        let mut tapless_grids = compact_replay_test_grids();
+        super::grid_awproject_compact_samples_host_f64(
+            &mut tapless_grids,
+            &[sample],
+            &tapless,
+            Some(&phase_tables),
+            false,
+            None,
+            false,
+            2.0e9,
+            1,
+        )
+        .unwrap();
+        let mut contiguous_tapless_grids = compact_replay_test_grids();
+        super::grid_awproject_compact_samples_host_f64(
+            &mut contiguous_tapless_grids,
+            &[sample],
+            &tapless,
+            Some(&phase_tables),
+            true,
+            None,
+            false,
+            2.0e9,
+            1,
+        )
+        .unwrap();
+        let mut tiled_tapless_grids = compact_replay_test_grids();
+        let tile_stats = super::grid_awproject_compact_samples_host_f64(
+            &mut tiled_tapless_grids,
+            &[sample],
+            &tapless,
+            Some(&phase_tables),
+            false,
+            Some(2),
+            false,
+            2.0e9,
+            1,
+        )
+        .unwrap()
+        .expect("the spatial tile experiment must return its plan statistics");
+        let mut sparse_tapless_grids =
+            super::MosaicMtmfsSparseHostGrids::new(5, 5, 2, 1, 1).unwrap();
+        let sparse_tile_stats = super::grid_awproject_compact_samples_sparse_host_f64(
+            &mut sparse_tapless_grids,
+            &[sample],
+            &tapless,
+            Some(&phase_tables),
+            cfg!(target_arch = "aarch64"),
+            false,
+            false,
+            2.0e9,
+            3,
+            None,
+        )
+        .unwrap();
+        let sparse_psf = sparse_tapless_grids
+            .take_dense_plane(super::MosaicMtmfsSparsePlaneKind::Psf, 0)
+            .unwrap();
+        let sparse_residual = sparse_tapless_grids
+            .take_dense_plane(super::MosaicMtmfsSparsePlaneKind::Residual, 0)
+            .unwrap();
+        let sparse_weight = sparse_tapless_grids
+            .take_dense_plane(super::MosaicMtmfsSparsePlaneKind::Weight, 0)
+            .unwrap();
+        let mut dynamic_sparse_tile_stats = None;
+        for requested_threads in 1..=10 {
+            for reverse_task_order in [false, true] {
+                let mut dynamic_grids =
+                    super::MosaicMtmfsSparseHostGrids::new(5, 5, 2, 1, 1).unwrap();
+                let stats = super::grid_awproject_compact_samples_sparse_host_f64(
+                    &mut dynamic_grids,
+                    &[sample],
+                    &tapless,
+                    Some(&phase_tables),
+                    cfg!(target_arch = "aarch64"),
+                    true,
+                    reverse_task_order,
+                    2.0e9,
+                    requested_threads,
+                    None,
+                )
+                .unwrap();
+                let dynamic_psf = dynamic_grids
+                    .take_dense_plane(super::MosaicMtmfsSparsePlaneKind::Psf, 0)
+                    .unwrap();
+                let dynamic_residual = dynamic_grids
+                    .take_dense_plane(super::MosaicMtmfsSparsePlaneKind::Residual, 0)
+                    .unwrap();
+                let dynamic_weight = dynamic_grids
+                    .take_dense_plane(super::MosaicMtmfsSparsePlaneKind::Weight, 0)
+                    .unwrap();
+                assert_eq!(
+                    sparse_psf, dynamic_psf,
+                    "PSF differs for {requested_threads} workers, reverse={reverse_task_order}"
+                );
+                assert_eq!(
+                    sparse_residual, dynamic_residual,
+                    "residual differs for {requested_threads} workers, reverse={reverse_task_order}"
+                );
+                assert_eq!(
+                    sparse_weight, dynamic_weight,
+                    "weight differs for {requested_threads} workers, reverse={reverse_task_order}"
+                );
+                if requested_threads == 4 && !reverse_task_order {
+                    dynamic_sparse_tile_stats = Some(stats);
+                }
+            }
+        }
+        let dynamic_sparse_tile_stats =
+            dynamic_sparse_tile_stats.expect("four-worker dynamic scheduler statistics");
+        #[cfg(target_arch = "aarch64")]
+        let (neon_tapless_grids, neon_tile_stats) = {
+            let mut grids = compact_replay_test_grids();
+            let stats = super::grid_awproject_compact_samples_host_f64(
+                &mut grids,
+                &[sample],
+                &tapless,
+                Some(&phase_tables),
+                false,
+                Some(2),
+                true,
+                2.0e9,
+                1,
+            )
+            .unwrap()
+            .expect("the NEON spatial tile experiment must return its plan statistics");
+            (grids, stats)
+        };
+
+        assert_eq!(prephased_grids.psf_grids, tapless_grids.psf_grids);
+        assert_eq!(prephased_grids.residual_grids, tapless_grids.residual_grids);
+        assert_eq!(prephased_grids.weight_grids, tapless_grids.weight_grids);
+        assert_eq!(tapless_grids.psf_grids, contiguous_tapless_grids.psf_grids);
+        assert_eq!(
+            tapless_grids.residual_grids,
+            contiguous_tapless_grids.residual_grids
+        );
+        assert_eq!(
+            tapless_grids.weight_grids,
+            contiguous_tapless_grids.weight_grids
+        );
+        assert_eq!(tapless_grids.psf_grids, tiled_tapless_grids.psf_grids);
+        assert_eq!(
+            tapless_grids.residual_grids,
+            tiled_tapless_grids.residual_grids
+        );
+        assert_eq!(tapless_grids.weight_grids, tiled_tapless_grids.weight_grids);
+        assert_eq!(tiled_tapless_grids.psf_grids[0], sparse_psf);
+        assert_eq!(tiled_tapless_grids.residual_grids[0], sparse_residual);
+        assert_eq!(tiled_tapless_grids.weight_grids[0], sparse_weight);
+        #[cfg(target_arch = "aarch64")]
+        {
+            assert_eq!(tiled_tapless_grids.psf_grids, neon_tapless_grids.psf_grids);
+            assert_eq!(
+                tiled_tapless_grids.residual_grids,
+                neon_tapless_grids.residual_grids
+            );
+            assert_eq!(
+                tiled_tapless_grids.weight_grids,
+                neon_tapless_grids.weight_grids
+            );
+            assert!(neon_tile_stats.simd_pixel_updates > 0);
+            assert_eq!(
+                neon_tile_stats.simd_pixel_updates + neon_tile_stats.scalar_pixel_updates,
+                neon_tile_stats.tap_pixel_updates
+            );
+        }
+        assert_eq!(tile_stats.active_tiles, 4);
+        assert_eq!(tile_stats.fragments, 4);
+        assert_eq!(tile_stats.tap_pixel_updates, 54);
+        assert_eq!(tile_stats.fragments_per_sample_p95, 4);
+        assert_eq!(tile_stats.fragments_per_sample_max, 4);
+        assert_eq!(sparse_tile_stats.new_tiles, 4);
+        assert_eq!(sparse_tile_stats.resident_tiles, 4);
+        assert_eq!(sparse_tile_stats.resident_bytes, 768);
+        assert!(dynamic_sparse_tile_stats.dynamic_tile_scheduler);
+        assert_eq!(dynamic_sparse_tile_stats.tile_task_count, 4);
+        assert!(dynamic_sparse_tile_stats.tile_task_estimated_bytes_max > 0);
+        assert!(dynamic_sparse_tile_stats.scheduler_nonpreemptive_efficiency_ppm > 0);
+        assert!(dynamic_sparse_tile_stats.scheduler_worker_utilization_ppm > 0);
+        assert!(
+            dynamic_sparse_tile_stats.scheduler_worker_busy_max
+                >= dynamic_sparse_tile_stats.scheduler_worker_busy_min
         );
     }
 
@@ -41061,6 +44956,7 @@ mod tests {
             beam_frequency_hz: reffreq_hz,
             primary_beam_model,
             pointing_direction_rad: [0.0, 0.0],
+            pointing_pixel_position: None,
             sample_ranges: vec![VisibilitySampleRange {
                 start: 0,
                 end: batch.len(),
@@ -42427,6 +46323,43 @@ mod tests {
     }
 
     #[test]
+    fn aw_phase_gradient_uses_exact_group_pixel_when_available() {
+        let cell_size_rad = (0.6_f64 / 3600.0).to_radians();
+        let geometry = ImageGeometry {
+            image_shape: [12_150, 12_150],
+            cell_size_rad: [cell_size_rad, cell_size_rad],
+        };
+        let phase_center = [3.54, 0.291];
+        let pointing_direction = [3.541, 0.292];
+        let pointing_pixel = [5_986.256_835_937_5, 6_074.892_578_125];
+        let sampling = 20;
+
+        let gradient = super::mosaic_projector_phase_gradient_rad_per_sample_for_group(
+            geometry,
+            phase_center,
+            pointing_direction,
+            Some(pointing_pixel),
+            sampling,
+        );
+        let expected = [
+            -(pointing_pixel[0] - geometry.nx() as f64 / 2.0) * std::f64::consts::TAU
+                / (geometry.nx() as f64 * sampling as f64),
+            -(pointing_pixel[1] - geometry.ny() as f64 / 2.0) * std::f64::consts::TAU
+                / (geometry.ny() as f64 * sampling as f64),
+        ];
+        assert_eq!(gradient, expected);
+
+        let direction_round_trip = super::mosaic_projector_phase_gradient_rad_per_sample_for_group(
+            geometry,
+            phase_center,
+            pointing_direction,
+            None,
+            sampling,
+        );
+        assert_ne!(gradient, direction_round_trip);
+    }
+
+    #[test]
     #[ignore = "large SimplePB projector regression; covered by the 512 CASA trace test in the fast suite"]
     fn alma_mosaic_projector_matches_casa_trace_support() {
         let geometry = ImageGeometry {
@@ -43340,6 +47273,7 @@ mod tests {
                 beam_frequency_hz: 1.4e9,
                 primary_beam_model,
                 pointing_direction_rad: [0.0, 0.0],
+                pointing_pixel_position: None,
                 sample_ranges: vec![VisibilitySampleRange {
                     start: 0,
                     end: batch.len(),
@@ -43459,6 +47393,7 @@ mod tests {
                 beam_frequency_hz: 1.4e9,
                 primary_beam_model,
                 pointing_direction_rad: [0.0, 0.0],
+                pointing_pixel_position: None,
                 sample_ranges: vec![VisibilitySampleRange {
                     start: 0,
                     end: batch.len(),
@@ -43582,6 +47517,7 @@ mod tests {
                 beam_frequency_hz: 1.4e9,
                 primary_beam_model,
                 pointing_direction_rad: [0.0, 0.0],
+                pointing_pixel_position: None,
                 sample_ranges: vec![VisibilitySampleRange { start: 0, end: len }],
             }],
         };
@@ -43730,6 +47666,7 @@ mod tests {
                 beam_frequency_hz: 1.4e9,
                 primary_beam_model,
                 pointing_direction_rad: [0.0, 0.0],
+                pointing_pixel_position: None,
                 sample_ranges: vec![VisibilitySampleRange { start: 0, end: len }],
             }],
         };
@@ -43971,12 +47908,14 @@ mod tests {
                     beam_frequency_hz: 1.4e9,
                     primary_beam_model,
                     pointing_direction_rad: [0.0, 0.0],
+                    pointing_pixel_position: None,
                     sample_ranges: vec![VisibilitySampleRange { start: 0, end: 3 }],
                 },
                 GroupedVisibilityMetadata {
                     beam_frequency_hz: 1.4e9,
                     primary_beam_model,
                     pointing_direction_rad: [0.0, 0.0],
+                    pointing_pixel_position: None,
                     sample_ranges: vec![VisibilitySampleRange {
                         start: 3,
                         end: batch.len(),
@@ -44136,6 +48075,7 @@ mod tests {
                 beam_frequency_hz: 1.4e9,
                 primary_beam_model,
                 pointing_direction_rad: [0.0, 0.0],
+                pointing_pixel_position: None,
                 sample_ranges: vec![VisibilitySampleRange {
                     start: 0,
                     end: batch.len(),
@@ -44316,6 +48256,7 @@ mod tests {
                 beam_frequency_hz: 1.4e9,
                 primary_beam_model,
                 pointing_direction_rad: [0.0, 0.0],
+                pointing_pixel_position: None,
                 sample_ranges: vec![VisibilitySampleRange { start: 0, end: len }],
             }],
         };

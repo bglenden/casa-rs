@@ -37,6 +37,7 @@ def run_json_file_protocol(
     cwd: pathlib.Path,
     timeout_seconds: float | None = None,
     environment: dict[str, str] | None = None,
+    stream_stdout: bool = False,
 ) -> CasaProtocolResult:
     atomic_write_json(request_path, request)
     output_path.unlink(missing_ok=True)
@@ -68,6 +69,8 @@ def run_json_file_protocol(
             cwd=cwd,
             environment=environment,
             timeout_seconds=timeout_seconds,
+            stream_stdout=stream_stdout,
+            incremental_output_path=log_path if stream_stdout else None,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         log_path.write_text(str(error) + "\n", encoding="utf-8")
@@ -81,7 +84,8 @@ def run_json_file_protocol(
             output_path,
             log_path,
         )
-    log_path.write_text(completed.stdout, encoding="utf-8")
+    if not stream_stdout:
+        log_path.write_text(completed.stdout, encoding="utf-8")
     if completed.returncode != 0:
         return _result(
             "failed_execution",

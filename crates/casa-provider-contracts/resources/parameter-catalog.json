@@ -7559,6 +7559,39 @@
       "persistence_class": "profile"
     },
     {
+      "id": "parameter.standard_mfs_grid_threads",
+      "semantic_revision": 1,
+      "casa_name": "standard_mfs_grid_threads",
+      "value_domain": {
+        "kind": "optional",
+        "value": {
+          "kind": "integer"
+        },
+        "states": [
+          "auto"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "positive"
+        }
+      ],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Grid-stage worker selection for standard, mosaic, and AWProject MFS imaging",
+        "details": "auto delegates to the resource-adaptive execution planner. A positive integer is an explicit reproducibility and tuning override; the resolved worker count and its reason are reported by the execution plan.",
+        "examples": [
+          "auto",
+          "6"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "parameter.start",
       "semantic_revision": 1,
       "casa_name": "start",

@@ -603,6 +603,7 @@ dependencies = [
  "casa-types",
  "libloading",
  "libm",
+ "memmap2",
  "nalgebra",
  "ndarray",
  "num-complex",

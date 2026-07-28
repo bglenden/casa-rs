@@ -746,7 +746,8 @@ final class WorkbenchStoreTests: XCTestCase {
             "vis", "imagename", "imsize", "cell", "field", "phasecenter_field",
             "spw", "datacolumn", "specmode", "channel_count", "start", "width",
             "outframe", "restfreq", "deconvolver", "weighting", "robust",
-            "gridder", "standard_mfs_acceleration", "perchanweightdensity",
+            "gridder", "standard_mfs_acceleration", "standard_mfs_grid_threads",
+            "perchanweightdensity",
             "restoringbeam", "niter", "nmajor", "gain",
             "threshold", "usemask", "noisethreshold", "sidelobethreshold",
             "lownoisethreshold", "minbeamfrac", "negativethreshold",
@@ -3068,6 +3069,7 @@ final class WorkbenchStoreTests: XCTestCase {
             "--perchanweightdensity",
             "--gridder", "wproject",
             "--standard-mfs-acceleration", "metal",
+            "--standard-mfs-grid-threads", "auto",
             "--write-pb",
             "--pbcor",
             "--no-preview-pngs"

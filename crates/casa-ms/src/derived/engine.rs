@@ -65,6 +65,14 @@ struct GeometryCacheKey {
     antenna_id: usize,
 }
 
+fn epoch_from_mjd_seconds(mjd_seconds: f64, refer: EpochRef) -> MEpoch {
+    // Casacore's Quantity conversion scales seconds by the precomputed
+    // seconds-to-days factor. Multiplication and division differ by several
+    // f64 ULPs at MeasurementSet epoch magnitudes, which is observable in
+    // exact frequency-coordinate metadata.
+    MEpoch::from_mjd(mjd_seconds * (1.0 / 86_400.0), refer)
+}
+
 impl GeometryCacheKey {
     fn new(time_mjd_sec: f64, field_id: usize, antenna_id: usize) -> Self {
         Self {
@@ -176,7 +184,7 @@ impl MsCalEngine {
 
     /// Build a MeasFrame for the given time and antenna.
     fn make_frame(&self, time_mjd_sec: f64, antenna_id: usize) -> MsResult<MeasFrame> {
-        let epoch = MEpoch::from_mjd(time_mjd_sec / 86400.0, self.time_reference);
+        let epoch = epoch_from_mjd_seconds(time_mjd_sec, self.time_reference);
         let position = self
             .antenna_positions
             .get(antenna_id)
@@ -199,7 +207,7 @@ impl MsCalEngine {
         time_mjd_sec: f64,
         position: MPosition,
     ) -> MsResult<MeasFrame> {
-        let epoch = MEpoch::from_mjd(time_mjd_sec / 86400.0, self.time_reference);
+        let epoch = epoch_from_mjd_seconds(time_mjd_sec, self.time_reference);
         let frame = MeasFrame::new().with_epoch(epoch).with_position(position);
         Ok(match &self.measures {
             Some(measures) => frame.with_measures(Arc::clone(measures)),
@@ -363,7 +371,7 @@ impl MsCalEngine {
     /// Cf. C++ `MSCalEngine::getLAST`.
     pub fn last(&self, time_mjd_sec: f64, antenna_id: usize) -> MsResult<f64> {
         let frame = self.make_frame(time_mjd_sec, antenna_id)?;
-        let epoch = MEpoch::from_mjd(time_mjd_sec / 86400.0, EpochRef::UTC);
+        let epoch = epoch_from_mjd_seconds(time_mjd_sec, EpochRef::UTC);
         let last_epoch = epoch.convert_to(EpochRef::LAST, &frame)?;
         // LAST is stored as fraction of a day; convert to radians (1 day = 2π)
         let last_days = last_epoch.value().as_mjd();
@@ -376,7 +384,7 @@ impl MsCalEngine {
     pub fn last_observatory(&self, time_mjd_sec: f64) -> MsResult<f64> {
         let frame =
             self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
-        let epoch = MEpoch::from_mjd(time_mjd_sec / 86400.0, EpochRef::UTC);
+        let epoch = epoch_from_mjd_seconds(time_mjd_sec, EpochRef::UTC);
         let last_epoch = epoch.convert_to(EpochRef::LAST, &frame)?;
         let last_days = last_epoch.value().as_mjd();
         let frac = last_days - last_days.floor();
@@ -452,7 +460,7 @@ impl MsCalEngine {
         let (sin_dec, cos_dec) = dec.sin_cos();
 
         // Rotate baseline from ITRF to equatorial using GMST, then to UVW using RA/Dec.
-        let epoch = MEpoch::from_mjd(time_mjd_sec / 86400.0, EpochRef::UTC);
+        let epoch = epoch_from_mjd_seconds(time_mjd_sec, EpochRef::UTC);
         let gmst_epoch = epoch.convert_to(EpochRef::GMST1, &frame)?;
         let gmst_frac = gmst_epoch.value().as_mjd();
         let gmst_rad = (gmst_frac - gmst_frac.floor()) * 2.0 * std::f64::consts::PI;
@@ -998,6 +1006,13 @@ mod tests {
             pos0,
             casa_test_support::deterministic_measures_provider(),
         )
+    }
+
+    #[test]
+    fn mjd_seconds_scaling_matches_casacore_quantity_rounding() {
+        let epoch = epoch_from_mjd_seconds(5_060_832_843.375, EpochRef::UTC);
+        assert_eq!(epoch.value().day(), 58_574.0);
+        assert_eq!(epoch.value().frac(), 0.454_205_729_161_913_04);
     }
 
     #[test]

@@ -1292,7 +1292,8 @@ fn tdb_mjd(frame: &MeasFrame) -> Result<f64, MeasureError> {
 /// Casacore `Aberration::STANDARD` Earth barycentric velocity as β = v/c in
 /// J2000 Cartesian coordinates.
 fn casacore_aberration_beta(frame: &MeasFrame) -> Result<[f64; 3], MeasureError> {
-    let velocity_ms = earth_barycentric_velocity_ms(tdb_mjd(frame)?);
+    let velocity_ms =
+        frame.cached_earth_velocity_ms(|| Ok(earth_barycentric_velocity_ms(tdb_mjd(frame)?)))?;
     Ok(velocity_ms.map(|component| component / C_M_PER_S))
 }
 

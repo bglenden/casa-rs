@@ -42,10 +42,11 @@ use casa_imaging::{
     ImagingMemoryAllocation, ImagingPlanAdmission, ImagingRequest, ImagingResolvedPlan,
     ImagingResources, ImagingResult, ImagingSpectralSchedule, ImagingStageTimings,
     ImagingTileAnchor, ImagingWorkloadShape, MinorCycleTrace, MosaicGridderConfig,
-    ParallelHandBatch, PlaneStokes, PrimaryBeamModel, PrimaryBeamProductRequest,
-    PrimaryBeamWeightSample, ResidualRefreshDiagnostics, RestoringBeamMode, ScalarVisibilitySample,
-    StandardMfsBackend, StandardMfsCleanFinishPlan, StandardMfsCleanPlan, StandardMfsCleanSession,
-    StandardMfsDensitySourcePlan, StandardMfsDensitySourcePlanRequest, StandardMfsDirtyAccumulator,
+    ParallelHandBatch, ParallelWorkerCalibrationRequest, PlaneStokes, PrimaryBeamModel,
+    PrimaryBeamProductRequest, PrimaryBeamWeightSample, ResidualRefreshDiagnostics,
+    RestoringBeamMode, ScalarVisibilitySample, StandardMfsBackend, StandardMfsCleanFinishPlan,
+    StandardMfsCleanPlan, StandardMfsCleanSession, StandardMfsDensitySourcePlan,
+    StandardMfsDensitySourcePlanRequest, StandardMfsDirtyAccumulator,
     StandardMfsDirtyAccumulatorRequest, StandardMfsDirtyGridResult, StandardMfsDirtyPlan,
     StandardMfsExecutionPlan, StandardMfsMinorCycleBackend, StandardMfsModelPredictor,
     StandardMfsObservabilityCallback, StandardMfsObservabilityEvent,
@@ -72,8 +73,9 @@ use casa_imaging::{
     run_mosaic_mtmfs_from_single_plane_stream, run_mtmfs, run_standard_mfs_dirty_grid_plan,
     run_standard_mfs_plan, single_plane_image_product, standard_mfs_kernel_halo,
     standard_mfs_materialized_plan_bytes, standard_mfs_metal_grouped_cache_bytes_per_lane,
-    standard_mfs_tile_queue_entry_bytes, trace_cube_channel_residual_refresh,
-    trace_cube_channel_residual_refresh_model_channel_lambda, trace_w_project_plan,
+    standard_mfs_tile_queue_entry_bytes, topology_parallel_worker_candidates,
+    trace_cube_channel_residual_refresh, trace_cube_channel_residual_refresh_model_channel_lambda,
+    trace_w_project_plan,
 };
 #[cfg(test)]
 use casa_imaging::{
@@ -99,7 +101,9 @@ use casa_ms::{
     resolve_channel_selector_selection, resolve_contiguous_channel_selection,
 };
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
-use casa_tables::{ColumnSchema, SelectedArray1DCells, TiledFileIoStats};
+use casa_tables::{
+    ColumnSchema, RequiredScalarColumnValues, SelectedArray1DCells, TiledFileIoStats,
+};
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
@@ -120,7 +124,9 @@ fn release_allocator_pressure() {
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::epoch::{EpochRef, MEpoch};
-use casa_types::measures::frequency::FrequencyRef;
+#[cfg(test)]
+use casa_types::measures::frame::MeasFrame;
+use casa_types::measures::frequency::{FrequencyRef, MFrequencyConverter};
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use image::{ImageBuffer, Rgb};
@@ -8395,10 +8401,11 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         rows_skipped_by_flag_row: selection.selected_rows.len() - active_row_count,
         ..Default::default()
     };
-    let full_selection_frequency_metadata = merge_mfs_output_frequency_metadata(
-        ddid_plans
-            .iter()
-            .map(|plan| &plan.output_frequency_metadata),
+    let full_selection_frequency_metadata = casa_all_spw_mfs_output_frequency_metadata(
+        config,
+        &ddid_plans,
+        ms,
+        derived_engine.as_ref(),
     )?;
 
     let first_plan = ddid_plans
@@ -21885,6 +21892,12 @@ fn standard_mfs_profile_detail_enabled() -> bool {
     *ENABLED
 }
 
+fn awproject_pointing_trace_enabled() -> bool {
+    static ENABLED: LazyLock<bool> =
+        LazyLock::new(|| env_flag_enabled("CASA_RS_AWPROJECT_POINTING_TRACE"));
+    *ENABLED
+}
+
 fn standard_mfs_profile_line_detail_enabled() -> bool {
     static ENABLED: LazyLock<bool> = LazyLock::new(|| {
         standard_mfs_profile_detail_enabled()
@@ -26389,25 +26402,23 @@ fn casa_mfs_frequency_edge_range_for_selected_rows(
     let representative_row_slots = casa_mfs_representative_selected_row_indices(selected_rows)?;
     let mut low_extremum = None::<(f64, usize)>;
     let mut high_extremum = None::<(f64, usize)>;
+    let mut converter = MFrequencyConverter::new(source_freq_ref, FrequencyRef::LSRK);
     for &row_slot in &representative_row_slots {
         let selected_row = &selected_rows[row_slot];
         let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
             "internal error: missing row time for MFS frequency-frame conversion".to_string()
         })?;
-        let low_hz = casa_mfs_convert_frequency_to_frame(
-            source_freq_ref,
-            source_edge_range_hz[0],
-            row_time_mjd_sec,
-            selected_row.field_id,
-            derived_engine,
-        )?;
-        let high_hz = casa_mfs_convert_frequency_to_frame(
-            source_freq_ref,
-            source_edge_range_hz[1],
-            row_time_mjd_sec,
-            selected_row.field_id,
-            derived_engine,
-        )?;
+        let frame = derived_engine
+            .spectral_frame_observatory(row_time_mjd_sec, selected_row.field_id)
+            .map_err(|error| error.to_string())?;
+        let low_hz = converter
+            .convert_hz(source_edge_range_hz[0], &frame)
+            .map_err(|error| error.to_string())?
+            .hz();
+        let high_hz = converter
+            .convert_hz(source_edge_range_hz[1], &frame)
+            .map_err(|error| error.to_string())?
+            .hz();
         let row_low_hz = low_hz.min(high_hz);
         let row_high_hz = low_hz.max(high_hz);
         if low_extremum.is_none_or(|(value, _)| row_low_hz < value) {
@@ -26445,34 +26456,27 @@ fn casa_mfs_frequency_edge_range_for_selected_rows(
     edge_range_hz.ok_or_else(|| "MFS row metadata resolved to no spectral edges".to_string())
 }
 
-fn casa_mfs_convert_frequency_to_frame(
-    source_ref: FrequencyRef,
-    source_hz: f64,
-    time_mjd_sec: f64,
-    field_id: usize,
-    derived_engine: &MsCalEngine,
-) -> Result<f64, String> {
-    // Evaluate the shared measures conversion at each representative row.
-    // The previous local finite-difference interpolation shifted a frozen
-    // VLASS spectral edge by one ULP; the exact series reproduces CASA's
-    // endpoint and avoids maintaining a second aberration implementation.
-    convert_frequency_to_frame(
-        source_ref,
-        FrequencyRef::LSRK,
-        source_hz,
-        time_mjd_sec,
-        field_id,
-        derived_engine,
-    )
-    .map_err(|error| error.to_string())
-}
-
 fn mfs_output_frequency_metadata_for_config_selection(
     config: &CliConfig,
     table_values: &PreparedSelectionTableValues,
     selected_rows: &[SelectedMainRow],
     derived_engine: Option<&MsCalEngine>,
 ) -> Result<MfsOutputFrequencyMetadata, String> {
+    let (source_channel_frequencies_hz, source_channel_widths_hz) =
+        selected_mfs_source_frequencies_and_widths(config, table_values)?;
+    mfs_output_frequency_metadata_for_selected_rows(
+        table_values.freq_ref,
+        &source_channel_frequencies_hz,
+        &source_channel_widths_hz,
+        selected_rows,
+        derived_engine,
+    )
+}
+
+fn selected_mfs_source_frequencies_and_widths(
+    config: &CliConfig,
+    table_values: &PreparedSelectionTableValues,
+) -> Result<(Vec<f64>, Vec<f64>), String> {
     let explicit_channel_selector = selected_spw_channel_selector(config, table_values.spw_id)?;
     let source_channel_selection = match explicit_channel_selector.as_ref() {
         Some(selector) => resolve_channel_selector_selection(&table_values.spw_freqs_hz, selector)
@@ -26499,13 +26503,10 @@ fn mfs_output_frequency_metadata_for_config_selection(
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    mfs_output_frequency_metadata_for_selected_rows(
-        table_values.freq_ref,
-        &source_channel_selection.frequencies_hz,
-        &source_channel_widths_hz,
-        selected_rows,
-        derived_engine,
-    )
+    Ok((
+        source_channel_selection.frequencies_hz,
+        source_channel_widths_hz,
+    ))
 }
 
 fn merge_mfs_output_frequency_metadata<'a>(
@@ -26548,6 +26549,198 @@ fn merge_mfs_output_frequency_metadata<'a>(
         .unwrap_or_else(|| {
             0.5 * (merged.selected_frequency_range_hz[0] + merged.selected_frequency_range_hz[1])
         });
+    Ok(merged)
+}
+
+fn casa_all_spw_mfs_output_frequency_metadata(
+    config: &CliConfig,
+    plans: &[PreparedMfsDdidPlan],
+    ms: &MeasurementSet,
+    derived_engine: Option<&MsCalEngine>,
+) -> Result<MfsOutputFrequencyMetadata, String> {
+    let mut merged = merge_mfs_output_frequency_metadata(
+        plans.iter().map(|plan| &plan.output_frequency_metadata),
+    )?;
+    let selected_field_count = plans
+        .iter()
+        .flat_map(|plan| plan.active_selected_rows.iter().map(|row| row.field_id))
+        .collect::<BTreeSet<_>>()
+        .len();
+    // CASA's scalar-field path converts only that field's representative
+    // rows. Its multi-field tclean path uses MSUtil's `useFieldsInMS`
+    // overload, whose converter traversal includes every field represented
+    // by the MeasurementSet.
+    if selected_field_count <= 1 {
+        return Ok(merged);
+    }
+    if plans
+        .iter()
+        .all(|plan| plan.table_values.freq_ref == FrequencyRef::LSRK)
+    {
+        return Ok(merged);
+    }
+    let derived_engine = derived_engine.ok_or_else(|| {
+        "internal error: missing derived engine for all-SPW MFS frequency-frame conversion"
+            .to_string()
+    })?;
+    let source_edge_ranges_hz = plans
+        .iter()
+        .map(|plan| {
+            let (frequencies_hz, widths_hz) =
+                selected_mfs_source_frequencies_and_widths(config, &plan.table_values)?;
+            frequency_edge_range_hz(&frequencies_hz, &widths_hz)
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    // Read all three required MAIN scalar columns through the column-oriented
+    // storage path. Repeated cell access can fall back to materializing every
+    // row when a column is not in the lazy cache, which invalidates the later
+    // typed selected-channel FLAG/DATA reads.
+    let mut main_columns = ms
+        .main_table()
+        .required_scalar_columns_owned(&["TIME", "DATA_DESC_ID", "FIELD_ID"])
+        .map_err(|error| format!("read MAIN frequency representative columns: {error}"))?;
+    let times = match main_columns.remove("TIME") {
+        Some(RequiredScalarColumnValues::Float64(values)) => values,
+        Some(other) => {
+            return Err(format!(
+                "MAIN.TIME has unexpected required scalar type {other:?}"
+            ));
+        }
+        None => return Err("MAIN.TIME was not loaded for frequency representatives".to_string()),
+    };
+    let ddids = match main_columns.remove("DATA_DESC_ID") {
+        Some(RequiredScalarColumnValues::Int32(values)) => values,
+        Some(other) => {
+            return Err(format!(
+                "MAIN.DATA_DESC_ID has unexpected required scalar type {other:?}"
+            ));
+        }
+        None => {
+            return Err(
+                "MAIN.DATA_DESC_ID was not loaded for frequency representatives".to_string(),
+            );
+        }
+    };
+    let field_ids = match main_columns.remove("FIELD_ID") {
+        Some(RequiredScalarColumnValues::Int32(values)) => values,
+        Some(other) => {
+            return Err(format!(
+                "MAIN.FIELD_ID has unexpected required scalar type {other:?}"
+            ));
+        }
+        None => {
+            return Err("MAIN.FIELD_ID was not loaded for frequency representatives".to_string());
+        }
+    };
+    if times.len() != ms.row_count()
+        || ddids.len() != ms.row_count()
+        || field_ids.len() != ms.row_count()
+    {
+        return Err(format!(
+            "MAIN frequency representative column lengths differ from row count: TIME={} DATA_DESC_ID={} FIELD_ID={} rows={}",
+            times.len(),
+            ddids.len(),
+            field_ids.len(),
+            ms.row_count(),
+        ));
+    }
+    let mut representatives = Vec::<(f64, usize, usize, f64, usize)>::new();
+    let mut previous_time_ddid_key = None::<f64>;
+    for row_index in 0..ms.row_count() {
+        let time_mjd_seconds = times[row_index];
+        let ddid = ddids[row_index];
+        let ddid = usize::try_from(ddid)
+            .map_err(|_| format!("MAIN.DATA_DESC_ID row {row_index} is negative: {ddid}"))?;
+        let time_ddid_key = time_mjd_seconds * (ddid as f64 + 1.0);
+        if !time_ddid_key.is_finite() {
+            return Err(format!(
+                "invalid TIME/DDID key for all-SPW MFS frequency conversion at row {row_index}"
+            ));
+        }
+        if previous_time_ddid_key == Some(time_ddid_key) {
+            continue;
+        }
+        previous_time_ddid_key = Some(time_ddid_key);
+        let field_id = field_ids[row_index];
+        let field_id = usize::try_from(field_id)
+            .map_err(|_| format!("MAIN.FIELD_ID row {row_index} is negative: {field_id}"))?;
+        representatives.push((time_ddid_key, row_index, ddid, time_mjd_seconds, field_id));
+    }
+    representatives.sort_by(|left, right| {
+        left.0
+            .total_cmp(&right.0)
+            .then_with(|| left.1.cmp(&right.1))
+    });
+    representatives.dedup_by(|left, right| left.0 == right.0);
+
+    let mut edge_range_hz = None::<[f64; 2]>;
+    let mut low_extremum = None::<(f64, usize, f64, usize, usize)>;
+    let mut high_extremum = None::<(f64, usize, f64, usize, usize)>;
+    for (plan_slot, plan) in plans.iter().enumerate() {
+        let source_edges_hz = source_edge_ranges_hz[plan_slot];
+        if plan.table_values.freq_ref == FrequencyRef::LSRK {
+            extend_frequency_range_hz(&mut edge_range_hz, source_edges_hz);
+            continue;
+        }
+        // MSUtil constructs one converter per selected SPW, then walks the
+        // globally sorted TIME*(DDID+1) representatives that belong to it.
+        let mut converter =
+            MFrequencyConverter::new(plan.table_values.freq_ref, FrequencyRef::LSRK);
+        for &(_, row_index, ddid, time_mjd_seconds, field_id) in &representatives {
+            if ddid != plan.ddid {
+                continue;
+            }
+            let frame = derived_engine
+                .spectral_frame_observatory(time_mjd_seconds, field_id)
+                .map_err(|error| error.to_string())?;
+            let converted_edges_hz = [
+                converter
+                    .convert_hz(source_edges_hz[0], &frame)
+                    .map_err(|error| error.to_string())?
+                    .hz(),
+                converter
+                    .convert_hz(source_edges_hz[1], &frame)
+                    .map_err(|error| error.to_string())?
+                    .hz(),
+            ];
+            let row_low_hz = converted_edges_hz[0].min(converted_edges_hz[1]);
+            let row_high_hz = converted_edges_hz[0].max(converted_edges_hz[1]);
+            if low_extremum.is_none_or(|(value, _, _, _, _)| row_low_hz < value) {
+                low_extremum = Some((row_low_hz, row_index, time_mjd_seconds, field_id, ddid));
+            }
+            if high_extremum.is_none_or(|(value, _, _, _, _)| row_high_hz > value) {
+                high_extremum = Some((row_high_hz, row_index, time_mjd_seconds, field_id, ddid));
+            }
+            extend_frequency_range_hz(&mut edge_range_hz, [row_low_hz, row_high_hz]);
+        }
+    }
+    let edge_range_hz = edge_range_hz
+        .ok_or_else(|| "all-SPW MFS selection resolved to no spectral edges".to_string())?;
+    merged.freq_ref = FrequencyRef::LSRK;
+    merged.spectral_frequency_edge_range_hz = Some(edge_range_hz);
+    merged.reffreq_hz = 0.5 * (edge_range_hz[0] + edge_range_hz[1]);
+
+    if standard_mfs_profile_detail_enabled()
+        && let (
+            Some((low_hz, low_row, low_time, low_field, low_ddid)),
+            Some((high_hz, high_row, high_time, high_field, high_ddid)),
+        ) = (low_extremum, high_extremum)
+    {
+        eprintln!(
+            "casa_mfs_all_spw_frequency_edge_range target_ref=LSRK representatives={} low_hz={:.17e} low_row={} low_time_mjd_seconds={:.17e} low_field={} low_ddid={} high_hz={:.17e} high_row={} high_time_mjd_seconds={:.17e} high_field={} high_ddid={}",
+            representatives.len(),
+            low_hz,
+            low_row,
+            low_time,
+            low_field,
+            low_ddid,
+            high_hz,
+            high_row,
+            high_time,
+            high_field,
+            high_ddid,
+        );
+    }
     Ok(merged)
 }
 
@@ -28707,6 +28900,7 @@ fn push_mosaic_cube_direct_metadata_range(
                     beam_frequency_hz,
                     primary_beam_model,
                     pointing_direction_rad,
+                    pointing_pixel_position: None,
                     sample_ranges: Vec::new(),
                 });
                 index
@@ -35798,10 +35992,15 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         0
     };
     // The compact source-order tap arena coexists with the full-cell LRU.
-    // Reuse the explicit AW byte control as its ceiling, but charge the two
-    // allocations independently so adaptive row planning cannot borrow the
-    // tap arena from the safety reserve or CF residency.
-    let aw_source_order_tap_bytes = aw_cf_resident_bytes;
+    // Reuse the explicit AW byte control as its normal ceiling, but let the
+    // benchmark-only experiment independently repartition the same admitted
+    // bytes between mapped-CF descriptors and source-order taps.
+    let aw_source_order_tap_bytes = env::var("CASA_RS_AWPROJECT_TAP_BUDGET_MB_EXPERIMENT")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&value| value > 0)
+        .and_then(|mib| mib.checked_mul(1024 * 1024))
+        .unwrap_or(aw_cf_resident_bytes);
     let pointing_index_bytes = if awproject_mtmfs && config.use_pointing {
         awproject_pointing_index_estimate_bytes(active_row_count, pointing_table_row_count)?
     } else {
@@ -36052,8 +36251,13 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             name: "awproject_source_order_tap_bytes",
             value: aw_source_order_tap_bytes.to_string(),
             origin: casa_imaging::ImagingPlanOrigin::UserPolicy,
-            reason: "independently charged compact phase-applied tap ceiling derived from the AWProject byte control"
-                .to_string(),
+            reason: if env::var_os("CASA_RS_AWPROJECT_TAP_BUDGET_MB_EXPERIMENT").is_some() {
+                "independently charged benchmark repartition for compact phase-applied taps"
+                    .to_string()
+            } else {
+                "independently charged compact phase-applied tap ceiling derived from the AWProject byte control"
+                    .to_string()
+            },
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_cf_index_bytes",
@@ -36544,6 +36748,48 @@ fn imaging_process_cpu_capacity(full_grid_owner: bool) -> usize {
     )
 }
 
+fn standard_mfs_worker_planner_experiment_enabled() -> bool {
+    env::var_os("CASA_RS_STANDARD_MFS_WORKER_PLANNER_EXPERIMENT").is_some()
+}
+
+fn standard_mfs_grid_workers_requested_auto(config: &CliConfig) -> bool {
+    config.imaging_prepare_workers.is_none()
+        && config
+            .standard_mfs_grid_threads
+            .as_deref()
+            .is_none_or(|value| value.trim().eq_ignore_ascii_case("auto"))
+}
+
+fn standard_mfs_parallel_worker_calibration_request(
+    config: &CliConfig,
+) -> Option<ParallelWorkerCalibrationRequest> {
+    if !standard_mfs_worker_planner_experiment_enabled()
+        || !standard_mfs_grid_workers_requested_auto(config)
+        || config.aw_project.is_none()
+        || env::var_os("CASA_RS_AWPROJECT_DYNAMIC_SPARSE_TILE_TASKS_EXPERIMENT").is_none()
+    {
+        return None;
+    }
+    let assigned_parallelism = imaging_hardware_threads();
+    let highest_capacity_class_boundary = system_performance_cpu_count()
+        .filter(|boundary| *boundary > 0 && *boundary < assigned_parallelism);
+    let candidates =
+        topology_parallel_worker_candidates(assigned_parallelism, highest_capacity_class_boundary);
+    let maximum_elapsed_ms = env::var("CASA_RS_STANDARD_MFS_WORKER_CALIBRATION_MS_EXPERIMENT")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(10_000);
+    ParallelWorkerCalibrationRequest::new(
+        candidates,
+        assigned_parallelism,
+        highest_capacity_class_boundary,
+        Duration::from_millis(maximum_elapsed_ms),
+        20_000,
+    )
+    .ok()
+}
+
 #[cfg(all(unix, not(target_os = "macos")))]
 fn system_physical_memory_bytes() -> Option<usize> {
     let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
@@ -36866,6 +37112,9 @@ fn standard_mfs_execution_config(
     execution.force_tiled_one_worker = execution.grid_backend == StandardMfsBackend::FixedTile;
     execution.progress_callback = standard_mfs_progress_callback(config);
     execution.observability_callback = standard_mfs_observability_callback(config);
+    if let Some(calibration) = standard_mfs_parallel_worker_calibration_request(config) {
+        execution = execution.with_parallel_worker_calibration(calibration);
+    }
     execution
 }
 
@@ -39493,6 +39742,12 @@ struct CasaAwPointingGroupAccumulator {
     pointing_id_by_baseline: BTreeMap<(usize, i32, i32), usize>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct EffectivePointing {
+    direction_rad: [f64; 2],
+    pixel_position: Option<[f64; 2]>,
+}
+
 impl MfsMosaicMetadataAccumulator {
     fn with_capacity(capacity: usize) -> Self {
         Self {
@@ -39598,11 +39853,32 @@ impl MfsMosaicMetadataAccumulator {
         Some(pointing_id)
     }
 
+    #[cfg(test)]
     fn effective_pointing_direction_by_id(&self) -> Result<BTreeMap<usize, [f64; 2]>, String> {
+        Ok(self
+            .effective_pointing_by_id()?
+            .into_iter()
+            .map(|(pointing_id, pointing)| (pointing_id, pointing.direction_rad))
+            .collect())
+    }
+
+    fn effective_pointing_by_id(&self) -> Result<BTreeMap<usize, EffectivePointing>, String> {
         let Some(groups) = self.casa_aw_pointing_groups.as_ref() else {
-            return Ok(self.pointing_direction_by_id.clone());
+            return Ok(self
+                .pointing_direction_by_id
+                .iter()
+                .map(|(&pointing_id, &direction_rad)| {
+                    (
+                        pointing_id,
+                        EffectivePointing {
+                            direction_rad,
+                            pixel_position: None,
+                        },
+                    )
+                })
+                .collect());
         };
-        groups.effective_pointing_direction_by_id()
+        groups.effective_pointing_by_id()
     }
 
     fn push_sample(&mut self, pointing_id: usize, spw_id: usize, sample_frequency_hz: f64) {
@@ -39658,7 +39934,7 @@ impl MfsMosaicMetadataAccumulator {
 }
 
 impl CasaAwPointingGroupAccumulator {
-    fn effective_pointing_direction_by_id(&self) -> Result<BTreeMap<usize, [f64; 2]>, String> {
+    fn effective_pointing_by_id(&self) -> Result<BTreeMap<usize, EffectivePointing>, String> {
         let geometry = self.config.geometry;
         let direction_coordinate = DirectionCoordinate::new(
             DirectionRef::J2000,
@@ -39692,7 +39968,7 @@ impl CasaAwPointingGroupAccumulator {
                     field_antenna.0, field_antenna.1
                 )
             })?;
-            if standard_mfs_profile_detail_enabled() {
+            if awproject_pointing_trace_enabled() {
                 eprintln!(
                     "casa_aw_pointing_group_input field_id={} antenna_id={} direction_ra_rad={:.17e} direction_dec_rad={:.17e} pixel_x={:.17e} pixel_y={:.17e}",
                     field_antenna.0,
@@ -39752,7 +40028,7 @@ impl CasaAwPointingGroupAccumulator {
                         (sum_x / count as f32) as f64,
                         (sum_y / count as f32) as f64,
                     ];
-                    if standard_mfs_profile_detail_enabled() {
+                    if awproject_pointing_trace_enabled() {
                         eprintln!(
                             "casa_aw_pointing_group_mean field_id={} bin_x={} bin_y={} antenna_count={} pixel_x={:.17e} pixel_y={:.17e}",
                             field_id, bin.0, bin.1, count, mean_pixel[0], mean_pixel[1],
@@ -39767,7 +40043,7 @@ impl CasaAwPointingGroupAccumulator {
             }
         }
 
-        let mut directions = BTreeMap::new();
+        let mut pointings = BTreeMap::new();
         for (&pointing_id, &(field_id, antenna1_id, antenna2_id)) in &self.baseline_by_pointing_id {
             let antenna1_pixel = grouped_pixel_by_field_antenna
                 .get(&(field_id, antenna1_id))
@@ -39789,16 +40065,19 @@ impl CasaAwPointingGroupAccumulator {
                 0.5 * (antenna1_pixel[0] + antenna2_pixel[0]),
                 0.5 * (antenna1_pixel[1] + antenna2_pixel[1]),
             ];
-            directions.insert(
+            pointings.insert(
                 pointing_id,
-                sin_direction_for_image_pixel(
-                    geometry,
-                    self.config.phase_center_direction_rad,
-                    baseline_pixel,
-                )?,
+                EffectivePointing {
+                    direction_rad: sin_direction_for_image_pixel(
+                        geometry,
+                        self.config.phase_center_direction_rad,
+                        baseline_pixel,
+                    )?,
+                    pixel_position: Some(baseline_pixel),
+                },
             );
         }
-        Ok(directions)
+        Ok(pointings)
     }
 }
 
@@ -46532,16 +46811,18 @@ fn build_mfs_mosaic_gridder_mode_without_trace(
     let beam_frequency_elapsed =
         beam_frequency_started.map_or(Duration::ZERO, |started| started.elapsed());
     let chunk_started = profile_detail.then(Instant::now);
-    let pointing_direction_by_id = metadata.effective_pointing_direction_by_id()?;
-    let (sample_pointing_ids, pointing_direction_by_id) = canonicalize_effective_pointing_ids(
-        &metadata.sample_pointing_ids,
-        &pointing_direction_by_id,
-    )?;
+    let effective_pointing_by_id = metadata.effective_pointing_by_id()?;
+    let (sample_pointing_ids, pointing_direction_by_id, pointing_pixel_position_by_id) =
+        canonicalize_effective_pointing_ids(
+            &metadata.sample_pointing_ids,
+            &effective_pointing_by_id,
+        )?;
     let metadata_batches = if let Some(beam_frequency_hz) = explicit_beam_frequency_hz {
         chunk_mfs_mosaic_metadata_batches_from_explicit_beam_frequencies(
             beam_frequency_hz,
             &sample_pointing_ids,
             &pointing_direction_by_id,
+            &pointing_pixel_position_by_id,
             primary_beam_model,
             max_batch_size,
         )?
@@ -46552,6 +46833,7 @@ fn build_mfs_mosaic_gridder_mode_without_trace(
             &beam_frequency_by_spw_freq,
             &sample_pointing_ids,
             &pointing_direction_by_id,
+            &pointing_pixel_position_by_id,
             primary_beam_model,
             max_batch_size,
         )?
@@ -46667,41 +46949,62 @@ fn cube_gridder_modes_without_trace(
 }
 
 type MosaicBeamFrequencyLookup = HashMap<(usize, u64), f64>;
-type CanonicalPointingIds = (Vec<usize>, BTreeMap<usize, [f64; 2]>);
+type CanonicalPointingIds = (
+    Vec<usize>,
+    BTreeMap<usize, [f64; 2]>,
+    BTreeMap<usize, [f64; 2]>,
+);
 
 fn canonicalize_effective_pointing_ids(
     sample_pointing_ids: &[usize],
-    pointing_direction_by_id: &BTreeMap<usize, [f64; 2]>,
+    effective_pointing_by_id: &BTreeMap<usize, EffectivePointing>,
 ) -> Result<CanonicalPointingIds, String> {
-    let mut canonical_id_by_direction_bits = BTreeMap::<(u64, u64), usize>::new();
+    let mut canonical_id_by_pointing_bits =
+        BTreeMap::<(u64, u64, Option<(u64, u64)>), usize>::new();
     let mut canonical_direction_by_id = BTreeMap::<usize, [f64; 2]>::new();
+    let mut canonical_pixel_position_by_id = BTreeMap::<usize, [f64; 2]>::new();
     let mut canonical_sample_ids = Vec::with_capacity(sample_pointing_ids.len());
     for &pointing_id in sample_pointing_ids {
-        let direction = pointing_direction_by_id
+        let pointing = effective_pointing_by_id
             .get(&pointing_id)
             .copied()
             .ok_or_else(|| {
-                format!("internal error: missing effective pointing direction for id {pointing_id}")
+                format!("internal error: missing effective pointing for id {pointing_id}")
             })?;
-        let key = (direction[0].to_bits(), direction[1].to_bits());
-        let canonical_id = match canonical_id_by_direction_bits.get(&key).copied() {
+        let direction = pointing.direction_rad;
+        let key = (
+            direction[0].to_bits(),
+            direction[1].to_bits(),
+            pointing
+                .pixel_position
+                .map(|pixel| (pixel[0].to_bits(), pixel[1].to_bits())),
+        );
+        let canonical_id = match canonical_id_by_pointing_bits.get(&key).copied() {
             Some(canonical_id) => canonical_id,
             None => {
                 let canonical_id = canonical_direction_by_id.len();
-                canonical_id_by_direction_bits.insert(key, canonical_id);
+                canonical_id_by_pointing_bits.insert(key, canonical_id);
                 canonical_direction_by_id.insert(canonical_id, direction);
+                if let Some(pixel) = pointing.pixel_position {
+                    canonical_pixel_position_by_id.insert(canonical_id, pixel);
+                }
                 canonical_id
             }
         };
         canonical_sample_ids.push(canonical_id);
     }
-    Ok((canonical_sample_ids, canonical_direction_by_id))
+    Ok((
+        canonical_sample_ids,
+        canonical_direction_by_id,
+        canonical_pixel_position_by_id,
+    ))
 }
 
 fn chunk_mfs_mosaic_metadata_batches_from_explicit_beam_frequencies(
     beam_frequency_hz: &[f64],
     sample_pointing_ids: &[usize],
     pointing_direction_by_id: &BTreeMap<usize, [f64; 2]>,
+    pointing_pixel_position_by_id: &BTreeMap<usize, [f64; 2]>,
     primary_beam_model: PrimaryBeamModel,
     max_batch_size: usize,
 ) -> Result<Vec<GroupedVisibilityMetadataBatch>, String> {
@@ -46739,6 +47042,9 @@ fn chunk_mfs_mosaic_metadata_batches_from_explicit_beam_frequencies(
                         beam_frequency_hz,
                         primary_beam_model,
                         pointing_direction_rad,
+                        pointing_pixel_position: pointing_pixel_position_by_id
+                            .get(&pointing_id)
+                            .copied(),
                         sample_ranges: Vec::new(),
                     });
                     index
@@ -46777,6 +47083,7 @@ fn chunk_mfs_mosaic_metadata_batches_from_beam_lookup(
     beam_frequency_by_spw_freq: &MosaicBeamFrequencyLookup,
     sample_pointing_ids: &[usize],
     pointing_direction_by_id: &BTreeMap<usize, [f64; 2]>,
+    pointing_pixel_position_by_id: &BTreeMap<usize, [f64; 2]>,
     primary_beam_model: PrimaryBeamModel,
     max_batch_size: usize,
 ) -> Result<Vec<GroupedVisibilityMetadataBatch>, String> {
@@ -46791,6 +47098,7 @@ fn chunk_mfs_mosaic_metadata_batches_from_beam_lookup(
             &constant_beam_frequency_by_spw,
             sample_pointing_ids,
             pointing_direction_by_id,
+            pointing_pixel_position_by_id,
             primary_beam_model,
             max_batch_size,
         )? {
@@ -46828,6 +47136,9 @@ fn chunk_mfs_mosaic_metadata_batches_from_beam_lookup(
                         beam_frequency_hz,
                         primary_beam_model,
                         pointing_direction_rad,
+                        pointing_pixel_position: pointing_pixel_position_by_id
+                            .get(&pointing_id)
+                            .copied(),
                         sample_ranges: Vec::new(),
                     });
                     index
@@ -46886,6 +47197,7 @@ fn try_chunk_mfs_mosaic_metadata_batches_with_constant_beam_frequency(
     beam_frequency_by_spw: &HashMap<usize, f64>,
     sample_pointing_ids: &[usize],
     pointing_direction_by_id: &BTreeMap<usize, [f64; 2]>,
+    pointing_pixel_position_by_id: &BTreeMap<usize, [f64; 2]>,
     primary_beam_model: PrimaryBeamModel,
     max_batch_size: usize,
 ) -> Result<Option<Vec<GroupedVisibilityMetadataBatch>>, String> {
@@ -46928,6 +47240,9 @@ fn try_chunk_mfs_mosaic_metadata_batches_with_constant_beam_frequency(
                         beam_frequency_hz,
                         primary_beam_model,
                         pointing_direction_rad,
+                        pointing_pixel_position: pointing_pixel_position_by_id
+                            .get(&pointing_id)
+                            .copied(),
                         sample_ranges: Vec::new(),
                     });
                     index
@@ -49649,7 +49964,6 @@ mod tests {
     use casa_test_support::gridder_interop::GridderOracle;
     use casa_types::measures::direction::{DirectionRef, MDirection};
     use casa_types::measures::epoch::{EpochRef, MEpoch};
-    use casa_types::measures::frame::MeasFrame;
     use casa_types::measures::frequency::MFrequency;
     use casa_types::measures::position::MPosition;
     use casa_types::{RecordField, RecordValue};
@@ -54756,10 +55070,9 @@ mod tests {
             Some(&engine),
         )
         .expect("derive frozen per-DDID metadata");
-        let merged = merge_mfs_output_frequency_metadata(
-            plans.iter().map(|plan| &plan.output_frequency_metadata),
-        )
-        .expect("merge frozen SPW metadata");
+        let merged =
+            casa_all_spw_mfs_output_frequency_metadata(&config, &plans, &ms, Some(&engine))
+                .expect("derive CASA-ordered frozen all-SPW metadata");
 
         assert_eq!(merged.reffreq_hz, 2_987_890_056.546_800_6);
         assert_eq!(
@@ -54767,6 +55080,57 @@ mod tests {
                 .spectral_frequency_edge_range_hz
                 .map(spectral_delta_from_range),
             Some(Some(2_047_924_643.945_432_2))
+        );
+    }
+
+    #[test]
+    #[ignore = "requires the staged frozen VLASS MeasurementSet"]
+    fn vlass_all_fields_mfs_coordinate_metadata_matches_frozen_casa() {
+        let data_root = env::var_os("CASA_RS_VLASS_DATA_ROOT")
+            .map(PathBuf::from)
+            .expect("set CASA_RS_VLASS_DATA_ROOT to the staged frozen VLASS data root");
+        let ms_path = data_root.join(VLASS_FROZEN_MS_NAME);
+        let mut config = vlass_field_1525_real_cache_config(
+            &ms_path,
+            Path::new("/unused/cf-cache"),
+            Path::new("/unused/output"),
+            12_150,
+            "2~17",
+        );
+        config.field_ids = Some(
+            (1107..=1127)
+                .chain(1512..=1532)
+                .chain(1542..=1562)
+                .collect(),
+        );
+        let ms = MeasurementSet::open(&ms_path).expect("open frozen VLASS MeasurementSet");
+        let data_description = ms.data_description().expect("open frozen DATA_DESCRIPTION");
+        let ddid_info = data_description_index(&data_description).expect("index frozen DDIDs");
+        let spectral_window = ms.spectral_window().expect("open frozen SPECTRAL_WINDOW");
+        let polarization = ms.polarization().expect("open frozen POLARIZATION");
+        let selection =
+            select_main_rows(&ms, &config, &ddid_info).expect("select frozen VLASS field patch");
+        let engine = MsCalEngine::new(&ms).expect("build frozen measures engine");
+        let plans = prepare_mfs_ddid_plans(
+            &config,
+            &selection,
+            selection.selected_rows.clone(),
+            &ddid_info,
+            &spectral_window,
+            &polarization,
+            Some(&engine),
+        )
+        .expect("derive frozen per-DDID metadata");
+        let merged =
+            casa_all_spw_mfs_output_frequency_metadata(&config, &plans, &ms, Some(&engine))
+                .expect("derive CASA-ordered frozen all-SPW metadata");
+
+        assert_eq!(merged.reffreq_hz, 2_987_890_978.473_200_3);
+        assert_eq!(
+            merged
+                .spectral_frequency_edge_range_hz
+                .map(spectral_delta_from_range),
+            Some(Some(2_047_933_110.651_349_3))
         );
     }
 
@@ -56464,14 +56828,24 @@ mod tests {
             )
             .unwrap();
 
-        let effective = metadata.effective_pointing_direction_by_id().unwrap();
+        let effective = metadata.effective_pointing_by_id().unwrap();
         assert_ne!(first_id, second_id);
-        assert_eq!(effective[&first_id], effective[&second_id]);
-        let (canonical_sample_ids, canonical_directions) =
+        assert_eq!(
+            effective[&first_id].direction_rad,
+            effective[&second_id].direction_rad
+        );
+        assert_eq!(
+            effective[&first_id].pixel_position,
+            effective[&second_id].pixel_position
+        );
+        let (canonical_sample_ids, canonical_directions, canonical_pixels) =
             canonicalize_effective_pointing_ids(&[first_id, second_id], &effective).unwrap();
         assert_eq!(canonical_sample_ids, vec![0, 0]);
         assert_eq!(canonical_directions.len(), 1);
-        let effective_pixel = coordinate.to_pixel(&effective[&first_id]).unwrap();
+        assert_eq!(canonical_pixels, BTreeMap::from([(0, [61.5, 60.5])]));
+        let effective_pixel = coordinate
+            .to_pixel(&effective[&first_id].direction_rad)
+            .unwrap();
         assert!(
             (effective_pixel[0] - 61.5).abs() < 1.0e-5,
             "effective pixel was {effective_pixel:?}"
@@ -59329,6 +59703,7 @@ mod tests {
         let reference_frequency_hz = source_frequencies_hz[0];
         let mut expected_range_hz = None::<[f64; 2]>;
         let mut expected_edge_range_hz = None::<[f64; 2]>;
+        let mut converter = MFrequencyConverter::new(FrequencyRef::TOPO, FrequencyRef::LSRK);
         for row in &rows {
             let scale = mfs_imaging_frequency_scale(
                 FrequencyRef::TOPO,
@@ -59341,25 +59716,20 @@ mod tests {
                 &mut expected_range_hz,
                 [source_range_hz[0] * scale, source_range_hz[1] * scale],
             );
+            let frame = engine
+                .spectral_frame_observatory(row.time_mjd_seconds.unwrap(), row.field_id)
+                .unwrap();
             extend_frequency_range_hz(
                 &mut expected_edge_range_hz,
                 [
-                    casa_mfs_convert_frequency_to_frame(
-                        FrequencyRef::TOPO,
-                        source_edge_range_hz[0],
-                        row.time_mjd_seconds.unwrap(),
-                        row.field_id,
-                        &engine,
-                    )
-                    .unwrap(),
-                    casa_mfs_convert_frequency_to_frame(
-                        FrequencyRef::TOPO,
-                        source_edge_range_hz[1],
-                        row.time_mjd_seconds.unwrap(),
-                        row.field_id,
-                        &engine,
-                    )
-                    .unwrap(),
+                    converter
+                        .convert_hz(source_edge_range_hz[0], &frame)
+                        .unwrap()
+                        .hz(),
+                    converter
+                        .convert_hz(source_edge_range_hz[1], &frame)
+                        .unwrap()
+                        .hz(),
                 ],
             );
         }

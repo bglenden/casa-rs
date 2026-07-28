@@ -26,7 +26,9 @@
 use std::fmt;
 use std::str::FromStr;
 
-use super::casacore_aberration::earth_barycentric_velocity_ms;
+use super::casacore_aberration::{
+    earth_barycentric_velocity_derivative_ms_per_day, earth_barycentric_velocity_ms,
+};
 use super::direction::DirectionRef;
 use super::epoch::EpochRef;
 use super::error::MeasureError;
@@ -192,6 +194,158 @@ impl fmt::Display for FrequencyRef {
 pub struct MFrequency {
     hz: f64,
     refer: FrequencyRef,
+}
+
+/// Reusable frequency-frame converter with casacore-compatible aberration
+/// interpolation across an ordered sequence of frames.
+///
+/// Casacore's `MFrequency::Convert` retains one `Aberration::STANDARD`
+/// instance, while its measures runtime also reuses dUT1 within a 0.04-day
+/// interval. Successive conversions preserve both behaviors. This state is
+/// observable at sub-millihertz precision and is required when reproducing
+/// CASA coordinate metadata from an ordered MS row traversal.
+#[derive(Debug, Clone)]
+pub struct MFrequencyConverter {
+    source: FrequencyRef,
+    target: FrequencyRef,
+    aberration: CasacoreAberrationInterpolation,
+    dut1: CasacoreDut1Interpolation,
+}
+
+#[derive(Debug, Clone, Default)]
+struct CasacoreAberrationInterpolation {
+    anchor_tdb_mjd: Option<f64>,
+    velocity_ms: [f64; 3],
+    derivative_ms_per_day: [f64; 3],
+}
+
+#[derive(Debug, Clone, Default)]
+struct CasacoreDut1Interpolation {
+    anchor_utc_mjd: Option<f64>,
+    dut1_seconds: Option<f64>,
+}
+
+impl CasacoreDut1Interpolation {
+    const INTERVAL_DAYS: f64 = 0.04;
+
+    fn value_seconds(
+        &mut self,
+        utc_mjd: f64,
+        frame: &MeasFrame,
+    ) -> Result<Option<f64>, MeasureError> {
+        let refresh = self
+            .anchor_utc_mjd
+            .is_none_or(|anchor| (utc_mjd - anchor).abs() > Self::INTERVAL_DAYS);
+        if refresh {
+            self.anchor_utc_mjd = Some(utc_mjd);
+            self.dut1_seconds = frame.dut1_for_mjd(utc_mjd)?;
+        }
+        Ok(self.dut1_seconds)
+    }
+}
+
+impl CasacoreAberrationInterpolation {
+    const INTERVAL_DAYS: f64 = 0.04;
+
+    fn velocity_ms(&mut self, tdb_mjd: f64) -> [f64; 3] {
+        let refresh = self
+            .anchor_tdb_mjd
+            .is_none_or(|anchor| (tdb_mjd - anchor).abs() > Self::INTERVAL_DAYS);
+        if refresh {
+            self.anchor_tdb_mjd = Some(tdb_mjd);
+            self.velocity_ms = earth_barycentric_velocity_ms(tdb_mjd);
+            self.derivative_ms_per_day = earth_barycentric_velocity_derivative_ms_per_day(tdb_mjd);
+        }
+        let delta_days = tdb_mjd - self.anchor_tdb_mjd.expect("anchor set above");
+        std::array::from_fn(|axis| {
+            self.velocity_ms[axis] + delta_days * self.derivative_ms_per_day[axis]
+        })
+    }
+}
+
+impl MFrequencyConverter {
+    /// Construct an ordered converter between two spectral frames.
+    pub fn new(source: FrequencyRef, target: FrequencyRef) -> Self {
+        Self {
+            source,
+            target,
+            aberration: CasacoreAberrationInterpolation::default(),
+            dut1: CasacoreDut1Interpolation::default(),
+        }
+    }
+
+    /// Convert one frequency using the next frame in the ordered sequence.
+    pub fn convert_hz(
+        &mut self,
+        frequency_hz: f64,
+        frame: &MeasFrame,
+    ) -> Result<MFrequency, MeasureError> {
+        if self.source == self.target {
+            return Ok(MFrequency::new(frequency_hz, self.target));
+        }
+        let path = find_freq_path(self.source, self.target)?;
+        let uses_aberration = path
+            .iter()
+            .scan(self.source, |current, &next| {
+                let edge = (*current, next);
+                *current = next;
+                Some(edge)
+            })
+            .any(|edge| {
+                matches!(
+                    edge,
+                    (FrequencyRef::BARY, FrequencyRef::GEO)
+                        | (FrequencyRef::GEO, FrequencyRef::BARY)
+                        | (FrequencyRef::GEO, FrequencyRef::TOPO)
+                        | (FrequencyRef::TOPO, FrequencyRef::GEO)
+                )
+            });
+        let mut effective_frame = if uses_aberration {
+            let epoch = frame.epoch().ok_or(MeasureError::MissingFrameData {
+                what: "epoch (for Earth orbital velocity)",
+            })?;
+            let tdb_mjd = epoch.convert_to(EpochRef::TDB, frame)?.value().as_mjd();
+            frame
+                .clone()
+                .with_cached_earth_velocity_ms(self.aberration.velocity_ms(tdb_mjd))
+        } else {
+            frame.clone()
+        };
+        let uses_diurnal = path
+            .iter()
+            .scan(self.source, |current, &next| {
+                let edge = (*current, next);
+                *current = next;
+                Some(edge)
+            })
+            .any(|edge| {
+                matches!(
+                    edge,
+                    (FrequencyRef::GEO, FrequencyRef::TOPO)
+                        | (FrequencyRef::TOPO, FrequencyRef::GEO)
+                )
+            });
+        if uses_diurnal {
+            let epoch = frame.epoch().ok_or(MeasureError::MissingFrameData {
+                what: "epoch (for Earth rotation angle)",
+            })?;
+            let utc_mjd = if epoch.refer() == EpochRef::UTC {
+                epoch.value().as_mjd()
+            } else {
+                epoch.convert_to(EpochRef::UTC, frame)?.value().as_mjd()
+            };
+            if let Some(dut1_seconds) = self.dut1.value_seconds(utc_mjd, frame)? {
+                effective_frame = effective_frame.with_dut1(dut1_seconds);
+            }
+        }
+        let mut hz = frequency_hz;
+        let mut current_ref = self.source;
+        for next_ref in path {
+            hz = apply_freq_hop(hz, current_ref, next_ref, &effective_frame)?;
+            current_ref = next_ref;
+        }
+        Ok(MFrequency::new(hz, self.target))
+    }
 }
 
 impl MFrequency {
@@ -620,6 +774,7 @@ fn apply_freq_hop(
 mod tests {
     use super::*;
     use crate::measures::direction::{DirectionRef, MDirection};
+    use crate::measures::epoch::{EpochRef, MEpoch};
     use crate::measures::provider::test_measures;
 
     #[test]
@@ -628,6 +783,31 @@ mod tests {
             let parsed: FrequencyRef = r.as_str().parse().unwrap();
             assert_eq!(parsed, r);
         }
+    }
+
+    #[test]
+    fn ordered_converter_reuses_casacore_dut1_within_interpolation_interval() {
+        let mut interpolation = CasacoreDut1Interpolation::default();
+        let first = MeasFrame::new().with_dut1(0.1);
+        let within_interval = MeasFrame::new().with_dut1(0.2);
+        let after_interval = MeasFrame::new().with_dut1(0.3);
+
+        assert_eq!(
+            interpolation.value_seconds(58_574.0, &first).unwrap(),
+            Some(0.1)
+        );
+        assert_eq!(
+            interpolation
+                .value_seconds(58_574.02, &within_interval)
+                .unwrap(),
+            Some(0.1)
+        );
+        assert_eq!(
+            interpolation
+                .value_seconds(58_574.05, &after_interval)
+                .unwrap(),
+            Some(0.3)
+        );
     }
 
     #[test]
@@ -728,5 +908,58 @@ mod tests {
         assert_eq!(FrequencyRef::LSRK.casacore_code(), 1);
         assert_eq!(FrequencyRef::TOPO.casacore_code(), 5);
         assert_eq!(FrequencyRef::CMB.casacore_code(), 8);
+    }
+
+    #[test]
+    fn reusable_converter_preserves_casacore_aberration_anchor() {
+        let anchor_mjd = 58_574.453_934_895_835;
+        let next_mjd = anchor_mjd + 0.01;
+        let direction = MDirection::from_angles(3.25, 0.55, DirectionRef::J2000);
+        let anchor_frame = MeasFrame::new()
+            .with_epoch(MEpoch::from_mjd(anchor_mjd, EpochRef::TDB))
+            .with_direction(direction.clone());
+        let next_frame = MeasFrame::new()
+            .with_epoch(MEpoch::from_mjd(next_mjd, EpochRef::TDB))
+            .with_direction(direction);
+        let frequency_hz = 3.0e9;
+
+        let mut converter = MFrequencyConverter::new(FrequencyRef::BARY, FrequencyRef::GEO);
+        converter.convert_hz(frequency_hz, &anchor_frame).unwrap();
+        let interpolated = converter.convert_hz(frequency_hz, &next_frame).unwrap();
+
+        let mut expected_velocity = earth_barycentric_velocity_ms(anchor_mjd);
+        let derivative = earth_barycentric_velocity_derivative_ms_per_day(anchor_mjd);
+        for axis in 0..3 {
+            expected_velocity[axis] += (next_mjd - anchor_mjd) * derivative[axis];
+        }
+        let expected_frame = next_frame.with_cached_earth_velocity_ms(expected_velocity);
+        let expected = MFrequency::new(frequency_hz, FrequencyRef::BARY)
+            .convert_to(FrequencyRef::GEO, &expected_frame)
+            .unwrap();
+
+        assert_eq!(interpolated.hz().to_bits(), expected.hz().to_bits());
+    }
+
+    #[test]
+    fn reusable_converter_refreshes_outside_casacore_interval() {
+        let anchor_mjd = 58_574.453_934_895_835;
+        let next_mjd = anchor_mjd + CasacoreAberrationInterpolation::INTERVAL_DAYS + 0.001;
+        let direction = MDirection::from_angles(3.25, 0.55, DirectionRef::J2000);
+        let anchor_frame = MeasFrame::new()
+            .with_epoch(MEpoch::from_mjd(anchor_mjd, EpochRef::TDB))
+            .with_direction(direction.clone());
+        let next_frame = MeasFrame::new()
+            .with_epoch(MEpoch::from_mjd(next_mjd, EpochRef::TDB))
+            .with_direction(direction);
+        let frequency_hz = 3.0e9;
+
+        let mut converter = MFrequencyConverter::new(FrequencyRef::BARY, FrequencyRef::GEO);
+        converter.convert_hz(frequency_hz, &anchor_frame).unwrap();
+        let refreshed = converter.convert_hz(frequency_hz, &next_frame).unwrap();
+        let stateless = MFrequency::new(frequency_hz, FrequencyRef::BARY)
+            .convert_to(FrequencyRef::GEO, &next_frame)
+            .unwrap();
+
+        assert_eq!(refreshed.hz().to_bits(), stateless.hz().to_bits());
     }
 }

@@ -24,6 +24,9 @@ rayon = "1.11"
 rustfft.workspace = true
 thiserror.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+memmap2 = "0.9"
+
 [target.'cfg(all(target_os = "macos", not(coverage)))'.dependencies]
 objc2 = { version = "0.6.4", default-features = false }
 objc2-foundation = { version = "0.3.2", default-features = false, features = [

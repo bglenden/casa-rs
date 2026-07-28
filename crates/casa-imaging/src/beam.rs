@@ -5,6 +5,7 @@ use ndarray::Array2;
 use num_complex::Complex32;
 
 use crate::fft::{centered_fft2, centered_ifft2};
+use crate::least_squares::solve_symmetric_ldlt_casacore;
 use crate::{BeamFit, BeamFitDebugSummary};
 
 const CASA_FWHM_TO_INTERNAL: f64 = 0.600_561_204_393_224_9;
@@ -395,8 +396,11 @@ fn resample_psf(psf: &Array2<f32>, oversampling: usize) -> Array2<f32> {
     let mut resampled = Array2::<f32>::zeros((nx_re, ny_re));
     for i in 0..nx_re {
         for j in 0..ny_re {
-            let x = i as f64 / oversampling as f64;
-            let y = j as f64 / oversampling as f64;
+            // StokesImageUtil::ResamplePSF performs both operands of this
+            // division in Float before assigning the result to its
+            // Vector<Double> interpolation position.
+            let x = f64::from(i as f32 / oversampling as f32);
+            let y = f64::from(j as f32 / oversampling as f32);
             resampled[(i, j)] = casa_interp_cubic(psf, x, y) as f32;
         }
     }
@@ -416,50 +420,97 @@ fn fit_gaussian_beam_casa_seeded(
     cell_size_rad: [f64; 2],
     seed_angle_rad: f64,
 ) -> Option<(BeamFit, f64)> {
-    let mut params = CasaBeamFitParams {
+    let initial_params = CasaBeamFitParams {
         width_fwhm_rad: 2.5 * cell_size_rad[0].abs(),
         axial_ratio: 0.5,
         position_angle_rad: seed_angle_rad,
     };
-    stabilize_casa_params(&mut params);
+    let mut accepted_params = initial_params;
+    let (mut accepted_normal, mut accepted_known) =
+        casa_normal_equations(samples, accepted_params)?;
+    accepted_known.iter_mut().for_each(|value| *value = -*value);
+    let mut accepted_cost = casa_gaussian_cost(samples, accepted_params)?;
     let mut lambda = 1.0e-3;
-    let mut best_cost = casa_gaussian_cost(samples, params)?;
+    let mut step_factor = 2.0;
+    let mut candidate_params = accepted_params;
+    let mut candidate_delta = [0.0; 3];
+    let mut first_iteration = true;
 
     for _ in 0..1_000 {
-        let (mut normal, gradient) = casa_normal_equations(samples, params)?;
-        for (axis, row) in normal.iter_mut().enumerate() {
-            let damping = row[axis].abs().max(1.0e-12) * lambda;
-            row[axis] += damping;
-        }
-        let rhs = gradient.map(|value| -value);
-        let delta = solve_3x3(normal, rhs)?;
-        if delta.iter().all(|value| value.abs() < 1.0e-12) {
-            break;
+        if !first_iteration {
+            let candidate_cost = casa_gaussian_cost(samples, candidate_params)?;
+            let expected_reduction = candidate_delta
+                .iter()
+                .enumerate()
+                .map(|(axis, delta)| {
+                    delta * (lambda * delta * accepted_normal[axis][axis] + accepted_known[axis])
+                })
+                .sum::<f64>()
+                * 0.5;
+            let actual_reduction = (accepted_cost - candidate_cost) * 0.5;
+            if expected_reduction > 0.0 && actual_reduction > 0.0 {
+                accepted_params = candidate_params;
+                accepted_cost = candidate_cost;
+                (accepted_normal, accepted_known) =
+                    casa_normal_equations(samples, accepted_params)?;
+                accepted_known.iter_mut().for_each(|value| *value = -*value);
+                lambda *= 0.3;
+                step_factor = 2.0;
+                if accepted_known.iter().all(|value| value.abs() <= 1.0e-8) {
+                    break;
+                }
+            } else {
+                lambda *= step_factor;
+                step_factor *= 2.0;
+                if step_factor > 1.0e10 {
+                    break;
+                }
+            }
         }
 
-        let mut candidate = params;
-        candidate.width_fwhm_rad += delta[0];
-        candidate.axial_ratio += delta[1];
-        candidate.position_angle_rad += delta[2];
-        stabilize_casa_params(&mut candidate);
-        let Some(candidate_cost) = casa_gaussian_cost(samples, candidate) else {
-            lambda *= 4.0;
-            continue;
-        };
-        if candidate_cost < best_cost {
-            params = candidate;
-            if (best_cost - candidate_cost) / best_cost.max(1.0e-12) < 1.0e-12 {
-                break;
-            }
-            best_cost = candidate_cost;
-            lambda = (lambda / 3.0).max(1.0e-6);
-        } else {
-            lambda = (lambda * 5.0).min(1.0e6);
+        let mut damped_normal = accepted_normal;
+        for (axis, row) in damped_normal.iter_mut().enumerate() {
+            row[axis] *= 1.0 + lambda;
+        }
+        candidate_delta = solve_symmetric_ldlt_casacore(damped_normal, accepted_known)?;
+        candidate_params = add_casa_params(accepted_params, candidate_delta);
+        first_iteration = false;
+
+        let delta_norm = candidate_delta
+            .iter()
+            .map(|value| value * value)
+            .sum::<f64>()
+            .sqrt();
+        let parameter_norm = [
+            accepted_params.width_fwhm_rad,
+            accepted_params.axial_ratio,
+            accepted_params.position_angle_rad,
+        ]
+        .iter()
+        .map(|value| value * value)
+        .sum::<f64>()
+        .sqrt();
+        if delta_norm <= 1.0e-8 * (parameter_norm + 1.0e-8) {
+            break;
         }
     }
 
-    stabilize_casa_params(&mut params);
-    casa_params_to_beam(params).map(|beam| (beam, best_cost))
+    // NonLinearFitLM::fitIt performs one final undamped Gauss-Newton solve
+    // from the last candidate before returning the solution.
+    let (final_normal, mut final_known) = casa_normal_equations(samples, candidate_params)?;
+    final_known.iter_mut().for_each(|value| *value = -*value);
+    let final_delta = solve_symmetric_ldlt_casacore(final_normal, final_known)?;
+    let final_params = add_casa_params(candidate_params, final_delta);
+    let final_cost = casa_gaussian_cost(samples, final_params)?;
+    casa_params_to_beam(final_params).map(|beam| (beam, final_cost))
+}
+
+fn add_casa_params(params: CasaBeamFitParams, delta: [f64; 3]) -> CasaBeamFitParams {
+    CasaBeamFitParams {
+        width_fwhm_rad: params.width_fwhm_rad + delta[0],
+        axial_ratio: params.axial_ratio + delta[1],
+        position_angle_rad: params.position_angle_rad + delta[2],
+    }
 }
 
 fn casa_gaussian_cost(samples: &[FitSample], params: CasaBeamFitParams) -> Option<f64> {
@@ -527,58 +578,33 @@ fn casa_gaussian_value_and_jacobian(
 
     let cos_pa = params.position_angle_rad.cos();
     let sin_pa = params.position_angle_rad.sin();
-    let xnorm = cos_pa * x_rad + sin_pa * y_rad;
-    let ynorm = -sin_pa * x_rad + cos_pa * y_rad;
-    let width_internal = width * CASA_FWHM_TO_INTERNAL;
-    let x_scaled = xnorm / (width_internal * ratio);
-    let y_scaled = ynorm / width_internal;
-    let x_power = x_scaled * x_scaled;
-    let y_power = y_scaled * y_scaled;
-    let model = (-(x_power + y_power)).exp();
-    let common_angle = 2.0 * xnorm * ynorm / (width_internal * width_internal);
+    let xnorm = x_rad * cos_pa + y_rad * sin_pa;
+    let ynorm = -x_rad * sin_pa + y_rad * cos_pa;
+    let xnorm2 = xnorm * xnorm;
+    let ynorm2 = ynorm * ynorm;
+    let xwidth = width * ratio;
+    let xwidth2 = xwidth * xwidth * CASA_FWHM_TO_INTERNAL * CASA_FWHM_TO_INTERNAL;
+    let ywidth2 = width * width * CASA_FWHM_TO_INTERNAL * CASA_FWHM_TO_INTERNAL;
+    let x2w = 2.0 * xnorm / xwidth2;
+    let y2w = 2.0 * ynorm / ywidth2;
+    let x2w2 = x2w * xnorm;
+    let y2w2 = y2w * ynorm;
+    let model = (-(xnorm2 / xwidth2 + ynorm2 / ywidth2)).exp();
+    let dev = model;
     let jacobian = [
-        model * 2.0 * (x_power + y_power) / width,
-        model * 2.0 * x_power / ratio,
-        -model * common_angle * (1.0 / (ratio * ratio) - 1.0),
+        dev * ((x2w2 + y2w2) / width),
+        dev * x2w2 * width / xwidth,
+        -dev * (x2w * (-x_rad * sin_pa + y_rad * cos_pa)
+            + y2w * (-x_rad * cos_pa - y_rad * sin_pa)),
     ];
     (model.is_finite() && jacobian.iter().all(|value| value.is_finite()))
         .then_some((model, jacobian))
 }
 
 fn casa_gaussian_value(params: CasaBeamFitParams, x_rad: f64, y_rad: f64) -> f64 {
-    if !(params.width_fwhm_rad.is_finite()
-        && params.width_fwhm_rad.abs() > MIN_SIGMA_RAD
-        && params.axial_ratio.is_finite()
-        && params.axial_ratio.abs() > 1.0e-6
-        && params.position_angle_rad.is_finite())
-    {
-        return 0.0;
-    }
-
-    // Match casacore Gaussian2D exactly:
-    // x' = cos(pa) * x + sin(pa) * y
-    // y' = -sin(pa) * x + cos(pa) * y
-    // exp(-(x'/(width*ratio*fwhm2int))^2 - (y'/(width*fwhm2int))^2)
-    let cos_pa = params.position_angle_rad.cos();
-    let sin_pa = params.position_angle_rad.sin();
-    let xnorm = cos_pa * x_rad + sin_pa * y_rad;
-    let ynorm = -sin_pa * x_rad + cos_pa * y_rad;
-    let denom_x = params.width_fwhm_rad * params.axial_ratio * CASA_FWHM_TO_INTERNAL;
-    let denom_y = params.width_fwhm_rad * CASA_FWHM_TO_INTERNAL;
-    if denom_x.abs() <= MIN_SIGMA_RAD || denom_y.abs() <= MIN_SIGMA_RAD {
-        return 0.0;
-    }
-    let exponent = -((xnorm / denom_x).powi(2) + (ynorm / denom_y).powi(2));
-    exponent.exp()
-}
-
-fn stabilize_casa_params(params: &mut CasaBeamFitParams) {
-    if params.width_fwhm_rad.abs() < MIN_SIGMA_RAD {
-        params.width_fwhm_rad = MIN_SIGMA_RAD.copysign(params.width_fwhm_rad);
-    }
-    if params.axial_ratio.abs() < 1.0e-6 {
-        params.axial_ratio = 1.0e-6_f64.copysign(params.axial_ratio);
-    }
+    casa_gaussian_value_and_jacobian(params, x_rad, y_rad)
+        .map(|(value, _)| value)
+        .unwrap_or(0.0)
 }
 
 fn casa_params_to_beam(params: CasaBeamFitParams) -> Option<BeamFit> {
@@ -644,41 +670,6 @@ fn casa_wrap_beam_position_angle(mut angle: f64) -> f64 {
     angle
 }
 
-fn solve_3x3(mut a: [[f64; 3]; 3], mut b: [f64; 3]) -> Option<[f64; 3]> {
-    for pivot in 0..3 {
-        let (best_row, best_value) = (pivot..3)
-            .map(|row| (row, a[row][pivot].abs()))
-            .max_by(|left, right| left.1.partial_cmp(&right.1).unwrap())?;
-        if best_value <= 1.0e-18 {
-            return None;
-        }
-        if best_row != pivot {
-            a.swap(best_row, pivot);
-            b.swap(best_row, pivot);
-        }
-        let pivot_value = a[pivot][pivot];
-        for value in &mut a[pivot][pivot..] {
-            *value /= pivot_value;
-        }
-        b[pivot] /= pivot_value;
-        let pivot_row = a[pivot];
-        for row in 0..3 {
-            if row == pivot {
-                continue;
-            }
-            let factor = a[row][pivot];
-            if factor.abs() <= 1.0e-18 {
-                continue;
-            }
-            for (value, pivot_value) in a[row][pivot..].iter_mut().zip(pivot_row[pivot..].iter()) {
-                *value -= factor * *pivot_value;
-            }
-            b[row] -= factor * b[pivot];
-        }
-    }
-    Some(b)
-}
-
 fn casa_interp_cubic(data: &Array2<f32>, x: f64, y: f64) -> f64 {
     let nx = data.shape()[0] as isize;
     let ny = data.shape()[1] as isize;
@@ -701,40 +692,48 @@ fn casa_interp_cubic(data: &Array2<f32>, x: f64, y: f64) -> f64 {
     vals[2] = data[((i + 1) as usize, (j + 1) as usize)] as f64;
     vals[3] = data[(i as usize, (j + 1) as usize)] as f64;
 
+    // Interpolate2D<T=Float> evaluates these source-pixel expressions in
+    // Float before assigning them to its Double derivative arrays.
     dx_vals[0] =
-        data[((i + 1) as usize, j as usize)] as f64 - data[((i - 1) as usize, j as usize)] as f64;
-    dx_vals[1] =
-        data[((i + 2) as usize, j as usize)] as f64 - data[(i as usize, j as usize)] as f64;
-    dx_vals[2] = data[((i + 2) as usize, (j + 1) as usize)] as f64
-        - data[(i as usize, (j + 1) as usize)] as f64;
-    dx_vals[3] = data[((i + 1) as usize, (j + 1) as usize)] as f64
-        - data[((i - 1) as usize, (j + 1) as usize)] as f64;
+        f64::from(data[((i + 1) as usize, j as usize)] - data[((i - 1) as usize, j as usize)]);
+    dx_vals[1] = f64::from(data[((i + 2) as usize, j as usize)] - data[(i as usize, j as usize)]);
+    dx_vals[2] = f64::from(
+        data[((i + 2) as usize, (j + 1) as usize)] - data[(i as usize, (j + 1) as usize)],
+    );
+    dx_vals[3] = f64::from(
+        data[((i + 1) as usize, (j + 1) as usize)] - data[((i - 1) as usize, (j + 1) as usize)],
+    );
 
     dy_vals[0] =
-        data[(i as usize, (j + 1) as usize)] as f64 - data[(i as usize, (j - 1) as usize)] as f64;
-    dy_vals[1] = data[((i + 1) as usize, (j + 1) as usize)] as f64
-        - data[((i + 1) as usize, (j - 1) as usize)] as f64;
-    dy_vals[2] = data[((i + 1) as usize, (j + 2) as usize)] as f64
-        - data[((i + 1) as usize, j as usize)] as f64;
-    dy_vals[3] =
-        data[(i as usize, (j + 2) as usize)] as f64 - data[(i as usize, j as usize)] as f64;
+        f64::from(data[(i as usize, (j + 1) as usize)] - data[(i as usize, (j - 1) as usize)]);
+    dy_vals[1] = f64::from(
+        data[((i + 1) as usize, (j + 1) as usize)] - data[((i + 1) as usize, (j - 1) as usize)],
+    );
+    dy_vals[2] = f64::from(
+        data[((i + 1) as usize, (j + 2) as usize)] - data[((i + 1) as usize, j as usize)],
+    );
+    dy_vals[3] = f64::from(data[(i as usize, (j + 2) as usize)] - data[(i as usize, j as usize)]);
 
-    dxy_vals[0] = data[((i + 1) as usize, (j + 1) as usize)] as f64
-        + data[((i - 1) as usize, (j - 1) as usize)] as f64
-        - data[((i - 1) as usize, (j + 1) as usize)] as f64
-        - data[((i + 1) as usize, (j - 1) as usize)] as f64;
-    dxy_vals[1] = data[((i + 2) as usize, (j + 1) as usize)] as f64
-        + data[(i as usize, (j - 1) as usize)] as f64
-        - data[(i as usize, (j + 1) as usize)] as f64
-        - data[((i + 2) as usize, (j - 1) as usize)] as f64;
-    dxy_vals[2] = data[((i + 2) as usize, (j + 2) as usize)] as f64
-        + data[(i as usize, j as usize)] as f64
-        - data[(i as usize, (j + 2) as usize)] as f64
-        - data[((i + 2) as usize, j as usize)] as f64;
-    dxy_vals[3] = data[((i + 1) as usize, (j + 2) as usize)] as f64
-        + data[((i - 1) as usize, j as usize)] as f64
-        - data[((i - 1) as usize, (j + 2) as usize)] as f64
-        - data[((i + 1) as usize, j as usize)] as f64;
+    dxy_vals[0] = f64::from(
+        data[((i + 1) as usize, (j + 1) as usize)] + data[((i - 1) as usize, (j - 1) as usize)]
+            - data[((i - 1) as usize, (j + 1) as usize)]
+            - data[((i + 1) as usize, (j - 1) as usize)],
+    );
+    dxy_vals[1] = f64::from(
+        data[((i + 2) as usize, (j + 1) as usize)] + data[(i as usize, (j - 1) as usize)]
+            - data[(i as usize, (j + 1) as usize)]
+            - data[((i + 2) as usize, (j - 1) as usize)],
+    );
+    dxy_vals[2] = f64::from(
+        data[((i + 2) as usize, (j + 2) as usize)] + data[(i as usize, j as usize)]
+            - data[(i as usize, (j + 2) as usize)]
+            - data[((i + 2) as usize, j as usize)],
+    );
+    dxy_vals[3] = f64::from(
+        data[((i + 1) as usize, (j + 2) as usize)] + data[((i - 1) as usize, j as usize)]
+            - data[((i - 1) as usize, (j + 2) as usize)]
+            - data[((i + 1) as usize, j as usize)],
+    );
 
     for axis in 0..4 {
         dx_vals[axis] /= 2.0;
@@ -743,13 +742,13 @@ fn casa_interp_cubic(data: &Array2<f32>, x: f64, y: f64) -> f64 {
     }
 
     let coeffs = casa_bcucof(vals, dx_vals, dy_vals, dxy_vals);
-    let mut result = 0.0f64;
+    let mut result = 0.0f32;
     for row in (0..4).rev() {
-        result = tt * result
+        result = (tt * f64::from(result)
             + ((coeffs[row][3] * uu + coeffs[row][2]) * uu + coeffs[row][1]) * uu
-            + coeffs[row][0];
+            + coeffs[row][0]) as f32;
     }
-    result
+    f64::from(result)
 }
 
 fn casa_interp_linear(data: &Array2<f32>, x: f64, y: f64) -> f64 {
@@ -864,7 +863,10 @@ fn peak_max_value_f32(image: &Array2<f32>) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use ndarray::Array2;
+    use std::path::PathBuf;
+
+    use casa_images::PagedImage;
+    use ndarray::{Array2, Ix4};
 
     use super::{fit_beam_from_psf, make_casa_gaussian_psf_image, restore_model};
     use crate::BeamFit;
@@ -931,6 +933,54 @@ mod tests {
             let requantized = f64::from((value_rad * unit_scale) as f32) / unit_scale;
             assert_eq!(value_rad.to_bits(), requantized.to_bits());
         }
+    }
+
+    #[test]
+    #[ignore = "requires retained CASA and casa-rs 12150x12150 VLASS PSFs"]
+    fn retained_vlass_psf_beams_match_the_casa_fitter() {
+        fn fit_retained_vlass_psf(path: PathBuf) -> BeamFit {
+            let image = PagedImage::<f32>::open(path).expect("open retained VLASS PSF");
+            assert_eq!(image.shape(), &[12_150, 12_150, 1, 1]);
+            let patch = image
+                .get_slice(&[6_035, 6_035, 0, 0], &[81, 81, 1, 1])
+                .expect("read retained VLASS PSF patch")
+                .into_dimensionality::<Ix4>()
+                .expect("four-dimensional PSF patch")
+                .index_axis_move(ndarray::Axis(3), 0)
+                .index_axis_move(ndarray::Axis(2), 0);
+            let arcsec_to_rad = std::f64::consts::PI / (180.0 * 3_600.0);
+            fit_beam_from_psf(&patch, [0.6 * arcsec_to_rad, 0.6 * arcsec_to_rad], 0.35)
+                .beam
+                .expect("fit retained VLASS beam")
+        }
+
+        let rust_path = std::env::var_os("CASA_RS_BEAM_PROBE_IMAGE")
+            .map(PathBuf::from)
+            .expect("set CASA_RS_BEAM_PROBE_IMAGE to the retained casa-rs VLASS PSF");
+        let casa_path = std::env::var_os("CASA_RS_BEAM_PROBE_REFERENCE")
+            .map(PathBuf::from)
+            .expect("set CASA_RS_BEAM_PROBE_REFERENCE to the retained CASA VLASS PSF");
+        let rust_beam = fit_retained_vlass_psf(rust_path);
+        let casa_beam = fit_retained_vlass_psf(casa_path);
+        let arcsec_to_rad = std::f64::consts::PI / (180.0 * 3_600.0);
+        let rad_to_arcsec = 1.0 / arcsec_to_rad;
+        let rad_to_deg = 180.0 / std::f64::consts::PI;
+        assert_eq!(
+            (
+                (rust_beam.major_fwhm_rad * rad_to_arcsec) as f32,
+                (rust_beam.minor_fwhm_rad * rad_to_arcsec) as f32,
+                (rust_beam.position_angle_rad * rad_to_deg) as f32,
+            ),
+            (2.955_340_4_f32, 2.084_298_1_f32, 71.113_63_f32,),
+        );
+        assert_eq!(
+            (
+                (casa_beam.major_fwhm_rad * rad_to_arcsec) as f32,
+                (casa_beam.minor_fwhm_rad * rad_to_arcsec) as f32,
+                (casa_beam.position_angle_rad * rad_to_deg) as f32,
+            ),
+            (2.955_340_9_f32, 2.084_298_4_f32, 71.113_64_f32,),
+        );
     }
 
     #[test]

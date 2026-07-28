@@ -291,6 +291,7 @@ def imager(
     imaging_prepare_workers: int | Literal['none'] = ...,
     imaging_fft_precision: Literal['auto', 'f32', 'f64'] = ...,
     projection: Literal['SIN'] = ...,
+    standard_mfs_grid_threads: int | Literal['auto'] = ...,
     parameters: TaskParameters | None = ...,
     profile: StrPath | None = ... ,
     base_source: Literal["defaults", "last", "last_successful"] = ... ,

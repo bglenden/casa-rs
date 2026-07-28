@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "id": "vlass-fragment-all-fields-four-spw-fftw-f64-experiment",
+  "id": "vlass-fragment-all-fields-full-band-fftw-f64-experiment",
   "mode_id": "vlass-awproject-mtmfs-raster-patch",
-  "description": "Full-geometry connected-63-field VLASS fragment four-SPW turnaround using the measured six-worker dynamic sparse-tile candidate. This is casa-rs-only worker-planner development evidence, never final correctness or 10x evidence.",
+  "description": "Full-geometry connected-63-field VLASS fragment full-16-SPW experiment using exact compact source-order replay, sparse 192-pixel f64 grid tiles, 2-by-2 NEON replay, and plane-at-a-time local f64 FFTW. This is casa-rs-only development evidence, not the final repeated 10x row.",
   "dataset": {
     "key": "vlass-fragment-b80d5e87487a",
     "relative_path": "VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms",
@@ -17,7 +17,7 @@
     "wprojplanes": 32,
     "field": "1107~1127,1512~1532,1542~1562",
     "phasecenter_field": 1525,
-    "spw": "2,7,12,17",
+    "spw": "2~17",
     "channel_start": 0,
     "channel_count": 64,
     "imsize": 12150,
@@ -84,10 +84,11 @@
     "warmups": 1,
     "profile_repeats": 1,
     "stream_log": true,
-    "run_label": "vlass-all-fields-four-spw-dynamic-sparse-tile-task-experiment",
+    "run_label": "vlass-all-fields-full-band-dynamic-sparse-tile-task-experiment",
     "storage_label": "GLENDENNING-vlass-archive",
     "ms_staging": "direct",
     "skip_casa": "1",
+    "reuse_casa_prefix": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/vlass-fragment-all-fields-cold/casa_cold_dirty_fiducial/20260721T071009Z-vlass-fragment-all-fields-cold-3d3179ae/casa/measured-001/casa",
     "skip_profile": "1",
     "cf_cache_role": "warm",
     "env": {
@@ -111,14 +112,12 @@
       "CASA_RS_FFTW_LIBRARY_DIR": "/Users/brianglendenning/SoftwareProjects/casa-build/venv/lib/python3.14/site-packages/casaplotms/__bin__/casaplotms.app/Contents/Frameworks",
       "CASA_RS_STANDARD_MFS_PROFILE_DETAIL": "1"
     },
-    "evidence_role": "reduced_turnaround_only"
+    "evidence_role": "full_band_first_runtime"
   },
   "review": {
     "required_reviewer": "Brian",
     "requires_human_acceptance_before_done": false,
-    "required_evidence_roles": [
-      "reduced_turnaround_only"
-    ]
+    "required_evidence_roles": ["full_band_first_runtime"]
   },
   "comparison": {
     "mode": "full",

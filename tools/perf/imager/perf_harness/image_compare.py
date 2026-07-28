@@ -2315,6 +2315,7 @@ def compare_products(
         output_path=artifact_prefix.with_suffix(".comparison.json"),
         log_path=artifact_prefix.with_suffix(".comparison.log"),
         cwd=cwd,
+        stream_stdout=True,
     )
     input_sha256 = (
         sha256_file(protocol.request_path) if protocol.request_path.is_file() else None

@@ -14,16 +14,25 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+#[cfg(unix)]
+use std::{env, fs::File};
+
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, StokesType};
 use casa_images::PagedImage;
 use casa_types::{RecordValue, ScalarValue, Value};
+#[cfg(unix)]
+use memmap2::{Mmap, MmapOptions};
 use ndarray::{Array2, ArrayD, Axis, Ix4};
 use num_complex::Complex32;
 
-use crate::ImagingError;
+use crate::{ImagingError, gridder::AwProjectKernelPixels};
 
 const IMAGING_PREFIX: &str = "CFS_";
 const WEIGHT_PREFIX: &str = "WTCFS_";
+#[cfg(unix)]
+const EXPERIMENTAL_PACKED_CF_MAGIC: [u8; 16] = *b"CASARS_AWCF_V1\0\0";
+#[cfg(unix)]
+const EXPERIMENTAL_PACKED_CF_HEADER_BYTES: u64 = 32;
 
 /// Scientific lookup key for one CASA AWProject convolution-function cell.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -411,11 +420,334 @@ pub struct AwConvolutionFunctionCache {
     entries: Arc<BTreeMap<StableKey, AwConvolutionFunctionEntryMetadata>>,
     inventory: AwConvolutionFunctionInventory,
     identity: AwConvolutionFunctionCacheIdentity,
+    #[cfg(unix)]
+    experimental_direct_sample_select: bool,
+    #[cfg(unix)]
+    experimental_packed: Option<Arc<ExperimentalPackedCfStore>>,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy)]
+struct ExperimentalPackedCfEntry {
+    imaging_offset: u64,
+    weight_offset: u64,
+}
+
+#[cfg(unix)]
+#[derive(Debug)]
+struct ExperimentalPackedCfStore {
+    path: PathBuf,
+    map: Arc<Mmap>,
+    entries: BTreeMap<StableKey, ExperimentalPackedCfEntry>,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone)]
+pub(crate) struct ExperimentalMappedCfPlane {
+    map: Arc<Mmap>,
+    offset: usize,
+    shape: [usize; 2],
+}
+
+#[cfg(unix)]
+impl AwProjectKernelPixels for ExperimentalMappedCfPlane {
+    fn shape(&self) -> [usize; 2] {
+        self.shape
+    }
+
+    #[inline]
+    fn get_pixel(&self, (x, y): (usize, usize)) -> Option<Complex32> {
+        if x >= self.shape[0] || y >= self.shape[1] {
+            return None;
+        }
+        let index = x.checked_mul(self.shape[1])?.checked_add(y)?;
+        let byte_offset = self
+            .offset
+            .checked_add(index.checked_mul(std::mem::size_of::<Complex32>())?)?;
+        // SAFETY: `open` validates the complete mapped length, the packed
+        // payload starts at an aligned 32-byte boundary, every plane length is
+        // a multiple of `Complex32`, and `Complex32` accepts every bit pattern.
+        Some(unsafe { *self.map.as_ptr().add(byte_offset).cast::<Complex32>() })
+    }
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone)]
+pub(crate) struct ExperimentalMappedCfCell {
+    pub(crate) metadata: AwConvolutionFunctionEntryMetadata,
+    pub(crate) imaging: ExperimentalMappedCfPlane,
+    pub(crate) weight: ExperimentalMappedCfPlane,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum AwConvolutionFunctionReplayCell {
+    Owned(Arc<AwConvolutionFunctionCell>),
+    #[cfg(unix)]
+    Mapped(ExperimentalMappedCfCell),
+}
+
+impl AwConvolutionFunctionReplayCell {
+    fn pixel_bytes(&self) -> usize {
+        match self {
+            Self::Owned(cell) => paired_cell_pixel_bytes(cell),
+            #[cfg(unix)]
+            Self::Mapped(cell) => cell
+                .imaging
+                .shape
+                .into_iter()
+                .product::<usize>()
+                .saturating_add(cell.weight.shape.into_iter().product::<usize>())
+                .saturating_mul(std::mem::size_of::<Complex32>()),
+        }
+    }
+}
+
+#[cfg(unix)]
+impl ExperimentalPackedCfStore {
+    fn open(
+        path: PathBuf,
+        entries: &BTreeMap<StableKey, AwConvolutionFunctionEntryMetadata>,
+        identity: &AwConvolutionFunctionCacheIdentity,
+    ) -> Result<Self, ImagingError> {
+        if !cfg!(target_endian = "little") {
+            return Err(cache_error(
+                &path,
+                "experimental packed CF files currently require a little-endian host",
+            ));
+        }
+        let file = File::open(&path).map_err(|error| {
+            cache_error(
+                &path,
+                format!("cannot open experimental packed CF file: {error}"),
+            )
+        })?;
+        // SAFETY: the mapping is read-only and this experimental cache is an
+        // immutable benchmark artifact for the lifetime of the process.
+        let map = unsafe { MmapOptions::new().map(&file) }.map_err(|error| {
+            cache_error(
+                &path,
+                format!("cannot memory-map experimental packed CF file: {error}"),
+            )
+        })?;
+        let header = map
+            .get(..EXPERIMENTAL_PACKED_CF_HEADER_BYTES as usize)
+            .ok_or_else(|| cache_error(&path, "experimental packed CF header is truncated"))?;
+        if header[..16] != EXPERIMENTAL_PACKED_CF_MAGIC {
+            return Err(cache_error(
+                &path,
+                "experimental packed CF magic/version does not match",
+            ));
+        }
+        let fingerprint = u64::from_le_bytes(header[16..24].try_into().expect("fixed slice"));
+        if fingerprint != identity.metadata_fingerprint {
+            return Err(cache_error(
+                &path,
+                format!(
+                    "experimental packed CF fingerprint {fingerprint:016x} does not match source cache {:016x}",
+                    identity.metadata_fingerprint
+                ),
+            ));
+        }
+        let pair_count = u64::from_le_bytes(header[24..32].try_into().expect("fixed slice"));
+        if pair_count != entries.len() as u64 {
+            return Err(cache_error(
+                &path,
+                format!(
+                    "experimental packed CF pair count {pair_count} does not match source cache {}",
+                    entries.len()
+                ),
+            ));
+        }
+
+        let mut packed_entries = BTreeMap::new();
+        let mut cursor = EXPERIMENTAL_PACKED_CF_HEADER_BYTES;
+        for (&stable, metadata) in entries {
+            let imaging_offset = cursor;
+            cursor = cursor
+                .checked_add(experimental_packed_plane_bytes(metadata.imaging.shape)?)
+                .ok_or_else(|| cache_error(&path, "packed imaging offset overflowed"))?;
+            let weight_offset = cursor;
+            cursor = cursor
+                .checked_add(experimental_packed_plane_bytes(metadata.weight.shape)?)
+                .ok_or_else(|| cache_error(&path, "packed weight offset overflowed"))?;
+            packed_entries.insert(
+                stable,
+                ExperimentalPackedCfEntry {
+                    imaging_offset,
+                    weight_offset,
+                },
+            );
+        }
+        let actual_bytes = map.len() as u64;
+        if actual_bytes != cursor {
+            return Err(cache_error(
+                &path,
+                format!(
+                    "experimental packed CF length {actual_bytes} does not match indexed length {cursor}"
+                ),
+            ));
+        }
+        let map = Arc::new(map);
+        let payload_value_count = (actual_bytes - EXPERIMENTAL_PACKED_CF_HEADER_BYTES) as usize
+            / std::mem::size_of::<Complex32>();
+        let validate_values = env::var_os("CASA_RS_AWPROJECT_TRUST_PACKED_CF_EXPERIMENT").is_none();
+        if validate_values {
+            let payload = experimental_packed_complex_slice(
+                map.as_ref(),
+                EXPERIMENTAL_PACKED_CF_HEADER_BYTES as usize,
+                payload_value_count,
+                &path,
+            )?;
+            if payload
+                .iter()
+                .any(|value| !(value.re.is_finite() && value.im.is_finite()))
+            {
+                return Err(cache_error(
+                    &path,
+                    "experimental packed CF payload contains non-finite complex values",
+                ));
+            }
+        }
+        eprintln!(
+            "awproject_experimental_packed_cf path={} bytes={} pairs={} metadata_fingerprint={:016x} access=mmap-zero-copy payload_validation={} validated_values={}",
+            path.display(),
+            actual_bytes,
+            entries.len(),
+            identity.metadata_fingerprint,
+            if validate_values {
+                "finite-scan"
+            } else {
+                "trusted-experiment-skip"
+            },
+            if validate_values {
+                payload_value_count
+            } else {
+                0
+            },
+        );
+        Ok(Self {
+            path,
+            map,
+            entries: packed_entries,
+        })
+    }
+
+    fn load(
+        &self,
+        stable: StableKey,
+        metadata: &AwConvolutionFunctionEntryMetadata,
+    ) -> Result<(Array2<Complex32>, Array2<Complex32>), ImagingError> {
+        let entry = self.entries.get(&stable).ok_or_else(|| {
+            cache_error(
+                &self.path,
+                "experimental packed CF index has no entry for a validated source key",
+            )
+        })?;
+        let imaging = self.read_plane(
+            entry.imaging_offset,
+            metadata.imaging.shape,
+            &metadata.imaging.path,
+        )?;
+        let weight = self.read_plane(
+            entry.weight_offset,
+            metadata.weight.shape,
+            &metadata.weight.path,
+        )?;
+        Ok((imaging, weight))
+    }
+
+    fn read_plane(
+        &self,
+        offset: u64,
+        shape: [usize; 2],
+        source_path: &Path,
+    ) -> Result<Array2<Complex32>, ImagingError> {
+        let value_count = shape[0]
+            .checked_mul(shape[1])
+            .ok_or_else(|| cache_error(source_path, "experimental packed CF shape overflowed"))?;
+        let offset = usize::try_from(offset)
+            .map_err(|_| cache_error(source_path, "packed CF offset exceeds host usize"))?;
+        let values =
+            experimental_packed_complex_slice(self.map.as_ref(), offset, value_count, source_path)?
+                .to_vec();
+        Ok(Array2::from_shape_fn((shape[0], shape[1]), |(x, y)| {
+            values[x * shape[1] + y]
+        }))
+    }
+
+    fn mapped_cell(
+        &self,
+        stable: StableKey,
+        metadata: AwConvolutionFunctionEntryMetadata,
+    ) -> Result<ExperimentalMappedCfCell, ImagingError> {
+        let entry = self.entries.get(&stable).ok_or_else(|| {
+            cache_error(
+                &self.path,
+                "experimental packed CF index has no entry for a validated source key",
+            )
+        })?;
+        let imaging = ExperimentalMappedCfPlane {
+            map: Arc::clone(&self.map),
+            offset: usize::try_from(entry.imaging_offset)
+                .map_err(|_| cache_error(&self.path, "packed imaging offset exceeds host usize"))?,
+            shape: metadata.imaging.shape,
+        };
+        let weight = ExperimentalMappedCfPlane {
+            map: Arc::clone(&self.map),
+            offset: usize::try_from(entry.weight_offset)
+                .map_err(|_| cache_error(&self.path, "packed weight offset exceeds host usize"))?,
+            shape: metadata.weight.shape,
+        };
+        Ok(ExperimentalMappedCfCell {
+            metadata,
+            imaging,
+            weight,
+        })
+    }
+}
+
+#[cfg(unix)]
+fn experimental_packed_complex_slice<'a>(
+    map: &'a Mmap,
+    offset: usize,
+    value_count: usize,
+    source_path: &Path,
+) -> Result<&'a [Complex32], ImagingError> {
+    let byte_count = value_count
+        .checked_mul(std::mem::size_of::<Complex32>())
+        .ok_or_else(|| cache_error(source_path, "experimental packed CF byte count overflowed"))?;
+    let end = offset
+        .checked_add(byte_count)
+        .ok_or_else(|| cache_error(source_path, "experimental packed CF range overflowed"))?;
+    if end > map.len() || offset % std::mem::align_of::<Complex32>() != 0 {
+        return Err(cache_error(
+            source_path,
+            "experimental packed CF range is outside or misaligned in its mapped file",
+        ));
+    }
+    // SAFETY: the bounds and alignment are checked above, the map is immutable
+    // for this process, and every bit pattern is a valid pair of `f32` values.
+    Ok(unsafe {
+        std::slice::from_raw_parts(map.as_ptr().add(offset).cast::<Complex32>(), value_count)
+    })
+}
+
+#[cfg(unix)]
+fn experimental_packed_plane_bytes(shape: [usize; 2]) -> Result<u64, ImagingError> {
+    shape[0]
+        .checked_mul(shape[1])
+        .and_then(|values| values.checked_mul(std::mem::size_of::<Complex32>()))
+        .and_then(|bytes| u64::try_from(bytes).ok())
+        .ok_or_else(|| {
+            ImagingError::ConvolutionFunctionCache(
+                "experimental packed CF plane byte count overflowed".to_string(),
+            )
+        })
 }
 
 #[derive(Debug)]
 struct ResidentCell {
-    cell: Arc<AwConvolutionFunctionCell>,
+    cell: Arc<AwConvolutionFunctionReplayCell>,
     bytes: usize,
     last_used: u64,
 }
@@ -482,6 +814,17 @@ impl AwConvolutionFunctionResidentCache {
         &self,
         key: AwConvolutionFunctionKey,
     ) -> Result<Arc<AwConvolutionFunctionCell>, ImagingError> {
+        match self.get_replay(key)?.as_ref() {
+            AwConvolutionFunctionReplayCell::Owned(cell) => Ok(Arc::clone(cell)),
+            #[cfg(unix)]
+            AwConvolutionFunctionReplayCell::Mapped(_) => Ok(Arc::new(self.cache.load(key)?)),
+        }
+    }
+
+    pub(crate) fn get_replay(
+        &self,
+        key: AwConvolutionFunctionKey,
+    ) -> Result<Arc<AwConvolutionFunctionReplayCell>, ImagingError> {
         let stable = StableKey::from(key);
         {
             let mut state = self.lock_state()?;
@@ -495,8 +838,22 @@ impl AwConvolutionFunctionResidentCache {
             }
         }
 
-        let loaded = Arc::new(self.cache.load(key)?);
-        let bytes = paired_cell_pixel_bytes(&loaded);
+        let metadata = self.cache.metadata(key).cloned().ok_or_else(|| {
+            cache_error(
+                self.cache.root(),
+                format!("no exact CF cell for key {key:?}"),
+            )
+        })?;
+        #[cfg(unix)]
+        let loaded = if let Some(store) = self.cache.experimental_packed.as_ref() {
+            AwConvolutionFunctionReplayCell::Mapped(store.mapped_cell(stable, metadata)?)
+        } else {
+            AwConvolutionFunctionReplayCell::Owned(Arc::new(self.cache.load(key)?))
+        };
+        #[cfg(not(unix))]
+        let loaded = AwConvolutionFunctionReplayCell::Owned(Arc::new(self.cache.load(key)?));
+        let loaded = Arc::new(loaded);
+        let bytes = loaded.pixel_bytes();
         let mut state = self.lock_state()?;
         state.loads = state.loads.saturating_add(1);
         state.clock = state.clock.wrapping_add(1);
@@ -652,11 +1009,35 @@ impl AwConvolutionFunctionCache {
         validate_cache_axes(root, &entries)?;
         let inventory = inventory_from_entries(&entries);
         let identity = identity_from_entries(root, &entries, &inventory);
+        #[cfg(unix)]
+        let experimental_packed = env::var_os("CASA_RS_AWPROJECT_PACKED_CF_EXPERIMENT")
+            .map(PathBuf::from)
+            .map(|path| ExperimentalPackedCfStore::open(path, &entries, &identity))
+            .transpose()?
+            .map(Arc::new);
+        #[cfg(unix)]
+        let experimental_direct_sample_select =
+            env::var_os("CASA_RS_AWPROJECT_DIRECT_CF_SELECT_EXPERIMENT").is_some();
+        #[cfg(unix)]
+        if experimental_direct_sample_select {
+            eprintln!(
+                "awproject_experimental_direct_cf_select pairs={} frequencies={} wplanes={} mueller={} pa_bins={}",
+                inventory.paired_cells,
+                inventory.frequencies_hz.len(),
+                inventory.w_values_lambda.len(),
+                inventory.mueller_elements.len(),
+                inventory.parallactic_angles_deg.len(),
+            );
+        }
         Ok(Self {
             root: Arc::new(root.to_path_buf()),
             entries: Arc::new(entries),
             inventory,
             identity,
+            #[cfg(unix)]
+            experimental_direct_sample_select,
+            #[cfg(unix)]
+            experimental_packed,
         })
     }
 
@@ -774,6 +1155,30 @@ impl AwConvolutionFunctionCache {
         } else {
             15_i32.checked_sub(mueller_element)?
         };
+        #[cfg(unix)]
+        if self.experimental_direct_sample_select {
+            return self.select_key_for_sample_direct(
+                requested_cf_frequency_hz,
+                w_lambda,
+                selected_mueller_element,
+                parallactic_angle_deg,
+            );
+        }
+        self.select_key_for_sample_scanned(
+            requested_cf_frequency_hz,
+            w_lambda,
+            selected_mueller_element,
+            parallactic_angle_deg,
+        )
+    }
+
+    fn select_key_for_sample_scanned(
+        &self,
+        requested_cf_frequency_hz: f64,
+        w_lambda: f64,
+        selected_mueller_element: i32,
+        parallactic_angle_deg: f64,
+    ) -> Option<AwConvolutionFunctionKey> {
         let candidates = self
             .entries
             .values()
@@ -818,6 +1223,64 @@ impl AwConvolutionFunctionCache {
             .map(|entry| entry.key)
     }
 
+    #[cfg(unix)]
+    fn select_key_for_sample_direct(
+        &self,
+        requested_cf_frequency_hz: f64,
+        w_lambda: f64,
+        selected_mueller_element: i32,
+        parallactic_angle_deg: f64,
+    ) -> Option<AwConvolutionFunctionKey> {
+        if !self
+            .inventory
+            .mueller_elements
+            .contains(&selected_mueller_element)
+        {
+            return None;
+        }
+        let first = self.entries.values().next()?;
+        let w_values = &self.inventory.w_values_lambda;
+        let w_index = if w_values.len() <= 1 || first.imaging.w_increment == 0.0 {
+            0
+        } else {
+            (first.imaging.w_increment * w_lambda.abs())
+                .sqrt()
+                .round()
+                .clamp(0.0, (w_values.len() - 1) as f64) as usize
+        };
+        let frequency_hz =
+            self.inventory
+                .frequencies_hz
+                .iter()
+                .copied()
+                .min_by(|left, right| {
+                    (left - requested_cf_frequency_hz)
+                        .abs()
+                        .total_cmp(&(right - requested_cf_frequency_hz).abs())
+                        .then_with(|| left.to_bits().cmp(&right.to_bits()))
+                })?;
+        let parallactic_angle_deg = self
+            .inventory
+            .parallactic_angles_deg
+            .iter()
+            .copied()
+            .min_by(|left, right| {
+                circular_degrees(*left - parallactic_angle_deg)
+                    .abs()
+                    .total_cmp(&circular_degrees(*right - parallactic_angle_deg).abs())
+                    .then_with(|| left.to_bits().cmp(&right.to_bits()))
+            })?;
+        let key = AwConvolutionFunctionKey {
+            frequency_hz,
+            w_value_lambda: w_values[w_index],
+            mueller_element: selected_mueller_element,
+            parallactic_angle_deg,
+        };
+        self.entries
+            .get(&StableKey::from(key))
+            .map(|entry| entry.key)
+    }
+
     /// Load one exact paired CF cell without retaining its pixels in the cache.
     pub fn load(
         &self,
@@ -827,8 +1290,28 @@ impl AwConvolutionFunctionCache {
             .metadata(key)
             .cloned()
             .ok_or_else(|| cache_error(self.root(), format!("no exact CF cell for key {key:?}")))?;
-        let imaging = read_kernel_pixels(&metadata.imaging)?;
-        let weight = read_kernel_pixels(&metadata.weight)?;
+        #[cfg(unix)]
+        let stable = StableKey::from(key);
+        #[cfg(unix)]
+        let packed = self
+            .experimental_packed
+            .as_ref()
+            .map(|store| store.load(stable, &metadata))
+            .transpose()?;
+        #[cfg(unix)]
+        let (imaging, weight) = if let Some(packed) = packed {
+            packed
+        } else {
+            (
+                read_kernel_pixels(&metadata.imaging)?,
+                read_kernel_pixels(&metadata.weight)?,
+            )
+        };
+        #[cfg(not(unix))]
+        let (imaging, weight) = (
+            read_kernel_pixels(&metadata.imaging)?,
+            read_kernel_pixels(&metadata.weight)?,
+        );
         Ok(AwConvolutionFunctionCell {
             metadata,
             imaging,
@@ -1703,6 +2186,131 @@ mod tests {
             .unwrap();
         assert_eq!(conjugate.frequency_hz, 1.2e9);
         assert_eq!(conjugate.w_value_lambda, 2.0);
+        #[cfg(unix)]
+        {
+            let mut direct_cache = cache.clone();
+            direct_cache.experimental_direct_sample_select = true;
+            for sample_frequency_hz in [0.81e9, 1.1e9, 1.15e9, 1.19e9, 1.25e9] {
+                for w_lambda in [0.1, 1.9, 2.1, 20.0] {
+                    for conjugate_beams in [false, true] {
+                        assert_eq!(
+                            direct_cache.select_key_for_sample(
+                                sample_frequency_hz,
+                                1.0e9,
+                                w_lambda,
+                                0,
+                                31.0,
+                                conjugate_beams,
+                            ),
+                            cache.select_key_for_sample(
+                                sample_frequency_hz,
+                                1.0e9,
+                                w_lambda,
+                                0,
+                                31.0,
+                                conjugate_beams,
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn experimental_mapped_plane_uses_ndarray_storage_order() {
+        use std::io::Write as _;
+
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        let values = [
+            Complex32::new(0.0, 0.0),
+            Complex32::new(1.0, -1.0),
+            Complex32::new(10.0, -10.0),
+            Complex32::new(11.0, -11.0),
+            Complex32::new(20.0, -20.0),
+            Complex32::new(21.0, -21.0),
+        ];
+        let byte_count = std::mem::size_of_val(&values);
+        // SAFETY: `Complex32` is represented by two `f32` values and the
+        // temporary file is consumed by the same native process.
+        let bytes = unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), byte_count) };
+        file.write_all(bytes).unwrap();
+        file.as_file().sync_all().unwrap();
+        // SAFETY: the mapping remains alive through `file` for this test.
+        let map = unsafe { MmapOptions::new().map(file.as_file()).unwrap() };
+        let plane = ExperimentalMappedCfPlane {
+            map: Arc::new(map),
+            offset: 0,
+            shape: [2, 3],
+        };
+        assert_eq!(plane.get_pixel((0, 0)), Some(values[0]));
+        assert_eq!(plane.get_pixel((0, 1)), Some(values[1]));
+        assert_eq!(plane.get_pixel((1, 0)), Some(values[3]));
+        assert_eq!(plane.get_pixel((1, 2)), Some(values[5]));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn experimental_packed_cache_replays_exact_source_pixels() {
+        use std::io::Write as _;
+
+        let temp = TempDir::new().unwrap();
+        write_test_cell(temp.path(), "CFS_0_0_CF_0_0_0.im", 1.1e9, 0.0, false);
+        write_test_cell(temp.path(), "WTCFS_0_0_CF_0_0_0.im", 1.1e9, 0.0, true);
+        let cache = AwConvolutionFunctionCache::open(temp.path()).unwrap();
+        let packed_path = temp.path().join("cells.awcf");
+        let mut packed = File::create(&packed_path).unwrap();
+        packed.write_all(&EXPERIMENTAL_PACKED_CF_MAGIC).unwrap();
+        packed
+            .write_all(&cache.identity().metadata_fingerprint.to_le_bytes())
+            .unwrap();
+        packed
+            .write_all(&(cache.inventory().paired_cells as u64).to_le_bytes())
+            .unwrap();
+        for key in cache.keys() {
+            let cell = cache.load(key).unwrap();
+            for plane in [&cell.imaging, &cell.weight] {
+                let mut values = Vec::with_capacity(plane.len());
+                for x in 0..plane.shape()[0] {
+                    for y in 0..plane.shape()[1] {
+                        values.push(plane[(x, y)]);
+                    }
+                }
+                let byte_count = values.len() * std::mem::size_of::<Complex32>();
+                // SAFETY: matches the experiment format's native Complex32
+                // representation on the little-endian test host.
+                let bytes =
+                    unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), byte_count) };
+                packed.write_all(bytes).unwrap();
+            }
+        }
+        packed.sync_all().unwrap();
+        drop(packed);
+
+        let store =
+            ExperimentalPackedCfStore::open(packed_path, cache.entries.as_ref(), cache.identity())
+                .unwrap();
+        for (&stable, metadata) in cache.entries.iter() {
+            let direct = cache.load(stable.into()).unwrap();
+            let (imaging, weight) = store.load(stable, metadata).unwrap();
+            assert_eq!(imaging, direct.imaging);
+            assert_eq!(weight, direct.weight);
+            let mapped = store.mapped_cell(stable, metadata.clone()).unwrap();
+            for x in 0..metadata.imaging.shape[0] {
+                for y in 0..metadata.imaging.shape[1] {
+                    assert_eq!(
+                        mapped.imaging.get_pixel((x, y)),
+                        Some(direct.imaging[(x, y)])
+                    );
+                }
+            }
+            for x in 0..metadata.weight.shape[0] {
+                for y in 0..metadata.weight.shape[1] {
+                    assert_eq!(mapped.weight.get_pixel((x, y)), Some(direct.weight[(x, y)]));
+                }
+            }
+        }
     }
 
     #[test]
@@ -1744,6 +2352,33 @@ mod tests {
                 .mueller_element,
             0
         );
+        #[cfg(unix)]
+        {
+            let mut direct_cache = cache.clone();
+            direct_cache.experimental_direct_sample_select = true;
+            for w_lambda in [-1.0, 0.0, 1.0] {
+                for mueller_element in [0, 15] {
+                    assert_eq!(
+                        direct_cache.select_key_for_sample(
+                            1.1e9,
+                            1.1e9,
+                            w_lambda,
+                            mueller_element,
+                            30.0,
+                            false,
+                        ),
+                        cache.select_key_for_sample(
+                            1.1e9,
+                            1.1e9,
+                            w_lambda,
+                            mueller_element,
+                            30.0,
+                            false,
+                        ),
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -1970,12 +2605,14 @@ mod tests {
                     beam_frequency_hz: frequencies_hz[0],
                     primary_beam_model,
                     pointing_direction_rad: [0.0, 0.0],
+                    pointing_pixel_position: None,
                     sample_ranges: vec![VisibilitySampleRange { start: 0, end: 3 }],
                 },
                 GroupedVisibilityMetadata {
                     beam_frequency_hz: frequencies_hz[1],
                     primary_beam_model,
                     pointing_direction_rad: [1.5e-4, -1.0e-4],
+                    pointing_pixel_position: None,
                     sample_ranges: vec![VisibilitySampleRange { start: 3, end: 6 }],
                 },
             ],

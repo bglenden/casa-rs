@@ -38,6 +38,126 @@ fn measures_frame() -> MeasFrame {
     MeasFrame::new().with_measures(measures_runtime())
 }
 
+#[test]
+#[ignore = "VLASS metadata diagnosis only"]
+fn vlass_mfs_frequency_converter_lifecycle_probe() {
+    let frequency_hz = 4_012_000_000.0;
+    let direction_lon_rad = -2.746_631_494_525_407_1;
+    let direction_lat_rad = 0.295_309_709_400_346_68;
+    let epoch_mjd = 5_060_832_843.375 / SECONDS_PER_DAY;
+    let observatory_lon_rad = -1.878_288_434_411_257_6;
+    let observatory_lat_rad = 0.594_787_741_027_755_8;
+    let observatory_height_m = 2_118.614_142_014_556_4;
+    let initial_direction_lon_rad = -2.743_916_984_344_138_7;
+    let initial_direction_lat_rad = 0.291_120_919_200_755_9;
+    let initial_epoch_mjd = 5_060_832_436.125 / SECONDS_PER_DAY;
+    let selected_initial_epoch_mjd = 5_060_832_454.125 / SECONDS_PER_DAY;
+
+    for (name, result) in [
+        (
+            "direct",
+            MeasuresOracle::frequency_convert(
+                frequency_hz,
+                "TOPO",
+                "LSRK",
+                direction_lon_rad,
+                direction_lat_rad,
+                "J2000",
+                epoch_mjd,
+                observatory_lon_rad,
+                observatory_lat_rad,
+                observatory_height_m,
+            ),
+        ),
+        (
+            "model",
+            MeasuresOracle::frequency_convert_via_model(
+                frequency_hz,
+                "TOPO",
+                "LSRK",
+                direction_lon_rad,
+                direction_lat_rad,
+                "J2000",
+                epoch_mjd,
+                observatory_lon_rad,
+                observatory_lat_rad,
+                observatory_height_m,
+            ),
+        ),
+        (
+            "mutated-model",
+            MeasuresOracle::frequency_convert_via_mutated_model(
+                frequency_hz,
+                "TOPO",
+                "LSRK",
+                direction_lon_rad,
+                direction_lat_rad,
+                "J2000",
+                epoch_mjd,
+                observatory_lon_rad,
+                observatory_lat_rad,
+                observatory_height_m,
+            ),
+        ),
+        (
+            "casa-msutil-reset-frame",
+            MeasuresOracle::frequency_convert_via_reset_frame(
+                frequency_hz,
+                "TOPO",
+                "LSRK",
+                initial_direction_lon_rad,
+                initial_direction_lat_rad,
+                initial_epoch_mjd,
+                direction_lon_rad,
+                direction_lat_rad,
+                epoch_mjd,
+                "J2000",
+                observatory_lon_rad,
+                observatory_lat_rad,
+                observatory_height_m,
+            ),
+        ),
+        (
+            "casa-msutil-scalar-field",
+            MeasuresOracle::frequency_convert_via_reset_frame(
+                frequency_hz,
+                "TOPO",
+                "LSRK",
+                direction_lon_rad,
+                direction_lat_rad,
+                initial_epoch_mjd,
+                direction_lon_rad,
+                direction_lat_rad,
+                epoch_mjd,
+                "J2000",
+                observatory_lon_rad,
+                observatory_lat_rad,
+                observatory_height_m,
+            ),
+        ),
+        (
+            "casa-msutil-selected-scalar-field",
+            MeasuresOracle::frequency_convert_via_reset_frame(
+                frequency_hz,
+                "TOPO",
+                "LSRK",
+                direction_lon_rad,
+                direction_lat_rad,
+                selected_initial_epoch_mjd,
+                direction_lon_rad,
+                direction_lat_rad,
+                epoch_mjd,
+                "J2000",
+                observatory_lon_rad,
+                observatory_lat_rad,
+                observatory_height_m,
+            ),
+        ),
+    ] {
+        eprintln!("{name}={:.17e}", result.unwrap());
+    }
+}
+
 fn close(a: f64, b: f64, tol: f64) -> bool {
     (a - b).abs() < tol
 }

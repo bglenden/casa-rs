@@ -601,6 +601,13 @@ pub struct GroupedVisibilityMetadata {
     pub primary_beam_model: PrimaryBeamModel,
     /// Beam-center direction `[ra, dec]` in radians for this group.
     pub pointing_direction_rad: [f64; 2],
+    /// Exact image pixel used by CASA to construct the AW pointing phase
+    /// gradient, when the upstream grouping algorithm exposes it.
+    ///
+    /// The direction remains authoritative for primary-beam evaluation. This
+    /// pixel avoids losing the observable float32 group mean through a
+    /// pixel-to-direction-to-pixel round trip.
+    pub pointing_pixel_position: Option<[f64; 2]>,
     /// Contiguous sample ranges in the aligned visibility batch.
     pub sample_ranges: Vec<VisibilitySampleRange>,
 }
@@ -637,6 +644,14 @@ impl GroupedVisibilityMetadataBatch {
                 return Err(ImagingError::InvalidRequest(
                     "grouped visibility metadata pointing directions must be finite radians"
                         .to_string(),
+                ));
+            }
+            if group
+                .pointing_pixel_position
+                .is_some_and(|pixel| !(pixel[0].is_finite() && pixel[1].is_finite()))
+            {
+                return Err(ImagingError::InvalidRequest(
+                    "grouped visibility metadata pointing pixels must be finite".to_string(),
                 ));
             }
             for range in &group.sample_ranges {

@@ -8221,7 +8221,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 5,
+      "contract_version": 6,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -12632,6 +12632,49 @@
           }
         },
         {
+          "name": "standard_mfs_grid_threads",
+          "concept": {
+            "id": "parameter.standard_mfs_grid_threads",
+            "semantic_revision": 1
+          },
+          "order": 89,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "auto"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "surface_note": "auto delegates to the resource-adaptive execution planner; a positive integer is an explicit override.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--standard-mfs-grid-threads"
+              ],
+              "metavar": "AUTO|N"
+            },
+            "provider": {
+              "field": "standard_mfs_grid_threads",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "standard_mfs_grid_threads"
+            },
+            "presentation": {
+              "label": "Grid Workers",
+              "group": "Execution Resources",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
           "name": "projection",
           "concept": {
             "id": "parameter.projection",
@@ -12704,6 +12747,12 @@
               "to": "stokes"
             }
           ],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 5,
+          "to_contract": 6,
+          "steps": [],
           "changed_defaults": []
         }
       ]

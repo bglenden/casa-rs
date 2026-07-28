@@ -364,6 +364,11 @@ impl MeasFrame {
         Ok(value)
     }
 
+    pub(crate) fn with_cached_earth_velocity_ms(self, velocity_ms: [f64; 3]) -> Self {
+        *self.cache.earth_velocity_ms.lock().unwrap() = Some(velocity_ms);
+        self
+    }
+
     pub(crate) fn cached_direction_j2000<F>(&self, compute: F) -> Result<[f64; 3], MeasureError>
     where
         F: FnOnce() -> Result<[f64; 3], MeasureError>,
