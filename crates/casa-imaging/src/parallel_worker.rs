@@ -388,6 +388,10 @@ mod tests {
             topology_parallel_worker_candidates(8, None),
             vec![1, 3, 6, 8]
         );
+        assert_eq!(
+            topology_parallel_worker_candidates(8, Some(4)),
+            vec![4, 5, 7, 8]
+        );
         assert_eq!(topology_parallel_worker_candidates(1, Some(1)), vec![1]);
     }
 
@@ -501,6 +505,22 @@ mod tests {
                 .0
                 .workers,
             7
+        );
+        let broad_mini_overlap = (4..=8)
+            .map(|workers| super::ParallelWorkerCandidateScore {
+                workers,
+                mean_elapsed_ns: 700,
+                interval_min_score: 8_000,
+                interval_max_score: 10_000,
+                combined_score: 9_000,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            choose_parallel_worker_with_topology_prior(&broad_mini_overlap, Some(4), 8)
+                .unwrap()
+                .0
+                .workers,
+            6
         );
 
         let four_window_small_sample = [
