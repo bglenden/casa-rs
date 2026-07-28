@@ -862,6 +862,9 @@ def build_plan(
                 else bool_value(run, "stream_log", False)
             ),
             "profile_repeats": int(profile_repeats),
+            "preverified_warm_cache": bool_value(
+                run, "preverified_warm_cache", False
+            ),
             "warmups": warmups,
             "cf_cache_role": cf_cache_role,
             "evidence_role": str_value(run, "evidence_role", "benchmark"),

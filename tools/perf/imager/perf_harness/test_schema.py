@@ -42,16 +42,21 @@ ALTERNATING_RESULT = (
 VLASS_WORKLOADS = {
     "vlass-fragment-single-field.json",
     "vlass-fragment-single-field-auto.json",
+    "vlass-fragment-single-field-clean-casa.json",
+    "vlass-fragment-single-field-clean-serial.json",
     "vlass-fragment-single-field-cold.json",
     "vlass-fragment-all-fields.json",
     "vlass-fragment-all-fields-auto.json",
+    "vlass-fragment-all-fields-clean-casa.json",
     "vlass-fragment-all-fields-cold.json",
     "vlass-fragment-smoke-cold.json",
     "vlass-fragment-smoke-warm.json",
 }
 VLASS_CASA_ONLY_WORKLOADS = {
     "vlass-fragment-single-field-cold.json",
+    "vlass-fragment-single-field-clean-casa.json",
     "vlass-fragment-all-fields-cold.json",
+    "vlass-fragment-all-fields-clean-casa.json",
     "vlass-fragment-smoke-cold.json",
     "vlass-fragment-smoke-warm.json",
 }
@@ -870,6 +875,13 @@ class SchemaTests(unittest.TestCase):
                 "product_inventory": None,
                 "structured_difference_review": None,
                 "tolerances": None,
+                "comparisons": [
+                    {
+                        "status": "failed_validation",
+                        "reason": "non-finite source-region beam area",
+                        "products": {},
+                    }
+                ],
             }
 
             self.assertEqual(
@@ -942,29 +954,29 @@ class SchemaTests(unittest.TestCase):
             self.assertEqual(0.0, manifest["imaging"]["pointingoffsetsigdev"])
             self.assertTrue(manifest["comparison"]["require_exact_product_inventory"])
             self.assertTrue(manifest["comparison"]["require_metadata_parity"])
-            self.assertEqual(
-                {
-                    ".alpha",
-                    ".alpha.error",
-                    ".image.tt0",
-                    ".image.tt1",
-                    ".model.tt0",
-                    ".model.tt1",
-                    ".pb.tt0",
-                    ".psf.tt0",
-                    ".psf.tt1",
-                    ".psf.tt2",
-                    ".residual.tt0",
-                    ".residual.tt1",
-                    ".sumwt.tt0",
-                    ".sumwt.tt1",
-                    ".sumwt.tt2",
-                    ".weight.tt0",
-                    ".weight.tt1",
-                    ".weight.tt2",
-                },
-                set(manifest["comparison"]["products"]),
-            )
+            expected_products = {
+                ".alpha",
+                ".alpha.error",
+                ".image.tt0",
+                ".image.tt1",
+                ".model.tt0",
+                ".model.tt1",
+                ".pb.tt0",
+                ".psf.tt0",
+                ".psf.tt1",
+                ".psf.tt2",
+                ".residual.tt0",
+                ".residual.tt1",
+                ".sumwt.tt0",
+                ".sumwt.tt1",
+                ".sumwt.tt2",
+                ".weight.tt0",
+                ".weight.tt1",
+                ".weight.tt2",
+            }
+            if manifest["imaging"]["mode"] == "clean":
+                expected_products.add(".mask")
+            self.assertEqual(expected_products, set(manifest["comparison"]["products"]))
 
         self.assertEqual(
             "1525", loaded["vlass-fragment-single-field.json"]["imaging"]["field"]
@@ -973,6 +985,28 @@ class SchemaTests(unittest.TestCase):
             "1107~1127,1512~1532,1542~1562",
             loaded["vlass-fragment-all-fields.json"]["imaging"]["field"],
         )
+        for stem in ("single-field", "all-fields"):
+            clean = loaded[f"vlass-fragment-{stem}-clean-casa.json"]
+            self.assertEqual("clean", clean["imaging"]["mode"])
+            self.assertEqual(2000, clean["imaging"]["niter"])
+            self.assertEqual("user", clean["imaging"]["usemask"])
+            expected_mask_sha256 = (
+                "fabf361e6609a4d66c251458c2ed31bc80978d936e78a39a8f449bd1a63dc322"
+                if stem == "single-field"
+                else "a68722a8bcb3afe2181b5a2f5e012010cfccd9f5fcdde75e733f56eb97c1b0a9"
+            )
+            self.assertEqual(
+                expected_mask_sha256,
+                clean["imaging"]["mask_sha256"],
+            )
+            self.assertEqual(
+                ("warm", 0, True),
+                (
+                    clean["run"]["cf_cache_role"],
+                    clean["run"]["warmups"],
+                    clean["run"]["preverified_warm_cache"],
+                ),
+            )
         self.assertEqual(
             ("cold", 0),
             (
@@ -1106,10 +1140,32 @@ class SchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "warm requires run.warmups >= 1"):
             validate_workload_manifest(no_warmup)
 
+        preverified = copy.deepcopy(no_warmup)
+        preverified["run"]["preverified_warm_cache"] = True
+        validate_workload_manifest(preverified)
+
+        preverified_with_warmup = copy.deepcopy(workload)
+        preverified_with_warmup["run"]["preverified_warm_cache"] = True
+        with self.assertRaisesRegex(
+            ContractError, "preverified_warm_cache=true requires run.warmups=0"
+        ):
+            validate_workload_manifest(preverified_with_warmup)
+
         cold_with_warmup = copy.deepcopy(workload)
         cold_with_warmup["run"] = {"cf_cache_role": "cold", "warmups": 1}
         with self.assertRaisesRegex(ContractError, "cold requires run.warmups=0"):
             validate_workload_manifest(cold_with_warmup)
+
+        cold_preverified = copy.deepcopy(workload)
+        cold_preverified["run"] = {
+            "cf_cache_role": "cold",
+            "warmups": 0,
+            "preverified_warm_cache": True,
+        }
+        with self.assertRaisesRegex(
+            ContractError, "preverified_warm_cache=true requires run.cf_cache_role=warm"
+        ):
+            validate_workload_manifest(cold_preverified)
 
         invalid_role = copy.deepcopy(workload)
         invalid_role["run"] = {"cf_cache_role": "ambient", "warmups": 0}

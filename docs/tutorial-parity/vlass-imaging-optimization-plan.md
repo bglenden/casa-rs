@@ -2302,6 +2302,36 @@ the code was removed. Its interrupted receipt is
 `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260728T035859Z-vlass-fragment-all-fields-four-spw-fftw-f64-experiment-29a13398.json`
 (`5a953169f3caac7a28ef4287e38738767114a91a6c9e94894e63036f6aef831c`).
 
+### Deterministic-clean fiducials
+
+Clean parity uses one checksum-bound 64 by 64 pixel user-mask box per workload,
+derived from that workload's accepted dirty image. The all-fields patch mask
+selects inclusive pixels `[6243,6003]` through `[6306,6066]` and has stable
+tree digest
+`a68722a8bcb3afe2181b5a2f5e012010cfccd9f5fcdde75e733f56eb97c1b0a9`.
+The single-field image's strongest residual is instead at `[4633,6183]`, so
+its mask selects `[4602,6152]` through `[4665,6215]` and has digest
+`fabf361e6609a4d66c251458c2ed31bc80978d936e78a39a8f449bd1a63dc322`.
+Both masks have the full `[12150,12150,1,1]` CASA-image geometry, exactly 4,096
+one-valued pixels, and zeros elsewhere.
+
+The first single-field probe intentionally tested the all-fields box before
+changing the contract. CASA measured a `0.0306417` Jy/beam full-image peak but
+only `0.00127664` Jy/beam inside that box, below the `0.00221293` Jy/beam
+five-sigma threshold, and therefore restored an empty model after no minor
+iterations. Its tclean call took `282.277905` seconds. That run is rejected as
+a clean fiducial, but its evidence is preserved at
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260728T041618Z-vlass-fragment-single-field-clean-casa-7d4fb8c5.json`.
+It also exposed a receipt-closeout defect: an unversioned comparator validation
+failure was decorated with successful-protocol metadata and then reported as
+an internal schema error. Live comparator validation failures now close to the
+strict `status`/`reason`/empty-products terminal shape instead.
+
+The clean manifests bind a verified warm CF cache but deliberately omit a
+redundant clean warmup. The new `run.preverified_warm_cache=true` contract is
+valid only with `cf_cache_role=warm` and `warmups=0`; cold roles or an
+additional warmup fail schema validation.
+
 Production `auto` now has the required dirty full-band
 correctness/performance evidence, but remains experiment-gated pending Brian's
 explicit incorporation approval. The exact restoring-beam defect remains a
@@ -2419,10 +2449,11 @@ These are reviewed manifest fields, not sweep knobs. Recipe-backed workloads
 reject `--set-imaging` and nonempty `run.env`; a proposed variant requires a
 separately reviewed non-fiducial manifest rather than mutating frozen evidence.
 
-Before clean parity begins, create one deterministic explicit CASA mask from
-the accepted dirty fiducial, preserve it by checksum, and use that identical
-mask for CASA and casa-rs. The resulting clean is a new reproducible fiducial;
-it is not described as a reconstruction of undocumented interactive choices.
+Before clean parity begins, create a deterministic explicit CASA mask from
+each workload's accepted dirty fiducial, preserve it by checksum, and use the
+same workload-specific mask for CASA and casa-rs. The resulting cleans are new
+reproducible fiducials; they are not described as reconstructions of
+undocumented interactive choices.
 
 ## Evidence Tiers
 
