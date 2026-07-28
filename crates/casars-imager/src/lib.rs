@@ -36753,11 +36753,10 @@ fn standard_mfs_worker_planner_experiment_enabled() -> bool {
 }
 
 fn standard_mfs_grid_workers_requested_auto(config: &CliConfig) -> bool {
-    config.imaging_prepare_workers.is_none()
-        && config
-            .standard_mfs_grid_threads
-            .as_deref()
-            .is_none_or(|value| value.trim().eq_ignore_ascii_case("auto"))
+    config
+        .standard_mfs_grid_threads
+        .as_deref()
+        .is_none_or(|value| value.trim().eq_ignore_ascii_case("auto"))
 }
 
 fn standard_mfs_parallel_worker_calibration_request(
@@ -55681,6 +55680,21 @@ mod tests {
             standard_mfs_density_prepare_threads_for_config(&config, 4),
             4
         );
+    }
+
+    #[test]
+    fn grid_worker_auto_selection_is_independent_of_prepare_workers() {
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imaging_prepare_workers = Some(1);
+
+        assert!(standard_mfs_grid_workers_requested_auto(&config));
+
+        config.standard_mfs_grid_threads = Some("auto".to_string());
+        assert!(standard_mfs_grid_workers_requested_auto(&config));
+
+        config.standard_mfs_grid_threads = Some("6".to_string());
+        assert!(!standard_mfs_grid_workers_requested_auto(&config));
     }
 
     #[test]

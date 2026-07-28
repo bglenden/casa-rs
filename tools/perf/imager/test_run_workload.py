@@ -1785,6 +1785,33 @@ image_product_write suffix=.image.pbcor role=image.pbcor shape=1024x1024x1x1 ele
             summary["image_product_write_shape_by_suffix"],
         )
 
+    def test_parallel_worker_plan_is_retained_in_backend_receipt(self) -> None:
+        parsed = run_workload.parse_backend_plan_logs(
+            "standard_mfs_parallel_worker_plan requested=auto resolved=6 "
+            "source=auto-calibrated hard_cap=10 candidates=4,6,8,10 "
+            "topology_high_capacity_boundary=4 calibration_tasks=32 "
+            "calibration_elapsed_ms=987.500 "
+            "scores=4:1.20,6:1.00,8:1.15,10:1.30\n"
+        )
+
+        self.assertEqual(1, len(parsed["standard_mfs_parallel_worker_plan"]))
+        summary = parsed["summary"]
+        self.assertEqual(6, summary["resolved_parallel_workers"])
+        self.assertEqual("auto-calibrated", summary["parallel_worker_plan_source"])
+        self.assertEqual(10, summary["parallel_worker_plan_hard_cap"])
+        self.assertEqual("4,6,8,10", summary["parallel_worker_plan_candidates"])
+        self.assertEqual(
+            4, summary["parallel_worker_plan_topology_high_capacity_boundary"]
+        )
+        self.assertEqual(32, summary["parallel_worker_plan_calibration_tasks"])
+        self.assertEqual(
+            987.5, summary["parallel_worker_plan_calibration_elapsed_ms"]
+        )
+        self.assertEqual(
+            "4:1.20,6:1.00,8:1.15,10:1.30",
+            summary["parallel_worker_plan_scores"],
+        )
+
     def test_mosaic_resident_product_diagnostic_is_parsed(self) -> None:
         buckets = run_workload.parse_backend_plan_logs(
             "mosaic_dirty_product_gpu_resident products=1 "

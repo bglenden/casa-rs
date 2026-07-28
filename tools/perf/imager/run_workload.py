@@ -1382,6 +1382,7 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
     buckets = {
         "single_plane_execution_plan": [],
         "standard_mfs_runtime_plan": [],
+        "standard_mfs_parallel_worker_plan": [],
         "source_stream_memory_plan": [],
         "imaging_source_read_ahead": [],
         "standard_mfs_source_read_ahead": [],
@@ -1428,6 +1429,8 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["single_plane_execution_plan"].append(parsed)
         elif name == "standard_mfs_runtime_plan":
             buckets["standard_mfs_runtime_plan"].append(parsed)
+        elif name == "standard_mfs_parallel_worker_plan":
+            buckets["standard_mfs_parallel_worker_plan"].append(parsed)
         elif name == "standard_mfs_memory_plan_actual":
             buckets["source_stream_memory_plan"].append(parsed)
         elif name == "imaging_source_read_ahead_summary":
@@ -1596,6 +1599,9 @@ def summarize_backend_plan_logs(
     buckets: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any]:
     runtime = last_fields(buckets.get("standard_mfs_runtime_plan", []))
+    parallel_worker_plan = last_fields(
+        buckets.get("standard_mfs_parallel_worker_plan", [])
+    )
     memory = last_fields(buckets.get("source_stream_memory_plan", []))
     source_read_ahead_entries = unique_entries_by_raw(
         buckets.get("imaging_source_read_ahead", [])
@@ -1734,6 +1740,21 @@ def summarize_backend_plan_logs(
         "resolved_auto_metal": runtime.get("auto_metal"),
         "resolved_auto_metal_reason": runtime.get("auto_metal_reason"),
         "resolved_grid_threads": runtime.get("grid_threads"),
+        "resolved_parallel_workers": parallel_worker_plan.get("resolved"),
+        "parallel_worker_plan_source": parallel_worker_plan.get("source"),
+        "parallel_worker_plan_hard_cap": parallel_worker_plan.get("hard_cap"),
+        "parallel_worker_plan_candidates": parallel_worker_plan.get("candidates"),
+        "parallel_worker_plan_topology_high_capacity_boundary": parallel_worker_plan.get(
+            "topology_high_capacity_boundary"
+        ),
+        "parallel_worker_plan_calibration_tasks": parallel_worker_plan.get(
+            "calibration_tasks"
+        ),
+        "parallel_worker_plan_calibration_elapsed_ms": parallel_worker_plan.get(
+            "calibration_elapsed_ms"
+        ),
+        "parallel_worker_plan_scores": parallel_worker_plan.get("scores"),
+        "parallel_worker_plan_reason": parallel_worker_plan.get("reason"),
         "resolved_tile_anchor": runtime.get("tile_anchor"),
         "resolved_residual_backend": runtime.get("residual_backend"),
         "resolved_initial_dirty_backend": runtime.get("initial_dirty_backend"),
