@@ -1,7 +1,7 @@
 # VLASS Fragment Imaging Correctness And Performance Plan
 
 Truth class: approved execution contract
-Last reality check: 2026-07-26
+Last reality check: 2026-07-27
 Verification: `just docs-check`
 
 WDAD scope:
@@ -92,6 +92,61 @@ Brian's approval. Rejected experiments remain explicitly non-fiducial and
 cannot weaken the frozen correctness or final performance gates. Destructive
 actions and changes outside this approved VLASS wave remain governed by the
 normal repository contract.
+
+### Iteration And Promotion Ladder
+
+Brian redirected the wave's iteration strategy on 2026-07-27 without changing
+its approved scope or acceptance criteria. Full-size `12,150`-square clean
+runs are no longer development-turnaround rows. They are reserved for
+promoted final candidates after the reduced real-VLASS gates below pass.
+Existing full-size dirty evidence and frozen products remain authoritative;
+this redirection does not replace or weaken any final laptop gate.
+
+The normal single-field clean correctness and performance gate is the real
+VLASS field-1525 workload at `4,096` by `4,096`, using SPWs `2,7,12,17` and all
+64 channels from each SPW. It retains the production recipe rather than a
+simplified proxy:
+
+- CASA AWProject with 32 W planes, A term, wideband A projection, conjugate
+  beams, and the CASA CF cache;
+- real POINTING resolution, Briggs weighting with robust `1.0`, and the
+  existing UV and intent selection;
+- MT-MFS with `nterms=2`, scales `[0,5,12]`, the checksum-bound deterministic
+  mask, `niter=2000`, `gain=0.1`, `nsigma=5.0`, and the frozen major/minor-cycle
+  controls; and
+- the exact 19-product numerical, topology, metadata, and inventory comparison
+  contract, including mask, PB, PSF, residual, model, restored image, Taylor
+  weight/sum-weight, alpha, and alpha-error products.
+
+Smaller diagnostic rows may be used only to isolate one semantic boundary.
+They cannot promote an implementation. Each reduced CASA oracle is generated
+once, checksum-bound, and frozen. An unchanged CASA reduced case must be
+reused, not rerun for timing repetition or convenience.
+
+Promotion proceeds in this order:
+
+1. Make the `4,096`-square four-SPW single-field clean row correct and fast.
+2. Validate a `4,096`-square full-16-SPW single-field row against its one-time
+   frozen CASA oracle.
+3. Run the frozen `12,150`-square 16-SPW single-field dirty and clean final
+   rows on the acceptance laptop only after the implementation is a promoted
+   candidate.
+4. Apply the same four-SPW, then 16-SPW, then final-size progression to the
+   all-fields workload without reducing its 63 FIELD IDs, POINTING rows, or
+   mosaic behavior.
+
+Every promotion requires CASA-equivalent multiscale component selection and
+major-cycle residual behavior with no iteration divergence; every numerical,
+mask/topology, metadata, product-inventory, and protocol-integrity gate green;
+bounded planner-accounted memory; and credible end-to-end stage timings.
+Performance-only wins, matched final peaks with divergent component histories,
+or partial product comparisons do not promote.
+
+The final acceptance contract remains unchanged: single-field and all-fields,
+dirty and deterministic clean, at the frozen `12,150` by `12,150` 16-SPW
+geometry; full CASA correctness for every required product; and an independent
+minimum 10x speedup for each final row on the acceptance laptop. Reduced rows
+are development evidence only.
 
 ### 2026-07-22 Mac Mini Continuation
 
@@ -2852,9 +2907,407 @@ The same commit removes an MT-MFS frontend early return that bypassed the
 already-shared clean-mask product writer. The `mask-image` and `mask-box`
 parameters now produce the required `.mask` product for MT-MFS as they already
 did for the other imaging families. Focused selector, synthetic AW clean, and
-MT-MFS product-inventory tests pass. Full `12,150`-pixel serial clean parity
-remains the next correctness gate; the reduced diagnostic is not acceptance
-evidence.
+MT-MFS product-inventory tests pass. Full `12,150`-pixel serial clean parity is
+no longer the development-turnaround gate. The exact `4,096`-pixel, four-SPW,
+2,000-iteration, 19-product row in the promotion ladder above is the next
+correctness and performance checkpoint; the one-component diagnostic is not
+promotion evidence.
+
+### 2026-07-28 Reduced four-SPW clean checkpoint
+
+The one-time CASA oracle for the exact `4,096`-square, SPW `2,7,12,17`,
+field-1525 clean row is frozen at
+`/Volumes/Extra Storage (not encrypted)/SoftwareProjects/casa-rs-vlass/issue-446/casa-reduced-clean/4096-four-spw/casa`.
+It completed the requested 2,000 iterations in 171 clean cycles and
+`3,631.809729` seconds. Its 19-product inventory and deterministic mask are the
+reused reduced-row reference; this CASA case must not be rerun unless the
+workload contract changes.
+
+The current serial casa-rs experiment reused that oracle and completed the
+same 171 cycles and 2,000 reported iterations in `2,296.570` seconds, or
+`1.581x` faster than CASA. The cycle comparator aligned all 171 CASA and
+casa-rs cycles with zero discrete component-selection mismatches. Its maximum
+start-peak relative difference was `1.1614901342752731e-4`, and its maximum
+model-flux relative difference was `2.2714348118055995e-5`. The exact final
+refresh reported a `0.008116511 Jy/beam` peak and `0.016844304 Jy` TT0 model
+flux. The planner admitted `5,236,080,499` bytes, and live RSS samples stayed
+at or below approximately `4.24 GiB`, below the 16 GiB development target.
+
+The full-array comparator found the exact 19 products with matched metadata,
+no extra or missing products, and every ordinary numerical ceiling green.
+This is not yet a promotion pass. `.alpha` and `.alpha.error` differ in mask
+topology at 52 threshold-boundary pixels. `.image.tt0`, `.image.tt1`,
+`.residual.tt0`, and `.residual.tt1` have numerically small differences but
+retain `investigate` structured-difference labels rather than the required
+`good`; their normalized difference RMS values are
+`2.592666619709721e-5`, `2.6050960724245685e-5`,
+`2.1406558266903393e-5`, and `2.344370703471681e-5`, respectively. The alpha
+topology mismatch is a consequence of image-TT0 differences of only a few
+times `1e-8` around CASA's approximately `0.00127781 Jy/beam` spectral-index
+threshold, but the frozen exact-topology gate remains authoritative.
+
+The dominant measured runtime owner is repeated AW residual replay. The 171
+residual refreshes consumed `1,343.239` seconds, averaging `7.855` seconds.
+Across the initial and residual passes, compact AW replay spent `758.165`
+seconds rematerializing taps, including `585.542` seconds loading CF cells and
+`170.182` seconds packing taps; sample planning consumed `215.261` seconds,
+grid updates `327.645` seconds, and prepared-sample construction `38.282`
+seconds. The final cache counters record 143,926 loads, only 48 hits, and
+143,867 evictions. The next correctness diagnostic therefore isolates the
+zero-model dirty operator, while the next performance experiment targets
+planner-bounded reuse of invariant source-order tap geometry. Neither can
+promote until the exact 2,000-iteration row is rerun after a material source
+change and all topology and structured-difference gates pass.
+
+The immutable casa-rs receipt is
+`/Volumes/Extra Storage (not encrypted)/SoftwareProjects/casa-rs-vlass/issue-446/receipts/runs/20260728-vlass-4096-four-spw-clean-current/20260728T210052Z-vlass-fragment-single-field-clean-4096-four-spw-dense-rhs-control-248d16c8.json`;
+the adjacent full comparison and major-cycle trace JSON files preserve the
+product and iteration evidence. No CASA computation was repeated.
+
+The corresponding zero-model diagnostic confirms that the dirty operator is
+not the remaining clean-parity owner. Its full 19-product comparison has
+matched topology, and the normalized difference RMS of the image and residual
+Taylor terms is approximately `8.6e-8` to `9.7e-8`. Replaying the current
+casa-rs model against CASA instead exposes a small, coherent prediction
+difference: the TT0 and TT1 model-response terms have relative L2 differences
+of `3.78283e-6` and `3.59685e-6`, with correlation greater than
+`0.99999999999`. A same-input CASA-cleaner sandwich differs by only
+`1.91e-7` for TT0 and `2.63e-7` for TT1. The remaining correctness
+investigation therefore stays on model preparation and AW `GridToData`
+arithmetic rather than component selection or dirty gridding. A new exact
+2,000-iteration row is not warranted until that path changes materially.
+
+### 2026-07-28 Adaptive compact-replay checkpoint
+
+The compact replay cache now retains only model-independent source-order sample
+plans and packed AW tap bundles. Residual visibilities are still recomputed
+from the current model on every major cycle. Retention is planner-bounded and
+adaptive within each stream block: a block may retain a source-order prefix
+when its next materialization window exceeds the remaining arena, then compute
+only the uncached tail. Replay validates block shape, source endpoints, and
+cursor order before using retained state.
+
+Focused synthetic MT-MFS coverage is bit-for-bit identical to uncached replay.
+A deliberately constrained two-window case retains a `27,136`-byte block and
+reduces CF loads from 36 to 28; a full-fit case reduces them from 24 to 16.
+The bounded planner test also confirms that the two adaptive arenas remain
+inside the admitted memory and headroom limits.
+
+The real 4,096-square four-SPW diagnostic used six one-iteration major cycles
+without invoking CASA. The planner admitted `2,190,082,048` bytes for replay
+retention, and the four SPW blocks occupied `1,722,755,064` bytes after the
+first fill, with no partial or rejected blocks. The first residual refresh
+took `6.791` seconds; the next five took `2.102885`, `2.103436`, `2.089087`,
+`2.097913`, and `2.100646` seconds. CF loads stopped at 1,126 after the fill
+while replay-cache hits grew to 20 and misses remained at four. End-to-end
+runtime was `66.03` seconds and all 19 products were written.
+
+This is a performance checkpoint, not promotion evidence: it intentionally had
+no CASA comparison and only six clean iterations. Relative to the prior
+`7.855`-second average refresh, the steady-state residual stage is about
+`3.74x` faster while retaining bounded memory and exact source order. Its
+receipt is
+`/Volumes/Extra Storage (not encrypted)/SoftwareProjects/casa-rs-vlass/issue-446/receipts/runs/20260728-vlass-4096-four-spw-replay-cache-adaptive-niter6/20260728T225337Z-vlass-fragment-single-field-clean-4096-four-spw-dense-rhs-control-25a8a57d.json`.
+The exact 2,000-iteration promotion row remains blocked on the model-prediction
+difference above; replay retention does not alter its numerical path.
+
+### 2026-07-29 Reduced deconvolution-parity breakthrough
+
+The six-cycle diagnostic has now removed the model-prediction divergence from
+the production defaults. Instrumentation against the archived CASA trace
+identified three distinct rounding contracts in CASA's AW prediction path:
+
+- model images are transformed as complex f32 with FFTW using casacore's
+  first-axis-contiguous physical layout;
+- AW PSF normalization applies CASA's scale and narrowing order; and
+- `BaselineType::findAntennaGroups` adds its double-precision POINTING input to
+  a float accumulator, narrowing after each addition rather than before it.
+
+The combined production path exactly reproduces the CASA diagnostic control
+flow: initial masked peak `0.03540397`, six accepted component updates, TT0
+model flux `0.015148571`, and refreshed masked peak `0.013047275`. A rebuilt
+binary run with no hidden CASA-arithmetic experiment variables then passed the
+frozen 19-product comparator. Inventory, topology, coordinate metadata, masks,
+and every numerical gate are green. The worst normalized difference RMS among
+the image and residual Taylor terms is `2.9412836224643946e-7` (about
+`0.294 ppm`); `.image.tt0`, `.image.tt1`, `.residual.tt0`, and
+`.residual.tt1` are all classified `good`.
+
+The immutable comparison receipt is
+`/Volumes/Extra Storage (not encrypted)/SoftwareProjects/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-production-default-niter6.comparison.json`;
+the corresponding no-hidden-flags run log is
+`/Volumes/Extra Storage (not encrypted)/SoftwareProjects/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-production-default-niter6-v6.log`.
+It completed in `30.321` seconds. This supersedes the prior statement that the
+2,000-iteration row was blocked on model prediction.
+
+The production resource contract now carries the role-specific implementation
+explicitly. The execution planner reports the casacore layout, selects f32
+FFTW when the configured runtime supports it with a portable RustFFT fallback,
+assigns a system- or user-bounded FFT thread ceiling, and charges one
+image-sized `Complex32` transpose buffer to the major cycle. The global dirty
+product FFT selection remains independent. The exact 4,096-square,
+four-SPW, 2,000-iteration run is now the next promotion gate; the six-cycle
+diagnostic remains diagnostic evidence only.
+
+### 2026-07-29 Reduced 2,000-iteration promotion result
+
+The production-default 4,096-square four-SPW row completed all 2,000 requested
+iterations in the same 171 major cycles as CASA. Cycle starts, ends, and update
+counts match exactly; there is no component-selection or major-cycle control-
+flow divergence. The maximum cycle-start peak difference is `24.73 ppm`, and
+the maximum accumulated model-flux difference is `13.19 ppm`. The run consumed
+`1,386.916` seconds on the Mac mini versus the frozen CASA oracle's
+`3,631.809729` seconds, a `2.619x` development-host speedup. This is turnaround
+evidence, not a final-laptop timing result.
+
+The exact 19-product inventory, coordinates, metadata, shapes, masks, and
+ordinary numerical gates pass. Only `.alpha` and `.alpha.error` retain a
+topology difference: 16 of 16,777,216 pixels fall on opposite sides of the
+same f32 image-TT0 threshold. The underlying image and residual amplitudes pass
+the frozen numerical contract. On 2026-07-29 Brian judged the approximately
+`0.2 ppm` prediction-level agreement close enough and approved ending further
+sub-ppm arithmetic investigation for this reduced development gate. This
+signoff does not relax the final 12,150-square product or performance
+requirements.
+
+The exact run evidence is:
+
+- run log:
+  `/Volumes/Extra Storage (not encrypted)/SoftwareProjects/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-production-niter2000-promotion-v1.log`;
+- full product comparison:
+  `/Volumes/Extra Storage (not encrypted)/SoftwareProjects/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-production-niter2000-promotion-v1.comparison.json`;
+- major-cycle trace:
+  `/Volumes/Extra Storage (not encrypted)/SoftwareProjects/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-production-niter2000-promotion-v1.major-cycle-trace.json`.
+
+The final bounded arithmetic audit confirms that the residual difference is
+not an FFT implementation defect. A diagnostic linked directly against CASA
+6.7.5.18 invoked casacore `LatticeFFT::cfft2d`, the same entry point used by
+AWProject. Its TT0 and TT1 grids are bit-for-bit identical to the casa-rs f32
+FFTW grids across all 16,777,216 complex pixels in each term:
+
+- TT0:
+  `/Volumes/Extra Storage (not encrypted)/SoftwareProjects/casa-rs-vlass/issue-446/receipts/diagnostics/20260729-vlass-rust-vs-casa-cfft2d-term0.json`;
+- TT1:
+  `/Volumes/Extra Storage (not encrypted)/SoftwareProjects/casa-rs-vlass/issue-446/receipts/diagnostics/20260729-vlass-rust-vs-casa-cfft2d-term1.json`.
+
+CASA-style scaled complex division, model-FFT thread count, global f64 FFT, and
+several plausible FMA contraction orders did not improve the prediction trace.
+The public CASA image-tool FFT was also rejected as an AWProject proxy: it uses
+a separable transform path and worsened the matched prediction error. These
+negative experiments remain diagnostic evidence; their environment gates and
+hot-loop branches are not part of the production runtime.
+
+### 2026-07-29 Deconvolution performance-owner redirect
+
+The exact 2,000-iteration production log contains 171 independently timed
+`ResidualRefresh` stream passes. They total `360.909` seconds of the
+`1,386.916`-second end-to-end run, leaving `1,026.007` seconds outside the
+already-cached residual replay. Brian explicitly redirected performance work
+toward breakthrough deconvolution algorithms rather than incremental replay
+changes. The next performance experiment therefore owns the MT-MFS minor cycle
+while the already-launched 4,096-square full-16-SPW promotion chain continues.
+
+The first bounded hypothesis revives the existing mask-sparse MT-MFS RHS
+experiment against the corrected production prediction path. For the frozen
+single-field mask, only `4,096`, `4,604`, and `5,136` candidate positions are
+cleanable at scales `[0,5,12]`, respectively. Retaining two Taylor RHS values
+at those positions needs `110,688` bytes rather than full-image scale planes.
+An earlier isolated real-geometry block measured `640.123` milliseconds of
+one-time basis setup and `7.931` milliseconds of initial sparse RHS
+construction. Its old end-to-end attempt predates the AW prediction fixes and
+is not correctness or performance evidence.
+
+The current experiment must fail closed on any scale, component-position,
+update-count, or major-cycle-topology divergence. Direct compact convolution
+does not reproduce a full-image FFT bit for bit, so speed alone is
+insufficient. Promotion requires the exact 171-cycle trace contract and the
+same frozen 19-product gates used by the dense production control. Per-cycle
+profiling now separates RHS preparation, candidate search, model update, RHS
+subtraction, residual writeback, and total minor-cycle time. The experiment
+remains behind a diagnostic gate pending evidence and explicit approval for
+production incorporation.
+
+### 2026-07-29 Mask-sparse MT-MFS breakthrough result
+
+The corrected direct-seeded sparse experiment completed the entire reduced
+production row: 171 major cycles, 2,000 component updates, and all 19
+products. The minor-cycle state fell from six full 4,096-square scale/Taylor
+planes, approximately 384 MiB, to 13,836 sorted candidate entries occupying
+110,688 bytes. That is a structural state reduction of about `3,638x`, based
+on mask and scale support rather than a VLASS-specific image-size rule.
+
+The complete sparse minor-cycle ledger was only `1.949` seconds:
+
+- direct RHS preparation: `1.052` seconds;
+- flat deterministic candidate search and coefficient solves: `0.804`
+  seconds;
+- model updates: less than `0.001` seconds;
+- bounded sparse RHS subtraction: `0.091` seconds; and
+- sparse scale-zero residual writeback: `0.001` seconds.
+
+The flat scan and update path are therefore already cache-sized. Hierarchical
+peak trees, an interaction graph, deferred writeback, and a GPU-resident
+sparse minor cycle are not current owners and must not displace work on the
+new dominant stages without contrary evidence.
+
+The run completed in `824.600` seconds on the laptop, with a live resident-set
+sample of approximately `5.59 GiB`. The prior `1,386.916`-second dense run was
+measured on the Mac mini, so their `1.682x` ratio is useful turnaround context
+but is not a controlled same-host speedup claim. Within the laptop sparse run,
+171 residual-refresh passes consumed `322.079` seconds and the initial-dirty
+stream pass consumed `3.649` seconds. The sparse minor cycle is no longer a
+material performance owner. About 497 seconds remain outside those explicitly
+logged passes and minor-cycle work, so the profiler now emits the complete
+frontend and `ImagingStageTimings` ledgers on every detailed run before
+another optimization is selected.
+
+The fail-closed dense-control comparison passes all recorded discrete
+decisions: cycle count and ordinal, starting iteration, reported and actual
+update counts, first selected scale and position, stop reason, residual-refresh
+ordinal, and final 2,000-iteration boundary. The largest numerical difference
+in the cycle ledger is `5.739 ppm` for a start/refreshed peak; accumulated
+model flux differs by at most `2.104 ppm`. The receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-production-clean-4096-four-spw-sparse-rhs-v1.dense-control-trace.json`.
+The run log is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-production-clean-4096-four-spw-sparse-rhs-v1.log`.
+The frozen CASA 19-product comparison remains pending; no production
+incorporation is approved from trace evidence alone.
+
+Oracle's evidence-delta review confirmed that direct mask-sparse RHS is the
+highest-value deconvolution experiment and recommended a second seeder as the
+correctness bridge. The experimental implementation now supports
+full-FFT-sampled sparse initialization: each scale uses the existing full FFT
+convolution, gathers the exact candidate values, releases the dense scale
+image, and then runs the same compact recurrence. Focused tests require every
+sampled f32 value to be bit-for-bit identical to the dense source image.
+Direct candidate convolution remains the maximum-performance seeder; the
+full-FFT-sampled mode is the fail-closed diagnostic and prospective fallback.
+Both remain internal experiments until the frozen product contract and broader
+geometry gates pass and Brian explicitly approves final incorporation.
+
+### 2026-07-29 Frozen-base image-response and radix-statistics candidate
+
+The first complete same-host exact control after the sparse minor-cycle work
+finished in `143.15` seconds end to end (`137.688` seconds in the imaging
+core). Its 171 major cycles spent `33.188` seconds in model FFTs, `28.708`
+seconds in residual degrid/grid, `42.779` seconds in residual FFTs, and
+`24.793` seconds in the controller. The immutable control log is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-clean4096-4spw-n2000-fftw-wisdom-f64-exact-v1.log`.
+
+Model-delta census showed that 167 late major cycles update only pixel
+`(581,2143)`. The promoted experiment treats the exact production AWProject
+operator as a locally linear image-domain response:
+
+1. after two stable cycles, perform one exact refresh at the current model;
+2. measure a central `+/-0.125` response for each input Taylor term with the
+   exact source-order production operator;
+3. retain the two-by-two f64 output response planes and the exact frozen base;
+4. synthesize later residuals from the accumulated model delta; and
+5. invalidate immediately if model-delta support changes, while always doing
+   the final residual refresh through the exact production operator.
+
+This is a frozen-base calculation, not a recurrent residual update, so
+roundoff does not accumulate with cycle count. The response planes and base
+state consume about 640 MiB at 4,096 square. Direct scaling predicts about
+5.50 GiB at 12,150 square, so admission must remain resource- and
+reuse-dependent. Multiple hot positions and the 63-field workload are not yet
+admitted by this one-position experiment.
+
+The first forward-difference response run completed in `49.88` seconds but
+left one alpha-mask threshold mismatch. The central response plus forced exact
+final refresh removed that topology difference. Fusing the cached response
+synthesis with the principal residual peak and replacing dense model-flux
+scans with deterministic row-major sparse accumulation then reduced the
+controller from `21.098` to `17.649` seconds without changing its discrete
+trajectory.
+
+The final reduced candidate additionally replaces masked-value
+materialization and comparison sorting with an exact radix order statistic.
+Two 16-bit histogram passes select the same f32 total-order median keys and
+f64 non-negative deviation keys as the existing keyed implementation.
+Focused odd- and even-cardinality tests require bit-for-bit identical median
+and MAD results. Across the 171 real cycles, this reduced statistics time from
+about `6.27` to `3.70` seconds.
+
+The combined candidate completed in `28.65` seconds, a controlled
+`4.996x` same-host speedup over the `143.15`-second exact control. Its core
+time was `24.808` seconds:
+
+- major-cycle refresh: `11.148` seconds;
+- controller: `4.565` seconds;
+- sparse minor cycle: `2.330` seconds;
+- initial PSF grid: `3.554` seconds;
+- model FFT: `2.069` seconds;
+- residual degrid/grid: `5.587` seconds;
+- residual FFT: `2.338` seconds; and
+- restoration: `1.307` seconds.
+
+All 171 component selections, cycle boundaries, refresh boundaries, and the
+final 2,000-iteration boundary match the exact control. All 19 product
+inventory, coordinate, metadata, finite-topology, and mask gates pass. The
+worst product relative RMS is `5.642879625864284e-7`, about `0.564 ppm`.
+There are zero mask, finite-topology, and metadata mismatches.
+
+The immutable evidence is:
+
+- run log:
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-clean4096-4spw-n2000-image-response-radix-madfm-v4.log`,
+  SHA-256
+  `f07d3b8721de81ef4aa152f3a3e0747ac597e4b3f25ec609fef279cbec2d0989`;
+- exact-control trace comparison:
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-clean4096-4spw-n2000-image-response-radix-madfm-v4.trace-comparison.json`,
+  SHA-256
+  `01a403119013875db93c7f8b1679a9a5b8ffb671ee91e98b643cb391303db780`;
+  and
+- frozen CASA product comparison:
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-clean4096-4spw-n2000-image-response-radix-madfm-v4.comparison.json`,
+  SHA-256
+  `0df5ec1401e2aaa18998feb96b654b922e0a793050f28e86c27e53227fc4fb01`.
+
+This passes the 4,096-square four-SPW development promotion gate but remains
+an experimental candidate rather than an approved production default. The
+next ladder step is the 4,096-square full-16-SPW row. The old full-band runner
+and CASA generator were tied to the now-unmounted Mac-mini volume, so they now
+resolve a configurable experiment root and binary on
+`/Volumes/GLENDENNING`. That volume does not yet contain the one-time
+full-16-SPW CASA oracle or its CF cache. Generate them once with CASA
+6.7.5.18, freeze them, and do not repeat their timing before promoting the
+casa-rs candidate.
+
+Oracle's evidence-delta review judged the exact 171-cycle trajectory, exact
+final refresh, complete topology contract, and `0.564 ppm` product result a
+scientifically defensible reduced-workload promotion. It also identified the
+remaining semantic risk: the exact operator is mathematically linear, but its
+f32 execution is only locally affine, so an exact final refresh cannot repair
+an earlier wrong component decision. A production candidate therefore needs
+a dyadic calibration policy, a held-out exact shadow cycle, coefficient trust
+regions, controller decision-margin certificates, and exact fallback on any
+uncertified cycle. Lossy response compression, response-tile omission,
+analytic response construction, or a changed deconvolution trajectory remain
+separate approval decisions.
+
+The first recommended no-code rank census falsified an exact rank-one cache.
+Across 163 consecutive cached late deltas, the TT1/TT0 delta ratio spans
+`51.7743049648762` through `51.78273215813869`. The direction is extremely
+stable but is not bitwise one-dimensional, so production cannot silently
+replace the two exact Taylor axes with one response. An approximate rank-one
+experiment remains allowed under the experiment boundary, but promotion would
+require explicit approval for the new numerical approximation.
+
+The next exact memory experiment exploits a stronger property of the current
+calibration: every f64 response sample is a dyadic-scaled difference of two
+f32 residual samples. A tile may therefore be representable losslessly as a
+shared binary exponent plus signed 16- or 32-bit integers. A diagnostic census
+now measures exact tile widths and compression before implementation. The
+promotion threshold is at least `1.5x` aggregate compression with bitwise f64
+round-trip and decode, synthesis, and controller time no slower than `1.10x`
+the raw response scan. No response or sidelobe tile may be omitted.
+
+The laptop oracle runtime is isolated at
+`/Volumes/GLENDENNING/DeveloperTools/CASA/6.7.5.18-laptop/venv-py312`.
+It reports `casatasks 6.7.5.18` and `casatools 6.7.5-18`. The checked-in
+`casasiteconfig_vlass.py` binds the existing measures data and disables
+automatic data and network updates so the one-time oracle is reproducible.
 
 ## Iteration Rules
 

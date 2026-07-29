@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import statistics
 import tempfile
 import time
@@ -13,6 +14,10 @@ from typing import Callable, Dict, List, Tuple
 from casatools import synthesisimager
 from casatasks.private.imagerhelpers.imager_base import PySynthesisImager
 from casatasks.private.imagerhelpers.input_parameters import ImagerParameters
+
+
+class WeightDensityOnlyComplete(Exception):
+    """Stop a diagnostic run after freezing CASA's internal density grid."""
 
 
 def env_int(name: str) -> int:
@@ -228,11 +233,9 @@ def main() -> None:
         float(value)
         for value in env_str("CASA_RS_BENCH_POINTINGOFFSETSIGDEV").split(",")
     ]
-    pointingoffsetsigdev = (
-        pointing_sigdev_values[0]
-        if len(pointing_sigdev_values) == 1
-        else pointing_sigdev_values
-    )
+    # The public tclean task accepts a scalar here, but CASA 6.7.5.18's
+    # private ImagerParameters/defineimage path requires a vector.
+    pointingoffsetsigdev = pointing_sigdev_values
     mosweight = env_str("CASA_RS_BENCH_MOSWEIGHT") == "1"
     normtype = env_str("CASA_RS_BENCH_NORMTYPE")
     usepointing = env_str("CASA_RS_BENCH_USEPOINTING") == "1"
@@ -241,6 +244,11 @@ def main() -> None:
     weighting = env_str("CASA_RS_BENCH_WEIGHTING")
     robust = env_float("CASA_RS_BENCH_ROBUST")
     perchanweightdensity = env_str("CASA_RS_BENCH_PERCHANWEIGHTDENSITY") == "1"
+    # task_tclean.py forcibly disables cube Briggs weighting for MFS before it
+    # constructs ImagerParameters. This harness calls the private layer
+    # directly, so apply the same public-task normalization here.
+    if specmode == "mfs":
+        perchanweightdensity = False
     deconvolver = env_str("CASA_RS_BENCH_DECONVOLVER")
     nterms = env_int("CASA_RS_BENCH_NTERMS")
     scales_env = env_str("CASA_RS_BENCH_SCALES")
@@ -266,6 +274,16 @@ def main() -> None:
     savemodel = env_str("CASA_RS_BENCH_SAVEMODEL")
     calcres = env_str("CASA_RS_BENCH_CALCRES") == "1"
     calcpsf = env_str("CASA_RS_BENCH_CALCPSF") == "1"
+    weight_density_output = os.environ.get("CASA_RS_BENCH_WEIGHT_DENSITY_OUTPUT", "")
+    weight_density_only = (
+        os.environ.get("CASA_RS_BENCH_WEIGHT_DENSITY_ONLY", "0").lower()
+        in ("1", "true", "yes", "on")
+    )
+    if weight_density_only and not weight_density_output:
+        raise RuntimeError(
+            "CASA_RS_BENCH_WEIGHT_DENSITY_ONLY requires "
+            "CASA_RS_BENCH_WEIGHT_DENSITY_OUTPUT"
+        )
 
     scales = [] if scales_env == "" else [int(float(value)) for value in scales_env.split(",")]
     spw_selector = (
@@ -323,8 +341,8 @@ def main() -> None:
                     field=field,
                     spw=spw_selector if specmode == "mfs" else spw,
                     datacolumn=datacolumn,
-                    uvrange=uvrange,
-                    intent=intent,
+                    uvdist=uvrange,
+                    state=intent,
                     imsize=imsize_vec,
                     cell=cell,
                     stokes=stokes,
@@ -347,7 +365,7 @@ def main() -> None:
                     deconvolver=deconvolver,
                     nterms=nterms,
                     scales=scales,
-                    smallscalebias=smallscalebias,
+                    scalebias=smallscalebias,
                     usemask=usemask,
                     mask=mask_image,
                     calcres=calcres,
@@ -367,7 +385,6 @@ def main() -> None:
                     parameter_kwargs.update(
                         cfcache=cfcache,
                         facets=facets,
-                        psfphasecenter=psfphasecenter,
                         vptable=vptable,
                         aterm=aterm,
                         psterm=psterm,
@@ -380,6 +397,11 @@ def main() -> None:
                         normtype=normtype,
                         usepointing=usepointing,
                     )
+                    if psfphasecenter:
+                        raise RuntimeError(
+                            "CASA 6.7.5.18 ImagerParameters cannot represent "
+                            "a non-empty psfphasecenter"
+                        )
                 if wprojplanes_env:
                     parameter_kwargs["wprojplanes"] = int(wprojplanes_env)
                 if specmode == "cube":
@@ -403,6 +425,25 @@ def main() -> None:
                 elapsed, _ = timed(imager.setWeighting)
                 per_stage["set_weighting"] += elapsed
                 drain_probe_stages(imager, per_stage)
+                if weight_density_output and not is_warmup:
+                    if run_index != 0:
+                        raise RuntimeError(
+                            "CASA_RS_BENCH_WEIGHT_DENSITY_OUTPUT requires one measured repeat"
+                        )
+                    if os.path.exists(weight_density_output):
+                        raise RuntimeError(
+                            "refusing to replace frozen CASA weight density "
+                            f"{weight_density_output}"
+                        )
+                    density_image = imager.SItool.getweightdensity()
+                    if not density_image:
+                        raise RuntimeError(
+                            "CASA getweightdensity returned no image for this weighting mode"
+                        )
+                    shutil.copytree(density_image, weight_density_output)
+                    print(f"weight_density_image={weight_density_output}")
+                    if weight_density_only:
+                        raise WeightDensityOnlyComplete
 
                 if niter > 0 or restoration:
                     elapsed, _ = timed(imager.initializeDeconvolvers)
@@ -475,6 +516,8 @@ def main() -> None:
                 if restoration:
                     elapsed, _ = timed(imager.restoreImages)
                     per_stage["restore_images"] += elapsed
+            except WeightDensityOnlyComplete:
+                pass
             finally:
                 if imager is not None:
                     elapsed, _ = timed(imager.deleteTools)

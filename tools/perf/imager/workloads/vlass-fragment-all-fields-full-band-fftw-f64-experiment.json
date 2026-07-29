@@ -74,7 +74,7 @@
     "imaging_prepare_workers": 1,
     "imaging_read_ahead_blocks": 1,
     "imaging_fft_precision": "f64",
-    "imaging_fft_backend": "fftw-local-bench",
+    "imaging_fft_backend": "fftw",
     "imaging_memory_target_mb": 32768,
     "cfcache": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache/6.7.5.9/f6f947c5104f8da579f9411dd7087dd331c9e59034073a9fd68b5d6132cd281d",
     "cf_resident_mb": 256
@@ -93,7 +93,6 @@
     "cf_cache_role": "warm",
     "env": {
       "CASA_RS_AWPROJECT_ALTERNATE_CF_LOAD_ORDER": "1",
-      "CASA_RS_AWPROJECT_CASA_PSF_SCALE_EXPERIMENT": "1",
       "CASA_RS_AWPROJECT_DIRECT_CF_SELECT_EXPERIMENT": "1",
       "CASA_RS_AWPROJECT_DYNAMIC_SPARSE_TILE_TASKS_EXPERIMENT": "1",
       "CASA_RS_AWPROJECT_PACK_THREADS": "4",

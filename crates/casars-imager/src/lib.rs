@@ -28,7 +28,10 @@ use casa_coordinates::{
     Coordinate, CoordinateSystem, DirectionCoordinate, Projection, ProjectionType,
 };
 use casa_images::{GaussianBeam, ImageBeamSet, ImageInfo, ImageType, PagedImage};
-use casa_imaging::fft_backend::{FftBackendChoice, FftPrecisionChoice};
+use casa_imaging::fft_backend::{
+    Fft2Spec, FftBackendChoice, FftDirection, FftPrecision, FftPrecisionChoice, FftUseCase,
+    fft_backend_capability,
+};
 use casa_imaging::{
     AwConvolutionFunctionEntryMetadata, AwParallelHandVisibilityBatch, AwProjectControls,
     AwProjectGridderConfig, AwProjectNormalization, AxisKind, BeamFit, BeamFitDebugSummary,
@@ -5462,6 +5465,23 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
             "frontend stage=cli/run_from_request_return stage_elapsed_s={:.3}",
             cli_started_at.elapsed().as_secs_f64(),
         );
+        let frontend = summary.frontend_timings;
+        eprintln!(
+            "frontend stage=run_summary open_measurement_set_ms={:.3} prepare_plane_input_ms={:.3} get_ms_values_into_processing_buffer_ms={:.3} prepare_processing_buffer_ms={:.3} extract_phase_center_ms={:.3} run_imaging_ms={:.3} build_coordinate_system_ms={:.3} write_products_ms={:.3} total_ms={:.3}",
+            duration_ms(frontend.open_measurement_set),
+            duration_ms(frontend.prepare_plane_input),
+            duration_ms(frontend.get_ms_values_into_processing_buffer),
+            duration_ms(frontend.prepare_processing_buffer),
+            duration_ms(frontend.extract_phase_center),
+            duration_ms(frontend.run_imaging),
+            duration_ms(frontend.build_coordinate_system),
+            duration_ms(frontend.write_products),
+            duration_ms(frontend.total),
+        );
+        eprintln!(
+            "core stage=run_summary {}",
+            imaging_stage_timing_detail(summary.stage_timings),
+        );
     }
     let result_started_at = Instant::now();
     let result = ImagerRunTaskResult::from_run(request, &summary);
@@ -8370,7 +8390,7 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         .map(|plan| plan.table_values.corr_types.len())
         .max()
         .unwrap_or(1);
-    let strategy = standard_mfs_memory_plan_for_ms(
+    let base_strategy = standard_mfs_memory_plan_for_ms(
         config,
         ms,
         data_column,
@@ -8378,7 +8398,16 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         active_row_count,
         correlation_count,
     )?;
-    let row_block_rows = strategy.ingest.source_row_block_rows.max(1);
+    let row_block_rows = base_strategy.ingest.source_row_block_rows.max(1);
+    let stream_block_count = ddid_plans
+        .iter()
+        .map(|plan| plan.active_selected_rows.len().div_ceil(row_block_rows))
+        .sum::<usize>();
+    let strategy = if !clean_is_dirty(config) && config.aw_project.is_some() {
+        admit_awproject_compact_replay_retention(base_strategy, stream_block_count)?
+    } else {
+        base_strategy
+    };
     log_standard_mfs_memory_plan_actual(
         &strategy,
         active_row_count,
@@ -8643,6 +8672,7 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         mosaic_weight,
         spectral_delta_hz: spectral_frequency_edge_range_hz.and_then(spectral_delta_from_range),
     }));
+    let effective_clean_mask = clean_mask.map(EffectiveCleanMask::Plane);
     let mut coords = build_image_coordinate_system(
         config.imsize,
         phase_center.angles_rad,
@@ -8679,7 +8709,13 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         Some(run_result.estimated_product_payload_bytes()),
     );
     emit_imager_progress_product_write(config, &run_result, true);
-    write_products(config, &coords, &run_result, None, None)?;
+    write_products(
+        config,
+        &coords,
+        &run_result,
+        effective_clean_mask.as_ref(),
+        None,
+    )?;
     drop(product_guard);
     emit_imager_progress_product_write(config, &run_result, false);
     let write_products_time = stage_start.elapsed();
@@ -22750,7 +22786,9 @@ pub(crate) fn apply_parallel_runtime_control(
     config.standard_mfs_grid_threads = Some("1".to_string());
     config.imaging_prepare_workers = Some(1);
     config.imaging_read_ahead_blocks = Some(1);
-    config.imaging_fft_backend = ImagingFftBackendPolicy::RustFft;
+    if config.imaging_fft_backend == ImagingFftBackendPolicy::Auto {
+        config.imaging_fft_backend = ImagingFftBackendPolicy::RustFft;
+    }
     config.standard_mfs_metal_grouped_input_cache = Some(false);
     Ok(())
 }
@@ -23215,8 +23253,8 @@ pub enum ImagingFftBackendPolicy {
     Accelerate,
     /// Use Apple Metal MPSGraph when available for f32 product FFT batches.
     MetalMpsGraph,
-    /// Explicit local-only FFTW experiment; never selected by `auto`.
-    FftwLocalBench,
+    /// Use the dynamically loaded host FFTW backend.
+    Fftw,
 }
 
 impl ImagingFftBackendPolicy {
@@ -23226,7 +23264,7 @@ impl ImagingFftBackendPolicy {
             Self::RustFft => "rustfft",
             Self::Accelerate => "accelerate",
             Self::MetalMpsGraph => "metal-mpsgraph",
-            Self::FftwLocalBench => "fftw-local-bench",
+            Self::Fftw => "fftw",
         }
     }
 }
@@ -35351,6 +35389,75 @@ fn standard_mfs_memory_plan_for_ms(
     )
 }
 
+fn admit_awproject_compact_replay_retention(
+    mut plan: ImagingResolvedPlan,
+    stream_block_count: usize,
+) -> Result<ImagingResolvedPlan, String> {
+    const ADAPTIVE_TAP_ARENAS_PER_STREAM_BLOCK: usize = 2;
+
+    if stream_block_count == 0 {
+        return Ok(plan);
+    }
+    let tap_bytes_per_block = plan.allocation_bytes("AWProject source-order tap scratch");
+    if tap_bytes_per_block == 0 {
+        return Ok(plan);
+    }
+    let tap_candidate_bytes = checked_imaging_product(
+        [
+            tap_bytes_per_block,
+            stream_block_count,
+            ADAPTIVE_TAP_ARENAS_PER_STREAM_BLOCK,
+        ],
+        "AWProject compact replay tap retention",
+    )?;
+    // The lower-level replay structs are private. The same conservative
+    // per-sample allowance used for transient AW plans bounds retained source
+    // plans, tap descriptors, vector capacities, and block directories.
+    let metadata_candidate_bytes = checked_imaging_product(
+        [plan.workload.sample_count, 256],
+        "AWProject compact replay metadata retention",
+    )?;
+    let candidate_bytes = checked_imaging_sum(
+        [tap_candidate_bytes, metadata_candidate_bytes],
+        "AWProject compact replay retention",
+    )?;
+    let resource_cap_bytes = plan.usable_memory_bytes / 4;
+    let headroom_bytes = plan
+        .usable_memory_bytes
+        .saturating_sub(plan.maximum_planned_resident_bytes);
+    let admitted_bytes = candidate_bytes.min(resource_cap_bytes).min(headroom_bytes);
+    if admitted_bytes == 0 {
+        plan.decisions.push(casa_imaging::ImagingPlanDecision {
+            name: "awproject_compact_replay_retention_bytes",
+            value: "0".to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason:
+                "the admitted run ledger had no residual headroom for persistent compact replay"
+                    .to_string(),
+        });
+        return Ok(plan);
+    }
+    plan.memory_allocations
+        .push(casa_imaging::ImagingMemoryAllocation {
+            component: "AWProject compact replay retention",
+            stage: "run",
+            bytes: admitted_bytes,
+        });
+    plan.maximum_planned_resident_bytes = plan
+        .maximum_planned_resident_bytes
+        .checked_add(admitted_bytes)
+        .ok_or_else(|| "AWProject compact replay planned peak overflowed".to_string())?;
+    plan.decisions.push(casa_imaging::ImagingPlanDecision {
+        name: "awproject_compact_replay_retention_bytes",
+        value: admitted_bytes.to_string(),
+        origin: casa_imaging::ImagingPlanOrigin::Resources,
+        reason: format!(
+            "retain exact source-order AW tap windows across clean major cycles; the candidate allows {ADAPTIVE_TAP_ARENAS_PER_STREAM_BLOCK} adaptive tap arenas per stream block and the runtime retains a bounded prefix when a block needs more; candidate_bytes={candidate_bytes}, stream_blocks={stream_block_count}, resource_cap_bytes={resource_cap_bytes}, prior_headroom_bytes={headroom_bytes}"
+        ),
+    });
+    Ok(plan)
+}
+
 fn standard_mfs_memory_plan_with_cache_channels_for_ms(
     config: &CliConfig,
     ms: &MeasurementSet,
@@ -35628,9 +35735,11 @@ fn awproject_mtmfs_in_place_fft_eligible(config: &CliConfig) -> bool {
                 | ImagingFftPrecisionPolicy::F32
                 | ImagingFftPrecisionPolicy::F64
         ),
-        ImagingFftBackendPolicy::FftwLocalBench => matches!(
+        ImagingFftBackendPolicy::Fftw => matches!(
             config.imaging_fft_precision,
-            ImagingFftPrecisionPolicy::Auto | ImagingFftPrecisionPolicy::F64
+            ImagingFftPrecisionPolicy::Auto
+                | ImagingFftPrecisionPolicy::F32
+                | ImagingFftPrecisionPolicy::F64
         ),
         ImagingFftBackendPolicy::Auto
         | ImagingFftBackendPolicy::Accelerate
@@ -36011,6 +36120,32 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     } else {
         0
     };
+    let aw_model_fft_staging_bytes = if awproject_mtmfs && !clean_is_dirty(config) {
+        checked_imaging_product(
+            [image_pixels, std::mem::size_of::<Complex32>()],
+            "AWProject CASA-layout model FFT staging",
+        )?
+    } else {
+        0
+    };
+    let aw_model_fft_threads = dirty_product_fft_policy(config)
+        .max_threads
+        .unwrap_or(1)
+        .max(1);
+    let aw_model_fft_fftw_spec = Fft2Spec::centered_c2c(
+        config.imsize,
+        config.imsize,
+        FftPrecision::F32,
+        FftDirection::Forward,
+        FftUseCase::ModelDegrid,
+        FftBackendChoice::Fftw,
+    );
+    let aw_model_fft_backend =
+        if fft_backend_capability(FftBackendChoice::Fftw, aw_model_fft_fftw_spec).supported {
+            "fftw"
+        } else {
+            "rustfft"
+        };
     let mut fixed_allocations = vec![
         ImagingMemoryAllocation {
             component: if awproject_mtmfs {
@@ -36057,6 +36192,11 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
                 component: "AWProject safety margin",
                 stage: "run",
                 bytes: aw_safety_margin_bytes,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject CASA-layout model FFT staging",
+                stage: "major-cycle",
+                bytes: aw_model_fft_staging_bytes,
             },
         ]);
     }
@@ -36303,9 +36443,13 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
                     config.imaging_fft_precision,
                 ) {
                     (
-                        ImagingFftBackendPolicy::FftwLocalBench,
+                        ImagingFftBackendPolicy::Fftw,
                         ImagingFftPrecisionPolicy::Auto | ImagingFftPrecisionPolicy::F64,
                     ) => "in-place-fftw-local-f64",
+                    (
+                        ImagingFftBackendPolicy::Fftw,
+                        ImagingFftPrecisionPolicy::F32,
+                    ) => "in-place-fftw-local-f32",
                     (_, ImagingFftPrecisionPolicy::F32) => "in-place-rustfft-f32",
                     (
                         _,
@@ -36318,6 +36462,34 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             .to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Workload,
             reason: "selected FFT precision/backend and even unpadded grid geometry".to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_model_fft_backend",
+            value: aw_model_fft_backend.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "CASA-parity model prediction prefers configured f32 FFTW and otherwise uses the portable RustFFT fallback"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_model_fft_layout",
+            value: "casacore-first-axis-contiguous".to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "AWProject model prediction preserves casacore transform-axis and rounding semantics"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_model_fft_threads",
+            value: aw_model_fft_threads.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "bounded by the same system-adaptive host worker policy as standard-MFS execution"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_model_fft_staging_bytes",
+            value: aw_model_fft_staging_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "one Complex32 image-sized transpose buffer produces a first-axis-contiguous in-place FFT result"
+                .to_string(),
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_multiscale_minor_cycle_peak_bytes",
@@ -37130,9 +37302,16 @@ fn dirty_product_fft_policy(config: &CliConfig) -> DirtyProductFftPolicy {
         ImagingFftBackendPolicy::RustFft => FftBackendChoice::RustFft,
         ImagingFftBackendPolicy::Accelerate => FftBackendChoice::Accelerate,
         ImagingFftBackendPolicy::MetalMpsGraph => FftBackendChoice::MetalMpsGraph,
-        ImagingFftBackendPolicy::FftwLocalBench => FftBackendChoice::FftwLocalBench,
+        ImagingFftBackendPolicy::Fftw => FftBackendChoice::Fftw,
     };
-    DirtyProductFftPolicy::new(precision, backend)
+    let max_threads = config
+        .standard_mfs_grid_threads
+        .as_deref()
+        .and_then(parse_standard_mfs_grid_threads)
+        .or(config.imaging_prepare_workers)
+        .unwrap_or_else(|| imaging_process_cpu_capacity(config.aw_project.is_some()))
+        .max(1);
+    DirtyProductFftPolicy::new(precision, backend).with_max_threads(max_threads)
 }
 
 fn imaging_execution_config_with_standard_mfs(
@@ -40018,8 +40197,14 @@ impl CasaAwPointingGroupAccumulator {
                 );
                 bin_by_antenna.insert(antenna_id, bin);
                 let sums = sums_by_bin.entry(bin).or_insert((0.0, 0.0, 0));
-                sums.0 += pixel[0] as f32;
-                sums.1 += pixel[1] as f32;
+                // BaselineType::findAntennaGroups accumulates into
+                // vector<float>, but poAnt1 is vector<double>. C++ usual
+                // arithmetic conversions therefore evaluate each `+=` in
+                // double and narrow only the compound-assignment result.
+                // The frozen VLASS fragment distinguishes this from
+                // pre-narrowing pixel to float by about 0.008 image pixel.
+                sums.0 = (f64::from(sums.0) + pixel[0]) as f32;
+                sums.1 = (f64::from(sums.1) + pixel[1]) as f32;
                 sums.2 += 1;
             }
             let mean_by_bin = sums_by_bin
@@ -43603,7 +43788,10 @@ impl PreparedSelection {
         timings.weight_spectrum += Duration::ZERO;
 
         let adapt_started_at = Instant::now();
-        let uvw_m = geometry_row.transform.uvw_m;
+        // CASA constructs VisImagingWeight before the FTMachine applies any
+        // phase-center UVW reprojection, so combined MFS density uses the raw
+        // MeasurementSet UVW coordinates. Gridding still uses transform.uvw_m.
+        let uvw_m = geometry_row.raw_uvw_m;
         let mfs_frequency_scale =
             self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
         let accepted_samples = accumulate_standard_mfs_density_row_from_visibility_block(
@@ -46087,9 +46275,9 @@ fn parse_imaging_fft_backend_policy(text: &str) -> Result<ImagingFftBackendPolic
         "metal-mpsgraph" | "mpsgraph" | "mps-graph" | "metal" | "gpu" => {
             Ok(ImagingFftBackendPolicy::MetalMpsGraph)
         }
-        "fftw-local-bench" | "fftw-local" | "fftw" => Ok(ImagingFftBackendPolicy::FftwLocalBench),
+        "fftw" => Ok(ImagingFftBackendPolicy::Fftw),
         _ => Err(format!(
-            "unsupported --imaging-fft-backend value {text:?}; expected auto, rustfft, accelerate, metal-mpsgraph, or fftw-local-bench"
+            "unsupported --imaging-fft-backend value {text:?}; expected auto, rustfft, accelerate, metal-mpsgraph, or fftw"
         )),
     }
 }
@@ -49918,7 +50106,7 @@ Options:
                             override planner use of the grouped Metal input cache
   --imaging-fft-precision auto|f64|f32
                             imaging-wide dirty/residual FFT precision policy
-  --imaging-fft-backend auto|rustfft|accelerate|metal-mpsgraph|fftw-local-bench
+  --imaging-fft-backend auto|rustfft|accelerate|metal-mpsgraph|fftw
                             imaging-wide dirty/residual FFT backend policy
   --standard-mfs-memory-target-mb N
                             compatibility alias for --imaging-memory-target-mb
@@ -53568,6 +53756,29 @@ mod tests {
     }
 
     #[test]
+    fn cli_no_parallel_preserves_explicit_fftw_backend() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--imaging-fft-backend"),
+            OsString::from("fftw"),
+            OsString::from("--no-parallel"),
+        ])
+        .expect("parse serial FFTW controls");
+
+        assert_eq!(config.imaging_fft_backend, ImagingFftBackendPolicy::Fftw);
+        assert_eq!(config.standard_mfs_grid_threads.as_deref(), Some("1"));
+        assert_eq!(config.imaging_prepare_workers, Some(1));
+        assert_eq!(config.imaging_read_ahead_blocks, Some(1));
+    }
+
+    #[test]
     fn chanchunks_adds_bounded_spectral_slab_candidates_without_hiding_larger_shapes() {
         assert_eq!(chanchunks_to_active_planes(1, 10), 10);
         assert_eq!(chanchunks_to_active_planes(4, 10), 3);
@@ -55408,12 +55619,40 @@ mod tests {
         assert!(plan.allocation_bytes("AWProject MT-MFS product state") > 0);
         assert!(plan.allocation_bytes("product writer scratch") > 0);
         assert_eq!(
+            plan.allocation_bytes("AWProject CASA-layout model FFT staging"),
+            config.imsize * config.imsize * std::mem::size_of::<Complex32>()
+        );
+        assert_eq!(
             plan.allocation_bytes("FFT chunks"),
             config.imsize * config.imsize * std::mem::size_of::<f32>()
         );
         assert!(plan.maximum_planned_resident_bytes <= plan.usable_memory_bytes);
         assert!(plan.decisions.iter().any(|decision| {
             decision.name == "awproject_fft_residency" && decision.value == "in-place-rustfft-f64"
+        }));
+        assert!(plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_model_fft_layout"
+                && decision.value == "casacore-first-axis-contiguous"
+        }));
+        assert!(plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_model_fft_threads" && decision.value == "1"
+        }));
+        assert!(plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_model_fft_staging_bytes"
+                && decision.value
+                    == (config.imsize * config.imsize * std::mem::size_of::<Complex32>())
+                        .to_string()
+        }));
+        assert!(plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_model_fft_backend"
+                && matches!(decision.value.as_str(), "fftw" | "rustfft")
+        }));
+        config.imaging_fft_backend = ImagingFftBackendPolicy::Fftw;
+        config.imaging_fft_precision = ImagingFftPrecisionPolicy::F32;
+        let fftw_f32_plan = standard_mfs_memory_plan(&config, 64, 1024);
+        assert!(fftw_f32_plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_fft_residency"
+                && decision.value == "in-place-fftw-local-f32"
         }));
         assert!(plan.decisions.iter().any(|decision| {
             decision.name == "awproject_cf_locality_index_bytes_per_row"
@@ -55438,6 +55677,11 @@ mod tests {
         config.dirty_only = true;
         let dirty_plan = standard_mfs_memory_plan(&config, 64, 1024);
         assert_eq!(
+            dirty_plan.allocation_bytes("AWProject CASA-layout model FFT staging"),
+            0,
+            "dirty-only execution must not reserve model-prediction FFT staging"
+        );
+        assert_eq!(
             dirty_plan.allocation_bytes("AWProject MT-MFS bounded multiscale scratch"),
             0
         );
@@ -55445,6 +55689,46 @@ mod tests {
             decision.name == "awproject_multiscale_minor_cycle_peak_bytes"
                 && decision.reason.contains("dirty-only")
         }));
+    }
+
+    #[test]
+    fn awproject_compact_replay_retention_is_resource_bounded() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("planner-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let config = awproject_mtmfs_planner_config(cf_cache, 4096);
+        let base = standard_mfs_memory_plan(&config, 64, 1024);
+        let base_peak = base.maximum_planned_resident_bytes;
+
+        let admitted =
+            admit_awproject_compact_replay_retention(base.clone(), 4).expect("replay admission");
+        let retention = admitted.allocation_bytes("AWProject compact replay retention");
+        assert!(retention > 0);
+        assert!(retention <= admitted.usable_memory_bytes / 4);
+        assert_eq!(
+            admitted.maximum_planned_resident_bytes,
+            base_peak + retention
+        );
+        assert!(admitted.maximum_planned_resident_bytes <= admitted.usable_memory_bytes);
+        assert!(admitted.decisions.iter().any(|decision| {
+            decision.name == "awproject_compact_replay_retention_bytes"
+                && decision.value == retention.to_string()
+                && decision.reason.contains("stream_blocks=4")
+        }));
+
+        let mut headroom_limited = base;
+        headroom_limited.maximum_planned_resident_bytes =
+            headroom_limited.usable_memory_bytes - 4096;
+        let capped = admit_awproject_compact_replay_retention(headroom_limited, 64)
+            .expect("headroom-limited replay admission");
+        assert_eq!(
+            capped.allocation_bytes("AWProject compact replay retention"),
+            4096
+        );
+        assert_eq!(
+            capped.maximum_planned_resident_bytes,
+            capped.usable_memory_bytes
+        );
     }
 
     #[test]
@@ -55510,11 +55794,14 @@ mod tests {
         assert!(!awproject_mtmfs_in_place_fft_eligible(&config));
 
         config.imaging_fft_precision = ImagingFftPrecisionPolicy::F64;
-        config.imaging_fft_backend = ImagingFftBackendPolicy::FftwLocalBench;
+        config.imaging_fft_backend = ImagingFftBackendPolicy::Fftw;
         assert!(awproject_mtmfs_in_place_fft_eligible(&config));
 
         config.imaging_fft_precision = ImagingFftPrecisionPolicy::F32;
-        assert!(!awproject_mtmfs_in_place_fft_eligible(&config));
+        assert!(
+            awproject_mtmfs_in_place_fft_eligible(&config),
+            "the explicit FFTW F32 backend reuses the admitted AWProject grids in place"
+        );
 
         config.imaging_fft_precision = ImagingFftPrecisionPolicy::F64;
         config.imaging_fft_backend = ImagingFftBackendPolicy::RustFft;
@@ -56984,7 +57271,7 @@ mod tests {
         let expected = [0, 1].map(|axis| {
             let casa_sum = antenna_pixels
                 .iter()
-                .fold(0.0_f32, |sum, pixel| sum + pixel[axis] as f32);
+                .fold(0.0_f32, |sum, pixel| (f64::from(sum) + pixel[axis]) as f32);
             (casa_sum / antenna_pixels.len() as f32) as f64
         });
         let f64_mean = [0, 1].map(|axis| {
@@ -63241,7 +63528,7 @@ deconvolver=mtmfs
     }
 
     #[test]
-    fn mosaic_mtmfs_streams_multiple_ddids_and_spws() {
+    fn mosaic_mtmfs_streams_multiple_ddids_spws_and_writes_clean_mask() {
         let tmp = tempdir().unwrap();
         let ms_path = tmp.path().join("multi_spw_mosaic_mtmfs.ms");
         let image_prefix = tmp.path().join("multi_spw_mosaic_mtmfs_image");
@@ -63302,7 +63589,10 @@ deconvolver=mtmfs
             OsString::from("mtmfs"),
             OsString::from("--nterms"),
             OsString::from("2"),
-            OsString::from("--dirty-only"),
+            OsString::from("--niter"),
+            OsString::from("1"),
+            OsString::from("--mask-box"),
+            OsString::from("8,8,23,23"),
             OsString::from("--weighting"),
             OsString::from("natural"),
             OsString::from("--no-parallel"),
@@ -63312,7 +63602,14 @@ deconvolver=mtmfs
         let summary = run_from_config(&config).unwrap();
 
         assert!(summary.gridded_samples >= 8);
-        for suffix in ["psf.tt0", "psf.tt1", "psf.tt2", "image.tt0", "image.tt1"] {
+        for suffix in [
+            "psf.tt0",
+            "psf.tt1",
+            "psf.tt2",
+            "image.tt0",
+            "image.tt1",
+            "mask",
+        ] {
             let path = format!("{}.{}", image_prefix.display(), suffix);
             assert!(
                 Path::new(&path).exists(),

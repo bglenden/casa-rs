@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA-style imaging-weight preparation for the pure imaging core.
 
-use std::{sync::LazyLock, thread};
+use std::{
+    fs::OpenOptions,
+    io::{BufWriter, Write},
+    sync::LazyLock,
+    thread,
+};
 
 use ndarray::{Array2, Zip};
 
@@ -203,6 +208,13 @@ impl StandardMfsStreamingWeightingPlan {
 
     /// Finalize robust statistics after the density pass.
     pub fn finish_density_pass(&mut self) {
+        if let Some(density) = self.density.as_ref() {
+            dump_weighting_density_csv(
+                density,
+                self.density_build_convention,
+                self.density_convention,
+            );
+        }
         self.mode = match self.weighting {
             WeightingMode::Natural => None,
             WeightingMode::Uniform => Some(DensityReweightMode::Uniform),
@@ -389,6 +401,41 @@ impl StandardMfsStreamingWeightingPlan {
             }
         }
     }
+}
+
+fn dump_weighting_density_csv(
+    density: &Array2<f32>,
+    build_convention: DensityCellConvention,
+    lookup_convention: DensityCellConvention,
+) {
+    let Some(path) = std::env::var_os("CASA_RS_TRACE_RUST_WEIGHTING_DENSITY_CSV") else {
+        return;
+    };
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .unwrap_or_else(|error| {
+            panic!(
+                "failed to create CASA_RS_TRACE_RUST_WEIGHTING_DENSITY_CSV {}: {error}",
+                std::path::Path::new(&path).display()
+            )
+        });
+    let mut output = BufWriter::new(file);
+    let (nx, ny) = density.dim();
+    writeln!(
+        output,
+        "# shape={nx},{ny} build={build_convention:?} lookup={lookup_convention:?}"
+    )
+    .expect("write Rust weighting density header");
+    writeln!(output, "x,y,f32_bits,value").expect("write Rust weighting density columns");
+    for ((x, y), value) in density.indexed_iter() {
+        if *value != 0.0 {
+            writeln!(output, "{x},{y},{:08x},{value:.9e}", value.to_bits())
+                .expect("write Rust weighting density cell");
+        }
+    }
+    output.flush().expect("flush Rust weighting density");
 }
 
 /// Accumulate standard-MFS density samples from one row in a borrowed visibility block.
@@ -599,7 +646,6 @@ where
             source_channel_frequencies_hz.len()
         )));
     }
-    let mfs_lambda_scale = mfs_frequency_scale / crate::SPEED_OF_LIGHT_M_PER_S;
     let mut accepted_samples = 0usize;
     match polarization {
         StandardMfsVisibilityPolarization::Explicit { corr_index, .. } => {
@@ -619,12 +665,9 @@ where
                 if !(weight.is_finite() && weight > 0.0) {
                     continue;
                 }
-                let lambda_scale = frequency_hz * mfs_lambda_scale;
-                weighting_plan.accumulate_density_sample(
-                    uvw_m[0] * lambda_scale,
-                    uvw_m[1] * lambda_scale,
-                    weight,
-                );
+                let (u_lambda, v_lambda) =
+                    casa_vis_imaging_weight_uv_lambda(uvw_m, frequency_hz * mfs_frequency_scale);
+                weighting_plan.accumulate_density_sample(u_lambda, v_lambda, weight);
                 accepted_samples += 1;
             }
         }
@@ -663,17 +706,24 @@ where
                 if !(combined_weight.is_finite() && combined_weight > 0.0) {
                     continue;
                 }
-                let lambda_scale = frequency_hz * mfs_lambda_scale;
-                weighting_plan.accumulate_density_sample(
-                    uvw_m[0] * lambda_scale,
-                    uvw_m[1] * lambda_scale,
-                    combined_weight,
-                );
+                let (u_lambda, v_lambda) =
+                    casa_vis_imaging_weight_uv_lambda(uvw_m, frequency_hz * mfs_frequency_scale);
+                weighting_plan.accumulate_density_sample(u_lambda, v_lambda, combined_weight);
                 accepted_samples += 1;
             }
         }
     }
     Ok(accepted_samples)
+}
+
+fn casa_vis_imaging_weight_uv_lambda(uvw_m: [f64; 3], frequency_hz: f64) -> (f64, f64) {
+    // VisImagingWeight stores frequency/c in Float, multiplies the Double UVW
+    // coordinate by that rounded scale, and stores the result in Float again.
+    let lambda_scale = f64::from((frequency_hz / crate::SPEED_OF_LIGHT_M_PER_S) as f32);
+    (
+        f64::from((uvw_m[0] * lambda_scale) as f32),
+        f64::from((uvw_m[1] * lambda_scale) as f32),
+    )
 }
 
 fn standard_mfs_density_local_channel(
@@ -2813,6 +2863,20 @@ mod tests {
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         }
+    }
+
+    #[test]
+    fn vis_imaging_weight_uv_lambda_preserves_both_casa_float_rounding_steps() {
+        let (u_lambda, v_lambda) = casa_vis_imaging_weight_uv_lambda(
+            [123_456.789_012_3, -98_765.432_109_8, 0.0],
+            2_123_456_789.0,
+        );
+
+        assert_eq!((u_lambda as f32).to_bits(), 0x4955_7d77);
+        assert_eq!((v_lambda as f32).to_bits(), 0xc92a_cac6);
+        let one_step =
+            (123_456.789_012_3 * (2_123_456_789.0 / crate::SPEED_OF_LIGHT_M_PER_S)) as f32;
+        assert_eq!(one_step.to_bits(), 0x4955_7d78);
     }
 
     #[test]

@@ -269,7 +269,7 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(1, manifest["imaging"]["imaging_read_ahead_blocks"])
         self.assertEqual("f64", manifest["imaging"]["imaging_fft_precision"])
         self.assertEqual(
-            "fftw-local-bench", manifest["imaging"]["imaging_fft_backend"]
+            "fftw", manifest["imaging"]["imaging_fft_backend"]
         )
         self.assertEqual(
             "experimental_fftw_f64", manifest["run"]["evidence_role"]
@@ -299,7 +299,7 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(1, manifest["imaging"]["imaging_read_ahead_blocks"])
         self.assertEqual("f64", manifest["imaging"]["imaging_fft_precision"])
         self.assertEqual(
-            "fftw-local-bench", manifest["imaging"]["imaging_fft_backend"]
+            "fftw", manifest["imaging"]["imaging_fft_backend"]
         )
         self.assertEqual(
             "experimental_metal_grid_fftw_f64", manifest["run"]["evidence_role"]
@@ -331,7 +331,7 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(1, manifest["imaging"]["imaging_read_ahead_blocks"])
         self.assertEqual("f64", manifest["imaging"]["imaging_fft_precision"])
         self.assertEqual(
-            "fftw-local-bench", manifest["imaging"]["imaging_fft_backend"]
+            "fftw", manifest["imaging"]["imaging_fft_backend"]
         )
         self.assertEqual(
             "experimental_multicpu_fftw_f64", manifest["run"]["evidence_role"]

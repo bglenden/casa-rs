@@ -197,8 +197,8 @@ if [[ "$imaging_fft_precision" != "auto" && "$imaging_fft_precision" != "f64" &&
   echo "error: IMAGER_BENCH_IMAGING_FFT_PRECISION must be auto, f64, or f32" >&2
   exit 2
 fi
-if [[ "$imaging_fft_backend" != "auto" && "$imaging_fft_backend" != "rustfft" && "$imaging_fft_backend" != "accelerate" && "$imaging_fft_backend" != "metal-mpsgraph" && "$imaging_fft_backend" != "fftw-local-bench" ]]; then
-  echo "error: IMAGER_BENCH_IMAGING_FFT_BACKEND must be auto, rustfft, accelerate, metal-mpsgraph, or fftw-local-bench" >&2
+if [[ "$imaging_fft_backend" != "auto" && "$imaging_fft_backend" != "rustfft" && "$imaging_fft_backend" != "accelerate" && "$imaging_fft_backend" != "metal-mpsgraph" && "$imaging_fft_backend" != "fftw" ]]; then
+  echo "error: IMAGER_BENCH_IMAGING_FFT_BACKEND must be auto, rustfft, accelerate, metal-mpsgraph, or fftw" >&2
   exit 2
 fi
 if [[ -n "$imaging_memory_target_mb" && ! "$imaging_memory_target_mb" =~ ^[0-9]+$ ]]; then
@@ -466,48 +466,39 @@ PY
 run_timed_command() {
   local stderr_file="$1"
   shift
-  local start
   local status
-  start="$(python3 - <<'PY'
-import time
-print(f"{time.perf_counter():.9f}")
-PY
-)"
   set +e
   if [[ "${IMAGER_BENCH_STREAM_LOG:-0}" == "1" || "${IMAGER_BENCH_STREAM_LOG:-}" == "true" || "${IMAGER_BENCH_STREAM_LOG:-}" == "yes" || "${IMAGER_BENCH_STREAM_LOG:-}" == "on" ]]; then
     : >"$stderr_file"
     tail -f "$stderr_file" >&2 &
     local tail_pid="$!"
-    "$@" >/dev/null 2>>"$stderr_file" &
+    /usr/bin/time -p "$@" >/dev/null 2>>"$stderr_file" &
     local command_pid="$!"
-    local heartbeat_start="$SECONDS"
-    local last_heartbeat="$SECONDS"
-    while kill -0 "$command_pid" 2>/dev/null; do
-      sleep 1
-      if (( SECONDS - last_heartbeat >= 30 )) && kill -0 "$command_pid" 2>/dev/null; then
-        echo "benchmark_command_progress command=$(basename "$1") elapsed_s=$((SECONDS - heartbeat_start))" >&2
-        last_heartbeat="$SECONDS"
-      fi
-    done
+    local command_name
+    command_name="$(basename "$1")"
+    (
+      local heartbeat_start="$SECONDS"
+      local last_heartbeat="$SECONDS"
+      while kill -0 "$command_pid" 2>/dev/null; do
+        sleep 1
+        if (( SECONDS - last_heartbeat >= 30 )) && kill -0 "$command_pid" 2>/dev/null; then
+          echo "benchmark_command_progress command=$command_name elapsed_s=$((SECONDS - heartbeat_start))" >&2
+          last_heartbeat="$SECONDS"
+        fi
+      done
+    ) &
+    local progress_pid="$!"
     wait "$command_pid"
     status="$?"
+    kill "$progress_pid" 2>/dev/null
+    wait "$progress_pid" 2>/dev/null
     kill "$tail_pid" 2>/dev/null
     wait "$tail_pid" 2>/dev/null
   else
-    "$@" >/dev/null 2>"$stderr_file"
+    /usr/bin/time -p "$@" >/dev/null 2>"$stderr_file"
     status="$?"
   fi
   set -e
-  python3 - "$start" "$stderr_file" <<'PY'
-import sys
-import time
-
-start = float(sys.argv[1])
-stderr_file = sys.argv[2]
-elapsed = time.perf_counter() - start
-with open(stderr_file, "a", encoding="utf-8") as handle:
-    handle.write(f"real {elapsed:.6f}\n")
-PY
   return "$status"
 }
 
@@ -517,7 +508,7 @@ emit_rust_backend_diagnostics() {
     return 0
   fi
   grep -E \
-    '^(awproject_(plan|cache|mtmfs_sample_census|metal_.*)|single_plane_execution_plan|standard_mfs_runtime_plan|standard_mfs_memory_plan_actual|imaging_source_read_ahead_summary|standard_mfs_source_read_ahead_summary|dirty_product_(fft_timing|gpu_resident|gpu_resident_fallback)|mosaic_dirty_product_gpu_resident|mosaic_mtmfs_(direct_metal_tile_parallel|residual_gpu_resident)|visibility_source_stream_consumer|standard_mfs_profile_run|standard_mfs_(hogbom|clark|multiscale)_minor_cycle_summary|standard_mfs_multiscale_metal_(minor_cycle_summary|indirect_summary)|standard_mfs_clean_residual_refresh_summary|standard_mfs_metal_(residual_refresh|residual_refresh_detail|row_run_residual_refresh|row_run_residual_refresh_detail|row_run_grouped_residual_refresh|row_run_grouped_append_detail)|spectral_slab_plan|spectral_slab_event|spectral_slab_memory|visibility_geometry_cache_summary|image_product_write|mosaic_cube_slab_(plane|executor_summary)|cube_per_plane_backend_summary|cube_slab_executor_limitation|cube_source_row_blocks|cube_plane_state_store_summary|cube_resident_clean_(control|executor_summary|stage_summary|finish_plane|finish_plane_stage_detail)|cube_shared_(direct_)?plane_executor_summary|cube_shared_direct_dirty_eligibility|cube_shared_direct_dirty_source|independent_plane_executor_owned_streaming_done|frontend stage=(prepare_plane_input/(data_coverage|accumulate_rows/detail|finish_cube_source_row_blocks)|write_products|cube_slab/|cube_resident_clean/|cli/))' \
+    '^(awproject_(plan|cache|mtmfs_sample_census|prediction_trace|metal_.*)|single_plane_execution_plan|standard_mfs_runtime_plan|standard_mfs_memory_plan_actual|imaging_source_read_ahead_summary|standard_mfs_source_read_ahead_summary|dirty_product_(fft_timing|gpu_resident|gpu_resident_fallback)|mosaic_dirty_product_gpu_resident|mosaic_mtmfs_(direct_metal_tile_parallel|residual_gpu_resident)|visibility_source_stream_consumer|standard_mfs_profile_run|standard_mfs_(hogbom|clark|multiscale)_minor_cycle_summary|standard_mfs_multiscale_metal_(minor_cycle_summary|indirect_summary)|standard_mfs_clean_residual_refresh_summary|standard_mfs_metal_(residual_refresh|residual_refresh_detail|row_run_residual_refresh|row_run_residual_refresh_detail|row_run_grouped_residual_refresh|row_run_grouped_append_detail)|spectral_slab_plan|spectral_slab_event|spectral_slab_memory|visibility_geometry_cache_summary|image_product_write|mosaic_cube_slab_(plane|executor_summary)|cube_per_plane_backend_summary|cube_slab_executor_limitation|cube_source_row_blocks|cube_plane_state_store_summary|cube_resident_clean_(control|executor_summary|stage_summary|finish_plane|finish_plane_stage_detail)|cube_shared_(direct_)?plane_executor_summary|cube_shared_direct_dirty_eligibility|cube_shared_direct_dirty_source|independent_plane_executor_owned_streaming_done|frontend stage=(prepare_plane_input/(data_coverage|accumulate_rows/detail|finish_cube_source_row_blocks)|write_products|cube_slab/|cube_resident_clean/|cli/))' \
     "$stderr_file" || true
 }
 
@@ -684,10 +675,20 @@ run_with_optional_phasecenter() {
     "$@"
   fi
 }
+rust_loader_prefix=()
+if [[ "$(uname -s)" == "Darwin" && -n "${CASA_RS_FFTW_LIBRARY_DIR:-}" ]]; then
+  # macOS strips DYLD_* variables when Python crosses the protected system
+  # shell boundary. Reintroduce the explicit operator-supplied FFTW directory
+  # immediately before exec so local FFTW experiments can resolve a threads
+  # dylib whose core dependency is expressed with @rpath.
+  rust_loader_prefix=(env DYLD_LIBRARY_PATH="$CASA_RS_FFTW_LIBRARY_DIR")
+fi
 run_rust_cli() {
   local stderr_file="$1"
   local prefix="$2"
-  run_with_optional_phasecenter run_timed_command "$stderr_file" target/release/casars-imager \
+  run_with_optional_phasecenter run_timed_command "$stderr_file" \
+    ${rust_loader_prefix[@]+"${rust_loader_prefix[@]}"} \
+    target/release/casars-imager \
     --ms "$ms_path" \
     --imagename "$prefix" \
     --imsize "$imsize" \
@@ -732,7 +733,9 @@ run_rust_cli() {
     ${rust_dirty_flags[@]+"${rust_dirty_flags[@]}"}
 }
 run_rust_profile() {
-  run_with_optional_phasecenter target/release/examples/profile_imager \
+  run_with_optional_phasecenter \
+    ${rust_loader_prefix[@]+"${rust_loader_prefix[@]}"} \
+    target/release/examples/profile_imager \
     "$ms_path" \
     --field "$field" \
     --spw "$spw" \

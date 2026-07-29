@@ -1,24 +1,15 @@
 {
   "schema_version": 1,
-  "id": "vlass-fragment-single-field-multicpu-fftw-f64-experiment",
-  "mode_id": "vlass-awproject-mtmfs-single-field-multicpu4-fftw-f64",
-  "description": "Full-geometry field-1525 VLASS exact compact-source-order AW replay with four disjoint Taylor-plane CPU workers and the local f64 FFTW adapter against the frozen CASA 6.7.5.9 products. This is never final acceptance evidence and does not replace the frozen serial row.",
-  "casa": {
-    "dataset_geometry_path": "tools/perf/imager/recipes/vlass-fragment-dataset-geometry.json",
-    "dataset_selection": "single_field",
-    "dataset_geometry_sha256": "28b1350f2754e4439a0ac94480eb4efb054ecf03f221c805e98cf34c6b5f77f1",
-    "recipe_path": "tools/perf/imager/recipes/vlass-fragment-tclean.last",
-    "recipe_sha256": "a64e6213d66436fee6d602eb5bbda3ac8667b8df2491ea7310557748bbbf15b5",
-    "runtime_identity_path": "tools/perf/imager/recipes/vlass-casa-runtime-identity.json",
-    "runtime_identity_sha256": "7f1d97745f17c770b615b9fbd0ebfe9915b0333e4e9ce6bfb7099de7de721a0b"
-  },
+  "id": "vlass-fragment-single-field-clean-4096-full-16-spw",
+  "mode_id": "vlass-awproject-mtmfs-single-field-clean",
+  "description": "Reduced 4,096-square, full-16-SPW field-1525 VLASS clean promotion row. This is development correctness and turnaround evidence only, never final 12,150-square correctness or laptop 10x evidence.",
   "dataset": {
     "key": "vlass-fragment-b80d5e87487a",
     "relative_path": "VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms",
     "root_env": "CASA_RS_VLASS_DATA_ROOT"
   },
   "imaging": {
-    "mode": "dirty",
+    "mode": "clean",
     "specmode": "mfs",
     "gridder": "awproject",
     "casa_gridder": "awproject",
@@ -29,7 +20,7 @@
     "spw": "2~17",
     "channel_start": 0,
     "channel_count": 64,
-    "imsize": 12150,
+    "imsize": 4096,
     "cell_arcsec": 0.6,
     "datacolumn": "data",
     "stokes": "I",
@@ -44,7 +35,7 @@
     "nterms": 2,
     "scales": [0, 5, 12],
     "smallscalebias": 0.0,
-    "niter": 0,
+    "niter": 2000,
     "gain": 0.1,
     "threshold_jy": 0.0,
     "nsigma": 5.0,
@@ -73,38 +64,47 @@
     "restoringbeam": "common",
     "interactive": false,
     "usemask": "user",
+    "mask_image": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/masks/vlass-single-field-peak-box-4096.mask",
+    "mask_sha256": "24607e668794b0aa9aaa402e1d9a1f52fa269ca46b78e36ca50c8481a61110bf",
     "restart": false,
     "savemodel": "none",
     "calcres": true,
     "calcpsf": true,
-    "parallel": true,
-    "standard_mfs_acceleration": "multi-cpu",
-    "standard_mfs_grid_threads": 4,
-    "imaging_prepare_workers": 4,
+    "parallel": false,
+    "standard_mfs_acceleration": "metal",
+    "standard_mfs_grid_threads": 2,
+    "imaging_prepare_workers": 1,
     "imaging_read_ahead_blocks": 1,
     "imaging_fft_precision": "f64",
     "imaging_fft_backend": "fftw",
-    "imaging_memory_target_mb": 32768,
-    "cfcache": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache/6.7.5.9/8e5679681214158629c7eb6113bc3b062d6105fbae64471905aa73de50080a69",
+    "imaging_memory_target_mb": 16384,
+    "cfcache": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache/6.7.5.18/single-field-4096-full-16-spw",
     "cf_resident_mb": 256
   },
   "run": {
     "repeats": 1,
-    "warmups": 1,
+    "warmups": 0,
     "profile_repeats": 1,
-    "stream_log": false,
-    "run_label": "vlass-single-field-multicpu-fftw-f64-experiment",
-    "storage_label": "GLENDENNING-vlass-archive",
+    "stream_log": true,
+    "run_label": "vlass-single-field-clean-4096-full-16-spw",
+    "storage_label": "laptop-glendenning-external-ssd",
     "ms_staging": "direct",
     "skip_casa": "1",
-    "reuse_casa_prefix": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/vlass-fragment-single-field-cold/casa_cold_dirty_fiducial/20260721T051546Z-vlass-fragment-single-field-cold-164bd8e1/casa/measured-001/casa",
+    "skip_profile": "1",
+    "reuse_casa_prefix": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/casa-reduced-clean/4096-full-16-spw/casa",
     "cf_cache_role": "warm",
-    "evidence_role": "experimental_multicpu_fftw_f64"
+    "preverified_warm_cache": true,
+    "env": {
+      "CASA_RS_STANDARD_MFS_PROFILE_DETAIL": "1"
+    },
+    "evidence_role": "reduced_turnaround_only"
   },
   "review": {
     "required_reviewer": "Brian",
-    "requires_human_acceptance_before_done": true,
-    "required_evidence_roles": ["experimental_multicpu_fftw_f64"]
+    "requires_human_acceptance_before_done": false,
+    "required_evidence_roles": [
+      "reduced_turnaround_only"
+    ]
   },
   "comparison": {
     "mode": "full",
@@ -113,6 +113,7 @@
       ".alpha.error",
       ".image.tt0",
       ".image.tt1",
+      ".mask",
       ".model.tt0",
       ".model.tt1",
       ".pb.tt0",
@@ -134,10 +135,20 @@
     "require_metadata_parity": true,
     "source_regions": [
       {
-        "id": "bright-source-field-1525",
-        "products": [".image.tt0"],
-        "blc": [6243, 6003],
-        "trc": [6306, 6066]
+        "id": "bright-source-field-1525-centered-crop",
+        "products": [
+          ".image.tt0",
+          ".model.tt0",
+          ".residual.tt0"
+        ],
+        "blc": [
+          575,
+          2125
+        ],
+        "trc": [
+          638,
+          2188
+        ]
       }
     ],
     "tolerances": {
@@ -147,29 +158,11 @@
         "diff_abs_max_over_right_peak": 0.005,
         "diff_rms_over_right_rms": 0.001,
         "require_topology_parity": true,
-        "allowed_structure_labels": ["good"]
+        "allowed_structure_labels": [
+          "good"
+        ]
       },
-      "products": {
-        ".image.tt0": {
-          "beam_major_relative": 0.001,
-          "beam_minor_relative": 0.001,
-          "beam_pa_degrees": 0.1,
-          "centroid_pixels": 0.05,
-          "integrated_flux_relative": 0.001,
-          "peak_relative": 0.001
-        },
-        ".image.tt1": {
-          "beam_major_relative": 0.001,
-          "beam_minor_relative": 0.001,
-          "beam_pa_degrees": 0.1
-        },
-        ".model.tt0": {
-          "allowed_structure_labels": ["good", "not_applicable_exact_zero"]
-        },
-        ".model.tt1": {
-          "allowed_structure_labels": ["good", "not_applicable_exact_zero"]
-        }
-      }
+      "products": {}
     }
   }
 }

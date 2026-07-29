@@ -83,7 +83,7 @@
     "imaging_prepare_workers": 1,
     "imaging_read_ahead_blocks": 1,
     "imaging_fft_precision": "f64",
-    "imaging_fft_backend": "fftw-local-bench",
+    "imaging_fft_backend": "fftw",
     "imaging_memory_target_mb": 32768,
     "cfcache": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache/6.7.5.9/8e5679681214158629c7eb6113bc3b062d6105fbae64471905aa73de50080a69",
     "cf_resident_mb": 1024
