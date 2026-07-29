@@ -2129,10 +2129,11 @@ mod tests {
     use crate::{
         AwParallelHandVisibilityBatch, AwProjectControls, AwProjectGridderConfig, CleanConfig,
         CompatibilityMode, DirtyProductFftPolicy, GridderMode, GroupedVisibilityMetadata,
-        GroupedVisibilityMetadataBatch, ImageGeometry, ImagingExecutionPlan, ImagingResolvedPlan,
-        MosaicGridderConfig, MosaicMtmfsVisibilityBlock, MtmfsRequest, PlaneStokes,
-        PrimaryBeamModel, VisibilityBatch, VisibilitySampleRange, WTermMode, WeightDensityMode,
-        WeightingMode, run_mosaic_mtmfs_from_single_plane_stream,
+        GroupedVisibilityMetadataBatch, ImageGeometry, ImagingExecutionPlan,
+        ImagingMemoryAllocation, ImagingResolvedPlan, MosaicGridderConfig,
+        MosaicMtmfsVisibilityBlock, MtmfsRequest, PlaneStokes, PrimaryBeamModel, VisibilityBatch,
+        VisibilitySampleRange, WTermMode, WeightDensityMode, WeightingMode,
+        run_mosaic_mtmfs_from_single_plane_stream,
     };
 
     #[test]
@@ -2762,13 +2763,18 @@ mod tests {
             clean_mask: Some(Array2::from_elem((64, 64), true)),
             compatibility: CompatibilityMode::CasaStandardMfs,
         };
-        let run = |request| {
+        let run_with_replay_retention = |request, replay_retention_bytes| {
+            let mut resolved = ImagingResolvedPlan::default();
+            if replay_retention_bytes > 0 {
+                resolved.memory_allocations.push(ImagingMemoryAllocation {
+                    component: "AWProject compact replay retention",
+                    stage: "run",
+                    bytes: replay_retention_bytes,
+                });
+            }
             run_mosaic_mtmfs_from_single_plane_stream(
                 request,
-                ImagingExecutionPlan::new(
-                    DirtyProductFftPolicy::correctness_first(),
-                    ImagingResolvedPlan::default(),
-                ),
+                ImagingExecutionPlan::new(DirtyProductFftPolicy::correctness_first(), resolved),
                 WeightDensityMode::Combined,
                 |_, consumer| {
                     consumer(MosaicMtmfsVisibilityBlock {
@@ -2788,6 +2794,7 @@ mod tests {
                 },
             )
         };
+        let run = |request| run_with_replay_retention(request, 0);
         let result = run(request.clone()).unwrap();
 
         assert_eq!(result.psf_terms.len(), 3);
@@ -2838,23 +2845,23 @@ mod tests {
         let mut clean_request = request;
         clean_request.clean.niter = 2;
         clean_request.clean.minor_cycle_length = 1;
-        let clean_result = run(clean_request.clone()).unwrap();
-        let repeated_clean_result = run(clean_request).unwrap();
-        assert_eq!(clean_result.psf_terms, repeated_clean_result.psf_terms);
+        let uncached_clean_result = run(clean_request.clone()).unwrap();
+        let clean_result = run_with_replay_retention(clean_request.clone(), 1024 * 1024).unwrap();
+        assert_eq!(clean_result.psf_terms, uncached_clean_result.psf_terms);
         assert_eq!(
             clean_result.residual_terms,
-            repeated_clean_result.residual_terms
+            uncached_clean_result.residual_terms
         );
-        assert_eq!(clean_result.model_terms, repeated_clean_result.model_terms);
-        assert_eq!(clean_result.image_terms, repeated_clean_result.image_terms);
-        assert_eq!(clean_result.sumwt_terms, repeated_clean_result.sumwt_terms);
+        assert_eq!(clean_result.model_terms, uncached_clean_result.model_terms);
+        assert_eq!(clean_result.image_terms, uncached_clean_result.image_terms);
+        assert_eq!(clean_result.sumwt_terms, uncached_clean_result.sumwt_terms);
         assert_eq!(
             clean_result.weight_terms,
-            repeated_clean_result.weight_terms
+            uncached_clean_result.weight_terms
         );
-        assert_eq!(clean_result.alpha, repeated_clean_result.alpha);
-        assert_eq!(clean_result.alpha_error, repeated_clean_result.alpha_error);
-        assert_eq!(clean_result.alpha_mask, repeated_clean_result.alpha_mask);
+        assert_eq!(clean_result.alpha, uncached_clean_result.alpha);
+        assert_eq!(clean_result.alpha_error, uncached_clean_result.alpha_error);
+        assert_eq!(clean_result.alpha_mask, uncached_clean_result.alpha_mask);
         assert_eq!(clean_result.psf_terms.len(), 3);
         assert_eq!(clean_result.residual_terms.len(), 2);
         assert_eq!(clean_result.model_terms.len(), 2);
@@ -2876,12 +2883,60 @@ mod tests {
         assert_eq!(clean_diagnostics.samples.attempted_samples, 6);
         assert_eq!(clean_diagnostics.samples.accepted_samples, 6);
         assert_eq!(
-            clean_diagnostics.resident.loads, 24,
-            "three clean passes each pack the fixture's eight unique cells once"
+            clean_diagnostics.resident.loads, 16,
+            "initial dirty and the first residual pass pack the fixture's cells; the second residual pass reuses the retained exact source-order window"
         );
         assert_eq!(clean_diagnostics.resident.hits, 0);
         assert!(
             clean_diagnostics.resident.resident_bytes <= clean_diagnostics.resident_budget_bytes
+        );
+
+        let mut partial_request = clean_request;
+        let GridderMode::AwProject(partial_config) = &mut partial_request.gridder_mode else {
+            unreachable!("the synthetic replay fixture must remain AWProject");
+        };
+        partial_config.controls.cf_resident_bytes = 14 * 1024;
+        let uncached_partial_result = run(partial_request.clone()).unwrap();
+        let partial_result = run_with_replay_retention(partial_request, 28 * 1024).unwrap();
+        assert_eq!(partial_result.psf_terms, uncached_partial_result.psf_terms);
+        assert_eq!(
+            partial_result.residual_terms,
+            uncached_partial_result.residual_terms
+        );
+        assert_eq!(
+            partial_result.model_terms,
+            uncached_partial_result.model_terms
+        );
+        assert_eq!(
+            partial_result.image_terms,
+            uncached_partial_result.image_terms
+        );
+        assert_eq!(
+            partial_result.sumwt_terms,
+            uncached_partial_result.sumwt_terms
+        );
+        assert_eq!(
+            partial_result.weight_terms,
+            uncached_partial_result.weight_terms
+        );
+        assert_eq!(partial_result.alpha, uncached_partial_result.alpha);
+        assert_eq!(
+            partial_result.alpha_error,
+            uncached_partial_result.alpha_error
+        );
+        assert_eq!(
+            partial_result.alpha_mask,
+            uncached_partial_result.alpha_mask
+        );
+        let uncached_partial_diagnostics = uncached_partial_result
+            .awproject
+            .expect("uncached partial AWProject diagnostics");
+        let partial_diagnostics = partial_result
+            .awproject
+            .expect("partial AWProject diagnostics");
+        assert!(
+            partial_diagnostics.resident.loads < uncached_partial_diagnostics.resident.loads,
+            "a bounded retained prefix must avoid at least one full-cell load"
         );
     }
 

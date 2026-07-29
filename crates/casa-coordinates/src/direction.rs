@@ -361,8 +361,10 @@ impl DirectionCoordinate {
             (self.cdelt[0] * to_degrees) * (self.pc[[0, 0]] * dx + self.pc[[0, 1]] * dy);
         let y_degrees =
             (self.cdelt[1] * to_degrees) * (self.pc[[1, 0]] * dx + self.pc[[1, 1]] * dy);
-        let x = x_degrees * (PI / 180.0);
-        let y = y_degrees * (PI / 180.0);
+        // WCSLIB's zenithal reverse projection applies its unparenthesized
+        // D2R macro to these degree-valued linear coordinates.
+        let x = x_degrees * PI / 180.0;
+        let y = y_degrees * PI / 180.0;
 
         (x, y)
     }
@@ -394,8 +396,9 @@ impl DirectionCoordinate {
         let (alpha_p, delta_p) = (self.native_pole[0], self.native_pole[1]);
         let radians_per_degree = PI / 180.0;
         let to_degrees = 1.0 / radians_per_degree;
-        let phi_degrees = phi * to_degrees;
-        let theta_degrees = theta * to_degrees;
+        // WCSLIB returns native angles through its unparenthesized R2D macro.
+        let phi_degrees = phi * 180.0 / PI;
+        let theta_degrees = theta * 180.0 / PI;
         let euler_0 = alpha_p * to_degrees;
         let euler_1 = 90.0 - delta_p * to_degrees;
         let euler_2 = self.longpole * to_degrees;
@@ -496,7 +499,9 @@ fn wcslib_sin_cos_degrees(angle_degrees: f64) -> (f64, f64) {
             _ => unreachable!(),
         };
     }
-    let angle_radians = angle_degrees * (PI / 180.0);
+    // D2R is an unparenthesized `PI/180.0` macro in WCSLIB, so its call
+    // sites evaluate `angle * PI / 180.0` from left to right.
+    let angle_radians = angle_degrees * PI / 180.0;
     (angle_radians.sin(), angle_radians.cos())
 }
 
@@ -512,7 +517,7 @@ fn wcslib_acos_degrees(value: f64) -> f64 {
     } else if value <= -1.0 && value + 1.0 > -1.0e-10 {
         180.0
     } else {
-        value.acos() * (180.0 / PI)
+        value.acos() * 180.0 / PI
     }
 }
 
@@ -524,7 +529,7 @@ fn wcslib_asin_degrees(value: f64) -> f64 {
     } else if value >= 1.0 && value - 1.0 < 1.0e-10 {
         90.0
     } else {
-        value.asin() * (180.0 / PI)
+        value.asin() * 180.0 / PI
     }
 }
 
@@ -534,7 +539,7 @@ fn wcslib_atan2_degrees(y: f64, x: f64) -> f64 {
     } else if x == 0.0 {
         if y > 0.0 { 90.0 } else { -90.0 }
     } else {
-        y.atan2(x) * (180.0 / PI)
+        y.atan2(x) * 180.0 / PI
     }
 }
 
@@ -734,6 +739,22 @@ mod tests {
             "lat mismatch: {} vs {}",
             world[1],
             coord.crval[1]
+        );
+    }
+
+    #[test]
+    fn vlass_4096_zero_pixel_matches_casa_wcslib() {
+        let coord = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [3.5456021799042077, 0.29321531433310033],
+            [-2.9088820866572157e-6, 2.9088820866572157e-6],
+            [2048.0, 2048.0],
+        );
+
+        assert_eq!(
+            coord.to_world(&[0.0, 0.0]).unwrap(),
+            vec![3.55181413812941, 0.2872525403597409]
         );
     }
 

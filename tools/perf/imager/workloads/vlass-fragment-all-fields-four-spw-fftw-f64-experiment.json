@@ -1,0 +1,188 @@
+{
+  "schema_version": 1,
+  "id": "vlass-fragment-all-fields-four-spw-fftw-f64-experiment",
+  "mode_id": "vlass-awproject-mtmfs-raster-patch",
+  "description": "Full-geometry connected-63-field VLASS fragment four-SPW turnaround using the measured seven-worker dynamic sparse-tile candidate. This is casa-rs-only worker-planner development evidence, never final correctness or 10x evidence.",
+  "dataset": {
+    "key": "vlass-fragment-b80d5e87487a",
+    "relative_path": "VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms",
+    "root_env": "CASA_RS_VLASS_DATA_ROOT"
+  },
+  "imaging": {
+    "mode": "dirty",
+    "specmode": "mfs",
+    "gridder": "awproject",
+    "casa_gridder": "awproject",
+    "wterm": "wproject",
+    "wprojplanes": 32,
+    "field": "1107~1127,1512~1532,1542~1562",
+    "phasecenter_field": 1525,
+    "spw": "2,7,12,17",
+    "channel_start": 0,
+    "channel_count": 64,
+    "imsize": 12150,
+    "cell_arcsec": 0.6,
+    "datacolumn": "data",
+    "stokes": "I",
+    "projection": "SIN",
+    "interpolation": "linear",
+    "uvrange": "<12km",
+    "intent": "OBSERVE_TARGET#UNSPECIFIED",
+    "weighting": "briggs",
+    "robust": 1.0,
+    "perchanweightdensity": true,
+    "deconvolver": "mtmfs",
+    "nterms": 2,
+    "scales": [0, 5, 12],
+    "smallscalebias": 0.0,
+    "niter": 0,
+    "gain": 0.1,
+    "threshold_jy": 0.0,
+    "nsigma": 5.0,
+    "minor_cycle_length": 2000,
+    "cyclefactor": 3.0,
+    "min_psf_fraction": 0.05,
+    "max_psf_fraction": 0.8,
+    "facets": 1,
+    "psfphasecenter": "",
+    "chanchunks": 1,
+    "vptable": "",
+    "mosweight": false,
+    "aterm": true,
+    "psterm": false,
+    "wbawp": true,
+    "conjbeams": true,
+    "usepointing": true,
+    "computepastep": 360.0,
+    "rotatepastep": 360.0,
+    "pointingoffsetsigdev": 0.0,
+    "pblimit": 0.0001,
+    "normtype": "flatnoise",
+    "write_pb": true,
+    "pbcor": false,
+    "restoration": true,
+    "restoringbeam": "common",
+    "interactive": false,
+    "usemask": "user",
+    "restart": false,
+    "savemodel": "none",
+    "calcres": true,
+    "calcpsf": true,
+    "parallel": true,
+    "standard_mfs_acceleration": "cpu",
+    "standard_mfs_grid_threads": 7,
+    "imaging_prepare_workers": 1,
+    "imaging_read_ahead_blocks": 1,
+    "imaging_fft_precision": "f64",
+    "imaging_fft_backend": "fftw",
+    "imaging_memory_target_mb": 32768,
+    "cfcache": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache/6.7.5.9/f6f947c5104f8da579f9411dd7087dd331c9e59034073a9fd68b5d6132cd281d",
+    "cf_resident_mb": 256
+  },
+  "run": {
+    "repeats": 1,
+    "warmups": 1,
+    "profile_repeats": 1,
+    "stream_log": true,
+    "run_label": "vlass-all-fields-four-spw-dynamic-sparse-tile-task-experiment",
+    "storage_label": "GLENDENNING-vlass-archive",
+    "ms_staging": "direct",
+    "skip_casa": "1",
+    "skip_profile": "1",
+    "cf_cache_role": "warm",
+    "env": {
+      "CASA_RS_AWPROJECT_ALTERNATE_CF_LOAD_ORDER": "1",
+      "CASA_RS_AWPROJECT_DIRECT_CF_SELECT_EXPERIMENT": "1",
+      "CASA_RS_AWPROJECT_DYNAMIC_SPARSE_TILE_TASKS_EXPERIMENT": "1",
+      "CASA_RS_AWPROJECT_PACK_THREADS": "4",
+      "CASA_RS_AWPROJECT_PACKED_CF_EXPERIMENT": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache-packed/f24a584cbe2dd782.awcf",
+      "CASA_RS_AWPROJECT_PHASE_TABLE_EXPERIMENT": "1",
+      "CASA_RS_AWPROJECT_NEON_2X2_EXPERIMENT": "1",
+      "CASA_RS_AWPROJECT_PLAN_CHUNK_SAMPLES": "16384",
+      "CASA_RS_AWPROJECT_PLAN_THREADS": "4",
+      "CASA_RS_AWPROJECT_PREFETCH_CF_CELL": "1",
+      "CASA_RS_AWPROJECT_SPATIAL_TILE_SIDE_EXPERIMENT": "192",
+      "CASA_RS_AWPROJECT_SPARSE_TILES_EXPERIMENT": "1",
+      "CASA_RS_AWPROJECT_TAP_BUDGET_MB_EXPERIMENT": "1792",
+      "CASA_RS_AWPROJECT_TAPLESS_PHASE_EXPERIMENT": "1",
+      "CASA_RS_AWPROJECT_TRUST_PACKED_CF_EXPERIMENT": "1",
+      "CASA_RS_STANDARD_MFS_WORKER_PLANNER_EXPERIMENT": "1",
+      "CASA_RS_FFTW_LIBRARY_DIR": "/Users/brianglendenning/SoftwareProjects/casa-build/venv/lib/python3.14/site-packages/casaplotms/__bin__/casaplotms.app/Contents/Frameworks",
+      "CASA_RS_STANDARD_MFS_PROFILE_DETAIL": "1"
+    },
+    "evidence_role": "reduced_turnaround_only"
+  },
+  "review": {
+    "required_reviewer": "Brian",
+    "requires_human_acceptance_before_done": false,
+    "required_evidence_roles": [
+      "reduced_turnaround_only"
+    ]
+  },
+  "comparison": {
+    "mode": "full",
+    "products": [
+      ".alpha",
+      ".alpha.error",
+      ".image.tt0",
+      ".image.tt1",
+      ".model.tt0",
+      ".model.tt1",
+      ".pb.tt0",
+      ".psf.tt0",
+      ".psf.tt1",
+      ".psf.tt2",
+      ".residual.tt0",
+      ".residual.tt1",
+      ".sumwt.tt0",
+      ".sumwt.tt1",
+      ".sumwt.tt2",
+      ".weight.tt0",
+      ".weight.tt1",
+      ".weight.tt2"
+    ],
+    "max_elements_per_product": 1000000,
+    "full_chunk_elements": 262144,
+    "require_exact_product_inventory": true,
+    "require_metadata_parity": true,
+    "source_regions": [
+      {
+        "id": "bright-source-field-1525",
+        "products": [".image.tt0"],
+        "blc": [6243, 6003],
+        "trc": [6306, 6066]
+      }
+    ],
+    "tolerances": {
+      "contract_version": 1,
+      "require_full_array": true,
+      "default": {
+        "diff_abs_max_over_right_peak": 0.005,
+        "diff_rms_over_right_rms": 0.001,
+        "require_topology_parity": true,
+        "allowed_structure_labels": ["good"]
+      },
+      "products": {
+        ".image.tt0": {
+          "beam_major_relative": 0.001,
+          "beam_minor_relative": 0.001,
+          "beam_pa_degrees": 0.1,
+          "centroid_pixels": 0.05,
+          "integrated_flux_relative": 0.001,
+          "peak_relative": 0.001
+        },
+        ".image.tt1": {
+          "beam_major_relative": 0.001,
+          "beam_minor_relative": 0.001,
+          "beam_pa_degrees": 0.1
+        },
+        ".model.tt0": {
+          "allowed_structure_labels": ["good", "not_applicable_exact_zero"]
+        },
+        ".model.tt1": {
+          "allowed_structure_labels": ["good", "not_applicable_exact_zero"]
+        }
+      }
+    }
+  }
+}
