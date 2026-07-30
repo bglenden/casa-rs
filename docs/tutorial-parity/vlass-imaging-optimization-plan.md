@@ -4225,11 +4225,11 @@ integrated clean row. A negative result promotes an ordered source-role prefix
 as the next discriminator; only after that remains inconclusive is a
 destination/tap prefix, followed by invasive CASA tap tracing, justified.
 
-The discriminator is implemented but has not yet been executed. Its private
-casars-imager preflight preserves the frozen v4 27-field handoff unchanged and
-uses a separate 31-field v1 marker that additionally binds RR index/code
-`0/5` and LL index/code `3/8`. The core independently requires the frozen 32
-source blocks, channel-map hash `2111453637644839429`, polarization-map hash
+The discriminator was implemented behind a private casars-imager preflight
+that preserves the frozen v4 27-field handoff unchanged and uses a separate
+31-field v1 marker additionally binding RR index/code `0/5` and LL index/code
+`3/8`. The core independently requires the frozen 32 source blocks,
+channel-map hash `2111453637644839429`, polarization-map hash
 `13222926617229668273`, frequency hash `17711728193083539473`, and endpoint
 bits `4746028312096267298` / `4746556774954748567`. Its production control
 must reproduce TT0 hash `9898952817250783852`; the comparison target remains
@@ -4262,10 +4262,60 @@ test opened its temporary table with CASA in `36.32` seconds, but did not call
 `tclean`, read VLASS data, form an image, or create a correctness or timing
 reference.
 
-No unchanged v1-v4 casa-rs bracket and no unchanged CASA bracket/reference may
-be rerun. The full-geometry memory campaign remains implemented but
-unexecuted, with no 12,150-square policy receipt or production memory-policy
-promotion.
+The checkpoint was committed and pushed as
+`dc159dc629c5e09c83d2027d06b5d909bf4f4c0a`; local HEAD, the tracking branch,
+and the remote branch matched. Exact-SHA CI run `30558692167` completed
+successfully: `docs`, `lint_test`, `python_package`, and `sync` all passed.
+Only after that terminal green state did the single authorized arithmetic
+discriminator run. No checkpoint-source repair was required by CI.
+
+The diagnostic completed its controlled stop on 2026-07-30 and classified
+`valid-negative-no-exact-casa-tt0-grid-hash-match`. All five variants produced
+the same grid hash as the frozen production control,
+`9898952817250783852`: production HostF64; CASA-prefix `nvalue` only;
+CASA-prefix contribution only; both CASA-prefix operations; and both
+CASA-prefix operations with explicit component-wise f64 accumulation. None
+matched the frozen CASA target `9328098071914194885`. This falsifies only the
+tested arithmetic spellings as the common-boundary owner. Phase application,
+CF preparation and conjugation, `sumwt`, TT1, normalization, FFT, products,
+deconvolution, and production dispatch remain uncontrolled or unentered.
+There is still no proof that the TT0 grid mismatch causes the two integrated
+`.alpha`/`.alpha.error` topology pixels, no DataToGrid or integrated-row
+promotion, and no performance evidence.
+
+The immutable output directory is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/casa-rs-aw-datagrid-tt0-arithmetic-compat-4096-full16-first-vb-v1`.
+Its receipt, comparison, imager log, comparison log, and provenance SHA-256
+digests are, respectively,
+`a9c7fc453d343a48745269744ffd257a5ca8c532ccefe4ac74ba5a85b0ce9271`,
+`e50bf9642a442688dc2f5f37390c63e1a04cd0ad19729f4daea4a0bf43be608e`,
+`13bbbbab33f82e408ef0ad86777dd22a1a8891191aeb684dd27c67877fc56dc0`,
+`9499d2ef0b6c4e993253b4cee70f5796181a906bd07c517089083169b8684023`,
+and
+`9a042b639cbbcf738e0ada8a4a07836f95e963fdecef914f9ae93b56cb549307`.
+The receipt's embedded evidence digest is
+`c2b2bc4daafe12aa0090d9d00e8cdd02ca627c2fa671f846fb6625aad912af99`;
+the comparison's embedded digest is
+`dfcd28767cb60a727f1486a49a9a9b9ad96748114ff69d47d9a8e3c8dec5f73b`.
+The release binary, launcher, validator, and `Cargo.lock` SHA-256 digests are
+`b84d6edc8bd1eaeab7677d791f3fac54654b95ab6fe13f8f69b0eb5c0fef7e4c`,
+`d961a1ab88f61b58673746957c075967b0911d4f06a535b92b5c88b9f9f20e02`,
+`4d1acc88cb6de489e814800e144a78a9f0b2cdb5ec08877684f1f613d67ec4c8`,
+and
+`0a30771fc5777290edf379b201ec828af0c8ab7ebb933cd5f3c7ed2c97a19b5c`.
+The receipt remains bound to casa-rs v4
+`1c52961a3058f8f362e9d554c64b69a077f9414a7a44c738bed5351e6df59b40`
+and CASA v5
+`fe3d5ba3bff1ba925f63f0f088df602692655131c86d6319210ffa90e067ea1f`.
+Only the five receipt/log/provenance files were created; no `rust.*` image
+product exists.
+
+No unchanged v1-v4 casa-rs bracket, this arithmetic diagnostic, or unchanged
+CASA bracket/reference may be rerun. The next promoted discriminator is the
+ordered source-role prefix already selected by the same-conversation Oracle;
+only if that is inconclusive does the destination/tap prefix become eligible.
+The full-geometry memory campaign remains implemented but unexecuted, with no
+12,150-square policy receipt or production memory-policy promotion.
 
 The intentional checkpoint set consists only of the Rust production-boundary
 and Metal-rounding changes, the per-channel MFS frequency repair, their tests,
