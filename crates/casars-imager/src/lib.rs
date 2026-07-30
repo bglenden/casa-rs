@@ -7282,6 +7282,10 @@ const AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV: &str =
     "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_OUTPUT_V2";
 const AWPROJECT_NATIVE_GEOMETRY_AUDIT_SELECTION_ENV: &str =
     "CASA_RS_INTERNAL_AW_NATIVE_GEOMETRY_AUDIT_SELECTION_V2";
+const AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV: &str =
+    "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_OUTPUT_V3";
+const AWPROJECT_NATIVE_COMPONENTS_AUDIT_SELECTION_ENV: &str =
+    "CASA_RS_INTERNAL_AW_NATIVE_COMPONENTS_AUDIT_SELECTION_V3";
 #[allow(unexpected_cfgs)]
 const AWPROJECT_LITERAL_COEFFICIENT_AUDIT_CORE_HOOK_COMPILED: bool =
     cfg!(all(target_os = "macos", not(coverage)));
@@ -7299,6 +7303,7 @@ enum AwProjectDataToGridDiagnosticMode {
     Tt0ArithmeticCompatV1,
     LiteralCoefficientAuditV1,
     NativeGeometryAuditV2,
+    NativeComponentsAuditV3,
 }
 
 impl AwProjectDataToGridDiagnosticMode {
@@ -7308,6 +7313,7 @@ impl AwProjectDataToGridDiagnosticMode {
             Self::Tt0ArithmeticCompatV1 => AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV,
             Self::LiteralCoefficientAuditV1 => AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV,
             Self::NativeGeometryAuditV2 => AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV,
+            Self::NativeComponentsAuditV3 => AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV,
         }
     }
 
@@ -7317,6 +7323,7 @@ impl AwProjectDataToGridDiagnosticMode {
             Self::Tt0ArithmeticCompatV1 => AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV,
             Self::LiteralCoefficientAuditV1 => AWPROJECT_LITERAL_COEFFICIENT_AUDIT_SELECTION_ENV,
             Self::NativeGeometryAuditV2 => AWPROJECT_NATIVE_GEOMETRY_AUDIT_SELECTION_ENV,
+            Self::NativeComponentsAuditV3 => AWPROJECT_NATIVE_COMPONENTS_AUDIT_SELECTION_ENV,
         }
     }
 
@@ -7342,6 +7349,11 @@ impl AwProjectDataToGridDiagnosticMode {
                 ("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_BLOCKS_V2", "1"),
                 ("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_TERMS_V2", "2"),
             ],
+            Self::NativeComponentsAuditV3 => [
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V3", "4096"),
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V3", "1"),
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V3", "2"),
+            ],
         }
     }
 }
@@ -7359,6 +7371,7 @@ fn awproject_datatogrid_diagnostic_request()
     let literal_coefficient_audit_output =
         env::var_os(AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV);
     let native_geometry_audit_output = env::var_os(AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV);
+    let native_components_audit_output = env::var_os(AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV);
     let configured = [
         (
             AwProjectDataToGridDiagnosticMode::FrozenV4,
@@ -7376,6 +7389,10 @@ fn awproject_datatogrid_diagnostic_request()
             AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2,
             native_geometry_audit_output,
         ),
+        (
+            AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV3,
+            native_components_audit_output,
+        ),
     ]
     .into_iter()
     .filter_map(|(mode, output)| output.map(|output| (mode, output)))
@@ -7388,7 +7405,8 @@ fn awproject_datatogrid_diagnostic_request()
                 "{AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV}, \
                  {AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV}, and \
                  {AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV}, and \
-                 {AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV} are mutually exclusive"
+                 {AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV}, and \
+                 {AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV} are mutually exclusive"
             ));
         }
     };
@@ -7623,6 +7641,7 @@ fn validate_awproject_datatogrid_bracket_cli(config: &CliConfig) -> Result<(), S
             AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2 => {
                 "native stream/geometry audit"
             }
+            AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV3 => "native component audit",
         };
         return Err(format!(
             "refusing to overwrite AWProject {diagnostic} receipt {}",
@@ -7676,6 +7695,22 @@ fn validate_awproject_datatogrid_bracket_cli(config: &CliConfig) -> Result<(), S
     {
         return Err(
             "the AWProject DataToGrid bracket requires POINTING, A/WB/conjugate beams, facets=1, ps_term=false, normtype=flatnoise, and 32 W planes"
+                .to_string(),
+        );
+    }
+    if request.mode == AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV3
+        && (!matches!(
+            config.weighting,
+            WeightingMode::Briggs { robust } if robust.to_bits() == 1.0_f32.to_bits()
+        ) || config.uvrange.as_deref() != Some("<12km")
+            || !config.per_channel_weight_density
+            || controls.mosaic_weighting
+            || standard_mfs_streaming_weight_density_mode(config) != WeightDensityMode::Combined)
+    {
+        return Err(
+            "the AWProject native-component-v3 audit requires the frozen uvrange='<12km', \
+             Briggs robust=1.0, public perchanweightdensity=true MFS request, mosweight=false, \
+             and resolved combined density mode"
                 .to_string(),
         );
     }
@@ -7747,6 +7782,7 @@ fn awproject_datatogrid_selection_marker_for_mode(
         AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1
             | AwProjectDataToGridDiagnosticMode::LiteralCoefficientAuditV1
             | AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2
+            | AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV3
     ) {
         marker.push_str(&format!(
             ";selected_corr_first_index={};selected_corr_second_index={};\
@@ -7857,6 +7893,7 @@ fn install_awproject_datatogrid_bracket_selection(
         AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1
             | AwProjectDataToGridDiagnosticMode::LiteralCoefficientAuditV1
             | AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2
+            | AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV3
     ) {
         validate_awproject_tt0_arithmetic_compat_corr_order(&observed)?;
     }
@@ -7879,6 +7916,18 @@ const AWPROJECT_NATIVE_GEOMETRY_EXPECTED_SOURCE_COUNT: usize = 12_359;
 const AWPROJECT_NATIVE_GEOMETRY_EXPECTED_STREAM_HASH: u64 = 4_740_440_223_154_359_747;
 const AWPROJECT_NATIVE_GEOMETRY_EXPECTED_GEOMETRY_HASHES: [u64; 2] =
     [15_079_793_846_523_608_377, 14_381_099_959_812_707_833];
+const AWPROJECT_NATIVE_COMPONENTS_EXPECTED_HEADER_HASH: u64 = 6_709_505_723_840_238_374;
+const AWPROJECT_NATIVE_COMPONENTS_EXPECTED_ROW_IDS_HASH: u64 = 15_058_004_568_616_189_240;
+const AWPROJECT_NATIVE_COMPONENTS_EXPECTED_CHANNEL_MAP_HASH: u64 = 2_111_453_637_644_839_429;
+const AWPROJECT_NATIVE_COMPONENTS_EXPECTED_POLARIZATION_MAP_HASH: u64 = 13_222_926_617_229_668_273;
+const AWPROJECT_NATIVE_COMPONENTS_EXPECTED_FREQUENCIES_HASH: u64 = 17_711_728_193_083_539_473;
+const AWPROJECT_NATIVE_COMPONENTS_EXPECTED_ROW_FLAGS_HASH: u64 = 3_526_571_572_021_233_857;
+const AWPROJECT_NATIVE_COMPONENTS_EXPECTED_UVW_DPHASE_HASH: u64 = 6_884_923_150_254_773_287;
+const AWPROJECT_NATIVE_COMPONENTS_EXPECTED_FLAG_MASKS_HASH: u64 = 13_953_846_914_309_385_891;
+const AWPROJECT_NATIVE_COMPONENTS_EXPECTED_IMAGING_WEIGHTS_HASH: u64 = 2_430_234_571_011_807_313;
+const AWPROJECT_NATIVE_COMPONENTS_EXPECTED_ADMISSION_HASH: u64 = 14_184_653_015_859_831_397;
+const AWPROJECT_NATIVE_COMPONENTS_CASA_RECEIPT_SHA256: &str =
+    "cc30d5492f6654336f46617a696f9a7fc8da9006df4e5ae9a3c64a6a9f401644";
 const AWPROJECT_NATIVE_GEOMETRY_UVW_HYPOTHESIS: &str =
     "casa-awproject-negate-uv-before-girar-assumed-same-field-identity";
 const AWPROJECT_NATIVE_GEOMETRY_PHASE_HYPOTHESIS: &str =
@@ -7929,6 +7978,10 @@ impl AwProjectNativeGeometryHasher {
 
     fn f64(&mut self, value: f64) {
         self.u64(value.to_bits());
+    }
+
+    fn f32(&mut self, value: f32) {
+        self.bytes(&value.to_bits().to_le_bytes());
     }
 }
 
@@ -8247,6 +8300,14 @@ fn awproject_native_geometry_atomic_receipt(output: &Path, payload: &[u8]) -> Re
             temporary.display()
         )
     })?;
+    File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| {
+            format!(
+                "sync AWProject native-geometry receipt parent {}: {error}",
+                parent.display()
+            )
+        })?;
     Ok(())
 }
 
@@ -8511,6 +8572,696 @@ fn maybe_run_awproject_native_geometry_audit(
     Err(format!(
         "AWProject native-geometry-v2 audit stopped before production dispatch; receipt={} \
          evidence_sha256={evidence_sha256} result={result}",
+        request.output.display()
+    ))
+}
+
+fn awproject_native_components_hash_vector_u64(values: &[u64]) -> u64 {
+    let mut hash = AwProjectNativeGeometryHasher::new();
+    hash.u64(values.len() as u64);
+    for &value in values {
+        hash.u64(value);
+    }
+    hash.0
+}
+
+fn awproject_native_components_hash_frequencies(values: &[f64]) -> u64 {
+    let mut hash = AwProjectNativeGeometryHasher::new();
+    hash.u64(values.len() as u64);
+    for &value in values {
+        hash.f64(value);
+    }
+    hash.0
+}
+
+#[allow(clippy::too_many_arguments)]
+fn awproject_native_components_evidence(
+    source_block: &ColumnarPreparedSource,
+    flag_row: &[bool],
+    frequencies_hz: &[f64],
+    im_ref_freq_hz: f64,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    density_source_blocks: usize,
+) -> Result<serde_json::Value, String> {
+    if source_block.row_count() != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || source_block.visibility.channel_start != 0
+        || source_block.visibility.channel_count != 64
+        || source_block.visibility.corr_count != 4
+        || frequencies_hz.len() != 64
+    {
+        return Err(format!(
+            "the AWProject native-component-v3 audit requires a 325-row, 64-channel, \
+             four-correlation source block beginning at channel zero; observed rows={} \
+             channel_start={} channels={} correlations={} frequencies={}",
+            source_block.row_count(),
+            source_block.visibility.channel_start,
+            source_block.visibility.channel_count,
+            source_block.visibility.corr_count,
+            frequencies_hz.len(),
+        ));
+    }
+    let spw_id = source_block
+        .geometry_rows
+        .first()
+        .ok_or_else(|| "the AWProject native-component-v3 source block is empty".to_string())?
+        .selected_row
+        .spw_id;
+    if spw_id != 2
+        || source_block
+            .geometry_rows
+            .iter()
+            .any(|row| row.selected_row.spw_id != spw_id)
+    {
+        return Err(format!(
+            "the AWProject native-component-v3 audit requires homogeneous SPW 2 rows; \
+             observed first SPW {spw_id}"
+        ));
+    }
+
+    let row_ids = (0..source_block.row_count())
+        .map(|row| row as u64)
+        .collect::<Vec<_>>();
+    let channel_map = vec![0_i64; frequencies_hz.len()];
+    let polarization_map = vec![0_i64, -1, -1, 0];
+    let mut header_hash = AwProjectNativeGeometryHasher::new();
+    awproject_native_geometry_hash_header(
+        &mut header_hash,
+        false,
+        source_block.row_count(),
+        spw_id,
+        im_ref_freq_hz,
+    );
+    let row_ids_hash = awproject_native_components_hash_vector_u64(&row_ids);
+    let channel_map_hash = awproject_native_components_hash_vector_u64(
+        &channel_map
+            .iter()
+            .map(|&value| value as u64)
+            .collect::<Vec<_>>(),
+    );
+    let polarization_map_hash = awproject_native_components_hash_vector_u64(
+        &polarization_map
+            .iter()
+            .map(|&value| value as u64)
+            .collect::<Vec<_>>(),
+    );
+    let frequencies_hash = awproject_native_components_hash_frequencies(frequencies_hz);
+
+    let mut row_flags_hash = AwProjectNativeGeometryHasher::new();
+    row_flags_hash.u64(source_block.row_count() as u64);
+    let mut uvw_dphase_hash = AwProjectNativeGeometryHasher::new();
+    uvw_dphase_hash.u64(source_block.row_count() as u64);
+    let mut flag_masks_hash = AwProjectNativeGeometryHasher::new();
+    flag_masks_hash.u64(source_block.row_count() as u64);
+    flag_masks_hash.u64(frequencies_hz.len() as u64);
+    flag_masks_hash.u64(4);
+    let mut imaging_weights_hash = AwProjectNativeGeometryHasher::new();
+    imaging_weights_hash.u64(source_block.row_count() as u64);
+    imaging_weights_hash.u64(frequencies_hz.len() as u64);
+    let mut admission_hash = AwProjectNativeGeometryHasher::new();
+    admission_hash.u64(source_block.row_count() as u64);
+    admission_hash.u64(frequencies_hz.len() as u64);
+
+    let mut stream_hash = AwProjectNativeGeometryHasher::new();
+    awproject_native_geometry_hash_header(
+        &mut stream_hash,
+        false,
+        source_block.row_count(),
+        spw_id,
+        im_ref_freq_hz,
+    );
+    let mut tt0_geometry_hash = AwProjectNativeGeometryHasher::new();
+    tt0_geometry_hash.u64(0);
+    tt0_geometry_hash.u64(0);
+    tt0_geometry_hash.u64(0);
+    awproject_native_geometry_hash_header(
+        &mut tt0_geometry_hash,
+        false,
+        source_block.row_count(),
+        spw_id,
+        im_ref_freq_hz,
+    );
+    let mut tt1_geometry_hash = AwProjectNativeGeometryHasher::new();
+    tt1_geometry_hash.u64(1);
+    tt1_geometry_hash.u64(0);
+    tt1_geometry_hash.u64(1);
+    awproject_native_geometry_hash_header(
+        &mut tt1_geometry_hash,
+        false,
+        source_block.row_count(),
+        spw_id,
+        im_ref_freq_hz,
+    );
+
+    let mut raw_rows = Vec::with_capacity(source_block.row_count());
+    let mut row_checkpoints = Vec::with_capacity(source_block.row_count());
+    let mut source_count = 0usize;
+    let mut flagged_rows = 0usize;
+    let mut zero_imaging_weights = 0usize;
+    let mut nonzero_imaging_weights = 0usize;
+    for (row_id, geometry_row) in source_block.geometry_rows.iter().enumerate() {
+        let row_flagged =
+            source_block.flag_row_value(flag_row, row_id, geometry_row.selected_row.row_index)?;
+        flagged_rows += usize::from(row_flagged);
+        row_flags_hash.boolean(row_flagged);
+
+        uvw_dphase_hash.u64(row_id as u64);
+        for component in geometry_row.transform.uvw_m {
+            uvw_dphase_hash.f64(component);
+        }
+        uvw_dphase_hash.f64(geometry_row.transform.phase_shift_m);
+
+        stream_hash.u64(row_id as u64);
+        stream_hash.boolean(row_flagged);
+        tt0_geometry_hash.u64(row_id as u64);
+        tt0_geometry_hash.boolean(row_flagged);
+        tt1_geometry_hash.u64(row_id as u64);
+        tt1_geometry_hash.boolean(row_flagged);
+        if !row_flagged {
+            for component in geometry_row.transform.uvw_m {
+                stream_hash.f64(component);
+                tt0_geometry_hash.f64(component);
+                tt1_geometry_hash.f64(component);
+            }
+            stream_hash.f64(geometry_row.transform.phase_shift_m);
+            tt0_geometry_hash.f64(geometry_row.transform.phase_shift_m);
+            tt1_geometry_hash.f64(geometry_row.transform.phase_shift_m);
+        }
+
+        let flags = source_block.flags_2d(row_id)?;
+        let weights = source_block.weights(row_id)?;
+        let mut row_flag_masks = Vec::with_capacity(frequencies_hz.len());
+        let mut row_imaging_weight_bits = Vec::with_capacity(frequencies_hz.len());
+        let mut row_admission = Vec::with_capacity(frequencies_hz.len());
+        let mut first_natural_weight_bits = Vec::with_capacity(frequencies_hz.len());
+        let mut second_natural_weight_bits = Vec::with_capacity(frequencies_hz.len());
+        let mut collapsed_natural_weight_bits = Vec::with_capacity(frequencies_hz.len());
+        for (local_channel, &frequency_hz) in frequencies_hz.iter().enumerate() {
+            let source_channel = source_block.visibility.channel_start + local_channel;
+            let mut polarization_flags = [false; 4];
+            let mut mask = 0_u8;
+            for (polarization, flagged) in polarization_flags.iter_mut().enumerate() {
+                *flagged = flags.get_local(polarization, local_channel, source_channel)?;
+                mask |= u8::from(*flagged) << polarization;
+            }
+            row_flag_masks.push(mask);
+            flag_masks_hash.u64(row_id as u64);
+            flag_masks_hash.u64(local_channel as u64);
+            for &flagged in &polarization_flags {
+                flag_masks_hash.boolean(flagged);
+            }
+
+            let (first_weight, _) = weights.get_local(0, local_channel)?;
+            let (second_weight, _) = weights.get_local(3, local_channel)?;
+            let natural_weight = 0.5_f32 * (first_weight + second_weight);
+            first_natural_weight_bits.push(first_weight.to_bits());
+            second_natural_weight_bits.push(second_weight.to_bits());
+            collapsed_natural_weight_bits.push(natural_weight.to_bits());
+            let pair_admitted = !row_flagged
+                && !polarization_flags[0]
+                && !polarization_flags[3]
+                && first_weight.is_finite()
+                && first_weight > 0.0
+                && second_weight.is_finite()
+                && second_weight > 0.0
+                && natural_weight.is_finite()
+                && natural_weight > 0.0;
+            let final_weight = if pair_admitted {
+                let density_uvw_lambda =
+                    mfs_density_uvw_lambda(frequency_hz, geometry_row.raw_uvw_m);
+                weighting_plan
+                    .weight_sample(density_uvw_lambda[0], density_uvw_lambda[1], natural_weight)
+                    .map_err(|error| error.to_string())?
+            } else {
+                0.0
+            };
+            row_imaging_weight_bits.push(final_weight.to_bits());
+            imaging_weights_hash.u64(row_id as u64);
+            imaging_weights_hash.u64(local_channel as u64);
+            imaging_weights_hash.f32(final_weight);
+
+            let target_valid = true;
+            let weight_nonzero = final_weight != 0.0;
+            let admitted = !row_flagged && target_valid && weight_nonzero;
+            row_admission.push(admitted);
+            admission_hash.u64(row_id as u64);
+            admission_hash.u64(local_channel as u64);
+            admission_hash.boolean(!row_flagged);
+            admission_hash.boolean(target_valid);
+            admission_hash.boolean(weight_nonzero);
+            admission_hash.boolean(admitted);
+            if weight_nonzero {
+                nonzero_imaging_weights += 1;
+            } else {
+                zero_imaging_weights += 1;
+            }
+
+            if !row_flagged {
+                stream_hash.u64(local_channel as u64);
+                stream_hash.f64(frequency_hz);
+                for &flagged in &polarization_flags {
+                    stream_hash.boolean(flagged);
+                }
+                if weight_nonzero {
+                    tt0_geometry_hash.u64(source_count as u64);
+                    tt0_geometry_hash.u64(local_channel as u64);
+                    tt0_geometry_hash.f64(frequency_hz);
+                    tt1_geometry_hash.u64(source_count as u64);
+                    tt1_geometry_hash.u64(local_channel as u64);
+                    tt1_geometry_hash.f64(frequency_hz);
+                    for &flagged in &polarization_flags {
+                        tt0_geometry_hash.boolean(flagged);
+                        tt1_geometry_hash.boolean(flagged);
+                    }
+                    source_count += 1;
+                }
+            }
+        }
+
+        raw_rows.push(serde_json::json!({
+            "row": row_id,
+            "row_flag": row_flagged,
+            "uvw_bits": geometry_row
+                .transform
+                .uvw_m
+                .map(f64::to_bits),
+            "dphase_bits": geometry_row.transform.phase_shift_m.to_bits(),
+            "flag_masks": row_flag_masks,
+            "imaging_weight_bits": row_imaging_weight_bits,
+            "admitted": row_admission,
+            "auxiliary": {
+                "absolute_main_row": geometry_row.selected_row.row_index,
+                "raw_uvw_bits": geometry_row.raw_uvw_m.map(f64::to_bits),
+                "gridft_density_uvw_bits": geometry_row.gridft_density_uvw_m.map(f64::to_bits),
+                "negated_uv_transform_uvw_bits":
+                    awproject_native_geometry_negate_uv_hypothesis_m(
+                        geometry_row.transform.uvw_m
+                    ).map(f64::to_bits),
+                "first_parallel_hand_natural_weight_bits": first_natural_weight_bits,
+                "second_parallel_hand_natural_weight_bits": second_natural_weight_bits,
+                "collapsed_natural_weight_bits": collapsed_natural_weight_bits,
+            }
+        }));
+        row_checkpoints.push(serde_json::json!({
+            "row": row_id,
+            "source_count": source_count,
+            "row_flags_hash": row_flags_hash.0,
+            "uvw_dphase_hash": uvw_dphase_hash.0,
+            "flag_masks_hash": flag_masks_hash.0,
+            "imaging_weights_hash": imaging_weights_hash.0,
+            "admission_hash": admission_hash.0,
+            "stream_hash": stream_hash.0,
+            "tt0_geometry_hash": tt0_geometry_hash.0,
+            "tt1_geometry_hash": tt1_geometry_hash.0,
+        }));
+    }
+
+    let component_values = [
+        (
+            "header",
+            header_hash.0,
+            AWPROJECT_NATIVE_COMPONENTS_EXPECTED_HEADER_HASH,
+        ),
+        (
+            "row_ids",
+            row_ids_hash,
+            AWPROJECT_NATIVE_COMPONENTS_EXPECTED_ROW_IDS_HASH,
+        ),
+        (
+            "channel_map",
+            channel_map_hash,
+            AWPROJECT_NATIVE_COMPONENTS_EXPECTED_CHANNEL_MAP_HASH,
+        ),
+        (
+            "polarization_map",
+            polarization_map_hash,
+            AWPROJECT_NATIVE_COMPONENTS_EXPECTED_POLARIZATION_MAP_HASH,
+        ),
+        (
+            "frequencies",
+            frequencies_hash,
+            AWPROJECT_NATIVE_COMPONENTS_EXPECTED_FREQUENCIES_HASH,
+        ),
+        (
+            "row_flags",
+            row_flags_hash.0,
+            AWPROJECT_NATIVE_COMPONENTS_EXPECTED_ROW_FLAGS_HASH,
+        ),
+        (
+            "uvw_dphase",
+            uvw_dphase_hash.0,
+            AWPROJECT_NATIVE_COMPONENTS_EXPECTED_UVW_DPHASE_HASH,
+        ),
+        (
+            "flag_masks",
+            flag_masks_hash.0,
+            AWPROJECT_NATIVE_COMPONENTS_EXPECTED_FLAG_MASKS_HASH,
+        ),
+        (
+            "imaging_weights",
+            imaging_weights_hash.0,
+            AWPROJECT_NATIVE_COMPONENTS_EXPECTED_IMAGING_WEIGHTS_HASH,
+        ),
+        (
+            "admission",
+            admission_hash.0,
+            AWPROJECT_NATIVE_COMPONENTS_EXPECTED_ADMISSION_HASH,
+        ),
+    ];
+    let component_hashes = component_values
+        .iter()
+        .map(|(name, actual, _)| ((*name).to_string(), serde_json::json!(actual)))
+        .collect::<serde_json::Map<_, _>>();
+    let component_comparison = component_values
+        .iter()
+        .map(|(name, actual, expected)| {
+            (
+                (*name).to_string(),
+                serde_json::json!({
+                    "actual": actual,
+                    "expected_casa": expected,
+                    "exact": actual == expected,
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    let mismatched_components = component_values
+        .iter()
+        .filter(|(_, actual, expected)| actual != expected)
+        .map(|(name, _, _)| *name)
+        .collect::<Vec<_>>();
+    let recomputed_calls = [
+        serde_json::json!({
+            "origin": "observed-first-tt0",
+            "call": 0,
+            "block": 0,
+            "term": 0,
+            "source_count": source_count,
+            "stream_hash": stream_hash.0,
+            "geometry_hash": tt0_geometry_hash.0,
+        }),
+        serde_json::json!({
+            "origin": "derived-from-observed-tt0-under-frozen-v5-contract",
+            "call": 1,
+            "block": 0,
+            "term": 1,
+            "source_count": source_count,
+            "stream_hash": stream_hash.0,
+            "geometry_hash": tt1_geometry_hash.0,
+        }),
+    ];
+    let calls_exact = source_count == AWPROJECT_NATIVE_GEOMETRY_EXPECTED_SOURCE_COUNT
+        && stream_hash.0 == AWPROJECT_NATIVE_GEOMETRY_EXPECTED_STREAM_HASH
+        && tt0_geometry_hash.0 == AWPROJECT_NATIVE_GEOMETRY_EXPECTED_GEOMETRY_HASHES[0]
+        && tt1_geometry_hash.0 == AWPROJECT_NATIVE_GEOMETRY_EXPECTED_GEOMETRY_HASHES[1];
+    let exact = mismatched_components.is_empty() && calls_exact;
+    let result = if exact {
+        "completed-native-components-exact-frozen-casa"
+    } else {
+        "completed-native-components-mismatch"
+    };
+
+    Ok(serde_json::json!({
+        "schema": "casa-rs-aw-datatogrid-native-components-audit-v3",
+        "status": "completed-controlled-stop",
+        "result": result,
+        "result_taxonomy": [
+            "completed-native-components-mismatch",
+            "completed-native-components-exact-frozen-casa"
+        ],
+        "role": "bounded-correctness-oracle-not-performance-evidence",
+        "producer": "casa-rs",
+        "diagnostic_hook_added": true,
+        "normal_execution_behavior_changed": false,
+        "production_science_arithmetic_changed": false,
+        "density_pass": "diagnostic-only-completed-with-production-weighting-plan",
+        "density_source_blocks": density_source_blocks,
+        "production_dispatch": "not-entered",
+        "cf_cache": "not-opened",
+        "cf_selection": "not-entered",
+        "grid_storage": "not-allocated",
+        "grid_dispatch": "not-entered",
+        "sumwt": "not-entered",
+        "formed_image": false,
+        "normalization": "not-entered",
+        "fft": "not-entered",
+        "products": "not-entered",
+        "completed_calls": 0,
+        "terms_observed": [],
+        "hash_contracts": {
+            "algorithm": "fnv1a64",
+            "offset_basis": AWPROJECT_NATIVE_GEOMETRY_FNV_OFFSET,
+            "prime": AWPROJECT_NATIVE_GEOMETRY_FNV_PRIME,
+            "integer_encoding": "little-endian",
+            "float_encoding": "ieee754-bits-little-endian",
+            "boolean_encoding": "one-byte-0-or-1",
+            "recomposition": "casa-6.7.5.18-bracket-hash-call-inputs",
+            "actual_uvw": "casa-rs-prepared-geometry-transform-uvw-m",
+            "actual_phase": "casa-rs-prepared-geometry-phase-shift-m",
+            "flag_masks": "unmodified-four-correlation-source-FLAG",
+            "imaging_weights": "production-global-Briggs-plan-with-raw-UVW-f32-rounded-density-lookup",
+        },
+        "frozen_parent_receipts": {
+            "casa_native_components_v1": {
+                "schema": "casa-aw-datagrid-native-components-v1",
+                "receipt_sha256": AWPROJECT_NATIVE_COMPONENTS_CASA_RECEIPT_SHA256,
+            }
+        },
+        "header": {
+            "use_conjugate_frequency_cf": false,
+            "begin_row": 0,
+            "end_row": source_block.row_count(),
+            "n_row": source_block.row_count(),
+            "spw_id": spw_id,
+            "im_ref_freq_bits": im_ref_freq_hz.to_bits(),
+            "grid_shape": [4096, 4096, 1, 1],
+            "channel_map": channel_map,
+            "polarization_map": polarization_map,
+            "row_ids": row_ids,
+            "frequency_bits": frequencies_hz.iter().map(|value| value.to_bits()).collect::<Vec<_>>(),
+        },
+        "component_hashes": component_hashes,
+        "component_comparison": component_comparison,
+        "mismatched_components": mismatched_components,
+        "counts": {
+            "flagged_rows": flagged_rows,
+            "zero_imaging_weights": zero_imaging_weights,
+            "nonzero_imaging_weights": nonzero_imaging_weights,
+            "admitted_channels": source_count,
+        },
+        "recomputed_frozen_hashes": recomputed_calls,
+        "row_checkpoints": row_checkpoints,
+        "rows": raw_rows,
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn maybe_run_awproject_native_components_audit_v3(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column: VisibilityDataColumn,
+    selection: &SelectedRowsContext,
+    ddid_plans: &[PreparedMfsDdidPlan],
+    ddid_info: &[Option<(usize, usize)>],
+    spectral_window: &casa_ms::subtables::spectral_window::MsSpectralWindow<'_>,
+    polarization: &casa_ms::subtables::polarization::MsPolarization<'_>,
+    flag_row: &[bool],
+    derived_engine: Option<&MsCalEngine>,
+    geometry_columns: &PreparedGeometryColumnCache,
+    row_block_rows: usize,
+    max_live_row_blocks: usize,
+    geometry: ImageGeometry,
+    selected_frequency_range_hz: [f64; 2],
+    im_ref_freq_hz: f64,
+    prepare_started_at: Instant,
+    prepare_stage_timings: &mut PreparePlaneInputStageTimings,
+    accumulate_timings: &mut AccumulateRowTimings,
+) -> Result<(), String> {
+    let Some(request) = awproject_datatogrid_diagnostic_request()? else {
+        return Ok(());
+    };
+    if request.mode != AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV3 {
+        return Ok(());
+    }
+    if im_ref_freq_hz.to_bits() != 4_748_556_467_228_999_524 {
+        return Err(format!(
+            "the AWProject native-component-v3 audit expected imRefFreq bits \
+             4748556467228999524, observed {}",
+            im_ref_freq_hz.to_bits()
+        ));
+    }
+    let controls = config.aw_project.as_ref().ok_or_else(|| {
+        "the AWProject native-component-v3 audit requires normalized AWProject controls".to_string()
+    })?;
+    if controls.mosaic_weighting
+        || !matches!(
+            config.weighting,
+            WeightingMode::Briggs { robust } if robust.to_bits() == 1.0_f32.to_bits()
+        )
+        || standard_mfs_streaming_weight_density_mode(config) != WeightDensityMode::Combined
+    {
+        return Err(
+            "the AWProject native-component-v3 audit requires the production global \
+             mosweight=false Briggs robust=1.0 combined-density plan"
+                .to_string(),
+        );
+    }
+    let density_source_blocks = ddid_plans
+        .iter()
+        .map(|plan| plan.active_selected_rows.len().div_ceil(row_block_rows))
+        .sum::<usize>();
+    if density_source_blocks != 32 {
+        return Err(format!(
+            "the AWProject native-component-v3 audit expected 32 density source blocks, \
+             observed {density_source_blocks}"
+        ));
+    }
+    let first_plan = ddid_plans
+        .first()
+        .ok_or_else(|| "the AWProject native-component-v3 audit has no DDID plan".to_string())?;
+    let first_rows = first_plan
+        .active_selected_rows
+        .get(..AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS)
+        .ok_or_else(|| {
+            "the AWProject native-component-v3 audit has fewer than 325 first-SPW rows".to_string()
+        })?;
+    let observed = awproject_datatogrid_bracket_observed_first_buffer(
+        &selection.selected_rows,
+        first_rows,
+        flag_row,
+        &first_plan.table_values,
+        first_plan.channel_read_range,
+        derived_engine,
+    )?;
+    let expected_marker = awproject_datatogrid_selection_marker_for_mode(
+        AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV3,
+        2,
+        32,
+        &observed,
+    );
+    let marker = env::var(request.mode.selection_env()).map_err(|_| {
+        format!(
+            "the AWProject native-component-v3 audit requires the live selection marker {}",
+            request.mode.selection_env()
+        )
+    })?;
+    if marker != expected_marker {
+        return Err(format!(
+            "the AWProject native-component-v3 audit selection marker differs from the \
+             observed frozen first source block: {marker}"
+        ));
+    }
+
+    let mut weighting_plan = StandardMfsStreamingWeightingPlan::new_with_density_mode(
+        geometry,
+        config.weighting,
+        selected_frequency_range_hz,
+        WeightDensityMode::Combined,
+    )
+    .map_err(|error| error.to_string())?;
+    if !weighting_plan.needs_density_pass() {
+        return Err(
+            "the AWProject native-component-v3 audit did not create a Briggs density plan"
+                .to_string(),
+        );
+    }
+    for ddid_plan in ddid_plans {
+        stream_mfs_mosaic_source_row_block_planes(
+            ms,
+            config,
+            data_column,
+            false,
+            selection,
+            &ddid_plan.table_values,
+            ddid_info,
+            spectral_window,
+            polarization,
+            flag_row,
+            &ddid_plan.active_selected_rows,
+            derived_engine,
+            ddid_plan.channel_read_range,
+            geometry_columns,
+            row_block_rows,
+            max_live_row_blocks,
+            ddid_plan.selected_channel_count,
+            prepare_started_at,
+            prepare_stage_timings,
+            accumulate_timings,
+            None,
+            "native_components_v3_density",
+            |plane, _| {
+                let density_batches =
+                    align_optional_density_batches(&plane.batches, plane.density_batches)?;
+                for (visibility, density) in plane.batches.iter().zip(&density_batches) {
+                    let source = density.as_ref().unwrap_or(visibility);
+                    weighting_plan.accumulate_density_batches(std::slice::from_ref(source));
+                }
+                Ok(())
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    weighting_plan.finish_density_pass();
+
+    let source_block = read_columnar_prepared_source(
+        ms,
+        data_column,
+        false,
+        selection,
+        &first_plan.table_values,
+        ddid_info,
+        first_rows,
+        derived_engine,
+        uvw_reprojection_mode_for_selection(config, selection),
+        first_plan.channel_read_range,
+        geometry_columns,
+        None,
+        None,
+    )?;
+    let channel_start = source_block.visibility.channel_start;
+    let channel_end = channel_start.saturating_add(source_block.visibility.channel_count);
+    let source_frequencies_hz = first_plan
+        .table_values
+        .spw_freqs_hz
+        .get(channel_start..channel_end)
+        .ok_or_else(|| {
+            format!(
+                "the AWProject native-component-v3 channel range {channel_start}..{channel_end} \
+                 exceeds SPW {} channel count {}",
+                first_plan.table_values.spw_id,
+                first_plan.table_values.spw_freqs_hz.len()
+            )
+        })?;
+    let frequencies_hz = mfs_imaging_frequencies(
+        first_plan.table_values.freq_ref,
+        source_frequencies_hz,
+        &first_rows[0],
+        derived_engine,
+    )?;
+    let evidence = awproject_native_components_evidence(
+        &source_block,
+        flag_row,
+        &frequencies_hz.frequency_hz,
+        im_ref_freq_hz,
+        &weighting_plan,
+        density_source_blocks,
+    )?;
+    let result = evidence
+        .get("result")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("completed-native-components-mismatch");
+    let evidence_json = serde_json::to_string(&evidence)
+        .map_err(|error| format!("serialize AWProject native-component-v3 evidence: {error}"))?;
+    let evidence_sha256 = format!("{:x}", Sha256::digest(evidence_json.as_bytes()));
+    let payload = format!(
+        "{{\"schema\":\"casa-rs-aw-datatogrid-native-components-audit-envelope-v3\",\
+         \"content_address\":{{\"algorithm\":\"sha256\",\
+         \"scope\":\"embedded-evidence-json-utf8\",\"digest\":\"{evidence_sha256}\"}},\
+         \"evidence\":{evidence_json}}}\n"
+    );
+    awproject_native_geometry_atomic_receipt(&request.output, payload.as_bytes())?;
+    Err(format!(
+        "AWProject native-components-v3 audit stopped before casa-imaging core/CF/cache/grid \
+         dispatch; receipt={} evidence_sha256={evidence_sha256} result={result}",
         request.output.display()
     ))
 }
@@ -10379,6 +11130,27 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         clean_mask: clean_mask.clone(),
         compatibility: CompatibilityMode::CasaStandardMfs,
     };
+    maybe_run_awproject_native_components_audit_v3(
+        ms,
+        config,
+        data_column,
+        &selection,
+        &ddid_plans,
+        &ddid_info,
+        &spectral_window,
+        &polarization,
+        flag_row,
+        derived_engine.as_ref(),
+        &geometry_columns,
+        row_block_rows,
+        strategy.ingest.max_live_row_blocks,
+        geometry,
+        request.selected_frequency_range_hz,
+        request.reffreq_hz,
+        prepare_started_at,
+        &mut prepare_stage_timings,
+        &mut accumulate_timings,
+    )?;
     let prepare_plane_time = prepare_started_at.elapsed();
     maybe_log_frontend_progress(
         "prepare_plane_input",
@@ -52976,22 +53748,21 @@ fn push_mfs_density_sample(
     if !(frequency_hz.is_finite() && frequency_hz > 0.0 && weight.is_finite() && weight > 0.0) {
         return;
     }
-    // VisImagingWeight stores frequency/c and the resulting UV coordinates as
-    // Float before assigning the density cell. Preserve both rounding steps.
-    let lambda_scale = f64::from((frequency_hz / SPEED_OF_LIGHT_M_PER_S) as f32);
-    batch
-        .u_lambda
-        .push(f64::from((uvw_m[0] * lambda_scale) as f32));
-    batch
-        .v_lambda
-        .push(f64::from((uvw_m[1] * lambda_scale) as f32));
-    batch
-        .w_lambda
-        .push(f64::from((uvw_m[2] * lambda_scale) as f32));
+    let uvw_lambda = mfs_density_uvw_lambda(frequency_hz, uvw_m);
+    batch.u_lambda.push(uvw_lambda[0]);
+    batch.v_lambda.push(uvw_lambda[1]);
+    batch.w_lambda.push(uvw_lambda[2]);
     batch.weight.push(weight);
     batch.sumwt_factor.push(sumwt_factor);
     batch.gridable.push(is_cross);
     batch.visibility.push(Complex32::new(0.0, 0.0));
+}
+
+fn mfs_density_uvw_lambda(frequency_hz: f64, uvw_m: [f64; 3]) -> [f64; 3] {
+    // VisImagingWeight stores frequency/c and the resulting UV coordinates as
+    // Float before assigning the density cell. Preserve both rounding steps.
+    let lambda_scale = f64::from((frequency_hz / SPEED_OF_LIGHT_M_PER_S) as f32);
+    uvw_m.map(|component| f64::from((component * lambda_scale) as f32))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -53383,7 +54154,7 @@ mod tests {
     static AWPROJECT_DIAGNOSTIC_ENV_TEST_LOCK: LazyLock<Mutex<()>> =
         LazyLock::new(|| Mutex::new(()));
 
-    const AWPROJECT_DIAGNOSTIC_TEST_ENV_NAMES: [&str; 20] = [
+    const AWPROJECT_DIAGNOSTIC_TEST_ENV_NAMES: [&str; 25] = [
         AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV,
         AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV,
         AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV,
@@ -53392,6 +54163,8 @@ mod tests {
         AWPROJECT_LITERAL_COEFFICIENT_AUDIT_SELECTION_ENV,
         AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV,
         AWPROJECT_NATIVE_GEOMETRY_AUDIT_SELECTION_ENV,
+        AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV,
+        AWPROJECT_NATIVE_COMPONENTS_AUDIT_SELECTION_ENV,
         "CASA_RS_AW_BRACKET_EXPECT_NXY",
         "CASA_RS_AW_BRACKET_BLOCKS",
         "CASA_RS_AW_BRACKET_TERMS",
@@ -53404,6 +54177,9 @@ mod tests {
         "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_EXPECT_NXY_V2",
         "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_BLOCKS_V2",
         "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_TERMS_V2",
+        "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V3",
+        "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V3",
+        "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V3",
     ];
 
     struct AwProjectDiagnosticTestEnv {
@@ -53503,6 +54279,12 @@ mod tests {
         test_env.set("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_EXPECT_NXY_V2", "4096");
         test_env.set("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_BLOCKS_V2", "1");
         test_env.set("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_TERMS_V2", "2");
+    }
+
+    fn set_aw_native_components_audit_controls(test_env: &AwProjectDiagnosticTestEnv) {
+        test_env.set("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V3", "4096");
+        test_env.set("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V3", "1");
+        test_env.set("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V3", "2");
     }
 
     #[test]
@@ -53828,6 +54610,93 @@ mod tests {
     }
 
     #[test]
+    fn awproject_native_components_audit_reuses_exact_31_field_marker() {
+        let _test_lock = AWPROJECT_DIAGNOSTIC_ENV_TEST_LOCK
+            .lock()
+            .expect("AWProject diagnostic environment lock");
+        let test_env = AwProjectDiagnosticTestEnv::isolated();
+        assert_eq!(
+            AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV,
+            "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_OUTPUT_V3"
+        );
+        assert_eq!(
+            AWPROJECT_NATIVE_COMPONENTS_AUDIT_SELECTION_ENV,
+            "CASA_RS_INTERNAL_AW_NATIVE_COMPONENTS_AUDIT_SELECTION_V3"
+        );
+        assert_eq!(
+            AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV3.expected_controls(),
+            [
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V3", "4096"),
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V3", "1"),
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V3", "2"),
+            ]
+        );
+        let temp = tempdir().expect("temporary output parent");
+        let output = temp.path().join("native-components-audit-v3.json");
+        test_env.set(AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV, &output);
+        set_aw_native_components_audit_controls(&test_env);
+
+        let config = aw_bracket_valid_cli_config();
+        validate_awproject_datatogrid_bracket_cli(&config)
+            .expect("validate the private native-components audit");
+        let request = awproject_datatogrid_diagnostic_request()
+            .expect("resolve diagnostic")
+            .expect("diagnostic is active");
+        assert_eq!(
+            request,
+            AwProjectDataToGridDiagnosticRequest {
+                mode: AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV3,
+                output,
+            }
+        );
+        assert!(
+            env::var_os(AWPROJECT_NATIVE_COMPONENTS_AUDIT_SELECTION_ENV).is_none(),
+            "the exact marker is installed only after observing the live selection"
+        );
+
+        let rows = vec![aw_bracket_test_row(0)];
+        let table_values = aw_bracket_test_table_values(64);
+        let observed = awproject_datatogrid_bracket_observed_first_buffer(
+            &rows,
+            &rows,
+            &[false],
+            &table_values,
+            Some(SelectedChannelReadRange::new(0, 64)),
+            None,
+        )
+        .expect("observe the production role and frequency route");
+        let marker = awproject_datatogrid_selection_marker_for_mode(request.mode, 2, 32, &observed);
+        let arithmetic_marker = awproject_datatogrid_selection_marker_for_mode(
+            AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1,
+            2,
+            32,
+            &observed,
+        );
+        assert_eq!(marker, arithmetic_marker);
+        assert_eq!(marker.split(';').count(), 31);
+        install_awproject_datatogrid_selection_marker(request.mode, &marker);
+        assert_eq!(
+            env::var(AWPROJECT_NATIVE_COMPONENTS_AUDIT_SELECTION_ENV).as_deref(),
+            Ok(marker.as_str())
+        );
+    }
+
+    #[test]
+    fn awproject_native_components_f32_hash_and_density_rounding_are_stable() {
+        let mut hash = AwProjectNativeGeometryHasher::new();
+        hash.f32(16.767227_f32);
+        assert_eq!(hash.0, 0x1abf_fcd7_2fbb_857d);
+
+        let frequency_hz = 2.1e9;
+        let uvw_m = [12_345.678_901, -2_345.678_901, -0.0];
+        let expected_scale = f64::from((frequency_hz / SPEED_OF_LIGHT_M_PER_S) as f32);
+        let expected = uvw_m.map(|component| f64::from((component * expected_scale) as f32));
+        let observed = mfs_density_uvw_lambda(frequency_hz, uvw_m);
+        assert_eq!(observed.map(f64::to_bits), expected.map(f64::to_bits));
+        assert_eq!(observed[2].to_bits(), (-0.0_f64).to_bits());
+    }
+
+    #[test]
     fn awproject_native_geometry_fnv_and_result_taxonomy_are_stable() {
         let mut hash = AwProjectNativeGeometryHasher::new();
         hash.bytes(b"a");
@@ -53952,6 +54821,10 @@ mod tests {
             AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV,
             "/tmp/native-geometry-v2.json",
         );
+        test_env.set(
+            AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV,
+            "/tmp/native-components-v3.json",
+        );
 
         let error = validate_awproject_datatogrid_bracket_cli(&aw_bracket_valid_cli_config())
             .expect_err("simultaneous private diagnostics must fail closed");
@@ -53960,6 +54833,7 @@ mod tests {
         assert!(error.contains(AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV));
         assert!(error.contains(AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV));
         assert!(error.contains(AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV));
+        assert!(error.contains(AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV));
     }
 
     #[test]
