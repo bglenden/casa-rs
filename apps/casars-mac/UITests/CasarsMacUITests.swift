@@ -2803,8 +2803,8 @@ final class CasarsMacUITests: XCTestCase {
         if let configuredTarget = ProcessInfo.processInfo.environment["CARGO_TARGET_DIR"] {
             targetRoot = URL(
                 fileURLWithPath: configuredTarget,
-                relativeTo: repoRoot,
-                isDirectory: true
+                isDirectory: true,
+                relativeTo: repoRoot
             ).standardizedFileURL
         } else {
             targetRoot = repoRoot.appendingPathComponent("target", isDirectory: true)
