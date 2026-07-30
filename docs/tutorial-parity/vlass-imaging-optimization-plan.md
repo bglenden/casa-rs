@@ -4321,8 +4321,8 @@ production memory-policy promotion.
 
 ### 2026-07-30 Literal CASA coefficient-formation discriminator
 
-The next discriminator is implemented in source but has not been executed.
-It is bound to the completed arithmetic diagnostic receipt
+The discriminator was implemented and stabilized before execution. It is
+bound to the completed arithmetic diagnostic receipt
 `a9c7fc453d343a48745269744ffd257a5ca8c532ccefe4ac74ba5a85b0ce9271`
 and its embedded evidence digest
 `c2b2bc4daafe12aa0090d9d00e8cdd02ca627c2fa671f846fb6625aad912af99`.
@@ -4367,16 +4367,14 @@ with the frozen CASA hash `9328098071914194885` and frozen casa-rs hash
 unchanged; the added hook is inert unless the private fail-closed audit is
 explicitly armed.
 
-This is implementation and pre-execution status only. No literal-coefficient
-receipt exists yet, and no CASA call, imaging workload, normalization, FFT,
-product formation, deconvolution, or performance measurement was launched to
-create it. The 4,096-square full-16-SPW row therefore remains unpromoted, with
-the same two exact `.alpha` / `.alpha.error` topology pixels as its integrated
-correctness blocker. The discriminator has earned no correctness or
-performance claim, and the required full-geometry memory campaign remains
-gated behind full-16-SPW promotion.
+At the pre-execution checkpoint no literal-coefficient receipt existed and no
+CASA call, imaging workload, normalization, FFT, product formation,
+deconvolution, or performance measurement had been launched to create one.
+The 4,096-square full-16-SPW row remained unpromoted, with the same two exact
+`.alpha` / `.alpha.error` topology pixels as its integrated correctness
+blocker.
 
-Checkpoint verification for the unexecuted discriminator is green on every
+Checkpoint verification for the then-unexecuted discriminator is green on every
 affected surface. `cargo fmt --all`, affected-package warning-free `cargo
 check`, affected-package Clippy with `-D warnings`, and workspace SPDX,
 formatting, and warning-denying Clippy through `just lint` pass. The direct
@@ -4396,12 +4394,71 @@ Exactly those two tests pass outside the socket-denying sandbox (`2` passed,
 pre-existing synthetic-MeasurementSet interoperability test again opened only
 its temporary generated table through CASA and passed; it did not call
 `tclean`, read VLASS data, grid, FFT, form an image, or create a reference or
-timing receipt. No literal discriminator, VLASS row, 12,150-square development
-clean, unchanged CASA reference, or replacement run was launched.
+timing receipt. No literal discriminator, VLASS row, 12,150-square
+development clean, unchanged CASA reference, or replacement run had been
+launched at that checkpoint.
+
+Exact-SHA CI run `30565355329` then passed at revision
+`9604e540fb90482774eab20f858ec0930e556a53`: docs in `11m39s`, the Python
+package in `9m55s`, and workspace lint/tests in `16m27s`; WDAD project-sync
+run `30565351882` also passed. Only after that durable boundary did the
+launcher execute the discriminator exactly once. The immutable output
+directory is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/casa-rs-aw-datagrid-literal-coefficient-4096-full16-first-vb-v1`.
+It contains exactly `receipt.json`, `comparison.json`, `casars-imager.log`,
+`comparison.log`, and `provenance.tsv`, with whole-file SHA-256 digests,
+respectively:
+
+- `1dbed734c0f9dc3966038302c673c2ddeae7c812e4507408b4c56647db3d3c2c`;
+- `7d5567e9f9d570536dd3406b5a7d8a59a330b29321fd5142b319dbf70d65908d`;
+- `9edb33b92c10886b06e15390c961a87018ce24d0b8a7cd201313e2516699def1`;
+- `3e5df007c5fb9596de6e844fc10bed5039eecff9430eccf22dc276ed6d9ba1b4`;
+  and
+- `556b0bfcd0114b86f22bc5506dd488ae18224739e997fb2160b1f25d6646f94e`.
+
+The receipt's embedded-evidence digest is
+`dfb6f809c9e96b6007321b293ee147b961a39bfc65968c21637f65058afc8d38`;
+the comparison's canonical embedded digest is
+`a8b10b7e5fd73185762a4e55e2883e1422c96a320718e00d26c08bf0a05bdd8c`.
+The release binary, launcher, literal validator, parent arithmetic validator,
+and `Cargo.lock` SHA-256 digests are
+`dd1116aa0601a9f4081e047e18f8537a63eb0b3b2fed4f3eef41ce3948f6172b`,
+`498cff9f398cc2662f7e93c6b796914b8e6ba625cb2064edf3dc9cef36a2899f`,
+`a9877e41d772ce4af0f0c8e7c4b1d851a92dcfb8d62a8f2cc6f147baaf1331db`,
+`4d1acc88cb6de489e814800e144a78a9f0b2cdb5ec08877684f1f613d67ec4c8`,
+and
+`0a30771fc5777290edf379b201ec828af0c8ab7ebb933cd5f3c7ed2c97a19b5c`.
+
+The controlled result is
+`completed-literal-packed-exact-no-grid`, independently classified as
+`valid-negative-literal-coefficient-boundary-excluded`. Its exact audited
+scope is field `1525`, SPW `2`, selection-relative rows `[0,325)`, term `0`,
+and the first replay block/window; although the request selected SPWs `2~17`,
+this discriminator did not enter a later buffer or SPW. Across `12,359`
+sources, `24,718` logical roles, and `7,343,758` taps in that scope, the
+source-audited CASA literal coefficient and production packed coefficient
+have the same ordered FNV-64 hash, `15102905920100538072`, with zero
+mismatches, zero nonfinite operands, and zero out-of-grid attempts. The
+literal operand stream used `225,094,528` bytes. Because the coefficients
+were exact, the conditional 4,096-square grid is null and its allocation is
+zero bytes. The imager made its expected controlled exit `1`; the validator
+exited `0`; no `rust.*` product exists.
+
+This is valid negative localization evidence, not a cross-producer tap match,
+DataToGrid promotion, integrated-row promotion, or performance evidence.
+Production dispatch, TT1, normalization, FFT, image formation, products, and
+deconvolution were not entered; `sumwt` was not controlled; and no CASA
+process ran. The result excludes the tested literal coefficient-formation
+boundary over the same casa-rs CF pixels only for the first-buffer scope
+above. It does not explain the frozen CASA/casa-rs TT0 whole-grid mismatch or
+prove the cause of the two final `.alpha` / `.alpha.error` topology pixels.
+The 4,096-square full-16-SPW row remains unpromoted, and the required
+full-geometry memory campaign remains gated behind that promotion. This
+immutable discriminator must not be rerun.
 
 The intentional checkpoint set consists only of the prior Rust
 production-boundary and Metal-rounding changes, the per-channel MFS frequency
-repair and tests, the unexecuted literal-coefficient audit hook and Rust
+repair and tests, the literal-coefficient audit hook and Rust
 regressions, this plan evidence, and the reusable fail-closed launcher,
 validator, and validator tests. Rebuildable `target/` content, CASA logs,
 TempLattice scratch, Python and Ruff caches, copied CASA products,
