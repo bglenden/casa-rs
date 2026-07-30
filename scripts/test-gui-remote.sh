@@ -89,7 +89,7 @@ set +e
 ssh "${ssh_args[@]}" "$remote" /bin/bash -s -- "$request" <<'REMOTE_RUN'
 set -euo pipefail
 
-request_file="$(mktemp "${TMPDIR:-/tmp}/casa-rs-gui-request.XXXXXX.json")"
+request_file="$(mktemp "${TMPDIR:-/tmp}/casa-rs-gui-request.json.XXXXXX")"
 cleanup_request() { rm -f "$request_file"; }
 trap cleanup_request EXIT
 printf '%s' "$1" | /usr/bin/base64 -D >"$request_file"
