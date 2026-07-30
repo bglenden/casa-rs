@@ -3,9 +3,12 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 root="${CASA_RS_VLASS_EXPERIMENT_ROOT:-/Volumes/GLENDENNING/casa-rs-vlass/issue-446}"
+receipt_date="${CASA_RS_VLASS_RECEIPT_DATE:-$(date -u +%Y%m%d)}"
 binary="${CASA_RS_VLASS_EXPERIMENT_BINARY:-$repo_root/target/release/casars-imager}"
 fftw_dir="${CASA_RS_VLASS_FFTW_LIBRARY_DIR:-/opt/homebrew/opt/fftw/lib}"
 fftw_threads="${CASA_RS_VLASS_FFTW_THREADS:-1}"
+model_fft_threads="${CASA_RS_VLASS_MODEL_FFT_THREADS:-8}"
+memory_pressure_policy="${CASA_RS_VLASS_MEMORY_PRESSURE_POLICY:-auto}"
 grid_threads="${CASA_RS_VLASS_GRID_THREADS:-2}"
 plan_threads="${CASA_RS_VLASS_AW_PLAN_THREADS:-1}"
 pack_threads="${CASA_RS_VLASS_AW_PACK_THREADS:-1}"
@@ -21,6 +24,11 @@ niter="${CASA_RS_VLASS_NITER:-2000}"
 image_response_cache="${CASA_RS_VLASS_IMAGE_RESPONSE_CACHE:-0}"
 image_response_dyadic_tiles="${CASA_RS_VLASS_IMAGE_RESPONSE_DYADIC_TILES:-0}"
 radix_madfm="${CASA_RS_VLASS_RADIX_MADFM:-0}"
+mtmfs_sparse_rhs_fft_seed="${CASA_RS_VLASS_MT_MFS_SPARSE_RHS_FFT_SEED:-0}"
+mtmfs_full_fft_basis="${CASA_RS_VLASS_MT_MFS_FULL_FFT_BASIS:-0}"
+mtmfs_casa_fft0="${CASA_RS_VLASS_MT_MFS_CASA_FFT0:-0}"
+mtmfs_casa_fft0_threads="${CASA_RS_VLASS_MT_MFS_CASA_FFT0_THREADS:-$fftw_threads}"
+mtmfs_force_unit_scale_fft="${CASA_RS_VLASS_MT_MFS_FORCE_UNIT_SCALE_FFT:-0}"
 frozen_model_prefix="${CASA_RS_VLASS_FROZEN_MODEL_PREFIX:-}"
 frozen_weight_image="${CASA_RS_VLASS_FROZEN_WEIGHT_IMAGE:-}"
 prediction_trace_limit="${CASA_RS_VLASS_PREDICTION_TRACE_LIMIT:-0}"
@@ -42,7 +50,7 @@ if [[ "$image_response_cache" == "1" ]]; then
     experimental_environment+=(
         CASA_RS_EXPERIMENTAL_AWPROJECT_IMAGE_RESPONSE_CACHE=1
         CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_ONLY_REFRESH=1
-        CASA_RS_AWPROJECT_MODEL_FFT_THREADS_EXPERIMENT=8
+        CASA_RS_AWPROJECT_MODEL_FFT_THREADS_EXPERIMENT="$model_fft_threads"
         CASA_RS_EXPERIMENTAL_PARALLEL_MODEL_TERM_FFT=1
         CASA_RS_EXPERIMENTAL_SPARSE_AWPROJECT_MODEL_PREP=1
         CASA_RS_EXPERIMENTAL_PARALLEL_RESIDUAL_TERM_FFT=1
@@ -120,6 +128,43 @@ elif [[ "$radix_madfm" != "0" ]]; then
     echo "CASA_RS_VLASS_RADIX_MADFM must be 0 or 1" >&2
     exit 2
 fi
+if [[ "$mtmfs_sparse_rhs_fft_seed" == "1" ]]; then
+    label="${label}-mtmfs-sparse-rhs-fft-seed"
+    experimental_environment+=(CASA_RS_EXPERIMENTAL_MT_MFS_SPARSE_RHS_FFT_SEED=1)
+elif [[ "$mtmfs_sparse_rhs_fft_seed" != "0" ]]; then
+    echo "CASA_RS_VLASS_MT_MFS_SPARSE_RHS_FFT_SEED must be 0 or 1" >&2
+    exit 2
+fi
+if [[ "$mtmfs_full_fft_basis" == "1" ]]; then
+    label="${label}-mtmfs-full-fft-basis"
+    experimental_environment+=(CASA_RS_EXPERIMENTAL_MT_MFS_FULL_FFT_BASIS=1)
+elif [[ "$mtmfs_full_fft_basis" != "0" ]]; then
+    echo "CASA_RS_VLASS_MT_MFS_FULL_FFT_BASIS must be 0 or 1" >&2
+    exit 2
+fi
+if [[ "$mtmfs_casa_fft0" == "1" ]]; then
+    case "$mtmfs_casa_fft0_threads" in
+        ''|*[!0-9]*|0)
+            echo "CASA_RS_VLASS_MT_MFS_CASA_FFT0_THREADS must be a positive integer" >&2
+            exit 2
+            ;;
+    esac
+    label="${label}-mtmfs-casa-fft0-t${mtmfs_casa_fft0_threads}"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_MT_MFS_CASA_FFT0=1
+        CASA_RS_EXPERIMENTAL_MT_MFS_CASA_FFT0_THREADS="$mtmfs_casa_fft0_threads"
+    )
+elif [[ "$mtmfs_casa_fft0" != "0" ]]; then
+    echo "CASA_RS_VLASS_MT_MFS_CASA_FFT0 must be 0 or 1" >&2
+    exit 2
+fi
+if [[ "$mtmfs_force_unit_scale_fft" == "1" ]]; then
+    label="${label}-mtmfs-force-unit-scale-fft"
+    experimental_environment+=(CASA_RS_EXPERIMENTAL_MT_MFS_FORCE_UNIT_SCALE_FFT=1)
+elif [[ "$mtmfs_force_unit_scale_fft" != "0" ]]; then
+    echo "CASA_RS_VLASS_MT_MFS_FORCE_UNIT_SCALE_FFT must be 0 or 1" >&2
+    exit 2
+fi
 if [[ -n "$frozen_model_prefix" ]]; then
     for term in 0 1; do
         if [[ ! -d "${frozen_model_prefix}.model.tt${term}" ]]; then
@@ -190,6 +235,9 @@ elif [[ "$pointing_trace" != "0" ]]; then
 fi
 case "$standard_mfs_acceleration" in
     cpu)
+        if [[ "$grid_threads" != "1" ]]; then
+            parallel_argument=(--parallel)
+        fi
         ;;
     metal)
         label="${label}-accel-metal"
@@ -234,11 +282,25 @@ if [[ -n "${CASA_RS_VLASS_LABEL_OVERRIDE:-}" ]]; then
     label="$CASA_RS_VLASS_LABEL_OVERRIDE"
 fi
 output="$root/artifacts/products/$label/rust"
-log="$root/receipts/runs/20260729-$label.log"
+log="$root/receipts/runs/${receipt_date}-$label.log"
 
 case "$fftw_threads" in
     ''|*[!0-9]*|0)
         echo "CASA_RS_VLASS_FFTW_THREADS must be a positive integer" >&2
+        exit 2
+        ;;
+esac
+case "$model_fft_threads" in
+    ''|*[!0-9]*|0)
+        echo "CASA_RS_VLASS_MODEL_FFT_THREADS must be a positive integer" >&2
+        exit 2
+        ;;
+esac
+case "$memory_pressure_policy" in
+    auto|conservative-no-swap|aggressive|oversubscribe|stage-aware|hybrid)
+        ;;
+    *)
+        echo "CASA_RS_VLASS_MEMORY_PRESSURE_POLICY must be auto, conservative-no-swap, aggressive, oversubscribe, stage-aware, or hybrid" >&2
         exit 2
         ;;
 esac
@@ -269,8 +331,8 @@ if [[ "$pack_threads" != "1" ]]; then
     experimental_environment+=(CASA_RS_AWPROJECT_PACK_THREADS="$pack_threads")
 fi
 case "$niter" in
-    ''|*[!0-9]*|0)
-        echo "CASA_RS_VLASS_NITER must be a positive integer" >&2
+    ''|*[!0-9]*)
+        echo "CASA_RS_VLASS_NITER must be a non-negative integer" >&2
         exit 2
         ;;
 esac
@@ -325,6 +387,7 @@ mkdir -p "$(dirname "$output")" "$(dirname "$log")"
     "${parallel_argument[@]}" \
     --standard-mfs-grid-threads "$grid_threads" \
     --imaging-memory-target-mb 16384 \
+    --imaging-memory-pressure-policy "$memory_pressure_policy" \
     --imaging-prepare-workers 1 \
     --imaging-read-ahead-blocks 1 \
     --hogbom-iteration-mode strict \

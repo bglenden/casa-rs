@@ -17,7 +17,6 @@ casa-lattices = { path = "../casa-lattices" }
 casa-types = { path = "../casa-types" }
 libloading = "0.8"
 libm = "0.2"
-nalgebra.workspace = true
 ndarray.workspace = true
 num-complex.workspace = true
 rayon = "1.11"
@@ -65,8 +64,10 @@ objc2-metal-performance-shaders-graph = { version = "0.3.2", default-features = 
     "MPSGraphTensorData",
     "objc2-metal-performance-shaders",
 ] }
+sha2 = "0.10"
 
 [dev-dependencies]
 casa-test-support = { path = "../casa-test-support" }
 serial_test = "3"
+serde_json = "1"
 tempfile = "3"

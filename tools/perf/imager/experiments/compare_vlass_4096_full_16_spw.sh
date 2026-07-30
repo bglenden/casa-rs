@@ -8,15 +8,16 @@ fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 root="${CASA_RS_VLASS_EXPERIMENT_ROOT:-/Volumes/GLENDENNING/casa-rs-vlass/issue-446}"
+receipt_date="${CASA_RS_VLASS_RECEIPT_DATE:-$(date -u +%Y%m%d)}"
 casa_python="${CASA_RS_VLASS_CASA_PYTHON:-/Volumes/GLENDENNING/DeveloperTools/CASA/6.7.5.18-laptop/venv-py312/bin/python}"
 label="${1:-vlass-production-clean-4096-full-16-spw-fftw-t1-gridt2-niter2000-image-response-cache-promoted-stack-dyadic-tiles-radix-madfm-accel-metal-v1}"
 workload="$repo_root/tools/perf/imager/workloads/vlass-fragment-single-field-clean-4096-full-16-spw.json"
 rust_prefix="$root/artifacts/products/$label/rust"
 casa_prefix="$root/casa-reduced-clean/4096-full-16-spw/casa"
-rust_log="$root/receipts/runs/20260729-$label.log"
+rust_log="$root/receipts/runs/${receipt_date}-$label.log"
 casa_log="$root/receipts/runs/20260729-vlass-reduced-casa-clean-4096-full-16-spw.casa.log"
-comparison_prefix="$root/receipts/runs/20260729-$label.comparison"
-trace_output="$root/receipts/runs/20260729-$label.trace-comparison.json"
+comparison_prefix="$root/receipts/runs/${receipt_date}-$label.comparison"
+trace_output="$root/receipts/runs/${receipt_date}-$label.trace-comparison.json"
 
 for required in \
     "$casa_python" \

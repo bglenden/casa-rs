@@ -9,6 +9,7 @@ import shutil
 import time
 from pathlib import Path
 
+import casatools
 import numpy as np
 from casatasks import casalog, tclean
 from casatools import image, table
@@ -185,6 +186,7 @@ def main() -> None:
     parser.add_argument("--model-prefix", required=True, type=Path)
     parser.add_argument("--output-prefix", required=True, type=Path)
     parser.add_argument("--output-npz", required=True, type=Path)
+    parser.add_argument("--casa-log", type=Path)
     parser.add_argument(
         "--profile",
         choices=tuple(PROFILE_PARAMETERS),
@@ -212,6 +214,17 @@ def main() -> None:
 
     if args.output_npz.exists():
         raise RuntimeError(f"refusing to overwrite trace: {args.output_npz}")
+    if args.casa_log is not None:
+        if args.extract_only:
+            if not args.casa_log.is_file():
+                raise RuntimeError(
+                    f"completed CASA log is missing: {args.casa_log}"
+                )
+        else:
+            if args.casa_log.exists():
+                raise RuntimeError(f"refusing to overwrite CASA log: {args.casa_log}")
+            args.casa_log.parent.mkdir(parents=True, exist_ok=True)
+            casalog.setlogfile(str(args.casa_log))
     protected_suffixes = MODEL_SUFFIXES + IMMUTABLE_SUFFIXES
     if args.extract_only:
         if not args.scratch_ms.is_dir():
@@ -297,7 +310,8 @@ def main() -> None:
     result = {
         "kind": "vlass_casa_awproject_prediction_trace",
         "role": "bounded_correctness_trace_not_performance_evidence",
-        "casa_version": "6.7.5.18",
+        "casa_version": ".".join(str(int(value)) for value in casatools.version()),
+        "casa_version_string": str(casatools.version_string()),
         "elapsed_s": elapsed_s,
         "source_ms": str(args.source_ms),
         "scratch_ms": str(args.scratch_ms),
@@ -305,6 +319,7 @@ def main() -> None:
         "model_prefix": str(args.model_prefix),
         "output_prefix": str(args.output_prefix),
         "output_npz": str(args.output_npz),
+        "casa_log": str(args.casa_log) if args.casa_log is not None else None,
         "extract_only": args.extract_only,
         "usepointing": not args.disable_pointing,
         "zero_model_term": args.zero_model_term,

@@ -1,0 +1,266 @@
+diff --git a/casatools/src/code/synthesis/ImagerObjects/SIImageStoreMultiTerm.cc b/casatools/src/code/synthesis/ImagerObjects/SIImageStoreMultiTerm.cc
+--- a/casatools/src/code/synthesis/ImagerObjects/SIImageStoreMultiTerm.cc
++++ b/casatools/src/code/synthesis/ImagerObjects/SIImageStoreMultiTerm.cc
+@@ -24,5 +24,9 @@
+ 
+ #include <casacore/casa/Exceptions/Error.h>
++#include <cstdint>
++#include <cstdlib>
++#include <cstring>
++#include <fstream>
+ #include <iostream>
+ #include <sstream>
+ 
+@@ -47,6 +52,7 @@
+ #include <casacore/images/Images/SubImage.h>
+ #include <casacore/images/Regions/ImageRegion.h>
+ 
++#include <synthesis/TransformMachines2/Utils.h>
+ #include <synthesis/ImagerObjects/SIImageStoreMultiTerm.h>
+ 
+ #include <casacore/casa/Arrays/MatrixMath.h>
+@@ -993,6 +999,50 @@ namespace casa { //# NAMESPACE CASA - BEGIN
+ 	    LatticeExpr<Float> ratio( ( (*(model(tix))) * mask ) / ( deno + maskinv ) );
+ 
+ 	    itsModels[tix]->copyData(ratio);
++
++		    // Bounded VLASS parity diagnostic. This is inert unless a
++		    // trace prefix is supplied and writes the normalized Float
++		    // model exactly once for the selected Taylor term.
++		    static Bool vlassModelInitTraceADone = false;
++		    const char* vlassTracePrefix =
++		      std::getenv("CASA_VLASS_MODEL_INIT_TRACE_PREFIX");
++		    const char* vlassTraceTermText =
++		      std::getenv("CASA_VLASS_MODEL_INIT_TRACE_TERM");
++		    const Int vlassTraceTerm =
++		      vlassTraceTermText == nullptr ? 0 : std::atoi(vlassTraceTermText);
++		    if (!vlassModelInitTraceADone && vlassTracePrefix != nullptr &&
++			static_cast<Int>(tix) == vlassTraceTerm) {
++		      const String vlassStagePath =
++			String(vlassTracePrefix) + ".A.tt" + String::toString(tix);
++		      refim::storeImg(vlassStagePath, *itsModels[tix]);
++
++		      auto vlassFloatBits = [](Float value) {
++			std::uint32_t bits = 0;
++			static_assert(sizeof(bits) == sizeof(value),
++				      "Float32 trace width changed");
++			std::memcpy(&bits, &value, sizeof(bits));
++			return bits;
++		      };
++		      auto vlassDoubleBits = [](Double value) {
++			std::uint64_t bits = 0;
++			static_assert(sizeof(bits) == sizeof(value),
++				      "Float64 trace width changed");
++			std::memcpy(&bits, &value, sizeof(bits));
++			return bits;
++		      };
++		      std::ofstream vlassMeta(
++			(vlassStagePath + ".meta").c_str(),
++			std::ios::out | std::ios::trunc);
++		      if (!vlassMeta)
++			throw AipsError("cannot open VLASS model-init stage-A metadata");
++		      vlassMeta << "schema_version=1\n"
++				<< "term=" << tix << '\n'
++				<< "normtype=" << normtype << '\n'
++				<< "pblimit_f32_bits=" << vlassFloatBits(pblimit) << '\n'
++				<< "pb_scale_factor_f64_bits="
++				<< vlassDoubleBits(itsPBScaleFactor) << '\n';
++		      vlassModelInitTraceADone = true;
++		    }
+ 	  }    
+       }
+   }
+diff --git a/casatools/src/code/synthesis/TransformMachines2/MultiTermFTNew.cc b/casatools/src/code/synthesis/TransformMachines2/MultiTermFTNew.cc
+--- a/casatools/src/code/synthesis/TransformMachines2/MultiTermFTNew.cc
++++ b/casatools/src/code/synthesis/TransformMachines2/MultiTermFTNew.cc
+@@ -42,6 +42,7 @@
+ #include <casacore/casa/Utilities/Assert.h>
+ #include <casacore/casa/Exceptions/Error.h>
+ #include <casacore/casa/OS/Timer.h>
++#include <cstdlib>
+ #include <sstream>
+ 
+ #include <synthesis/TransformMachines/StokesImageUtil.h>
+@@ -320,6 +321,24 @@ void MultiTermFTNew::initializeToVisNew(const VisBuffer2& vb,
+       if(!(imstore->forwardGrid(taylor)).get())
+         throw(AipsError("MultiTermFTNew::InitializeToVisNew error imagestore has no valid grid initialized for taylor term "+String::toString(taylor)));
+       stokesToCorrelation( *(imstore->model(taylor)) , *(imstore->forwardGrid(taylor) ) );
++
++      // Record the exact Complex correlation grid before the following
++      // representation-only coordinate relabel. The payload is written once
++      // and only when the bounded VLASS diagnostic is enabled.
++      static Bool vlassModelInitTraceBDone = false;
++      const char* vlassTracePrefix =
++        std::getenv("CASA_VLASS_MODEL_INIT_TRACE_PREFIX");
++      const char* vlassTraceTermText =
++        std::getenv("CASA_VLASS_MODEL_INIT_TRACE_TERM");
++      const Int vlassTraceTerm =
++        vlassTraceTermText == nullptr ? 0 : std::atoi(vlassTraceTermText);
++      if (!vlassModelInitTraceBDone && vlassTracePrefix != nullptr &&
++          static_cast<Int>(taylor) == vlassTraceTerm) {
++        const String vlassStagePath =
++          String(vlassTracePrefix) + ".B.tt" + String::toString(taylor);
++        storeImg(vlassStagePath, *(imstore->forwardGrid(taylor)));
++        vlassModelInitTraceBDone = true;
++      }
+       
+       if(vb.polarizationFrame()==MSIter::Linear) {
+ 	StokesImageUtil::changeCStokesRep(  *(imstore->forwardGrid(taylor) ), StokesImageUtil::LINEAR);
+diff --git a/casatools/src/code/synthesis/TransformMachines2/AWProjectFT.cc b/casatools/src/code/synthesis/TransformMachines2/AWProjectFT.cc
+--- a/casatools/src/code/synthesis/TransformMachines2/AWProjectFT.cc
++++ b/casatools/src/code/synthesis/TransformMachines2/AWProjectFT.cc
+@@ -24,5 +24,11 @@
+ //# $Id$
+ 
++#include <algorithm>
++#include <cstdint>
++#include <cstdlib>
++#include <cstring>
++#include <fstream>
++#include <limits>
+ #include <casacore/casa/Quanta/UnitMap.h>
+ #include <casacore/casa/Quanta/MVTime.h>
+ #include <casacore/casa/Quanta/UnitVal.h>
+@@ -39,6 +45,7 @@
+ #include <synthesis/MeasurementComponents/ExpCache.h>
+ #include <synthesis/MeasurementComponents/CExp.h>
+ #include <synthesis/TransformMachines2/AWVisResampler.h>
++#include <synthesis/TransformMachines2/Utils.h>
+ #include <synthesis/TransformMachines2/VBStore.h>
+ 
+ #include <casacore/scimath/Mathematics/FFTServer.h>
+@@ -1248,6 +1255,24 @@ namespace casa { //# NAMESPACE CASA - BEGIN
+ 				    const VisBuffer2& vb)
+   {
+     LogIO log_l(LogOrigin("AWProjectFT2", "initializeToVis[R&D]"));
++    static Bool vlassModelInitTraceCDDone = false;
++    const char* vlassTracePrefix =
++      std::getenv("CASA_VLASS_MODEL_INIT_TRACE_PREFIX");
++    const char* vlassTraceTermText =
++      std::getenv("CASA_VLASS_MODEL_INIT_TRACE_TERM");
++    const Int vlassTraceTerm =
++      vlassTraceTermText == nullptr ? 0 : std::atoi(vlassTraceTermText);
++    const Bool vlassTraceThis =
++      !vlassModelInitTraceCDDone && vlassTracePrefix != nullptr &&
++      sensitivityPatternQualifier_p == vlassTraceTerm;
++    Bool vlassAvgPBBranchRan = false;
++    Bool vlassPBCorrectionRan = false;
++    Float vlassAppliedPBMin = std::numeric_limits<Float>::infinity();
++    Float vlassAppliedPBMax = -std::numeric_limits<Float>::infinity();
++    const String vlassTraceBase =
++      vlassTracePrefix == nullptr
++        ? String("")
++        : String(vlassTracePrefix) + ".tt" + String::toString(vlassTraceTerm);
+     image=&iimage;
+     
+     ok();
+@@ -1306,7 +1331,8 @@ namespace casa { //# NAMESPACE CASA - BEGIN
+       }
+     
+     if(cfCache_p->avgPBReady()) //SB
+     {
++      vlassAvgPBBranchRan = true;
+       //      normalizeAvgPB();
+       
+       IPosition cursorShape(4, nx, 1, 1, 1);
+@@ -1345,10 +1371,15 @@ namespace casa { //# NAMESPACE CASA - BEGIN
+ 	  for(int ix=0;ix<nx;ix++) 
+ 	    {
+ 	      if (doPBCorrection)
+ 		{
++		  vlassPBCorrectionRan = true;
+ 		  PBCorrection(ix) = pbFunc(PBCorrection(ix),pbLimit_p)*(sincConv(ix)*sincConv(iy));
++		  if (vlassTraceThis) {
++		    vlassAppliedPBMin = std::min(vlassAppliedPBMin, PBCorrection(ix));
++		    vlassAppliedPBMax = std::max(vlassAppliedPBMax, PBCorrection(ix));
++		  }
+ 		  lix.rwVectorCursor()(ix) /= (PBCorrection(ix));
+ 		}
+ 	      else 
+ 		lix.rwVectorCursor()(ix) /= (1.0/(sincConv(ix)*sincConv(iy)));
+ 	    }
+@@ -1355,9 +1386,84 @@ namespace casa { //# NAMESPACE CASA - BEGIN
+ 	}
+     }
+     //
++    // Persist the exact AW input after all conditional corrections and before
++    // the FFT. A companion metadata record captures the branch state needed
++    // to interpret this one-shot diagnostic.
++    //
++    if (vlassTraceThis) {
++      storeArrayAsImage(
++        vlassTraceBase + ".C", image->coordinates(), griddedData);
++
++      auto vlassFloatBits = [](Float value) {
++        std::uint32_t bits = 0;
++        static_assert(sizeof(bits) == sizeof(value),
++                      "Float32 trace width changed");
++        std::memcpy(&bits, &value, sizeof(bits));
++        return bits;
++      };
++      Float vlassAvgPBMin = std::numeric_limits<Float>::quiet_NaN();
++      Float vlassAvgPBMax = std::numeric_limits<Float>::quiet_NaN();
++      if (!avgPB_p.null()) {
++        Array<Float> vlassAvgPBValues;
++        avgPB_p->get(vlassAvgPBValues);
++        if (vlassAvgPBValues.nelements() > 0) {
++          vlassAvgPBMin = min(vlassAvgPBValues);
++          vlassAvgPBMax = max(vlassAvgPBValues);
++        }
++      }
++      const Bool vlassCFCachePresent = !cfCache_p.null();
++      const Bool vlassCFReadyDefault =
++        vlassCFCachePresent && cfCache_p->avgPBReady();
++      const Bool vlassCFReadyQualified =
++        vlassCFCachePresent &&
++        cfCache_p->avgPBReady(sensitivityPatternQualifierStr_p);
++
++      std::ofstream vlassMeta(
++        (vlassTraceBase + ".CD.meta").c_str(),
++        std::ios::out | std::ios::trunc);
++      if (!vlassMeta)
++        throw AipsError("cannot open VLASS model-init C/D metadata");
++      vlassMeta << "schema_version=1\n"
++                << "role=isolated_arithmetic_diagnostic_not_promotion_evidence\n"
++                << "term=" << sensitivityPatternQualifier_p << '\n'
++                << "shape=" << nx << ',' << ny << ',' << npol << ',' << nchan << '\n'
++                << "vb_polarization_frame="
++                << static_cast<Int>(vb.polarizationFrame()) << '\n'
++                << "sensitivity_pattern_qualifier="
++                << sensitivityPatternQualifier_p << '\n'
++                << "sensitivity_pattern_qualifier_string="
++                << sensitivityPatternQualifierStr_p << '\n'
++                << "do_pb_correction=" << static_cast<Int>(doPBCorrection) << '\n'
++                << "aw_avg_pb_ready=" << static_cast<Int>(avgPBReady_p) << '\n'
++                << "cf_cache_present=" << static_cast<Int>(vlassCFCachePresent) << '\n'
++                << "cf_cache_avg_pb_ready_default="
++                << static_cast<Int>(vlassCFReadyDefault) << '\n'
++                << "cf_cache_avg_pb_ready_qualified="
++                << static_cast<Int>(vlassCFReadyQualified) << '\n'
++                << "avg_pb_branch_ran=" << static_cast<Int>(vlassAvgPBBranchRan) << '\n'
++                << "pb_correction_ran=" << static_cast<Int>(vlassPBCorrectionRan) << '\n'
++                << "conv_sampling=" << convSampling << '\n'
++                << "pb_limit_f32_bits=" << vlassFloatBits(pbLimit_p) << '\n'
++                << "avg_pb_min_f32_bits=" << vlassFloatBits(vlassAvgPBMin) << '\n'
++                << "avg_pb_max_f32_bits=" << vlassFloatBits(vlassAvgPBMax) << '\n'
++                << "applied_pb_min_f32_bits="
++                << vlassFloatBits(vlassAppliedPBMin) << '\n'
++                << "applied_pb_max_f32_bits="
++                << vlassFloatBits(vlassAppliedPBMax) << '\n'
++                << "host_cpus=" << HostInfo::numCPUs(false) << '\n'
++                << "host_cpus_aipsrc=" << HostInfo::numCPUs(true) << '\n'
++                << "fft_call=LatticeFFT::cfft2d\n"
++                << "fft_forward=1\n";
++    }
++    //
+     // Now do the FFT2D in place
+     //
+ 
+     LatticeFFT::cfft2d(*lattice);
++    if (vlassTraceThis) {
++      storeArrayAsImage(
++        vlassTraceBase + ".D", image->coordinates(), griddedData);
++      vlassModelInitTraceCDDone = true;
++    }
+     log_l << LogIO::DEBUGGING << "Finished FFT" << LogIO::POST;
+   }

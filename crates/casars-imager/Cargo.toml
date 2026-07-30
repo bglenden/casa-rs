@@ -37,6 +37,11 @@ sha2 = "0.10"
 thiserror.workspace = true
 tracing.workspace = true
 
+[target.'cfg(all(target_os = "macos", not(coverage)))'.dependencies]
+objc2-metal = { version = "0.3.2", default-features = false, features = [
+    "MTLDevice",
+] }
+
 [dev-dependencies]
 casa-measures-data = { path = "../casa-measures-data" }
 casa-test-support = { path = "../casa-test-support" }

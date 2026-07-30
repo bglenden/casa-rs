@@ -136,14 +136,11 @@ pub(crate) fn adjacent_parallel_worker_candidates(
         .copied()
         .filter(|workers| *workers > 0 && *workers <= hard_cap)
     {
-        candidates.extend(
-            [
-                workers.saturating_sub(1).max(1),
-                workers,
-                workers.saturating_add(1).min(hard_cap),
-            ]
-            .into_iter(),
-        );
+        candidates.extend([
+            workers.saturating_sub(1).max(1),
+            workers,
+            workers.saturating_add(1).min(hard_cap),
+        ]);
     }
     candidates.sort_unstable();
     candidates.dedup();
