@@ -3967,16 +3967,38 @@ hard-coded Rust copy of CASA's first-buffer values in the comparator.
 
 The completed Oracle review agreed that a complete replay block is required
 and that no tap-prefix trace is warranted before an actual common-boundary
-grid mismatch. The v2 receipt addresses its provenance objection by comparing
-producer-observed row, flag, channel-map, polarization-map, and frequency
-boundaries before comparing the CASA-order grids and production `sumwt`. The
-launcher additionally pins the frozen source archive, dataset tree receipt,
-dataset receipt, `tclean.last`, and CASA v5 receipt identities. This binds the
-current diagnostic to the declared frozen dataset, but it is not claimed as a
-retroactive byte-for-byte manifest of the mutable inputs at the time CASA v5
-was captured. The v2 launcher SHA-256 is
-`b580dd10777e4fdb80b861a75d9cefff3e199c2b31a31583bd98a233e5873dcd`;
-it has not yet been executed. A future exact common-boundary match may promote
+grid mismatch. The v2 diagnostic addressed its provenance objection by
+comparing producer-observed row, flag, channel-map, polarization-map, and
+frequency boundaries before comparing the CASA-order grids and production
+`sumwt`. Its launcher additionally pinned the frozen source archive, declared
+dataset tree receipt, dataset receipt, `tclean.last`, and CASA v5 receipt
+identities. This binds the diagnostic to the declared frozen dataset, but it
+is not claimed as a retroactive byte-for-byte manifest of the mutable inputs
+at the time CASA v5 was captured.
+
+The single v2 attempt at revision
+`01bcc3bfbba31522484107838b282c627e32bd50` also failed closed before
+receipt creation or bracket gridding. It reached the portable-input hash only
+after the direct/raw-versus-compact input audit returned no mismatch, then
+rejected source `50` because the diagnostic incorrectly required logical role
+zero to select Mueller `0`; CASA and production casa-rs both select conjugate
+Mueller `15` for that role when W is non-positive. The preserved v2
+`casars-imager.log` and `provenance.tsv` have SHA-256
+`cd6e684e8d632ac0442124591fd8cff515cb70827c92c438c8db6e3c6209fc3c`
+and
+`f794ab0f53469a822c7ce43ebc382dcc5761d6d43e7ed82e2a94271b565888df`,
+respectively; its binary SHA-256 is
+`4f25e3d64339a11936addf28133e6ce82cf08526a4b0b007cbed96c3ba972106`.
+No receipt, CASA call, FFT, image, or product was created, and no unchanged
+run was repeated.
+
+The v3-only correction leaves production CF selection and replay untouched.
+It validates the CASA W-sign rule for both logical lanes, requires exactly one
+selected Mueller `0` and one `15`, and hashes each source canonically in
+actual-Mueller order `0,15` with the matching residual. Focused tests cover
+positive, zero, and negative W. The v3 launcher SHA-256 is
+`3f3175c57a4d309bf72f3531e05dc2e0d87302fd146ca7b0aba3f2f1816d8b3a`;
+it has not been executed. A future exact common-boundary match may promote
 only the first-buffer DataToGrid boundary, never the integrated
 4,096-square row.
 
