@@ -4706,6 +4706,100 @@ not run a 4,096-square image row, a 12,150-square development clean, or the
 full-geometry memory campaign. The 4,096-square full-16-SPW row remains
 unpromoted, and the memory campaign remains gated behind that promotion.
 
+### 2026-07-30 casa-rs native first-source comparison
+
+The matching casa-rs V3 diagnostic was checkpointed and pushed at
+`e9d913882993c8af024b9fedd23ea2f135c5eb78`, then executed once from that
+exact revision. It stopped at the first source block before CF lookup, grid
+allocation, FFT, image-product formation, or deconvolution. The immutable
+output directory is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/casa-rs-aw-datagrid-native-components-4096-full16-first-vb-v3`.
+The receipt, comparison, provenance, casa-rs log, and comparison-log
+whole-file SHA-256 digests are, respectively:
+
+- `98f2a538ec8cc8742651c0171d97ff50e4da424ee77543ea756f654680ac037d`;
+- `7bc87dbabd3b3cf627b84fda17883cfefadbbf1535c0b4ff8587f99cdf31973f`;
+- `2d80f5eb31038f5c4178ce170652ce02d528b99c86b1443fb8811da218c4c210`;
+- `6cd8b0997d5d4b739e7e987037a3f510865dc8c6c0457bdaec328b6ae472d0c2`;
+  and
+- `c0f7ec267cfeef49610b05dc22561078519beb03a167c3ba70fa3532cc412d3d`.
+
+The receipt's embedded evidence SHA-256 digest is
+`2b7e3c505cbeb38f49282c8a7b516fc18d4928b0cb4e7d86820df40a094c557e`.
+The independent validator classified the controlled exit as
+`valid-native-component-mismatch`. The exact binary, launcher, validator, and
+`Cargo.lock` SHA-256 digests are
+`8815d104bff2e6c24a91e6bd2836d1d9af87a744e9f224ddacc9474342a63c49`,
+`09d99df27b2633534a513bb5aaccce608fc4c279d7dc26613293e8bdbf733489`,
+`31e042ea6aa15c1a609f10733a380a26b26d9e402bfe8b4a61f2b9ea91987bc9`,
+and
+`0a30771fc5777290edf379b201ec828af0c8ab7ebb933cd5f3c7ed2c97a19b5c`.
+
+Eight of the ten native component hashes match CASA bit for bit: header, row
+IDs, channel map, polarization map, frequencies, row flags,
+four-correlation flag masks, and admission. The admitted-source count
+`12,359`, nonzero-weight count `12,359`, zero-weight count `8,441`, and
+flagged-row count `48` all match exactly. Admission membership matches
+slot-by-slot. The flag masks are already exactly `0` or `15`, so broadcasting
+the CASA any-polarization flag decision cannot change casa-rs's result and is
+not an outstanding owner.
+
+Only two component hashes differ:
+
+- UVW and differential phase: casa-rs `6119428256071280816`, CASA
+  `6884923150254773287`; and
+- imaging weights: casa-rs `6417129240768820313`, CASA
+  `2430234571011807313`.
+
+The imaging-weight residual is narrowly arithmetic rather than a selection,
+density-cell, or flagging difference. Of `20,800` samples, `19,935` are bit
+exact. The other `865` differ by one or two f32 ULPs: `690` by one ULP and
+`175` by two ULPs. The maximum absolute difference is
+`7.62939453125e-06`, the maximum relative difference is
+`1.7627471073980997e-07`, and the median relative difference is
+`8.938639369253852e-08`. The first difference, row 0 channel 11, is CASA
+`16.767227172851562` versus casa-rs `16.76722526550293`.
+
+The UVW residual is likewise deterministic and localized. Negating casa-rs's
+current internal U and V gives CASA's convention. Under that comparison, U is
+exact for all `325` rows; V is exact for `222` rows and differs by 1--35 f64
+ULPs for the remaining `103`, with maximum absolute difference
+`4.547473508864641e-13`; W is exact for `17` rows and differs by 2--1,100 f64
+ULPs for the remaining `308`, with maximum absolute difference
+`3.637978807091713e-12`. casa-rs currently reports zero differential phase
+for all rows, while CASA reports nonzero roundoff-scale values with maximum
+absolute magnitude `4.736786283771703e-12`.
+
+Read-only inspection of the exact CASA `6.7.5.18` source revision
+`418bb1a26df7c4aba663ff123b038b75a6fa0295` and its casacore dependency
+localizes the two arithmetic paths. CASA `AWProjectFT::put` calls
+`negateUV`, `girarUVW`, and `refocus`; `negateUV` negates U and V but retains
+W, and `girarUVW` executes two `UVWMachine` transforms even for this
+nominally same-field case. That execution order accounts for the observed
+roundoff-scale V/W and differential-phase values. casa-rs currently
+short-circuits the same-field transform to identity. CASA's standard Briggs
+path retains its `f2` scale and denominator arithmetic as double precision
+and casts only the final weight to f32. casa-rs currently stores `f2` as f32
+and evaluates the denominator and division in f32, accounting for the
+remaining one-to-two-ULP weight residual.
+
+This result authorizes two shared parity corrections, not a VLASS-specific
+table or tolerance: reproduce CASA's exact AW UVW/phase transformation
+semantics at the shared geometry boundary, and retain double precision
+through the final standard-MFS Briggs division before the one f32 cast. No
+flag, admission, density-grid, channel-map, or polarization-map change is
+supported by the evidence.
+
+The CF cache remained unchanged: its metadata digest before and after is
+`29cd6432bc16e91b80664d58f82c76857bd3846db48a302c691078b1db0ed7f7`,
+and its content-tree digest is
+`f8fd10b133235e04f75f903fde38d68aa446e1892143fb6bf12b82b1e3cfff68`.
+No CASA process, CASA reference rerun, 4,096-square image row, 12,150-square
+development clean, full-geometry memory-policy row, CF lookup, grid, FFT,
+image product, or performance measurement ran. The 4,096-square full-16-SPW
+row remains unpromoted, and the full-geometry memory campaign remains gated
+behind that promotion.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
