@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 from casatasks import casalog, tclean
-from casatools import table
+from casatools import image, table
 
 from vlass_common_model_major_cycle import (
     IMMUTABLE_SUFFIXES,
@@ -19,16 +19,39 @@ from vlass_common_model_major_cycle import (
     image_content_sha256,
     prefixed_directories,
 )
-from vlass_reduced_casa_clean_4096_four_spw import TCLEAN_PARAMETERS
+from vlass_reduced_casa_clean_4096_four_spw import (
+    TCLEAN_PARAMETERS as FOUR_SPW_TCLEAN_PARAMETERS,
+)
+from vlass_reduced_casa_clean_4096_full_16_spw import (
+    TCLEAN_PARAMETERS as FULL_16_SPW_TCLEAN_PARAMETERS,
+)
 
 
-SELECTED_SPWS = (2, 7, 12, 17)
 SELECTED_FIELD = 1525
 SELECTED_INTENT = "OBSERVE_TARGET#UNSPECIFIED"
 MAX_UV_METERS = 12_000.0
 
 
-def clone_image_bundle(zero_prefix: Path, model_prefix: Path, output_prefix: Path) -> None:
+PROFILE_PARAMETERS = {
+    "four-spw": {
+        "selected_spws": (2, 7, 12, 17),
+        "expected_unflagged_rows": 2233,
+        "tclean": FOUR_SPW_TCLEAN_PARAMETERS,
+    },
+    "full-16-spw": {
+        "selected_spws": tuple(range(2, 18)),
+        "expected_unflagged_rows": 8986,
+        "tclean": FULL_16_SPW_TCLEAN_PARAMETERS,
+    },
+}
+
+
+def clone_image_bundle(
+    zero_prefix: Path,
+    model_prefix: Path,
+    output_prefix: Path,
+    zero_model_term: int | None,
+) -> None:
     products = prefixed_directories(zero_prefix)
     if not products:
         raise RuntimeError(f"zero-model CASA bundle is missing: {zero_prefix}.*")
@@ -45,9 +68,22 @@ def clone_image_bundle(zero_prefix: Path, model_prefix: Path, output_prefix: Pat
             Path(f"{model_prefix}{suffix}"),
             Path(f"{output_prefix}{suffix}"),
         )
+    if zero_model_term is not None:
+        model_path = Path(f"{output_prefix}.model.tt{zero_model_term}")
+        tool = image()
+        try:
+            if not tool.open(str(model_path)):
+                raise RuntimeError(f"failed to open copied model term: {model_path}")
+            tool.putchunk(np.zeros(tool.shape(), dtype=np.float32))
+        finally:
+            tool.close()
 
 
-def selected_prediction_rows(ms_path: Path) -> dict[str, np.ndarray]:
+def selected_prediction_rows(
+    ms_path: Path,
+    selected_spws: tuple[int, ...],
+    expected_unflagged_rows: int,
+) -> dict[str, np.ndarray]:
     data_description = table()
     spectral_window = table()
     state = table()
@@ -77,7 +113,7 @@ def selected_prediction_rows(ms_path: Path) -> dict[str, np.ndarray]:
         spectral_window.open(str(ms_path / "SPECTRAL_WINDOW"))
         channel_frequencies = {
             spw: np.asarray(spectral_window.getcell("CHAN_FREQ", spw), dtype=np.float64)
-            for spw in SELECTED_SPWS
+            for spw in selected_spws
         }
         spectral_window.close()
 
@@ -93,17 +129,14 @@ def selected_prediction_rows(ms_path: Path) -> dict[str, np.ndarray]:
         spw_ids = ddid_spw[data_description_ids]
         selected = (
             (field_ids == SELECTED_FIELD)
-            & np.isin(spw_ids, np.asarray(SELECTED_SPWS, dtype=np.int32))
+            & np.isin(spw_ids, np.asarray(selected_spws, dtype=np.int32))
             & np.isin(state_ids, selected_states)
             & (~flag_rows)
         )
         row_ids = np.flatnonzero(selected).astype(np.int64)
-        # CASA reports 2600 selected rows before applying pre-existing
-        # FLAG_ROW state.  The frozen fragment has 367 flagged rows, leaving
-        # 2233 rows that can contribute predictions.
-        if row_ids.size != 2233:
+        if row_ids.size != expected_unflagged_rows:
             raise RuntimeError(
-                f"expected 2233 unflagged rows from CASA's 2600-row selection, selected {row_ids.size}"
+                f"expected {expected_unflagged_rows} unflagged rows, selected {row_ids.size}"
             )
         first_model = np.asarray(main.getcell("MODEL_DATA", int(row_ids[0])))
         correlations, channels = first_model.shape
@@ -153,11 +186,29 @@ def main() -> None:
     parser.add_argument("--output-prefix", required=True, type=Path)
     parser.add_argument("--output-npz", required=True, type=Path)
     parser.add_argument(
+        "--profile",
+        choices=tuple(PROFILE_PARAMETERS),
+        default="four-spw",
+        help="frozen VLASS selection and tclean parameter profile",
+    )
+    parser.add_argument(
         "--extract-only",
         action="store_true",
         help="extract MODEL_DATA from an already completed scratch run",
     )
+    parser.add_argument(
+        "--disable-pointing",
+        action="store_true",
+        help="changed diagnostic: run AWProject without POINTING phase gradients",
+    )
+    parser.add_argument(
+        "--zero-model-term",
+        choices=(0, 1),
+        type=int,
+        help="changed diagnostic: zero one copied MT-MFS model term before prediction",
+    )
     args = parser.parse_args()
+    profile = PROFILE_PARAMETERS[args.profile]
 
     if args.output_npz.exists():
         raise RuntimeError(f"refusing to overwrite trace: {args.output_npz}")
@@ -180,12 +231,19 @@ def main() -> None:
             raise RuntimeError(f"refusing to overwrite scratch MS: {args.scratch_ms}")
         args.scratch_ms.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(args.source_ms, args.scratch_ms)
-        clone_image_bundle(args.zero_prefix, args.model_prefix, args.output_prefix)
+        clone_image_bundle(
+            args.zero_prefix,
+            args.model_prefix,
+            args.output_prefix,
+            args.zero_model_term,
+        )
         protected_before = {
             suffix: image_content_sha256(Path(f"{args.output_prefix}{suffix}"))
             for suffix in protected_suffixes
         }
-        parameters = dict(TCLEAN_PARAMETERS)
+        parameters = dict(profile["tclean"])
+        if args.disable_pointing:
+            parameters["usepointing"] = False
         parameters.update(
             {
                 "vis": str(args.scratch_ms),
@@ -229,7 +287,11 @@ def main() -> None:
         for suffix in protected_suffixes
     }
 
-    arrays = selected_prediction_rows(args.scratch_ms)
+    arrays = selected_prediction_rows(
+        args.scratch_ms,
+        profile["selected_spws"],
+        profile["expected_unflagged_rows"],
+    )
     args.output_npz.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(args.output_npz, **arrays)
     result = {
@@ -244,6 +306,10 @@ def main() -> None:
         "output_prefix": str(args.output_prefix),
         "output_npz": str(args.output_npz),
         "extract_only": args.extract_only,
+        "usepointing": not args.disable_pointing,
+        "zero_model_term": args.zero_model_term,
+        "profile": args.profile,
+        "selected_spws": list(profile["selected_spws"]),
         "selected_rows": int(arrays["row_id"].size),
         "model_shape": list(arrays["model_data"].shape),
         "protected_content_hashes": protected_after,

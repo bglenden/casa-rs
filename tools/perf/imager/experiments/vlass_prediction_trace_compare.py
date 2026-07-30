@@ -71,6 +71,11 @@ def main() -> None:
     parser.add_argument("--rust-log", required=True, type=Path)
     parser.add_argument("--casa-npz", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--reffreq-hz",
+        type=float,
+        help="when supplied with term-level Rust traces, also test CASA raw-frequency Taylor weighting",
+    )
     args = parser.parse_args()
 
     rust_records = parse_rust_trace(args.rust_log)
@@ -86,6 +91,8 @@ def main() -> None:
     rust_ll = []
     casa_rr = []
     casa_ll = []
+    raw_frequency_rr = []
+    raw_frequency_ll = []
     matches = []
     for record in rust_records:
         frequency_hz = float(record["frequency_hz"])
@@ -122,10 +129,38 @@ def main() -> None:
         )
         casa_rr_value = complex(model_data[best_row, 0, best_channel])
         casa_ll_value = complex(model_data[best_row, 3, best_channel])
+        casa_frequency_hz = float(frequencies_hz[best_row, best_channel])
         rust_rr.append(rr)
         rust_ll.append(ll)
         casa_rr.append(casa_rr_value)
         casa_ll.append(casa_ll_value)
+        raw_frequency_predictions = None
+        if args.reffreq_hz is not None and "rr_term1_re" in record:
+            taylor_x = np.float32(
+                (float(np.float32(casa_frequency_hz)) - args.reffreq_hz)
+                / args.reffreq_hz
+            )
+            rr_term0 = np.complex64(
+                complex(float(record["rr_term0_re"]), float(record["rr_term0_im"]))
+            )
+            rr_term1 = np.complex64(
+                complex(float(record["rr_term1_re"]), float(record["rr_term1_im"]))
+            )
+            ll_term0 = np.complex64(
+                complex(float(record["ll_term0_re"]), float(record["ll_term0_im"]))
+            )
+            ll_term1 = np.complex64(
+                complex(float(record["ll_term1_re"]), float(record["ll_term1_im"]))
+            )
+            raw_rr = np.complex64(rr_term0 + np.complex64(rr_term1 * taylor_x))
+            raw_ll = np.complex64(ll_term0 + np.complex64(ll_term1 * taylor_x))
+            raw_frequency_rr.append(complex(raw_rr))
+            raw_frequency_ll.append(complex(raw_ll))
+            raw_frequency_predictions = {
+                "taylor_x": float(taylor_x),
+                "rust_rr": [float(raw_rr.real), float(raw_rr.imag)],
+                "rust_ll": [float(raw_ll.real), float(raw_ll.imag)],
+            }
         matches.append(
             {
                 "trace_index": int(record["index"]),
@@ -135,6 +170,8 @@ def main() -> None:
                 "channel": best_channel,
                 "uvw_distance_m": min_uv_distance,
                 "frequency_delta_hz": best_frequency_delta,
+                "rust_frequency_hz": frequency_hz,
+                "casa_frequency_hz": casa_frequency_hz,
                 "rr_flagged": bool(flags[best_row, 0, best_channel]),
                 "ll_flagged": bool(flags[best_row, 3, best_channel]),
                 "rust_rr": [rr.real, rr.imag],
@@ -143,6 +180,7 @@ def main() -> None:
                 "casa_ll": [casa_ll_value.real, casa_ll_value.imag],
                 "rr_absolute_error": abs(rr - casa_rr_value),
                 "ll_absolute_error": abs(ll - casa_ll_value),
+                "raw_frequency_predictions": raw_frequency_predictions,
             }
         )
 
@@ -175,6 +213,21 @@ def main() -> None:
         ),
         "rr_against_casa_ll": complex_metrics(rust_rr_array, casa_ll_array),
         "ll_against_casa_rr": complex_metrics(rust_ll_array, casa_rr_array),
+        "raw_frequency_taylor": (
+            {
+                "reffreq_hz": args.reffreq_hz,
+                "rr": complex_metrics(
+                    np.asarray(raw_frequency_rr, dtype=np.complex128),
+                    casa_rr_array,
+                ),
+                "ll": complex_metrics(
+                    np.asarray(raw_frequency_ll, dtype=np.complex128),
+                    casa_ll_array,
+                ),
+            }
+            if raw_frequency_rr
+            else None
+        ),
         "matches": matches,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

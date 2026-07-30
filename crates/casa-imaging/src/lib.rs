@@ -83,12 +83,13 @@ use casa_coordinates::{
     CoordinateSystem, CoordinateType, DirectionCoordinate, Projection, ProjectionType,
     SpectralCoordinate, StokesCoordinate, StokesType,
 };
+use casa_images::PagedImage;
 use casa_lattices::array_madfm;
 use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::frequency::FrequencyRef;
 use libm::{erfc, j1};
 use nalgebra::DMatrix;
-use ndarray::{Array2, Array4, ArrayD, ArrayViewMut2, Axis, ShapeBuilder, Zip, s};
+use ndarray::{Array2, Array4, ArrayD, ArrayViewMut2, Axis, IxDyn, ShapeBuilder, Zip, s};
 use num_complex::{Complex32, Complex64};
 use rayon::prelude::*;
 
@@ -4378,9 +4379,15 @@ struct LosslessDyadicTileCensus {
     cells: usize,
     tiles: usize,
     zero_tiles: usize,
+    i8_tiles: usize,
     i16_tiles: usize,
+    i24_tiles: usize,
     i32_tiles: usize,
+    i40_tiles: usize,
+    i48_tiles: usize,
+    i56_tiles: usize,
     raw_f64_tiles: usize,
+    max_required_signed_bits: u32,
     encoded_bytes: usize,
     raw_bytes: usize,
 }
@@ -4397,26 +4404,85 @@ impl LosslessDyadicTileCensus {
         self.cells = self.cells.saturating_add(other.cells);
         self.tiles = self.tiles.saturating_add(other.tiles);
         self.zero_tiles = self.zero_tiles.saturating_add(other.zero_tiles);
+        self.i8_tiles = self.i8_tiles.saturating_add(other.i8_tiles);
         self.i16_tiles = self.i16_tiles.saturating_add(other.i16_tiles);
+        self.i24_tiles = self.i24_tiles.saturating_add(other.i24_tiles);
         self.i32_tiles = self.i32_tiles.saturating_add(other.i32_tiles);
+        self.i40_tiles = self.i40_tiles.saturating_add(other.i40_tiles);
+        self.i48_tiles = self.i48_tiles.saturating_add(other.i48_tiles);
+        self.i56_tiles = self.i56_tiles.saturating_add(other.i56_tiles);
         self.raw_f64_tiles = self.raw_f64_tiles.saturating_add(other.raw_f64_tiles);
+        self.max_required_signed_bits = self
+            .max_required_signed_bits
+            .max(other.max_required_signed_bits);
         self.encoded_bytes = self.encoded_bytes.saturating_add(other.encoded_bytes);
         self.raw_bytes = self.raw_bytes.saturating_add(other.raw_bytes);
     }
+
+    fn record_tile(&mut self, atoms: &[Option<(bool, u64, i32)>]) {
+        const TILE_HEADER_BYTES: usize = 8;
+
+        self.tiles += 1;
+        if atoms.iter().all(Option::is_none) {
+            self.zero_tiles += 1;
+            self.encoded_bytes += TILE_HEADER_BYTES;
+            return;
+        }
+        if atoms.iter().flatten().any(|atom| atom.2 == i32::MIN) {
+            self.raw_f64_tiles += 1;
+            self.encoded_bytes += TILE_HEADER_BYTES + atoms.len() * size_of::<f64>();
+            return;
+        }
+        let shared_exponent = atoms
+            .iter()
+            .flatten()
+            .map(|atom| atom.2)
+            .min()
+            .expect("a nonzero finite tile has a dyadic exponent");
+        let required_signed_bits = atoms
+            .iter()
+            .flatten()
+            .map(|&(_, odd_significand, exponent)| {
+                let magnitude_bits = u64::BITS - odd_significand.leading_zeros();
+                magnitude_bits
+                    .saturating_add((exponent - shared_exponent) as u32)
+                    .saturating_add(1)
+            })
+            .max()
+            .unwrap_or(1);
+        self.max_required_signed_bits = self.max_required_signed_bits.max(required_signed_bits);
+        let bytes_per_cell = required_signed_bits.div_ceil(u8::BITS);
+        match bytes_per_cell {
+            0 | 1 => self.i8_tiles += 1,
+            2 => self.i16_tiles += 1,
+            3 => self.i24_tiles += 1,
+            4 => self.i32_tiles += 1,
+            5 => self.i40_tiles += 1,
+            6 => self.i48_tiles += 1,
+            7 => self.i56_tiles += 1,
+            _ => {
+                self.raw_f64_tiles += 1;
+                self.encoded_bytes += TILE_HEADER_BYTES + atoms.len() * size_of::<f64>();
+                return;
+            }
+        }
+        self.encoded_bytes += TILE_HEADER_BYTES + atoms.len() * bytes_per_cell as usize;
+    }
 }
 
-fn finite_f64_dyadic_atom(value: f64) -> Option<(u64, i32)> {
+fn finite_f64_dyadic_atom(value: f64) -> Option<(bool, u64, i32)> {
     if value == 0.0 {
         return if value.to_bits() == 0 {
             None
         } else {
-            Some((u64::MAX, i32::MIN))
+            Some((false, u64::MAX, i32::MIN))
         };
     }
     if !value.is_finite() {
-        return Some((u64::MAX, i32::MIN));
+        return Some((false, u64::MAX, i32::MIN));
     }
     let bits = value.to_bits();
+    let negative = bits >> 63 != 0;
     let exponent_bits = ((bits >> 52) & 0x7ff) as i32;
     let fraction = bits & ((1_u64 << 52) - 1);
     let (significand, exponent) = if exponent_bits == 0 {
@@ -4426,71 +4492,274 @@ fn finite_f64_dyadic_atom(value: f64) -> Option<(u64, i32)> {
     };
     let trailing_zeros = significand.trailing_zeros();
     Some((
+        negative,
         significand >> trailing_zeros,
         exponent + trailing_zeros as i32,
     ))
 }
 
-fn lossless_dyadic_tile_census(
+fn lossless_dyadic_spatial_tile_census(
     response: &Array2<f64>,
-    tile_cells: usize,
+    tile_side: usize,
 ) -> LosslessDyadicTileCensus {
-    const TILE_HEADER_BYTES: usize = 8;
-    let values = response
-        .as_slice_memory_order()
-        .expect("AWProject response planes use contiguous native storage");
-    let tile_cells = tile_cells.max(1);
+    let (width, height) = response.dim();
+    let tile_side = tile_side.max(1);
     let mut census = LosslessDyadicTileCensus {
-        cells: values.len(),
-        raw_bytes: values.len().saturating_mul(size_of::<f64>()),
+        cells: response.len(),
+        raw_bytes: response.len().saturating_mul(size_of::<f64>()),
         ..LosslessDyadicTileCensus::default()
     };
-    for tile in values.chunks(tile_cells) {
-        census.tiles += 1;
-        let atoms = tile
-            .iter()
-            .copied()
-            .map(finite_f64_dyadic_atom)
-            .collect::<Vec<_>>();
-        if atoms.iter().all(Option::is_none) {
-            census.zero_tiles += 1;
-            census.encoded_bytes += TILE_HEADER_BYTES;
-            continue;
-        }
-        if atoms.iter().flatten().any(|atom| atom.1 == i32::MIN) {
-            census.raw_f64_tiles += 1;
-            census.encoded_bytes += TILE_HEADER_BYTES + tile.len() * size_of::<f64>();
-            continue;
-        }
-        let shared_exponent = atoms
-            .iter()
-            .flatten()
-            .map(|atom| atom.1)
-            .min()
-            .expect("a nonzero finite tile has a dyadic exponent");
-        let required_signed_bits = atoms
-            .iter()
-            .flatten()
-            .map(|&(odd_significand, exponent)| {
-                let magnitude_bits = u64::BITS - odd_significand.leading_zeros();
-                magnitude_bits
-                    .saturating_add((exponent - shared_exponent) as u32)
-                    .saturating_add(1)
-            })
-            .max()
-            .unwrap_or(1);
-        if required_signed_bits <= i16::BITS {
-            census.i16_tiles += 1;
-            census.encoded_bytes += TILE_HEADER_BYTES + tile.len() * size_of::<i16>();
-        } else if required_signed_bits <= i32::BITS {
-            census.i32_tiles += 1;
-            census.encoded_bytes += TILE_HEADER_BYTES + tile.len() * size_of::<i32>();
-        } else {
-            census.raw_f64_tiles += 1;
-            census.encoded_bytes += TILE_HEADER_BYTES + tile.len() * size_of::<f64>();
+    let mut atoms = Vec::with_capacity(tile_side.saturating_mul(tile_side));
+    for x_start in (0..width).step_by(tile_side) {
+        let x_end = (x_start + tile_side).min(width);
+        for y_start in (0..height).step_by(tile_side) {
+            let y_end = (y_start + tile_side).min(height);
+            atoms.clear();
+            for x in x_start..x_end {
+                atoms.extend((y_start..y_end).map(|y| finite_f64_dyadic_atom(response[(x, y)])));
+            }
+            census.record_tile(&atoms);
         }
     }
     census
+}
+
+#[derive(Debug)]
+struct LosslessDyadicSpatialPlane {
+    shape: (usize, usize),
+    tile_side: usize,
+    tiles_y: usize,
+    widths: Vec<u8>,
+    shared_exponents: Vec<i16>,
+    side_offsets: Vec<u32>,
+    low_words: Vec<u32>,
+    high_bytes: Vec<i8>,
+    wide_high_words: Vec<u16>,
+    raw_values: Vec<f64>,
+}
+
+impl LosslessDyadicSpatialPlane {
+    fn encode(response: &Array2<f64>, tile_side: usize) -> Result<Self, ImagingError> {
+        let shape = response.dim();
+        let tile_side = tile_side.max(1);
+        let tiles_x = shape.0.div_ceil(tile_side);
+        let tiles_y = shape.1.div_ceil(tile_side);
+        let tile_count = tiles_x.checked_mul(tiles_y).ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject dyadic response tile count overflowed".to_string(),
+            )
+        })?;
+        let mut widths = Vec::with_capacity(tile_count);
+        let mut shared_exponents = Vec::with_capacity(tile_count);
+        let mut side_offsets = Vec::with_capacity(tile_count);
+        let mut low_words = vec![0_u32; response.len()];
+        let mut high_bytes = vec![0_i8; response.len()];
+        let mut wide_high_words = Vec::new();
+        let mut raw_values = Vec::new();
+        let mut atoms = Vec::with_capacity(tile_side.saturating_mul(tile_side));
+        let mut tile_values = Vec::with_capacity(tile_side.saturating_mul(tile_side));
+        let mut global_indices = Vec::with_capacity(tile_side.saturating_mul(tile_side));
+
+        for x_start in (0..shape.0).step_by(tile_side) {
+            let x_end = (x_start + tile_side).min(shape.0);
+            for y_start in (0..shape.1).step_by(tile_side) {
+                let y_end = (y_start + tile_side).min(shape.1);
+                atoms.clear();
+                tile_values.clear();
+                global_indices.clear();
+                for x in x_start..x_end {
+                    for y in y_start..y_end {
+                        let value = response[(x, y)];
+                        tile_values.push(value);
+                        global_indices.push(x * shape.1 + y);
+                        atoms.push(finite_f64_dyadic_atom(value));
+                    }
+                }
+
+                if atoms.iter().all(Option::is_none) {
+                    widths.push(0);
+                    shared_exponents.push(0);
+                    side_offsets.push(0);
+                } else if atoms.iter().flatten().any(|atom| atom.2 == i32::MIN) {
+                    widths.push(size_of::<f64>() as u8);
+                    shared_exponents.push(0);
+                    side_offsets.push(u32::try_from(raw_values.len()).map_err(|_| {
+                        ImagingError::InvalidRequest(
+                            "AWProject dyadic raw side storage exceeds four Gi cells".to_string(),
+                        )
+                    })?);
+                    raw_values.extend_from_slice(&tile_values);
+                } else {
+                    let shared_exponent = atoms
+                        .iter()
+                        .flatten()
+                        .map(|atom| atom.2)
+                        .min()
+                        .expect("a nonzero finite tile has a dyadic exponent");
+                    let required_signed_bits = atoms
+                        .iter()
+                        .flatten()
+                        .map(|&(_, odd_significand, exponent)| {
+                            let magnitude_bits = u64::BITS - odd_significand.leading_zeros();
+                            magnitude_bits
+                                .saturating_add((exponent - shared_exponent) as u32)
+                                .saturating_add(1)
+                        })
+                        .max()
+                        .unwrap_or(1);
+                    let width = required_signed_bits.div_ceil(u8::BITS);
+                    if width >= 7 {
+                        widths.push(size_of::<f64>() as u8);
+                        shared_exponents.push(0);
+                        side_offsets.push(u32::try_from(raw_values.len()).map_err(|_| {
+                            ImagingError::InvalidRequest(
+                                "AWProject dyadic raw side storage exceeds four Gi cells"
+                                    .to_string(),
+                            )
+                        })?);
+                        raw_values.extend_from_slice(&tile_values);
+                    } else {
+                        widths.push(width as u8);
+                        shared_exponents.push(i16::try_from(shared_exponent).map_err(|_| {
+                            ImagingError::InvalidRequest(format!(
+                                "AWProject dyadic response exponent {shared_exponent} exceeds i16"
+                            ))
+                        })?);
+                        if width == 6 {
+                            side_offsets.push(u32::try_from(wide_high_words.len()).map_err(
+                                |_| {
+                                    ImagingError::InvalidRequest(
+                                        "AWProject dyadic wide side storage exceeds four Gi cells"
+                                            .to_string(),
+                                    )
+                                },
+                            )?);
+                        } else {
+                            side_offsets.push(0);
+                        }
+                        for (atom, &global_index) in atoms.iter().zip(&global_indices) {
+                            let coefficient = atom.map_or(0_i64, |(negative, odd, exponent)| {
+                                let magnitude = odd << (exponent - shared_exponent) as u32;
+                                let magnitude = i64::try_from(magnitude)
+                                    .expect("sub-64-bit dyadic coefficient fits i64");
+                                if negative { -magnitude } else { magnitude }
+                            });
+                            low_words[global_index] = coefficient as u32;
+                            if width <= 5 {
+                                high_bytes[global_index] = (coefficient >> 32) as i8;
+                            } else {
+                                wide_high_words.push((coefficient >> 32) as u16);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(Self {
+            shape,
+            tile_side,
+            tiles_y,
+            widths,
+            shared_exponents,
+            side_offsets,
+            low_words,
+            high_bytes,
+            wide_high_words,
+            raw_values,
+        })
+    }
+
+    fn storage_bytes(&self) -> usize {
+        self.widths
+            .len()
+            .saturating_mul(size_of::<u8>())
+            .saturating_add(self.shared_exponents.len() * size_of::<i16>())
+            .saturating_add(self.side_offsets.len() * size_of::<u32>())
+            .saturating_add(self.low_words.len() * size_of::<u32>())
+            .saturating_add(self.high_bytes.len() * size_of::<i8>())
+            .saturating_add(self.wide_high_words.len() * size_of::<u16>())
+            .saturating_add(self.raw_values.len() * size_of::<f64>())
+    }
+
+    fn tile_descriptor(&self, tile_index: usize) -> (usize, f64, usize) {
+        let width = self.widths[tile_index] as usize;
+        let scale = if width == 0 || width == size_of::<f64>() {
+            0.0
+        } else {
+            2.0_f64.powi(i32::from(self.shared_exponents[tile_index]))
+        };
+        (width, scale, self.side_offsets[tile_index] as usize)
+    }
+
+    fn decode_tile_value(
+        &self,
+        width: usize,
+        scale: f64,
+        side_offset: usize,
+        global_index: usize,
+        tile_local_index: usize,
+    ) -> f64 {
+        if width == 0 {
+            return 0.0;
+        }
+        if width == size_of::<f64>() {
+            return self.raw_values[side_offset + tile_local_index];
+        }
+        let low = i64::from(self.low_words[global_index]);
+        let high = match width {
+            1..=5 => i64::from(self.high_bytes[global_index]),
+            6 => i64::from(self.wide_high_words[side_offset + tile_local_index] as i16),
+            _ => unreachable!("dyadic tile coefficient width is zero through six or raw"),
+        };
+        let coefficient = (high << 32) | low;
+        (coefficient as f64) * scale
+    }
+
+    fn value_at(&self, x: usize, y: usize) -> f64 {
+        debug_assert!(x < self.shape.0 && y < self.shape.1);
+        let tile_x = x / self.tile_side;
+        let tile_y = y / self.tile_side;
+        let tile_index = tile_x * self.tiles_y + tile_y;
+        let width = self.widths[tile_index] as usize;
+        if width == 0 {
+            return 0.0;
+        }
+        let tile_y_start = tile_y * self.tile_side;
+        let tile_height = self.tile_side.min(self.shape.1 - tile_y_start);
+        let local_index = (x % self.tile_side) * tile_height + (y - tile_y_start);
+        let global_index = x * self.shape.1 + y;
+        let (_, scale, side_offset) = self.tile_descriptor(tile_index);
+        self.decode_tile_value(width, scale, side_offset, global_index, local_index)
+    }
+}
+
+#[derive(Debug)]
+enum AwProjectImageResponsePlane {
+    Raw(Array2<f64>),
+    LosslessDyadic(LosslessDyadicSpatialPlane),
+}
+
+impl AwProjectImageResponsePlane {
+    fn shape(&self) -> (usize, usize) {
+        match self {
+            Self::Raw(response) => response.dim(),
+            Self::LosslessDyadic(response) => response.shape,
+        }
+    }
+
+    fn storage_bytes(&self) -> usize {
+        match self {
+            Self::Raw(response) => response.len().saturating_mul(size_of::<f64>()),
+            Self::LosslessDyadic(response) => response.storage_bytes(),
+        }
+    }
+
+    fn value_at(&self, x: usize, y: usize) -> f64 {
+        match self {
+            Self::Raw(response) => response[(x, y)],
+            Self::LosslessDyadic(response) => response.value_at(x, y),
+        }
+    }
 }
 
 fn collect_awproject_sparse_model_deltas(
@@ -4528,10 +4797,18 @@ struct AwProjectImageResponseCache {
     base_model_values: Vec<f32>,
     base_residual_terms: Vec<Array2<f32>>,
     // Indexed as [input model Taylor term][output residual Taylor term].
-    response_terms: Vec<Vec<Array2<f64>>>,
+    response_terms: Vec<Vec<AwProjectImageResponsePlane>>,
 }
 
 impl AwProjectImageResponseCache {
+    fn response_storage_bytes(&self) -> usize {
+        self.response_terms
+            .iter()
+            .flatten()
+            .map(AwProjectImageResponsePlane::storage_bytes)
+            .sum()
+    }
+
     fn from_central_calibrations(
         position: (usize, usize),
         model_terms: &[Array2<f32>],
@@ -4561,16 +4838,25 @@ impl AwProjectImageResponseCache {
             ));
         }
         let inverse_amplitude = 0.5 / f64::from(calibration_amplitude);
+        let dyadic_tiles =
+            env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_IMAGE_RESPONSE_DYADIC_TILES").is_some();
+        let dyadic_census =
+            env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_IMAGE_RESPONSE_DYADIC_CENSUS").is_some();
+        let census_tile_sides = [16usize, 32, 64, 128];
+        let mut census_totals = [LosslessDyadicTileCensus::default(); 4];
         let mut response_terms = Vec::with_capacity(positive_calibration_residual_terms.len());
-        for (positive_calibration, negative_calibration) in positive_calibration_residual_terms
-            .into_iter()
-            .zip(negative_calibration_residual_terms)
+        for (input_term, (positive_calibration, negative_calibration)) in
+            positive_calibration_residual_terms
+                .into_iter()
+                .zip(negative_calibration_residual_terms)
+                .enumerate()
         {
             let mut input_responses = Vec::with_capacity(positive_calibration.len());
-            for ((positive, negative), base) in positive_calibration
+            for (output_term, ((positive, negative), base)) in positive_calibration
                 .iter()
                 .zip(&negative_calibration)
                 .zip(base_residual_terms)
+                .enumerate()
             {
                 if positive.dim() != base.dim() || negative.dim() != base.dim() {
                     return Err(ImagingError::InvalidRequest(format!(
@@ -4585,51 +4871,83 @@ impl AwProjectImageResponseCache {
                         (f64::from(positive_value) - f64::from(negative_value)) * inverse_amplitude
                     },
                 );
+                if dyadic_census {
+                    for (census_index, &tile_side) in census_tile_sides.iter().enumerate() {
+                        let census = lossless_dyadic_spatial_tile_census(&response, tile_side);
+                        census_totals[census_index].add(census);
+                        eprintln!(
+                            "awproject_image_response_dyadic_census input_term={} output_term={} \
+                             spatial_tile_side={} cells={} tiles={} zero_tiles={} i8_tiles={} \
+                             i16_tiles={} i24_tiles={} i32_tiles={} i40_tiles={} i48_tiles={} \
+                             i56_tiles={} raw_f64_tiles={} max_required_signed_bits={} \
+                             raw_bytes={} encoded_bytes={} compression_ratio={:.3}",
+                            input_term,
+                            output_term,
+                            tile_side,
+                            census.cells,
+                            census.tiles,
+                            census.zero_tiles,
+                            census.i8_tiles,
+                            census.i16_tiles,
+                            census.i24_tiles,
+                            census.i32_tiles,
+                            census.i40_tiles,
+                            census.i48_tiles,
+                            census.i56_tiles,
+                            census.raw_f64_tiles,
+                            census.max_required_signed_bits,
+                            census.raw_bytes,
+                            census.encoded_bytes,
+                            census.compression_ratio(),
+                        );
+                    }
+                }
+                let response = if dyadic_tiles {
+                    let raw_bytes = response.len().saturating_mul(size_of::<f64>());
+                    let encoded = LosslessDyadicSpatialPlane::encode(&response, 16)?;
+                    eprintln!(
+                        "awproject_image_response_dyadic_encode input_term={} output_term={} \
+                         spatial_tile_side=16 raw_bytes={} storage_bytes={} compression_ratio={:.3}",
+                        input_term,
+                        output_term,
+                        raw_bytes,
+                        encoded.storage_bytes(),
+                        raw_bytes as f64 / encoded.storage_bytes() as f64,
+                    );
+                    AwProjectImageResponsePlane::LosslessDyadic(encoded)
+                } else {
+                    AwProjectImageResponsePlane::Raw(response)
+                };
                 input_responses.push(response);
             }
             response_terms.push(input_responses);
         }
-        if env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_IMAGE_RESPONSE_DYADIC_CENSUS").is_some() {
-            let tile_cells = 65_536usize;
-            let mut total = LosslessDyadicTileCensus::default();
-            for (input_term, output_terms) in response_terms.iter().enumerate() {
-                for (output_term, response) in output_terms.iter().enumerate() {
-                    let census = lossless_dyadic_tile_census(response, tile_cells);
-                    total.add(census);
-                    eprintln!(
-                        "awproject_image_response_dyadic_census input_term={} output_term={} \
-                         tile_cells={} cells={} tiles={} zero_tiles={} i16_tiles={} i32_tiles={} \
-                         raw_f64_tiles={} raw_bytes={} encoded_bytes={} compression_ratio={:.3}",
-                        input_term,
-                        output_term,
-                        tile_cells,
-                        census.cells,
-                        census.tiles,
-                        census.zero_tiles,
-                        census.i16_tiles,
-                        census.i32_tiles,
-                        census.raw_f64_tiles,
-                        census.raw_bytes,
-                        census.encoded_bytes,
-                        census.compression_ratio(),
-                    );
-                }
+        if dyadic_census {
+            for (&tile_side, &total) in census_tile_sides.iter().zip(&census_totals) {
+                eprintln!(
+                    "awproject_image_response_dyadic_census_total spatial_tile_side={} cells={} \
+                     tiles={} zero_tiles={} i8_tiles={} i16_tiles={} i24_tiles={} i32_tiles={} \
+                     i40_tiles={} i48_tiles={} i56_tiles={} raw_f64_tiles={} \
+                     max_required_signed_bits={} raw_bytes={} encoded_bytes={} \
+                     compression_ratio={:.3}",
+                    tile_side,
+                    total.cells,
+                    total.tiles,
+                    total.zero_tiles,
+                    total.i8_tiles,
+                    total.i16_tiles,
+                    total.i24_tiles,
+                    total.i32_tiles,
+                    total.i40_tiles,
+                    total.i48_tiles,
+                    total.i56_tiles,
+                    total.raw_f64_tiles,
+                    total.max_required_signed_bits,
+                    total.raw_bytes,
+                    total.encoded_bytes,
+                    total.compression_ratio(),
+                );
             }
-            eprintln!(
-                "awproject_image_response_dyadic_census_total tile_cells={} cells={} tiles={} \
-                 zero_tiles={} i16_tiles={} i32_tiles={} raw_f64_tiles={} raw_bytes={} \
-                 encoded_bytes={} compression_ratio={:.3}",
-                tile_cells,
-                total.cells,
-                total.tiles,
-                total.zero_tiles,
-                total.i16_tiles,
-                total.i32_tiles,
-                total.raw_f64_tiles,
-                total.raw_bytes,
-                total.encoded_bytes,
-                total.compression_ratio(),
-            );
         }
         Ok(Self {
             position,
@@ -4670,42 +4988,179 @@ impl AwProjectImageResponseCache {
                     "AWProject image-response base residual is not contiguous".to_string(),
                 )
             })?;
-            let response_storage = self
+            let response_planes = self
                 .response_terms
                 .iter()
                 .map(|input_terms| {
-                    input_terms[output_term]
-                        .as_slice_memory_order()
-                        .ok_or_else(|| {
-                            ImagingError::InvalidRequest(
-                                "AWProject image-response plane is not contiguous".to_string(),
-                            )
-                        })
+                    let response = &input_terms[output_term];
+                    if response.shape() != shape {
+                        return Err(ImagingError::InvalidRequest(format!(
+                            "AWProject image-response plane shape {:?} does not match base residual shape {shape:?}",
+                            response.shape(),
+                        )));
+                    }
+                    Ok(response)
                 })
                 .collect::<Result<Vec<_>, ImagingError>>()?;
             let mut synthesized = Array2::<f32>::zeros(shape);
             let synthesized_storage = synthesized
                 .as_slice_memory_order_mut()
                 .expect("new AWProject image-response output is contiguous");
-            let chunk_cells = 65_536usize;
-            let peak_abs = synthesized_storage
-                .par_chunks_mut(chunk_cells)
-                .enumerate()
-                .map(|(chunk_index, chunk)| {
-                    let offset = chunk_index.saturating_mul(chunk_cells);
-                    let mut chunk_peak_abs = 0.0_f32;
-                    for (local_index, value) in chunk.iter_mut().enumerate() {
-                        let index = offset + local_index;
-                        let mut sample = f64::from(base_storage[index]);
-                        for (delta, response) in model_deltas.iter().zip(&response_storage) {
-                            sample += delta * response[index];
+            let peak_abs = if response_planes
+                .iter()
+                .all(|response| matches!(response, AwProjectImageResponsePlane::Raw(_)))
+            {
+                let response_storage = response_planes
+                    .iter()
+                    .map(|response| match response {
+                        AwProjectImageResponsePlane::Raw(response) => response
+                            .as_slice_memory_order()
+                            .expect("validated raw AWProject response is contiguous"),
+                        AwProjectImageResponsePlane::LosslessDyadic(_) => unreachable!(),
+                    })
+                    .collect::<Vec<_>>();
+                let chunk_cells = 65_536usize;
+                synthesized_storage
+                    .par_chunks_mut(chunk_cells)
+                    .enumerate()
+                    .map(|(chunk_index, chunk)| {
+                        let offset = chunk_index.saturating_mul(chunk_cells);
+                        let mut chunk_peak_abs = 0.0_f32;
+                        for (local_index, value) in chunk.iter_mut().enumerate() {
+                            let index = offset + local_index;
+                            let mut sample = f64::from(base_storage[index]);
+                            for (delta, response) in model_deltas.iter().zip(&response_storage) {
+                                sample += delta * response[index];
+                            }
+                            *value = sample as f32;
+                            chunk_peak_abs = chunk_peak_abs.max(value.abs());
                         }
-                        *value = sample as f32;
-                        chunk_peak_abs = chunk_peak_abs.max(value.abs());
-                    }
-                    chunk_peak_abs
-                })
-                .reduce(|| 0.0, f32::max);
+                        chunk_peak_abs
+                    })
+                    .reduce(|| 0.0, f32::max)
+            } else if response_planes
+                .iter()
+                .all(|response| matches!(response, AwProjectImageResponsePlane::LosslessDyadic(_)))
+            {
+                let dyadic_responses = response_planes
+                    .iter()
+                    .map(|response| match response {
+                        AwProjectImageResponsePlane::LosslessDyadic(response) => response,
+                        AwProjectImageResponsePlane::Raw(_) => unreachable!(),
+                    })
+                    .collect::<Vec<_>>();
+                let tile_side = dyadic_responses[0].tile_side;
+                if dyadic_responses.iter().any(|response| {
+                    response.tile_side != tile_side
+                        || response.shape != shape
+                        || response.tiles_y != dyadic_responses[0].tiles_y
+                }) {
+                    return Err(ImagingError::InvalidRequest(
+                        "AWProject dyadic response tile layouts differ".to_string(),
+                    ));
+                }
+                let tiles_y = dyadic_responses[0].tiles_y;
+                let chunk_cells = shape.1.saturating_mul(tile_side);
+                synthesized_storage
+                    .par_chunks_mut(chunk_cells)
+                    .enumerate()
+                    .map(|(tile_x, chunk)| {
+                        let offset = tile_x.saturating_mul(chunk_cells);
+                        let rows = chunk.len() / shape.1;
+                        let mut chunk_peak_abs = 0.0_f32;
+                        let mut tile_descriptors = Vec::with_capacity(dyadic_responses.len());
+                        for tile_y in 0..tiles_y {
+                            let tile_index = tile_x * tiles_y + tile_y;
+                            let y_start = tile_y * tile_side;
+                            let tile_height = tile_side.min(shape.1 - y_start);
+                            tile_descriptors.clear();
+                            tile_descriptors.extend(
+                                dyadic_responses
+                                    .iter()
+                                    .map(|response| response.tile_descriptor(tile_index)),
+                            );
+                            if dyadic_responses.len() == 2
+                                && tile_descriptors[0].0 <= 5
+                                && tile_descriptors[1].0 <= 5
+                            {
+                                let first = dyadic_responses[0];
+                                let second = dyadic_responses[1];
+                                let first_scale_delta = tile_descriptors[0].1 * model_deltas[0];
+                                let second_scale_delta = tile_descriptors[1].1 * model_deltas[1];
+                                for local_x in 0..rows {
+                                    for local_y in 0..tile_height {
+                                        let local_index = local_x * shape.1 + y_start + local_y;
+                                        let index = offset + local_index;
+                                        let first_coefficient =
+                                            (i64::from(first.high_bytes[index]) << 32)
+                                                | i64::from(first.low_words[index]);
+                                        let second_coefficient =
+                                            (i64::from(second.high_bytes[index]) << 32)
+                                                | i64::from(second.low_words[index]);
+                                        let sample = f64::from(base_storage[index])
+                                            + first_scale_delta * first_coefficient as f64
+                                            + second_scale_delta * second_coefficient as f64;
+                                        let value = sample as f32;
+                                        chunk[local_index] = value;
+                                        chunk_peak_abs = chunk_peak_abs.max(value.abs());
+                                    }
+                                }
+                            } else {
+                                for local_x in 0..rows {
+                                    for local_y in 0..tile_height {
+                                        let local_index = local_x * shape.1 + y_start + local_y;
+                                        let tile_local_index = local_x * tile_height + local_y;
+                                        let index = offset + local_index;
+                                        let mut sample = f64::from(base_storage[index]);
+                                        for ((delta, response), &(width, scale, side_offset)) in
+                                            model_deltas
+                                                .iter()
+                                                .zip(&dyadic_responses)
+                                                .zip(&tile_descriptors)
+                                        {
+                                            sample += delta
+                                                * response.decode_tile_value(
+                                                    width,
+                                                    scale,
+                                                    side_offset,
+                                                    index,
+                                                    tile_local_index,
+                                                );
+                                        }
+                                        let value = sample as f32;
+                                        chunk[local_index] = value;
+                                        chunk_peak_abs = chunk_peak_abs.max(value.abs());
+                                    }
+                                }
+                            }
+                        }
+                        chunk_peak_abs
+                    })
+                    .reduce(|| 0.0, f32::max)
+            } else {
+                let chunk_rows = 16usize;
+                let chunk_cells = shape.1.saturating_mul(chunk_rows);
+                synthesized_storage
+                    .par_chunks_mut(chunk_cells)
+                    .enumerate()
+                    .map(|(chunk_index, chunk)| {
+                        let offset = chunk_index.saturating_mul(chunk_cells);
+                        let mut chunk_peak_abs = 0.0_f32;
+                        for (local_index, value) in chunk.iter_mut().enumerate() {
+                            let index = offset + local_index;
+                            let x = index / shape.1;
+                            let y = index % shape.1;
+                            let mut sample = f64::from(base_storage[index]);
+                            for (delta, response) in model_deltas.iter().zip(&response_planes) {
+                                sample += delta * response.value_at(x, y);
+                            }
+                            *value = sample as f32;
+                            chunk_peak_abs = chunk_peak_abs.max(value.abs());
+                        }
+                        chunk_peak_abs
+                    })
+                    .reduce(|| 0.0, f32::max)
+            };
             if output_term == 0 {
                 principal_peak_abs = peak_abs;
             }
@@ -4889,6 +5344,8 @@ where
     }
     stage_timings.weighting += weighting_started.elapsed();
 
+    let prime_aw_replay_during_initial_dirty =
+        env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PRIME_REPLAY_INITIAL_DIRTY").is_some();
     let dirty_started = Instant::now();
     let mut initial = accumulate_mosaic_mtmfs_stream_grids(
         &request,
@@ -4917,7 +5374,11 @@ where
         direct_metal_scratch_bytes,
         aw_cache.as_ref(),
         aw_controls.as_ref(),
-        None,
+        if prime_aw_replay_during_initial_dirty {
+            aw_replay_cache.as_mut()
+        } else {
+            None
+        },
     )?;
     stage_timings.psf_grid += dirty_started.elapsed();
 
@@ -4969,6 +5430,12 @@ where
             error,
         )
     {
+        if prime_aw_replay_during_initial_dirty {
+            aw_replay_cache = (aw_replay_retention_bytes > 0
+                && request.clean.niter > 0
+                && matches!(request.gridder_mode, GridderMode::AwProject(_)))
+            .then(|| AwProjectCompactReplayCache::new(aw_replay_retention_bytes));
+        }
         #[cfg(all(target_os = "macos", not(coverage)))]
         emit_dirty_product_gpu_resident_fallback(&format!(
             "{error}; replaying mosaic MT-MFS initial accumulation on host"
@@ -5153,6 +5620,107 @@ where
         .map(|(_, value)| value.abs())
         .unwrap_or(0.0);
     let mut model_terms = vec![Array2::<f32>::zeros((nx, ny)); clean_request.nterms];
+    let frozen_model_prefix = env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_FROZEN_MODEL_PREFIX");
+    if let Some(prefix) = frozen_model_prefix.as_ref() {
+        for (term_index, model_term) in model_terms.iter_mut().enumerate() {
+            let path = std::path::PathBuf::from(format!(
+                "{}.model.tt{term_index}",
+                prefix.to_string_lossy()
+            ));
+            let image = PagedImage::<f32>::open(&path).map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "open experimental frozen model {}: {error}",
+                    path.display()
+                ))
+            })?;
+            let shape = image.shape();
+            if shape != [nx, ny] && shape != [nx, ny, 1, 1] {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "experimental frozen model {} has shape {shape:?}; expected [{nx}, {ny}] or [{nx}, {ny}, 1, 1]",
+                    path.display()
+                )));
+            }
+            let pixels = image
+                .get_slice(&vec![0; shape.len()], shape)
+                .map_err(|error| {
+                    ImagingError::InvalidRequest(format!(
+                        "read experimental frozen model {}: {error}",
+                        path.display()
+                    ))
+                })?;
+            for x in 0..nx {
+                for y in 0..ny {
+                    let index = if shape.len() == 2 {
+                        IxDyn(&[x, y])
+                    } else {
+                        IxDyn(&[x, y, 0, 0])
+                    };
+                    model_term[(x, y)] = pixels[index];
+                }
+            }
+        }
+        eprintln!(
+            "awproject_frozen_model_refresh prefix={} terms={} image_shape={}x{}",
+            prefix.to_string_lossy(),
+            model_terms.len(),
+            nx,
+            ny,
+        );
+    }
+    let frozen_prediction_weight_image =
+        env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_FROZEN_WEIGHT_IMAGE")
+            .map(|path| {
+                if frozen_model_prefix.is_none() {
+                    return Err(ImagingError::InvalidRequest(
+                        "an experimental frozen AWProject weight image requires a frozen model"
+                            .to_string(),
+                    ));
+                }
+                let path = std::path::PathBuf::from(path);
+                let image = PagedImage::<f32>::open(&path).map_err(|error| {
+                    ImagingError::InvalidRequest(format!(
+                        "open experimental frozen prediction weight image {}: {error}",
+                        path.display()
+                    ))
+                })?;
+                let shape = image.shape();
+                if shape != [nx, ny] && shape != [nx, ny, 1, 1] {
+                    return Err(ImagingError::InvalidRequest(format!(
+                        "experimental frozen prediction weight image {} has shape {shape:?}; expected [{nx}, {ny}] or [{nx}, {ny}, 1, 1]",
+                        path.display()
+                    )));
+                }
+                let pixels = image
+                    .get_slice(&vec![0; shape.len()], shape)
+                    .map_err(|error| {
+                        ImagingError::InvalidRequest(format!(
+                            "read experimental frozen prediction weight image {}: {error}",
+                            path.display()
+                        ))
+                    })?;
+                let mut weight = Array2::<f32>::zeros((nx, ny));
+                for x in 0..nx {
+                    for y in 0..ny {
+                        let index = if shape.len() == 2 {
+                            IxDyn(&[x, y])
+                        } else {
+                            IxDyn(&[x, y, 0, 0])
+                        };
+                        weight[(x, y)] = pixels[index];
+                    }
+                }
+                eprintln!(
+                    "awproject_frozen_prediction_weight path={} image_shape={}x{}",
+                    path.display(),
+                    nx,
+                    ny,
+                );
+                Ok(weight)
+            })
+            .transpose()?;
+    let prediction_weight_image = frozen_prediction_weight_image
+        .as_ref()
+        .unwrap_or(&weight_image);
     let sparse_model_casacore_prep =
         env::var_os("CASA_RS_EXPERIMENTAL_SPARSE_AWPROJECT_MODEL_PREP").is_some();
     let mut model_support_positions = BTreeSet::<(usize, usize)>::new();
@@ -5183,12 +5751,18 @@ where
     }
 
     let controller_started = Instant::now();
-    let mut reported_minor_iterations = 0usize;
+    let mut reported_minor_iterations = if frozen_model_prefix.is_some() {
+        clean_request.clean.niter
+    } else {
+        0
+    };
     let mut major_cycles = 0usize;
-    let mut clean_stop_reason = None::<CleanStopReason>;
+    let mut clean_stop_reason = frozen_model_prefix
+        .as_ref()
+        .map(|_| CleanStopReason::IterationLimitReached);
     let mut minor_cycle_traces = Vec::<MinorCycleTrace>::new();
     let mut final_cycle_threshold_jy_per_beam = clean_request.clean.threshold_jy_per_beam;
-    let mut residual_needs_refresh = false;
+    let mut residual_needs_refresh = frozen_model_prefix.is_some();
     let cache_nsigma_threshold =
         env::var_os("CASA_RS_EXPERIMENTAL_CACHE_REFRESHED_NSIGMA").is_some();
     let mut cached_nsigma_threshold_jy_per_beam = None::<f32>;
@@ -5399,7 +5973,7 @@ where
                 &model_terms,
                 sparse_model_casacore_prep.then_some(&model_support_positions),
                 &psf_state,
-                &weight_image,
+                prediction_weight_image,
                 &mut replay_unweighted_blocks,
                 &mut stage_timings,
                 dirty_product_fft_policy,
@@ -5446,7 +6020,7 @@ where
                     &model_terms,
                     sparse_model_casacore_prep.then_some(&model_support_positions),
                     &psf_state,
-                    &weight_image,
+                    prediction_weight_image,
                     &mut replay_unweighted_blocks,
                     &mut stage_timings,
                     dirty_product_fft_policy,
@@ -5470,7 +6044,7 @@ where
                     &model_terms,
                     sparse_model_casacore_prep.then_some(&model_support_positions),
                     &psf_state,
-                    &weight_image,
+                    prediction_weight_image,
                     &mut replay_unweighted_blocks,
                     &mut stage_timings,
                     dirty_product_fft_policy,
@@ -5487,27 +6061,23 @@ where
                 positive_calibration_residual_terms.push(positive_calibrated?);
                 negative_calibration_residual_terms.push(negative_calibrated?);
             }
-            image_response_cache = Some(AwProjectImageResponseCache::from_central_calibrations(
+            let calibrated_cache = AwProjectImageResponseCache::from_central_calibrations(
                 position,
                 &model_terms,
                 &base_residual_terms,
                 positive_calibration_residual_terms,
                 negative_calibration_residual_terms,
                 calibration_amplitude,
-            )?);
+            )?;
             eprintln!(
                 "awproject_image_response_calibrated position={position:?} input_terms={} \
                  output_terms={} response_bytes={} elapsed_ms={:.3}",
                 model_terms.len(),
                 residual_terms.len(),
-                model_terms
-                    .len()
-                    .saturating_mul(residual_terms.len())
-                    .saturating_mul(nx)
-                    .saturating_mul(ny)
-                    .saturating_mul(size_of::<f64>()),
+                calibrated_cache.response_storage_bytes(),
                 profile::millis(calibration_started.elapsed()),
             );
+            image_response_cache = Some(calibrated_cache);
         }
         stage_timings.major_cycle_refresh += refresh_started.elapsed();
         major_cycles += 1;
@@ -5581,7 +6151,7 @@ where
                 &model_terms,
                 sparse_model_casacore_prep.then_some(&model_support_positions),
                 &psf_state,
-                &weight_image,
+                prediction_weight_image,
                 &mut replay_unweighted_blocks,
                 &mut stage_timings,
                 dirty_product_fft_policy,
@@ -8318,6 +8888,35 @@ struct AwProjectCompactTapKey {
     conjugate_for_grid: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct AwProjectPhaseInvariantTapKey {
+    cell: AwProjectStableCellKey,
+    kernel_kind: AwProjectCompactKernelKind,
+    off_x: isize,
+    off_y: isize,
+    conjugate_for_grid: bool,
+}
+
+impl From<AwProjectCompactTapKey> for AwProjectPhaseInvariantTapKey {
+    fn from(key: AwProjectCompactTapKey) -> Self {
+        Self {
+            cell: key.cell,
+            kernel_kind: key.kernel_kind,
+            off_x: key.off_x,
+            off_y: key.off_y,
+            conjugate_for_grid: key.conjugate_for_grid,
+        }
+    }
+}
+
+#[derive(Default)]
+struct AwProjectTaplessPhaseCensus {
+    phase_invariant_keys: HashSet<AwProjectPhaseInvariantTapKey>,
+    phase_applied_requests: usize,
+    phase_applied_kernel_bytes: usize,
+    phase_invariant_kernel_bytes: usize,
+}
+
 type AwProjectCompactTapIndex =
     HashMap<AwProjectCompactTapKey, usize, BuildHasherDefault<MosaicMetalSampleHasher>>;
 
@@ -8423,6 +9022,34 @@ impl AwProjectCompactReplayWindow {
                     .map(AwProjectMetalResidentProgram::resident_bytes)
                     .unwrap_or(0),
             )
+    }
+
+    fn resident_payload_bytes(&self) -> usize {
+        self.resident_bytes()
+            .saturating_sub(std::mem::size_of::<Self>())
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.source_samples.shrink_to_fit();
+        self.tap_requests.shrink_to_fit();
+        for bundle in &mut self.bundles {
+            if let AwProjectCompactMaterializedTap::Ready(bundle) = bundle {
+                bundle.values.shrink_to_fit();
+            }
+        }
+        self.bundles.shrink_to_fit();
+    }
+
+    fn compact_to_resident_metal_program(&mut self) -> usize {
+        if self.persistent_metal_resident_program.is_none() {
+            return 0;
+        }
+        let resident_bytes_before = self.resident_bytes();
+        self.source_samples = Vec::new();
+        self.tap_requests = Vec::new();
+        self.bundles = Vec::new();
+        self.persistent_metal_batch = None;
+        resident_bytes_before.saturating_sub(self.resident_bytes())
     }
 }
 
@@ -8549,6 +9176,7 @@ impl AwProjectCompactReplayCache {
                 block.cached_cursor_end, block.shape.samples,
             )));
         }
+        block.windows.shrink_to_fit();
         block.resident_bytes = block
             .windows
             .capacity()
@@ -8557,7 +9185,7 @@ impl AwProjectCompactReplayCache {
                 block
                     .windows
                     .iter()
-                    .map(AwProjectCompactReplayWindow::resident_bytes)
+                    .map(AwProjectCompactReplayWindow::resident_payload_bytes)
                     .sum::<usize>(),
             )
             .saturating_add(std::mem::size_of::<AwProjectCompactReplayBlock>());
@@ -8937,6 +9565,13 @@ fn observe_awproject_compact_tile_stats(
 #[repr(C)]
 #[derive(Clone, Copy)]
 #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+struct AwProjectMetalPhasePlan {
+    base: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 struct AwProjectMetalPlan {
     loc_x: i32,
     loc_y: i32,
@@ -8944,6 +9579,7 @@ struct AwProjectMetalPlan {
     y_support: u32,
     kernel_base: u32,
     _pad0: u32,
+    phase: AwProjectMetalPhasePlan,
 }
 
 #[repr(C)]
@@ -8988,6 +9624,7 @@ struct AwProjectMetalPredictionPlan {
     _pad0: u32,
     normalization_re: f32,
     normalization_im: f32,
+    phase: AwProjectMetalPhasePlan,
 }
 
 #[repr(C)]
@@ -9093,6 +9730,7 @@ struct AwProjectMetalTileParams {
 struct AwProjectMetalPredictionBatch {
     samples: Vec<AwProjectMetalPredictionSample>,
     kernels: Vec<WProjectMetalComplex>,
+    phases: Vec<WProjectMetalComplex>,
 }
 
 impl AwProjectMetalPredictionBatch {
@@ -9102,6 +9740,11 @@ impl AwProjectMetalPredictionBatch {
             .saturating_mul(std::mem::size_of::<AwProjectMetalPredictionSample>())
             .saturating_add(
                 self.kernels
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<WProjectMetalComplex>()),
+            )
+            .saturating_add(
+                self.phases
                     .capacity()
                     .saturating_mul(std::mem::size_of::<WProjectMetalComplex>()),
             )
@@ -9250,6 +9893,7 @@ struct AwProjectMetalResidentChainStats {
 struct AwProjectMetalBatch {
     samples: Vec<AwProjectMetalSample>,
     kernels: Vec<WProjectMetalComplex>,
+    phases: Vec<WProjectMetalComplex>,
     /// Sample-major CASA-rounded weights for all PSF Taylor orders. The first
     /// `nterms` values are also the residual-grid weights.
     term_weights: Vec<f32>,
@@ -9263,6 +9907,11 @@ impl AwProjectMetalBatch {
             .saturating_mul(std::mem::size_of::<AwProjectMetalSample>())
             .saturating_add(
                 self.kernels
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<WProjectMetalComplex>()),
+            )
+            .saturating_add(
+                self.phases
                     .capacity()
                     .saturating_mul(std::mem::size_of::<WProjectMetalComplex>()),
             )
@@ -9735,7 +10384,35 @@ fn awproject_compact_degrid_sample(
         }
     }
     debug_assert_eq!(tap_index, bundle.values.len());
-    value / bundle.normalization.conj()
+    awproject_cpp_complex_divide(value, bundle.normalization.conj())
+}
+
+#[repr(C)]
+struct AwProjectCppComplex32 {
+    re: f32,
+    im: f32,
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn __divsc3(left_re: f32, left_im: f32, right_re: f32, right_im: f32) -> AwProjectCppComplex32;
+}
+
+fn awproject_cpp_complex_divide(left: Complex32, right: Complex32) -> Complex32 {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    if !*ENABLED.get_or_init(|| env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_CPP_COMPLEX").is_some())
+    {
+        return left / right;
+    }
+    #[cfg(target_os = "macos")]
+    unsafe {
+        let result = __divsc3(left.re, left.im, right.re, right.im);
+        Complex32::new(result.re, result.im)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        left / right
+    }
 }
 
 fn awproject_ready_compact_tap(
@@ -12353,6 +13030,7 @@ fn dispatch_awproject_mtmfs_metal_batch(
         let mut stats = slot.as_ref().expect("AWProject Metal executor").dispatch(
             &batch.samples,
             &batch.kernels,
+            &batch.phases,
             &batch.term_weights,
             grid.metal_buffer(),
             compensation,
@@ -12381,6 +13059,7 @@ fn dispatch_awproject_mtmfs_metal_batch(
 fn awproject_metal_fixed_scales(
     samples: &[AwProjectMetalSample],
     kernels: &[WProjectMetalComplex],
+    phases: &[WProjectMetalComplex],
     term_weights: &[f32],
     params: AwProjectMetalParams,
 ) -> Result<(Vec<f32>, Vec<f32>), ImagingError> {
@@ -12414,9 +13093,20 @@ fn awproject_metal_fixed_scales(
             max_values[psf_term_count + order] = max_values[psf_term_count + order].max(value);
         }
     }
-    let max_kernel_norm = kernels.iter().fold(0.0f64, |maximum, kernel| {
-        maximum.max(f64::from(kernel.re).hypot(f64::from(kernel.im)))
-    });
+    let max_kernel_norm = awproject_metal_max_effective_kernel_norm(
+        samples.iter().flat_map(|sample| {
+            [
+                sample.first_imaging,
+                sample.second_imaging,
+                sample.first_psf,
+                sample.second_psf,
+                sample.first_weight,
+                sample.second_weight,
+            ]
+        }),
+        kernels,
+        phases,
+    )?;
     if !(max_kernel_norm.is_finite() && max_kernel_norm > 0.0) {
         return Err(ImagingError::Normalization(
             "AWProject Metal packed kernels have no finite non-zero values".to_string(),
@@ -12506,12 +13196,17 @@ fn awproject_metal_fixed_scales(
 fn plan_awproject_metal_residual_scales(
     samples: &[AwProjectMetalSample],
     kernels: &[WProjectMetalComplex],
+    phases: &[WProjectMetalComplex],
     grid_width: usize,
     grid_height: usize,
 ) -> Result<AwProjectMetalResidualScalePlan, ImagingError> {
-    let max_kernel_norm = kernels.iter().fold(0.0f64, |maximum, kernel| {
-        maximum.max(f64::from(kernel.re).hypot(f64::from(kernel.im)))
-    });
+    let max_kernel_norm = awproject_metal_max_effective_kernel_norm(
+        samples
+            .iter()
+            .flat_map(|sample| [sample.first_imaging, sample.second_imaging]),
+        kernels,
+        phases,
+    )?;
     if !(max_kernel_norm.is_finite() && max_kernel_norm > 0.0) {
         return Err(ImagingError::Normalization(
             "AWProject Metal packed residual kernels have no finite non-zero values".to_string(),
@@ -12528,6 +13223,81 @@ fn plan_awproject_metal_residual_scales(
         max_kernel_norm,
         residual_overlap,
     })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_metal_max_effective_kernel_norm(
+    plans: impl IntoIterator<Item = AwProjectMetalPlan>,
+    kernels: &[WProjectMetalComplex],
+    phases: &[WProjectMetalComplex],
+) -> Result<f64, ImagingError> {
+    let mut seen = HashSet::new();
+    let mut maximum = 0.0f64;
+    for plan in plans {
+        let identity = (
+            plan.kernel_base,
+            plan.phase.base,
+            plan.x_support,
+            plan.y_support,
+        );
+        if !seen.insert(identity) {
+            continue;
+        }
+        let tap_count = usize::try_from(plan.x_support)
+            .ok()
+            .and_then(|support| support.checked_mul(2))
+            .and_then(|value| value.checked_add(1))
+            .and_then(|width| {
+                usize::try_from(plan.y_support)
+                    .ok()
+                    .and_then(|support| support.checked_mul(2))
+                    .and_then(|value| value.checked_add(1))
+                    .and_then(|height| width.checked_mul(height))
+            })
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject Metal effective-kernel tap count overflowed".to_string(),
+                )
+            })?;
+        let kernel_base = plan.kernel_base as usize;
+        let kernel_end = kernel_base.checked_add(tap_count).ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject Metal effective-kernel range overflowed".to_string(),
+            )
+        })?;
+        let kernel_values = kernels.get(kernel_base..kernel_end).ok_or_else(|| {
+            ImagingError::Normalization(
+                "AWProject Metal effective-kernel plan escaped the kernel atlas".to_string(),
+            )
+        })?;
+        if plan.phase.base == u32::MAX {
+            for kernel in kernel_values {
+                maximum = maximum.max(f64::from(kernel.re).hypot(f64::from(kernel.im)));
+            }
+            continue;
+        }
+        let phase_base = plan.phase.base as usize;
+        let phase_end = phase_base.checked_add(tap_count).ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject Metal effective phase-stencil range overflowed".to_string(),
+            )
+        })?;
+        let phase_values = phases.get(phase_base..phase_end).ok_or_else(|| {
+            ImagingError::Normalization(
+                "AWProject Metal effective-kernel plan escaped the phase-stencil atlas".to_string(),
+            )
+        })?;
+        for (kernel, phase) in kernel_values.iter().zip(phase_values) {
+            let value = Complex32::new(kernel.re, kernel.im) * Complex32::new(phase.re, phase.im);
+            maximum = maximum.max(f64::from(value.re).hypot(f64::from(value.im)));
+        }
+    }
+    if !(maximum.is_finite() && maximum > 0.0) {
+        return Err(ImagingError::Normalization(
+            "AWProject Metal effective kernel atlas has no finite non-zero values".to_string(),
+        ));
+    }
+    Ok(maximum)
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -12892,6 +13662,7 @@ impl AwProjectMetalExecutor {
         &self,
         samples: &[AwProjectMetalSample],
         kernels: &[WProjectMetalComplex],
+        phases: &[WProjectMetalComplex],
         term_weights: &[f32],
         output: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
         compensation: &mut Option<AwProjectMetalCompensation>,
@@ -12908,8 +13679,9 @@ impl AwProjectMetalExecutor {
 
         let sample_bytes = mem::size_of_val(samples);
         let kernel_bytes = mem::size_of_val(kernels);
+        let phase_bytes = mem::size_of_val(phases);
         let term_weight_bytes = mem::size_of_val(term_weights);
-        if sample_bytes == 0 || kernel_bytes == 0 {
+        if sample_bytes == 0 || kernel_bytes == 0 || phase_bytes == 0 {
             return Ok(AwProjectMetalGridStats::default());
         }
         let expected_term_weights = samples
@@ -12951,6 +13723,7 @@ impl AwProjectMetalExecutor {
         }
         let packed_batch_bytes = sample_bytes
             .checked_add(kernel_bytes)
+            .and_then(|value| value.checked_add(phase_bytes))
             .and_then(|value| value.checked_add(term_weight_bytes))
             .ok_or_else(|| {
                 ImagingError::InvalidRequest(
@@ -12966,7 +13739,7 @@ impl AwProjectMetalExecutor {
         )?;
         let fixed_grid_bytes = segment_plan.fixed_grid_bytes;
         let (scales, inverse_scales) =
-            awproject_metal_fixed_scales(samples, kernels, term_weights, params)?;
+            awproject_metal_fixed_scales(samples, kernels, phases, term_weights, params)?;
         let storage_options = MTLResourceOptions::StorageModeShared;
         let buffer_started = Instant::now();
         let sample_buffer = unsafe {
@@ -13006,6 +13779,26 @@ impl AwProjectMetalExecutor {
                 .ok_or_else(|| {
                     ImagingError::Unsupported(
                         "AWProject backend 'metal' could not wrap kernel buffer".to_string(),
+                    )
+                })?
+        };
+        let phase_buffer = unsafe {
+            let pointer = NonNull::new(phases.as_ptr().cast::<c_void>() as *mut c_void)
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "AWProject Metal phase-stencil pointer was null".to_string(),
+                    )
+                })?;
+            self.device
+                .newBufferWithBytesNoCopy_length_options_deallocator(
+                    pointer,
+                    phase_bytes,
+                    storage_options,
+                    None,
+                )
+                .ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "AWProject backend 'metal' could not wrap phase-stencil buffer".to_string(),
                     )
                 })?
         };
@@ -13222,6 +14015,7 @@ impl AwProjectMetalExecutor {
                 encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 4);
                 encoder.setBuffer_offset_atIndex(Some(&scales_buffer), 0, 5);
                 encoder.setBuffer_offset_atIndex(Some(&term_weight_buffer), 0, 6);
+                encoder.setBuffer_offset_atIndex(Some(&phase_buffer), 0, 7);
             }
             encoder.dispatchThreads_threadsPerThreadgroup(
                 MTLSize {
@@ -13406,6 +14200,7 @@ impl AwProjectMetalExecutor {
         };
         let sample_bytes = mem::size_of_val(batch.samples.as_slice());
         let kernel_bytes = mem::size_of_val(batch.kernels.as_slice());
+        let phase_bytes = mem::size_of_val(batch.phases.as_slice());
         let model_bytes = mem::size_of_val(model_tt0_values);
         let result_bytes = batch
             .samples
@@ -13454,6 +14249,11 @@ impl AwProjectMetalExecutor {
             batch.kernels.as_ptr().cast::<c_void>(),
             kernel_bytes,
             "kernel",
+        )?;
+        let phase_buffer = wrap_shared(
+            batch.phases.as_ptr().cast::<c_void>(),
+            phase_bytes,
+            "phase stencil",
         )?;
         let model_tt0_buffer = wrap_shared(
             model_tt0_values.as_ptr().cast::<c_void>(),
@@ -13506,6 +14306,7 @@ impl AwProjectMetalExecutor {
             encoder.setBuffer_offset_atIndex(Some(&model_tt1_buffer), 0, 3);
             encoder.setBuffer_offset_atIndex(Some(&result_buffer), 0, 4);
             encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 5);
+            encoder.setBuffer_offset_atIndex(Some(&phase_buffer), 0, 6);
         }
         let thread_count = batch.samples.len();
         let thread_width = self.prediction_pipeline.threadExecutionWidth().max(1);
@@ -14164,6 +14965,7 @@ impl AwProjectMetalExecutor {
             awproject_metal_fixed_scales(
                 &batch.samples,
                 &batch.kernels,
+                &batch.phases,
                 &batch.term_weights,
                 scale_params,
             )?
@@ -14201,6 +15003,7 @@ impl AwProjectMetalExecutor {
         }
         let sample_bytes = mem::size_of_val(batch.samples.as_slice());
         let kernel_bytes = mem::size_of_val(batch.kernels.as_slice());
+        let phase_bytes = mem::size_of_val(batch.phases.as_slice());
         let term_weight_bytes = mem::size_of_val(batch.term_weights.as_slice());
         let active_tile_bytes = mem::size_of_val(tile_plan.active_tile_ids.as_slice());
         let offset_bytes = mem::size_of_val(tile_plan.tile_fragment_offsets.as_slice());
@@ -14243,6 +15046,11 @@ impl AwProjectMetalExecutor {
             batch.kernels.as_ptr().cast::<c_void>(),
             kernel_bytes,
             "kernel",
+        )?;
+        let phase_buffer = wrap_shared(
+            batch.phases.as_ptr().cast::<c_void>(),
+            phase_bytes,
+            "phase stencil",
         )?;
         let term_weight_buffer = wrap_shared(
             batch.term_weights.as_ptr().cast::<c_void>(),
@@ -14365,6 +15173,7 @@ impl AwProjectMetalExecutor {
             encoder.setBuffer_offset_atIndex(Some(&scales_buffer), 0, 8);
             encoder.setBuffer_offset_atIndex(Some(&inverse_scales_buffer), 0, 9);
             encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 10);
+            encoder.setBuffer_offset_atIndex(Some(&phase_buffer), 0, 11);
         }
         encoder.dispatchThreadgroups_threadsPerThreadgroup(
             MTLSize {
@@ -14510,6 +15319,7 @@ impl AwProjectMetalExecutor {
         let (scales, inverse_scales) = awproject_metal_fixed_scales(
             &tile_batch.samples,
             &tile_batch.kernels,
+            &tile_batch.phases,
             &tile_batch.term_weights,
             scale_params,
         )?;
@@ -14612,6 +15422,11 @@ impl AwProjectMetalExecutor {
             mem::size_of_val(prediction_batch.kernels.as_slice()),
             "prediction kernels",
         )?;
+        let prediction_phase_buffer = wrap_shared(
+            prediction_batch.phases.as_ptr().cast::<c_void>(),
+            mem::size_of_val(prediction_batch.phases.as_slice()),
+            "prediction phase stencils",
+        )?;
         let model_bytes = mem::size_of_val(model_tt0_values);
         let model_tt0_buffer = wrap_shared(
             model_tt0_values.as_ptr().cast::<c_void>(),
@@ -14656,6 +15471,11 @@ impl AwProjectMetalExecutor {
             tile_batch.kernels.as_ptr().cast::<c_void>(),
             mem::size_of_val(tile_batch.kernels.as_slice()),
             "tile kernels",
+        )?;
+        let tile_phase_buffer = wrap_shared(
+            tile_batch.phases.as_ptr().cast::<c_void>(),
+            mem::size_of_val(tile_batch.phases.as_slice()),
+            "tile phase stencils",
         )?;
         let term_weight_buffer = wrap_shared(
             tile_batch.term_weights.as_ptr().cast::<c_void>(),
@@ -14755,6 +15575,7 @@ impl AwProjectMetalExecutor {
             prediction_encoder.setBuffer_offset_atIndex(Some(&model_tt1_buffer), 0, 3);
             prediction_encoder.setBuffer_offset_atIndex(Some(&residual_buffer), 0, 4);
             prediction_encoder.setBuffer_offset_atIndex(Some(&prediction_params_buffer), 0, 5);
+            prediction_encoder.setBuffer_offset_atIndex(Some(&prediction_phase_buffer), 0, 6);
         }
         let prediction_threads = prediction_batch.samples.len();
         let prediction_thread_width = self.prediction_pipeline.threadExecutionWidth().max(1);
@@ -14801,6 +15622,7 @@ impl AwProjectMetalExecutor {
             tile_encoder.setBuffer_offset_atIndex(Some(&scales_buffer), 0, 9);
             tile_encoder.setBuffer_offset_atIndex(Some(&inverse_scales_buffer), 0, 10);
             tile_encoder.setBuffer_offset_atIndex(Some(&tile_params_buffer), 0, 11);
+            tile_encoder.setBuffer_offset_atIndex(Some(&tile_phase_buffer), 0, 12);
         }
         tile_encoder.dispatchThreadgroups_threadsPerThreadgroup(
             MTLSize {
@@ -14848,6 +15670,10 @@ const AWPROJECT_METAL_SHADER: &str = r#"
 #include <metal_stdlib>
 using namespace metal;
 
+struct AwPhasePlan {
+    uint base;
+};
+
 struct AwPlan {
     int loc_x;
     int loc_y;
@@ -14855,6 +15681,7 @@ struct AwPlan {
     uint y_support;
     uint kernel_base;
     uint _pad0;
+    AwPhasePlan phase;
 };
 
 struct AwSample {
@@ -14890,6 +15717,7 @@ struct AwPredictionPlan {
     uint _pad0;
     float normalization_re;
     float normalization_im;
+    AwPhasePlan phase;
 };
 
 struct AwPredictionSample {
@@ -14964,19 +15792,21 @@ struct AwTileParams {
     uint nterms;
 };
 
-static_assert(sizeof(AwPlan) == 24, "AwPlan ABI drift");
+static_assert(sizeof(AwPhasePlan) == 4, "AwPhasePlan ABI drift");
+static_assert(alignof(AwPhasePlan) == 4, "AwPhasePlan alignment drift");
+static_assert(sizeof(AwPlan) == 28, "AwPlan ABI drift");
 static_assert(alignof(AwPlan) == 4, "AwPlan alignment drift");
-static_assert(sizeof(AwSample) == 160, "AwSample ABI drift");
+static_assert(sizeof(AwSample) == 184, "AwSample ABI drift");
 static_assert(alignof(AwSample) == 4, "AwSample alignment drift");
-static_assert(__builtin_offsetof(AwSample, first_residual_re) == 144, "AwSample first residual real offset drift");
-static_assert(__builtin_offsetof(AwSample, first_residual_im) == 148, "AwSample first residual imaginary offset drift");
-static_assert(__builtin_offsetof(AwSample, second_residual_re) == 152, "AwSample second residual real offset drift");
-static_assert(__builtin_offsetof(AwSample, second_residual_im) == 156, "AwSample second residual imaginary offset drift");
+static_assert(__builtin_offsetof(AwSample, first_residual_re) == 168, "AwSample first residual real offset drift");
+static_assert(__builtin_offsetof(AwSample, first_residual_im) == 172, "AwSample first residual imaginary offset drift");
+static_assert(__builtin_offsetof(AwSample, second_residual_re) == 176, "AwSample second residual real offset drift");
+static_assert(__builtin_offsetof(AwSample, second_residual_im) == 180, "AwSample second residual imaginary offset drift");
 static_assert(sizeof(AwParams) == 32, "AwParams ABI drift");
 static_assert(alignof(AwParams) == 4, "AwParams alignment drift");
-static_assert(sizeof(AwPredictionPlan) == 32, "AwPredictionPlan ABI drift");
+static_assert(sizeof(AwPredictionPlan) == 36, "AwPredictionPlan ABI drift");
 static_assert(alignof(AwPredictionPlan) == 4, "AwPredictionPlan alignment drift");
-static_assert(sizeof(AwPredictionSample) == 96, "AwPredictionSample ABI drift");
+static_assert(sizeof(AwPredictionSample) == 104, "AwPredictionSample ABI drift");
 static_assert(alignof(AwPredictionSample) == 4, "AwPredictionSample alignment drift");
 static_assert(sizeof(AwPredictionParams) == 24, "AwPredictionParams ABI drift");
 static_assert(alignof(AwPredictionParams) == 4, "AwPredictionParams alignment drift");
@@ -15041,19 +15871,42 @@ static inline float2 aw_complex_multiply(float2 left, float2 right) {
     );
 }
 
+static inline float2 aw_phased_tap(
+    AwPhasePlan phase,
+    device const float2 *kernels,
+    device const float2 *phases,
+    uint kernel_tap,
+    uint phase_offset
+) {
+    const float2 value = kernels[kernel_tap];
+    if (phase.base == 0xffffffffu) {
+        return value;
+    }
+    return aw_complex_multiply(value, phases[phase.base + phase_offset]);
+}
+
 static inline float2 aw_degrid_prediction(
     AwPredictionPlan plan,
     device const float2 *kernels,
+    device const float2 *phases,
     device const float2 *model,
     constant AwPredictionParams &params
 ) {
     float2 value = float2(0.0f);
-    uint tap = plan.kernel_base;
+    uint tap_offset = 0u;
     for (int iy = -int(plan.y_support); iy <= int(plan.y_support); ++iy) {
         const uint grid_y = uint(plan.loc_y + iy);
         for (int ix = -int(plan.x_support); ix <= int(plan.x_support); ++ix) {
             const uint grid_x = uint(plan.loc_x + ix);
-            const float2 kernel_value = kernels[tap++];
+            const float2 kernel_value =
+                aw_phased_tap(
+                    plan.phase,
+                    kernels,
+                    phases,
+                    plan.kernel_base + tap_offset,
+                    tap_offset
+                );
+            ++tap_offset;
             const float2 conjugate_kernel = float2(kernel_value.x, -kernel_value.y);
             const uint grid_index =
                 grid_x * params.model_stride_x + grid_y * params.model_stride_y;
@@ -15076,6 +15929,7 @@ kernel void awproject_predict_residual_samples(
     device const float2 *model_tt1 [[buffer(3)]],
     device AwPredictionResult *results [[buffer(4)]],
     constant AwPredictionParams &params [[buffer(5)]],
+    device const float2 *phases [[buffer(6)]],
     uint sample_index [[thread_position_in_grid]]
 ) {
     if (sample_index >= params.sample_count) {
@@ -15083,12 +15937,12 @@ kernel void awproject_predict_residual_samples(
     }
     const AwPredictionSample sample = samples[sample_index];
     const float2 first_prediction =
-        aw_degrid_prediction(sample.first_prediction, kernels, model_tt0, params)
-        + aw_degrid_prediction(sample.first_prediction, kernels, model_tt1, params)
+        aw_degrid_prediction(sample.first_prediction, kernels, phases, model_tt0, params)
+        + aw_degrid_prediction(sample.first_prediction, kernels, phases, model_tt1, params)
             * sample.taylor_x;
     const float2 second_prediction =
-        aw_degrid_prediction(sample.second_prediction, kernels, model_tt0, params)
-        + aw_degrid_prediction(sample.second_prediction, kernels, model_tt1, params)
+        aw_degrid_prediction(sample.second_prediction, kernels, phases, model_tt0, params)
+        + aw_degrid_prediction(sample.second_prediction, kernels, phases, model_tt1, params)
             * sample.taylor_x;
     const float2 first_observed =
         float2(sample.first_observed_re, sample.first_observed_im);
@@ -15191,6 +16045,7 @@ static inline long2 aw_tile_plan_fixed(
     uint grid_x,
     uint grid_y,
     device const float2 *kernels,
+    device const float2 *phases,
     float scale
 ) {
     const int delta_x = int(grid_x) - plan.loc_x;
@@ -15201,7 +16056,14 @@ static inline long2 aw_tile_plan_fixed(
     const uint tap_x = uint(delta_x + int(plan.x_support));
     const uint tap_y = uint(delta_y + int(plan.y_support));
     const uint tap_width = 2u * plan.x_support + 1u;
-    const float2 tap = kernels[plan.kernel_base + tap_y * tap_width + tap_x];
+    const uint tap_offset = tap_y * tap_width + tap_x;
+    const float2 tap = aw_phased_tap(
+        plan.phase,
+        kernels,
+        phases,
+        plan.kernel_base + tap_offset,
+        tap_offset
+    );
     return aw_complex_product_fixed64(value, tap, scale);
 }
 
@@ -15239,6 +16101,7 @@ kernel void awproject_grid_mtmfs_tiles(
     device const float *fixed_scales [[buffer(8)]],
     device const float *inverse_scales [[buffer(9)]],
     constant AwTileParams &params [[buffer(10)]],
+    device const float2 *phases [[buffer(11)]],
     uint local_index [[thread_index_in_threadgroup]],
     uint active_tile_index [[threadgroup_position_in_grid]]
 ) {
@@ -15277,6 +16140,7 @@ kernel void awproject_grid_mtmfs_tiles(
             grid_x,
             grid_y,
             kernels,
+            phases,
             fixed_scales[0]
         );
         fixed_tt0 += aw_tile_plan_fixed(
@@ -15285,6 +16149,7 @@ kernel void awproject_grid_mtmfs_tiles(
             grid_x,
             grid_y,
             kernels,
+            phases,
             fixed_scales[0]
         );
         fixed_tt1 += aw_tile_plan_fixed(
@@ -15293,6 +16158,7 @@ kernel void awproject_grid_mtmfs_tiles(
             grid_x,
             grid_y,
             kernels,
+            phases,
             fixed_scales[1]
         );
         fixed_tt1 += aw_tile_plan_fixed(
@@ -15301,6 +16167,7 @@ kernel void awproject_grid_mtmfs_tiles(
             grid_x,
             grid_y,
             kernels,
+            phases,
             fixed_scales[1]
         );
     }
@@ -15354,6 +16221,7 @@ kernel void awproject_grid_predicted_mtmfs_tiles(
     device const float *fixed_scales [[buffer(9)]],
     device const float *inverse_scales [[buffer(10)]],
     constant AwTileParams &params [[buffer(11)]],
+    device const float2 *phases [[buffer(12)]],
     uint local_index [[thread_index_in_threadgroup]],
     uint active_tile_index [[threadgroup_position_in_grid]]
 ) {
@@ -15393,6 +16261,7 @@ kernel void awproject_grid_predicted_mtmfs_tiles(
             grid_x,
             grid_y,
             kernels,
+            phases,
             fixed_scales[0]
         );
         fixed_tt0 += aw_tile_plan_fixed(
@@ -15401,6 +16270,7 @@ kernel void awproject_grid_predicted_mtmfs_tiles(
             grid_x,
             grid_y,
             kernels,
+            phases,
             fixed_scales[0]
         );
         fixed_tt1 += aw_tile_plan_fixed(
@@ -15409,6 +16279,7 @@ kernel void awproject_grid_predicted_mtmfs_tiles(
             grid_x,
             grid_y,
             kernels,
+            phases,
             fixed_scales[1]
         );
         fixed_tt1 += aw_tile_plan_fixed(
@@ -15417,6 +16288,7 @@ kernel void awproject_grid_predicted_mtmfs_tiles(
             grid_x,
             grid_y,
             kernels,
+            phases,
             fixed_scales[1]
         );
     }
@@ -15462,6 +16334,7 @@ static inline void aw_grid_plan(
     float2 value,
     uint plane,
     device const float2 *kernels,
+    device const float2 *phases,
     device atomic_uint *output_low,
     device atomic_uint *output_high,
     device const float *fixed_scales,
@@ -15473,14 +16346,21 @@ static inline void aw_grid_plan(
     }
     const uint cell_count = params.grid_width * params.grid_height;
     const uint local_plane = plane - params.active_plane_start;
-    uint tap = plan.kernel_base;
+    uint tap_offset = 0u;
     for (int iy = -int(plan.y_support); iy <= int(plan.y_support); ++iy) {
         const uint centered_y = uint(plan.loc_y + iy);
         const uint fft_y = (centered_y + params.grid_height / 2u) % params.grid_height;
         for (int ix = -int(plan.x_support); ix <= int(plan.x_support); ++ix) {
             const uint centered_x = uint(plan.loc_x + ix);
             const uint fft_x = (centered_x + params.grid_width / 2u) % params.grid_width;
-            const float2 cwt = kernels[tap++];
+            const float2 cwt = aw_phased_tap(
+                plan.phase,
+                kernels,
+                phases,
+                plan.kernel_base + tap_offset,
+                tap_offset
+            );
+            ++tap_offset;
             const uint cell = fft_x * params.grid_height + fft_y;
             const uint output_base = (local_plane * cell_count + cell) * 2u;
             const float scale = fixed_scales[plane];
@@ -15503,6 +16383,7 @@ kernel void awproject_grid_mtmfs_samples(
     constant AwParams &params [[buffer(4)]],
     device const float *fixed_scales [[buffer(5)]],
     device const float *term_weights [[buffer(6)]],
+    device const float2 *phases [[buffer(7)]],
     uint sample_index [[thread_position_in_grid]]
 ) {
     if (sample_index >= params.sample_count) {
@@ -15514,11 +16395,11 @@ kernel void awproject_grid_mtmfs_samples(
         const float term_weight =
             term_weights[sample_index * term_weight_count + order];
         const float2 value = float2(term_weight, 0.0f);
-        aw_grid_plan(sample.first_psf, value, order, kernels, output_low, output_high, fixed_scales, params);
-        aw_grid_plan(sample.second_psf, value, order, kernels, output_low, output_high, fixed_scales, params);
+        aw_grid_plan(sample.first_psf, value, order, kernels, phases, output_low, output_high, fixed_scales, params);
+        aw_grid_plan(sample.second_psf, value, order, kernels, phases, output_low, output_high, fixed_scales, params);
         const uint weight_plane = params.psf_term_count + params.nterms + order;
-        aw_grid_plan(sample.first_weight, value, weight_plane, kernels, output_low, output_high, fixed_scales, params);
-        aw_grid_plan(sample.second_weight, value, weight_plane, kernels, output_low, output_high, fixed_scales, params);
+        aw_grid_plan(sample.first_weight, value, weight_plane, kernels, phases, output_low, output_high, fixed_scales, params);
+        aw_grid_plan(sample.second_weight, value, weight_plane, kernels, phases, output_low, output_high, fixed_scales, params);
     }
 
     for (uint order = 0u; order < params.nterms; ++order) {
@@ -15530,6 +16411,7 @@ kernel void awproject_grid_mtmfs_samples(
             float2(sample.first_residual_re, sample.first_residual_im) * term_weight,
             residual_plane,
             kernels,
+            phases,
             output_low,
             output_high,
             fixed_scales,
@@ -15540,6 +16422,7 @@ kernel void awproject_grid_mtmfs_samples(
             float2(sample.second_residual_re, sample.second_residual_im) * term_weight,
             residual_plane,
             kernels,
+            phases,
             output_low,
             output_high,
             fixed_scales,
@@ -15713,15 +16596,12 @@ fn awproject_compact_tap_spec(
     Ok(AwProjectCompactTapSpec {
         request: AwProjectCompactTapRequest {
             key: AwProjectCompactTapKey {
-                // In the tapless phase experiment, POINTING phase is applied
-                // during exact source-order replay. The stored compact tap is
-                // therefore group-independent and can be shared across every
-                // POINTING group with the same CF/offset/conjugation tuple.
-                group_index: if awproject_compact_tapless_phase() {
-                    0
-                } else {
-                    group_index
-                },
+                // Preserve the logical POINTING group here because it is part
+                // of the CASA-matched replay-segmentation contract. The
+                // compact resident identity removes this group later, after
+                // boundary planning has accounted for the phase-applied
+                // working set.
+                group_index,
                 cell: awproject_stable_cell_key(cell_key),
                 kernel_kind,
                 off_x: geometry.off_x,
@@ -16594,15 +17474,42 @@ fn awproject_compact_plan(
     }
 }
 
+#[inline]
+fn awproject_compact_tap_identity_key(mut key: AwProjectCompactTapKey) -> AwProjectCompactTapKey {
+    if awproject_compact_tapless_phase() {
+        key.group_index = 0;
+    }
+    key
+}
+
 fn awproject_compact_candidate_tap_bytes(
     specs: &[AwProjectCompactTapSpec],
     existing: &AwProjectCompactTapIndex,
+) -> Result<usize, ImagingError> {
+    awproject_compact_candidate_tap_bytes_with_identity(specs, existing, true)
+}
+
+fn awproject_compact_candidate_logical_tap_bytes(
+    specs: &[AwProjectCompactTapSpec],
+    existing: &AwProjectCompactTapIndex,
+) -> Result<usize, ImagingError> {
+    awproject_compact_candidate_tap_bytes_with_identity(specs, existing, false)
+}
+
+fn awproject_compact_candidate_tap_bytes_with_identity(
+    specs: &[AwProjectCompactTapSpec],
+    existing: &AwProjectCompactTapIndex,
+    compact_phase_identity: bool,
 ) -> Result<usize, ImagingError> {
     let mut candidate_keys = [None; 8];
     let mut candidate_count = 0usize;
     let mut additional_tap_bytes = 0usize;
     for spec in specs {
-        let key = spec.request.key;
+        let key = if compact_phase_identity {
+            awproject_compact_tap_identity_key(spec.request.key)
+        } else {
+            spec.request.key
+        };
         let already_candidate = candidate_keys[..candidate_count].contains(&Some(key));
         if !existing.contains_key(&key) && !already_candidate {
             candidate_keys[candidate_count] = Some(key);
@@ -17040,38 +17947,76 @@ fn prepare_awproject_compact_planned_samples(
         let mut first_prediction = Complex32::new(0.0, 0.0);
         let mut second_prediction = Complex32::new(0.0, 0.0);
         if let Some(model_grids) = model_grids {
+            let first_key = tap_requests[sample.first_prediction_plan.tap_bundle].cell_key;
+            let second_key = tap_requests[sample.second_prediction_plan.tap_bundle].cell_key;
+            let prediction_trace = awproject_prediction_trace_index(
+                awproject_prediction_trace_limit(),
+                first_key.frequency_hz,
+                batch.w_lambda[sample_index],
+            );
+            let mut first_prediction_terms =
+                prediction_trace.map(|_| Vec::with_capacity(request.nterms));
+            let mut second_prediction_terms =
+                prediction_trace.map(|_| Vec::with_capacity(request.nterms));
             for (model_order, model_grid) in model_grids.iter().enumerate().take(request.nterms) {
                 let taylor_weight = taylor_weights[model_order];
-                first_prediction += awproject_compact_degrid_sample(
+                let first_term = awproject_compact_degrid_sample(
                     model_grid,
                     sample.first_prediction_plan,
                     first_prediction_tap,
                     sample.group_index,
                     phase_tables,
-                ) * taylor_weight;
-                second_prediction += awproject_compact_degrid_sample(
+                );
+                let second_term = awproject_compact_degrid_sample(
                     model_grid,
                     sample.second_prediction_plan,
                     second_prediction_tap,
                     sample.group_index,
                     phase_tables,
-                ) * taylor_weight;
+                );
+                first_prediction += first_term * taylor_weight;
+                second_prediction += second_term * taylor_weight;
+                if let Some(terms) = first_prediction_terms.as_mut() {
+                    terms.push(first_term);
+                }
+                if let Some(terms) = second_prediction_terms.as_mut() {
+                    terms.push(second_term);
+                }
             }
-            let first_key = tap_requests[sample.first_prediction_plan.tap_bundle].cell_key;
-            let second_key = tap_requests[sample.second_prediction_plan.tap_bundle].cell_key;
-            if let Some((trace_index, trace_bucket_index)) = awproject_prediction_trace_index(
-                awproject_prediction_trace_limit(),
-                first_key.frequency_hz,
-                batch.w_lambda[sample_index],
-            ) {
+            if let Some((trace_index, trace_bucket_index)) = prediction_trace {
                 let first_imaging_key = tap_requests[sample.first_imaging_plan.tap_bundle].cell_key;
                 let second_imaging_key =
                     tap_requests[sample.second_imaging_plan.tap_bundle].cell_key;
+                let first_term0 = first_prediction_terms
+                    .as_ref()
+                    .and_then(|terms| terms.first())
+                    .copied()
+                    .unwrap_or_default();
+                let first_term1 = first_prediction_terms
+                    .as_ref()
+                    .and_then(|terms| terms.get(1))
+                    .copied()
+                    .unwrap_or_default();
+                let second_term0 = second_prediction_terms
+                    .as_ref()
+                    .and_then(|terms| terms.first())
+                    .copied()
+                    .unwrap_or_default();
+                let second_term1 = second_prediction_terms
+                    .as_ref()
+                    .and_then(|terms| terms.get(1))
+                    .copied()
+                    .unwrap_or_default();
                 eprintln!(
                     "awproject_prediction_trace index={} bucket_index={} sample_index={} group={} \
                      frequency_hz={:.17e} u_lambda={:.17e} v_lambda={:.17e} w_lambda={:.17e} \
+                     taylor_x={:.9e} \
                      weight={:.9e} rr_observed_re={:.9e} rr_observed_im={:.9e} \
                      ll_observed_re={:.9e} ll_observed_im={:.9e} \
+                     rr_term0_re={:.9e} rr_term0_im={:.9e} \
+                     rr_term1_re={:.9e} rr_term1_im={:.9e} \
+                     ll_term0_re={:.9e} ll_term0_im={:.9e} \
+                     ll_term1_re={:.9e} ll_term1_im={:.9e} \
                      rr_prediction_re={:.9e} rr_prediction_im={:.9e} \
                      ll_prediction_re={:.9e} ll_prediction_im={:.9e} \
                      rr_residual_re={:.9e} rr_residual_im={:.9e} \
@@ -17091,11 +18036,20 @@ fn prepare_awproject_compact_planned_samples(
                     batch.u_lambda[sample_index],
                     batch.v_lambda[sample_index],
                     batch.w_lambda[sample_index],
+                    taylor_weights.get(1).copied().unwrap_or(0.0),
                     weight,
                     direct_first_visibility.re,
                     direct_first_visibility.im,
                     direct_second_visibility.re,
                     direct_second_visibility.im,
+                    first_term0.re,
+                    first_term0.im,
+                    first_term1.re,
+                    first_term1.im,
+                    second_term0.re,
+                    second_term0.im,
+                    second_term1.re,
+                    second_term1.im,
                     first_prediction.re,
                     first_prediction.im,
                     second_prediction.re,
@@ -17162,10 +18116,76 @@ fn prepare_awproject_compact_planned_samples(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Default)]
+struct AwProjectMetalPhaseAtlasBuilder {
+    values: Vec<WProjectMetalComplex>,
+    tables: BTreeMap<(usize, usize, usize, usize, isize, isize), AwProjectMetalPhasePlan>,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl AwProjectMetalPhaseAtlasBuilder {
+    fn plan(
+        &mut self,
+        group_index: usize,
+        bundle: &AwProjectCompactTapBundle,
+        phase_tables: Option<&AwProjectPhaseTables>,
+    ) -> Result<AwProjectMetalPhasePlan, ImagingError> {
+        if bundle.phase_applied {
+            return Ok(AwProjectMetalPhasePlan { base: u32::MAX });
+        }
+        let table_key = (
+            group_index,
+            bundle.sampling,
+            bundle.x_support,
+            bundle.y_support,
+            bundle.off_x,
+            bundle.off_y,
+        );
+        let table_plan = if let Some(plan) = self.tables.get(&table_key) {
+            *plan
+        } else {
+            let table = phase_tables
+                .and_then(|tables| tables.get(&(group_index, bundle.sampling)))
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(format!(
+                        "AWProject Metal tapless phase atlas is missing group {group_index} sampling {}",
+                        bundle.sampling,
+                    ))
+                })?;
+            let base = u32::try_from(self.values.len()).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "AWProject Metal phase-stencil atlas offset exceeds u32".to_string(),
+                )
+            })?;
+            for iy in -(bundle.y_support as isize)..=bundle.y_support as isize {
+                let y_coordinate = iy * bundle.sampling as isize + bundle.off_y;
+                let phase_y = table.y(y_coordinate);
+                for ix in -(bundle.x_support as isize)..=bundle.x_support as isize {
+                    let x_coordinate = ix * bundle.sampling as isize + bundle.off_x;
+                    let phase =
+                        gridder::casa_aw_phase_gradient_from_axes(table.x(x_coordinate), phase_y);
+                    self.values.push(WProjectMetalComplex {
+                        re: phase.re,
+                        im: phase.im,
+                    });
+                }
+            }
+            let plan = AwProjectMetalPhasePlan { base };
+            self.tables.insert(table_key, plan);
+            plan
+        };
+        Ok(table_plan)
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn awproject_compact_metal_plan(
     plan: AwProjectCompactSamplePlan,
     bundles: &[AwProjectCompactMaterializedTap],
     kernel_bases: &[Option<u32>],
+    group_index: usize,
+    phase_tables: Option<&AwProjectPhaseTables>,
+    phase_atlas: &mut AwProjectMetalPhaseAtlasBuilder,
 ) -> Result<AwProjectMetalPlan, ImagingError> {
     let bundle = awproject_ready_compact_tap(bundles, plan.tap_bundle);
     Ok(AwProjectMetalPlan {
@@ -17188,6 +18208,7 @@ fn awproject_compact_metal_plan(
         kernel_base: kernel_bases[plan.tap_bundle]
             .expect("replayed AWProject Metal plan must have packed taps"),
         _pad0: 0,
+        phase: phase_atlas.plan(group_index, bundle, phase_tables)?,
     })
 }
 
@@ -17196,14 +18217,11 @@ fn awproject_compact_metal_prediction_plan(
     plan: AwProjectCompactSamplePlan,
     bundles: &[AwProjectCompactMaterializedTap],
     kernel_bases: &[Option<u32>],
+    group_index: usize,
+    phase_tables: Option<&AwProjectPhaseTables>,
+    phase_atlas: &mut AwProjectMetalPhaseAtlasBuilder,
 ) -> Result<AwProjectMetalPredictionPlan, ImagingError> {
     let bundle = awproject_ready_compact_tap(bundles, plan.tap_bundle);
-    if !bundle.phase_applied {
-        return Err(ImagingError::Unsupported(
-            "the fused AWProject Metal prediction probe requires phase-applied POINTING taps"
-                .to_string(),
-        ));
-    }
     Ok(AwProjectMetalPredictionPlan {
         loc_x: i32::try_from(plan.loc_x).map_err(|_| {
             ImagingError::InvalidRequest(
@@ -17230,6 +18248,7 @@ fn awproject_compact_metal_prediction_plan(
         _pad0: 0,
         normalization_re: bundle.normalization.re,
         normalization_im: bundle.normalization.im,
+        phase: phase_atlas.plan(group_index, bundle, phase_tables)?,
     })
 }
 
@@ -17243,6 +18262,7 @@ fn pack_awproject_metal_prediction_probe_batch(
     planned_samples: &[AwProjectCompactPlannedSample],
     tap_requests: &[AwProjectCompactTapRequest],
     bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
 ) -> Result<AwProjectMetalPredictionBatch, ImagingError> {
     if source_samples.len() != planned_samples.len() {
         return Err(ImagingError::Unsupported(format!(
@@ -17281,6 +18301,7 @@ fn pack_awproject_metal_prediction_probe_batch(
         kernel_bases[bundle_index] = Some(base);
     }
     packed.samples.reserve(source_samples.len());
+    let mut phase_atlas = AwProjectMetalPhaseAtlasBuilder::default();
     for (source, planned) in source_samples.iter().zip(planned_samples) {
         if source.group_index != planned.group_index {
             return Err(ImagingError::Normalization(
@@ -17308,11 +18329,17 @@ fn pack_awproject_metal_prediction_probe_batch(
                 source.first_prediction_plan,
                 bundles,
                 &kernel_bases,
+                source.group_index,
+                phase_tables,
+                &mut phase_atlas,
             )?,
             second_prediction: awproject_compact_metal_prediction_plan(
                 source.second_prediction_plan,
                 bundles,
                 &kernel_bases,
+                source.group_index,
+                phase_tables,
+                &mut phase_atlas,
             )?,
             first_observed_re: first_observed.re,
             first_observed_im: first_observed.im,
@@ -17324,6 +18351,12 @@ fn pack_awproject_metal_prediction_probe_batch(
             _pad0: 0,
         });
     }
+    if phase_atlas.values.is_empty() {
+        phase_atlas
+            .values
+            .push(WProjectMetalComplex { re: 1.0, im: 0.0 });
+    }
+    packed.phases = phase_atlas.values;
     Ok(packed)
 }
 
@@ -17407,13 +18440,12 @@ fn plan_awproject_metal_tiles(
     let active_tile_ids = tile_counts
         .iter()
         .enumerate()
-        .filter_map(|(tile_id, &count)| {
-            (count > 0).then(|| {
-                u32::try_from(tile_id).map_err(|_| {
-                    ImagingError::InvalidRequest(
-                        "AWProject Metal tile identifier exceeds u32".to_string(),
-                    )
-                })
+        .filter(|&(_, &count)| count > 0)
+        .map(|(tile_id, _)| {
+            u32::try_from(tile_id).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "AWProject Metal tile identifier exceeds u32".to_string(),
+                )
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -17507,6 +18539,7 @@ fn build_awproject_metal_resident_program(
     planned_samples: &[AwProjectCompactPlannedSample],
     tap_requests: &[AwProjectCompactTapRequest],
     bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
     metadata: AwProjectMetalResidentMetadata,
 ) -> Result<AwProjectMetalResidentProgram, ImagingError> {
     let prediction_batch = pack_awproject_metal_prediction_probe_batch(
@@ -17517,10 +18550,12 @@ fn build_awproject_metal_resident_program(
         planned_samples,
         tap_requests,
         bundles,
+        phase_tables,
     )?;
     let tile_batch = pack_awproject_compact_metal_batch(
         planned_samples,
         bundles,
+        phase_tables,
         request.reffreq_hz,
         request.nterms,
         0,
@@ -17535,6 +18570,7 @@ fn build_awproject_metal_resident_program(
     let residual_scale_plan = plan_awproject_metal_residual_scales(
         &tile_batch.samples,
         &tile_batch.kernels,
+        &tile_batch.phases,
         grid_width,
         grid_height,
     )?;
@@ -17558,6 +18594,21 @@ fn offset_awproject_metal_plan_kernel_base(
             "merged AWProject Metal imaging kernel offset exceeds u32".to_string(),
         )
     })?;
+    Ok(())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn offset_awproject_metal_phase_plan(
+    plan: &mut AwProjectMetalPhasePlan,
+    phase_base: u32,
+) -> Result<(), ImagingError> {
+    if plan.base != u32::MAX {
+        plan.base = plan.base.checked_add(phase_base).ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "merged AWProject Metal phase-stencil offset exceeds u32".to_string(),
+            )
+        })?;
+    }
     Ok(())
 }
 
@@ -17594,6 +18645,10 @@ fn merge_awproject_metal_resident_programs(
         .iter()
         .map(|program| program.prediction_batch.kernels.len())
         .sum();
+    let prediction_phases = programs
+        .iter()
+        .map(|program| program.prediction_batch.phases.len())
+        .sum();
     let tile_samples = programs
         .iter()
         .map(|program| program.tile_batch.samples.len())
@@ -17601,6 +18656,10 @@ fn merge_awproject_metal_resident_programs(
     let tile_kernels = programs
         .iter()
         .map(|program| program.tile_batch.kernels.len())
+        .sum();
+    let tile_phases = programs
+        .iter()
+        .map(|program| program.tile_batch.phases.len())
         .sum();
     let term_weights = programs
         .iter()
@@ -17614,10 +18673,12 @@ fn merge_awproject_metal_resident_programs(
     let mut prediction_batch = AwProjectMetalPredictionBatch {
         samples: Vec::with_capacity(prediction_samples),
         kernels: Vec::with_capacity(prediction_kernels),
+        phases: Vec::with_capacity(prediction_phases),
     };
     let mut tile_batch = AwProjectMetalBatch {
         samples: Vec::with_capacity(tile_samples),
         kernels: Vec::with_capacity(tile_kernels),
+        phases: Vec::with_capacity(tile_phases),
         term_weights: Vec::with_capacity(term_weights),
         kernel_pack: Duration::ZERO,
     };
@@ -17634,6 +18695,11 @@ fn merge_awproject_metal_resident_programs(
                     "merged AWProject Metal prediction kernel arena exceeds u32".to_string(),
                 )
             })?;
+        let prediction_phase_base = u32::try_from(prediction_batch.phases.len()).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "merged AWProject Metal prediction phase arena exceeds u32".to_string(),
+            )
+        })?;
         for sample in &mut program.prediction_batch.samples {
             offset_awproject_metal_prediction_plan_kernel_base(
                 &mut sample.first_prediction,
@@ -17643,6 +18709,14 @@ fn merge_awproject_metal_resident_programs(
                 &mut sample.second_prediction,
                 prediction_kernel_base,
             )?;
+            offset_awproject_metal_phase_plan(
+                &mut sample.first_prediction.phase,
+                prediction_phase_base,
+            )?;
+            offset_awproject_metal_phase_plan(
+                &mut sample.second_prediction.phase,
+                prediction_phase_base,
+            )?;
         }
         prediction_batch
             .samples
@@ -17650,10 +18724,18 @@ fn merge_awproject_metal_resident_programs(
         prediction_batch
             .kernels
             .append(&mut program.prediction_batch.kernels);
+        prediction_batch
+            .phases
+            .append(&mut program.prediction_batch.phases);
 
         let tile_kernel_base = u32::try_from(tile_batch.kernels.len()).map_err(|_| {
             ImagingError::InvalidRequest(
                 "merged AWProject Metal imaging kernel arena exceeds u32".to_string(),
+            )
+        })?;
+        let tile_phase_base = u32::try_from(tile_batch.phases.len()).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "merged AWProject Metal imaging phase arena exceeds u32".to_string(),
             )
         })?;
         for sample in &mut program.tile_batch.samples {
@@ -17666,10 +18748,12 @@ fn merge_awproject_metal_resident_programs(
                 &mut sample.second_weight,
             ] {
                 offset_awproject_metal_plan_kernel_base(plan, tile_kernel_base)?;
+                offset_awproject_metal_phase_plan(&mut plan.phase, tile_phase_base)?;
             }
         }
         tile_batch.samples.append(&mut program.tile_batch.samples);
         tile_batch.kernels.append(&mut program.tile_batch.kernels);
+        tile_batch.phases.append(&mut program.tile_batch.phases);
         tile_batch
             .term_weights
             .append(&mut program.tile_batch.term_weights);
@@ -17691,6 +18775,7 @@ fn merge_awproject_metal_resident_programs(
     let residual_scale_plan = plan_awproject_metal_residual_scales(
         &tile_batch.samples,
         &tile_batch.kernels,
+        &tile_batch.phases,
         grid_width,
         grid_height,
     )?;
@@ -17705,12 +18790,15 @@ fn merge_awproject_metal_resident_programs(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+type AwProjectPredictionGridCensus = (usize, usize, usize, usize, usize, usize, usize);
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn census_awproject_prediction_grid(
     batch: &AwProjectMetalPredictionBatch,
     grid_width: usize,
     grid_height: usize,
     tile_side: usize,
-) -> Result<(usize, usize, usize, usize, usize, usize, usize), ImagingError> {
+) -> Result<AwProjectPredictionGridCensus, ImagingError> {
     let grid_cells = grid_width.checked_mul(grid_height).ok_or_else(|| {
         ImagingError::InvalidRequest("AWProject prediction grid census overflowed".to_string())
     })?;
@@ -17872,10 +18960,10 @@ fn build_awproject_selected_model_plan(
                     "AWProject selected-model footprint escaped the grid".to_string(),
                 ));
             }
-            for x in x_start..x_end {
-                active_x[x] = true;
-                for y in y_start..y_end {
-                    active_y[y] = true;
+            for (x, x_active) in active_x.iter_mut().enumerate().take(x_end).skip(x_start) {
+                *x_active = true;
+                for (y, y_active) in active_y.iter_mut().enumerate().take(y_end).skip(y_start) {
+                    *y_active = true;
                     let index = x * grid_height + y;
                     selected[index / u64::BITS as usize] |= 1u64 << (index % u64::BITS as usize);
                 }
@@ -17909,8 +18997,8 @@ fn build_awproject_selected_model_plan(
         })?;
     }
     let mut cells = Vec::new();
-    for grid_x in 0..grid_width {
-        for grid_y in 0..grid_height {
+    for (grid_x, &active_x_slot) in active_x_index.iter().enumerate().take(grid_width) {
+        for (grid_y, &active_y_slot) in active_y_index.iter().enumerate().take(grid_height) {
             let index = grid_x * grid_height + grid_y;
             if selected[index / u64::BITS as usize] & (1u64 << (index % u64::BITS as usize)) == 0 {
                 continue;
@@ -17926,8 +19014,8 @@ fn build_awproject_selected_model_plan(
                         "AWProject selected-model grid Y exceeds u32".to_string(),
                     )
                 })?,
-                active_x: active_x_index[grid_x],
-                active_y: active_y_index[grid_y],
+                active_x: active_x_slot,
+                active_y: active_y_slot,
             });
         }
     }
@@ -18107,6 +19195,7 @@ fn run_awproject_metal_tile_grid_probe(
     request: &MtmfsRequest,
     planned_samples: &[AwProjectCompactPlannedSample],
     bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
 ) -> Result<(), ImagingError> {
     use std::slice;
 
@@ -18120,6 +19209,7 @@ fn run_awproject_metal_tile_grid_probe(
     let packed = pack_awproject_compact_metal_batch(
         planned_samples,
         bundles,
+        phase_tables,
         request.reffreq_hz,
         request.nterms,
         0,
@@ -18310,6 +19400,7 @@ fn run_awproject_metal_resident_chain_probe(
     planned_samples: &[AwProjectCompactPlannedSample],
     tap_requests: &[AwProjectCompactTapRequest],
     bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
 ) -> Result<(), ImagingError> {
     use std::slice;
 
@@ -18324,11 +19415,13 @@ fn run_awproject_metal_resident_chain_probe(
         planned_samples,
         tap_requests,
         bundles,
+        phase_tables,
     )?;
     let prediction_pack_elapsed = prediction_pack_started.elapsed();
     let tile_batch = pack_awproject_compact_metal_batch(
         planned_samples,
         bundles,
+        phase_tables,
         request.reffreq_hz,
         request.nterms,
         0,
@@ -18532,6 +19625,7 @@ fn run_awproject_metal_prediction_probe(
     planned_samples: &[AwProjectCompactPlannedSample],
     tap_requests: &[AwProjectCompactTapRequest],
     bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
 ) -> Result<(), ImagingError> {
     let pack_started = Instant::now();
     let packed = pack_awproject_metal_prediction_probe_batch(
@@ -18542,6 +19636,7 @@ fn run_awproject_metal_prediction_probe(
         planned_samples,
         tap_requests,
         bundles,
+        phase_tables,
     )?;
     let pack_elapsed = pack_started.elapsed();
     let mut executor_setup = Duration::ZERO;
@@ -18640,6 +19735,7 @@ fn run_awproject_metal_prediction_probe(
 fn pack_awproject_compact_metal_batch(
     samples: &[AwProjectCompactPlannedSample],
     bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
     reffreq_hz: f64,
     nterms: usize,
     psf_term_count: usize,
@@ -18691,11 +19787,24 @@ fn pack_awproject_compact_metal_batch(
     batch
         .term_weights
         .reserve(samples.len().saturating_mul(term_weight_count));
+    let mut phase_atlas = AwProjectMetalPhaseAtlasBuilder::default();
     for sample in samples {
-        let first_imaging =
-            awproject_compact_metal_plan(sample.first_imaging_plan, bundles, &kernel_bases)?;
-        let second_imaging =
-            awproject_compact_metal_plan(sample.second_imaging_plan, bundles, &kernel_bases)?;
+        let first_imaging = awproject_compact_metal_plan(
+            sample.first_imaging_plan,
+            bundles,
+            &kernel_bases,
+            sample.group_index,
+            phase_tables,
+            &mut phase_atlas,
+        )?;
+        let second_imaging = awproject_compact_metal_plan(
+            sample.second_imaging_plan,
+            bundles,
+            &kernel_bases,
+            sample.group_index,
+            phase_tables,
+            &mut phase_atlas,
+        )?;
         let (first_psf, second_psf, first_weight, second_weight) = if residual_only {
             // The residual-only shader never dereferences these plans. Reuse
             // live plans so the full-pass ABI can remain the bounded first
@@ -18703,10 +19812,38 @@ fn pack_awproject_compact_metal_batch(
             (first_imaging, second_imaging, first_imaging, second_imaging)
         } else {
             (
-                awproject_compact_metal_plan(sample.first_psf_plan, bundles, &kernel_bases)?,
-                awproject_compact_metal_plan(sample.second_psf_plan, bundles, &kernel_bases)?,
-                awproject_compact_metal_plan(sample.first_weight_plan, bundles, &kernel_bases)?,
-                awproject_compact_metal_plan(sample.second_weight_plan, bundles, &kernel_bases)?,
+                awproject_compact_metal_plan(
+                    sample.first_psf_plan,
+                    bundles,
+                    &kernel_bases,
+                    sample.group_index,
+                    phase_tables,
+                    &mut phase_atlas,
+                )?,
+                awproject_compact_metal_plan(
+                    sample.second_psf_plan,
+                    bundles,
+                    &kernel_bases,
+                    sample.group_index,
+                    phase_tables,
+                    &mut phase_atlas,
+                )?,
+                awproject_compact_metal_plan(
+                    sample.first_weight_plan,
+                    bundles,
+                    &kernel_bases,
+                    sample.group_index,
+                    phase_tables,
+                    &mut phase_atlas,
+                )?,
+                awproject_compact_metal_plan(
+                    sample.second_weight_plan,
+                    bundles,
+                    &kernel_bases,
+                    sample.group_index,
+                    phase_tables,
+                    &mut phase_atlas,
+                )?,
             )
         };
         batch.samples.push(AwProjectMetalSample {
@@ -18730,6 +19867,12 @@ fn pack_awproject_compact_metal_batch(
             ));
         }
     }
+    if phase_atlas.values.is_empty() {
+        phase_atlas
+            .values
+            .push(WProjectMetalComplex { re: 1.0, im: 0.0 });
+    }
+    batch.phases = phase_atlas.values;
     batch.kernel_pack = started.elapsed();
     Ok(batch)
 }
@@ -18982,7 +20125,7 @@ fn replay_awproject_compact_window(
     taylor_weights: &mut Vec<f32>,
     replay_stats: &mut AwProjectCompactReplayStats,
     persistent_metal_batch: Option<&mut Option<AwProjectMetalBatch>>,
-    persistent_metal_resident_program: Option<&mut Option<AwProjectMetalResidentProgram>>,
+    mut persistent_metal_resident_program: Option<&mut Option<AwProjectMetalResidentProgram>>,
 ) -> Result<(), ImagingError> {
     let prepare_started = Instant::now();
     #[cfg(all(target_os = "macos", not(coverage)))]
@@ -19036,6 +20179,49 @@ fn replay_awproject_compact_window(
     replay_stats.prepare_elapsed += prepare_started.elapsed();
     #[cfg(all(target_os = "macos", not(coverage)))]
     if !gpu_residual_replay
+        && model_grids.is_none()
+        && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PRIME_REPLAY_INITIAL_DIRTY").is_some()
+        && matches!(
+            &accumulation.storage,
+            MosaicMtmfsStreamGridStorage::MetalSharedF32 {
+                psf_term_count,
+                ..
+            } if *psf_term_count > 0
+        )
+    {
+        let slot = persistent_metal_resident_program
+            .as_deref_mut()
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "initial-dirty replay priming requires a replay-cache window".to_string(),
+                )
+            })?;
+        if slot.is_none() {
+            let prime_started = Instant::now();
+            *slot = Some(build_awproject_metal_resident_program(
+                request,
+                parallel_hands,
+                sample_frequencies_hz,
+                source_samples,
+                &planned_samples,
+                tap_requests,
+                bundles,
+                phase_tables,
+                prepared_metadata.clone(),
+            )?);
+            if profile::standard_mfs_profile_detail_enabled() {
+                eprintln!(
+                    "awproject_initial_dirty_replay_program_primed program_bytes={} elapsed_ms={:.3}",
+                    slot.as_ref()
+                        .map(AwProjectMetalResidentProgram::resident_bytes)
+                        .unwrap_or(0),
+                    profile::millis(prime_started.elapsed()),
+                );
+            }
+        }
+    }
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    if !gpu_residual_replay
         && let Some(model_grids) = model_grids
         && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_PREDICTION_PROBE").is_some()
         && AWPROJECT_METAL_PREDICTION_PROBE_DONE
@@ -19051,6 +20237,7 @@ fn replay_awproject_compact_window(
             &planned_samples,
             tap_requests,
             bundles,
+            phase_tables,
         )?;
     }
     #[cfg(all(target_os = "macos", not(coverage)))]
@@ -19061,7 +20248,7 @@ fn replay_awproject_compact_window(
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
     {
-        run_awproject_metal_tile_grid_probe(request, &planned_samples, bundles)?;
+        run_awproject_metal_tile_grid_probe(request, &planned_samples, bundles, phase_tables)?;
     }
     #[cfg(all(target_os = "macos", not(coverage)))]
     if !gpu_residual_replay
@@ -19080,6 +20267,7 @@ fn replay_awproject_compact_window(
             &planned_samples,
             tap_requests,
             bundles,
+            phase_tables,
         )?;
     }
     let grid_started = Instant::now();
@@ -19148,12 +20336,15 @@ fn replay_awproject_compact_window(
                     || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GPU_RESIDUAL_REPLAY")
                         .is_some());
             if resident_chain {
-                let slot = persistent_metal_resident_program.ok_or_else(|| {
-                    ImagingError::InvalidRequest(
-                        "resident AWProject Metal tile chain requires a replay-cache window"
-                            .to_string(),
-                    )
-                })?;
+                let slot = match &mut persistent_metal_resident_program {
+                    Some(slot) => &mut **slot,
+                    None => {
+                        return Err(ImagingError::InvalidRequest(
+                            "resident AWProject Metal tile chain requires a replay-cache window"
+                                .to_string(),
+                        ));
+                    }
+                };
                 let build_started = Instant::now();
                 let built = slot.is_none();
                 if built {
@@ -19165,6 +20356,7 @@ fn replay_awproject_compact_window(
                         &planned_samples,
                         tap_requests,
                         bundles,
+                        phase_tables,
                         prepared_metadata.clone(),
                     )?);
                 }
@@ -19234,7 +20426,8 @@ fn replay_awproject_compact_window(
                     eprintln!(
                         "awproject_metal_resident_tile_chain built={} gpu_residual_replay={} program_bytes={} \
                          build_ms={:.3} executor_setup_ms={:.3} samples={} \
-                         prediction_kernel_values={} imaging_kernel_values={} active_tiles={} \
+                         prediction_kernel_values={} imaging_kernel_values={} \
+                         prediction_phase_values={} imaging_phase_values={} active_tiles={} \
                          fragments={} buffer_alloc_ms={:.3} dispatch_wait_ms={:.3} \
                          output_bytes={} residual_bytes={} total_ms={:.3}",
                         built,
@@ -19245,6 +20438,8 @@ fn replay_awproject_compact_window(
                         stats.samples,
                         stats.prediction_kernel_values,
                         stats.imaging_kernel_values,
+                        program.prediction_batch.phases.len(),
+                        program.tile_batch.phases.len(),
                         stats.active_tiles,
                         stats.fragments,
                         profile::millis(stats.buffer_alloc),
@@ -19278,6 +20473,7 @@ fn replay_awproject_compact_window(
                     Some(pack_awproject_compact_metal_batch(
                         &planned_samples,
                         bundles,
+                        phase_tables,
                         request.reffreq_hz,
                         request.nterms,
                         *psf_term_count,
@@ -19296,6 +20492,7 @@ fn replay_awproject_compact_window(
                         *slot = Some(pack_awproject_compact_metal_batch(
                             &planned_samples,
                             bundles,
+                            phase_tables,
                             request.reffreq_hz,
                             request.nterms,
                             *psf_term_count,
@@ -19398,18 +20595,19 @@ fn accumulate_awproject_mtmfs_metadata_batch(
     let plan_chunk_samples = awproject_compact_plan_chunk_samples();
     let pack_workers = awproject_compact_pack_workers();
     let tapless_phase = awproject_compact_tapless_phase();
+    // The legacy tap ceiling describes the logical phase-applied working set
+    // and therefore owns numerical segmentation. A factorized Metal program
+    // may retain prediction-only compact taps at an initial-dirty boundary;
+    // its real admission constraint is the already-accounted combined packed
+    // batch ceiling, not the legacy per-arena cap.
+    let priming_prediction_taps = model_grids.is_none()
+        && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PRIME_REPLAY_INITIAL_DIRTY").is_some();
+    let compact_tap_materialization_budget_bytes = if tapless_phase || priming_prediction_taps {
+        metal_packed_batch_budget_bytes.unwrap_or(tap_budget_bytes)
+    } else {
+        tap_budget_bytes
+    };
     let contiguous_grid_taps = awproject_compact_contiguous_grid_taps();
-    #[cfg(all(target_os = "macos", not(coverage)))]
-    if tapless_phase
-        && matches!(
-            &accumulation.storage,
-            MosaicMtmfsStreamGridStorage::MetalSharedF32 { .. }
-        )
-    {
-        return Err(ImagingError::Unsupported(
-            "the tapless AW phase experiment is currently CPU-only".to_string(),
-        ));
-    }
     let pack_pool = (pack_workers > 1)
         .then(|| {
             rayon::ThreadPoolBuilder::new()
@@ -19588,9 +20786,19 @@ fn accumulate_awproject_mtmfs_metadata_batch(
             65_536,
             BuildHasherDefault::<MosaicMetalSampleHasher>::default(),
         );
+        // Replay segmentation is part of the numerical execution contract:
+        // each boundary finalizes a fixed-point accumulation with its own
+        // scale. Keep those boundaries based on the logical, phase-applied
+        // tap working set even when the resident representation factors
+        // POINTING phase out of the kernels.
+        let mut logical_tap_indices = AwProjectCompactTapIndex::with_capacity_and_hasher(
+            65_536,
+            BuildHasherDefault::<MosaicMetalSampleHasher>::default(),
+        );
         let mut tap_requests = Vec::<AwProjectCompactTapRequest>::new();
         let mut source_samples = Vec::<AwProjectCompactSourceSample>::new();
         let mut planned_tap_bytes = 0usize;
+        let mut planned_logical_tap_bytes = 0usize;
 
         while cursor < batch.len() {
             if pending_outcomes.is_empty() {
@@ -19608,7 +20816,9 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                     cursor,
                     plan_end,
                     plan_workers,
-                    model_grids.is_some(),
+                    model_grids.is_some()
+                        || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PRIME_REPLAY_INITIAL_DIRTY")
+                            .is_some(),
                     residual_only,
                 )?);
             }
@@ -19628,8 +20838,24 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                 &specs[..active_tap_role_count],
                 &tap_indices,
             )?;
+            // Priming may classify distinct prediction CFs during the initial
+            // dirty pass, but those CFs are not consumed until a later major
+            // cycle. Do not let retention-only work change the initial
+            // gridding/finalization boundaries.
+            let initial_grid_specs = [specs[0], specs[1], specs[4], specs[5], specs[6], specs[7]];
+            let logical_specs = if !residual_only && model_grids.is_none() {
+                initial_grid_specs.as_slice()
+            } else {
+                &specs[..active_tap_role_count]
+            };
+            let additional_logical_tap_bytes =
+                awproject_compact_candidate_logical_tap_bytes(logical_specs, &logical_tap_indices)?;
             let next_tap_bytes =
                 awproject_compact_window_tap_bytes(planned_tap_bytes, additional_tap_bytes)?;
+            let next_logical_tap_bytes = awproject_compact_window_tap_bytes(
+                planned_logical_tap_bytes,
+                additional_logical_tap_bytes,
+            )?;
             let next_packed_batch_bytes = next_tap_bytes
                 .checked_add(
                     (source_samples.len() + 1)
@@ -19645,13 +20871,13 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                         "AWProject Metal packed source-order window size overflowed".to_string(),
                     )
                 })?;
-            if next_tap_bytes > tap_budget_bytes
+            if next_logical_tap_bytes > tap_budget_bytes
                 || metal_packed_batch_budget_bytes
                     .is_some_and(|budget| next_packed_batch_bytes > budget)
             {
                 if source_samples.is_empty() {
                     return Err(ImagingError::InvalidRequest(format!(
-                        "one AWProject source sample needs {next_tap_bytes} compact tap bytes and {next_packed_batch_bytes} packed Metal bytes, above the admitted {tap_budget_bytes}-byte tap and {}-byte packed-batch ceilings",
+                        "one AWProject source sample needs {next_logical_tap_bytes} logical tap bytes, {next_tap_bytes} compact resident tap bytes, and {next_packed_batch_bytes} packed Metal bytes, above the admitted {tap_budget_bytes}-byte logical-tap and {}-byte packed-batch ceilings",
                         metal_packed_batch_budget_bytes.unwrap_or(usize::MAX),
                     )));
                 }
@@ -19666,15 +20892,19 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                 .take(active_tap_role_count)
                 .enumerate()
             {
-                let bundle_index = if let Some(&index) = tap_indices.get(&spec.request.key) {
+                let identity_key = awproject_compact_tap_identity_key(spec.request.key);
+                let bundle_index = if let Some(&index) = tap_indices.get(&identity_key) {
                     index
                 } else {
                     let index = tap_requests.len();
                     tap_requests.push(spec.request);
-                    tap_indices.insert(spec.request.key, index);
+                    tap_indices.insert(identity_key, index);
                     index
                 };
                 bundle_indices[role_index] = bundle_index;
+            }
+            for spec in logical_specs {
+                logical_tap_indices.entry(spec.request.key).or_insert(0);
             }
             if residual_only {
                 bundle_indices[4] = bundle_indices[0];
@@ -19698,6 +20928,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                 second_weight_plan: awproject_compact_plan(specs[7].geometry, bundle_indices[7]),
             });
             planned_tap_bytes = next_tap_bytes;
+            planned_logical_tap_bytes = next_logical_tap_bytes;
             accumulation.aw_sample_census.attempted_samples += 1;
             cursor += 1;
         }
@@ -19731,7 +20962,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
             cache,
             &tap_requests,
             phase_tables.as_ref(),
-            tap_budget_bytes,
+            compact_tap_materialization_budget_bytes,
             env::var_os("CASA_RS_AWPROJECT_ALTERNATE_CF_LOAD_ORDER").is_some()
                 && replay_stats.windows % 2 == 1,
             awproject_compact_prefetch_cf_cell(),
@@ -19741,6 +20972,56 @@ fn accumulate_awproject_mtmfs_metadata_batch(
         )?;
         replay_stats.materialize_elapsed += materialize_started.elapsed();
         debug_assert_eq!(actual_tap_bytes, planned_tap_bytes);
+        if env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_TAPLESS_PHASE_CENSUS").is_some() {
+            static CENSUS: OnceLock<Mutex<AwProjectTaplessPhaseCensus>> = OnceLock::new();
+            let mut census = CENSUS
+                .get_or_init(|| Mutex::new(AwProjectTaplessPhaseCensus::default()))
+                .lock()
+                .expect("AWProject tapless-phase census lock must not be poisoned");
+            census.phase_applied_requests = census
+                .phase_applied_requests
+                .saturating_add(tap_requests.len());
+            census.phase_applied_kernel_bytes = census
+                .phase_applied_kernel_bytes
+                .saturating_add(actual_tap_bytes);
+            let mut window_phase_invariant_keys = HashSet::new();
+            let mut window_phase_invariant_bytes = 0usize;
+            for (tap_request, bundle) in tap_requests.iter().zip(&bundles) {
+                let key = AwProjectPhaseInvariantTapKey::from(tap_request.key);
+                if !window_phase_invariant_keys.insert(key) {
+                    continue;
+                }
+                let bytes = match bundle {
+                    AwProjectCompactMaterializedTap::Ready(bundle) => bundle
+                        .values
+                        .len()
+                        .saturating_mul(std::mem::size_of::<Complex32>()),
+                    AwProjectCompactMaterializedTap::Rejected(_) => 0,
+                };
+                window_phase_invariant_bytes = window_phase_invariant_bytes.saturating_add(bytes);
+                if census.phase_invariant_keys.insert(key) {
+                    census.phase_invariant_kernel_bytes =
+                        census.phase_invariant_kernel_bytes.saturating_add(bytes);
+                }
+            }
+            eprintln!(
+                "awproject_tapless_phase_census window_phase_applied_requests={} \
+                 window_phase_invariant_requests={} window_phase_applied_kernel_bytes={} \
+                 window_phase_invariant_kernel_bytes={} cumulative_phase_applied_requests={} \
+                 cumulative_phase_invariant_requests={} cumulative_phase_applied_kernel_bytes={} \
+                 cumulative_phase_invariant_kernel_bytes={} cumulative_byte_reduction={:.3}",
+                tap_requests.len(),
+                window_phase_invariant_keys.len(),
+                actual_tap_bytes,
+                window_phase_invariant_bytes,
+                census.phase_applied_requests,
+                census.phase_invariant_keys.len(),
+                census.phase_applied_kernel_bytes,
+                census.phase_invariant_kernel_bytes,
+                census.phase_applied_kernel_bytes as f64
+                    / census.phase_invariant_kernel_bytes.max(1) as f64,
+            );
+        }
         let mut persistent_metal_batch = None;
         let mut persistent_metal_resident_program = None;
         replay_awproject_compact_window(
@@ -19771,24 +21052,145 @@ fn accumulate_awproject_mtmfs_metadata_batch(
             .max(tap_requests.len());
         replay_stats.peak_tap_bytes = replay_stats.peak_tap_bytes.max(actual_tap_bytes);
         if replay_fill_enabled {
-            let window = AwProjectCompactReplayWindow {
+            let mut window = AwProjectCompactReplayWindow {
                 source_samples,
                 tap_requests,
                 bundles,
                 persistent_metal_batch,
                 persistent_metal_resident_program,
             };
+            if env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_RESIDENT_PROGRAM_COMPACTION")
+                .is_some()
+                && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GPU_RESIDUAL_REPLAY").is_some()
+            {
+                let resident_bytes_released = window.compact_to_resident_metal_program();
+                if resident_bytes_released > 0 && profile::standard_mfs_profile_detail_enabled() {
+                    eprintln!(
+                        "awproject_metal_resident_program_compaction released_bytes={} \
+                         program_bytes={} prediction_kernel_bytes={} imaging_kernel_bytes={} \
+                         prediction_phase_bytes={} imaging_phase_bytes={}",
+                        resident_bytes_released,
+                        window
+                            .persistent_metal_resident_program
+                            .as_ref()
+                            .map(AwProjectMetalResidentProgram::resident_bytes)
+                            .unwrap_or(0),
+                        window
+                            .persistent_metal_resident_program
+                            .as_ref()
+                            .map(|program| {
+                                program
+                                    .prediction_batch
+                                    .kernels
+                                    .capacity()
+                                    .saturating_mul(std::mem::size_of::<WProjectMetalComplex>())
+                            })
+                            .unwrap_or(0),
+                        window
+                            .persistent_metal_resident_program
+                            .as_ref()
+                            .map(|program| {
+                                program
+                                    .tile_batch
+                                    .kernels
+                                    .capacity()
+                                    .saturating_mul(std::mem::size_of::<WProjectMetalComplex>())
+                            })
+                            .unwrap_or(0),
+                        window
+                            .persistent_metal_resident_program
+                            .as_ref()
+                            .map(|program| {
+                                program
+                                    .prediction_batch
+                                    .phases
+                                    .capacity()
+                                    .saturating_mul(std::mem::size_of::<WProjectMetalComplex>())
+                            })
+                            .unwrap_or(0),
+                        window
+                            .persistent_metal_resident_program
+                            .as_ref()
+                            .map(|program| {
+                                program
+                                    .tile_batch
+                                    .phases
+                                    .capacity()
+                                    .saturating_mul(std::mem::size_of::<WProjectMetalComplex>())
+                            })
+                            .unwrap_or(0),
+                    );
+                }
+            } else {
+                window.shrink_to_fit();
+            }
             replay_windows.push(window);
             let replay_window_bytes = replay_windows
-                .capacity()
+                .len()
                 .saturating_mul(std::mem::size_of::<AwProjectCompactReplayWindow>())
                 .saturating_add(
                     replay_windows
                         .iter()
-                        .map(AwProjectCompactReplayWindow::resident_bytes)
+                        .map(AwProjectCompactReplayWindow::resident_payload_bytes)
                         .sum::<usize>(),
                 )
                 .saturating_add(std::mem::size_of::<AwProjectCompactReplayBlock>());
+            if profile::standard_mfs_profile_detail_enabled() {
+                let candidate = replay_windows
+                    .last()
+                    .expect("a replay-retention candidate was just appended");
+                eprintln!(
+                    "awproject_compact_replay_retention_candidate \
+                     budget_bytes={} aggregate_bytes={} window_bytes={} \
+                     source_samples={} source_capacity={} source_bytes={} \
+                     tap_requests={} tap_request_capacity={} tap_request_bytes={} \
+                     bundles={} bundle_capacity={} bundle_metadata_bytes={} \
+                     bundle_value_bytes={} persistent_metal_batch_bytes={} \
+                     persistent_metal_program_bytes={}",
+                    replay_fill_budget,
+                    replay_window_bytes,
+                    candidate.resident_bytes(),
+                    candidate.source_samples.len(),
+                    candidate.source_samples.capacity(),
+                    candidate
+                        .source_samples
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<AwProjectCompactSourceSample>()),
+                    candidate.tap_requests.len(),
+                    candidate.tap_requests.capacity(),
+                    candidate
+                        .tap_requests
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<AwProjectCompactTapRequest>()),
+                    candidate.bundles.len(),
+                    candidate.bundles.capacity(),
+                    candidate
+                        .bundles
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<AwProjectCompactMaterializedTap>()),
+                    candidate
+                        .bundles
+                        .iter()
+                        .map(|bundle| match bundle {
+                            AwProjectCompactMaterializedTap::Ready(bundle) => bundle
+                                .values
+                                .capacity()
+                                .saturating_mul(std::mem::size_of::<Complex32>()),
+                            AwProjectCompactMaterializedTap::Rejected(_) => 0,
+                        })
+                        .sum::<usize>(),
+                    candidate
+                        .persistent_metal_batch
+                        .as_ref()
+                        .map(AwProjectMetalBatch::resident_bytes)
+                        .unwrap_or(0),
+                    candidate
+                        .persistent_metal_resident_program
+                        .as_ref()
+                        .map(AwProjectMetalResidentProgram::resident_bytes)
+                        .unwrap_or(0),
+                );
+            }
             if replay_window_bytes > replay_fill_budget {
                 replay_windows.pop();
                 replay_windows.shrink_to_fit();
@@ -19822,12 +21224,13 @@ fn accumulate_awproject_mtmfs_metadata_batch(
     }
     if profile::standard_mfs_profile_detail_enabled() {
         eprintln!(
-            "awproject_compact_source_order windows={} largest_window_samples={} largest_window_tap_bundles={} peak_tap_bytes={} tap_budget_bytes={} metal_packed_batch_budget_bytes={} packed_sample_bytes={} routed_samples={} plan_workers={} plan_chunk_samples={} pack_workers={} prefetch_cf_cell={} tapless_phase={} contiguous_grid_taps={} spatial_tile_side={} neon_2x2={} dynamic_tile_scheduler={} tile_active_tiles_peak={} tile_new_tiles={} tile_resident_tiles_peak={} tile_resident_bytes_peak={} tile_fragments={} tile_tap_pixel_updates={} tile_plane_pixel_updates={} tile_simd_pixel_updates={} tile_scalar_pixel_updates={} tile_worker_imbalance_milli_max={} tile_task_count={} tile_task_estimated_bytes_max={} tile_scheduler_empty_claims={} tile_scheduler_nonpreemptive_efficiency_ppm_min={} tile_scheduler_worker_utilization_ppm_min={} tile_scheduler_ideal_lower_bound_sum_ms={:.3} tile_scheduler_tail_sum_ms={:.3} tile_scheduler_task_elapsed_sum_ms={:.3} tile_scheduler_task_elapsed_max_ms={:.3} tile_scheduler_worker_busy_global_min_ms={:.3} tile_scheduler_worker_busy_global_max_ms={:.3} tile_fragment_metadata_bytes_peak={} tile_directory_bytes_peak={} tile_fragments_per_sample_p95={} tile_fragments_per_sample_max={} phase_table_bytes={} phase_table_ms={:.3} plan_ms={:.3} materialize_ms={:.3} cache_load_worker_ms={:.3} tap_pack_ms={:.3} prepare_ms={:.3} tile_plan_ms={:.3} tile_allocation_ms={:.3} tile_scheduler_build_ms={:.3} tile_scheduler_sort_ms={:.3} tile_scheduler_claim_ms={:.3} grid_including_tile_plan_ms={:.3}",
+            "awproject_compact_source_order windows={} largest_window_samples={} largest_window_tap_bundles={} peak_tap_bytes={} tap_budget_bytes={} compact_tap_materialization_budget_bytes={} metal_packed_batch_budget_bytes={} packed_sample_bytes={} routed_samples={} plan_workers={} plan_chunk_samples={} pack_workers={} prefetch_cf_cell={} tapless_phase={} contiguous_grid_taps={} spatial_tile_side={} neon_2x2={} dynamic_tile_scheduler={} tile_active_tiles_peak={} tile_new_tiles={} tile_resident_tiles_peak={} tile_resident_bytes_peak={} tile_fragments={} tile_tap_pixel_updates={} tile_plane_pixel_updates={} tile_simd_pixel_updates={} tile_scalar_pixel_updates={} tile_worker_imbalance_milli_max={} tile_task_count={} tile_task_estimated_bytes_max={} tile_scheduler_empty_claims={} tile_scheduler_nonpreemptive_efficiency_ppm_min={} tile_scheduler_worker_utilization_ppm_min={} tile_scheduler_ideal_lower_bound_sum_ms={:.3} tile_scheduler_tail_sum_ms={:.3} tile_scheduler_task_elapsed_sum_ms={:.3} tile_scheduler_task_elapsed_max_ms={:.3} tile_scheduler_worker_busy_global_min_ms={:.3} tile_scheduler_worker_busy_global_max_ms={:.3} tile_fragment_metadata_bytes_peak={} tile_directory_bytes_peak={} tile_fragments_per_sample_p95={} tile_fragments_per_sample_max={} phase_table_bytes={} phase_table_ms={:.3} plan_ms={:.3} materialize_ms={:.3} cache_load_worker_ms={:.3} tap_pack_ms={:.3} prepare_ms={:.3} tile_plan_ms={:.3} tile_allocation_ms={:.3} tile_scheduler_build_ms={:.3} tile_scheduler_sort_ms={:.3} tile_scheduler_claim_ms={:.3} grid_including_tile_plan_ms={:.3}",
             replay_stats.windows,
             replay_stats.largest_window_samples,
             replay_stats.largest_window_tap_bundles,
             replay_stats.peak_tap_bytes,
             tap_budget_bytes,
+            compact_tap_materialization_budget_bytes,
             metal_packed_batch_budget_bytes.unwrap_or(0),
             packed_sample_bytes,
             source_group_route.len(),
@@ -20188,12 +21591,11 @@ where
                         config.pb_limit,
                     )
                     .map(|prediction_model| {
-                        let prepared = if aw_cache.is_some() {
+                        if aw_cache.is_some() {
                             gridder.prepare_awproject_model(&prediction_model)
                         } else {
                             gridder.apodize_mosaic_model(&prediction_model, conv_sampling)
-                        };
-                        prepared
+                        }
                     })
                 };
                 prepared.map(|prepared| {
@@ -32143,11 +33545,14 @@ fn sparse_flat_sky_awproject_model_casacore_storage(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+type AwProjectSparsePreparedModelValues = Vec<BTreeMap<(usize, usize), Complex32>>;
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn awproject_sparse_prepared_model_values(
     gridder: &StandardGridder,
     prepared_models: &[(Array2<Complex32>, bool)],
     model_support_positions: &BTreeSet<(usize, usize)>,
-) -> Result<Vec<BTreeMap<(usize, usize), Complex32>>, ImagingError> {
+) -> Result<AwProjectSparsePreparedModelValues, ImagingError> {
     let [grid_x0, grid_y0] = gridder.image_grid_origin();
     prepared_models
         .iter()
@@ -32358,18 +33763,18 @@ fn probe_awproject_incremental_model(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+type AwProjectIncrementalModelRuntime = (
+    Option<Vec<Array2<Complex32>>>,
+    Option<AwProjectIncrementalModelFullRefresh>,
+);
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn try_awproject_incremental_model_runtime(
     gridder: &StandardGridder,
     prepared_models: &[(Array2<Complex32>, bool)],
     model_support_positions: &BTreeSet<(usize, usize)>,
     replay_cache: &mut AwProjectCompactReplayCache,
-) -> Result<
-    (
-        Option<Vec<Array2<Complex32>>>,
-        Option<AwProjectIncrementalModelFullRefresh>,
-    ),
-    ImagingError,
-> {
+) -> Result<AwProjectIncrementalModelRuntime, ImagingError> {
     let current_values =
         awproject_sparse_prepared_model_values(gridder, prepared_models, model_support_positions)?;
     let max_delta_positions =
@@ -32811,6 +34216,9 @@ fn mosaic_projector_phase_gradient_rad_per_sample_for_group(
     pointing_pixel_position: Option<[f64; 2]>,
     conv_sampling: usize,
 ) -> [f64; 2] {
+    if env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_DISABLE_POINTING_PHASE").is_some() {
+        return [0.0, 0.0];
+    }
     let pixel_offset = pointing_pixel_position.map_or_else(
         || {
             mosaic_pointing_pixel_offset(
@@ -50870,25 +52278,26 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        AwProjectImageResponseCache, AwProjectSparseModelDelta, ClarkPsfPatch, CleanConfig,
-        CleanMaskProductRequest, CleanStopReason, CompatibilityMode, CubeModelChannelContribution,
-        CubeModelInterpolationBatch, Deconvolver, DirtyProductFftPolicy, FftBackendChoice,
-        FftPrecisionChoice, GridderMode, GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch,
-        HogbomIterationMode, HogbomPlaneMinorCycleControl, ImageGeometry, ImageWindow,
-        ImagingError, ImagingExecutionPlan, ImagingRequest, ImagingResolvedPlan, ImagingResult,
-        ImagingStageTimings, MosaicGridderConfig, MosaicMtmfsVisibilityBlock,
-        MosaicVisibilityBlock, MtmfsRequest, MultiscaleCandidate, ParallelHandBatch, PlaneStokes,
-        PrimaryBeamModel, PrimaryBeamProductRequest, PrimaryBeamWeightSample, PsfState,
-        StandardGridder, StandardMfsBackend, StandardMfsDirtyAccumulator,
-        StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionPlan, StandardMfsMinorCycleBackend,
-        StandardMfsMinorCycleProgressReporter, StandardMfsModelPredictor, StandardMfsPlan,
-        StandardMfsPlannedSampleBuilder, StandardMfsPlannedWeightedSample,
-        StandardMfsPlannedWeightedSampleRunBlock, StandardMfsProgressCallback,
-        StandardMfsProgressContext, StandardMfsProgressPhase, StandardMfsWeightedSample,
-        VisibilityBatch, VisibilityMetadataBatch, VisibilitySampleRange, WProjectMetalSample,
-        WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode, add_shifted_kernel,
-        add_shifted_kernel_with_support, apply_chauvenet_clipping, apply_weighting,
-        aw_stokes_i_residual_for_mueller, aw_stokes_i_visibility_for_mueller,
+        AwProjectImageResponseCache, AwProjectImageResponsePlane, AwProjectSparseModelDelta,
+        ClarkPsfPatch, CleanConfig, CleanMaskProductRequest, CleanStopReason, CompatibilityMode,
+        CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver,
+        DirtyProductFftPolicy, FftBackendChoice, FftPrecisionChoice, GridderMode,
+        GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch, HogbomIterationMode,
+        HogbomPlaneMinorCycleControl, ImageGeometry, ImageWindow, ImagingError,
+        ImagingExecutionPlan, ImagingRequest, ImagingResolvedPlan, ImagingResult,
+        ImagingStageTimings, LosslessDyadicSpatialPlane, MosaicGridderConfig,
+        MosaicMtmfsVisibilityBlock, MosaicVisibilityBlock, MtmfsRequest, MultiscaleCandidate,
+        ParallelHandBatch, PlaneStokes, PrimaryBeamModel, PrimaryBeamProductRequest,
+        PrimaryBeamWeightSample, PsfState, StandardGridder, StandardMfsBackend,
+        StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionPlan,
+        StandardMfsMinorCycleBackend, StandardMfsMinorCycleProgressReporter,
+        StandardMfsModelPredictor, StandardMfsPlan, StandardMfsPlannedSampleBuilder,
+        StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
+        StandardMfsProgressCallback, StandardMfsProgressContext, StandardMfsProgressPhase,
+        StandardMfsWeightedSample, VisibilityBatch, VisibilityMetadataBatch, VisibilitySampleRange,
+        WProjectMetalSample, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
+        add_shifted_kernel, add_shifted_kernel_with_support, apply_chauvenet_clipping,
+        apply_weighting, aw_stokes_i_residual_for_mueller, aw_stokes_i_visibility_for_mueller,
         awproject_model_fft_plan, build_direct_components, build_direct_pixel_coordinates,
         build_image_coordinate_system, build_image_spectral_coordinate,
         build_multiscale_scale_masks, casa_mtmfs_scaled_kernel_value,
@@ -50897,7 +52306,7 @@ mod tests {
         compute_dirty_psf_and_residual_standard, compute_psf, compute_psf_direct, compute_residual,
         compute_residual_direct, direct_predict_visibility, dirty_clean_config,
         extract_mfs_plane_product, kernel_nonzero_support, keyed_madfm_f32,
-        lossless_dyadic_tile_census, make_multiscale_kernel, mean_stddev,
+        lossless_dyadic_spatial_tile_census, make_multiscale_kernel, mean_stddev,
         mfs_image_product_peak_abs_masked, minor_cycle_stop_is_major_cycle_handoff,
         minor_cycle_stop_reason, mosaic_pointing_contributes_by_simple_pb_center,
         mosaic_pointing_pixel_inside_image, mosaic_primary_beam_product_from_weight_product,
@@ -50974,7 +52383,7 @@ mod tests {
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
-        let cache = AwProjectImageResponseCache::from_central_calibrations(
+        let mut cache = AwProjectImageResponseCache::from_central_calibrations(
             position,
             &model_terms,
             &base_residual_terms,
@@ -50999,29 +52408,103 @@ mod tests {
             assert_eq!(actual[output_term], expected);
         }
         assert_eq!(principal_peak_abs, 4.375);
+
+        for output_terms in &mut cache.response_terms {
+            for plane in output_terms {
+                let raw = match std::mem::replace(
+                    plane,
+                    AwProjectImageResponsePlane::Raw(Array2::zeros((0, 0))),
+                ) {
+                    AwProjectImageResponsePlane::Raw(raw) => raw,
+                    AwProjectImageResponsePlane::LosslessDyadic(_) => unreachable!(),
+                };
+                *plane = AwProjectImageResponsePlane::LosslessDyadic(
+                    LosslessDyadicSpatialPlane::encode(&raw, 2).unwrap(),
+                );
+            }
+        }
+        let (encoded_actual, encoded_peak_abs) = cache.synthesize(&updated_model_terms).unwrap();
+        assert_eq!(encoded_actual, actual);
+        assert_eq!(encoded_peak_abs, principal_peak_abs);
     }
 
     #[test]
     fn lossless_dyadic_tile_census_finds_exact_integer_tiles() {
         let response = Array2::from_shape_vec((2, 2), vec![0.0, 0.25, -0.5, 1.0]).unwrap();
-        let census = lossless_dyadic_tile_census(&response, 4);
+        let census = lossless_dyadic_spatial_tile_census(&response, 2);
         assert_eq!(census.cells, 4);
         assert_eq!(census.tiles, 1);
-        assert_eq!(census.i16_tiles, 1);
+        assert_eq!(census.i8_tiles, 1);
+        assert_eq!(census.i16_tiles, 0);
         assert_eq!(census.i32_tiles, 0);
         assert_eq!(census.raw_f64_tiles, 0);
         assert_eq!(census.raw_bytes, 32);
-        assert_eq!(census.encoded_bytes, 16);
-        assert_eq!(census.compression_ratio(), 2.0);
+        assert_eq!(census.encoded_bytes, 12);
+        assert_eq!(census.compression_ratio(), 32.0 / 12.0);
+
+        let spatial = lossless_dyadic_spatial_tile_census(&response, 1);
+        assert_eq!(spatial.tiles, 4);
+        assert_eq!(spatial.zero_tiles, 1);
+        assert_eq!(spatial.i8_tiles, 3);
+        assert_eq!(spatial.raw_f64_tiles, 0);
 
         let nonfinite = Array2::from_shape_vec((2, 2), vec![0.0, f64::NAN, 1.0, 2.0]).unwrap();
-        let census = lossless_dyadic_tile_census(&nonfinite, 4);
+        let census = lossless_dyadic_spatial_tile_census(&nonfinite, 2);
         assert_eq!(census.raw_f64_tiles, 1);
 
-        let signed_zero =
-            Array2::from_shape_vec((2, 2), vec![0.0, -0.0, 1.0, 2.0]).unwrap();
-        let census = lossless_dyadic_tile_census(&signed_zero, 4);
+        let signed_zero = Array2::from_shape_vec((2, 2), vec![0.0, -0.0, 1.0, 2.0]).unwrap();
+        let census = lossless_dyadic_spatial_tile_census(&signed_zero, 2);
         assert_eq!(census.raw_f64_tiles, 1);
+    }
+
+    #[test]
+    fn lossless_dyadic_spatial_plane_roundtrips_bits() {
+        let positive = [
+            0.0_f32,
+            1.0,
+            -1.0,
+            f32::MIN_POSITIVE,
+            0.125,
+            -0.0625,
+            1.25e-8,
+            -9.75e12,
+            std::f32::consts::PI,
+            -2.7182817,
+            65536.5,
+            -0.000_976_562_5,
+            7.0,
+            -11.0,
+            13.0,
+        ];
+        let negative = [
+            0.0_f32,
+            -0.5,
+            0.25,
+            0.0,
+            -0.125,
+            0.03125,
+            -1.0e-8,
+            9.5e12,
+            -3.0,
+            2.5,
+            65_535.5,
+            0.000_488_281_25,
+            -5.0,
+            10.0,
+            -12.0,
+        ];
+        let values = positive
+            .into_iter()
+            .zip(negative)
+            .map(|(positive, negative)| (f64::from(positive) - f64::from(negative)) * 4.0)
+            .collect::<Vec<_>>();
+        let response = Array2::from_shape_vec((3, 5), values).unwrap();
+        let encoded = LosslessDyadicSpatialPlane::encode(&response, 2).unwrap();
+        for x in 0..response.dim().0 {
+            for y in 0..response.dim().1 {
+                assert_eq!(encoded.value_at(x, y).to_bits(), response[(x, y)].to_bits());
+            }
+        }
     }
 
     #[test]
@@ -53111,15 +54594,17 @@ mod tests {
 
     #[test]
     fn awproject_metal_contract_matches_shader_layout() {
-        assert_eq!(std::mem::size_of::<super::AwProjectMetalPlan>(), 24);
+        assert_eq!(std::mem::size_of::<super::AwProjectMetalPhasePlan>(), 4);
+        assert_eq!(std::mem::align_of::<super::AwProjectMetalPhasePlan>(), 4);
+        assert_eq!(std::mem::size_of::<super::AwProjectMetalPlan>(), 28);
         assert_eq!(std::mem::align_of::<super::AwProjectMetalPlan>(), 4);
-        assert_eq!(std::mem::size_of::<super::AwProjectMetalSample>(), 160);
+        assert_eq!(std::mem::size_of::<super::AwProjectMetalSample>(), 184);
         assert_eq!(std::mem::align_of::<super::AwProjectMetalSample>(), 4);
         assert_eq!(std::mem::size_of::<super::AwProjectMetalParams>(), 32);
         assert_eq!(std::mem::align_of::<super::AwProjectMetalParams>(), 4);
         assert_eq!(
             std::mem::size_of::<super::AwProjectMetalPredictionPlan>(),
-            32
+            36
         );
         assert_eq!(
             std::mem::align_of::<super::AwProjectMetalPredictionPlan>(),
@@ -53127,7 +54612,7 @@ mod tests {
         );
         assert_eq!(
             std::mem::size_of::<super::AwProjectMetalPredictionSample>(),
-            96
+            104
         );
         assert_eq!(
             std::mem::align_of::<super::AwProjectMetalPredictionSample>(),
@@ -53153,19 +54638,19 @@ mod tests {
         assert_eq!(std::mem::align_of::<super::AwProjectMetalTileParams>(), 4);
         assert_eq!(
             std::mem::offset_of!(super::AwProjectMetalSample, first_residual_re),
-            144
+            168
         );
         assert_eq!(
             std::mem::offset_of!(super::AwProjectMetalSample, first_residual_im),
-            148
+            172
         );
         assert_eq!(
             std::mem::offset_of!(super::AwProjectMetalSample, second_residual_re),
-            152
+            176
         );
         assert_eq!(
             std::mem::offset_of!(super::AwProjectMetalSample, second_residual_im),
-            156
+            180
         );
     }
 
@@ -53237,6 +54722,47 @@ mod tests {
             super::peak_location_at_positions(&image, &positions),
             Some(((6, 0), -8.0)),
         );
+    }
+
+    #[test]
+    fn resident_metal_replay_compaction_discards_only_build_materialization() {
+        let mut window = super::AwProjectCompactReplayWindow {
+            source_samples: Vec::with_capacity(32),
+            tap_requests: Vec::with_capacity(64),
+            bundles: Vec::with_capacity(64),
+            persistent_metal_batch: Some(super::AwProjectMetalBatch::default()),
+            persistent_metal_resident_program: Some(super::AwProjectMetalResidentProgram {
+                prediction_batch: super::AwProjectMetalPredictionBatch::default(),
+                tile_batch: super::AwProjectMetalBatch::default(),
+                tile_plan: super::AwProjectMetalTilePlan::default(),
+                residual_scale_plan: super::AwProjectMetalResidualScalePlan {
+                    max_kernel_norm: 0.0,
+                    residual_overlap: 0,
+                },
+                selected_model_plan: None,
+                metadata: super::AwProjectMetalResidentMetadata {
+                    normalization_sumwt: 0.0,
+                    gridded_samples: 0,
+                    skipped_samples: 0,
+                    aw_sample_census: super::AwProjectSampleStats::default(),
+                },
+            }),
+        };
+        let resident_bytes_before = window.resident_bytes();
+
+        let released = window.compact_to_resident_metal_program();
+
+        assert!(released > 0);
+        assert_eq!(
+            resident_bytes_before - window.resident_bytes(),
+            released,
+            "reported released bytes must match the resident-byte ledger"
+        );
+        assert_eq!(window.source_samples.capacity(), 0);
+        assert_eq!(window.tap_requests.capacity(), 0);
+        assert_eq!(window.bundles.capacity(), 0);
+        assert!(window.persistent_metal_batch.is_none());
+        assert!(window.persistent_metal_resident_program.is_some());
     }
 
     #[test]
@@ -53414,6 +54940,7 @@ mod tests {
             y_support,
             kernel_base: 0,
             _pad0: 0,
+            phase: super::AwProjectMetalPhasePlan { base: u32::MAX },
         };
         assert_eq!(
             super::awproject_metal_max_plan_overlap(
@@ -53451,6 +54978,7 @@ mod tests {
         let (scales, inverse_scales) = super::awproject_metal_fixed_scales(
             &[sample],
             &[super::WProjectMetalComplex { re: 1.0, im: 0.0 }],
+            &[super::WProjectMetalComplex { re: 1.0, im: 0.0 }],
             &[2.0, 0.5, 0.125],
             params,
         )
@@ -53470,12 +54998,19 @@ mod tests {
             ..params
         };
         let kernels = [super::WProjectMetalComplex { re: 1.0, im: 0.0 }];
+        let phases = [super::WProjectMetalComplex { re: 1.0, im: 0.0 }];
         let weights = [2.0, 0.5];
-        let reference =
-            super::awproject_metal_fixed_scales(&[sample], &kernels, &weights, residual_params)
-                .unwrap();
+        let reference = super::awproject_metal_fixed_scales(
+            &[sample],
+            &kernels,
+            &phases,
+            &weights,
+            residual_params,
+        )
+        .unwrap();
         let scale_plan =
-            super::plan_awproject_metal_residual_scales(&[sample], &kernels, 8, 8).unwrap();
+            super::plan_awproject_metal_residual_scales(&[sample], &kernels, &phases, 8, 8)
+                .unwrap();
         let cached =
             super::awproject_metal_residual_fixed_scales(&[sample], &weights, 2, scale_plan)
                 .unwrap();
@@ -53496,6 +55031,7 @@ mod tests {
             y_support: 0,
             kernel_base: 0,
             _pad0: 0,
+            phase: super::AwProjectMetalPhasePlan { base: 0 },
         };
         let make_batch = || super::AwProjectMetalBatch {
             samples: vec![super::AwProjectMetalSample {
@@ -53511,11 +55047,12 @@ mod tests {
                 second_residual_im: 0.25,
             }],
             kernels: vec![super::WProjectMetalComplex { re: 1.0, im: 0.0 }],
+            phases: vec![super::WProjectMetalComplex { re: 1.0, im: 0.0 }],
             term_weights: vec![2.0, 0.5, 0.125],
             kernel_pack: Duration::ZERO,
         };
         let packed_batch_bytes = std::mem::size_of::<super::AwProjectMetalSample>()
-            + std::mem::size_of::<super::WProjectMetalComplex>()
+            + 2 * std::mem::size_of::<super::WProjectMetalComplex>()
             + 3 * std::mem::size_of::<f32>();
         let fixed_bytes_per_plane = 8 * 8 * std::mem::size_of::<Complex32>() * 2;
 
@@ -53572,6 +55109,7 @@ mod tests {
             y_support: 0,
             kernel_base: 0,
             _pad0: 0,
+            phase: super::AwProjectMetalPhasePlan { base: u32::MAX },
         };
         let sample = super::AwProjectMetalSample {
             first_imaging: sample_plan,
@@ -53588,11 +55126,12 @@ mod tests {
         let batch = super::AwProjectMetalBatch {
             samples: vec![sample],
             kernels: vec![super::WProjectMetalComplex { re: 1.0, im: 0.0 }],
+            phases: vec![super::WProjectMetalComplex { re: 1.0, im: 0.0 }],
             term_weights: vec![2.0, 0.5],
             kernel_pack: Duration::ZERO,
         };
         let packed_batch_bytes = std::mem::size_of::<super::AwProjectMetalSample>()
-            + std::mem::size_of::<super::WProjectMetalComplex>()
+            + 2 * std::mem::size_of::<super::WProjectMetalComplex>()
             + 2 * std::mem::size_of::<f32>();
         let fixed_bytes_per_plane = 8 * 8 * std::mem::size_of::<Complex32>() * 2;
         let mut grid = crate::apple_fft::MetalSharedF32DirtyGridBatch::new(8, 8, 2).unwrap();
@@ -53617,6 +55156,90 @@ mod tests {
 
     #[test]
     #[cfg(all(target_os = "macos", not(coverage)))]
+    fn awproject_metal_phase_stencil_matches_casa_f32_product() {
+        if !super::standard_mfs_metal_device_available() {
+            return;
+        }
+        let values = (0..32)
+            .map(|index| {
+                let seed = index as f32 + 1.0;
+                (
+                    Complex32::new((seed * 0.123_456_79).sin(), (seed * -0.234_567_9).cos()),
+                    Complex32::new((seed * 0.345_678_9).cos(), (seed * 0.938_271_6).sin()),
+                )
+            })
+            .collect::<Vec<_>>();
+        let batch = super::AwProjectMetalBatch {
+            samples: values
+                .iter()
+                .enumerate()
+                .map(|(index, _)| {
+                    let plan = super::AwProjectMetalPlan {
+                        loc_x: (index / 8) as i32 + 2,
+                        loc_y: (index % 8) as i32,
+                        x_support: 0,
+                        y_support: 0,
+                        kernel_base: index as u32,
+                        _pad0: 0,
+                        phase: super::AwProjectMetalPhasePlan { base: index as u32 },
+                    };
+                    super::AwProjectMetalSample {
+                        first_imaging: plan,
+                        second_imaging: plan,
+                        first_psf: plan,
+                        second_psf: plan,
+                        first_weight: plan,
+                        second_weight: plan,
+                        first_residual_re: 1.0,
+                        first_residual_im: 0.0,
+                        second_residual_re: 0.0,
+                        second_residual_im: 0.0,
+                    }
+                })
+                .collect(),
+            kernels: values
+                .iter()
+                .map(|(kernel, _)| super::WProjectMetalComplex {
+                    re: kernel.re,
+                    im: kernel.im,
+                })
+                .collect(),
+            phases: values
+                .iter()
+                .map(|(_, phase)| super::WProjectMetalComplex {
+                    re: phase.re,
+                    im: phase.im,
+                })
+                .collect(),
+            term_weights: (0..values.len()).flat_map(|_| [1.0, 0.0]).collect(),
+            kernel_pack: Duration::ZERO,
+        };
+        let packed_batch_bytes = batch.resident_bytes();
+        let fixed_bytes = 8 * 8 * std::mem::size_of::<Complex32>() * 2 * 2;
+        let mut grid = crate::apple_fft::MetalSharedF32DirtyGridBatch::new(8, 8, 2).unwrap();
+        let mut compensation = None;
+        super::dispatch_awproject_mtmfs_metal_batch(
+            &mut grid,
+            &mut compensation,
+            &batch,
+            2,
+            0,
+            packed_batch_bytes + fixed_bytes,
+        )
+        .unwrap();
+        let planes =
+            super::copy_awproject_metal_centered_f64_planes(&grid, compensation.as_ref().unwrap())
+                .unwrap();
+        for (index, &(kernel, phase)) in values.iter().enumerate() {
+            let expected = kernel * phase;
+            let actual = planes[0][[index / 8 + 2, index % 8]];
+            assert_eq!(actual.re.to_bits(), f64::from(expected.re).to_bits());
+            assert_eq!(actual.im.to_bits(), f64::from(expected.im).to_bits());
+        }
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
     fn awproject_metal_tile_grid_matches_source_major_fixed_grid() {
         if !super::standard_mfs_metal_device_available() {
             return;
@@ -53628,6 +55251,7 @@ mod tests {
             y_support: 0,
             kernel_base: 0,
             _pad0: 0,
+            phase: super::AwProjectMetalPhasePlan { base: 0 },
         };
         let second_plan = super::AwProjectMetalPlan {
             loc_x: 5,
@@ -53636,6 +55260,7 @@ mod tests {
             y_support: 0,
             kernel_base: 1,
             _pad0: 0,
+            phase: super::AwProjectMetalPhasePlan { base: 1 },
         };
         let batch = super::AwProjectMetalBatch {
             samples: vec![super::AwProjectMetalSample {
@@ -53654,11 +55279,15 @@ mod tests {
                 super::WProjectMetalComplex { re: 1.0, im: 0.0 },
                 super::WProjectMetalComplex { re: 0.5, im: -0.25 },
             ],
+            phases: vec![
+                super::WProjectMetalComplex { re: 0.0, im: 1.0 },
+                super::WProjectMetalComplex { re: -1.0, im: 0.0 },
+            ],
             term_weights: vec![2.0, 0.5],
             kernel_pack: Duration::ZERO,
         };
         let packed_batch_bytes = std::mem::size_of::<super::AwProjectMetalSample>()
-            + 2 * std::mem::size_of::<super::WProjectMetalComplex>()
+            + 4 * std::mem::size_of::<super::WProjectMetalComplex>()
             + 2 * std::mem::size_of::<f32>();
         let fixed_bytes = 8 * 8 * std::mem::size_of::<Complex32>() * 2 * 2;
         let mut source_grid = crate::apple_fft::MetalSharedF32DirtyGridBatch::new(8, 8, 2).unwrap();
@@ -53677,6 +55306,10 @@ mod tests {
             source_compensation.as_ref().unwrap(),
         )
         .unwrap();
+        assert_eq!(source_planes[0][[2, 2]], Complex64::new(1.0, 2.0));
+        assert_eq!(source_planes[0][[5, 6]], Complex64::new(-0.875, 0.125));
+        assert_eq!(source_planes[1][[2, 2]], Complex64::new(0.25, 0.5));
+        assert_eq!(source_planes[1][[5, 6]], Complex64::new(-0.21875, 0.03125));
 
         let tile_plan = super::plan_awproject_metal_tiles(&batch.samples, 8, 8, 8).unwrap();
         let mut tile_grid = crate::apple_fft::MetalSharedF32DirtyGridBatch::new(8, 8, 2).unwrap();
@@ -53715,6 +55348,7 @@ mod tests {
             y_support: 0,
             kernel_base: 0,
             _pad0: 0,
+            phase: super::AwProjectMetalPhasePlan { base: u32::MAX },
         };
         let second_plan = super::AwProjectMetalPlan {
             loc_x: 5,
@@ -53723,6 +55357,7 @@ mod tests {
             y_support: 0,
             kernel_base: 1,
             _pad0: 0,
+            phase: super::AwProjectMetalPhasePlan { base: u32::MAX },
         };
         let tile_batch = super::AwProjectMetalBatch {
             samples: vec![super::AwProjectMetalSample {
@@ -53741,6 +55376,7 @@ mod tests {
                 super::WProjectMetalComplex { re: 1.0, im: 0.0 },
                 super::WProjectMetalComplex { re: 0.5, im: -0.25 },
             ],
+            phases: vec![super::WProjectMetalComplex { re: 1.0, im: 0.0 }],
             term_weights: vec![2.0, 0.5],
             kernel_pack: Duration::ZERO,
         };
@@ -53755,6 +55391,7 @@ mod tests {
                     _pad0: 0,
                     normalization_re: 1.0,
                     normalization_im: 0.0,
+                    phase: super::AwProjectMetalPhasePlan { base: u32::MAX },
                 },
                 second_prediction: super::AwProjectMetalPredictionPlan {
                     loc_x: 5,
@@ -53765,6 +55402,7 @@ mod tests {
                     _pad0: 0,
                     normalization_re: 1.0,
                     normalization_im: 0.0,
+                    phase: super::AwProjectMetalPhasePlan { base: u32::MAX },
                 },
                 first_observed_re: 1.0,
                 first_observed_im: -0.5,
@@ -53776,9 +55414,10 @@ mod tests {
                 _pad0: 0,
             }],
             kernels: tile_batch.kernels.clone(),
+            phases: tile_batch.phases.clone(),
         };
         let packed_batch_bytes = std::mem::size_of::<super::AwProjectMetalSample>()
-            + 2 * std::mem::size_of::<super::WProjectMetalComplex>()
+            + 3 * std::mem::size_of::<super::WProjectMetalComplex>()
             + 2 * std::mem::size_of::<f32>();
         let fixed_bytes = 8 * 8 * std::mem::size_of::<Complex32>() * 2 * 2;
         let mut reference_grid =

@@ -7,26 +7,110 @@ binary="${CASA_RS_VLASS_EXPERIMENT_BINARY:-$repo_root/target/release/casars-imag
 fftw_dir="${CASA_RS_VLASS_FFTW_LIBRARY_DIR:-/opt/homebrew/opt/fftw/lib}"
 fftw_threads="${CASA_RS_VLASS_FFTW_THREADS:-1}"
 grid_threads="${CASA_RS_VLASS_GRID_THREADS:-2}"
+plan_threads="${CASA_RS_VLASS_AW_PLAN_THREADS:-1}"
+pack_threads="${CASA_RS_VLASS_AW_PACK_THREADS:-1}"
 standard_mfs_acceleration="${CASA_RS_VLASS_STANDARD_MFS_ACCELERATION:-metal}"
+imaging_fft_precision="${CASA_RS_VLASS_IMAGING_FFT_PRECISION:-f64}"
+cf_resident_mb="${CASA_RS_VLASS_CF_RESIDENT_MB:-256}"
 replay_retention_bytes="${CASA_RS_VLASS_REPLAY_RETENTION_BYTES:-4294967296}"
+replay_compact_programs="${CASA_RS_VLASS_REPLAY_COMPACT_PROGRAMS:-0}"
+prime_replay_initial_dirty="${CASA_RS_VLASS_PRIME_REPLAY_INITIAL_DIRTY:-0}"
+tapless_phase="${CASA_RS_VLASS_TAPLESS_PHASE:-0}"
+tapless_phase_census="${CASA_RS_VLASS_TAPLESS_PHASE_CENSUS:-0}"
 niter="${CASA_RS_VLASS_NITER:-2000}"
 image_response_cache="${CASA_RS_VLASS_IMAGE_RESPONSE_CACHE:-0}"
+image_response_dyadic_tiles="${CASA_RS_VLASS_IMAGE_RESPONSE_DYADIC_TILES:-0}"
 radix_madfm="${CASA_RS_VLASS_RADIX_MADFM:-0}"
+frozen_model_prefix="${CASA_RS_VLASS_FROZEN_MODEL_PREFIX:-}"
+frozen_weight_image="${CASA_RS_VLASS_FROZEN_WEIGHT_IMAGE:-}"
+prediction_trace_limit="${CASA_RS_VLASS_PREDICTION_TRACE_LIMIT:-0}"
+prediction_trace_stride="${CASA_RS_VLASS_PREDICTION_TRACE_STRIDE:-1}"
+cpp_complex="${CASA_RS_VLASS_CPP_COMPLEX:-0}"
+usepointing="${CASA_RS_VLASS_USEPOINTING:-1}"
+pointing_trace="${CASA_RS_VLASS_POINTING_TRACE:-0}"
 measures_dir="${CASA_RS_VLASS_MEASURES_DIR:-$HOME/.casa/data}"
 ms="$root/data/frozen-clean-b80d5e87487a/VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms"
 cf_cache="$root/cf-cache/6.7.5.18/single-field-4096-full-16-spw"
 mask="$root/masks/vlass-single-field-peak-box-4096.mask"
 experimental_environment=(CASA_RS_VLASS_EXPERIMENT_RUNNER=1)
 parallel_argument=(--no-parallel)
+pointing_argument=(--usepointing)
 label="vlass-production-clean-4096-full-16-spw-fftw-t${fftw_threads}-gridt${grid_threads}-niter${niter}"
 
 if [[ "$image_response_cache" == "1" ]]; then
-    label="${label}-image-response-cache"
+    label="${label}-image-response-cache-promoted-stack"
     experimental_environment+=(
         CASA_RS_EXPERIMENTAL_AWPROJECT_IMAGE_RESPONSE_CACHE=1
+        CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_ONLY_REFRESH=1
+        CASA_RS_AWPROJECT_MODEL_FFT_THREADS_EXPERIMENT=8
+        CASA_RS_EXPERIMENTAL_PARALLEL_MODEL_TERM_FFT=1
+        CASA_RS_EXPERIMENTAL_SPARSE_AWPROJECT_MODEL_PREP=1
+        CASA_RS_EXPERIMENTAL_PARALLEL_RESIDUAL_TERM_FFT=1
+        CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_RESIDENT_TILE_CHAIN=1
+        CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GPU_RESIDUAL_REPLAY=1
+        CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_TILE_SIDE=16
+        CASA_RS_EXPERIMENTAL_CACHE_REFRESHED_NSIGMA=1
+        CASA_RS_EXPERIMENTAL_SPARSE_MASK_PEAK_SEARCH=1
     )
 elif [[ "$image_response_cache" != "0" ]]; then
     echo "CASA_RS_VLASS_IMAGE_RESPONSE_CACHE must be 0 or 1" >&2
+    exit 2
+fi
+if [[ "$replay_compact_programs" == "1" ]]; then
+    if [[ "$image_response_cache" != "1" ]]; then
+        echo "CASA_RS_VLASS_REPLAY_COMPACT_PROGRAMS requires CASA_RS_VLASS_IMAGE_RESPONSE_CACHE=1" >&2
+        exit 2
+    fi
+    label="${label}-compact-replay-programs"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_RESIDENT_PROGRAM_COMPACTION=1
+    )
+elif [[ "$replay_compact_programs" != "0" ]]; then
+    echo "CASA_RS_VLASS_REPLAY_COMPACT_PROGRAMS must be 0 or 1" >&2
+    exit 2
+fi
+if [[ "$prime_replay_initial_dirty" == "1" ]]; then
+    if [[ "$replay_compact_programs" != "1" ]]; then
+        echo "CASA_RS_VLASS_PRIME_REPLAY_INITIAL_DIRTY requires CASA_RS_VLASS_REPLAY_COMPACT_PROGRAMS=1" >&2
+        exit 2
+    fi
+    label="${label}-prime-replay-initial-dirty"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_PRIME_REPLAY_INITIAL_DIRTY=1
+    )
+elif [[ "$prime_replay_initial_dirty" != "0" ]]; then
+    echo "CASA_RS_VLASS_PRIME_REPLAY_INITIAL_DIRTY must be 0 or 1" >&2
+    exit 2
+fi
+if [[ "$tapless_phase" == "1" ]]; then
+    label="${label}-tapless-phase-atlas"
+    experimental_environment+=(
+        CASA_RS_AWPROJECT_TAPLESS_PHASE_EXPERIMENT=1
+    )
+elif [[ "$tapless_phase" != "0" ]]; then
+    echo "CASA_RS_VLASS_TAPLESS_PHASE must be 0 or 1" >&2
+    exit 2
+fi
+if [[ "$tapless_phase_census" == "1" ]]; then
+    label="${label}-tapless-phase-census"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_TAPLESS_PHASE_CENSUS=1
+    )
+elif [[ "$tapless_phase_census" != "0" ]]; then
+    echo "CASA_RS_VLASS_TAPLESS_PHASE_CENSUS must be 0 or 1" >&2
+    exit 2
+fi
+if [[ "$image_response_dyadic_tiles" == "1" ]]; then
+    if [[ "$image_response_cache" != "1" ]]; then
+        echo "CASA_RS_VLASS_IMAGE_RESPONSE_DYADIC_TILES requires CASA_RS_VLASS_IMAGE_RESPONSE_CACHE=1" >&2
+        exit 2
+    fi
+    label="${label}-dyadic-tiles"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_IMAGE_RESPONSE_DYADIC_TILES=1
+    )
+elif [[ "$image_response_dyadic_tiles" != "0" ]]; then
+    echo "CASA_RS_VLASS_IMAGE_RESPONSE_DYADIC_TILES must be 0 or 1" >&2
     exit 2
 fi
 if [[ "$radix_madfm" == "1" ]]; then
@@ -34,6 +118,74 @@ if [[ "$radix_madfm" == "1" ]]; then
     experimental_environment+=(CASA_RS_EXPERIMENTAL_RADIX_MADFM=1)
 elif [[ "$radix_madfm" != "0" ]]; then
     echo "CASA_RS_VLASS_RADIX_MADFM must be 0 or 1" >&2
+    exit 2
+fi
+if [[ -n "$frozen_model_prefix" ]]; then
+    for term in 0 1; do
+        if [[ ! -d "${frozen_model_prefix}.model.tt${term}" ]]; then
+            echo "frozen MT-MFS model term does not exist: ${frozen_model_prefix}.model.tt${term}" >&2
+            exit 2
+        fi
+    done
+    label="${label}-frozen-model-refresh"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_FROZEN_MODEL_PREFIX="$frozen_model_prefix"
+    )
+fi
+if [[ -n "$frozen_weight_image" ]]; then
+    if [[ -z "$frozen_model_prefix" ]]; then
+        echo "CASA_RS_VLASS_FROZEN_WEIGHT_IMAGE requires CASA_RS_VLASS_FROZEN_MODEL_PREFIX" >&2
+        exit 2
+    fi
+    if [[ ! -d "$frozen_weight_image" ]]; then
+        echo "frozen AWProject prediction weight image does not exist: $frozen_weight_image" >&2
+        exit 2
+    fi
+    label="${label}-frozen-weight"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_FROZEN_WEIGHT_IMAGE="$frozen_weight_image"
+    )
+fi
+case "$prediction_trace_limit" in
+    ''|*[!0-9]*)
+        echo "CASA_RS_VLASS_PREDICTION_TRACE_LIMIT must be a non-negative integer" >&2
+        exit 2
+        ;;
+esac
+case "$prediction_trace_stride" in
+    ''|*[!0-9]*|0)
+        echo "CASA_RS_VLASS_PREDICTION_TRACE_STRIDE must be a positive integer" >&2
+        exit 2
+        ;;
+esac
+if [[ "$prediction_trace_limit" != "0" ]]; then
+    label="${label}-prediction-trace"
+    experimental_environment+=(
+        CASA_RS_AWPROJECT_PREDICTION_TRACE_LIMIT="$prediction_trace_limit"
+        CASA_RS_AWPROJECT_PREDICTION_TRACE_STRIDE="$prediction_trace_stride"
+    )
+fi
+if [[ "$cpp_complex" == "1" ]]; then
+    label="${label}-cpp-complex"
+    experimental_environment+=(CASA_RS_EXPERIMENTAL_AWPROJECT_CPP_COMPLEX=1)
+elif [[ "$cpp_complex" != "0" ]]; then
+    echo "CASA_RS_VLASS_CPP_COMPLEX must be 0 or 1" >&2
+    exit 2
+fi
+if [[ "$usepointing" == "0" ]]; then
+    label="${label}-no-pointing"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_DISABLE_POINTING_PHASE=1
+    )
+elif [[ "$usepointing" != "1" ]]; then
+    echo "CASA_RS_VLASS_USEPOINTING must be 0 or 1" >&2
+    exit 2
+fi
+if [[ "$pointing_trace" == "1" ]]; then
+    label="${label}-pointing-trace"
+    experimental_environment+=(CASA_RS_AWPROJECT_POINTING_TRACE=1)
+elif [[ "$pointing_trace" != "0" ]]; then
+    echo "CASA_RS_VLASS_POINTING_TRACE must be 0 or 1" >&2
     exit 2
 fi
 case "$standard_mfs_acceleration" in
@@ -45,6 +197,20 @@ case "$standard_mfs_acceleration" in
         ;;
     *)
         echo "CASA_RS_VLASS_STANDARD_MFS_ACCELERATION must be cpu or metal" >&2
+        exit 2
+        ;;
+esac
+case "$imaging_fft_precision" in
+    f32|f64)
+        ;;
+    *)
+        echo "CASA_RS_VLASS_IMAGING_FFT_PRECISION must be f32 or f64" >&2
+        exit 2
+        ;;
+esac
+case "$cf_resident_mb" in
+    ''|*[!0-9]*|0)
+        echo "CASA_RS_VLASS_CF_RESIDENT_MB must be a positive integer" >&2
         exit 2
         ;;
 esac
@@ -82,6 +248,26 @@ case "$grid_threads" in
         exit 2
         ;;
 esac
+case "$plan_threads" in
+    ''|*[!0-9]*|0)
+        echo "CASA_RS_VLASS_AW_PLAN_THREADS must be a positive integer" >&2
+        exit 2
+        ;;
+esac
+case "$pack_threads" in
+    ''|*[!0-9]*|0)
+        echo "CASA_RS_VLASS_AW_PACK_THREADS must be a positive integer" >&2
+        exit 2
+        ;;
+esac
+if [[ "$plan_threads" != "1" ]]; then
+    label="${label}-awplant${plan_threads}"
+    experimental_environment+=(CASA_RS_AWPROJECT_PLAN_THREADS="$plan_threads")
+fi
+if [[ "$pack_threads" != "1" ]]; then
+    label="${label}-awpackt${pack_threads}"
+    experimental_environment+=(CASA_RS_AWPROJECT_PACK_THREADS="$pack_threads")
+fi
 case "$niter" in
     ''|*[!0-9]*|0)
         echo "CASA_RS_VLASS_NITER must be a positive integer" >&2
@@ -128,13 +314,13 @@ mkdir -p "$(dirname "$output")" "$(dirname "$log")"
     --stokes I \
     --uvrange "<12km" \
     --intent "OBSERVE_TARGET#UNSPECIFIED" \
-    --usepointing \
+    "${pointing_argument[@]}" \
     --weighting briggs \
     --robust 1.0 \
     --perchanweightdensity \
     --deconvolver mtmfs \
     --standard-mfs-acceleration "$standard_mfs_acceleration" \
-    --imaging-fft-precision f64 \
+    --imaging-fft-precision "$imaging_fft_precision" \
     --imaging-fft-backend fftw \
     "${parallel_argument[@]}" \
     --standard-mfs-grid-threads "$grid_threads" \
@@ -158,7 +344,7 @@ mkdir -p "$(dirname "$output")" "$(dirname "$log")"
     --wterm wproject \
     --wprojplanes 32 \
     --cfcache "$cf_cache" \
-    --cf-resident-mb 256 \
+    --cf-resident-mb "$cf_resident_mb" \
     --facets 1 \
     --computepastep 360.0 \
     --rotatepastep 360.0 \
