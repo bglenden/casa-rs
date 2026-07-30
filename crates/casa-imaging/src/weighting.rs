@@ -48,7 +48,7 @@ pub(crate) struct WeightingTraceInternal {
 enum DensityReweightMode {
     Uniform,
     Briggs {
-        f2: f32,
+        f2: f64,
         use_bandwidth_taper: bool,
         fractional_bandwidth: f64,
     },
@@ -65,7 +65,7 @@ pub(crate) enum StandardMfsStreamingReweightPlan<'a> {
     Briggs {
         density: &'a Array2<f32>,
         convention: DensityCellConvention,
-        f2: f32,
+        f2: f64,
         use_bandwidth_taper: bool,
         fractional_bandwidth: f64,
     },
@@ -237,7 +237,7 @@ impl StandardMfsStreamingWeightingPlan {
                         / (sumlocwt / total_density_weight)
                 } else {
                     0.0
-                } as f32;
+                };
                 if trace_weighting_enabled() {
                     let density_nonzero = density.iter().filter(|value| **value > 0.0).count();
                     let density_max = density
@@ -977,7 +977,7 @@ pub(crate) fn apply_weighting_to_owned_batches_with_options(
                 (5.0f64 * 10f64.powf(-(robust as f64))).powi(2) / (sumlocwt / total_density_weight)
             } else {
                 0.0
-            } as f32;
+            };
             if trace_weighting {
                 let density_nonzero = density.iter().filter(|value| **value > 0.0).count();
                 let density_max = density
@@ -1095,7 +1095,7 @@ pub(crate) fn apply_weighting_with_density_source(
                 (5.0f64 * 10f64.powf(-(robust as f64))).powi(2) / (sumlocwt / total_density_weight)
             } else {
                 0.0
-            } as f32;
+            };
             if trace_weighting_enabled() {
                 let density_nonzero = density.iter().filter(|value| **value > 0.0).count();
                 let density_max = density
@@ -1131,17 +1131,11 @@ pub(crate) fn apply_weighting_with_density_source(
                                             gridder,
                                             u_lambda,
                                             v_lambda,
-                                        ) as f32
+                                        )
                                     }
                                     _ => 1.0,
                                 };
-                                let denominator =
-                                    if matches!(weighting, WeightingMode::BriggsBwTaper { .. }) {
-                                        (f2 * density) / taper_factor + 1.0
-                                    } else {
-                                        casa_briggs_denominator(density, f2)
-                                    };
-                                weight / denominator
+                                casa_standard_mfs_briggs_weight(weight, density, f2, taper_factor)
                             },
                         )
                     })
@@ -1197,7 +1191,7 @@ pub(crate) fn apply_weighting_to_owned_batches_by_sample_groups(
                         / (sumlocwt / total_density_weight)
                 } else {
                     0.0
-                } as f32;
+                };
                 if trace_weighting {
                     let density_nonzero = density.iter().filter(|value| **value > 0.0).count();
                     let density_max = density
@@ -1281,7 +1275,7 @@ pub(crate) fn apply_weighting_to_owned_batches_by_sample_range_groups(
                         / (sumlocwt / total_density_weight)
                 } else {
                     0.0
-                } as f32;
+                };
                 if trace_weighting {
                     let density_nonzero = density.iter().filter(|value| **value > 0.0).count();
                     let density_max = density
@@ -2361,27 +2355,34 @@ fn reweight_density_sample(
             use_bandwidth_taper,
             fractional_bandwidth,
         } => {
-            let denominator = if use_bandwidth_taper {
-                let taper_factor = briggs_bw_taper_uv_distance_factor(
+            let taper_factor = if use_bandwidth_taper {
+                briggs_bw_taper_uv_distance_factor(
                     fractional_bandwidth,
                     gridder,
                     u_lambda,
                     v_lambda,
-                ) as f32;
-                (f2 * cell_density) / taper_factor + 1.0
+                )
             } else {
-                casa_briggs_denominator(cell_density, f2)
+                1.0
             };
-            weight / denominator
+            casa_standard_mfs_briggs_weight(weight, cell_density, f2, taper_factor)
         }
     }
 }
 
-/// CASA's optimized C++ build contracts the ordinary Briggs denominator's
-/// multiply and add. Make that rounding boundary explicit and portable.
+/// Apply CASA's standard-MFS Briggs arithmetic and cast once to the output
+/// `Float` weight.
+///
+/// CASA retains the robust scale and denominator expression as `Double`.
+/// Its `Matrix<Float>` result receives the cast only after the division.
 #[inline]
-fn casa_briggs_denominator(density: f32, f2: f32) -> f32 {
-    f2.mul_add(density, 1.0)
+fn casa_standard_mfs_briggs_weight(
+    input_weight: f32,
+    density: f32,
+    f2: f64,
+    taper_factor: f64,
+) -> f32 {
+    (f64::from(input_weight) / (f2 * f64::from(density) / taper_factor + 1.0)) as f32
 }
 
 fn reweight_owned_batch_in_place(
@@ -2493,7 +2494,7 @@ fn reweight_owned_batch_briggs_in_place(
     gridder: &StandardGridder,
     density: &Array2<f32>,
     convention: DensityCellConvention,
-    f2: f32,
+    f2: f64,
     collect_stats: bool,
 ) -> WeightingWorkStats {
     let mut stats = WeightingWorkStats::default();
@@ -2520,7 +2521,7 @@ fn reweight_owned_batch_briggs_in_place(
                 if collect_stats {
                     stats.accepted_samples += 1;
                 }
-                weight / casa_briggs_denominator(cell_density, f2)
+                casa_standard_mfs_briggs_weight(weight, cell_density, f2, 1.0)
             } else {
                 if collect_stats {
                     if !(weight.is_finite() && weight > 0.0) {
@@ -2540,7 +2541,7 @@ fn reweight_owned_batch_briggs_taper_in_place(
     gridder: &StandardGridder,
     density: &Array2<f32>,
     convention: DensityCellConvention,
-    f2: f32,
+    f2: f64,
     fractional_bandwidth: f64,
     collect_stats: bool,
 ) -> WeightingWorkStats {
@@ -2572,8 +2573,8 @@ fn reweight_owned_batch_briggs_taper_in_place(
                     gridder,
                     u_lambda,
                     v_lambda,
-                ) as f32;
-                weight / ((f2 * cell_density) / taper_factor + 1.0)
+                );
+                casa_standard_mfs_briggs_weight(weight, cell_density, f2, taper_factor)
             } else {
                 if collect_stats {
                     if !(weight.is_finite() && weight > 0.0) {
@@ -2783,9 +2784,15 @@ pub fn casa_cube_briggs_weight_denominator(
             ) as f32;
             (f2 * density) / taper + 1.0
         }
-        WeightingMode::Briggs { .. } => casa_briggs_denominator(density, f2),
+        WeightingMode::Briggs { .. } => casa_cube_briggs_denominator(density, f2),
         WeightingMode::Natural => 0.0,
     }
+}
+
+/// Preserve the f32 rounding contract of CASA's cube-specific Briggs weightor.
+#[inline]
+fn casa_cube_briggs_denominator(density: f32, f2: f32) -> f32 {
+    f2.mul_add(density, 1.0)
 }
 
 fn casa_cube_briggs_bw_taper_uv_distance_factor(
@@ -3374,13 +3381,29 @@ mod tests {
     }
 
     #[test]
-    fn briggs_denominator_preserves_casa_fused_rounding() {
+    fn standard_mfs_briggs_retains_double_scale_until_output_cast() {
+        let input_weight = f32::from_bits(1_107_661_012);
+        let density = f32::from_bits(1_139_490_708);
+        let f2 = 0.000_823_385_982_017_859_2_f64;
+
+        assert_eq!(
+            casa_standard_mfs_briggs_weight(input_weight, density, f2, 1.0).to_bits(),
+            1_103_137_407
+        );
+        assert_eq!(
+            (input_weight / (f2 as f32).mul_add(density, 1.0)).to_bits(),
+            1_103_137_408
+        );
+    }
+
+    #[test]
+    fn cube_briggs_denominator_preserves_casa_fused_rounding() {
         let input_weight = f32::from_bits(1_107_661_012);
         let density = f32::from_bits(1_139_490_708);
         let f2 = f32::from_bits(0x3a57_d92b);
 
         assert_eq!(
-            (input_weight / casa_briggs_denominator(density, f2)).to_bits(),
+            (input_weight / casa_cube_briggs_denominator(density, f2)).to_bits(),
             1_103_137_365
         );
         assert_eq!(

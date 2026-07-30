@@ -56,6 +56,7 @@ pub struct MsCalEngine {
     azel_cache: RwLock<HashMap<GeometryCacheKey, (f64, f64)>>,
     hadec_cache: RwLock<HashMap<GeometryCacheKey, (f64, f64)>>,
     parallactic_angle_cache: RwLock<HashMap<GeometryCacheKey, f64>>,
+    mosaic_uvw_cache: RwLock<HashMap<MosaicUvwCacheKey, CasaGirarUvwTransform>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -63,6 +64,21 @@ struct GeometryCacheKey {
     time_bits: u64,
     field_id: usize,
     antenna_id: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct MosaicUvwCacheKey {
+    source_field_id: usize,
+    target_cosine_bits: [u64; 3],
+}
+
+impl MosaicUvwCacheKey {
+    fn new(source_field_id: usize, target_direction: &MDirection) -> Self {
+        Self {
+            source_field_id,
+            target_cosine_bits: target_direction.cosines().map(f64::to_bits),
+        }
+    }
 }
 
 fn epoch_from_mjd_seconds(mjd_seconds: f64, refer: EpochRef) -> MEpoch {
@@ -149,6 +165,7 @@ impl MsCalEngine {
             azel_cache: RwLock::new(HashMap::new()),
             hadec_cache: RwLock::new(HashMap::new()),
             parallactic_angle_cache: RwLock::new(HashMap::new()),
+            mosaic_uvw_cache: RwLock::new(HashMap::new()),
         })
     }
 
@@ -169,6 +186,7 @@ impl MsCalEngine {
             azel_cache: RwLock::new(HashMap::new()),
             hadec_cache: RwLock::new(HashMap::new()),
             parallactic_angle_cache: RwLock::new(HashMap::new()),
+            mosaic_uvw_cache: RwLock::new(HashMap::new()),
         }
     }
 
@@ -551,15 +569,8 @@ impl MsCalEngine {
         source_field_id: usize,
         target_field_id: usize,
     ) -> MsResult<([f64; 3], f64)> {
-        if source_field_id == target_field_id {
-            return Ok((raw_uvw_m, 0.0));
-        }
-
-        let source_dir = self.field_dir(source_field_id)?;
         let target_dir = self.field_dir(target_field_id)?;
-        Ok(reproject_raw_uvw_for_mosaic(
-            raw_uvw_m, source_dir, target_dir,
-        ))
+        self.reproject_raw_uvw_for_mosaic_to_direction(raw_uvw_m, source_field_id, target_dir)
     }
 
     /// Reproject raw MS UVW coordinates from one field phase center to an
@@ -606,12 +617,25 @@ impl MsCalEngine {
                 found: target_direction.refer().as_str().to_string(),
             });
         }
-        let source_dir = self.field_dir(source_field_id)?;
-        Ok(reproject_raw_uvw_for_mosaic(
-            raw_uvw_m,
-            source_dir,
-            target_direction,
-        ))
+        let key = MosaicUvwCacheKey::new(source_field_id, target_direction);
+        let transform = if let Some(transform) = self
+            .mosaic_uvw_cache
+            .read()
+            .expect("MS mosaic UVW cache poisoned")
+            .get(&key)
+            .copied()
+        {
+            transform
+        } else {
+            let source_direction = self.field_dir(source_field_id)?;
+            let transform = CasaGirarUvwTransform::new(source_direction, target_direction);
+            self.mosaic_uvw_cache
+                .write()
+                .expect("MS mosaic UVW cache poisoned")
+                .insert(key, transform);
+            transform
+        };
+        Ok(transform.apply(raw_uvw_m))
     }
 
     /// The observatory position used by this engine.
@@ -692,29 +716,175 @@ fn uvw_phase_rotation_vector(
     )
 }
 
-fn reproject_raw_uvw_for_mosaic(
-    raw_uvw_m: [f64; 3],
-    source_direction: &MDirection,
-    target_direction: &MDirection,
-) -> ([f64; 3], f64) {
-    let casa_input_uvw_m = [-raw_uvw_m[0], -raw_uvw_m[1], raw_uvw_m[2]];
-    let rot = uvw_rotation_matrix(source_direction, target_direction);
-    let casa_output_uvw_m = [
-        casa_input_uvw_m[0] * rot[0][0] + casa_input_uvw_m[1] * rot[1][0],
-        casa_input_uvw_m[1] * rot[1][1] + casa_input_uvw_m[0] * rot[0][1],
-        casa_input_uvw_m[0] * rot[0][2]
-            + casa_input_uvw_m[1] * rot[1][2]
-            + casa_input_uvw_m[2] * rot[2][2],
-    ];
-    let phrot = uvw_phase_rotation_vector(source_direction, target_direction);
-    let phase_shift_m = phrot[0] * casa_output_uvw_m[0] + phrot[1] * casa_output_uvw_m[1];
-    (
-        [
-            -casa_output_uvw_m[0],
-            -casa_output_uvw_m[1],
-            casa_output_uvw_m[2],
-        ],
-        phase_shift_m,
+#[derive(Debug, Clone, Copy)]
+struct CasaUvwMachine {
+    uvrot: [[f64; 3]; 3],
+    phrot: [f64; 3],
+}
+
+impl CasaUvwMachine {
+    /// Construct the fixed-J2000 subset of casacore `UVWMachine`.
+    ///
+    /// Both directions already use the shared J2000 reference, so the
+    /// reference-frame axis conversion is the identity. The explicit-output
+    /// constructor nevertheless executes the rotation even for two identical
+    /// directions; CASA's AW gridders depend on the resulting f64 roundoff.
+    fn new(output_direction: &MDirection, input_direction: &MDirection) -> Self {
+        let [input_ra, input_dec] = casa_mvdirection_angles(input_direction);
+        let [output_ra, output_dec] = casa_mvdirection_angles(output_direction);
+        let rot1 = casa_euler_rotation(&[
+            (-(std::f64::consts::FRAC_PI_2 - input_ra), Axis::Z),
+            (input_dec - std::f64::consts::FRAC_PI_2, Axis::X),
+        ]);
+        let rot3 = casa_euler_rotation(&[
+            (std::f64::consts::FRAC_PI_2 - output_dec, Axis::X),
+            (-(output_ra - std::f64::consts::FRAC_PI_2), Axis::Z),
+        ]);
+        let uvrot = mat3_transpose(casa_mat3_mul(casa_mat3_mul(rot3, identity3()), rot1));
+        let output_cosines = output_direction.cosines();
+        let input_cosines = input_direction.cosines();
+        let phrot = casa_mat3_mul_vec3(
+            rot3,
+            [
+                output_cosines[0] - input_cosines[0],
+                output_cosines[1] - input_cosines[1],
+                output_cosines[2] - input_cosines[2],
+            ],
+        );
+        Self { uvrot, phrot }
+    }
+
+    fn convert_uvw(self, uvw_m: [f64; 3]) -> ([f64; 3], f64) {
+        let converted = casa_row_vec3_mul_mat3(uvw_m, self.uvrot);
+        let phase_shift_m = casa_dot3(self.phrot, converted);
+        (converted, phase_shift_m)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CasaGirarUvwTransform {
+    frame_machine: CasaUvwMachine,
+    phase_machine: CasaUvwMachine,
+}
+
+impl CasaGirarUvwTransform {
+    fn new(source_direction: &MDirection, image_direction: &MDirection) -> Self {
+        Self {
+            // `FTMachine::girarUVW()` first executes an explicit-output
+            // UVWMachine for the correlator direction -> in-field direction
+            // conversion. These are both J2000 here, but CASA does not collapse
+            // this explicit-output machine to a no-op.
+            frame_machine: CasaUvwMachine::new(source_direction, source_direction),
+            phase_machine: CasaUvwMachine::new(image_direction, source_direction),
+        }
+    }
+
+    fn apply(self, raw_uvw_m: [f64; 3]) -> ([f64; 3], f64) {
+        // `AWProjectFT::put()` enters `girarUVW()` through `negateUV(vb)`.
+        // Keep CASA's native sign convention inside this one shared boundary.
+        let casa_input_uvw_m = [-raw_uvw_m[0], -raw_uvw_m[1], raw_uvw_m[2]];
+        let (intermediate, mut phase_shift_m) = self.frame_machine.convert_uvw(casa_input_uvw_m);
+        let rot = self.phase_machine.uvrot;
+        let casa_output_uvw_m = [
+            intermediate[1].mul_add(rot[1][0], intermediate[0] * rot[0][0]),
+            intermediate[0].mul_add(rot[0][1], intermediate[1] * rot[1][1]),
+            intermediate[2].mul_add(
+                rot[2][2],
+                intermediate[1].mul_add(rot[1][2], intermediate[0] * rot[0][2]),
+            ),
+        ];
+        let phase_delta_m = self.phase_machine.phrot[1].mul_add(
+            casa_output_uvw_m[1],
+            self.phase_machine.phrot[0] * casa_output_uvw_m[0],
+        );
+        phase_shift_m += phase_delta_m;
+        (
+            [
+                -casa_output_uvw_m[0],
+                -casa_output_uvw_m[1],
+                casa_output_uvw_m[2],
+            ],
+            phase_shift_m,
+        )
+    }
+}
+
+fn casa_mvdirection_angles(direction: &MDirection) -> [f64; 2] {
+    let cosines = direction.cosines();
+    [cosines[1].atan2(cosines[0]), cosines[2].asin()]
+}
+
+fn casa_euler_rotation(operations: &[(f64, Axis)]) -> [[f64; 3]; 3] {
+    let mut matrix = identity3();
+    for &(angle, axis) in operations {
+        if angle * axis.number() == 0.0 {
+            continue;
+        }
+        let mut rotation = identity3();
+        let (i, j) = axis.indices();
+        let cosine = angle.cos();
+        let sine = angle.sin();
+        rotation[i][i] = cosine;
+        rotation[j][j] = cosine;
+        rotation[j][i] = sine;
+        rotation[i][j] = -sine;
+        matrix = casa_mat3_mul(matrix, rotation);
+    }
+    matrix
+}
+
+fn casa_mat3_mul(left: [[f64; 3]; 3], right: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
+    let mut output = identity3();
+    for row in 0..3 {
+        let source = left[row];
+        for column in 0..3 {
+            let mut value = source[0] * right[0][column];
+            value = source[1].mul_add(right[1][column], value);
+            value = source[2].mul_add(right[2][column], value);
+            output[row][column] = value;
+        }
+    }
+    output
+}
+
+fn casa_row_vec3_mul_mat3(vector: [f64; 3], matrix: [[f64; 3]; 3]) -> [f64; 3] {
+    [
+        vector[2].mul_add(
+            matrix[2][0],
+            vector[1].mul_add(matrix[1][0], vector[0] * matrix[0][0]),
+        ),
+        vector[2].mul_add(
+            matrix[2][1],
+            vector[1].mul_add(matrix[1][1], vector[0] * matrix[0][1]),
+        ),
+        vector[2].mul_add(
+            matrix[2][2],
+            vector[1].mul_add(matrix[1][2], vector[0] * matrix[0][2]),
+        ),
+    ]
+}
+
+fn casa_mat3_mul_vec3(matrix: [[f64; 3]; 3], vector: [f64; 3]) -> [f64; 3] {
+    [
+        vector[2].mul_add(
+            matrix[0][2],
+            vector[1].mul_add(matrix[0][1], vector[0] * matrix[0][0]),
+        ),
+        vector[2].mul_add(
+            matrix[1][2],
+            vector[1].mul_add(matrix[1][1], vector[0] * matrix[1][0]),
+        ),
+        vector[2].mul_add(
+            matrix[2][2],
+            vector[1].mul_add(matrix[2][1], vector[0] * matrix[2][0]),
+        ),
+    ]
+}
+
+fn casa_dot3(left: [f64; 3], right: [f64; 3]) -> f64 {
+    left[2].mul_add(
+        right[2],
+        left[1].mul_add(right[1], left[0].mul_add(right[0], 0.0)),
     )
 }
 
@@ -750,6 +920,22 @@ fn mat3_transpose(matrix: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
 enum Axis {
     X,
     Z,
+}
+
+impl Axis {
+    fn number(self) -> f64 {
+        match self {
+            Self::X => 1.0,
+            Self::Z => 3.0,
+        }
+    }
+
+    fn indices(self) -> (usize, usize) {
+        match self {
+            Self::X => (1, 2),
+            Self::Z => (0, 1),
+        }
+    }
 }
 
 fn euler_rotation(operations: &[(f64, Axis)]) -> [[f64; 3]; 3] {
@@ -1352,6 +1538,50 @@ mod tests {
             (phase_shift_m - -0.000_314_029_427_521_723_44).abs() < 1.0e-12,
             "phase_shift_m={phase_shift_m}"
         );
+    }
+
+    #[test]
+    fn mosaic_explicit_same_field_machine_matches_vlass_native_bits() {
+        let source_direction = MDirection::from_angles(
+            -2.737_583_127_275_378,
+            0.293_215_314_333_100_33,
+            DirectionRef::J2000,
+        );
+        let engine = MsCalEngine::from_parts(
+            vec![MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z)],
+            vec![source_direction],
+            MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z),
+            casa_test_support::deterministic_measures_provider(),
+        );
+        // This is the exact reference direction returned by CASA's
+        // DirectionCoordinate after its radians -> WCS degrees -> radians
+        // boundary for the frozen VLASS field.
+        let image_direction = MDirection::from_angles(
+            3.545_602_179_904_207_7,
+            0.293_215_314_333_100_33,
+            DirectionRef::J2000,
+        );
+        let (uvw_m, phase_shift_m) = engine
+            .reproject_raw_uvw_for_mosaic_to_direction(
+                [
+                    -1_236.664_060_532_996_5,
+                    -2_033.447_768_019_716_7,
+                    1_892.803_548_834_091,
+                ],
+                0,
+                &image_direction,
+            )
+            .unwrap();
+
+        assert_eq!(
+            uvw_m.map(f64::to_bits),
+            [
+                13_876_525_758_357_962_531,
+                13_880_030_050_162_779_011,
+                4_656_039_453_490_506_920,
+            ]
+        );
+        assert_eq!(phase_shift_m.to_bits(), 4_425_269_780_393_832_168);
     }
 
     #[test]

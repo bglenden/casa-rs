@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Validate and classify the casa-rs VLASS native-component V3 receipt.
+"""Validate and classify the casa-rs VLASS native-component V4 receipt.
 
 This validator is deliberately independent of the Rust diagnostic.  It
 reconstructs every FNV-1a component, admission decision, STREAM hash, TT0
@@ -26,12 +26,12 @@ from typing import Any, Iterable
 CASA_RECEIPT_SHA256 = "cc30d5492f6654336f46617a696f9a7fc8da9006df4e5ae9a3c64a6a9f401644"
 CASA_ENVELOPE_SCHEMA = "casa-aw-datagrid-native-components-envelope-v1"
 CASA_EVIDENCE_SCHEMA = "casa-aw-datagrid-native-components-v1"
-CANDIDATE_ENVELOPE_SCHEMA = "casa-rs-aw-datatogrid-native-components-audit-envelope-v3"
-CANDIDATE_EVIDENCE_SCHEMA = "casa-rs-aw-datatogrid-native-components-audit-v3"
+CANDIDATE_ENVELOPE_SCHEMA = "casa-rs-aw-datatogrid-native-components-audit-envelope-v4"
+CANDIDATE_EVIDENCE_SCHEMA = "casa-rs-aw-datatogrid-native-components-audit-v4"
 COMPARISON_ENVELOPE_SCHEMA = (
-    "casa-rs-aw-datatogrid-native-components-comparison-envelope-v3"
+    "casa-rs-aw-datatogrid-native-components-comparison-envelope-v4"
 )
-COMPARISON_SCHEMA = "casa-rs-aw-datatogrid-native-components-comparison-v3"
+COMPARISON_SCHEMA = "casa-rs-aw-datatogrid-native-components-comparison-v4"
 
 FNV_OFFSET = 0xCBF29CE484222325
 FNV_PRIME = 0x00000100000001B3
@@ -96,7 +96,9 @@ HASH_CONTRACT = {
 }
 CANDIDATE_HASH_CONTRACT = {
     **HASH_CONTRACT,
-    "actual_uvw": "casa-rs-prepared-geometry-transform-uvw-m",
+    "actual_uvw": (
+        "casa-convention-reexpression-of-casa-rs-prepared-geometry-transform-uvw-m"
+    ),
     "actual_phase": "casa-rs-prepared-geometry-phase-shift-m",
     "flag_masks": "unmodified-four-correlation-source-FLAG",
     "imaging_weights": (
@@ -151,6 +153,7 @@ AUXILIARY_KEYS = frozenset(
         "absolute_main_row",
         "raw_uvw_bits",
         "gridft_density_uvw_bits",
+        "casa_rs_internal_uvw_bits",
         "negated_uv_transform_uvw_bits",
         "first_parallel_hand_natural_weight_bits",
         "second_parallel_hand_natural_weight_bits",
@@ -603,6 +606,7 @@ def _validate_rows(value: Any, *, candidate: bool, label: str) -> list[dict[str,
             for name in (
                 "raw_uvw_bits",
                 "gridft_density_uvw_bits",
+                "casa_rs_internal_uvw_bits",
                 "negated_uv_transform_uvw_bits",
             ):
                 bits = _sequence(auxiliary[name], f"{row_label}.auxiliary.{name}")
@@ -1076,8 +1080,15 @@ def validate_candidate(
         )
         _exact(
             claimed["auxiliary"]["negated_uv_transform_uvw_bits"],
-            _negated_raw_uvw(claimed["uvw_bits"]),
-            f"{label}.rows[{row}]: independently negated internal UVW",
+            claimed["uvw_bits"],
+            f"{label}.rows[{row}]: published CASA-convention UVW",
+        )
+        _exact(
+            claimed["auxiliary"]["negated_uv_transform_uvw_bits"],
+            _negated_raw_uvw(
+                claimed["auxiliary"]["casa_rs_internal_uvw_bits"]
+            ),
+            f"{label}.rows[{row}]: independently reexpressed internal UVW",
         )
     _validate_candidate_comparison_claims(evidence, components, calls, label=label)
     return (
@@ -1237,6 +1248,8 @@ def _science_rows(
             uvw_bits = _negated_raw_uvw(row["auxiliary"]["raw_uvw_bits"])
         elif uvw_selector == "gridft_density":
             uvw_bits = row["auxiliary"]["gridft_density_uvw_bits"]
+        elif uvw_selector == "casa_rs_internal":
+            uvw_bits = row["auxiliary"]["casa_rs_internal_uvw_bits"]
         elif uvw_selector == "negated_internal":
             uvw_bits = row["auxiliary"]["negated_uv_transform_uvw_bits"]
         masks = row["flag_masks"]
@@ -1426,7 +1439,7 @@ def build_comparison(
         ),
     }
     uvw_hypotheses = {
-        "internal": _hypothesis_summary(
+        "published_casa_convention": _hypothesis_summary(
             casa_header=casa_header,
             casa_rows=casa_rows,
             candidate_header=candidate_header,
@@ -1450,6 +1463,14 @@ def build_comparison(
             candidate_header=candidate_header,
             transformed_rows=_science_rows(
                 candidate_rows, uvw_selector="gridft_density"
+            ),
+        ),
+        "casa_rs_internal": _hypothesis_summary(
+            casa_header=casa_header,
+            casa_rows=casa_rows,
+            candidate_header=candidate_header,
+            transformed_rows=_science_rows(
+                candidate_rows, uvw_selector="casa_rs_internal"
             ),
         ),
         "negated_internal": _hypothesis_summary(
