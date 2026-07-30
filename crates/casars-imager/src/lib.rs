@@ -7269,6 +7269,10 @@ pub fn run_from_request(request: &ImagerRunTaskRequest) -> Result<RunSummary, St
 
 const AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV: &str = "CASA_RS_AW_BRACKET_OUTPUT";
 const AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV: &str = "CASA_RS_INTERNAL_AW_BRACKET_SELECTION_V4";
+const AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV: &str =
+    "CASA_RS_AW_TT0_ARITHMETIC_COMPAT_OUTPUT_V1";
+const AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV: &str =
+    "CASA_RS_INTERNAL_AW_TT0_ARITHMETIC_COMPAT_SELECTION_V1";
 const AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS: usize = 325;
 const AWPROJECT_DATATOGRID_BRACKET_FIRST_SELECTED_ROW_IDS_HASH: u64 = 15_058_004_568_616_189_240;
 const AWPROJECT_DATATOGRID_BRACKET_FIRST_ABSOLUTE_ROW_IDS_HASH: u64 = 8_652_707_267_842_020_204;
@@ -7276,6 +7280,73 @@ const AWPROJECT_DATATOGRID_BRACKET_FIRST_ABSOLUTE_ROW: usize = 353_600;
 const AWPROJECT_DATATOGRID_BRACKET_LAST_ABSOLUTE_ROW: usize = 353_924;
 const AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_FLAGS_HASH: u64 = 3_526_571_572_021_233_857;
 const AWPROJECT_DATATOGRID_BRACKET_FIRST_FLAGGED_ROWS: usize = 48;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AwProjectDataToGridDiagnosticMode {
+    FrozenV4,
+    Tt0ArithmeticCompatV1,
+}
+
+impl AwProjectDataToGridDiagnosticMode {
+    fn output_env(self) -> &'static str {
+        match self {
+            Self::FrozenV4 => AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV,
+            Self::Tt0ArithmeticCompatV1 => AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV,
+        }
+    }
+
+    fn selection_env(self) -> &'static str {
+        match self {
+            Self::FrozenV4 => AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV,
+            Self::Tt0ArithmeticCompatV1 => AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV,
+        }
+    }
+
+    fn expected_controls(self) -> [(&'static str, &'static str); 3] {
+        match self {
+            Self::FrozenV4 => [
+                ("CASA_RS_AW_BRACKET_EXPECT_NXY", "4096"),
+                ("CASA_RS_AW_BRACKET_BLOCKS", "1"),
+                ("CASA_RS_AW_BRACKET_TERMS", "2"),
+            ],
+            Self::Tt0ArithmeticCompatV1 => [
+                ("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_EXPECT_NXY", "4096"),
+                ("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_BLOCKS", "1"),
+                ("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_TERMS", "1"),
+            ],
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AwProjectDataToGridDiagnosticRequest {
+    mode: AwProjectDataToGridDiagnosticMode,
+    output: PathBuf,
+}
+
+fn awproject_datatogrid_diagnostic_request()
+-> Result<Option<AwProjectDataToGridDiagnosticRequest>, String> {
+    let frozen_v4_output = env::var_os(AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV);
+    let tt0_arithmetic_compat_output = env::var_os(AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV);
+    let (mode, output) = match (frozen_v4_output, tt0_arithmetic_compat_output) {
+        (None, None) => return Ok(None),
+        (Some(_), Some(_)) => {
+            return Err(format!(
+                "{AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV} and \
+                 {AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV} are mutually exclusive"
+            ));
+        }
+        (Some(output), None) => (AwProjectDataToGridDiagnosticMode::FrozenV4, output),
+        (None, Some(output)) => (
+            AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1,
+            output,
+        ),
+    };
+    Ok(Some(AwProjectDataToGridDiagnosticRequest {
+        mode,
+        output: PathBuf::from(output),
+    }))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AwProjectDataToGridObservedFirstBuffer {
@@ -7298,6 +7369,10 @@ struct AwProjectDataToGridObservedFirstBuffer {
     chan_map_hash: u64,
     pol_map_count: usize,
     pol_map_hash: u64,
+    selected_corr_first_index: usize,
+    selected_corr_second_index: usize,
+    selected_corr_first_code: i32,
+    selected_corr_second_code: i32,
     freq_count: usize,
     freq_hash: u64,
     freq_first_bits: u64,
@@ -7451,6 +7526,10 @@ fn awproject_datatogrid_bracket_observed_first_buffer(
         chan_map_hash,
         pol_map_count: table_values.corr_types.len(),
         pol_map_hash,
+        selected_corr_first_index: parallel_hands.0,
+        selected_corr_second_index: parallel_hands.1,
+        selected_corr_first_code: table_values.corr_types[parallel_hands.0],
+        selected_corr_second_code: table_values.corr_types[parallel_hands.1],
         freq_count: source_frequencies_hz.len(),
         freq_hash,
         freq_first_bits: freq_first_bits.expect("non-empty source frequencies"),
@@ -7459,31 +7538,33 @@ fn awproject_datatogrid_bracket_observed_first_buffer(
 }
 
 fn validate_awproject_datatogrid_bracket_cli(config: &CliConfig) -> Result<(), String> {
-    let Some(output) = env::var_os(AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV) else {
+    let Some(request) = awproject_datatogrid_diagnostic_request()? else {
         return Ok(());
     };
     // This marker is process-private state installed only after the actual
     // selected rows and DDID plans have also passed the checks below.
     unsafe {
-        env::remove_var(AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV);
+        env::remove_var(request.mode.selection_env());
     }
-    let output = PathBuf::from(output);
-    if !output.is_absolute() {
+    if !request.output.is_absolute() {
         return Err(format!(
-            "{AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV} must be an absolute path"
+            "{} must be an absolute path",
+            request.mode.output_env()
         ));
     }
-    if output.exists() {
+    if request.output.exists() {
+        let diagnostic = match request.mode {
+            AwProjectDataToGridDiagnosticMode::FrozenV4 => "DataToGrid bracket",
+            AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1 => {
+                "TT0 arithmetic-compatibility"
+            }
+        };
         return Err(format!(
-            "refusing to overwrite AWProject DataToGrid bracket receipt {}",
-            output.display()
+            "refusing to overwrite AWProject {diagnostic} receipt {}",
+            request.output.display()
         ));
     }
-    for (name, expected) in [
-        ("CASA_RS_AW_BRACKET_EXPECT_NXY", "4096"),
-        ("CASA_RS_AW_BRACKET_BLOCKS", "1"),
-        ("CASA_RS_AW_BRACKET_TERMS", "2"),
-    ] {
+    for (name, expected) in request.mode.expected_controls() {
         if env::var(name).ok().as_deref() != Some(expected) {
             return Err(format!(
                 "the frozen AWProject DataToGrid bracket requires {name}={expected}"
@@ -7547,13 +7628,107 @@ struct AwProjectDataToGridBracketSelectionContext<'a> {
     derived_engine: Option<&'a MsCalEngine>,
 }
 
+fn awproject_datatogrid_selection_marker(
+    first_spw: usize,
+    planned_source_blocks: usize,
+    observed: &AwProjectDataToGridObservedFirstBuffer,
+) -> String {
+    format!(
+        "field=1525;spws=2-17;first_spw={first_spw};source_blocks={planned_source_blocks};\
+         selected_row_begin={};selected_row_end={};selected_row_count={};\
+         selected_row_hash={};selected_row_first={};selected_row_last={};\
+         absolute_main_row_count={};absolute_main_row_hash={};\
+         absolute_main_row_first={};absolute_main_row_last={};\
+         row_flags_count={};row_flags_hash={};flagged_rows={};\
+         n_data_chan={};n_data_pol={};chan_map_count={};chan_map_hash={};\
+         pol_map_count={};pol_map_hash={};freq_count={};freq_hash={};\
+         freq_first_bits={};freq_last_bits={}",
+        observed.selected_row_begin,
+        observed.selected_row_end,
+        observed.selected_row_count,
+        observed.selected_row_hash,
+        observed.selected_row_first,
+        observed.selected_row_last,
+        observed.absolute_main_row_count,
+        observed.absolute_main_row_hash,
+        observed.absolute_main_row_first,
+        observed.absolute_main_row_last,
+        observed.row_flags_count,
+        observed.row_flags_hash,
+        observed.flagged_rows,
+        observed.n_data_chan,
+        observed.n_data_pol,
+        observed.chan_map_count,
+        observed.chan_map_hash,
+        observed.pol_map_count,
+        observed.pol_map_hash,
+        observed.freq_count,
+        observed.freq_hash,
+        observed.freq_first_bits,
+        observed.freq_last_bits,
+    )
+}
+
+fn awproject_datatogrid_selection_marker_for_mode(
+    mode: AwProjectDataToGridDiagnosticMode,
+    first_spw: usize,
+    planned_source_blocks: usize,
+    observed: &AwProjectDataToGridObservedFirstBuffer,
+) -> String {
+    let mut marker =
+        awproject_datatogrid_selection_marker(first_spw, planned_source_blocks, observed);
+    if mode == AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1 {
+        marker.push_str(&format!(
+            ";selected_corr_first_index={};selected_corr_second_index={};\
+             selected_corr_first_code={};selected_corr_second_code={}",
+            observed.selected_corr_first_index,
+            observed.selected_corr_second_index,
+            observed.selected_corr_first_code,
+            observed.selected_corr_second_code,
+        ));
+    }
+    marker
+}
+
+fn validate_awproject_tt0_arithmetic_compat_corr_order(
+    observed: &AwProjectDataToGridObservedFirstBuffer,
+) -> Result<(), String> {
+    if (
+        observed.selected_corr_first_index,
+        observed.selected_corr_second_index,
+        observed.selected_corr_first_code,
+        observed.selected_corr_second_code,
+    ) != (0, 3, 5, 8)
+    {
+        return Err(format!(
+            "the AWProject TT0 arithmetic-compatibility diagnostic requires the frozen CASA \
+             input-ipol role order RR(index 0) then LL(index 3), observed indices ({}, {}) and \
+             correlation codes ({}, {})",
+            observed.selected_corr_first_index,
+            observed.selected_corr_second_index,
+            observed.selected_corr_first_code,
+            observed.selected_corr_second_code,
+        ));
+    }
+    Ok(())
+}
+
+fn install_awproject_datatogrid_selection_marker(
+    mode: AwProjectDataToGridDiagnosticMode,
+    marker: &str,
+) {
+    unsafe {
+        env::set_var(mode.selection_env(), marker);
+    }
+}
+
 fn install_awproject_datatogrid_bracket_selection(
     config: &CliConfig,
     context: AwProjectDataToGridBracketSelectionContext<'_>,
 ) -> Result<(), String> {
-    if env::var_os(AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV).is_none() {
+    let Some(request) = awproject_datatogrid_diagnostic_request()? else {
         return Ok(());
-    }
+    };
     // `run_from_cli_config` validated the user-facing request while it still
     // carried `wterm='wproject'`. AWProject owns that W projection, so the
     // shared stream receives the normalized core projection (`None`) rather
@@ -7607,48 +7782,19 @@ fn install_awproject_datatogrid_bracket_selection(
             context.planned_source_blocks,
         ));
     }
-    let marker = format!(
-        "field=1525;spws=2-17;first_spw={};source_blocks={};\
-         selected_row_begin={};selected_row_end={};selected_row_count={};\
-         selected_row_hash={};selected_row_first={};selected_row_last={};\
-         absolute_main_row_count={};absolute_main_row_hash={};\
-         absolute_main_row_first={};absolute_main_row_last={};\
-         row_flags_count={};row_flags_hash={};flagged_rows={};\
-         n_data_chan={};n_data_pol={};chan_map_count={};chan_map_hash={};\
-         pol_map_count={};pol_map_hash={};freq_count={};freq_hash={};\
-         freq_first_bits={};freq_last_bits={}",
+    if request.mode == AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1 {
+        validate_awproject_tt0_arithmetic_compat_corr_order(&observed)?;
+    }
+    let marker = awproject_datatogrid_selection_marker_for_mode(
+        request.mode,
         context.first_plan.table_values.spw_id,
         context.planned_source_blocks,
-        observed.selected_row_begin,
-        observed.selected_row_end,
-        observed.selected_row_count,
-        observed.selected_row_hash,
-        observed.selected_row_first,
-        observed.selected_row_last,
-        observed.absolute_main_row_count,
-        observed.absolute_main_row_hash,
-        observed.absolute_main_row_first,
-        observed.absolute_main_row_last,
-        observed.row_flags_count,
-        observed.row_flags_hash,
-        observed.flagged_rows,
-        observed.n_data_chan,
-        observed.n_data_pol,
-        observed.chan_map_count,
-        observed.chan_map_hash,
-        observed.pol_map_count,
-        observed.pol_map_hash,
-        observed.freq_count,
-        observed.freq_hash,
-        observed.freq_first_bits,
-        observed.freq_last_bits,
+        &observed,
     );
     // The bracket is an explicitly single-process, abort-before-FFT
     // diagnostic. Install its private selection handoff before any imaging
     // worker is started; normal execution never mutates the environment.
-    unsafe {
-        env::set_var(AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV, marker);
-    }
+    install_awproject_datatogrid_selection_marker(request.mode, &marker);
     Ok(())
 }
 
@@ -52510,6 +52656,59 @@ mod tests {
 
     static IMAGER_PROGRESS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
     static SPECTRAL_SLAB_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+    static AWPROJECT_DIAGNOSTIC_ENV_TEST_LOCK: LazyLock<Mutex<()>> =
+        LazyLock::new(|| Mutex::new(()));
+
+    const AWPROJECT_DIAGNOSTIC_TEST_ENV_NAMES: [&str; 10] = [
+        AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV,
+        AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV,
+        AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV,
+        AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV,
+        "CASA_RS_AW_BRACKET_EXPECT_NXY",
+        "CASA_RS_AW_BRACKET_BLOCKS",
+        "CASA_RS_AW_BRACKET_TERMS",
+        "CASA_RS_AW_TT0_ARITHMETIC_COMPAT_EXPECT_NXY",
+        "CASA_RS_AW_TT0_ARITHMETIC_COMPAT_BLOCKS",
+        "CASA_RS_AW_TT0_ARITHMETIC_COMPAT_TERMS",
+    ];
+
+    struct AwProjectDiagnosticTestEnv {
+        previous: Vec<(&'static str, Option<OsString>)>,
+    }
+
+    impl AwProjectDiagnosticTestEnv {
+        fn isolated() -> Self {
+            let previous = AWPROJECT_DIAGNOSTIC_TEST_ENV_NAMES
+                .iter()
+                .map(|&name| (name, env::var_os(name)))
+                .collect::<Vec<_>>();
+            for name in AWPROJECT_DIAGNOSTIC_TEST_ENV_NAMES {
+                unsafe {
+                    env::remove_var(name);
+                }
+            }
+            Self { previous }
+        }
+
+        fn set(&self, name: &str, value: impl AsRef<std::ffi::OsStr>) {
+            unsafe {
+                env::set_var(name, value);
+            }
+        }
+    }
+
+    impl Drop for AwProjectDiagnosticTestEnv {
+        fn drop(&mut self) {
+            for (name, value) in &self.previous {
+                unsafe {
+                    match value {
+                        Some(value) => env::set_var(name, value),
+                        None => env::remove_var(name),
+                    }
+                }
+            }
+        }
+    }
 
     fn aw_bracket_test_row(row_index: usize) -> SelectedMainRow {
         SelectedMainRow {
@@ -52534,6 +52733,30 @@ mod tests {
             freq_ref: FrequencyRef::LSRK,
             corr_types: vec![5, 6, 7, 8],
         }
+    }
+
+    fn aw_bracket_valid_cli_config() -> CliConfig {
+        let mut config = vlass_field_1525_real_cache_config(
+            Path::new("/unused/input.ms"),
+            Path::new("/unused/cf-cache"),
+            Path::new("/unused/output"),
+            4096,
+            "2~17",
+        );
+        config.imaging_row_block_rows = Some(AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS);
+        config
+    }
+
+    fn set_aw_bracket_v4_controls(test_env: &AwProjectDiagnosticTestEnv) {
+        test_env.set("CASA_RS_AW_BRACKET_EXPECT_NXY", "4096");
+        test_env.set("CASA_RS_AW_BRACKET_BLOCKS", "1");
+        test_env.set("CASA_RS_AW_BRACKET_TERMS", "2");
+    }
+
+    fn set_aw_tt0_arithmetic_compat_controls(test_env: &AwProjectDiagnosticTestEnv) {
+        test_env.set("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_EXPECT_NXY", "4096");
+        test_env.set("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_BLOCKS", "1");
+        test_env.set("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_TERMS", "1");
     }
 
     #[test]
@@ -52602,6 +52825,19 @@ mod tests {
         assert_eq!(observed.chan_map_hash, 2_111_453_637_644_839_429);
         assert_eq!(observed.pol_map_count, 4);
         assert_eq!(observed.pol_map_hash, 13_222_926_617_229_668_273);
+        assert_eq!(observed.selected_corr_first_index, 0);
+        assert_eq!(observed.selected_corr_second_index, 3);
+        assert_eq!(observed.selected_corr_first_code, 5);
+        assert_eq!(observed.selected_corr_second_code, 8);
+        validate_awproject_tt0_arithmetic_compat_corr_order(&observed)
+            .expect("frozen circular-basis input-ipol role order");
+        let mut reversed_corr_roles = observed.clone();
+        reversed_corr_roles.selected_corr_first_code = 8;
+        reversed_corr_roles.selected_corr_second_code = 5;
+        assert!(
+            validate_awproject_tt0_arithmetic_compat_corr_order(&reversed_corr_roles).is_err(),
+            "the diagnostic must not silently reverse CASA's RR/LL input-ipol roles"
+        );
         assert_eq!(observed.freq_count, 64);
         assert_eq!(
             observed.freq_first_bits,
@@ -52610,6 +52846,248 @@ mod tests {
         assert_eq!(
             observed.freq_last_bits,
             table_values.spw_freqs_hz[63].to_bits()
+        );
+    }
+
+    #[test]
+    fn awproject_datatogrid_diagnostic_tt0_uses_separate_live_selection_marker() {
+        let _test_lock = AWPROJECT_DIAGNOSTIC_ENV_TEST_LOCK
+            .lock()
+            .expect("AWProject diagnostic environment lock");
+        let test_env = AwProjectDiagnosticTestEnv::isolated();
+        let temp = tempdir().expect("temporary output parent");
+        let output = temp.path().join("tt0-arithmetic-compat-v1.json");
+        test_env.set(AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV, &output);
+        set_aw_tt0_arithmetic_compat_controls(&test_env);
+        test_env.set(
+            AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV,
+            "frozen-v4-marker",
+        );
+        test_env.set(
+            AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV,
+            "stale-v1-marker",
+        );
+
+        let config = aw_bracket_valid_cli_config();
+        assert_eq!(
+            config.nterms, 2,
+            "the user-facing MT-MFS request remains nterms=2"
+        );
+        validate_awproject_datatogrid_bracket_cli(&config)
+            .expect("validate the private TT0-only diagnostic");
+        let request = awproject_datatogrid_diagnostic_request()
+            .expect("resolve diagnostic")
+            .expect("diagnostic is active");
+        assert_eq!(
+            request,
+            AwProjectDataToGridDiagnosticRequest {
+                mode: AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1,
+                output,
+            }
+        );
+        assert_eq!(
+            env::var(AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV).as_deref(),
+            Ok("frozen-v4-marker"),
+            "the new preflight must not mutate the frozen-v4 marker"
+        );
+        assert!(
+            env::var_os(AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV).is_none(),
+            "the active marker is installed only after observing the live selection"
+        );
+
+        let rows = vec![aw_bracket_test_row(0)];
+        let table_values = aw_bracket_test_table_values(64);
+        let observed = awproject_datatogrid_bracket_observed_first_buffer(
+            &rows,
+            &rows,
+            &[false],
+            &table_values,
+            Some(SelectedChannelReadRange::new(0, 64)),
+            None,
+        )
+        .expect("observe the production map and frequency route");
+        let marker = awproject_datatogrid_selection_marker_for_mode(request.mode, 2, 1, &observed);
+        install_awproject_datatogrid_selection_marker(request.mode, &marker);
+
+        assert_eq!(
+            env::var(AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV).as_deref(),
+            Ok(marker.as_str())
+        );
+        assert_eq!(marker.split(';').count(), 31);
+        assert!(marker.contains(&format!("chan_map_hash={}", observed.chan_map_hash)));
+        assert!(marker.contains(&format!("pol_map_hash={}", observed.pol_map_hash)));
+        assert!(marker.contains("selected_corr_first_index=0"));
+        assert!(marker.contains("selected_corr_second_index=3"));
+        assert!(marker.contains("selected_corr_first_code=5"));
+        assert!(marker.contains("selected_corr_second_code=8"));
+        assert!(marker.contains(&format!("freq_hash={}", observed.freq_hash)));
+        assert!(marker.contains(&format!("freq_first_bits={}", observed.freq_first_bits)));
+        assert!(marker.contains(&format!("freq_last_bits={}", observed.freq_last_bits)));
+    }
+
+    #[test]
+    fn awproject_datatogrid_diagnostic_modes_are_mutually_exclusive() {
+        let _test_lock = AWPROJECT_DIAGNOSTIC_ENV_TEST_LOCK
+            .lock()
+            .expect("AWProject diagnostic environment lock");
+        let test_env = AwProjectDiagnosticTestEnv::isolated();
+        test_env.set(AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV, "/tmp/v4.json");
+        test_env.set(
+            AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV,
+            "/tmp/tt0-v1.json",
+        );
+
+        let error = validate_awproject_datatogrid_bracket_cli(&aw_bracket_valid_cli_config())
+            .expect_err("simultaneous private diagnostics must fail closed");
+        assert!(error.contains("mutually exclusive"), "{error}");
+        assert!(error.contains(AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV));
+        assert!(error.contains(AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV));
+    }
+
+    #[test]
+    fn awproject_datatogrid_diagnostic_tt0_rejects_wrong_output_size_and_mode() {
+        let _test_lock = AWPROJECT_DIAGNOSTIC_ENV_TEST_LOCK
+            .lock()
+            .expect("AWProject diagnostic environment lock");
+        let test_env = AwProjectDiagnosticTestEnv::isolated();
+        set_aw_tt0_arithmetic_compat_controls(&test_env);
+        let config = aw_bracket_valid_cli_config();
+
+        test_env.set(
+            AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV,
+            "relative-receipt.json",
+        );
+        let error = validate_awproject_datatogrid_bracket_cli(&config)
+            .expect_err("relative output must fail closed");
+        assert!(error.contains("must be an absolute path"), "{error}");
+
+        let temp = tempdir().expect("temporary output parent");
+        test_env.set(AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV, temp.path());
+        let error = validate_awproject_datatogrid_bracket_cli(&config)
+            .expect_err("existing output must fail closed");
+        assert!(error.contains("refusing to overwrite"), "{error}");
+
+        let output = temp.path().join("new-receipt.json");
+        test_env.set(AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV, &output);
+        test_env.set("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_EXPECT_NXY", "8192");
+        let error = validate_awproject_datatogrid_bracket_cli(&config)
+            .expect_err("wrong expected geometry must fail closed");
+        assert!(
+            error.contains("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_EXPECT_NXY=4096"),
+            "{error}"
+        );
+
+        test_env.set("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_EXPECT_NXY", "4096");
+        test_env.set("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_TERMS", "2");
+        let error = validate_awproject_datatogrid_bracket_cli(&config)
+            .expect_err("non-TT0-only diagnostic mode must fail closed");
+        assert!(
+            error.contains("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_TERMS=1"),
+            "{error}"
+        );
+
+        test_env.set("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_TERMS", "1");
+        let mut wrong_user_terms = config.clone();
+        wrong_user_terms.nterms = 1;
+        let error = validate_awproject_datatogrid_bracket_cli(&wrong_user_terms)
+            .expect_err("the user-facing request must remain nterms=2");
+        assert!(error.contains("MT-MFS nterms=2"), "{error}");
+
+        let mut wrong_row_block = config;
+        wrong_row_block.imaging_row_block_rows = Some(AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS - 1);
+        let error = validate_awproject_datatogrid_bracket_cli(&wrong_row_block)
+            .expect_err("the frozen first-buffer row boundary must remain 325 rows");
+        assert!(error.contains("imaging_row_block_rows=325"), "{error}");
+    }
+
+    #[test]
+    fn awproject_datatogrid_diagnostic_frozen_v4_preflight_and_marker_schema_are_unchanged() {
+        let _test_lock = AWPROJECT_DIAGNOSTIC_ENV_TEST_LOCK
+            .lock()
+            .expect("AWProject diagnostic environment lock");
+        let test_env = AwProjectDiagnosticTestEnv::isolated();
+        let temp = tempdir().expect("temporary output parent");
+        let output = temp.path().join("frozen-v4.json");
+        test_env.set(AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV, &output);
+        set_aw_bracket_v4_controls(&test_env);
+
+        validate_awproject_datatogrid_bracket_cli(&aw_bracket_valid_cli_config())
+            .expect("the frozen v4 preflight remains valid");
+        let request = awproject_datatogrid_diagnostic_request()
+            .expect("resolve diagnostic")
+            .expect("diagnostic is active");
+        assert_eq!(
+            request,
+            AwProjectDataToGridDiagnosticRequest {
+                mode: AwProjectDataToGridDiagnosticMode::FrozenV4,
+                output,
+            }
+        );
+        assert_eq!(
+            request.mode.selection_env(),
+            "CASA_RS_INTERNAL_AW_BRACKET_SELECTION_V4"
+        );
+        assert_eq!(
+            request.mode.expected_controls(),
+            [
+                ("CASA_RS_AW_BRACKET_EXPECT_NXY", "4096"),
+                ("CASA_RS_AW_BRACKET_BLOCKS", "1"),
+                ("CASA_RS_AW_BRACKET_TERMS", "2"),
+            ]
+        );
+
+        let rows = vec![aw_bracket_test_row(0)];
+        let table_values = aw_bracket_test_table_values(64);
+        let observed = awproject_datatogrid_bracket_observed_first_buffer(
+            &rows,
+            &rows,
+            &[false],
+            &table_values,
+            Some(SelectedChannelReadRange::new(0, 64)),
+            None,
+        )
+        .expect("observe the shared live marker fields");
+        let marker = awproject_datatogrid_selection_marker(2, 1, &observed);
+        install_awproject_datatogrid_selection_marker(request.mode, &marker);
+        assert_eq!(
+            env::var(AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV).as_deref(),
+            Ok(marker.as_str())
+        );
+        assert_eq!(marker.split(';').count(), 27);
+        assert_eq!(
+            marker
+                .split(';')
+                .map(|entry| entry.split_once('=').expect("marker field").0)
+                .collect::<Vec<_>>(),
+            vec![
+                "field",
+                "spws",
+                "first_spw",
+                "source_blocks",
+                "selected_row_begin",
+                "selected_row_end",
+                "selected_row_count",
+                "selected_row_hash",
+                "selected_row_first",
+                "selected_row_last",
+                "absolute_main_row_count",
+                "absolute_main_row_hash",
+                "absolute_main_row_first",
+                "absolute_main_row_last",
+                "row_flags_count",
+                "row_flags_hash",
+                "flagged_rows",
+                "n_data_chan",
+                "n_data_pol",
+                "chan_map_count",
+                "chan_map_hash",
+                "pol_map_count",
+                "pol_map_hash",
+                "freq_count",
+                "freq_hash",
+                "freq_first_bits",
+                "freq_last_bits",
+            ]
         );
     }
 
