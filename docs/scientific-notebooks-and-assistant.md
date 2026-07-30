@@ -410,7 +410,7 @@ explorer configuration and selected data products, Python cells and retained
 outputs, plots, and processing history. It also includes task and parameter
 documentation plus persistent table, MeasurementSet, image, coordinate, and
 measures semantics. Selected open-tab excerpts and corpus retrieval share the
-active backend model's deterministic resource plan; unselected tabs consume no
+active thread's deterministic resource plan; unselected tabs consume no
 payload and there is no fixed fallback. The assistant may retrieve from these sources as needed
 without per-read approval. CASA shows what domain context is available and
 which CASA resources and citations were used, not a fictional exact record of
@@ -582,10 +582,12 @@ commit overlay. See
 
 ### Assistant resource plan and retained limits
 
-The active backend model must report both input capacity and output reserve.
-CASA-RS treats one UTF-8 byte in the encoded JSON content as one conservative
-capacity unit, including escaping; it does not guess token ratios. The planner
-first subtracts the backend output reserve,
+The active Codex thread reports its model context window through the App Server
+token-usage notification. CASA-RS treats one UTF-8 byte in the encoded JSON
+content as one conservative capacity unit, including escaping; it does not
+guess token ratios. Half of the reported window remains reserved for
+backend-owned instructions, tool exchanges, and the response. The planner then
+subtracts
 the exact CASA runtime instructions, the encoded durable conversation, and
 the encoded metadata for selected context projections. It then assigns one
 share to each selected tab, one additional priority share to the active
@@ -593,7 +595,7 @@ selected tab, and one share to corpus retrieval. Consumers that need less than
 their share are satisfied first and the unused capacity is redistributed.
 Integer remainder units go to the active tab first, then stable tab order, then
 corpus retrieval. Unselected tabs receive zero units.
-Missing capacity, checked-arithmetic
+Missing thread context-window capacity, checked-arithmetic
 overflow, or reserves larger than capacity produces an explicit unavailable
 plan with zero context and corpus allocation; there is no fixed fallback.
 
@@ -618,8 +620,8 @@ The remaining numeric bounds have separate owners and meanings:
   envelope that bounds transient bitmap work; it does not truncate extracted
   text or alter corpus result planning.
 - The model-list request limit of 100 is the adapter's discovery page size;
-  model selection remains backend-owned and this value is not a context
-  capacity input.
+  model selection remains backend-owned. Model-list entries do not own context
+  capacity; the live thread token-usage notification does.
 
 Representative measurements recorded on the reference Apple Silicon
 development system on 2026-07-18:
@@ -627,14 +629,15 @@ development system on 2026-07-18:
 - The removed policy always exposed a 65,536-byte total / 16,384-byte-per-tab
   envelope without using model capacity, instructions, history, metadata, or
   actual item demand.
-- With a 32,768-unit model, 4,096 output reserve, 1,900 runtime-instruction
+- With a 32,768-unit reported context window, a 16,384-unit backend/response
+  reserve, 1,900 runtime-instruction
   units, 4,096 conversation units, 768 projection-metadata units, a 12,000-unit
   active notebook, 512-unit task, 4,096-unit Python tab, one unselected
   8,000-unit history tab, and an 8,000-unit corpus demand, the current planner
-  allocated 11,534 / 512 / 4,096 context units and 5,766 corpus units. The
-  21,908-unit payload allocation plus 10,860 reserved units exactly equals the
+  allocated 4,554 / 512 / 2,277 context units and 2,277 corpus units. The
+  9,620-unit payload allocation plus 23,148 reserved units exactly equals the
   backend capacity; the unselected history used zero.
-- Ten thousand executions of that representative plan took 79.94 ms in a
+- Ten thousand executions of that representative plan took 72.53 ms in a
   debug Swift test (about 0.008 ms per plan). This is observational evidence,
   not a performance threshold.
 - A metadata-heavy retrieval fixture with a long locator and multibyte text was

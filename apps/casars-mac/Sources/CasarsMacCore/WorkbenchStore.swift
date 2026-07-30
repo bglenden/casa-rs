@@ -3793,6 +3793,9 @@ public final class WorkbenchStore: ObservableObject {
                 conversation.profile.effort = model.defaultEffort
             }
         }
+        state.assistantDiscussion?.contextWindowUnits = nil
+        refreshAssistantContextItems()
+        writeAssistantContextProjection()
         persistActiveAssistantConversation()
     }
 
@@ -4228,6 +4231,9 @@ public final class WorkbenchStore: ObservableObject {
             assistantController.session?.refreshAccount()
         case .restartConversation:
             restartActiveAgentConversation()
+        case .refreshResourcePlan:
+            refreshAssistantContextItems()
+            writeAssistantContextProjection()
         case .scheduleStreamFlush:
             assistantController.scheduleStreamFlush { [weak self] in
                 guard let self, var discussion = self.state.assistantDiscussion else { return }
@@ -4365,14 +4371,9 @@ public final class WorkbenchStore: ObservableObject {
         guard let discussion = state.assistantDiscussion else {
             return .unavailable("Assistant state is unavailable; no context resources were allocated.")
         }
-        let selectedModelID = discussion.activeConversation?.profile.model
-        let model = discussion.models.first { $0.id == selectedModelID }
-            ?? discussion.models.first { $0.isDefault }
-        guard let inputUnits = model?.inputCapacityUnits,
-              let outputUnits = model?.outputReserveUnits
-        else {
+        guard let contextWindowUnits = discussion.contextWindowUnits else {
             return .unavailable(
-                "The active backend did not report input and output capacity; context and corpus retrieval are disabled."
+                "The active thread has not reported its context window; context and corpus retrieval are disabled."
             )
         }
         let encodedConversationUnits = UInt64(
@@ -4405,10 +4406,7 @@ public final class WorkbenchStore: ObservableObject {
         }
         do {
             return try AssistantResourcePlanner.plan(
-                capacity: AssistantModelCapacity(
-                    inputUnits: inputUnits,
-                    outputReserveUnits: outputUnits
-                ),
+                capacity: .fromReportedContextWindow(contextWindowUnits),
                 reservations: [
                     AssistantResourceReservation(
                         id: "runtime_instructions",
@@ -4424,7 +4422,7 @@ public final class WorkbenchStore: ObservableObject {
                     ),
                 ],
                 contexts: requests,
-                corpusDesiredUnits: inputUnits
+                corpusDesiredUnits: contextWindowUnits
             )
         } catch {
             return .unavailable("Assistant resource planning failed: \(error)")

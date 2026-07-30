@@ -129,8 +129,6 @@ package struct AgentModelDescriptor: Equatable {
     package var defaultEffort: String
     package var supportedEfforts: [String]
     package var isDefault: Bool
-    package var inputCapacityUnits: UInt64?
-    package var outputReserveUnits: UInt64?
 }
 
 package struct AgentAccountDescriptor: Equatable {
@@ -172,6 +170,7 @@ package enum AgentSessionEvent: Equatable {
     case authenticationURL(String)
     case refreshAccount
     case accountLoggedOut
+    case contextWindow(UInt64)
     case messageDelta(String)
     case turnStarted(id: String?)
     case turnCompleted(status: String, error: String?)
@@ -369,7 +368,7 @@ package final class CodexAppServerSession: AgentSession {
 
     /// UI liveness bound for adapter startup negotiation, not a resource budget.
     private static let startupLivenessTimeout: TimeInterval = 10
-    /// Backend discovery page size; model capacity comes from each returned model.
+    /// Backend discovery page size; runtime capacity comes from thread token-usage events.
     private static let modelDiscoveryPageSize = 100
 
     private let configuration: AgentSessionConfiguration
@@ -935,6 +934,12 @@ package final class CodexAppServerSession: AgentSession {
                 return .mcpStatus(name: name, status: status)
             case "account/rateLimits/updated":
                 return .usage(Self.usageDescriptor(params))
+            case "thread/tokenUsage/updated":
+                guard let usage = params["tokenUsage"] as? [String: Any],
+                      let reported = usage["modelContextWindow"] as? NSNumber,
+                      reported.int64Value > 0
+                else { return nil }
+                return .contextWindow(UInt64(reported.int64Value))
             case "item/commandExecution/requestApproval",
                  "item/fileChange/requestApproval",
                  "item/permissions/requestApproval",
@@ -971,15 +976,7 @@ package final class CodexAppServerSession: AgentSession {
                     label: model["displayName"] as? String ?? id,
                     defaultEffort: model["defaultReasoningEffort"] as? String ?? "medium",
                     supportedEfforts: efforts,
-                    isDefault: model["isDefault"] as? Bool ?? false,
-                    inputCapacityUnits: (
-                        model["contextWindow"] as? NSNumber
-                            ?? model["contextWindowTokens"] as? NSNumber
-                    )?.uint64Value,
-                    outputReserveUnits: (
-                        model["maxOutputTokens"] as? NSNumber
-                            ?? model["maximumOutputTokens"] as? NSNumber
-                    )?.uint64Value
+                    isDefault: model["isDefault"] as? Bool ?? false
                 )
             })
         }
@@ -1205,10 +1202,9 @@ package final class DeterministicAgentSession: AgentSession {
             label: "Fixture Codex",
             defaultEffort: "medium",
             supportedEfforts: ["low", "medium", "high"],
-            isDefault: true,
-            inputCapacityUnits: 32_768,
-            outputReserveUnits: 4_096
+            isDefault: true
         )]))
+        eventHandler?(.contextWindow(32_768))
         eventHandler?(.usage(AgentUsageDescriptor(
             plan: "fixture",
             primaryPercentUsed: 12,

@@ -46,6 +46,7 @@ package enum AssistantControllerEffect: Equatable {
     case openAuthenticationURL(String)
     case refreshAccount
     case restartConversation
+    case refreshResourcePlan
     case scheduleStreamFlush
     case scheduleResponseTimeout(conversationID: String?)
 }
@@ -153,10 +154,13 @@ package final class AssistantController {
                     defaultEffort: model.defaultEffort,
                     supportedEfforts: model.supportedEfforts.isEmpty
                         ? ["low", "medium", "high"] : model.supportedEfforts,
-                    isDefault: model.isDefault,
-                    inputCapacityUnits: model.inputCapacityUnits,
-                    outputReserveUnits: model.outputReserveUnits
+                    isDefault: model.isDefault
                 )
+            }
+        case let .contextWindow(units):
+            if discussion.contextWindowUnits != units {
+                discussion.contextWindowUnits = units
+                effects.append(.refreshResourcePlan)
             }
         case let .account(account):
             discussion.account = AssistantAccountState(

@@ -83,8 +83,6 @@ package struct AssistantModelState: Codable, Equatable, Identifiable {
     package var defaultEffort: String
     package var supportedEfforts: [String]
     package var isDefault: Bool
-    package var inputCapacityUnits: UInt64? = nil
-    package var outputReserveUnits: UInt64? = nil
 }
 
 package struct AssistantAccountState: Codable, Equatable {
@@ -112,6 +110,7 @@ package struct AssistantDiscussionState: Codable, Equatable {
     package var conversations: [AssistantConversationState] = []
     package var activeConversationID: String?
     package var models: [AssistantModelState] = []
+    package var contextWindowUnits: UInt64?
     package var contexts: [AssistantContextItemState] = []
     package var selectedContextIDs: Set<String> = []
     package var account = AssistantAccountState(email: nil, plan: nil, requiresLogin: true)

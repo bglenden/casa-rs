@@ -49,10 +49,9 @@ final class WorkbenchStoreTests: XCTestCase {
             label: "Fixture model",
             defaultEffort: "medium",
             supportedEfforts: ["medium"],
-            isDefault: true,
-            inputCapacityUnits: 1_000_000,
-            outputReserveUnits: 1_000
+            isDefault: true
         )]
+        discussion.contextWindowUnits = 1_000_000
         var state = EmptyWorkbench.makeState()
         state.tabs = [
             WorkbenchTab(id: "task-a", title: "First", kind: .task, taskID: "imager"),
@@ -134,10 +133,9 @@ final class WorkbenchStoreTests: XCTestCase {
             label: "Fixture model",
             defaultEffort: "medium",
             supportedEfforts: ["medium"],
-            isDefault: true,
-            inputCapacityUnits: 1_000_000,
-            outputReserveUnits: 1_000
+            isDefault: true
         )]
+        discussion.contextWindowUnits = 1_000_000
 
         var state = EmptyWorkbench.makeState()
         state.project.rootPath = project.path
