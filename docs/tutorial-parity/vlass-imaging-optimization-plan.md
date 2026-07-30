@@ -4629,6 +4629,83 @@ product, or performance measurement ran. The 4,096-square full-16-SPW row
 remains unpromoted, and the required full-geometry memory campaign remains
 gated behind that promotion.
 
+### 2026-07-30 CASA native first-TT0 component oracle
+
+The next changed discriminator directly observed the first non-PSF DComplex
+CASA `DataToGrid` call and froze its native inputs before convolution-function
+or grid arithmetic could obscure their ownership. The implementation
+checkpoint is
+`94910f848642e2f7e285f687171a02ee7696b797`. This was a genuinely changed
+correctness oracle executed once and then frozen, not a repeated CASA timing
+run or a rerun of an unchanged reference. The interposer did not invoke the
+original `DataToGrid`; it did not access grid storage or `sumwt`, and it
+stopped before gridding, FFT, product formation, deconvolution, or any
+performance measurement. Only TT0 was directly observed. The reported TT1
+geometry is explicitly derived from the observed TT0 inputs under the frozen
+v5 hash contract rather than observed in a second CASA call.
+
+The immutable output directory is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/casa-aw-datagrid-native-components-4096-full16-first-vb-v1`.
+The receipt, comparison, provenance, `casa.log`, and `comparison.log`
+whole-file SHA-256 digests are, respectively:
+
+- `cc30d5492f6654336f46617a696f9a7fc8da9006df4e5ae9a3c64a6a9f401644`;
+- `35cd0ff5a143fc6e1780f5d431ab46bb7586425102359a885da3c257cb08845d`;
+- `6678d7362a66bf02a72d38c143c98563489baf65227543ad75c2b7a8a4b10aa7`;
+- `2dec1a4239d06c0a26b44584ecf9e57ff1fbbfb48ed1c6ab5837530a95cb71db`;
+  and
+- `6f1aaef1ff4d143bb8b9998faece28affc9e69b291a36f8c043583c0aeb73401`.
+
+The receipt's embedded evidence digest is
+`ab762c9a9a479b97338a30a09204a717c9acd0222d912fd4d5983d8da4e42729`;
+the comparison's embedded digest is
+`f11efcee2c126a30528e294cbbc0d40d4a305ec8b4dd8c12f42aa4ef361111e2`.
+The controlled CASA exit was `86`, and the independent validator classified
+the result as `exact-frozen-v5-native-components`. It exactly reproduces the
+frozen CASA stream hash `4740440223154359747`, TT0 geometry hash
+`15079793846523608377`, derived-TT1 geometry hash
+`14381099959812707833`, and accepted-source count `12,359`.
+
+The independently recomposed native component hashes are:
+
+- header `6709505723840238374`;
+- row IDs `15058004568616189240`;
+- channel map `2111453637644839429`;
+- polarization map `13222926617229668273`;
+- frequencies `17711728193083539473`;
+- row flags `3526571572021233857`;
+- UVW and differential phase `6884923150254773287`;
+- four-correlation flag masks `13953846914309385891`;
+- imaging weights `2430234571011807313`; and
+- admission `14184653015859831397`.
+
+The raw native arrays sharpen the unresolved owner. Among `20,800`
+row-channel samples, the four-correlation masks are exactly `{0: 12359, 15:
+8441}`: mask `0` occurs if and only if the imaging weight is nonzero, while
+mask `15` occurs if and only if it is zero. There are `48` flagged rows. The
+nonzero f32 imaging weights range from `6.555895805358887` to
+`50.455787658691406` and contain `2,310` distinct bit values. These identities
+are now frozen evidence; they do not by themselves authorize or identify a
+production correction.
+
+The shared CF cache was not mutated. Its metadata snapshot before and after
+the controlled call has the same SHA-256 digest,
+`29cd6432bc16e91b80664d58f82c76857bd3846db48a302c691078b1db0ed7f7`,
+covering `18,432` regular files and `5,793,369,728` bytes. The checkpoint
+passed `14` adversarial validator tests, Ruff lint and format checks, shell
+syntax checks, and a successful compile, link, and codesign check of the exact
+two-level binding. Two warnings originating in upstream CASA headers were
+explicitly downgraded; the diagnostic sources themselves remained
+warning-clean. A read-only review found no blocker. In accordance with the
+lean iteration policy, no broad workspace or hosted-CI wait was added.
+
+The remaining correctness blocker is to compare these exact CASA raw arrays
+and component identities with casa-rs's first source block. No production fix
+may be inferred before that comparison localizes the mismatch. This oracle did
+not run a 4,096-square image row, a 12,150-square development clean, or the
+full-geometry memory campaign. The 4,096-square full-16-SPW row remains
+unpromoted, and the memory campaign remains gated behind that promotion.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
