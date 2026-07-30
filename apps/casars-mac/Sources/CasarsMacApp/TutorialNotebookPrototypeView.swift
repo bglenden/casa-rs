@@ -3,6 +3,7 @@ import SwiftUI
 
 struct TutorialNotebookPrototypeView: View {
     @ObservedObject var store: WorkbenchStore
+    @Environment(\.colorScheme) private var colorScheme
     @State private var expandedFailureDetails = false
     @State private var learnerRichDocument = PrototypeNotebookRichDocument(markdown: "")
 
@@ -287,7 +288,7 @@ struct TutorialNotebookPrototypeView: View {
             VStack(alignment: .leading, spacing: 9) {
                 HStack(spacing: 9) {
                     Image(systemName: dataset.phase.icon)
-                        .foregroundStyle(dataset.phase.color)
+                        .foregroundStyle(dataset.phase.color(in: colorScheme))
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(dataset.name)
@@ -302,7 +303,7 @@ struct TutorialNotebookPrototypeView: View {
                     Spacer()
                     Text(dataset.phase.label)
                         .workbenchFont(.caption, weight: .semibold)
-                        .foregroundStyle(dataset.phase.color)
+                        .foregroundStyle(dataset.phase.color(in: colorScheme))
                         .accessibilityIdentifier("tutorialPrototype.dataset.status.\(dataset.id)")
                         .accessibilityValue(dataset.phase.rawValue)
                 }
@@ -634,13 +635,14 @@ private extension TutorialNotebookAcquisitionPhase {
         }
     }
 
-    var color: Color {
+    func color(in colorScheme: ColorScheme) -> Color {
         switch self {
         case .ready: .green
         case .downloading, .verifying, .unpacking: .accentColor
         case .checksumFailed, .diskFailed, .offline, .unsafeArchive: .red
         case .cancelled: .orange
-        case .missing, .approvalRequired: .primary
+        case .missing, .approvalRequired:
+            colorScheme == .dark ? .white : .black
         }
     }
 

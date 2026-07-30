@@ -194,6 +194,7 @@ struct CommandSearchField: View {
 
 struct LeftDockView: View {
     @ObservedObject var store: WorkbenchStore
+    @Environment(\.colorScheme) private var colorScheme
     @State private var datasetOrder: DatasetOrder = .alphabetical
 
     var body: some View {
@@ -225,7 +226,7 @@ struct LeftDockView: View {
 
                 Text(projectSourceLabel)
                     .workbenchFont(.caption2, weight: .semibold)
-                    .foregroundStyle(Color(nsColor: .labelColor))
+                    .foregroundStyle(colorScheme == .dark ? Color.white : Color.black)
 
                 if store.isNotebookPrototypeRuntime {
                     Text("Production boundary calls: \(store.prototypeProductionBoundaryInvocationCount)")
