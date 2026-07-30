@@ -150,7 +150,7 @@ if [[ "$console_user" != "$(/usr/bin/id -un)" ]]; then
 fi
 console_lock_state="$(
   /usr/sbin/ioreg -n Root -d1 \
-    | /usr/bin/awk -F'= ' '/"IOConsoleLocked"/ { gsub(/"/, "", $2); print $2; exit }'
+    | /usr/bin/awk -F'= ' '/"IOConsoleLocked"/ { gsub(/"/, "", $2); state = $2 } END { print state }'
 )"
 if [[ "$console_lock_state" == "Yes" ]]; then
   echo "remote GUI worker console is locked; unlock it before running XCTest" >&2
