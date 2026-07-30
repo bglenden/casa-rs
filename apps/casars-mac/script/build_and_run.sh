@@ -32,7 +32,11 @@ APP_ICON_SOURCE="$REPO_ROOT/branding/app-icon/casa-rs-app-icon.icns"
 APP_ICON_NAME="casa-rs-app-icon.icns"
 FRONTEND_DYLIB_NAME="libcasars_frontend_services.dylib"
 BUILD_CONFIGURATION="release"
-RUST_PROFILE_DIR="$REPO_ROOT/target/release"
+CARGO_TARGET_ROOT="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
+if [[ "$CARGO_TARGET_ROOT" != /* ]]; then
+  CARGO_TARGET_ROOT="$REPO_ROOT/$CARGO_TARGET_ROOT"
+fi
+RUST_PROFILE_DIR="$CARGO_TARGET_ROOT/release"
 FRONTEND_DYLIB="$RUST_PROFILE_DIR/$FRONTEND_DYLIB_NAME"
 TUTORIAL_DATA_ROOT="${CASA_RS_TUTORIAL_DATA_ROOT:-$HOME/SoftwareProjects/casa-tutorial-data}"
 TUTORIAL_DEMO_ARCHIVE="$TUTORIAL_DATA_ROOT/tutorial-parity/alma/first-look/twhya/twhya_calibrated.ms.tar"
@@ -265,7 +269,7 @@ if [[ "$MODE" == "--stage-only" || "$MODE" == "stage" ]]; then
   USE_TEMP_REAL_PROJECT="0"
 fi
 stage_temp_real_project
-"$REPO_ROOT/scripts/generate-frontend-bindings.sh" "$REPO_ROOT/target/frontend-bindings"
+"$REPO_ROOT/scripts/generate-frontend-bindings.sh" "$CARGO_TARGET_ROOT/frontend-bindings"
 cargo build --release -p casars-frontend-services --lib --bin casars-project-mcp
 TASK_HELPER_SPECS=()
 if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" && -z "$SHOW_PROTOTYPE" ]]; then

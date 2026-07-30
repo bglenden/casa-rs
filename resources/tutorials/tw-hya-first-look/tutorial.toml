@@ -29,13 +29,49 @@ dataset_ids = ["twhya-calibrated"]
 cell_ids = []
 
 [[sections]]
-id = "inspect"
-title = "Inspect the observation"
+id = "listobs"
+title = "Get oriented with the observation"
 dataset_ids = ["twhya-calibrated"]
 cell_ids = []
 
 [[sections]]
-id = "image"
-title = "Load imaging parameters"
+id = "uv-coverage"
+title = "Inspect the UV coverage"
+dataset_ids = ["twhya-calibrated"]
+cell_ids = []
+
+[[sections]]
+id = "amplitude-uv-distance"
+title = "Compare amplitude with UV distance"
+dataset_ids = ["twhya-calibrated"]
+cell_ids = []
+
+[[sections]]
+id = "phase-cal-dirty"
+title = "Make a dirty image of the phase calibrator"
+dataset_ids = ["twhya-calibrated"]
+cell_ids = ["019f6666-6666-7666-8666-666666666601"]
+
+[[sections]]
+id = "phase-cal-clean"
+title = "Clean the phase calibrator"
+dataset_ids = ["twhya-calibrated"]
+cell_ids = ["019f6666-6666-7666-8666-666666666602"]
+
+[[sections]]
+id = "science-target-split"
+title = "Split and average the science target"
+dataset_ids = ["twhya-calibrated"]
+cell_ids = ["019f6666-6666-7666-8666-666666666603"]
+
+[[sections]]
+id = "science-target-clean"
+title = "Make the TW Hya continuum image"
 dataset_ids = ["twhya-calibrated"]
 cell_ids = ["019f6666-6666-7666-8666-666666666666"]
+
+[[sections]]
+id = "primary-beam-correction"
+title = "Apply primary-beam correction"
+dataset_ids = ["twhya-calibrated"]
+cell_ids = ["019f6666-6666-7666-8666-666666666605"]

@@ -1770,7 +1770,15 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: templateManifest), templateManifestData)
         XCTAssertEqual(try Data(contentsOf: templateMarkdown), templateMarkdownData)
         XCTAssertTrue(forkedSource.contains("# First Look at Imaging: TW Hya"))
-        XCTAssertTrue(forkedSource.contains("019f6666-6666-7666-8666-666666666666"))
+        for taskCellID in [
+            "019f6666-6666-7666-8666-666666666601",
+            "019f6666-6666-7666-8666-666666666602",
+            "019f6666-6666-7666-8666-666666666603",
+            "019f6666-6666-7666-8666-666666666666",
+            "019f6666-6666-7666-8666-666666666605",
+        ] {
+            XCTAssertTrue(forkedSource.contains(taskCellID), "Missing guide task cell \(taskCellID)")
+        }
         let pythonCellID = "019f0000-0000-7000-8000-000000000418"
         let pythonSource = """
         import matplotlib.pyplot as plt
@@ -1878,7 +1886,7 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertEqual(explorerRevisions[0]["source_references"] as? [String], [measurementSet.path])
 
         try clickIdentified("central.tab.tab-scientific-notebook")
-        let taskCellID = "019f6666-6666-7666-8666-666666666666"
+        let taskCellID = "019f6666-6666-7666-8666-666666666601"
         try bringIntoView(
             "notebook.parameters.open.\(taskCellID)",
             in: "notebook.document.scroll",
@@ -2791,13 +2799,22 @@ final class CasarsMacUITests: XCTestCase {
         at output: URL,
         repoRoot: URL
     ) throws {
-        let simobserve = repoRoot
-            .appendingPathComponent("target", isDirectory: true)
+        let targetRoot: URL
+        if let configuredTarget = ProcessInfo.processInfo.environment["CARGO_TARGET_DIR"] {
+            targetRoot = URL(
+                fileURLWithPath: configuredTarget,
+                relativeTo: repoRoot,
+                isDirectory: true
+            ).standardizedFileURL
+        } else {
+            targetRoot = repoRoot.appendingPathComponent("target", isDirectory: true)
+        }
+        let simobserve = targetRoot
             .appendingPathComponent("debug", isDirectory: true)
             .appendingPathComponent("simobserve")
         XCTAssertTrue(
             FileManager.default.isExecutableFile(atPath: simobserve.path),
-            "The deterministic GUI journey must build target/debug/simobserve"
+            "The deterministic GUI journey must build \(simobserve.path)"
         )
         let request: [String: Any] = [
             "kind": "run",
