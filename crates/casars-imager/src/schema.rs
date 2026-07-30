@@ -141,11 +141,15 @@ mod tests {
         assert_eq!(default_for("parallel"), "none");
         assert_eq!(default_for("imaging_read_ahead_blocks"), "none");
         assert_eq!(default_for("imaging_fft_backend"), "auto");
+        assert_eq!(default_for("imaging_memory_target_mb"), "none");
+        assert_eq!(default_for("imaging_memory_pressure_policy"), "auto");
         for id in [
             "chanchunks",
             "parallel",
             "imaging_read_ahead_blocks",
             "imaging_fft_backend",
+            "imaging_memory_target_mb",
+            "imaging_memory_pressure_policy",
         ] {
             let argument = schema
                 .arguments
@@ -154,6 +158,25 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing {id}"));
             assert!(argument.advanced, "{id} should remain an advanced control");
         }
+        let memory_policy = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "imaging_memory_pressure_policy")
+            .expect("imaging_memory_pressure_policy");
+        let UiArgumentParser::Option { choices, .. } = &memory_policy.parser else {
+            panic!("imaging_memory_pressure_policy should use an option parser");
+        };
+        assert_eq!(
+            choices,
+            &vec![
+                "auto".to_string(),
+                "conservative-no-swap".to_string(),
+                "aggressive".to_string(),
+                "oversubscribe".to_string(),
+                "stage-aware".to_string(),
+                "hybrid".to_string(),
+            ]
+        );
         assert!(
             schema
                 .arguments

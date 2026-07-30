@@ -1173,9 +1173,26 @@ cell = "0.0002777777777777778deg"
                 ("usepointing", ParameterValue::Bool(true)),
                 ("nterms", ParameterValue::Integer(2)),
                 ("parallel", ParameterValue::Bool(false)),
+                (
+                    "imaging_memory_pressure_policy",
+                    ParameterValue::String("auto".into()),
+                ),
             ] {
                 assert_eq!(resolved.values[name], expected, "{label}.{name}");
             }
+            assert!(
+                !resolved
+                    .explicit_overrides
+                    .contains_key("imaging_memory_pressure_policy"),
+                "{label}.imaging_memory_pressure_policy must adopt the safe default"
+            );
+            assert!(
+                resolved.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code == DiagnosticCode::DefaultChanged
+                        && diagnostic.parameter.as_deref() == Some("imaging_memory_pressure_policy")
+                }),
+                "{label}.imaging_memory_pressure_policy migration must be explicit"
+            );
             for name in [
                 "cfcache",
                 "cf_resident_mb",

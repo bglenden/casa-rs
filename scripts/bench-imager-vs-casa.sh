@@ -4,6 +4,19 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+case "${IMAGER_BENCH_PLAN_ONLY:-0}" in
+  1|true|TRUE|yes|YES|on|ON)
+    plan_only_enabled=1
+    ;;
+  0|false|FALSE|no|NO|off|OFF|"")
+    plan_only_enabled=0
+    ;;
+  *)
+    echo "error: IMAGER_BENCH_PLAN_ONLY must be 0/1, true/false, yes/no, or on/off" >&2
+    exit 2
+    ;;
+esac
+
 if [[ -z "${CASA_RS_TESTDATA_ROOT:-}" && -d "/Volumes/home/casatestdata" ]]; then
   export CASA_RS_TESTDATA_ROOT="/Volumes/home/casatestdata"
 fi
@@ -31,7 +44,7 @@ if [[ ! -d "$ms_path" ]]; then
   exit 2
 fi
 
-if [[ -z "${CASA_RS_CASA_PYTHON:-}" ]]; then
+if [[ "$plan_only_enabled" == "0" && -z "${CASA_RS_CASA_PYTHON:-}" ]]; then
   echo "error: CASA_RS_CASA_PYTHON is not set and no default CASA python was found" >&2
   exit 2
 fi
@@ -93,6 +106,7 @@ mosweight="${IMAGER_BENCH_MOSWEIGHT:-0}"
 normtype="${IMAGER_BENCH_NORMTYPE:-flatnoise}"
 usepointing="${IMAGER_BENCH_USEPOINTING:-0}"
 imaging_memory_target_mb="${IMAGER_BENCH_IMAGING_MEMORY_TARGET_MB:-}"
+imaging_memory_pressure_policy="${IMAGER_BENCH_IMAGING_MEMORY_PRESSURE_POLICY:-auto}"
 imaging_prepare_buffer_mb="${IMAGER_BENCH_IMAGING_PREPARE_BUFFER_MB:-}"
 imaging_row_block_rows="${IMAGER_BENCH_IMAGING_ROW_BLOCK_ROWS:-}"
 imaging_prepare_workers="${IMAGER_BENCH_IMAGING_PREPARE_WORKERS:-}"
@@ -203,6 +217,10 @@ if [[ "$imaging_fft_backend" != "auto" && "$imaging_fft_backend" != "rustfft" &&
 fi
 if [[ -n "$imaging_memory_target_mb" && ! "$imaging_memory_target_mb" =~ ^[0-9]+$ ]]; then
   echo "error: IMAGER_BENCH_IMAGING_MEMORY_TARGET_MB must be an unsigned integer" >&2
+  exit 2
+fi
+if [[ "$imaging_memory_pressure_policy" != "auto" && "$imaging_memory_pressure_policy" != "conservative-no-swap" && "$imaging_memory_pressure_policy" != "aggressive" && "$imaging_memory_pressure_policy" != "oversubscribe" && "$imaging_memory_pressure_policy" != "stage-aware" && "$imaging_memory_pressure_policy" != "hybrid" ]]; then
+  echo "error: IMAGER_BENCH_IMAGING_MEMORY_PRESSURE_POLICY must be auto, conservative-no-swap, aggressive, oversubscribe, stage-aware, or hybrid" >&2
   exit 2
 fi
 if [[ -n "$imaging_prepare_buffer_mb" && ! "$imaging_prepare_buffer_mb" =~ ^[0-9]+$ ]]; then
@@ -463,6 +481,17 @@ print(f"{statistics.median(values):.6f}")
 PY
 }
 
+run_time_with_optional_pid_receipt() {
+  if [[ -n "${IMAGER_BENCH_RUST_PID_FILE:-}" ]]; then
+    : >"$IMAGER_BENCH_RUST_PID_FILE"
+    /usr/bin/time -p /bin/sh -c \
+      'pid_file=$1; shift; printf "%s\n" "$$" >"$pid_file"; exec "$@"' \
+      casars-imager-pid-receipt "$IMAGER_BENCH_RUST_PID_FILE" "$@"
+  else
+    /usr/bin/time -p "$@"
+  fi
+}
+
 run_timed_command() {
   local stderr_file="$1"
   shift
@@ -472,7 +501,7 @@ run_timed_command() {
     : >"$stderr_file"
     tail -f "$stderr_file" >&2 &
     local tail_pid="$!"
-    /usr/bin/time -p "$@" >/dev/null 2>>"$stderr_file" &
+    run_time_with_optional_pid_receipt "$@" >/dev/null 2>>"$stderr_file" &
     local command_pid="$!"
     local command_name
     command_name="$(basename "$1")"
@@ -495,7 +524,7 @@ run_timed_command() {
     kill "$tail_pid" 2>/dev/null
     wait "$tail_pid" 2>/dev/null
   else
-    /usr/bin/time -p "$@" >/dev/null 2>"$stderr_file"
+    run_time_with_optional_pid_receipt "$@" >/dev/null 2>"$stderr_file"
     status="$?"
   fi
   set -e
@@ -508,17 +537,21 @@ emit_rust_backend_diagnostics() {
     return 0
   fi
   grep -E \
-    '^(awproject_(plan|cache|mtmfs_sample_census|prediction_trace|metal_.*)|single_plane_execution_plan|standard_mfs_runtime_plan|standard_mfs_memory_plan_actual|imaging_source_read_ahead_summary|standard_mfs_source_read_ahead_summary|dirty_product_(fft_timing|gpu_resident|gpu_resident_fallback)|mosaic_dirty_product_gpu_resident|mosaic_mtmfs_(direct_metal_tile_parallel|residual_gpu_resident)|visibility_source_stream_consumer|standard_mfs_profile_run|standard_mfs_(hogbom|clark|multiscale)_minor_cycle_summary|standard_mfs_multiscale_metal_(minor_cycle_summary|indirect_summary)|standard_mfs_clean_residual_refresh_summary|standard_mfs_metal_(residual_refresh|residual_refresh_detail|row_run_residual_refresh|row_run_residual_refresh_detail|row_run_grouped_residual_refresh|row_run_grouped_append_detail)|spectral_slab_plan|spectral_slab_event|spectral_slab_memory|visibility_geometry_cache_summary|image_product_write|mosaic_cube_slab_(plane|executor_summary)|cube_per_plane_backend_summary|cube_slab_executor_limitation|cube_source_row_blocks|cube_plane_state_store_summary|cube_resident_clean_(control|executor_summary|stage_summary|finish_plane|finish_plane_stage_detail)|cube_shared_(direct_)?plane_executor_summary|cube_shared_direct_dirty_eligibility|cube_shared_direct_dirty_source|independent_plane_executor_owned_streaming_done|frontend stage=(prepare_plane_input/(data_coverage|accumulate_rows/detail|finish_cube_source_row_blocks)|write_products|cube_slab/|cube_resident_clean/|cli/))' \
+    '^(awproject_(plan|cache|mtmfs_sample_census|prediction_trace|compact_replay_cache|metal_.*)|single_plane_execution_plan|standard_mfs_runtime_plan|standard_mfs_(planning_resources|planner_preflight|execution_plan|execution_allocation|execution_lifetime_stage|execution_lifetime|execution_decision|stage_memory)|standard_mfs_memory_plan_actual|imaging_source_read_ahead_summary|standard_mfs_source_read_ahead_summary|dirty_product_(fft_timing|gpu_resident|gpu_resident_fallback)|mosaic_dirty_product_gpu_resident|mosaic_mtmfs_(direct_metal_tile_parallel|residual_gpu_resident)|visibility_source_stream_consumer|standard_mfs_profile_run|standard_mfs_(hogbom|clark|multiscale)_minor_cycle_summary|standard_mfs_multiscale_metal_(minor_cycle_summary|indirect_summary)|standard_mfs_clean_residual_refresh_summary|standard_mfs_metal_(residual_refresh|residual_refresh_detail|row_run_residual_refresh|row_run_residual_refresh_detail|row_run_grouped_residual_refresh|row_run_grouped_append_detail)|spectral_slab_plan|spectral_slab_event|spectral_slab_memory|visibility_geometry_cache_summary|image_product_write|mosaic_cube_slab_(plane|executor_summary)|cube_per_plane_backend_summary|cube_slab_executor_limitation|cube_source_row_blocks|cube_plane_state_store_summary|cube_resident_clean_(control|executor_summary|stage_summary|finish_plane|finish_plane_stage_detail)|cube_shared_(direct_)?plane_executor_summary|cube_shared_direct_dirty_eligibility|cube_shared_direct_dirty_source|independent_plane_executor_owned_streaming_done|frontend stage=(prepare_plane_input/(data_coverage|accumulate_rows/detail|finish_cube_source_row_blocks)|write_products|cube_slab/|cube_resident_clean/|cli/))' \
     "$stderr_file" || true
 }
 
 echo "ms_path=$ms_path"
-echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count datacolumn=$datacolumn stokes=$stokes projection=$projection uvrange=$uvrange intent=$intent cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration imaging_fft_precision=$imaging_fft_precision imaging_fft_backend=$imaging_fft_backend parallel=$parallel chanchunks=$chanchunks hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales smallscalebias=$smallscalebias wterm=$wterm wprojplanes=$wprojplanes casa_wprojplanes=$casa_wprojplanes cfcache=$cfcache cf_resident_mb=$cf_resident_mb facets=$facets psfphasecenter=$psfphasecenter vptable=$vptable aterm=$aterm_enabled psterm=$psterm_enabled wbawp=$wbawp_enabled conjbeams=$conjbeams_enabled computepastep=$computepastep rotatepastep=$rotatepastep pointingoffsetsigdev=$pointingoffsetsigdev mosweight=$mosweight_enabled normtype=$normtype usepointing=$usepointing_enabled imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imaging_read_ahead_blocks=$imaging_read_ahead_blocks imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats warmups=$warmups profile_repeats=$profile_repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled restoration=$restoration_enabled restoringbeam=$restoringbeam interactive=$interactive_enabled usemask=$usemask mask_image=$mask_image restart=$restart_enabled savemodel=$savemodel calcres=$calcres_enabled calcpsf=$calcpsf_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_rust=$skip_rust_enabled skip_profile=$skip_profile_enabled reuse_rust_prefix=$reuse_rust_prefix reuse_casa_prefix=$reuse_casa_prefix"
+echo "CASA_RS_CASA_PYTHON=${CASA_RS_CASA_PYTHON:-}"
+echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count datacolumn=$datacolumn stokes=$stokes projection=$projection uvrange=$uvrange intent=$intent cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration imaging_fft_precision=$imaging_fft_precision imaging_fft_backend=$imaging_fft_backend parallel=$parallel chanchunks=$chanchunks hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales smallscalebias=$smallscalebias wterm=$wterm wprojplanes=$wprojplanes casa_wprojplanes=$casa_wprojplanes cfcache=$cfcache cf_resident_mb=$cf_resident_mb facets=$facets psfphasecenter=$psfphasecenter vptable=$vptable aterm=$aterm_enabled psterm=$psterm_enabled wbawp=$wbawp_enabled conjbeams=$conjbeams_enabled computepastep=$computepastep rotatepastep=$rotatepastep pointingoffsetsigdev=$pointingoffsetsigdev mosweight=$mosweight_enabled normtype=$normtype usepointing=$usepointing_enabled imaging_memory_target_mb=$imaging_memory_target_mb imaging_memory_pressure_policy=$imaging_memory_pressure_policy imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imaging_read_ahead_blocks=$imaging_read_ahead_blocks imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats warmups=$warmups profile_repeats=$profile_repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled restoration=$restoration_enabled restoringbeam=$restoringbeam interactive=$interactive_enabled usemask=$usemask mask_image=$mask_image restart=$restart_enabled savemodel=$savemodel calcres=$calcres_enabled calcpsf=$calcpsf_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_rust=$skip_rust_enabled skip_profile=$skip_profile_enabled reuse_rust_prefix=$reuse_rust_prefix reuse_casa_prefix=$reuse_casa_prefix"
 echo
 
 if [[ "$skip_rust_enabled" == "0" ]]; then
-  cargo build --release -p casars-imager --bin casars-imager --example profile_imager >/dev/null
+  if [[ "$plan_only_enabled" == "1" ]]; then
+    cargo build --release -p casars-imager --bin casars-imager >/dev/null
+  else
+    cargo build --release -p casars-imager --bin casars-imager --example profile_imager >/dev/null
+  fi
 fi
 
 tmpdir="$(mktemp -d "$tmp_root/casa-rs-imager-bench.XXXXXX")"
@@ -570,6 +603,7 @@ rust_source_stream_flags=()
 if [[ -n "$imaging_memory_target_mb" ]]; then
   rust_source_stream_flags+=(--imaging-memory-target-mb "$imaging_memory_target_mb")
 fi
+rust_source_stream_flags+=(--imaging-memory-pressure-policy "$imaging_memory_pressure_policy")
 if [[ -n "$imaging_prepare_buffer_mb" ]]; then
   rust_source_stream_flags+=(--imaging-prepare-buffer-mb "$imaging_prepare_buffer_mb")
 fi
@@ -665,6 +699,10 @@ rust_dirty_flags=()
 if [[ -n "$dirty_flag" ]]; then
   rust_dirty_flags+=("$dirty_flag")
 fi
+rust_planner_flags=()
+if [[ "$plan_only_enabled" == "1" ]]; then
+  rust_planner_flags+=(--standard-mfs-plan-probe true)
+fi
 
 echo "Rust release CLI timings (seconds):"
 rust_cli_file="$tmpdir/rust-cli.txt"
@@ -730,7 +768,8 @@ run_rust_cli() {
     ${rust_awproject_flags[@]+"${rust_awproject_flags[@]}"} \
     ${rust_product_flags[@]+"${rust_product_flags[@]}"} \
     --no-preview-pngs \
-    ${rust_dirty_flags[@]+"${rust_dirty_flags[@]}"}
+    ${rust_dirty_flags[@]+"${rust_dirty_flags[@]}"} \
+    ${rust_planner_flags[@]+"${rust_planner_flags[@]}"}
 }
 run_rust_profile() {
   run_with_optional_phasecenter \
@@ -779,6 +818,21 @@ run_rust_profile() {
     --repeats "$profile_repeats" \
     --warmups "$profile_warmups"
 }
+if [[ "$plan_only_enabled" == "1" ]]; then
+  if [[ "$skip_rust_enabled" == "1" ]]; then
+    echo "error: planner-only mode cannot be combined with IMAGER_BENCH_SKIP_RUST" >&2
+    exit 2
+  fi
+  rust_stderr="$tmpdir/rust-planner-preflight.stderr"
+  if ! run_rust_cli "$rust_stderr" "$tmpdir/planner-preflight-no-products"; then
+    echo "error: Rust casars-imager planner preflight failed" >&2
+    cat "$rust_stderr" >&2
+    exit 1
+  fi
+  emit_rust_backend_diagnostics "$rust_stderr"
+  echo "planner_only_complete visibility_streamed=false grids_allocated=false products_materialized=false"
+  exit 0
+fi
 if [[ "$skip_rust_enabled" == "1" ]]; then
   echo "  skipped; IMAGER_BENCH_SKIP_RUST=$skip_rust"
   if [[ -n "$reuse_rust_prefix" ]]; then

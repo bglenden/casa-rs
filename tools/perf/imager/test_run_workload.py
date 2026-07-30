@@ -16,6 +16,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_workload
+from perf_harness.host_telemetry import SAMPLE_FIELDS, build_host_telemetry_result
 from perf_harness.image_compare import CASA_IMAGE_COMPARATOR
 from test_support import canonical_test_environment, canonical_workload_result
 
@@ -830,9 +831,7 @@ real 1.145408
         self.assertEqual("384", env["IMAGER_BENCH_CF_RESIDENT_MB"])
         self.assertEqual("2~17", env["IMAGER_BENCH_SPW"])
         self.assertEqual("<12km", env["IMAGER_BENCH_UVRANGE"])
-        self.assertEqual(
-            "OBSERVE_TARGET#UNSPECIFIED", env["IMAGER_BENCH_INTENT"]
-        )
+        self.assertEqual("OBSERVE_TARGET#UNSPECIFIED", env["IMAGER_BENCH_INTENT"])
         self.assertEqual("1", env["IMAGER_BENCH_ATERM"])
         self.assertEqual("0", env["IMAGER_BENCH_PSTERM"])
         self.assertEqual("1", env["IMAGER_BENCH_WBAWP"])
@@ -1135,7 +1134,9 @@ real 1.145408
             self.assertTrue(Path(request["structure_workspace_dir"]).is_absolute())
             self.assertEqual(str(root / "comparisons" / "panels"), result["panel_dir"])
 
-    def test_generic_comparison_collapses_operational_failure_to_closed_summary(self) -> None:
+    def test_generic_comparison_collapses_operational_failure_to_closed_summary(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
             plan = {
@@ -1252,9 +1253,7 @@ real 1.145408
             ("single-field", "1525"),
             ("all-fields", "1107~1127,1512~1532,1542~1562"),
         ):
-            manifest_path = (
-                run_workload.WORKLOAD_DIR / f"vlass-fragment-{stem}.json"
-            )
+            manifest_path = run_workload.WORKLOAD_DIR / f"vlass-fragment-{stem}.json"
             manifest = run_workload.load_manifest(manifest_path)
             with mock.patch.dict(
                 os.environ,
@@ -1277,9 +1276,7 @@ real 1.145408
             self.assertEqual(
                 "reused", plan["run_support"]["targets"]["casa"]["status"], stem
             )
-            self.assertEqual(
-                "recipe_bound_benchmark", plan["command"]["kind"], stem
-            )
+            self.assertEqual("recipe_bound_benchmark", plan["command"]["kind"], stem)
             self.assertEqual("runnable", plan["command"]["rust"]["status"], stem)
             self.assertEqual([], plan["command"]["rust"]["missing_capabilities"])
             self.assertEqual("1", plan["command"]["env"]["IMAGER_BENCH_SKIP_CASA"])
@@ -1298,9 +1295,7 @@ real 1.145408
                 expected_field,
                 plan["command"]["rust"]["intended_parameters"]["field"],
             )
-            self.assertEqual(
-                "serial_cpu_parity", plan["review"]["evidence_role"], stem
-            )
+            self.assertEqual("serial_cpu_parity", plan["review"]["evidence_role"], stem)
             run_workload.attach_output_paths(
                 plan,
                 Path("/tmp/vlass-results"),
@@ -1473,6 +1468,7 @@ real 1.145408
                 "specmode": "mfs",
                 "gridder": "standard",
                 "imaging_memory_target_mb": 2048,
+                "imaging_memory_pressure_policy": "hybrid",
                 "imaging_prepare_buffer_mb": 128,
                 "imaging_row_block_rows": 4096,
                 "imaging_prepare_workers": 3,
@@ -1497,6 +1493,7 @@ real 1.145408
 
         env = plan["command"]["env"]
         self.assertEqual("2048", env["IMAGER_BENCH_IMAGING_MEMORY_TARGET_MB"])
+        self.assertEqual("hybrid", env["IMAGER_BENCH_IMAGING_MEMORY_PRESSURE_POLICY"])
         self.assertEqual("128", env["IMAGER_BENCH_IMAGING_PREPARE_BUFFER_MB"])
         self.assertEqual("4096", env["IMAGER_BENCH_IMAGING_ROW_BLOCK_ROWS"])
         self.assertEqual("3", env["IMAGER_BENCH_IMAGING_PREPARE_WORKERS"])
@@ -1507,6 +1504,8 @@ real 1.145408
         self.assertEqual("4", env["IMAGER_BENCH_CHANCHUNKS"])
         self.assertEqual("f32", plan["mode"]["imaging_fft_precision"])
         self.assertEqual("metal-mpsgraph", plan["mode"]["imaging_fft_backend"])
+        self.assertEqual("hybrid", plan["mode"]["imaging_memory_pressure_policy"])
+        self.assertEqual(2048, plan["mode"]["imaging_memory_target_mb"])
         self.assertIs(False, plan["mode"]["parallel"])
         self.assertEqual(4, plan["mode"]["chanchunks"])
         self.assertEqual(2, plan["mode"]["imaging_read_ahead_blocks"])
@@ -1802,17 +1801,13 @@ image_product_write suffix=.image.pbcor role=image.pbcor shape=1024x1024x1x1 ele
         self.assertEqual(6, summary["resolved_parallel_workers"])
         self.assertEqual("auto-calibrated", summary["parallel_worker_plan_source"])
         self.assertEqual(10, summary["parallel_worker_plan_hard_cap"])
-        self.assertEqual(
-            "4,5,6,7,8,9,10", summary["parallel_worker_plan_candidates"]
-        )
+        self.assertEqual("4,5,6,7,8,9,10", summary["parallel_worker_plan_candidates"])
         self.assertEqual(
             4, summary["parallel_worker_plan_topology_high_capacity_boundary"]
         )
         self.assertIsNone(summary["parallel_worker_plan_calibration_tasks"])
         self.assertEqual(28, summary["parallel_worker_plan_calibration_windows"])
-        self.assertEqual(
-            987.5, summary["parallel_worker_plan_calibration_elapsed_ms"]
-        )
+        self.assertEqual(987.5, summary["parallel_worker_plan_calibration_elapsed_ms"])
         self.assertEqual(
             "production-windows",
             summary["parallel_worker_plan_calibration_mode"],
@@ -1826,6 +1821,163 @@ image_product_write suffix=.image.pbcor role=image.pbcor shape=1024x1024x1x1 ele
         self.assertEqual(
             "4:1.20,6:1.00,8:1.15,10:1.30",
             summary["parallel_worker_plan_scores"],
+        )
+
+    def test_memory_campaign_logs_are_structured_and_reconciled(self) -> None:
+        multiword = run_workload.parse_key_value_line(
+            "standard_mfs_execution_allocation allocation_id=grid-1 "
+            "component=AWProject MT-MFS run state stage=run bytes=100"
+        )
+        self.assertEqual(
+            "AWProject MT-MFS run state",
+            multiword["fields"]["component"],
+        )
+
+        stages = "\n".join(
+            "standard_mfs_execution_lifetime_stage "
+            f"stage=stage-{index} resident_bytes={200 if index == 5 else 100} "
+            "stored_bytes=0 "
+            "host_heap_bytes=50 unified_memory_bytes=50 metal_private_bytes=0 "
+            "memory_mapped_bytes=0 temporary_spill_bytes=0 "
+            "memory_mapped_stored_bytes=0 temporary_spill_stored_bytes=0"
+            for index in range(12)
+        )
+        parsed = run_workload.parse_backend_plan_logs(
+            "\n".join(
+                (
+                    "standard_mfs_planning_resources "
+                    "memory_pressure_policy=hybrid memory_target_bytes=1000 "
+                    "process_physical_footprint_bytes=25",
+                    "standard_mfs_memory_runtime_actions policy=hybrid "
+                    "admission_action=physical-process-ceiling "
+                    "swap_action=allow-compression-or-incidental-swap "
+                    "stage_lifetime_release_requested=true "
+                    "next_use_aware_replay_requested=true "
+                    "replay_prime_stage=residual-grid "
+                    "replay_retention_action=pinned-no-eviction-source-order "
+                    "known_last_use_release_active=true "
+                    "product_streaming_active=false replay_spill_active=false "
+                    "storage_demotion_active=false",
+                    "standard_mfs_execution_plan "
+                    "execution_mode=test rows_total=4 lifetime_logical_bytes=313 "
+                    "lifetime_peak_bytes=200 planned_peak_bytes=200 "
+                    "lifetime_stored_peak_bytes=0 lifetime_stored_peak_stage=none "
+                    "metal_eligible=true",
+                    "standard_mfs_execution_allocation "
+                    "allocation_id=initial-grid component=grid stage=grid bytes=100",
+                    "standard_mfs_execution_allocation "
+                    "allocation_id=standard-mfs-awproject-compact-replay-retention-1 "
+                    "component=replay stage=grid bytes=200",
+                    "standard_mfs_execution_allocation "
+                    "allocation_id=standard-mfs-awproject-compensated-f64-readback-1 "
+                    "component=readback stage=fft bytes=13",
+                    stages,
+                    "standard_mfs_execution_lifetime "
+                    "allocation_id=initial-grid component=grid logical_bytes=100 "
+                    "residency_index=0 backing=HostHeap resident_bytes=100 "
+                    "stored_bytes=0 "
+                    "live_from=prepare live_through=dirty next_use=none",
+                    "standard_mfs_execution_lifetime "
+                    "allocation_id=standard-mfs-awproject-compact-replay-retention-1 "
+                    "component=replay logical_bytes=200 "
+                    "residency_index=0 backing=HostHeap resident_bytes=200 "
+                    "stored_bytes=0 "
+                    "live_from=grid live_through=finish next_use=cyclic:grid:15",
+                    "standard_mfs_execution_lifetime "
+                    "allocation_id=standard-mfs-awproject-compensated-f64-readback-1 "
+                    "component=readback logical_bytes=13 "
+                    "residency_index=0 backing=HostHeap resident_bytes=13 "
+                    "stored_bytes=0 "
+                    "live_from=dirty live_through=dirty next_use=none",
+                    "standard_mfs_stage_memory phase=fft_start stage=fft "
+                    "current_rss_bytes=150 lifetime_peak_rss_bytes=190 "
+                    "stage_observed_peak_metal_allocated_bytes=40",
+                    "awproject_compact_replay_cache resident_bytes=77 "
+                    "compiled_total_bytes=88 compiled_total_bytes_complete=false "
+                    "resident_blocks=2 partial_blocks=1 rejected_blocks=0",
+                    "awproject_metal_compensated_readback products=8 "
+                    "readback_strategy=sequential-plane resident_bytes=100 "
+                    "host_f64_transient_bytes=13 "
+                    "materialized_f32_output_bytes=40 modeled_overlap_bytes=153 "
+                    "readback_ms=2.25",
+                    "standard_mfs_metal_residual_refresh "
+                    "dispatch_wait_ms=2.5 sync_ms=1.5",
+                    "standard_mfs_planner_preflight status=admitted rows_total=4 "
+                    "ddids=16 memory_pressure_policy=hybrid "
+                    "visibility_streamed=false replay_compiled=false "
+                    "grids_allocated=false products_materialized=false",
+                )
+            )
+        )
+
+        memory = parsed["memory_campaign"]
+        self.assertEqual(
+            "hybrid", memory["planning_resources"]["memory_pressure_policy"]
+        )
+        self.assertEqual(
+            "physical-process-ceiling",
+            memory["memory_runtime_actions"]["admission_action"],
+        )
+        self.assertEqual(1, memory["memory_runtime_action_record_count"])
+        self.assertTrue(memory["ledger_reconciliation"]["complete"])
+        self.assertEqual(
+            313,
+            memory["ledger_reconciliation"]["logical_bytes_from_lifetime_rows"],
+        )
+        self.assertEqual(
+            200, memory["ledger_reconciliation"]["peak_bytes_from_stage_rows"]
+        )
+        self.assertEqual(
+            0,
+            memory["ledger_reconciliation"]["stored_peak_bytes_from_stage_rows"],
+        )
+        self.assertEqual(12, memory["ledger_reconciliation"]["stage_count"])
+        self.assertEqual(
+            {"grid": 100, "readback": 13, "replay": 200},
+            memory["lifetime_logical_bytes_by_component"],
+        )
+        self.assertEqual(
+            {
+                "initial-grid": 100,
+                "standard-mfs-awproject-compact-replay-retention-1": 200,
+                "standard-mfs-awproject-compensated-f64-readback-1": 13,
+            },
+            memory["lifetime_logical_bytes_by_allocation_id"],
+        )
+        self.assertEqual(77, memory["compact_replay"]["actual_resident_bytes"])
+        self.assertEqual(
+            88,
+            memory["compact_replay"]["final"]["compiled_total_bytes"],
+        )
+        self.assertIs(
+            False,
+            memory["compact_replay"]["final"]["compiled_total_bytes_complete"],
+        )
+        self.assertEqual(200, memory["compact_replay"]["planned_reservation_bytes"])
+        self.assertIs(
+            True,
+            memory["compact_replay"]["actual_resident_within_planned_reservation"],
+        )
+        self.assertEqual(
+            ["sequential-plane"],
+            memory["compensated_readback"]["strategies"],
+        )
+        self.assertEqual(
+            13,
+            memory["compensated_readback"]["actual_f64_transient_peak_bytes"],
+        )
+        self.assertIs(
+            True,
+            memory["compensated_readback"][
+                "actual_f64_transient_within_planned_reservation"
+            ],
+        )
+        self.assertTrue(memory["compensated_readback"]["modeled_overlap_reconciled"])
+        self.assertEqual(190, memory["stage_memory"]["lifetime_peak_rss_bytes"])
+        self.assertEqual(1, memory["gpu_waits"]["record_count"])
+        self.assertEqual(
+            2.5,
+            memory["gpu_waits"]["field_totals_ms"]["dispatch_wait_ms"],
         )
 
     def test_mosaic_resident_product_diagnostic_is_parsed(self) -> None:
@@ -1908,6 +2060,154 @@ imaging_source_read_ahead_summary mode=cube_slab enabled=true max_live_row_block
             summary["source_read_ahead_effective_read_bandwidth_mib_s"],
             places=6,
         )
+
+    def test_run_plan_attaches_process_and_writes_host_telemetry_receipt(self) -> None:
+        first = {field: 0 for field in SAMPLE_FIELDS}
+        first.update(
+            {
+                "observed_at": "2026-07-30T00:00:00Z",
+                "elapsed_seconds": 0.0,
+                "page_size_bytes": 16_384,
+                "physical_memory_bytes": 34_359_738_368,
+                "memory_free_percent": 50,
+                "host_compressed_memory_bytes": 1024,
+                "swap_used_bytes": 2048,
+                "process_pid": 4242,
+                "process_physical_footprint_bytes": 4096,
+                "process_physical_footprint_bytes_lifetime_peak": 8192,
+                "process_resident_memory_bytes": 6144,
+                "process_page_faults": 10,
+                "process_disk_read_bytes": 100,
+                "process_disk_write_bytes": 200,
+                "spill_volume_path": "/Volumes/EXTERNAL",
+                "spill_volume_device": "disk4",
+                "spill_volume_read_bytes": 1000,
+                "spill_volume_write_bytes": 2000,
+            }
+        )
+        last = dict(first)
+        last.update(
+            {
+                "observed_at": "2026-07-30T00:00:01Z",
+                "elapsed_seconds": 1.0,
+                "process_physical_footprint_bytes_lifetime_peak": 12_288,
+                "process_page_faults": 13,
+                "process_disk_read_bytes": 150,
+                "process_disk_write_bytes": 270,
+                "spill_volume_read_bytes": 1500,
+                "spill_volume_write_bytes": 2800,
+            }
+        )
+        telemetry = build_host_telemetry_result(
+            interval_seconds=5.0,
+            samples=[first, last],
+            errors=[],
+        )
+
+        class FakeSampler:
+            def __init__(self):
+                self.started = False
+                self.attached = None
+
+            def start(self):
+                self.started = True
+
+            def attach_targets(self, **targets):
+                self.attached = targets
+
+            def stop(self):
+                return telemetry
+
+        sampler = FakeSampler()
+        plan = {
+            "run_id": "telemetry-test",
+            "run": {"stream_log": False},
+            "review": {},
+            "mode": {
+                "bench_mode": "dirty",
+                "specmode": "mfs",
+                "gridder": "standard",
+                "deconvolver": "hogbom",
+                "weighting": "natural",
+                "standard_mfs_acceleration": "auto",
+                "image_shape": [64, 64],
+                "channel_count": 1,
+                "nterms": 1,
+                "niter": 0,
+            },
+            "comparison": {"products": [".image"]},
+            "command": {"argv": ["bench"], "env": {}},
+            "environment": canonical_test_environment(),
+            "products": {},
+            "benchmark_features": {},
+        }
+
+        def fake_run(*args, on_spawn, before_reap, **kwargs):
+            process = mock.Mock(pid=4242)
+            on_spawn(process)
+            before_reap(process)
+            return run_workload.subprocess.CompletedProcess(
+                ["bench"],
+                1,
+                "Error: synthetic benchmark failure\n",
+                None,
+            )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            plan["artifacts"] = {"root": str(root)}
+            log_path = root / "telemetry-test.log"
+            with (
+                mock.patch(
+                    "run_workload.DarwinHostTelemetrySampler",
+                    return_value=sampler,
+                ),
+                mock.patch(
+                    "run_workload.run_benchmark_command",
+                    side_effect=fake_run,
+                ),
+            ):
+                result = run_workload.run_plan(plan, log_path)
+
+            receipt_path = root / "telemetry-test.host-telemetry.json"
+            self.assertTrue(receipt_path.is_file())
+            self.assertEqual(
+                str(receipt_path), result["results"]["host_telemetry_path"]
+            )
+
+        self.assertTrue(sampler.started)
+        self.assertNotIn("process_pid", sampler.attached)
+        self.assertEqual(
+            str(root / "telemetry-test.casars-imager.pid"),
+            str(sampler.attached["process_pid_file"]),
+        )
+        self.assertEqual(
+            plan["artifacts"]["root"],
+            str(sampler.attached["spill_volume_path"]),
+        )
+        self.assertEqual(
+            12_288,
+            result["results"]["host_telemetry"]["summary"][
+                "process_physical_footprint_bytes_peak"
+            ],
+        )
+        self.assertEqual(
+            500,
+            result["results"]["host_telemetry"]["summary"][
+                "spill_volume_read_bytes_delta"
+            ],
+        )
+        typed = canonical_workload_result(
+            extra_results={
+                key: result["results"][key]
+                for key in (
+                    "host_telemetry_path",
+                    "host_telemetry_sha256",
+                    "host_telemetry",
+                )
+            }
+        )
+        run_workload.validate_run_result(typed, source="host telemetry fixture")
 
     def test_completed_run_promotes_enriched_benchmark_features(self) -> None:
         plan = {

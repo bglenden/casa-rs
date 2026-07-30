@@ -278,6 +278,7 @@ def validate_recipe_bound_benchmark_bundle(result: dict[str, Any]) -> dict[str, 
         label="Rust/CASA comparison",
     )
     _validate_benchmark_log(result, partial_root=partial_root)
+    _validate_run_host_telemetry(result, partial_root=partial_root)
     return {
         "status": "passed",
         "validator_version": 1,
@@ -1213,6 +1214,41 @@ def _validate_benchmark_log(
         logs.get("benchmark_log_sha256"),
         label="benchmark summary log",
     )
+
+
+def _validate_run_host_telemetry(
+    result: dict[str, Any], *, partial_root: pathlib.Path
+) -> None:
+    results = _object(result, "results", "run result")
+    fields = (
+        "host_telemetry_path",
+        "host_telemetry_sha256",
+        "host_telemetry",
+    )
+    present = [field in results for field in fields]
+    if not any(present):
+        return
+    if not all(present):
+        raise BundleIntegrityError("run host telemetry artifact is incomplete")
+    path = _bundle_file(
+        results.get("host_telemetry_path"),
+        partial_root=partial_root,
+        label="run host telemetry",
+    )
+    _validate_file_digest(
+        path,
+        results.get("host_telemetry_sha256"),
+        label="run host telemetry",
+    )
+    telemetry = _load_json_object(path, label="run host telemetry")
+    if telemetry != results.get("host_telemetry"):
+        raise BundleIntegrityError(
+            "embedded run host telemetry differs from its artifact"
+        )
+    try:
+        validate_host_telemetry(telemetry)
+    except HostTelemetryError as error:
+        raise BundleIntegrityError(f"run host telemetry is invalid: {error}") from error
 
 
 def _expected_product_suffixes(result: dict[str, Any]) -> list[str]:

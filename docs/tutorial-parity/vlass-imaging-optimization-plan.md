@@ -1,7 +1,7 @@
 # VLASS Fragment Imaging Correctness And Performance Plan
 
 Truth class: approved execution contract
-Last reality check: 2026-07-27
+Last reality check: 2026-07-30
 Verification: `just docs-check`
 
 WDAD scope:
@@ -150,7 +150,7 @@ are development evidence only.
 
 ### Required Full-Geometry Memory Campaign
 
-Brian added memory as a measured optimization dimension on 2026-07-29 without
+Brian added memory as a measured optimization dimension on 2026-07-30 without
 changing the wave scope, correctness contract, or iteration ladder. Routine
 `12,150`-square clean development runs remain prohibited. First promote the
 `4,096`-square full-16-SPW candidate. Then use bounded planner dry-runs and the
@@ -204,6 +204,15 @@ memory-pressure policy with a safe automatic default. Intentional dependence
 on swap, a persisted replay-cache format, or another materially different
 production default still requires Brian's approval after the experiment
 evidence is presented.
+
+That promotion is explicitly a memory-campaign promotion, not final wave
+acceptance. Its receipt uses scope `memory-campaign-only`, status
+`memory-candidate-promoted`, and embeds the still-unsatisfied
+`vlass_final_four_row_10x_acceptance` contract. Final acceptance remains four
+independently measured, content-addressed matched CASA/casa-rs rows:
+single-field dirty, single-field clean, all-fields dirty, and all-fields clean,
+each at least 10x. Their CASA baselines are supplied only by the real matched
+receipts; this campaign does not invent missing baseline values.
 
 ### 2026-07-22 Mac Mini Continuation
 
@@ -3487,6 +3496,40 @@ identical value and is not an allowed parity fix. The required full-geometry
 memory campaign therefore remains gated; no `12,150`-square experiment has
 started.
 
+The final same-input FFT and model-preparation audit narrowed the remaining
+difference without relaxing that gate. casacore `LatticeFFT::cfft2d` and the
+casa-rs official f32 FFTW path produced bit-for-bit identical TT0 and TT1
+grids over all `16,777,216` complex pixels, so FFT implementation and worker
+count are excluded. Increasing model FFT workers from eight to ten was also a
+negative performance/correctness experiment: its products were byte-identical
+to the eight-worker candidate and retained the same two topology pixels.
+
+CASA's LEL model preparation performs the two square roots as Float, promotes
+their quotient and the model division to Double, and narrows only the final
+result. The previous all-Float casa-rs denominator differed at `436` of
+`1,985` active model pixels; the promoted expression matches all `1,985`
+bit-for-bit. Candidate
+`vlass-clean4096-full16-casa-lel-model-prep-official-fftw310-v55` preserves
+the exact five compared CASA major cycles and all `641` component updates.
+It reduces `.alpha` and `.alpha.error` from two topology mismatches to one,
+at `[1542,3144]`, but therefore still fails the 19-product promotion contract.
+Its continuous normalized RMS differences are `0.753` ppm for `.image.tt0`,
+`0.810` ppm for `.residual.tt0`, and `0.268` ppm for `.model.tt0`. The
+decisive next diagnostic captures CASA's normalized model, post-Stokes,
+pre-FFT AW, and post-FFT planes from one disposable, frozen-model prediction
+major cycle. It does not regenerate or retime the frozen CASA clean oracle.
+
+The v55 receipts are:
+
+- comparison:
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-clean4096-full16-casa-lel-model-prep-official-fftw310-v55.comparison.json`,
+  SHA-256
+  `9ad8902f721e4558d2e739a221473bdf57c1a45e8433df8add7b386adb41cda8`;
+- major-cycle trace:
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-clean4096-full16-casa-lel-model-prep-official-fftw310-v55.trace-comparison.json`,
+  SHA-256
+  `3dabab4fe726e6f043b127f339962939f041c54b13884eda953fc84b987645df`.
+
 The first reduced replay-memory ledger also found and fixed an admission
 accounting defect without changing replay order or science arithmetic. The
 resident calculation had charged the large inline replay-window object twice
@@ -3543,6 +3586,326 @@ The immutable full-16 evidence is:
 The required full-geometry memory campaign above remains queued behind this
 promotion gate. No 12,150-square development or memory-policy run has been
 started from this blocked candidate.
+
+### 2026-07-30 Full-16 arithmetic and memory-lifetime checkpoint
+
+The latest bounded full-16 correctness candidate used CASA's bundled FFTW
+3.3.10 and the exact casacore-style positive-definite inverse. Candidate v59
+still completed the same five CASA major cycles and all 641 component updates,
+with `0.734` ppm image-TT0, `0.789` ppm residual-TT0, and `0.280` ppm model-TT0
+normalized differences. Every non-alpha product gate passes. Promotion remains
+blocked by exactly two alpha/alpha-error topology pixels, `[309,3290]` and
+`[1542,3144]`; the frozen comparison receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260730-vlass-clean4096-full16-casa-lel-casacore-inverse-casa-fftw310-v59.comparison.json`,
+SHA-256
+`fb4a83e321028f50ab5234e07f2dcd30b0bcfc608a6d2bbcba06b4fff2565993`.
+
+The corresponding negative arithmetic evidence is now specific. Candidates
+v58 and v59 have byte-identical model, residual, restored image, alpha,
+alpha-error, and PSF storage, so the casacore inverse change did not move the
+result. Switching from Homebrew FFTW 3.3.11 to CASA FFTW 3.3.10 moved the two
+crossing pixels by changing the scale-5 and scale-12 Hessian bits, but did not
+remove the topology mismatch. At both current pixels the model is zero and the
+restored image is bitwise the principal residual. A frozen same-input oracle
+also reproduces CASA's scale-zero coefficient solve, score, and model update
+bit-for-bit. Threshold changes, topology tolerance, restoration, the scalar
+solve, and model-update arithmetic remain excluded. The next frozen-product
+diagnostic is the cycle-zero residual/RHS boundary; no further full candidate
+is warranted until that source path changes.
+
+The first exact 12,150-square lifetime audit found that the previous planner
+missed the dominant direct-Metal transform overlap. One plane contains
+147,622,500 pixels. The eight-plane main-plus-compensation grid is therefore
+18,895,680,000 bytes (`17.598 GiB`). The old implementation materialized all
+eight Complex64 readback planes while those two Metal buffers remained live,
+adding another 18,895,680,000 bytes and producing a raw `35.196 GiB` overlap
+before output arrays or FFT scratch.
+
+The production path now preserves exact plane and transform order while
+reading, transforming, and releasing one compensated Complex64 plane at a
+time. At full geometry the bounded f64 transient is 2,361,960,000 bytes
+(`2.200 GiB`); with all eight f32 dirty products materialized, the modeled
+overlap is 25,981,560,000 bytes (`24.197 GiB`). This removes
+16,533,720,000 bytes (`15.398 GiB`) from the old readback peak. The Metal grid
+and compensation buffers are explicitly released before normalization.
+Normalization now consumes its PSF and residual arrays rather than cloning
+five image planes, the mask-only weight clone is released after mask
+construction, and product pixels are written through borrowed lattice views
+instead of a full f32 clone. A focused Metal segmented/full dispatch test
+confirms that single-plane readback is array-identical to the former
+all-plane helper.
+
+The application ledger now charges the one-plane f64 transient at initial and
+residual transforms, all prepared Complex32 Taylor planes during model FFT,
+the product/mask writer scratch actually retained, and compact replay as
+HostHeap beginning at residual gridding. Replay admission uses exact
+residual-stage overlap headroom; it describes a pinned, no-eviction
+source-order subset when all 16 cyclic blocks do not fit. Runtime receipts
+reconcile the actual f64 transient and its full Metal-plus-output overlap
+against that allocation.
+
+An adversarial audit then found that the first lifetime version reused the
+initial eight-plane grid charge at every residual refresh. Production
+residual storage actually owns only the two compensated Taylor residual
+planes. The corrected full-geometry ledger therefore records
+`18,895,680,000` bytes for the initial grid and `4,723,920,000` bytes for the
+residual grid. The generic bootstrap planner also no longer pretends that the
+run-state and model-FFT staging allocations overlap the initial grid; both are
+restored before exact lifetime admission. A deterministic 32 GiB planner
+fixture now admits this corrected shape and reserves `5,166,808,761` bytes of
+residual-stage headroom for an exact-size, pinned replay subset. The same
+fixture rejects 24 GiB at the semantic lifetime gate and 16 GiB at the fixed
+initial-state gate. These are formula tests, not measured policy results.
+
+The same semantic-ledger gate exposed a shared fixed-tile admission defect:
+the bootstrap planner separately filled memory with source/read-ahead blocks
+and with resident tiles plus their queue even though those allocations coexist
+during gridding. Tile planning now derives row-block capacity from one combined
+grid-stage budget and charges live source blocks in the tile peak. Deterministic
+1, 2, and 4 GiB planner regressions prevent either side from independently
+spending the same headroom. This corrects admission accounting only; it is not
+a measured memory-policy result.
+
+This is positive implementation and planner evidence, not a memory-policy
+result. A read-only campaign audit found that the five policy names still need
+distinct execution semantics for stage-aware replay/product demotion and
+hybrid next-use eviction; the all-63-field campaign route and final clean
+trajectory gate also require hardening. Those deficiencies are recorded as
+negative evidence and must be closed before planner or dirty-policy evidence
+can promote. The 4,096-square full-16 row remains the active gate and no
+12,150-square run has been launched.
+
+The bounded host-accumulation follow-up did not promote that row. Candidate
+v60 stopped after `11.72` seconds, before the initial dirty transform, because
+optional initial replay priming produced a `338,706,544`-byte arena against a
+`268,435,456`-byte reservation. That is retained as a configuration and replay
+admission failure, not a science result. Candidate v61 disabled only that
+optional priming and exercised the genuine source-order HostF64 grid with the
+same CASA LEL model preparation, bundled FFTW 3.3.10, CASA FFT0, and exact
+minor-cycle arithmetic. It completed in `86.86` seconds with all `641`
+updates and zero discrete trajectory mismatch, but still failed exact
+alpha/alpha-error topology at two pixels. `[1542,3144]` persisted, while the
+Metal crossing `[309,3290]` moved to the HostF64-only `[2837,3114]`.
+Continuous normalized RMS differences were `0.7293` ppm for image TT0,
+`0.7820` ppm for residual TT0, and `0.2983` ppm for model TT0. HostF64
+therefore changes marginal rounding but is rejected as the topology fix. The
+content-addressed comparison receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260730-vlass-clean4096-full16-hostf64-casa-lel-casacore-inverse-casa-fftw310-v61.comparison.json`,
+SHA-256
+`6fe0bdf804825b3afd3bbc5b01b6923e1e2bd4e1afd60c8e7356ff40776b52a0`;
+the trajectory SHA-256 is
+`ac84b31a5eba75bccf8b45c3f4459f3faf3481cf2ba4543be5ad6dd6ec678533`.
+No further 4,096 candidate is warranted until a contribution-prefix oracle
+identifies the first per-contribution, ordering, or accumulator divergence.
+
+The campaign implementation now binds either the single-field selection or
+the exact connected 63-field selection, the frozen product inventories, all
+12 lifetime stages, named large allocations, measured 32 GiB Darwin/arm64
+host evidence, and content-addressed component/major-cycle trajectory
+receipts. The promotion receipt cannot promote from self-declared gate names.
+For the 4,096-square clean full-16-SPW prerequisite it verifies hashes and
+contents of the executable workload, all 19 product comparisons and
+tolerances, and the component, major-cycle, and no-divergence trajectory. For
+the full-size clean memory candidate, the trajectory additionally binds the
+exact workload-result file SHA-256 and the canonical SHA-256 of that result's
+embedded product comparison. Dirty-policy review likewise binds the exact
+experiment-receipt SHA-256, so edits after review fail closed. A successful
+full-size clean receipt promotes only the memory candidate and carries the
+separate, unevaluated four-row 10x acceptance contract; it cannot claim final
+wave acceptance. Resident process bytes and bytes stored on a mapped or
+temporary spill backing are separate ledger dimensions; stored payload no
+longer inflates resident-memory admission.
+Every policy also emits one immutable runtime-action receipt. `auto` and
+conservative admission remain no-swap, aggressive and hybrid use the measured
+physical-process ceiling, oversubscription still requires an explicit target,
+and ordinary replay LRU is absent. The receipt truthfully says that current
+production has last-use releases and residual-stage pinned source-order
+replay, but not yet product streaming, replay spill, storage demotion, or
+hybrid next-use selection. Consequently planner probes for stage-aware and
+hybrid are required to record negative evidence until those requested
+mechanisms are real; their names alone cannot promote a row.
+
+Execution receipts must contain complete, monotonic per-stage peak samples,
+policy-specific resolved-target evidence, exact full-geometry lifetime
+formulas and backing intervals, and an approximately 7.31 GiB measured
+compiled-replay working set. A single reusable, content-addressed 64 MiB
+uncached `fsync` probe measures the external artifact volume only for
+execution; planner-only rows record storage bandwidth as unavailable rather
+than inventing a value. The measured rate is injected into both the manifest
+and outer process environment and revalidated at promotion. The hardened
+campaign, host-telemetry, and workload suites pass `122` focused Python tests.
+Current negative evidence is fail-closed: production must still emit the full
+per-stage pressure schema and compiled replay total, dirty plans must omit
+clean-only residual lifetimes, and stage-aware and hybrid runtime actions
+remain inactive.
+
+The first no-grid contribution audit also excludes a compact-replay
+translation error in the first full-band block. It stopped after `2.71`
+seconds, before allocating or gridding an image. Direct/raw AWProject and
+compact replay produced the same 64-bit rolling hash,
+`13953044337494127029`, over `25,031` sources, `50,062` RR/LL roles, and
+`14,998,926` phased Y-outer/X-inner taps. The hash includes source ordinal,
+CF key, location and offset, conjugation, f32 and f64 normalization, weight,
+Taylor coefficient, visibility value, and every phased-tap bit; MS
+row/channel identity is explicitly unavailable in `VisibilityBatch` and was
+not inferred. At a selected high-cancellation residual-TT0 cell, the explicit
+CASA Complex-Float multiply/Double-add simulation and HostF64 agreed at every
+one of 52 accumulator prefixes. Fixed64 diverged at the first prefix, but its
+final normalized error was only `8.17e-15`, confirming it as a secondary
+Metal delta rather than the shared topology owner. The TSV SHA-256 is
+`08666b52822574f9a16cb04451c1b996ceb293a04a28548f171d3af988094d9e`;
+the sealed JSON receipt SHA-256 is
+`e8ec4213039d297378a100eef5c210a456fb28e15ea107704065b52938370706`.
+The completed all-block no-grid campaign stopped after the sixteenth replay
+block, before grid dispatch, FFT, image formation, or any CASA call. All 20
+source windows and all 16 block hashes match direct/raw AWProject exactly:
+`385,862` sources, `771,724` RR/LL roles, and `470,070,348` phased taps. This
+excludes compact replay compilation, source ordering, CF selection, phase/tap
+bits, and visibility values as the shared full-band owner. The all-block TSV
+SHA-256 is
+`9654a350c810d1fc3ce57afeffc67aa11cd585bd38a68a7be519f9c2bdc2a6a9`;
+the sealed JSON SHA-256 is
+`0decd810c8e778afbce161b3fd9c558b725bb4c05a2ecce89926a5dda67e6b19`.
+The next bounded discriminator is therefore the actual CASA-side
+`DataToGrid`/AW-resampler contribution and visitation stream, not another
+4,096-square image candidate.
+
+An Oracle evidence-delta review adopted a bracket-before-descending rule for
+that diagnostic. The first CASA probe will record the ordered accepted
+`DataToGrid` call stream and cumulative raw DComplex grid plus `sumwt` at
+block boundaries, then abort before normalization, FFT, or product creation.
+Only a matching call stream with a differing cumulative grid justifies
+instrumenting hundreds of millions of individual Fortran tap updates. Exact
+call, cumulative-grid, and `sumwt` bytes would promote the replay/DataToGrid
+subsystem, not the integrated row: the two alpha/alpha-error topology pixels
+must still reach zero before the 4,096-square candidate promotes.
+
+The probe itself was hardened through bounded negative evidence rather than
+silently treating instrumentation failures as science. Version v1 generated
+flat Mach-O imports and failed at dynamic load before CASA. Version v2 passed
+the two-level import check but rejected CASA's canonical `6.7.5-18` version
+string before `tclean`. Version v3 used `dlsym(RTLD_NEXT, ...)`; dyld returned
+the replacement itself, so the first call recursively entered a second call
+and the third dispatch hit the configured bound before either original call
+could return. No version formed an image. The adopted interposer is instead
+two-level-bound to the exact exported DComplex specialization and verifies
+with `dladdr` that the target belongs to
+`libcasacpp_synthesis.6.dylib`. It serializes diagnostic dispatch, identifies
+TT0/TT1 by stable raw-grid storage plus an equal source stream, and fails
+closed on recursion, unexpected precision, shape, term order, or finalize.
+
+The first successful v4 bracket completed CASA's exact TT0 and TT1 calls and
+then stopped with diagnostic exit 86 before finalize, normalization, FFT, or
+image formation. It traversed exactly `16,777,216` DComplex values and one
+Double `sumwt` per term. CASA's boundary hashes were
+`9328098071914194885` / `5773668711911205477` for TT0 grid / `sumwt` and
+`9296706034202754823` / `6979414366695050184` for TT1. Its receipt SHA-256 is
+`dd6ca70a03a3fb27f2298c3ec5115fd67ca26dd2e4eea34e6b937f897015155d`.
+That receipt also exposed a necessary alignment fact: CASA's first native
+visibility buffer contained `12,359` accepted sources, while casa-rs's first
+SPW replay block contains `25,031`; those cumulative grids must not be
+compared as if they covered the same input.
+
+The additive v5 receipt therefore recorded the native boundary without
+changing the original calls or grid hashes. It is SPW 2, rows `[0,325)`, 325
+ordered row IDs `0..324`, 48 flagged rows, 64 channels, and four
+polarizations. The row-ID FNV hash is `15058004568616189240`, the row-flag
+hash is `3526571572021233857`, the channel-map hash is
+`2111453637644839429`, the polarization-map hash is
+`13222926617229668273`, and the frequency hash is
+`17711728193083539473`. Receipt SHA-256
+`fe3d5ba3bff1ba925f63f0f088df602692655131c86d6319210ffa90e067ea1f`
+freezes that changed diagnostic. The next bounded step is one casa-rs
+HostF64 bracket over exactly those 325 SPW-2 rows. A matching grid and
+`sumwt` promotes the gridding boundary; a differing grid triggers the
+tap-prefix oracle. Neither outcome permits another unchanged CASA bracket.
+Independent receipt decoding identifies CASA's channel map as 64 zeroes,
+its Stokes-I polarization map as `[0,-1,-1,0]`, and the frequency endpoints
+as `1,964,927,697.7790608` and `2,090,923,061.606115` Hz.
+
+The same review usefully challenged physical aliasing and recommended
+stage-specific release receipts, second-pass replay residency measurements,
+tail-latency-aware early stops, and a lexicographic planner that first enforces
+physical/unified-memory feasibility and then minimizes predicted p95 wall
+time. Those recommendations are adopted as campaign design input, not as
+unmeasured constants. Its suggested 4.8 GiB automatic OS reserve remains a
+hypothesis for the bounded pressure-knee experiments; it does not replace the
+measured planner policy. Its suggestion to start a full-geometry one-block
+probe before the 4,096 promotion is rejected because Brian's iteration ladder
+requires that promotion first. Its suggestion that intentional
+oversubscription needs approval even as an experiment is also superseded:
+Brian already authorized the bounded experiment and reserved approval for
+making swap dependence or another materially different policy a production
+default.
+
+### 2026-07-30 stabilization checkpoint
+
+Scientific and performance iteration stopped at the explicit checkpoint
+boundary. No replacement VLASS diagnostic, CASA timing/reference call, or
+imaging workload was started. The already-complete CASA v5 bracket remains the
+final VLASS/CASA imaging call in this checkpoint: it stopped before finalize,
+normalization, FFT, or image formation, and its immutable receipt SHA-256 is
+`fe3d5ba3bff1ba925f63f0f088df602692655131c86d6319210ffa90e067ea1f`.
+The preceding v4 grid/sumwt receipt remains
+`dd6ca70a03a3fb27f2298c3ec5115fd67ca26dd2e4eea34e6b937f897015155d`.
+The complete direct/raw-versus-compact all-block audit remains frozen at TSV
+SHA-256
+`9654a350c810d1fc3ce57afeffc67aa11cd585bd38a68a7be519f9c2bdc2a6a9`
+and sealed JSON SHA-256
+`0decd810c8e778afbce161b3fd9c558b725bb4c05a2ecce89926a5dda67e6b19`.
+
+The private casa-rs first-visibility-buffer bracket is now implemented but was
+deliberately not executed during stabilization. It enforces the frozen
+4,096-square field-1525/SPW-2-through-17 selection, brackets rows `[0,325)`,
+checks the expected row and flag hashes, requires the expected `12,359`
+accepted sources, grids serial HostF64 TT0 then TT1 in exact source order, and
+writes a non-overwriting content-addressed receipt before FFT, normalization,
+image formation, or products. Producer-native input hashes are explicitly
+non-comparable; only the common CASA-order grid and `sumwt` hashes may be
+compared. Therefore there is no casa-rs bracket receipt and no claim that the
+CASA v5 grid/sumwt boundary matches yet.
+
+The 4,096-square full-16-SPW row remains unpromoted. Candidate v59 still has
+the exact five CASA major cycles and all `641` component updates, but
+`.alpha` and `.alpha.error` differ at `[309,3290]` and `[1542,3144]`.
+Candidate v61 HostF64 moved the former mismatch to `[2837,3114]` without
+removing either topology failure. Its `0.7293` ppm image-TT0, `0.7820` ppm
+residual-TT0, and `0.2983` ppm model-TT0 continuous differences are useful
+negative evidence, not promotion. The immediate correctness blocker is still
+the two exact topology pixels; the first unexecuted discriminator is the
+casa-rs 325-row bracket comparison against CASA v5.
+
+The full-geometry memory campaign is implemented as a fail-closed campaign
+driver, not yet as promoted policy evidence. Its focused Python suite passes
+all `31` tests, and Ruff check plus format check pass for the driver and test.
+The production ledger distinguishes the `18,895,680,000`-byte initial grid
+from the `4,723,920,000`-byte residual grid, models one
+`2,361,960,000`-byte f64 transform transient, admits the deterministic 32 GiB
+shape, rejects 24 and 16 GiB, and accounts source blocks plus resident/queued
+tiles as one overlapping gridding peak. Runtime execution still fails closed
+until all 12 stage samples, complete compiled-replay working-set bytes, CPU
+allocator data, external-device I/O, and GPU-stall evidence are available.
+Stage-aware product/replay demotion and hybrid next-use actions remain
+unimplemented; their planner rows must record negative evidence rather than
+claim execution. No 12,150-square memory-policy row has been launched.
+
+Checkpoint verification is intentionally bounded to stabilization. Affected
+package `cargo check` and warning-denying Clippy pass, including the earlier
+draft-PR Linux lint surface. `casa-imaging` reports `375` passed and `9`
+data-backed diagnostic tests ignored; `casars-imager` reports `345` passed
+and `13` ignored. `cargo fmt`, `docs-check`, the memory-campaign tests and
+lint, `git diff --check`, and the packaged Python task/UI gate pass; that
+Python gate reports `48` passed and `1` skipped. The workspace `just quick`
+gate passes SPDX, formatting, and warning-denying workspace Clippy, then stops
+on two unrelated `casa-notebook` local-HTTP tutorial tests because the
+checkpoint sandbox denies their socket operation with `PermissionDenied`; no
+notebook code or test was changed to mask that environmental failure. No
+12,150-square development clean and no unchanged CASA reference were run. The
+workspace test suite did discover CASA and execute its existing bounded
+`casa_can_open_generated_synthetic_ms_when_available` interoperability smoke:
+that test opened a temporary generated synthetic MeasurementSet through
+`casatools.table`, completed in `36.80` seconds, and did not call `tclean` or
+perform imaging. No further CASA-backed test or workload was started.
 
 ## Iteration Rules
 

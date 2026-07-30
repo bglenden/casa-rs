@@ -96,6 +96,7 @@ IMAGING_FIELDS = {
     "hogbom_iteration_mode",
     "imaging_fft_backend",
     "imaging_fft_precision",
+    "imaging_memory_pressure_policy",
     "imaging_memory_target_mb",
     "imaging_prepare_buffer_mb",
     "imaging_prepare_workers",
@@ -297,6 +298,8 @@ RESULT_MODE_FIELDS = {
     "image_shape",
     "imaging_fft_backend",
     "imaging_fft_precision",
+    "imaging_memory_pressure_policy",
+    "imaging_memory_target_mb",
     "imaging_read_ahead_blocks",
     "niter",
     "nterms",
@@ -393,6 +396,9 @@ WORKLOAD_RESULT_FIELDS = {
     "product_comparison",
     "casa_repeatability_comparison",
     "casa_tclean_calls",
+    "host_telemetry_path",
+    "host_telemetry_sha256",
+    "host_telemetry",
     "publication_recovery",
     "bundle_integrity",
     "failure",
@@ -1406,7 +1412,11 @@ def _validate_result_mode(value: Any, *, source: str) -> None:
     mode = _require_dict(value, source)
     _allowed_fields(mode, RESULT_MODE_FIELDS, source)
     integer_fields = {"channel_count", "niter", "nterms"}
-    nullable_integer_fields = {"chanchunks", "imaging_read_ahead_blocks"}
+    nullable_integer_fields = {
+        "chanchunks",
+        "imaging_memory_target_mb",
+        "imaging_read_ahead_blocks",
+    }
     nullable_string_fields = {
         "start",
         "width",
@@ -1852,6 +1862,24 @@ def _validate_results(
         _validate_casa_call_groups(
             value["casa_tclean_calls"], source=f"{source}: casa_tclean_calls"
         )
+    telemetry_fields = (
+        "host_telemetry_path",
+        "host_telemetry_sha256",
+        "host_telemetry",
+    )
+    telemetry_present = [field in value for field in telemetry_fields]
+    if any(telemetry_present) and not all(telemetry_present):
+        raise ContractError(f"{source}: host telemetry artifact is incomplete")
+    if all(telemetry_present):
+        _nonempty_string(value, "host_telemetry_path", source)
+        _sha256_or_historical(
+            value["host_telemetry_sha256"],
+            f"{source}: host_telemetry_sha256",
+        )
+        try:
+            validate_host_telemetry(value["host_telemetry"])
+        except HostTelemetryError as error:
+            raise ContractError(f"{source}: invalid host telemetry: {error}") from error
     if "publication_recovery" in value:
         _validate_publication_recovery_record(
             value["publication_recovery"], source=f"{source}: publication_recovery"
@@ -4069,6 +4097,13 @@ def _validate_imaging_types(imaging: dict[str, Any], source: str) -> None:
         _integer(imaging, key, f"{source}: imaging")
     if "cf_resident_mb" in imaging and imaging["cf_resident_mb"] < 1:
         raise ContractError(f"{source}: imaging.cf_resident_mb must be >= 1")
+    if (
+        "imaging_memory_target_mb" in imaging
+        and imaging["imaging_memory_target_mb"] < 1
+    ):
+        raise ContractError(
+            f"{source}: imaging.imaging_memory_target_mb must be >= 1"
+        )
     for key in numbers & set(imaging):
         finite_number(imaging[key], field=f"{source}: imaging.{key}", optional=False)
     for key in booleans & set(imaging):
@@ -4080,6 +4115,21 @@ def _validate_imaging_types(imaging: dict[str, Any], source: str) -> None:
             _string(imaging, key, f"{source}: imaging")
         else:
             _nonempty_string(imaging, key, f"{source}: imaging")
+    if "imaging_memory_pressure_policy" in imaging:
+        policy = imaging["imaging_memory_pressure_policy"]
+        if policy not in {
+            "auto",
+            "conservative-no-swap",
+            "aggressive",
+            "oversubscribe",
+            "stage-aware",
+            "hybrid",
+        }:
+            raise ContractError(
+                f"{source}: imaging.imaging_memory_pressure_policy must be "
+                "auto, conservative-no-swap, aggressive, oversubscribe, "
+                "stage-aware, or hybrid"
+            )
     if "phasecenter_field" in imaging and imaging["phasecenter_field"] is not None:
         _integer(imaging, "phasecenter_field", f"{source}: imaging")
     if "scales" in imaging:

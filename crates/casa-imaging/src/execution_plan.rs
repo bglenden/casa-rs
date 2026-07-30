@@ -5,7 +5,10 @@
 //! an explicitly assigned resource slice, and user policy; imaging algorithms
 //! consume the resulting immutable plan without consulting process state.
 
-use std::fmt;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+};
 
 /// Exact workload facts needed to plan an imaging run.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -92,6 +95,136 @@ pub struct ImagingResources {
     pub metal_device_budget_bytes: usize,
 }
 
+/// Memory-pressure behavior selected for one imaging run.
+///
+/// The policy describes how an application assigned the resource slice. The
+/// pure planner never creates swap headroom by itself; in particular,
+/// [`Self::AutoSafe`] preserves the existing bounded, no-intentional-swap
+/// behavior.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ImagingMemoryPressurePolicy {
+    /// Use an automatically assigned conservative resource slice.
+    #[default]
+    AutoSafe,
+    /// Require the assigned slice to fit current no-swap headroom.
+    ConservativeNoSwap,
+    /// Use nearly all physical memory and permit compression or modest swap.
+    AggressiveMemoryUse,
+    /// Deliberately exceed physical-memory headroom for a bounded experiment.
+    IntentionalOversubscription,
+    /// Release, demote, spill, and prefetch allocations using stage lifetimes.
+    StageAwareRelease,
+    /// Combine high utilization with explicit next-use-aware eviction.
+    Hybrid,
+}
+
+impl ImagingMemoryPressurePolicy {
+    /// Stable diagnostic label used by task and benchmark receipts.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::AutoSafe => "auto",
+            Self::ConservativeNoSwap => "conservative-no-swap",
+            Self::AggressiveMemoryUse => "aggressive",
+            Self::IntentionalOversubscription => "oversubscribe",
+            Self::StageAwareRelease => "stage-aware",
+            Self::Hybrid => "hybrid",
+        }
+    }
+
+    /// Whether selecting this policy explicitly authorizes planned swap use.
+    pub const fn permits_intentional_swap(self) -> bool {
+        matches!(
+            self,
+            Self::AggressiveMemoryUse | Self::IntentionalOversubscription | Self::Hybrid
+        )
+    }
+}
+
+/// Resource-admission action selected by one memory-pressure policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImagingMemoryAdmissionAction {
+    /// Automatically use current no-swap headroom.
+    AutomaticNoSwapHeadroom,
+    /// Explicitly require current no-swap headroom.
+    NoSwapHeadroom,
+    /// Use the process share of installed physical memory.
+    PhysicalProcessCeiling,
+    /// Require an explicit target that may exceed physical-memory headroom.
+    ExplicitOversubscriptionTarget,
+}
+
+impl ImagingMemoryAdmissionAction {
+    /// Stable diagnostic label.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::AutomaticNoSwapHeadroom => "automatic-no-swap-headroom",
+            Self::NoSwapHeadroom => "no-swap-headroom",
+            Self::PhysicalProcessCeiling => "physical-process-ceiling",
+            Self::ExplicitOversubscriptionTarget => "explicit-oversubscription-target",
+        }
+    }
+}
+
+/// Swap-pressure action selected by one memory-pressure policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImagingMemorySwapAction {
+    /// Avoid intentional compression or swap dependence.
+    AvoidIntentionalSwap,
+    /// Use physical memory aggressively and allow compression or incidental swap.
+    AllowCompressionOrIncidentalSwap,
+    /// Deliberately exceed current physical-memory headroom.
+    IntentionalOversubscription,
+}
+
+impl ImagingMemorySwapAction {
+    /// Stable diagnostic label.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::AvoidIntentionalSwap => "avoid-intentional-swap",
+            Self::AllowCompressionOrIncidentalSwap => "allow-compression-or-incidental-swap",
+            Self::IntentionalOversubscription => "intentional-oversubscription",
+        }
+    }
+}
+
+/// Host and device facts detected before planning.
+///
+/// Every field is optional because some platforms cannot report all facts.
+/// These values are evidence used to assign [`ImagingResources`]; they do not
+/// silently enlarge the explicitly assigned resource slice.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ImagingDetectedResources {
+    /// Installed physical memory.
+    pub physical_memory_bytes: Option<usize>,
+    /// Current memory headroom before expected compression or swapping.
+    pub current_memory_headroom_bytes: Option<usize>,
+    /// Physical footprint of the process before this run.
+    pub process_physical_footprint_bytes: Option<usize>,
+    /// Logical CPU threads visible to the process.
+    pub logical_cpu_threads: Option<usize>,
+    /// Performance-oriented CPU cores available to the process.
+    pub performance_cpu_cores: Option<usize>,
+    /// Metal device recommended maximum working-set size.
+    pub metal_recommended_working_set_bytes: Option<usize>,
+    /// Metal device allocation observed before this run.
+    pub metal_current_allocated_bytes: Option<usize>,
+    /// Unified-memory bytes reserved for concurrent CPU/GPU use.
+    pub unified_memory_requirement_bytes: Option<usize>,
+    /// Measured sequential read bandwidth of the selected spill volume.
+    pub storage_read_bytes_per_second: Option<u64>,
+    /// Measured sequential write bandwidth of the selected spill volume.
+    pub storage_write_bytes_per_second: Option<u64>,
+}
+
+/// Resource evidence and memory-pressure intent supplied to the pure planner.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ImagingPlanningContext {
+    /// Selected memory-pressure behavior.
+    pub memory_pressure_policy: ImagingMemoryPressurePolicy,
+    /// Detected host, device, and storage facts.
+    pub detected_resources: ImagingDetectedResources,
+}
+
 /// Explicit user limits and preferences. `None` means the pure planner may
 /// derive the value from workload and assigned resources.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -161,6 +294,451 @@ pub struct ImagingMemoryAllocation {
     pub stage: &'static str,
     /// Planned resident bytes.
     pub bytes: usize,
+}
+
+/// Ordered execution stages used by the imaging memory lifetime ledger.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ImagingMemoryStage {
+    /// Construct indexes, convolution functions, and execution inputs.
+    Prepare,
+    /// Read and prepare bounded source visibility blocks.
+    SourceIngest,
+    /// Derive natural, uniform, or Briggs visibility weights.
+    Weighting,
+    /// Grid the initial dirty image and PSF.
+    InitialGrid,
+    /// Transform and normalize the initial dirty image and PSF.
+    DirtyTransform,
+    /// Select and subtract components in a minor cycle.
+    MinorCycle,
+    /// Transform model terms for prediction.
+    ModelTransform,
+    /// Grid a major-cycle residual refresh.
+    ResidualGrid,
+    /// Transform and normalize a major-cycle residual refresh.
+    ResidualTransform,
+    /// Restore the model and derive Taylor-term products.
+    Finish,
+    /// Materialize the output product set.
+    ProductMaterialization,
+    /// Persist output products.
+    ProductWrite,
+}
+
+impl ImagingMemoryStage {
+    /// Stages in execution and lifetime order.
+    pub const ORDERED: [Self; 12] = [
+        Self::Prepare,
+        Self::SourceIngest,
+        Self::Weighting,
+        Self::InitialGrid,
+        Self::DirtyTransform,
+        Self::MinorCycle,
+        Self::ModelTransform,
+        Self::ResidualGrid,
+        Self::ResidualTransform,
+        Self::Finish,
+        Self::ProductMaterialization,
+        Self::ProductWrite,
+    ];
+
+    /// Stable diagnostic label.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Prepare => "prepare",
+            Self::SourceIngest => "source-ingest",
+            Self::Weighting => "weighting",
+            Self::InitialGrid => "initial-grid",
+            Self::DirtyTransform => "dirty-transform",
+            Self::MinorCycle => "minor-cycle",
+            Self::ModelTransform => "model-transform",
+            Self::ResidualGrid => "residual-grid",
+            Self::ResidualTransform => "residual-transform",
+            Self::Finish => "finish",
+            Self::ProductMaterialization => "product-materialization",
+            Self::ProductWrite => "product-write",
+        }
+    }
+}
+
+/// Actual replay-retention action currently implemented by the runtime.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImagingReplayRetentionAction {
+    /// Retain a deterministic source-order subset without eviction.
+    PinnedNoEvictionSourceOrder,
+}
+
+impl ImagingReplayRetentionAction {
+    /// Stable diagnostic label.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::PinnedNoEvictionSourceOrder => "pinned-no-eviction-source-order",
+        }
+    }
+}
+
+/// Immutable runtime-action receipt resolved once from a memory-pressure policy.
+///
+/// Requested-but-not-yet-active actions are recorded separately from actual
+/// runtime behavior so planner evidence cannot imply that replay spill,
+/// product streaming, or storage demotion already exists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImagingMemoryRuntimeActionReceipt {
+    /// Policy from which this receipt was resolved.
+    pub pressure_policy: ImagingMemoryPressurePolicy,
+    /// Resource slice used for admission.
+    pub admission_action: ImagingMemoryAdmissionAction,
+    /// Permitted swap-pressure behavior.
+    pub swap_action: ImagingMemorySwapAction,
+    /// Whether the selected policy requests stage-lifetime-directed release.
+    pub stage_lifetime_release_requested: bool,
+    /// Whether the selected policy requests next-use-aware replay selection.
+    pub next_use_aware_replay_requested: bool,
+    /// First production stage at which replay programs may become resident.
+    pub replay_prime_stage: ImagingMemoryStage,
+    /// Replay-retention behavior actually implemented by the runtime.
+    pub replay_retention_action: ImagingReplayRetentionAction,
+    /// Whether known last-use drops already present in the runtime are active.
+    pub known_last_use_release_active: bool,
+    /// Whether owned product streaming is active.
+    pub product_streaming_active: bool,
+    /// Whether replay programs are spilled to external storage.
+    pub replay_spill_active: bool,
+    /// Whether any allocation is demoted to external storage by this plan.
+    pub storage_demotion_active: bool,
+}
+
+impl ImagingMemoryRuntimeActionReceipt {
+    /// Resolve the current truthful runtime actions for `pressure_policy`.
+    pub const fn resolve(pressure_policy: ImagingMemoryPressurePolicy) -> Self {
+        let (admission_action, swap_action) = match pressure_policy {
+            ImagingMemoryPressurePolicy::AutoSafe => (
+                ImagingMemoryAdmissionAction::AutomaticNoSwapHeadroom,
+                ImagingMemorySwapAction::AvoidIntentionalSwap,
+            ),
+            ImagingMemoryPressurePolicy::ConservativeNoSwap
+            | ImagingMemoryPressurePolicy::StageAwareRelease => (
+                ImagingMemoryAdmissionAction::NoSwapHeadroom,
+                ImagingMemorySwapAction::AvoidIntentionalSwap,
+            ),
+            ImagingMemoryPressurePolicy::AggressiveMemoryUse
+            | ImagingMemoryPressurePolicy::Hybrid => (
+                ImagingMemoryAdmissionAction::PhysicalProcessCeiling,
+                ImagingMemorySwapAction::AllowCompressionOrIncidentalSwap,
+            ),
+            ImagingMemoryPressurePolicy::IntentionalOversubscription => (
+                ImagingMemoryAdmissionAction::ExplicitOversubscriptionTarget,
+                ImagingMemorySwapAction::IntentionalOversubscription,
+            ),
+        };
+        Self {
+            pressure_policy,
+            admission_action,
+            swap_action,
+            stage_lifetime_release_requested: matches!(
+                pressure_policy,
+                ImagingMemoryPressurePolicy::StageAwareRelease
+                    | ImagingMemoryPressurePolicy::Hybrid
+            ),
+            next_use_aware_replay_requested: matches!(
+                pressure_policy,
+                ImagingMemoryPressurePolicy::Hybrid
+            ),
+            replay_prime_stage: ImagingMemoryStage::ResidualGrid,
+            replay_retention_action: ImagingReplayRetentionAction::PinnedNoEvictionSourceOrder,
+            known_last_use_release_active: true,
+            product_streaming_active: false,
+            replay_spill_active: false,
+            storage_demotion_active: false,
+        }
+    }
+}
+
+/// Storage backing for one resident interval in an allocation lifetime.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ImagingMemoryBacking {
+    /// Ordinary CPU heap or anonymous virtual memory.
+    HostHeap,
+    /// CPU/GPU shared memory charged to the unified physical-memory pool.
+    UnifiedMemory,
+    /// Metal-private device allocation.
+    MetalPrivate,
+    /// Memory-mapped product or replay data.
+    MemoryMapped,
+    /// Temporary external-storage spill.
+    TemporarySpill,
+}
+
+impl ImagingMemoryBacking {
+    /// Backings in deterministic receipt order.
+    pub const ORDERED: [Self; 5] = [
+        Self::HostHeap,
+        Self::UnifiedMemory,
+        Self::MetalPrivate,
+        Self::MemoryMapped,
+        Self::TemporarySpill,
+    ];
+}
+
+/// Next-use fact used to choose release, demotion, or prefetch behavior.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImagingMemoryNextUse {
+    /// The allocation is dead after this resident interval.
+    NoFurtherUse,
+    /// The next use occurs at a known later execution stage.
+    AtStage(ImagingMemoryStage),
+    /// The allocation participates in a repeated cyclic access sequence.
+    Cyclic {
+        /// Stage containing the next access.
+        next_stage: ImagingMemoryStage,
+        /// Other logical allocations visited before this one is used again.
+        intervening_uses: usize,
+    },
+}
+
+/// One contiguous resident interval for a logical allocation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImagingMemoryResidency {
+    /// Storage backing used during this interval.
+    pub backing: ImagingMemoryBacking,
+    /// Bytes expected to be physically resident during this interval.
+    pub resident_bytes: usize,
+    /// Logical bytes stored by this backing without counting them as resident.
+    pub stored_bytes: usize,
+    /// First stage in which the allocation is resident.
+    pub live_from: ImagingMemoryStage,
+    /// Last stage in which the allocation is resident.
+    pub live_through: ImagingMemoryStage,
+    /// Known use after this interval ends.
+    pub next_use: ImagingMemoryNextUse,
+}
+
+impl ImagingMemoryResidency {
+    fn includes(&self, stage: ImagingMemoryStage) -> bool {
+        self.live_from <= stage && stage <= self.live_through
+    }
+}
+
+/// Stable logical allocation and its one or more residency intervals.
+///
+/// Multiple non-overlapping intervals model stage-aware demotion and reload
+/// without changing the allocation identity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImagingMemoryAllocationLifecycle {
+    /// Stable allocation identity used by planner, telemetry, and receipts.
+    pub allocation_id: String,
+    /// Human-readable component name.
+    pub component: String,
+    /// Logical allocation size, including bytes that may be spilled.
+    pub logical_bytes: usize,
+    /// Ordered resident intervals for this logical allocation.
+    pub residencies: Vec<ImagingMemoryResidency>,
+}
+
+/// Resident and stored bytes for one backing at one stage.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImagingMemoryBackingBytes {
+    /// Storage backing.
+    pub backing: ImagingMemoryBacking,
+    /// Simultaneously resident bytes.
+    pub bytes: usize,
+    /// Simultaneously stored bytes that are not charged as process residency.
+    pub stored_bytes: usize,
+}
+
+/// Exact overlap receipt for one execution stage.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImagingMemoryStagePeak {
+    /// Execution stage.
+    pub stage: ImagingMemoryStage,
+    /// Total simultaneous resident bytes across all backings.
+    pub resident_bytes: usize,
+    /// Total simultaneously stored bytes across all backings.
+    pub stored_bytes: usize,
+    /// Resident and stored bytes itemized by backing.
+    pub backing_bytes: Vec<ImagingMemoryBackingBytes>,
+}
+
+impl ImagingMemoryStagePeak {
+    /// Return resident bytes charged to one backing.
+    pub fn bytes_for_backing(&self, backing: ImagingMemoryBacking) -> usize {
+        self.backing_bytes
+            .iter()
+            .find(|entry| entry.backing == backing)
+            .map_or(0, |entry| entry.bytes)
+    }
+
+    /// Return stored, non-resident bytes charged to one backing.
+    pub fn stored_bytes_for_backing(&self, backing: ImagingMemoryBacking) -> usize {
+        self.backing_bytes
+            .iter()
+            .find(|entry| entry.backing == backing)
+            .map_or(0, |entry| entry.stored_bytes)
+    }
+}
+
+/// Explicit allocation lifetimes and their computed stage-overlap peaks.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ImagingMemoryLifetimeLedger {
+    /// Stable logical allocations.
+    pub allocations: Vec<ImagingMemoryAllocationLifecycle>,
+    /// Per-stage simultaneous residency.
+    pub stage_peaks: Vec<ImagingMemoryStagePeak>,
+    /// Maximum simultaneous residency across all stages.
+    pub maximum_resident_bytes: usize,
+    /// Maximum simultaneous external-storage footprint across all stages.
+    pub maximum_stored_bytes: usize,
+    /// First stage at which the maximum is reached.
+    pub peak_stage: Option<ImagingMemoryStage>,
+    /// First stage at which the maximum stored footprint is reached.
+    pub peak_stored_stage: Option<ImagingMemoryStage>,
+    /// Sum of distinct logical allocation sizes.
+    pub total_logical_bytes: usize,
+}
+
+impl ImagingMemoryLifetimeLedger {
+    /// Validate lifetimes and compute deterministic stage-overlap peaks.
+    pub fn build(
+        allocations: Vec<ImagingMemoryAllocationLifecycle>,
+    ) -> Result<Self, ImagingPlanError> {
+        let mut allocation_ids = BTreeSet::new();
+        let mut total_logical_bytes = 0usize;
+        for allocation in &allocations {
+            if allocation.allocation_id.is_empty() {
+                return Err(ImagingPlanError::InvalidInput(
+                    "memory allocation id must not be empty",
+                ));
+            }
+            if !allocation_ids.insert(allocation.allocation_id.as_str()) {
+                return Err(ImagingPlanError::InvalidInput(
+                    "memory allocation ids must be unique",
+                ));
+            }
+            if allocation.residencies.is_empty() {
+                return Err(ImagingPlanError::InvalidInput(
+                    "memory allocation must have a residency interval",
+                ));
+            }
+            total_logical_bytes = total_logical_bytes
+                .checked_add(allocation.logical_bytes)
+                .ok_or(ImagingPlanError::Overflow(
+                    "logical memory allocation bytes",
+                ))?;
+            for residency in &allocation.residencies {
+                if residency.live_from > residency.live_through {
+                    return Err(ImagingPlanError::InvalidInput(
+                        "memory residency stages must be ordered",
+                    ));
+                }
+                if residency.resident_bytes > allocation.logical_bytes {
+                    return Err(ImagingPlanError::InvalidInput(
+                        "resident bytes cannot exceed logical allocation bytes",
+                    ));
+                }
+                if residency.stored_bytes > allocation.logical_bytes {
+                    return Err(ImagingPlanError::InvalidInput(
+                        "stored bytes cannot exceed logical allocation bytes",
+                    ));
+                }
+                let is_external_storage = matches!(
+                    residency.backing,
+                    ImagingMemoryBacking::MemoryMapped | ImagingMemoryBacking::TemporarySpill
+                );
+                if is_external_storage != (residency.stored_bytes > 0) {
+                    return Err(ImagingPlanError::InvalidInput(
+                        "stored-byte accounting must match a mapped or temporary-spill backing",
+                    ));
+                }
+            }
+            for (index, left) in allocation.residencies.iter().enumerate() {
+                for right in allocation.residencies.iter().skip(index + 1) {
+                    if ((left.resident_bytes > 0 && right.resident_bytes > 0)
+                        || (left.stored_bytes > 0 && right.stored_bytes > 0))
+                        && left.live_from <= right.live_through
+                        && right.live_from <= left.live_through
+                    {
+                        return Err(ImagingPlanError::InvalidInput(
+                            "one allocation cannot have overlapping resident or stored intervals",
+                        ));
+                    }
+                }
+            }
+        }
+
+        let mut stage_peaks = Vec::with_capacity(ImagingMemoryStage::ORDERED.len());
+        let mut maximum_resident_bytes = 0usize;
+        let mut maximum_stored_bytes = 0usize;
+        let mut peak_stage = None;
+        let mut peak_stored_stage = None;
+        for stage in ImagingMemoryStage::ORDERED {
+            let mut resident_by_backing = BTreeMap::<ImagingMemoryBacking, usize>::new();
+            let mut stored_by_backing = BTreeMap::<ImagingMemoryBacking, usize>::new();
+            for allocation in &allocations {
+                for residency in allocation
+                    .residencies
+                    .iter()
+                    .filter(|residency| residency.includes(stage))
+                {
+                    let resident_bytes = resident_by_backing.entry(residency.backing).or_default();
+                    *resident_bytes = resident_bytes
+                        .checked_add(residency.resident_bytes)
+                        .ok_or(ImagingPlanError::Overflow("stage memory backing bytes"))?;
+                    let stored_bytes = stored_by_backing.entry(residency.backing).or_default();
+                    *stored_bytes = stored_bytes
+                        .checked_add(residency.stored_bytes)
+                        .ok_or(ImagingPlanError::Overflow("stage storage backing bytes"))?;
+                }
+            }
+            let resident_bytes = checked_sum(
+                ImagingMemoryBacking::ORDERED
+                    .iter()
+                    .map(|backing| resident_by_backing.get(backing).copied().unwrap_or(0)),
+                "stage overlap resident bytes",
+            )?;
+            let stored_bytes = checked_sum(
+                ImagingMemoryBacking::ORDERED
+                    .iter()
+                    .map(|backing| stored_by_backing.get(backing).copied().unwrap_or(0)),
+                "stage overlap stored bytes",
+            )?;
+            if resident_bytes > maximum_resident_bytes {
+                maximum_resident_bytes = resident_bytes;
+                peak_stage = Some(stage);
+            }
+            if stored_bytes > maximum_stored_bytes {
+                maximum_stored_bytes = stored_bytes;
+                peak_stored_stage = Some(stage);
+            }
+            stage_peaks.push(ImagingMemoryStagePeak {
+                stage,
+                resident_bytes,
+                stored_bytes,
+                backing_bytes: ImagingMemoryBacking::ORDERED
+                    .iter()
+                    .map(|backing| ImagingMemoryBackingBytes {
+                        backing: *backing,
+                        bytes: resident_by_backing.get(backing).copied().unwrap_or(0),
+                        stored_bytes: stored_by_backing.get(backing).copied().unwrap_or(0),
+                    })
+                    .collect(),
+            });
+        }
+
+        Ok(Self {
+            allocations,
+            stage_peaks,
+            maximum_resident_bytes,
+            maximum_stored_bytes,
+            peak_stage,
+            peak_stored_stage,
+            total_logical_bytes,
+        })
+    }
+
+    /// Return the overlap receipt for one stage.
+    pub fn stage_peak(&self, stage: ImagingMemoryStage) -> Option<&ImagingMemoryStagePeak> {
+        self.stage_peaks.iter().find(|peak| peak.stage == stage)
+    }
 }
 
 /// Resolved ingest batching and source-residency decisions.
@@ -311,6 +889,12 @@ pub struct ImagingResolvedPlan {
     pub caches: ImagingCachePlan,
     /// Itemized stage memory ledger.
     pub memory_allocations: Vec<ImagingMemoryAllocation>,
+    /// Resource evidence and memory-pressure intent used for this plan.
+    pub planning_context: ImagingPlanningContext,
+    /// Runtime memory actions resolved once from the selected pressure policy.
+    memory_runtime_actions: ImagingMemoryRuntimeActionReceipt,
+    /// Explicit allocation lifetimes and computed stage overlap.
+    pub memory_lifetime_ledger: ImagingMemoryLifetimeLedger,
     /// Maximum planned resident bytes at any stage.
     pub maximum_planned_resident_bytes: usize,
     /// Human-readable provenance for resolved choices.
@@ -358,6 +942,30 @@ pub struct ImagingPlanAdmission {
 pub fn admit_imaging_execution(
     admission: ImagingPlanAdmission,
 ) -> Result<ImagingResolvedPlan, ImagingPlanError> {
+    admit_imaging_execution_internal(admission, ImagingPlanningContext::default(), None, false)
+}
+
+/// Admit an application-selected schedule with detected resources, a typed
+/// memory-pressure policy, and optional exact allocation lifetimes.
+///
+/// When exact lifetimes are supplied, their computed overlap participates in
+/// admission. This makes the context-aware entry point suitable for
+/// stage-aware release and spill plans while the legacy entry point preserves
+/// its existing admission behavior.
+pub fn admit_imaging_execution_with_context(
+    admission: ImagingPlanAdmission,
+    planning_context: ImagingPlanningContext,
+    memory_lifetimes: Option<Vec<ImagingMemoryAllocationLifecycle>>,
+) -> Result<ImagingResolvedPlan, ImagingPlanError> {
+    admit_imaging_execution_internal(admission, planning_context, memory_lifetimes, true)
+}
+
+fn admit_imaging_execution_internal(
+    admission: ImagingPlanAdmission,
+    planning_context: ImagingPlanningContext,
+    memory_lifetimes: Option<Vec<ImagingMemoryAllocationLifecycle>>,
+    enforce_lifetime_peak: bool,
+) -> Result<ImagingResolvedPlan, ImagingPlanError> {
     if admission.usable_memory_bytes == 0 {
         return Err(ImagingPlanError::InvalidInput(
             "usable memory budget must be positive",
@@ -382,11 +990,31 @@ pub fn admit_imaging_execution(
             "image workloads require a non-empty FFT schedule",
         ));
     }
+    let exact_lifetimes_supplied = memory_lifetimes.is_some();
+    let memory_lifetime_ledger = match memory_lifetimes {
+        Some(lifetimes) => ImagingMemoryLifetimeLedger::build(lifetimes)?,
+        None => legacy_memory_lifetime_ledger(&admission.memory_allocations)?,
+    };
+    let maximum_planned_resident_bytes = if enforce_lifetime_peak && exact_lifetimes_supplied {
+        // The caller supplied the complete allocation schedule, so its
+        // computed overlap is authoritative. Retaining an older always-live
+        // estimate here would make explicit release and demotion incapable of
+        // creating any planner headroom.
+        memory_lifetime_ledger.maximum_resident_bytes
+    } else if enforce_lifetime_peak {
+        admission
+            .maximum_planned_resident_bytes
+            .max(memory_lifetime_ledger.maximum_resident_bytes)
+    } else {
+        admission.maximum_planned_resident_bytes
+    };
     require_fits(
         "admitted schedule",
-        admission.maximum_planned_resident_bytes,
+        maximum_planned_resident_bytes,
         admission.usable_memory_bytes,
     )?;
+    let memory_runtime_actions =
+        ImagingMemoryRuntimeActionReceipt::resolve(planning_context.memory_pressure_policy);
     Ok(ImagingResolvedPlan {
         workload: admission.workload,
         usable_memory_bytes: admission.usable_memory_bytes,
@@ -399,7 +1027,10 @@ pub fn admit_imaging_execution(
         metal: admission.metal,
         caches: admission.caches,
         memory_allocations: admission.memory_allocations,
-        maximum_planned_resident_bytes: admission.maximum_planned_resident_bytes,
+        planning_context,
+        memory_runtime_actions,
+        memory_lifetime_ledger,
+        maximum_planned_resident_bytes,
         decisions: admission.decisions,
     })
 }
@@ -450,6 +1081,11 @@ impl ImagingResolvedPlan {
                 direct_metal_scratch_bytes: 0,
             },
             memory_allocations: Vec::new(),
+            planning_context: ImagingPlanningContext::default(),
+            memory_runtime_actions: ImagingMemoryRuntimeActionReceipt::resolve(
+                ImagingMemoryPressurePolicy::AutoSafe,
+            ),
+            memory_lifetime_ledger: ImagingMemoryLifetimeLedger::default(),
             maximum_planned_resident_bytes: 0,
             decisions: Vec::new(),
         }
@@ -462,6 +1098,25 @@ impl ImagingResolvedPlan {
             .filter(|allocation| allocation.component == component)
             .map(|allocation| allocation.bytes)
             .sum()
+    }
+
+    /// Stable structured fields for the resolved memory runtime-action receipt.
+    pub fn memory_runtime_action_log_fields(&self) -> String {
+        let receipt = self.memory_runtime_actions;
+        format!(
+            "policy={} admission_action={} swap_action={} stage_lifetime_release_requested={} next_use_aware_replay_requested={} replay_prime_stage={} replay_retention_action={} known_last_use_release_active={} product_streaming_active={} replay_spill_active={} storage_demotion_active={}",
+            receipt.pressure_policy.label(),
+            receipt.admission_action.label(),
+            receipt.swap_action.label(),
+            receipt.stage_lifetime_release_requested,
+            receipt.next_use_aware_replay_requested,
+            receipt.replay_prime_stage.label(),
+            receipt.replay_retention_action.label(),
+            receipt.known_last_use_release_active,
+            receipt.product_streaming_active,
+            receipt.replay_spill_active,
+            receipt.storage_demotion_active,
+        )
     }
 }
 
@@ -536,6 +1191,178 @@ fn checked_sum(
         .ok_or(ImagingPlanError::Overflow(name))
 }
 
+fn legacy_allocation_id(index: usize, component: &str) -> String {
+    let mut normalized = String::with_capacity(component.len());
+    let mut separator_pending = false;
+    for character in component.chars() {
+        if character.is_ascii_alphanumeric() {
+            if separator_pending && !normalized.is_empty() {
+                normalized.push('.');
+            }
+            normalized.push(character.to_ascii_lowercase());
+            separator_pending = false;
+        } else {
+            separator_pending = true;
+        }
+    }
+    if normalized.is_empty() {
+        normalized.push_str("unnamed");
+    }
+    format!("legacy.{index:04}.{normalized}")
+}
+
+fn memory_residency(
+    bytes: usize,
+    live_from: ImagingMemoryStage,
+    live_through: ImagingMemoryStage,
+    next_use: ImagingMemoryNextUse,
+) -> ImagingMemoryResidency {
+    ImagingMemoryResidency {
+        backing: ImagingMemoryBacking::HostHeap,
+        resident_bytes: bytes,
+        stored_bytes: 0,
+        live_from,
+        live_through,
+        next_use,
+    }
+}
+
+fn legacy_residencies(allocation: &ImagingMemoryAllocation) -> Vec<ImagingMemoryResidency> {
+    use ImagingMemoryNextUse::{AtStage, NoFurtherUse};
+    use ImagingMemoryStage::{
+        DirtyTransform, Finish, InitialGrid, MinorCycle, ModelTransform, Prepare,
+        ProductMaterialization, ProductWrite, ResidualGrid, ResidualTransform, SourceIngest,
+        Weighting,
+    };
+
+    match allocation.stage {
+        "run" => vec![memory_residency(
+            allocation.bytes,
+            Prepare,
+            ProductWrite,
+            NoFurtherUse,
+        )],
+        "ingest" => vec![memory_residency(
+            allocation.bytes,
+            SourceIngest,
+            SourceIngest,
+            NoFurtherUse,
+        )],
+        "weighting" => vec![memory_residency(
+            allocation.bytes,
+            Weighting,
+            Weighting,
+            NoFurtherUse,
+        )],
+        "grid" => vec![
+            memory_residency(
+                allocation.bytes,
+                InitialGrid,
+                InitialGrid,
+                AtStage(ResidualGrid),
+            ),
+            memory_residency(allocation.bytes, ResidualGrid, ResidualGrid, NoFurtherUse),
+        ],
+        "fft" => vec![
+            memory_residency(
+                allocation.bytes,
+                DirtyTransform,
+                DirtyTransform,
+                AtStage(ResidualTransform),
+            ),
+            memory_residency(
+                allocation.bytes,
+                ResidualTransform,
+                ResidualTransform,
+                NoFurtherUse,
+            ),
+        ],
+        "major-cycle" | "major_cycle" => vec![memory_residency(
+            allocation.bytes,
+            ModelTransform,
+            ModelTransform,
+            NoFurtherUse,
+        )],
+        "minor-cycle" | "minor_cycle" => vec![memory_residency(
+            allocation.bytes,
+            MinorCycle,
+            MinorCycle,
+            NoFurtherUse,
+        )],
+        "finish" => vec![memory_residency(
+            allocation.bytes,
+            Finish,
+            Finish,
+            NoFurtherUse,
+        )],
+        "products" => vec![memory_residency(
+            allocation.bytes,
+            ProductMaterialization,
+            ProductWrite,
+            NoFurtherUse,
+        )],
+        "product-write" | "product_write" => vec![memory_residency(
+            allocation.bytes,
+            ProductWrite,
+            ProductWrite,
+            NoFurtherUse,
+        )],
+        "initial-grid" | "initial_grid" => vec![memory_residency(
+            allocation.bytes,
+            InitialGrid,
+            InitialGrid,
+            NoFurtherUse,
+        )],
+        "residual-grid" | "residual_grid" => vec![memory_residency(
+            allocation.bytes,
+            ResidualGrid,
+            ResidualGrid,
+            NoFurtherUse,
+        )],
+        "dirty-transform" | "dirty_transform" => vec![memory_residency(
+            allocation.bytes,
+            DirtyTransform,
+            DirtyTransform,
+            NoFurtherUse,
+        )],
+        "residual-transform" | "residual_transform" => vec![memory_residency(
+            allocation.bytes,
+            ResidualTransform,
+            ResidualTransform,
+            NoFurtherUse,
+        )],
+        _ => vec![memory_residency(
+            allocation.bytes,
+            Prepare,
+            ProductWrite,
+            NoFurtherUse,
+        )],
+    }
+}
+
+/// Convert the original component/stage ledger into explicit conservative
+/// lifetimes with deterministic compatibility allocation identifiers.
+///
+/// New application plans should supply semantic allocation identifiers and
+/// exact lifetimes through [`admit_imaging_execution_with_context`]. This
+/// adapter preserves existing plans while they migrate.
+pub fn legacy_memory_lifetime_ledger(
+    allocations: &[ImagingMemoryAllocation],
+) -> Result<ImagingMemoryLifetimeLedger, ImagingPlanError> {
+    ImagingMemoryLifetimeLedger::build(
+        allocations
+            .iter()
+            .enumerate()
+            .map(|(index, allocation)| ImagingMemoryAllocationLifecycle {
+                allocation_id: legacy_allocation_id(index, allocation.component),
+                component: allocation.component.to_string(),
+                logical_bytes: allocation.bytes,
+                residencies: legacy_residencies(allocation),
+            })
+            .collect(),
+    )
+}
+
 fn require_fits(
     stage: &'static str,
     required_bytes: usize,
@@ -592,6 +1419,26 @@ pub fn plan_imaging_execution(
     workload: &ImagingWorkloadShape,
     resources: &ImagingResources,
     policy: &ImagingExecutionPolicy,
+) -> Result<ImagingResolvedPlan, ImagingPlanError> {
+    plan_imaging_execution_with_context(
+        workload,
+        resources,
+        policy,
+        &ImagingPlanningContext::default(),
+    )
+}
+
+/// Build one deterministic plan with detected resource evidence and a typed
+/// memory-pressure policy.
+///
+/// Detected facts are retained in the resolved receipt. The explicitly
+/// assigned [`ImagingResources`] remain the hard resource authority, so this
+/// entry point cannot silently introduce swap dependence or enlarge a budget.
+pub fn plan_imaging_execution_with_context(
+    workload: &ImagingWorkloadShape,
+    resources: &ImagingResources,
+    policy: &ImagingExecutionPolicy,
+    planning_context: &ImagingPlanningContext,
 ) -> Result<ImagingResolvedPlan, ImagingPlanError> {
     if resources.cpu_capacity == 0 {
         return Err(ImagingPlanError::InvalidInput(
@@ -877,20 +1724,31 @@ pub fn plan_imaging_execution(
     let queued_bytes_per_row = samples_per_row
         .checked_mul(queue_entry_bytes)
         .ok_or(ImagingPlanError::Overflow("queued bytes per source row"))?;
-    if queued_bytes_per_row > 0 {
+    if tile_enabled {
+        // The consumer retains its admitted source/read-ahead blocks while
+        // routing the current block into resident tiles and the bounded tile
+        // queue. Size all three from one simultaneous grid-stage budget. The
+        // older independent row and tile peaks could each fit while their
+        // real overlap exceeded the assigned process-memory slice.
+        let live_source_and_queue_bytes_per_row = row_bytes
+            .checked_mul(max_live_row_blocks)
+            .and_then(|bytes| bytes.checked_add(queued_bytes_per_row))
+            .ok_or(ImagingPlanError::Overflow(
+                "live source and tile queue bytes per row",
+            ))?;
         source_row_block_rows = source_row_block_rows.min(
             tile_budget
                 .saturating_sub(resident_tile_bytes)
-                .checked_div(queued_bytes_per_row)
+                .checked_div(live_source_and_queue_bytes_per_row)
                 .unwrap_or(0),
         );
         if workload.selected_rows > 0 && source_row_block_rows == 0 {
             return Err(ImagingPlanError::InsufficientMemory {
-                stage: "tile queue",
+                stage: "grid stream",
                 required_bytes: fixed_with_execution
                     .checked_add(resident_tile_bytes)
-                    .and_then(|bytes| bytes.checked_add(queued_bytes_per_row))
-                    .ok_or(ImagingPlanError::Overflow("minimum tile queue bytes"))?,
+                    .and_then(|bytes| bytes.checked_add(live_source_and_queue_bytes_per_row))
+                    .ok_or(ImagingPlanError::Overflow("minimum grid stream bytes"))?,
                 budget_bytes: usable_memory_bytes,
             });
         }
@@ -931,7 +1789,12 @@ pub fn plan_imaging_execution(
             .min(queue_capacity)
     };
     let tile_peak = checked_sum(
-        [fixed_with_execution, resident_tile_bytes, queue_bytes],
+        [
+            fixed_with_execution,
+            live_row_bytes,
+            resident_tile_bytes,
+            queue_bytes,
+        ],
         "tile stage peak",
     )?;
     require_fits("tile", tile_peak, usable_memory_bytes)?;
@@ -1065,6 +1928,7 @@ pub fn plan_imaging_execution(
             bytes: direct_metal_scratch_bytes,
         },
     ]);
+    let memory_lifetime_ledger = legacy_memory_lifetime_ledger(&memory_allocations)?;
     let decisions = vec![
         ImagingPlanDecision {
             name: "usable_memory_bytes",
@@ -1179,8 +2043,23 @@ pub fn plan_imaging_execution(
                 )
             }),
         },
+        ImagingPlanDecision {
+            name: "memory_pressure_policy",
+            value: planning_context.memory_pressure_policy.label().to_string(),
+            origin: if planning_context.memory_pressure_policy
+                == ImagingMemoryPressurePolicy::AutoSafe
+            {
+                ImagingPlanOrigin::Resources
+            } else {
+                ImagingPlanOrigin::UserPolicy
+            },
+            reason: "describes how the application assigned the bounded resource slice; the pure planner does not enlarge it"
+                .to_string(),
+        },
     ];
 
+    let memory_runtime_actions =
+        ImagingMemoryRuntimeActionReceipt::resolve(planning_context.memory_pressure_policy);
     Ok(ImagingResolvedPlan {
         workload: workload.clone(),
         usable_memory_bytes,
@@ -1219,6 +2098,9 @@ pub fn plan_imaging_execution(
             direct_metal_scratch_bytes,
         },
         memory_allocations,
+        planning_context: planning_context.clone(),
+        memory_runtime_actions,
+        memory_lifetime_ledger,
         maximum_planned_resident_bytes,
         decisions,
     })
@@ -1370,6 +2252,35 @@ mod tests {
     }
 
     #[test]
+    fn tile_plan_admits_source_blocks_tiles_and_queue_as_one_grid_peak() {
+        let plan = plan_imaging_execution(
+            &workload(),
+            &resources(1024 * 1024 * 1024),
+            &ImagingExecutionPolicy::default(),
+        )
+        .unwrap();
+        let grid_stream_peak = [
+            "image planes",
+            "grids",
+            "worker scratch",
+            "source row blocks",
+            "resident tiles",
+            "tile queue",
+        ]
+        .into_iter()
+        .try_fold(0usize, |sum, component| {
+            sum.checked_add(plan.allocation_bytes(component))
+        })
+        .expect("grid stream peak must not overflow");
+
+        assert!(plan.allocation_bytes("source row blocks") > 0);
+        assert!(plan.allocation_bytes("resident tiles") > 0);
+        assert!(plan.allocation_bytes("tile queue") > 0);
+        assert!(grid_stream_peak <= plan.usable_memory_bytes);
+        assert!(plan.maximum_planned_resident_bytes >= grid_stream_peak);
+    }
+
+    #[test]
     fn full_grid_workload_does_not_charge_or_flush_an_unused_tile_queue() {
         let mut full_grid = workload();
         full_grid.tile_queue_entry_bytes = 0;
@@ -1389,6 +2300,545 @@ mod tests {
         assert_eq!(plan.allocation_bytes("resident tiles"), 0);
         assert_eq!(plan.allocation_bytes("tile queue"), 0);
         assert!(plan.maximum_planned_resident_bytes <= plan.usable_memory_bytes);
+    }
+
+    #[test]
+    fn auto_memory_pressure_is_safe_and_detected_resources_do_not_enlarge_the_slice() {
+        assert_eq!(
+            ImagingMemoryPressurePolicy::default(),
+            ImagingMemoryPressurePolicy::AutoSafe
+        );
+        assert!(!ImagingMemoryPressurePolicy::AutoSafe.permits_intentional_swap());
+        assert!(
+            ImagingMemoryPressurePolicy::IntentionalOversubscription.permits_intentional_swap()
+        );
+        assert!(ImagingMemoryPressurePolicy::Hybrid.permits_intentional_swap());
+
+        let assigned = resources(2 * 1024 * 1024 * 1024);
+        let baseline =
+            plan_imaging_execution(&workload(), &assigned, &ImagingExecutionPolicy::default())
+                .unwrap();
+        let planning_context = ImagingPlanningContext {
+            memory_pressure_policy: ImagingMemoryPressurePolicy::AutoSafe,
+            detected_resources: ImagingDetectedResources {
+                physical_memory_bytes: Some(32 * 1024 * 1024 * 1024),
+                current_memory_headroom_bytes: Some(20 * 1024 * 1024 * 1024),
+                process_physical_footprint_bytes: Some(512 * 1024 * 1024),
+                logical_cpu_threads: Some(8),
+                performance_cpu_cores: Some(4),
+                metal_recommended_working_set_bytes: Some(24 * 1024 * 1024 * 1024),
+                metal_current_allocated_bytes: Some(128 * 1024 * 1024),
+                unified_memory_requirement_bytes: Some(256 * 1024 * 1024),
+                storage_read_bytes_per_second: Some(1_500_000_000),
+                storage_write_bytes_per_second: Some(1_000_000_000),
+            },
+        };
+        let contextual = plan_imaging_execution_with_context(
+            &workload(),
+            &assigned,
+            &ImagingExecutionPolicy::default(),
+            &planning_context,
+        )
+        .unwrap();
+
+        assert_eq!(contextual.usable_memory_bytes, baseline.usable_memory_bytes);
+        assert_eq!(contextual.workers, baseline.workers);
+        assert_eq!(
+            contextual.maximum_planned_resident_bytes,
+            baseline.maximum_planned_resident_bytes
+        );
+        assert_eq!(contextual.planning_context, planning_context);
+    }
+
+    #[test]
+    fn memory_runtime_action_receipts_are_policy_exact_and_storage_truthful() {
+        let cases = [
+            (
+                ImagingMemoryPressurePolicy::AutoSafe,
+                ImagingMemoryAdmissionAction::AutomaticNoSwapHeadroom,
+                ImagingMemorySwapAction::AvoidIntentionalSwap,
+                false,
+                false,
+            ),
+            (
+                ImagingMemoryPressurePolicy::ConservativeNoSwap,
+                ImagingMemoryAdmissionAction::NoSwapHeadroom,
+                ImagingMemorySwapAction::AvoidIntentionalSwap,
+                false,
+                false,
+            ),
+            (
+                ImagingMemoryPressurePolicy::AggressiveMemoryUse,
+                ImagingMemoryAdmissionAction::PhysicalProcessCeiling,
+                ImagingMemorySwapAction::AllowCompressionOrIncidentalSwap,
+                false,
+                false,
+            ),
+            (
+                ImagingMemoryPressurePolicy::IntentionalOversubscription,
+                ImagingMemoryAdmissionAction::ExplicitOversubscriptionTarget,
+                ImagingMemorySwapAction::IntentionalOversubscription,
+                false,
+                false,
+            ),
+            (
+                ImagingMemoryPressurePolicy::StageAwareRelease,
+                ImagingMemoryAdmissionAction::NoSwapHeadroom,
+                ImagingMemorySwapAction::AvoidIntentionalSwap,
+                true,
+                false,
+            ),
+            (
+                ImagingMemoryPressurePolicy::Hybrid,
+                ImagingMemoryAdmissionAction::PhysicalProcessCeiling,
+                ImagingMemorySwapAction::AllowCompressionOrIncidentalSwap,
+                true,
+                true,
+            ),
+        ];
+        let mut distinct_receipts = BTreeSet::new();
+        for (policy, admission_action, swap_action, release_requested, next_use_requested) in cases
+        {
+            let receipt = ImagingMemoryRuntimeActionReceipt::resolve(policy);
+            assert_eq!(receipt.pressure_policy, policy);
+            assert_eq!(receipt.admission_action, admission_action);
+            assert_eq!(receipt.swap_action, swap_action);
+            assert_eq!(receipt.stage_lifetime_release_requested, release_requested);
+            assert_eq!(receipt.next_use_aware_replay_requested, next_use_requested);
+            assert_eq!(receipt.replay_prime_stage, ImagingMemoryStage::ResidualGrid);
+            assert_eq!(
+                receipt.replay_retention_action,
+                ImagingReplayRetentionAction::PinnedNoEvictionSourceOrder
+            );
+            assert!(receipt.known_last_use_release_active);
+            assert!(!receipt.product_streaming_active);
+            assert!(!receipt.replay_spill_active);
+            assert!(!receipt.storage_demotion_active);
+            distinct_receipts.insert(format!(
+                "{}:{}:{}:{}:{}",
+                policy.label(),
+                admission_action.label(),
+                swap_action.label(),
+                release_requested,
+                next_use_requested
+            ));
+        }
+        assert_eq!(distinct_receipts.len(), cases.len());
+    }
+
+    #[test]
+    fn lifetime_ledger_computes_stage_and_backing_overlap() {
+        let ledger = ImagingMemoryLifetimeLedger::build(vec![
+            ImagingMemoryAllocationLifecycle {
+                allocation_id: "initial-grid".to_string(),
+                component: "compensated AW grid".to_string(),
+                logical_bytes: 100,
+                residencies: vec![ImagingMemoryResidency {
+                    backing: ImagingMemoryBacking::HostHeap,
+                    resident_bytes: 100,
+                    stored_bytes: 0,
+                    live_from: ImagingMemoryStage::InitialGrid,
+                    live_through: ImagingMemoryStage::DirtyTransform,
+                    next_use: ImagingMemoryNextUse::NoFurtherUse,
+                }],
+            },
+            ImagingMemoryAllocationLifecycle {
+                allocation_id: "fft-scratch".to_string(),
+                component: "FFT staging".to_string(),
+                logical_bytes: 50,
+                residencies: vec![ImagingMemoryResidency {
+                    backing: ImagingMemoryBacking::UnifiedMemory,
+                    resident_bytes: 50,
+                    stored_bytes: 0,
+                    live_from: ImagingMemoryStage::DirtyTransform,
+                    live_through: ImagingMemoryStage::DirtyTransform,
+                    next_use: ImagingMemoryNextUse::NoFurtherUse,
+                }],
+            },
+            ImagingMemoryAllocationLifecycle {
+                allocation_id: "replay-programs".to_string(),
+                component: "compact replay programs".to_string(),
+                logical_bytes: 200,
+                residencies: vec![
+                    ImagingMemoryResidency {
+                        backing: ImagingMemoryBacking::TemporarySpill,
+                        resident_bytes: 0,
+                        stored_bytes: 200,
+                        live_from: ImagingMemoryStage::InitialGrid,
+                        live_through: ImagingMemoryStage::DirtyTransform,
+                        next_use: ImagingMemoryNextUse::AtStage(ImagingMemoryStage::ResidualGrid),
+                    },
+                    ImagingMemoryResidency {
+                        backing: ImagingMemoryBacking::MemoryMapped,
+                        resident_bytes: 25,
+                        stored_bytes: 200,
+                        live_from: ImagingMemoryStage::ResidualGrid,
+                        live_through: ImagingMemoryStage::ResidualTransform,
+                        next_use: ImagingMemoryNextUse::Cyclic {
+                            next_stage: ImagingMemoryStage::ResidualGrid,
+                            intervening_uses: 15,
+                        },
+                    },
+                ],
+            },
+        ])
+        .unwrap();
+
+        let dirty = ledger
+            .stage_peak(ImagingMemoryStage::DirtyTransform)
+            .unwrap();
+        assert_eq!(dirty.resident_bytes, 150);
+        assert_eq!(dirty.bytes_for_backing(ImagingMemoryBacking::HostHeap), 100);
+        assert_eq!(
+            dirty.bytes_for_backing(ImagingMemoryBacking::UnifiedMemory),
+            50
+        );
+        assert_eq!(dirty.stored_bytes, 200);
+        assert_eq!(
+            dirty.stored_bytes_for_backing(ImagingMemoryBacking::TemporarySpill),
+            200
+        );
+        let residual = ledger.stage_peak(ImagingMemoryStage::ResidualGrid).unwrap();
+        assert_eq!(residual.resident_bytes, 25);
+        assert_eq!(residual.stored_bytes, 200);
+        assert_eq!(
+            residual.bytes_for_backing(ImagingMemoryBacking::MemoryMapped),
+            25
+        );
+        assert_eq!(
+            residual.stored_bytes_for_backing(ImagingMemoryBacking::MemoryMapped),
+            200
+        );
+        assert_eq!(ledger.maximum_resident_bytes, 150);
+        assert_eq!(ledger.maximum_stored_bytes, 200);
+        assert_eq!(ledger.peak_stage, Some(ImagingMemoryStage::DirtyTransform));
+        assert_eq!(
+            ledger.peak_stored_stage,
+            Some(ImagingMemoryStage::InitialGrid)
+        );
+        assert_eq!(ledger.total_logical_bytes, 350);
+    }
+
+    #[test]
+    fn lifetime_ledger_rejects_duplicate_ids_and_overlapping_residencies() {
+        let lifecycle = ImagingMemoryAllocationLifecycle {
+            allocation_id: "replay".to_string(),
+            component: "replay".to_string(),
+            logical_bytes: 64,
+            residencies: vec![ImagingMemoryResidency {
+                backing: ImagingMemoryBacking::HostHeap,
+                resident_bytes: 64,
+                stored_bytes: 0,
+                live_from: ImagingMemoryStage::InitialGrid,
+                live_through: ImagingMemoryStage::DirtyTransform,
+                next_use: ImagingMemoryNextUse::NoFurtherUse,
+            }],
+        };
+        assert!(matches!(
+            ImagingMemoryLifetimeLedger::build(vec![lifecycle.clone(), lifecycle.clone()]),
+            Err(ImagingPlanError::InvalidInput(
+                "memory allocation ids must be unique"
+            ))
+        ));
+
+        let mut overlapping = lifecycle;
+        overlapping.residencies.push(ImagingMemoryResidency {
+            backing: ImagingMemoryBacking::MemoryMapped,
+            resident_bytes: 32,
+            stored_bytes: 32,
+            live_from: ImagingMemoryStage::DirtyTransform,
+            live_through: ImagingMemoryStage::ResidualGrid,
+            next_use: ImagingMemoryNextUse::NoFurtherUse,
+        });
+        assert!(matches!(
+            ImagingMemoryLifetimeLedger::build(vec![overlapping]),
+            Err(ImagingPlanError::InvalidInput(
+                "one allocation cannot have overlapping resident or stored intervals"
+            ))
+        ));
+
+        let false_spill = ImagingMemoryAllocationLifecycle {
+            allocation_id: "false-spill".to_string(),
+            component: "false spill".to_string(),
+            logical_bytes: 64,
+            residencies: vec![ImagingMemoryResidency {
+                backing: ImagingMemoryBacking::TemporarySpill,
+                resident_bytes: 0,
+                stored_bytes: 0,
+                live_from: ImagingMemoryStage::InitialGrid,
+                live_through: ImagingMemoryStage::DirtyTransform,
+                next_use: ImagingMemoryNextUse::NoFurtherUse,
+            }],
+        };
+        assert!(matches!(
+            ImagingMemoryLifetimeLedger::build(vec![false_spill]),
+            Err(ImagingPlanError::InvalidInput(
+                "stored-byte accounting must match a mapped or temporary-spill backing"
+            ))
+        ));
+    }
+
+    #[test]
+    fn legacy_stage_allocations_receive_stable_ids_and_conservative_lifetimes() {
+        let ledger = legacy_memory_lifetime_ledger(&[
+            ImagingMemoryAllocation {
+                component: "run state",
+                stage: "run",
+                bytes: 10,
+            },
+            ImagingMemoryAllocation {
+                component: "grid scratch",
+                stage: "grid",
+                bytes: 20,
+            },
+        ])
+        .unwrap();
+
+        assert_eq!(ledger.allocations[0].allocation_id, "legacy.0000.run.state");
+        assert_eq!(
+            ledger
+                .stage_peak(ImagingMemoryStage::InitialGrid)
+                .unwrap()
+                .resident_bytes,
+            30
+        );
+        assert_eq!(
+            ledger
+                .stage_peak(ImagingMemoryStage::DirtyTransform)
+                .unwrap()
+                .resident_bytes,
+            10
+        );
+        assert_eq!(
+            ledger
+                .stage_peak(ImagingMemoryStage::ResidualGrid)
+                .unwrap()
+                .resident_bytes,
+            30
+        );
+    }
+
+    #[test]
+    fn context_admission_charges_exact_lifetime_overlap() {
+        let baseline = plan_imaging_execution(
+            &workload(),
+            &resources(2 * 1024 * 1024 * 1024),
+            &ImagingExecutionPolicy::default(),
+        )
+        .unwrap();
+        let budget = baseline.maximum_planned_resident_bytes;
+        let admission = ImagingPlanAdmission {
+            workload: baseline.workload,
+            usable_memory_bytes: budget,
+            workers: baseline.workers,
+            worker_partition_rows: baseline.worker_partition_rows,
+            ingest: baseline.ingest,
+            fft: baseline.fft,
+            tile: baseline.tile,
+            spectral: baseline.spectral,
+            metal: baseline.metal,
+            caches: baseline.caches,
+            memory_allocations: baseline.memory_allocations,
+            maximum_planned_resident_bytes: budget,
+            decisions: baseline.decisions,
+        };
+        let oversized_lifetime = ImagingMemoryAllocationLifecycle {
+            allocation_id: "unaccounted".to_string(),
+            component: "unaccounted".to_string(),
+            logical_bytes: budget + 1,
+            residencies: vec![ImagingMemoryResidency {
+                backing: ImagingMemoryBacking::HostHeap,
+                resident_bytes: budget + 1,
+                stored_bytes: 0,
+                live_from: ImagingMemoryStage::Prepare,
+                live_through: ImagingMemoryStage::Prepare,
+                next_use: ImagingMemoryNextUse::NoFurtherUse,
+            }],
+        };
+
+        assert!(matches!(
+            admit_imaging_execution_with_context(
+                admission,
+                ImagingPlanningContext::default(),
+                Some(vec![oversized_lifetime]),
+            ),
+            Err(ImagingPlanError::InsufficientMemory {
+                stage: "admitted schedule",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn context_admission_uses_overlap_instead_of_total_logical_bytes() {
+        let admission = ImagingPlanAdmission {
+            workload: ImagingWorkloadShape::default(),
+            usable_memory_bytes: 100,
+            workers: 1,
+            worker_partition_rows: 0,
+            ingest: ImagingIngestPlan {
+                batch_rows: 0,
+                source_row_block_rows: 0,
+                max_live_row_blocks: 0,
+                source_row_block_bytes: 0,
+            },
+            fft: ImagingFftChunkPlan {
+                chunk_planes: 0,
+                chunk_bytes: 0,
+            },
+            tile: ImagingTilePlan {
+                anchor: ImagingTileAnchor::CenterBoundary,
+                edge: 0,
+                halo: 0,
+                padded_tile_bytes: 0,
+                resident_tiles: 0,
+                resident_bytes: 0,
+                queue_capacity: 0,
+                ready_sample_threshold: 0,
+                flush_after_source_block: false,
+            },
+            spectral: ImagingSpectralSchedule::SinglePlane,
+            metal: ImagingMetalPlan {
+                eligible: false,
+                command_samples: 0,
+                device_cache_bytes: 0,
+                rejection_reason: Some("CPU-only test".to_string()),
+            },
+            caches: ImagingCachePlan {
+                storage_cache_bytes: 0,
+                routed_replay_enabled: false,
+                routed_replay_bytes: 0,
+                metal_grouped_input_enabled: false,
+                metal_grouped_input_bytes: 0,
+                materialized_sample_plan_bytes: 0,
+                direct_metal_scratch_bytes: 0,
+            },
+            memory_allocations: Vec::new(),
+            maximum_planned_resident_bytes: 80,
+            decisions: Vec::new(),
+        };
+        let lifecycle =
+            |allocation_id: &str, stage: ImagingMemoryStage| ImagingMemoryAllocationLifecycle {
+                allocation_id: allocation_id.to_string(),
+                component: allocation_id.to_string(),
+                logical_bytes: 80,
+                residencies: vec![ImagingMemoryResidency {
+                    backing: ImagingMemoryBacking::HostHeap,
+                    resident_bytes: 80,
+                    stored_bytes: 0,
+                    live_from: stage,
+                    live_through: stage,
+                    next_use: ImagingMemoryNextUse::NoFurtherUse,
+                }],
+            };
+
+        let plan = admit_imaging_execution_with_context(
+            admission,
+            ImagingPlanningContext {
+                memory_pressure_policy: ImagingMemoryPressurePolicy::StageAwareRelease,
+                ..Default::default()
+            },
+            Some(vec![
+                lifecycle("initial-grid", ImagingMemoryStage::InitialGrid),
+                lifecycle("products", ImagingMemoryStage::ProductMaterialization),
+            ]),
+        )
+        .unwrap();
+
+        assert_eq!(plan.memory_lifetime_ledger.total_logical_bytes, 160);
+        assert_eq!(plan.memory_lifetime_ledger.maximum_resident_bytes, 80);
+        assert_eq!(plan.maximum_planned_resident_bytes, 80);
+    }
+
+    #[test]
+    fn exact_lifetimes_replace_a_conservative_always_live_peak() {
+        let admission = ImagingPlanAdmission {
+            workload: ImagingWorkloadShape::default(),
+            usable_memory_bytes: 100,
+            workers: 1,
+            worker_partition_rows: 0,
+            ingest: ImagingIngestPlan {
+                batch_rows: 0,
+                source_row_block_rows: 0,
+                max_live_row_blocks: 0,
+                source_row_block_bytes: 0,
+            },
+            fft: ImagingFftChunkPlan {
+                chunk_planes: 0,
+                chunk_bytes: 0,
+            },
+            tile: ImagingTilePlan {
+                anchor: ImagingTileAnchor::CenterBoundary,
+                edge: 0,
+                halo: 0,
+                padded_tile_bytes: 0,
+                resident_tiles: 0,
+                resident_bytes: 0,
+                queue_capacity: 0,
+                ready_sample_threshold: 0,
+                flush_after_source_block: false,
+            },
+            spectral: ImagingSpectralSchedule::SinglePlane,
+            metal: ImagingMetalPlan {
+                eligible: false,
+                command_samples: 0,
+                device_cache_bytes: 0,
+                rejection_reason: Some("CPU-only test".to_string()),
+            },
+            caches: ImagingCachePlan {
+                storage_cache_bytes: 0,
+                routed_replay_enabled: false,
+                routed_replay_bytes: 0,
+                metal_grouped_input_enabled: false,
+                metal_grouped_input_bytes: 0,
+                materialized_sample_plan_bytes: 0,
+                direct_metal_scratch_bytes: 0,
+            },
+            memory_allocations: vec![
+                ImagingMemoryAllocation {
+                    component: "initial grid",
+                    stage: "always-live legacy estimate",
+                    bytes: 80,
+                },
+                ImagingMemoryAllocation {
+                    component: "products",
+                    stage: "always-live legacy estimate",
+                    bytes: 80,
+                },
+            ],
+            maximum_planned_resident_bytes: 160,
+            decisions: Vec::new(),
+        };
+        let lifecycle =
+            |allocation_id: &str, stage: ImagingMemoryStage| ImagingMemoryAllocationLifecycle {
+                allocation_id: allocation_id.to_string(),
+                component: allocation_id.to_string(),
+                logical_bytes: 80,
+                residencies: vec![ImagingMemoryResidency {
+                    backing: ImagingMemoryBacking::HostHeap,
+                    resident_bytes: 80,
+                    stored_bytes: 0,
+                    live_from: stage,
+                    live_through: stage,
+                    next_use: ImagingMemoryNextUse::NoFurtherUse,
+                }],
+            };
+
+        let plan = admit_imaging_execution_with_context(
+            admission,
+            ImagingPlanningContext {
+                memory_pressure_policy: ImagingMemoryPressurePolicy::StageAwareRelease,
+                ..Default::default()
+            },
+            Some(vec![
+                lifecycle("initial-grid", ImagingMemoryStage::InitialGrid),
+                lifecycle("products", ImagingMemoryStage::ProductMaterialization),
+            ]),
+        )
+        .unwrap();
+
+        assert_eq!(plan.memory_lifetime_ledger.total_logical_bytes, 160);
+        assert_eq!(plan.maximum_planned_resident_bytes, 80);
     }
 
     #[test]

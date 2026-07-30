@@ -20192,6 +20192,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(ids.contains(&"imaging_memory_target_mb"));
+        assert!(ids.contains(&"imaging_memory_pressure_policy"));
         assert!(ids.contains(&"imaging_fft_precision"));
     }
 }

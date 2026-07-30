@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 import datetime as dt
+import json
 import os
 import pathlib
 import re
@@ -13,7 +14,7 @@ import subprocess
 import sys
 import uuid
 import math
-from typing import Any
+from typing import Any, Callable
 
 import perf_paths
 from perf_harness import (
@@ -28,6 +29,11 @@ from perf_harness import (
 )
 from perf_harness import casa_tclean_workflow
 from perf_harness.errors import HarnessError
+from perf_harness.host_telemetry import (
+    DarwinHostTelemetrySampler,
+    HostTelemetryError,
+    validate_host_telemetry,
+)
 from perf_harness.image_compare import compare_products as compare_image_products
 from perf_harness.provenance import capture_provenance, executable_path
 from perf_harness.stages import (
@@ -36,6 +42,7 @@ from perf_harness.stages import (
     parse_timing_section,
 )
 from perf_harness.subprocesses import run_command
+from perf_harness.tree_identity import sha256_file
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -680,6 +687,9 @@ def build_plan(
         "IMAGER_BENCH_USEPOINTING": boolean_env_value(
             imaging, "usepointing", False
         ),
+        "IMAGER_BENCH_IMAGING_MEMORY_PRESSURE_POLICY": str_value(
+            imaging, "imaging_memory_pressure_policy", "auto"
+        ),
         "IMAGER_BENCH_NITER": str(int_value(imaging, "niter", 4)),
         "IMAGER_BENCH_GAIN": str(float_value(imaging, "gain", 0.1)),
         "IMAGER_BENCH_THRESHOLD_JY": str(float_value(imaging, "threshold_jy", 0.0)),
@@ -829,6 +839,14 @@ def build_plan(
                 imaging, "imaging_fft_precision", "auto"
             ),
             "imaging_fft_backend": str_value(imaging, "imaging_fft_backend", "auto"),
+            "imaging_memory_pressure_policy": str_value(
+                imaging, "imaging_memory_pressure_policy", "auto"
+            ),
+            "imaging_memory_target_mb": (
+                int_value(imaging, "imaging_memory_target_mb", 0)
+                if imaging.get("imaging_memory_target_mb") is not None
+                else None
+            ),
             "imaging_read_ahead_blocks": (
                 int_value(imaging, "imaging_read_ahead_blocks", 0)
                 if imaging.get("imaging_read_ahead_blocks") is not None
@@ -1115,15 +1133,56 @@ def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
         env["IMAGER_BENCH_STREAM_LOG"] = "1"
         env["CASA_RS_IMAGING_PROGRESS"] = "1"
     started = utc_now()
-    completed = run_benchmark_command(
-        plan["command"]["argv"],
-        env=env,
-        stream_log=bool(plan.get("run", {}).get("stream_log", False)),
-        incremental_output_path=log_path,
-    )
+    telemetry_path = benchmark_host_telemetry_path(log_path)
+    telemetry_process_pid_path = benchmark_process_pid_path(log_path)
+    telemetry_volume = benchmark_telemetry_volume_path(plan, log_path)
+    try:
+        telemetry_process_pid_path.unlink()
+    except FileNotFoundError:
+        pass
+    env["IMAGER_BENCH_RUST_PID_FILE"] = str(telemetry_process_pid_path)
+    host_sampler = DarwinHostTelemetrySampler()
+    host_sampler.start()
+    host_telemetry: dict[str, Any] | None = None
+
+    def finalize_host_telemetry(_: subprocess.Popen[str] | None = None) -> None:
+        nonlocal host_telemetry
+        if host_telemetry is not None:
+            return
+        host_telemetry = host_sampler.stop()
+        telemetry_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(telemetry_path, host_telemetry)
+
+    def attach_host_telemetry(_: subprocess.Popen[str]) -> None:
+        host_sampler.attach_targets(
+            process_pid_file=telemetry_process_pid_path,
+            spill_volume_path=telemetry_volume,
+        )
+
+    try:
+        completed = run_benchmark_command(
+            plan["command"]["argv"],
+            env=env,
+            stream_log=bool(plan.get("run", {}).get("stream_log", False)),
+            incremental_output_path=log_path,
+            on_spawn=attach_host_telemetry,
+            before_reap=finalize_host_telemetry,
+        )
+    finally:
+        finalize_host_telemetry()
+    telemetry_evidence = load_host_telemetry_evidence(telemetry_path)
     log_path.write_text(completed.stdout, encoding="utf-8")
     if completed.returncode != 0:
         reason = benchmark_failure_reason(completed.stdout, completed.returncode)
+        results = {
+            **empty_results(casa_status="blocked", reason=reason),
+            **telemetry_evidence,
+            "failure": {
+                "kind": "execution",
+                "reason": reason,
+                "return_code": completed.returncode,
+            },
+        }
         return {
             "schema_version": RUN_RESULT_SCHEMA_VERSION,
             "kind": "workload_run",
@@ -1132,20 +1191,14 @@ def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
             "started_at": started,
             "completed_at": utc_now(),
             "exit_code": completed.returncode,
-            "results": {
-                **empty_results(casa_status="blocked", reason=reason),
-                "failure": {
-                    "kind": "execution",
-                    "reason": reason,
-                    "return_code": completed.returncode,
-                },
-            },
+            "results": results,
             "human_review": human_review_gate(plan, None),
         }
 
     parsed = parse_benchmark_log(completed.stdout)
     parsed["backend_plan_logs"] = parse_backend_plan_logs(completed.stdout)
     parsed["benchmark_features"] = build_benchmark_feature_summary(plan, parsed)
+    parsed.update(telemetry_evidence)
     attach_stage_breakdown(plan, parsed)
     comparison = compare_products(plan, parsed, log_path)
     parsed["product_comparison"] = comparison
@@ -1167,6 +1220,60 @@ def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
         "results": parsed,
         "human_review": human_review_gate(plan, comparison),
     }
+
+
+def benchmark_host_telemetry_path(log_path: pathlib.Path) -> pathlib.Path:
+    if log_path.name == "benchmark-summary.log":
+        return log_path.with_name("host-telemetry.json")
+    return log_path.with_name(f"{log_path.stem}.host-telemetry.json")
+
+
+def benchmark_process_pid_path(log_path: pathlib.Path) -> pathlib.Path:
+    if log_path.name == "benchmark-summary.log":
+        return log_path.with_name("casars-imager.pid")
+    return log_path.with_name(f"{log_path.stem}.casars-imager.pid")
+
+
+def benchmark_telemetry_volume_path(
+    plan: dict[str, Any], log_path: pathlib.Path
+) -> pathlib.Path:
+    artifacts = plan.get("artifacts")
+    if isinstance(artifacts, dict):
+        for key in ("root", "tmp_root", "products_root"):
+            value = artifacts.get(key)
+            if isinstance(value, str) and value:
+                path = pathlib.Path(value)
+                if path.exists():
+                    return path
+    return log_path.parent
+
+
+def load_host_telemetry_evidence(path: pathlib.Path) -> dict[str, Any]:
+    try:
+        telemetry = json.loads(path.read_text(encoding="utf-8"))
+        validate_host_telemetry(telemetry)
+    except (OSError, json.JSONDecodeError, HostTelemetryError) as error:
+        raise HarnessError(f"host telemetry receipt is invalid: {error}") from error
+    return {
+        "host_telemetry_path": str(path),
+        "host_telemetry_sha256": sha256_file(path),
+        "host_telemetry": telemetry,
+    }
+
+
+def attach_retained_host_telemetry(
+    result: dict[str, Any],
+    *,
+    log_path: pathlib.Path,
+    required: bool,
+) -> dict[str, Any]:
+    path = benchmark_host_telemetry_path(log_path)
+    if not path.is_file():
+        if required:
+            raise HarnessError(f"host telemetry receipt is missing: {path}")
+        return result
+    result.setdefault("results", {}).update(load_host_telemetry_evidence(path))
+    return result
 
 
 def run_casa_recipe_plan(
@@ -1205,7 +1312,7 @@ def failed_bundled_run_result(
 
     services = recipe_execution_services()
     if plan.get("command", {}).get("kind") == "recipe_bound_benchmark":
-        return casa_tclean_workflow.failed_recipe_bound_benchmark_result(
+        result = casa_tclean_workflow.failed_recipe_bound_benchmark_result(
             plan,
             log_path=log_path,
             reason=reason,
@@ -1213,13 +1320,19 @@ def failed_bundled_run_result(
             failure_kind=failure_kind,
             exit_code=exit_code,
         )
-    return casa_tclean_workflow.failed_recipe_run_result(
-        plan,
+    else:
+        result = casa_tclean_workflow.failed_recipe_run_result(
+            plan,
+            log_path=log_path,
+            reason=reason,
+            services=services,
+            failure_kind=failure_kind,
+            exit_code=exit_code,
+        )
+    return attach_retained_host_telemetry(
+        result,
         log_path=log_path,
-        reason=reason,
-        services=services,
-        failure_kind=failure_kind,
-        exit_code=exit_code,
+        required=False,
     )
 
 
@@ -1317,6 +1430,8 @@ def run_benchmark_command(
     env: dict[str, str],
     stream_log: bool,
     incremental_output_path: pathlib.Path,
+    on_spawn: Callable[[subprocess.Popen[str]], None] | None = None,
+    before_reap: Callable[[subprocess.Popen[str]], None] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     return run_command(
         argv,
@@ -1324,6 +1439,8 @@ def run_benchmark_command(
         environment=env,
         stream_stdout=stream_log,
         incremental_output_path=incremental_output_path,
+        on_spawn=on_spawn,
+        before_reap=before_reap,
     )
 
 
@@ -1386,6 +1503,18 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         "single_plane_execution_plan": [],
         "standard_mfs_runtime_plan": [],
         "standard_mfs_parallel_worker_plan": [],
+        "standard_mfs_planning_resources": [],
+        "standard_mfs_planner_preflight": [],
+        "standard_mfs_memory_runtime_actions": [],
+        "standard_mfs_execution_plan": [],
+        "standard_mfs_execution_allocations": [],
+        "standard_mfs_execution_lifetime_stages": [],
+        "standard_mfs_execution_lifetimes": [],
+        "standard_mfs_execution_decisions": [],
+        "standard_mfs_stage_memory": [],
+        "awproject_compact_replay_cache": [],
+        "awproject_compensated_readbacks": [],
+        "gpu_wait_diagnostics": [],
         "source_stream_memory_plan": [],
         "imaging_source_read_ahead": [],
         "standard_mfs_source_read_ahead": [],
@@ -1428,12 +1557,47 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         if not parsed:
             continue
         name = parsed["name"]
+        fields = parsed.get("fields", {})
+        if (
+            isinstance(fields, dict)
+            and ("metal" in name or "gpu" in name)
+            and any(
+                field.endswith(("_wait_ms", "_sync_ms", "_stall_ms"))
+                for field in fields
+            )
+        ):
+            buckets["gpu_wait_diagnostics"].append(parsed)
         if name == "single_plane_execution_plan":
             buckets["single_plane_execution_plan"].append(parsed)
         elif name == "standard_mfs_runtime_plan":
             buckets["standard_mfs_runtime_plan"].append(parsed)
         elif name == "standard_mfs_parallel_worker_plan":
             buckets["standard_mfs_parallel_worker_plan"].append(parsed)
+        elif name == "standard_mfs_planning_resources":
+            buckets["standard_mfs_planning_resources"].append(parsed)
+        elif name == "standard_mfs_planner_preflight":
+            buckets["standard_mfs_planner_preflight"].append(parsed)
+        elif name == "standard_mfs_memory_runtime_actions":
+            buckets["standard_mfs_memory_runtime_actions"].append(parsed)
+        elif name == "standard_mfs_execution_plan":
+            buckets["standard_mfs_execution_plan"].append(parsed)
+        elif name == "standard_mfs_execution_allocation":
+            buckets["standard_mfs_execution_allocations"].append(parsed)
+        elif name == "standard_mfs_execution_lifetime_stage":
+            buckets["standard_mfs_execution_lifetime_stages"].append(parsed)
+        elif name == "standard_mfs_execution_lifetime":
+            buckets["standard_mfs_execution_lifetimes"].append(parsed)
+        elif name == "standard_mfs_execution_decision":
+            buckets["standard_mfs_execution_decisions"].append(parsed)
+        elif name == "standard_mfs_stage_memory":
+            buckets["standard_mfs_stage_memory"].append(parsed)
+        elif name == "awproject_compact_replay_cache":
+            buckets["awproject_compact_replay_cache"].append(parsed)
+        elif name in {
+            "awproject_metal_compensated_readback",
+            "awproject_metal_compensated_residual_readback",
+        }:
+            buckets["awproject_compensated_readbacks"].append(parsed)
         elif name == "standard_mfs_memory_plan_actual":
             buckets["source_stream_memory_plan"].append(parsed)
         elif name == "imaging_source_read_ahead_summary":
@@ -1540,6 +1704,7 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "summary": summary,
+        "memory_campaign": summarize_memory_campaign_evidence(buckets),
         "collection_stats": collection_stats,
         **retained_buckets,
     }
@@ -1559,6 +1724,305 @@ def compact_backend_log_entries(
     return entries[:head_count] + entries[-(limit - head_count) :]
 
 
+def summarize_memory_campaign_evidence(
+    buckets: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    """Build one auditable planner/runtime memory receipt from log records."""
+
+    def unique_fields(name: str) -> list[dict[str, Any]]:
+        return [
+            entry.get("fields", {})
+            for entry in unique_entries_by_raw(buckets.get(name, []))
+            if isinstance(entry.get("fields"), dict)
+        ]
+
+    execution_plans = unique_fields("standard_mfs_execution_plan")
+    execution_plan = execution_plans[-1] if execution_plans else {}
+    planning_resources = unique_fields("standard_mfs_planning_resources")
+    planning_resource = planning_resources[-1] if planning_resources else {}
+    preflights = unique_fields("standard_mfs_planner_preflight")
+    preflight = preflights[-1] if preflights else {}
+    runtime_action_records = unique_fields("standard_mfs_memory_runtime_actions")
+    runtime_actions = runtime_action_records[-1] if runtime_action_records else {}
+    allocations = unique_fields("standard_mfs_execution_allocations")
+    lifetime_stages = unique_fields("standard_mfs_execution_lifetime_stages")
+    lifetimes = unique_fields("standard_mfs_execution_lifetimes")
+    decisions = unique_fields("standard_mfs_execution_decisions")
+    stage_memory = unique_fields("standard_mfs_stage_memory")
+    replay_records = unique_fields("awproject_compact_replay_cache")
+    replay = replay_records[-1] if replay_records else {}
+    compensated_readbacks = unique_fields("awproject_compensated_readbacks")
+
+    allocation_bytes_by_id: dict[str, int] = {}
+    inconsistent_execution_allocation_ids: list[str] = []
+    for allocation in allocations:
+        allocation_id = allocation.get("allocation_id")
+        allocation_bytes = allocation.get("bytes")
+        if (
+            not isinstance(allocation_id, str)
+            or not allocation_id
+            or isinstance(allocation_bytes, bool)
+            or not isinstance(allocation_bytes, int)
+            or allocation_bytes < 0
+        ):
+            continue
+        prior = allocation_bytes_by_id.setdefault(allocation_id, allocation_bytes)
+        if (
+            prior != allocation_bytes
+            and allocation_id not in inconsistent_execution_allocation_ids
+        ):
+            inconsistent_execution_allocation_ids.append(allocation_id)
+
+    logical_bytes_by_allocation: dict[str, int] = {}
+    component_by_allocation: dict[str, str] = {}
+    inconsistent_allocation_ids: list[str] = []
+    for lifetime in lifetimes:
+        allocation_id = lifetime.get("allocation_id")
+        logical_bytes = lifetime.get("logical_bytes")
+        if (
+            not isinstance(allocation_id, str)
+            or not allocation_id
+            or isinstance(logical_bytes, bool)
+            or not isinstance(logical_bytes, int)
+            or logical_bytes < 0
+        ):
+            continue
+        prior = logical_bytes_by_allocation.setdefault(allocation_id, logical_bytes)
+        component = lifetime.get("component")
+        if isinstance(component, str) and component:
+            component_by_allocation.setdefault(allocation_id, component)
+        if prior != logical_bytes and allocation_id not in inconsistent_allocation_ids:
+            inconsistent_allocation_ids.append(allocation_id)
+    lifetime_logical_bytes_from_rows = sum(logical_bytes_by_allocation.values())
+    lifetime_logical_bytes_by_component: dict[str, int] = {}
+    for allocation_id, logical_bytes in logical_bytes_by_allocation.items():
+        component = component_by_allocation.get(allocation_id, "unlabeled")
+        lifetime_logical_bytes_by_component[component] = (
+            lifetime_logical_bytes_by_component.get(component, 0) + logical_bytes
+        )
+    lifetime_stage_peak_from_rows = max(
+        (
+            int(stage["resident_bytes"])
+            for stage in lifetime_stages
+            if isinstance(stage.get("resident_bytes"), int)
+            and not isinstance(stage.get("resident_bytes"), bool)
+        ),
+        default=None,
+    )
+    lifetime_stored_peak_from_rows = max(
+        (
+            int(stage["stored_bytes"])
+            for stage in lifetime_stages
+            if isinstance(stage.get("stored_bytes"), int)
+            and not isinstance(stage.get("stored_bytes"), bool)
+        ),
+        default=None,
+    )
+    planned_lifetime_logical_bytes = execution_plan.get("lifetime_logical_bytes")
+    planned_lifetime_peak_bytes = execution_plan.get("lifetime_peak_bytes")
+    planned_lifetime_stored_peak_bytes = execution_plan.get(
+        "lifetime_stored_peak_bytes"
+    )
+    ledger_reconciliation = {
+        "execution_allocation_ids_unique_and_consistent": (
+            not inconsistent_execution_allocation_ids
+            and len(allocation_bytes_by_id) == len(allocations)
+        ),
+        "inconsistent_execution_allocation_ids": (
+            inconsistent_execution_allocation_ids
+        ),
+        "execution_allocation_bytes_by_id": allocation_bytes_by_id,
+        "execution_allocation_bytes_from_rows": sum(allocation_bytes_by_id.values()),
+        "allocation_ids_unique_and_consistent": not inconsistent_allocation_ids
+        and bool(logical_bytes_by_allocation),
+        "inconsistent_allocation_ids": inconsistent_allocation_ids,
+        "execution_allocations_match_lifetimes": (
+            allocation_bytes_by_id == logical_bytes_by_allocation
+        ),
+        "logical_bytes_from_lifetime_rows": lifetime_logical_bytes_from_rows,
+        "logical_bytes_from_execution_plan": planned_lifetime_logical_bytes,
+        "logical_bytes_match": isinstance(planned_lifetime_logical_bytes, int)
+        and planned_lifetime_logical_bytes == lifetime_logical_bytes_from_rows,
+        "peak_bytes_from_stage_rows": lifetime_stage_peak_from_rows,
+        "peak_bytes_from_execution_plan": planned_lifetime_peak_bytes,
+        "peak_bytes_match": isinstance(planned_lifetime_peak_bytes, int)
+        and planned_lifetime_peak_bytes == lifetime_stage_peak_from_rows,
+        "stored_peak_bytes_from_stage_rows": lifetime_stored_peak_from_rows,
+        "stored_peak_bytes_from_execution_plan": planned_lifetime_stored_peak_bytes,
+        "stored_peak_bytes_match": isinstance(
+            planned_lifetime_stored_peak_bytes, int
+        )
+        and planned_lifetime_stored_peak_bytes == lifetime_stored_peak_from_rows,
+        "stage_count": len(lifetime_stages),
+    }
+    ledger_reconciliation["complete"] = bool(
+        ledger_reconciliation["execution_allocation_ids_unique_and_consistent"]
+        and ledger_reconciliation["allocation_ids_unique_and_consistent"]
+        and ledger_reconciliation["execution_allocations_match_lifetimes"]
+        and ledger_reconciliation["logical_bytes_match"]
+        and ledger_reconciliation["peak_bytes_match"]
+        and ledger_reconciliation["stored_peak_bytes_match"]
+        and len(lifetime_stages) == 12
+    )
+
+    gpu_wait_records = []
+    gpu_wait_totals: dict[str, float] = {}
+    for entry in unique_entries_by_raw(buckets.get("gpu_wait_diagnostics", [])):
+        fields = entry.get("fields")
+        if not isinstance(fields, dict):
+            continue
+        waits = {
+            field: value
+            for field, value in fields.items()
+            if field.endswith(("_wait_ms", "_sync_ms", "_stall_ms"))
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+        }
+        if not waits:
+            continue
+        gpu_wait_records.append({"name": entry.get("name"), "waits_ms": waits})
+        for field, value in waits.items():
+            gpu_wait_totals[field] = gpu_wait_totals.get(field, 0.0) + float(value)
+
+    current_rss_values = [
+        value
+        for row in stage_memory
+        if isinstance((value := row.get("current_rss_bytes")), int)
+        and not isinstance(value, bool)
+    ]
+    lifetime_rss_values = [
+        value
+        for row in stage_memory
+        if isinstance((value := row.get("lifetime_peak_rss_bytes")), int)
+        and not isinstance(value, bool)
+    ]
+    metal_values = [
+        value
+        for row in stage_memory
+        if isinstance(
+            (value := row.get("stage_observed_peak_metal_allocated_bytes")), int
+        )
+        and not isinstance(value, bool)
+    ]
+    replay_reservation_bytes = sum(
+        bytes_
+        for allocation_id, bytes_ in allocation_bytes_by_id.items()
+        if "awproject-compact-replay-retention" in allocation_id
+    )
+    actual_replay_resident_bytes = replay.get("resident_bytes")
+    replay_resident_within_planned_reservation = (
+        actual_replay_resident_bytes <= replay_reservation_bytes
+        if isinstance(actual_replay_resident_bytes, int)
+        and not isinstance(actual_replay_resident_bytes, bool)
+        else None
+    )
+    compensated_readback_reservation_bytes = sum(
+        bytes_
+        for allocation_id, bytes_ in allocation_bytes_by_id.items()
+        if "awproject-compensated-f64-readback" in allocation_id
+    )
+    compensated_readback_transient_peak_bytes = max(
+        (
+            int(record["host_f64_transient_bytes"])
+            for record in compensated_readbacks
+            if isinstance(record.get("host_f64_transient_bytes"), int)
+            and not isinstance(record.get("host_f64_transient_bytes"), bool)
+        ),
+        default=None,
+    )
+    compensated_readback_within_planned_reservation = (
+        compensated_readback_transient_peak_bytes
+        <= compensated_readback_reservation_bytes
+        if compensated_readback_transient_peak_bytes is not None
+        else None
+    )
+    compensated_readback_overlap_reconciled = all(
+        isinstance(record.get("resident_bytes"), int)
+        and not isinstance(record.get("resident_bytes"), bool)
+        and isinstance(record.get("host_f64_transient_bytes"), int)
+        and not isinstance(record.get("host_f64_transient_bytes"), bool)
+        and isinstance(record.get("materialized_f32_output_bytes"), int)
+        and not isinstance(record.get("materialized_f32_output_bytes"), bool)
+        and record.get("modeled_overlap_bytes")
+        == record["resident_bytes"]
+        + record["host_f64_transient_bytes"]
+        + record["materialized_f32_output_bytes"]
+        for record in compensated_readbacks
+    )
+    return {
+        "schema_version": 1,
+        "planning_resources": planning_resource,
+        "planner_preflight": preflight,
+        "memory_runtime_actions": runtime_actions,
+        "memory_runtime_action_record_count": len(runtime_action_records),
+        "execution_plan": execution_plan,
+        "execution_plan_count": len(execution_plans),
+        "allocations": allocations,
+        "lifetime_stages": lifetime_stages,
+        "lifetimes": lifetimes,
+        "lifetime_logical_bytes_by_allocation_id": logical_bytes_by_allocation,
+        "lifetime_logical_bytes_by_component": lifetime_logical_bytes_by_component,
+        "decisions": decisions,
+        "ledger_reconciliation": ledger_reconciliation,
+        "stage_memory": {
+            "records": stage_memory,
+            "record_count": len(stage_memory),
+            "current_rss_bytes_peak": max(current_rss_values, default=None),
+            "lifetime_peak_rss_bytes": max(lifetime_rss_values, default=None),
+            "observed_metal_allocated_bytes_peak": max(metal_values, default=None),
+            "scope": (
+                "phase-transition-samples-not-transient-peak"
+                if stage_memory
+                else None
+            ),
+        },
+        "compact_replay": {
+            "records": replay_records,
+            "final": replay,
+            "actual_resident_bytes": actual_replay_resident_bytes,
+            "planned_reservation_bytes": replay_reservation_bytes,
+            "actual_resident_within_planned_reservation": (
+                replay_resident_within_planned_reservation
+            ),
+            "resident_blocks": replay.get("resident_blocks"),
+            "partial_blocks": replay.get("partial_blocks"),
+            "rejected_blocks": replay.get("rejected_blocks"),
+        },
+        "compensated_readback": {
+            "records": compensated_readbacks,
+            "record_count": len(compensated_readbacks),
+            "strategies": sorted(
+                {
+                    strategy
+                    for record in compensated_readbacks
+                    if isinstance(
+                        (strategy := record.get("readback_strategy")), str
+                    )
+                }
+            ),
+            "actual_f64_transient_peak_bytes": (
+                compensated_readback_transient_peak_bytes
+            ),
+            "planned_f64_transient_reservation_bytes": (
+                compensated_readback_reservation_bytes
+            ),
+            "actual_f64_transient_within_planned_reservation": (
+                compensated_readback_within_planned_reservation
+            ),
+            "modeled_overlap_reconciled": compensated_readback_overlap_reconciled,
+        },
+        "gpu_waits": {
+            "records": gpu_wait_records,
+            "record_count": len(gpu_wait_records),
+            "field_totals_ms": gpu_wait_totals,
+            "aggregation_note": (
+                "per-field sums preserve backend field identity; overlapping backend "
+                "summary/detail records are not collapsed into one wall-clock total"
+            ),
+        },
+    }
+
+
 def parse_key_value_line(line: str) -> dict[str, Any] | None:
     if "=" not in line:
         return None
@@ -1569,10 +2033,13 @@ def parse_key_value_line(line: str) -> dict[str, Any] | None:
         rest = line
     else:
         rest = parts[1] if len(parts) > 1 else ""
-    fields = {
-        key: parse_scalar_value(value)
-        for key, value in re.findall(r"([A-Za-z0-9_]+)=([^ \t]+)", rest)
-    }
+    matches = list(re.finditer(r"(?:^|[ \t])([A-Za-z0-9_]+)=", rest))
+    fields = {}
+    for index, match in enumerate(matches):
+        value_end = matches[index + 1].start() if index + 1 < len(matches) else len(rest)
+        raw_value = rest[match.end() : value_end].strip()
+        if raw_value:
+            fields[match.group(1)] = parse_scalar_value(raw_value)
     if not fields:
         return None
     return {"name": name, "raw": line, "fields": fields}

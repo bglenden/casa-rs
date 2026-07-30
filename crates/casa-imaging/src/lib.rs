@@ -28,6 +28,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 use std::cell::RefCell;
+#[cfg(all(target_os = "macos", not(coverage)))]
+use std::path::{Path, PathBuf};
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 mod apple_fft;
@@ -58,11 +60,15 @@ pub use awprojection::{
     AwProjectSampleStats,
 };
 pub use execution_plan::{
-    ImagingCachePlan, ImagingExecutionPolicy, ImagingFftChunkPlan, ImagingIngestPlan,
-    ImagingMemoryAllocation, ImagingMetalPlan, ImagingPlanAdmission, ImagingPlanDecision,
-    ImagingPlanError, ImagingPlanOrigin, ImagingResolvedPlan, ImagingResources,
-    ImagingSpectralSchedule, ImagingTileAnchor, ImagingTilePlan, ImagingWorkloadShape,
-    admit_imaging_execution, plan_imaging_execution,
+    ImagingCachePlan, ImagingDetectedResources, ImagingExecutionPolicy, ImagingFftChunkPlan,
+    ImagingIngestPlan, ImagingMemoryAllocation, ImagingMemoryAllocationLifecycle,
+    ImagingMemoryBacking, ImagingMemoryBackingBytes, ImagingMemoryLifetimeLedger,
+    ImagingMemoryNextUse, ImagingMemoryPressurePolicy, ImagingMemoryResidency, ImagingMemoryStage,
+    ImagingMemoryStagePeak, ImagingMetalPlan, ImagingPlanAdmission, ImagingPlanDecision,
+    ImagingPlanError, ImagingPlanOrigin, ImagingPlanningContext, ImagingResolvedPlan,
+    ImagingResources, ImagingSpectralSchedule, ImagingTileAnchor, ImagingTilePlan,
+    ImagingWorkloadShape, admit_imaging_execution, admit_imaging_execution_with_context,
+    legacy_memory_lifetime_ledger, plan_imaging_execution, plan_imaging_execution_with_context,
 };
 pub use parallel_worker::{ParallelWorkerCalibrationRequest, topology_parallel_worker_candidates};
 
@@ -88,10 +94,11 @@ use casa_lattices::array_madfm;
 use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::frequency::FrequencyRef;
 use libm::{erfc, j1};
-use nalgebra::DMatrix;
 use ndarray::{Array2, Array4, ArrayD, ArrayViewMut2, Axis, IxDyn, ShapeBuilder, Zip, s};
 use num_complex::{Complex32, Complex64};
 use rayon::prelude::*;
+#[cfg(all(target_os = "macos", not(coverage)))]
+use sha2::{Digest, Sha256};
 
 use beam::{
     BeamFitOutcome, estimate_psf_sidelobe_level, estimate_psf_sidelobe_level_for_beam,
@@ -146,6 +153,7 @@ pub use image_product::{
     beam_fit_to_gaussian, cube_image_product_set, image_beam_set_from_beam,
     image_beam_set_from_channel_beams, mfs_image_product_set, mtmfs_image_product_set,
 };
+use least_squares::invert_symmetric_positive_definite_casacore;
 pub use trace::CubePredictionLambdaMode;
 
 type MosaicProjectorKey = ((u8, u64, u64), u64, u8);
@@ -5525,6 +5533,7 @@ where
         config.pb_limit,
         request.clean_mask.as_ref(),
     )?;
+    drop(weight_image_for_mask);
     let mut clean_request = request.clone();
     clean_request.clean_mask = Some(mosaic_clean_mask);
     let clean_mask_pixels = clean_request
@@ -5559,13 +5568,6 @@ where
     };
     let mut warnings = Vec::new();
     let scale_sizes = effective_mtmfs_multiscale_scales(&clean_request);
-    let scale_hessians = mtmfs_scale_hessians_for_clean(
-        &psf_state.psf_terms,
-        clean_request.nterms,
-        &scale_sizes,
-        clean_request.clean.niter,
-        &mut warnings,
-    )?;
     let multiscale_basis =
         if clean_request.clean.niter == 0 || clean_request.multiscale_scales.is_empty() {
             None
@@ -5580,11 +5582,36 @@ where
             stage_timings.deconvolver_setup += setup_started.elapsed();
             Some(basis)
         };
+    let scale_hessians = if mtmfs_use_full_fft_basis()
+        && let Some(basis) = multiscale_basis.as_ref()
+    {
+        mtmfs_scale_hessians_from_basis(basis, clean_request.nterms)?
+    } else {
+        mtmfs_scale_hessians_for_clean(
+            &psf_state.psf_terms,
+            clean_request.nterms,
+            &scale_sizes,
+            clean_request.clean.niter,
+            &mut warnings,
+        )?
+    };
     if profile::standard_mfs_profile_detail_enabled() {
         for scale_hessian in &scale_hessians {
             eprintln!(
-                "mosaic_mtmfs_scale_hessian scale_pixels={} hessian={:?} inverse={:?}",
-                scale_hessian.scale_size, scale_hessian.hessian, scale_hessian.inverse,
+                "mosaic_mtmfs_scale_hessian scale_pixels={} hessian={:?} inverse={:?} hessian_f32_bits={:?} inverse_f32_bits={:?}",
+                scale_hessian.scale_size,
+                scale_hessian.hessian,
+                scale_hessian.inverse,
+                scale_hessian
+                    .hessian
+                    .iter()
+                    .map(|row| row.iter().map(|value| value.to_bits()).collect::<Vec<_>>())
+                    .collect::<Vec<_>>(),
+                scale_hessian
+                    .inverse
+                    .iter()
+                    .map(|row| row.iter().map(|value| value.to_bits()).collect::<Vec<_>>())
+                    .collect::<Vec<_>>(),
             );
         }
     }
@@ -7030,7 +7057,7 @@ fn finish_mosaic_mtmfs_dirty_images(
                         "streaming mosaic MT-MFS produced no weight terms".to_string(),
                     )
                 })?;
-                let mut psf_terms = raw_psf_terms
+                let psf_terms = raw_psf_terms
                     .iter()
                     .map(|raw| {
                         let mut image =
@@ -7040,8 +7067,8 @@ fn finish_mosaic_mtmfs_dirty_images(
                     })
                     .collect::<Vec<_>>();
                 return normalize_mosaic_mtmfs_dirty_images(
-                    &mut psf_terms,
-                    &raw_residual_terms
+                    psf_terms,
+                    raw_residual_terms
                         .iter()
                         .map(|raw| gridder.corrected_mosaic_image_from_grid(raw, conv_sampling))
                         .collect::<Vec<_>>(),
@@ -7051,7 +7078,7 @@ fn finish_mosaic_mtmfs_dirty_images(
                     pb_limit,
                 );
             }
-            let mut psf_terms = psf_grids
+            let psf_terms = psf_grids
                 .into_iter()
                 .map(|grid| {
                     let raw = execute_dirty_product_host_f32_owned_single(grid, fft_policy)?;
@@ -7095,8 +7122,8 @@ fn finish_mosaic_mtmfs_dirty_images(
                 )
             })?;
             normalize_mosaic_mtmfs_dirty_images(
-                &mut psf_terms,
-                &corrected_residual_terms,
+                psf_terms,
+                corrected_residual_terms,
                 weight_image,
                 weight_terms,
                 dirty_fft_scale,
@@ -7135,7 +7162,7 @@ fn finish_mosaic_mtmfs_dirty_images(
                         "streaming mosaic MT-MFS produced no weight terms".to_string(),
                     )
                 })?;
-                let mut psf_terms = raw_psf_terms
+                let psf_terms = raw_psf_terms
                     .iter()
                     .map(|raw| {
                         let mut image =
@@ -7145,8 +7172,8 @@ fn finish_mosaic_mtmfs_dirty_images(
                     })
                     .collect::<Vec<_>>();
                 return normalize_mosaic_mtmfs_dirty_images(
-                    &mut psf_terms,
-                    &raw_residual_terms
+                    psf_terms,
+                    raw_residual_terms
                         .iter()
                         .map(|raw| gridder.corrected_mosaic_image_from_grid_f64(raw, conv_sampling))
                         .collect::<Vec<_>>(),
@@ -7156,7 +7183,7 @@ fn finish_mosaic_mtmfs_dirty_images(
                     pb_limit,
                 );
             }
-            let mut psf_terms = psf_grids
+            let psf_terms = psf_grids
                 .into_iter()
                 .enumerate()
                 .map(|(order, grid)| {
@@ -7219,8 +7246,8 @@ fn finish_mosaic_mtmfs_dirty_images(
                 )
             })?;
             let psf_peak = normalize_mosaic_mtmfs_dirty_images(
-                &mut psf_terms,
-                &corrected_residual_terms,
+                psf_terms,
+                corrected_residual_terms,
                 weight_image,
                 weight_terms,
                 dirty_fft_scale,
@@ -7241,7 +7268,7 @@ fn finish_mosaic_mtmfs_dirty_images(
                 ));
             }
             let fft_started = Instant::now();
-            let mut psf_terms = (0..psf_term_count)
+            let psf_terms = (0..psf_term_count)
                 .map(|order| {
                     let grid = grids.take_dense_plane(MosaicMtmfsSparsePlaneKind::Psf, order)?;
                     let raw = execute_dirty_product_host_f64_owned_single(
@@ -7292,8 +7319,8 @@ fn finish_mosaic_mtmfs_dirty_images(
                 )
             })?;
             normalize_mosaic_mtmfs_dirty_images(
-                &mut psf_terms,
-                &corrected_residual_terms,
+                psf_terms,
+                corrected_residual_terms,
                 weight_image,
                 weight_terms,
                 dirty_fft_scale,
@@ -7323,38 +7350,109 @@ fn finish_mosaic_mtmfs_dirty_images(
                     plane_count,
                 )?
             {
-                let readback_started = Instant::now();
                 let resident_bytes = grid
                     .plane_count()
                     .saturating_mul(grid.shape()[0])
                     .saturating_mul(grid.shape()[1])
                     .saturating_mul(std::mem::size_of::<Complex32>())
                     .saturating_mul(2);
-                let planes = copy_awproject_metal_centered_f64_planes(&grid, compensation)?;
-                let readback = readback_started.elapsed();
-                stage_timings.psf_fft += readback;
+                let one_f64_plane_bytes = grid.shape()[0]
+                    .saturating_mul(grid.shape()[1])
+                    .saturating_mul(std::mem::size_of::<Complex64>());
+                let materialized_f32_output_bytes = plane_count
+                    .saturating_mul(grid.shape()[0])
+                    .saturating_mul(grid.shape()[1])
+                    .saturating_mul(std::mem::size_of::<f32>());
+                let fft_started = Instant::now();
+                let mut readback = Duration::ZERO;
+                let mut psf_terms = Vec::with_capacity(psf_term_count);
+                for order in 0..psf_term_count {
+                    let plane_started = Instant::now();
+                    let plane =
+                        copy_awproject_metal_centered_f64_plane(&grid, compensation, order)?;
+                    readback += plane_started.elapsed();
+                    dump_mosaic_complex_grid(&format!("aw_psf_tt{order}_prefft"), 0.0, &plane);
+                    let raw = execute_dirty_product_host_f64_owned_single(
+                        plane,
+                        dirty_product_fft_policy,
+                    )?;
+                    dump_mosaic_complex_grid(&format!("aw_psf_tt{order}_postfft"), 0.0, &raw);
+                    let mut image =
+                        gridder.corrected_mosaic_image_from_grid_f64(&raw, conv_sampling);
+                    image.mapv_inplace(|value| value * psf_fft_scale);
+                    psf_terms.push(image);
+                }
+                let mut corrected_residual_terms = Vec::with_capacity(nterms);
+                for order in 0..nterms {
+                    let plane_started = Instant::now();
+                    let plane = copy_awproject_metal_centered_f64_plane(
+                        &grid,
+                        compensation,
+                        psf_term_count + order,
+                    )?;
+                    readback += plane_started.elapsed();
+                    dump_mosaic_complex_grid(&format!("aw_residual_tt{order}_prefft"), 0.0, &plane);
+                    let raw = execute_dirty_product_host_f64_owned_single(
+                        plane,
+                        dirty_product_fft_policy,
+                    )?;
+                    dump_mosaic_complex_grid(&format!("aw_residual_tt{order}_postfft"), 0.0, &raw);
+                    corrected_residual_terms
+                        .push(gridder.corrected_mosaic_image_from_grid_f64(&raw, conv_sampling));
+                }
+                let mut weight_terms = Vec::with_capacity(psf_term_count);
+                for (order, &scale) in weight_fft_scales.iter().enumerate() {
+                    let plane_started = Instant::now();
+                    let plane = copy_awproject_metal_centered_f64_plane(
+                        &grid,
+                        compensation,
+                        psf_term_count + nterms + order,
+                    )?;
+                    readback += plane_started.elapsed();
+                    dump_mosaic_complex_grid(&format!("aw_weight_tt{order}_prefft"), 0.0, &plane);
+                    let raw = execute_dirty_product_host_f64_owned_single(
+                        plane,
+                        dirty_product_fft_policy,
+                    )?;
+                    dump_mosaic_complex_grid(&format!("aw_weight_tt{order}_postfft"), 0.0, &raw);
+                    let mut image = gridder.aw_weight_image_from_grid_f64(&raw, conv_sampling);
+                    if order == 0 {
+                        let sumwt = aw_weight_zero_sumwt
+                            .expect("AWProject weight semantics validated zeroth sumwt");
+                        image.mapv_inplace(|value| value / sumwt);
+                    } else {
+                        image.mapv_inplace(|value| value * scale);
+                    }
+                    weight_terms.push(image);
+                }
+                drop(aw_compensation);
+                drop(grid);
+                stage_timings.psf_fft += fft_started.elapsed();
+                let weight_image = weight_terms.first().cloned().ok_or_else(|| {
+                    ImagingError::Normalization(
+                        "direct Metal mosaic MT-MFS produced no weight terms".to_string(),
+                    )
+                })?;
                 if profile::standard_mfs_profile_detail_enabled() {
                     eprintln!(
-                        "awproject_metal_compensated_readback products={} residency=metal-shared-two-float-grid fft_precision=f64 resident_bytes={} readback_ms={:.3}",
+                        "awproject_metal_compensated_readback products={} residency=metal-shared-two-float-grid fft_precision=f64 readback_strategy=sequential-plane resident_bytes={} host_f64_transient_bytes={} materialized_f32_output_bytes={} modeled_overlap_bytes={} readback_ms={:.3}",
                         plane_count,
                         resident_bytes,
+                        one_f64_plane_bytes,
+                        materialized_f32_output_bytes,
+                        resident_bytes
+                            .saturating_add(one_f64_plane_bytes)
+                            .saturating_add(materialized_f32_output_bytes),
                         profile::millis(readback),
                     );
                 }
-                let host_grids = split_mosaic_mtmfs_host_planes(planes, psf_term_count, nterms)?;
-                return finish_mosaic_mtmfs_dirty_images(
-                    MosaicMtmfsDirtyFinishRequest {
-                        gridder,
-                        storage: MosaicMtmfsStreamGridStorage::HostF64(host_grids),
-                        conv_sampling,
-                        nterms,
-                        image_shape,
-                        normalization_sumwt,
-                        aw_psf_sumwt_terms,
-                        pb_limit,
-                        dirty_product_fft_policy,
-                    },
-                    stage_timings,
+                return normalize_mosaic_mtmfs_dirty_images(
+                    psf_terms,
+                    corrected_residual_terms,
+                    weight_image,
+                    weight_terms,
+                    dirty_fft_scale,
+                    pb_limit,
                 );
             }
             let input = grid.seal();
@@ -7401,7 +7499,7 @@ fn finish_mosaic_mtmfs_dirty_images(
                     "direct Metal mosaic MT-MFS produced no weight terms".to_string(),
                 )
             })?;
-            let mut psf_terms = raw_terms[..psf_term_count]
+            let psf_terms = raw_terms[..psf_term_count]
                 .iter()
                 .map(|raw| {
                     let mut image = gridder.corrected_mosaic_image_from_grid(raw, conv_sampling);
@@ -7414,8 +7512,8 @@ fn finish_mosaic_mtmfs_dirty_images(
                 .map(|raw| gridder.corrected_mosaic_image_from_grid(raw, conv_sampling))
                 .collect::<Vec<_>>();
             let products = normalize_mosaic_mtmfs_dirty_images(
-                &mut psf_terms,
-                &corrected_residual_terms,
+                psf_terms,
+                corrected_residual_terms,
                 weight_image,
                 weight_terms,
                 dirty_fft_scale,
@@ -7449,8 +7547,8 @@ fn finish_mosaic_mtmfs_dirty_images(
 }
 
 fn normalize_mosaic_mtmfs_dirty_images(
-    psf_terms: &mut [Array2<f32>],
-    corrected_residual_terms: &[Array2<f32>],
+    mut psf_terms: Vec<Array2<f32>>,
+    corrected_residual_terms: Vec<Array2<f32>>,
     weight_image: Array2<f32>,
     weight_terms: Vec<Array2<f32>>,
     fft_sumwt_scale: f32,
@@ -7462,20 +7560,19 @@ fn normalize_mosaic_mtmfs_dirty_images(
             "streaming mosaic MT-MFS PSF peak is non-finite or zero".to_string(),
         ));
     }
-    for psf_term in psf_terms.iter_mut() {
+    for psf_term in &mut psf_terms {
         psf_term.mapv_inplace(|value| value / psf_peak);
     }
     let residual_terms = corrected_residual_terms
-        .iter()
-        .map(|corrected| {
-            let mut image = corrected.clone();
+        .into_iter()
+        .map(|mut image| {
             image.mapv_inplace(|value| value * fft_sumwt_scale);
             normalize_mosaic_residual_by_weight(&mut image, &weight_image, pb_limit)?;
             Ok(image)
         })
         .collect::<Result<Vec<_>, ImagingError>>()?;
     Ok(MosaicMtmfsDirtyImages {
-        psf_terms: psf_terms.to_vec(),
+        psf_terms,
         residual_terms,
         weight_image,
         weight_terms,
@@ -7613,72 +7710,104 @@ fn finish_mosaic_mtmfs_residual_images(
                     plane_count,
                 )?
             {
-                let readback_started = Instant::now();
-                let planes = copy_awproject_metal_centered_f64_planes(&grid, compensation)?;
-                let readback = readback_started.elapsed();
+                let resident_bytes = grid
+                    .plane_count()
+                    .saturating_mul(grid.shape()[0])
+                    .saturating_mul(grid.shape()[1])
+                    .saturating_mul(std::mem::size_of::<Complex32>())
+                    .saturating_mul(2);
+                let one_f64_plane_bytes = grid.shape()[0]
+                    .saturating_mul(grid.shape()[1])
+                    .saturating_mul(std::mem::size_of::<Complex64>());
+                let materialized_f32_output_bytes = residual_term_count
+                    .saturating_mul(grid.shape()[0])
+                    .saturating_mul(grid.shape()[1])
+                    .saturating_mul(std::mem::size_of::<f32>());
+                let mut readback = Duration::ZERO;
+                let mut corrected = Vec::with_capacity(residual_term_count);
+                for order in 0..residual_term_count {
+                    let plane_started = Instant::now();
+                    let plane = copy_awproject_metal_centered_f64_plane(
+                        &grid,
+                        compensation,
+                        psf_term_count + order,
+                    )?;
+                    readback += plane_started.elapsed();
+                    let raw = execute_dirty_product_host_f64_owned_single(
+                        plane,
+                        dirty_product_fft_policy,
+                    )?;
+                    corrected
+                        .push(gridder.corrected_mosaic_image_from_grid_f64(&raw, conv_sampling));
+                }
+                drop(aw_compensation);
+                drop(grid);
                 if profile::standard_mfs_profile_detail_enabled() {
                     eprintln!(
-                        "awproject_metal_compensated_residual_readback products={} residency=metal-shared-two-float-grid fft_precision=f64 readback_ms={:.3}",
-                        plane_count,
+                        "awproject_metal_compensated_residual_readback products={} residency=metal-shared-two-float-grid fft_precision=f64 readback_strategy=sequential-plane resident_bytes={} host_f64_transient_bytes={} materialized_f32_output_bytes={} modeled_overlap_bytes={} readback_ms={:.3}",
+                        residual_term_count,
+                        resident_bytes,
+                        one_f64_plane_bytes,
+                        materialized_f32_output_bytes,
+                        resident_bytes
+                            .saturating_add(one_f64_plane_bytes)
+                            .saturating_add(materialized_f32_output_bytes),
                         profile::millis(readback),
                     );
                 }
-                let host_grids =
-                    split_mosaic_mtmfs_host_planes(planes, psf_term_count, residual_term_count)?;
-                return finish_mosaic_mtmfs_residual_images(
-                    gridder,
-                    MosaicMtmfsStreamGridStorage::HostF64(host_grids),
-                    finish,
-                );
+                corrected
+            } else {
+                if experimental_metal_f32_residual_fft
+                    && profile::standard_mfs_profile_detail_enabled()
+                {
+                    eprintln!(
+                        "awproject_metal_residual_fft precision=f32 compensation_finish=high-limb-only source=experiment"
+                    );
+                }
+                let input = grid.seal();
+                let grid_timing = input.timing();
+                let resident_bytes = input.resident_bytes();
+                let (raw_terms, timing, postprocess_elapsed) =
+                    crate::apple_fft::centered_ifft2_metal_shared_f32_batch(input).map_err(
+                        |reason| {
+                            ImagingError::Unsupported(format!(
+                                "direct Metal mosaic MT-MFS residual FFT failed after gridding: {reason}"
+                            ))
+                        },
+                    )?;
+                if raw_terms.len() < psf_term_count + residual_term_count {
+                    return Err(ImagingError::Normalization(
+                        "direct Metal mosaic MT-MFS residual FFT returned too few terms"
+                            .to_string(),
+                    ));
+                }
+                if profile::standard_mfs_profile_detail_enabled() {
+                    eprintln!(
+                        "mosaic_mtmfs_residual_gpu_resident terms={} requested_backend={} selected_backend={} fallback_used={} reason={} residency=metal-shared-f32-fft-input accumulator_precision=f32 input_pack_bytes=0 input_copy_to_device_bytes=0 host_full_grid_bytes=0 resident_bytes={} grid_sink_alloc_ms={:.3} grid_sink_zero_ms={:.3} plan_ms={:.3} pack_ms={:.3} transfer_to_device_ms={:.3} exec_ms={:.3} device_exec_ms={:.3} transfer_from_device_ms={:.3} sync_ms={:.3} postprocess_ms={:.3} total_ms={:.3}",
+                        nterms,
+                        timing.selection.requested_backend,
+                        timing.selection.selected_backend,
+                        timing.selection.fallback_used,
+                        timing.selection.reason,
+                        resident_bytes,
+                        profile::millis(grid_timing.allocation),
+                        profile::millis(grid_timing.zero),
+                        profile::millis(timing.plan),
+                        profile::millis(timing.pack),
+                        profile::millis(timing.transfer_to_device),
+                        profile::millis(timing.exec),
+                        profile::millis(timing.device_exec),
+                        profile::millis(timing.transfer_from_device),
+                        profile::millis(timing.sync),
+                        profile::millis(postprocess_elapsed),
+                        profile::millis(timing.total),
+                    );
+                }
+                raw_terms[psf_term_count..psf_term_count + residual_term_count]
+                    .iter()
+                    .map(|raw| gridder.corrected_mosaic_image_from_grid(raw, conv_sampling))
+                    .collect::<Vec<_>>()
             }
-            if experimental_metal_f32_residual_fft && profile::standard_mfs_profile_detail_enabled()
-            {
-                eprintln!(
-                    "awproject_metal_residual_fft precision=f32 compensation_finish=high-limb-only source=experiment"
-                );
-            }
-            let input = grid.seal();
-            let grid_timing = input.timing();
-            let resident_bytes = input.resident_bytes();
-            let (raw_terms, timing, postprocess_elapsed) =
-                crate::apple_fft::centered_ifft2_metal_shared_f32_batch(input).map_err(
-                    |reason| {
-                        ImagingError::Unsupported(format!(
-                            "direct Metal mosaic MT-MFS residual FFT failed after gridding: {reason}"
-                        ))
-                    },
-                )?;
-            if raw_terms.len() < psf_term_count + residual_term_count {
-                return Err(ImagingError::Normalization(
-                    "direct Metal mosaic MT-MFS residual FFT returned too few terms".to_string(),
-                ));
-            }
-            if profile::standard_mfs_profile_detail_enabled() {
-                eprintln!(
-                    "mosaic_mtmfs_residual_gpu_resident terms={} requested_backend={} selected_backend={} fallback_used={} reason={} residency=metal-shared-f32-fft-input accumulator_precision=f32 input_pack_bytes=0 input_copy_to_device_bytes=0 host_full_grid_bytes=0 resident_bytes={} grid_sink_alloc_ms={:.3} grid_sink_zero_ms={:.3} plan_ms={:.3} pack_ms={:.3} transfer_to_device_ms={:.3} exec_ms={:.3} device_exec_ms={:.3} transfer_from_device_ms={:.3} sync_ms={:.3} postprocess_ms={:.3} total_ms={:.3}",
-                    nterms,
-                    timing.selection.requested_backend,
-                    timing.selection.selected_backend,
-                    timing.selection.fallback_used,
-                    timing.selection.reason,
-                    resident_bytes,
-                    profile::millis(grid_timing.allocation),
-                    profile::millis(grid_timing.zero),
-                    profile::millis(timing.plan),
-                    profile::millis(timing.pack),
-                    profile::millis(timing.transfer_to_device),
-                    profile::millis(timing.exec),
-                    profile::millis(timing.device_exec),
-                    profile::millis(timing.transfer_from_device),
-                    profile::millis(timing.sync),
-                    profile::millis(postprocess_elapsed),
-                    profile::millis(timing.total),
-                );
-            }
-            raw_terms[psf_term_count..psf_term_count + residual_term_count]
-                .iter()
-                .map(|raw| gridder.corrected_mosaic_image_from_grid(raw, conv_sampling))
-                .collect::<Vec<_>>()
         }
     };
     corrected
@@ -9105,6 +9234,8 @@ enum AwProjectCompactReplayBlockSlot {
 struct AwProjectCompactReplayCache {
     budget_bytes: usize,
     resident_bytes: usize,
+    compiled_total_bytes: usize,
+    compiled_total_bytes_complete: bool,
     blocks: Vec<Option<AwProjectCompactReplayBlockSlot>>,
     persistent_metal_global_program: Option<AwProjectMetalResidentProgram>,
     #[cfg(all(target_os = "macos", not(coverage)))]
@@ -9122,6 +9253,8 @@ impl AwProjectCompactReplayCache {
         Self {
             budget_bytes,
             resident_bytes: 0,
+            compiled_total_bytes: 0,
+            compiled_total_bytes_complete: true,
             blocks: Vec::new(),
             persistent_metal_global_program: None,
             #[cfg(all(target_os = "macos", not(coverage)))]
@@ -9189,6 +9322,17 @@ impl AwProjectCompactReplayCache {
                     .sum::<usize>(),
             )
             .saturating_add(std::mem::size_of::<AwProjectCompactReplayBlock>());
+        self.compiled_total_bytes = self
+            .compiled_total_bytes
+            .checked_add(block.resident_bytes)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "compact AWProject replay compiled-byte accounting overflowed".to_string(),
+                )
+            })?;
+        if block.cached_cursor_end < block.shape.samples {
+            self.compiled_total_bytes_complete = false;
+        }
         if block.resident_bytes > self.remaining_bytes() {
             self.blocks[ordinal] = Some(AwProjectCompactReplayBlockSlot::ExceedsBudget);
             return Ok(false);
@@ -9202,6 +9346,7 @@ impl AwProjectCompactReplayCache {
         if self.blocks.len() <= ordinal {
             self.blocks.resize_with(ordinal + 1, || None);
         }
+        self.compiled_total_bytes_complete = false;
         self.blocks[ordinal] = Some(AwProjectCompactReplayBlockSlot::ExceedsBudget);
     }
 
@@ -9229,9 +9374,11 @@ impl AwProjectCompactReplayCache {
                 .filter(|slot| matches!(slot, Some(AwProjectCompactReplayBlockSlot::ExceedsBudget)))
                 .count();
             eprintln!(
-                "awproject_compact_replay_cache budget_bytes={} resident_bytes={} resident_blocks={} partial_blocks={} rejected_blocks={} global_metal_program={} global_metal_program_bytes={} hits={} misses={}",
+                "awproject_compact_replay_cache budget_bytes={} resident_bytes={} compiled_total_bytes={} compiled_total_bytes_complete={} resident_blocks={} partial_blocks={} rejected_blocks={} global_metal_program={} global_metal_program_bytes={} hits={} misses={}",
                 self.budget_bytes,
                 self.resident_bytes,
+                self.compiled_total_bytes,
+                self.compiled_total_bytes_complete,
                 resident_blocks,
                 partial_blocks,
                 rejected_blocks,
@@ -9863,6 +10010,7 @@ struct AwProjectMetalResidualScalePlan {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
+#[cfg(all(target_os = "macos", not(coverage)))]
 struct AwProjectMetalTileGridStats {
     active_tiles: usize,
     fragments: usize,
@@ -9875,6 +10023,7 @@ struct AwProjectMetalTileGridStats {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
+#[cfg(all(target_os = "macos", not(coverage)))]
 struct AwProjectMetalResidentChainStats {
     samples: usize,
     prediction_kernel_values: usize,
@@ -9940,11 +10089,13 @@ struct AwProjectMetalGridStats {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(any(all(target_os = "macos", not(coverage)), test))]
 struct AwProjectMetalPlaneSegmentPlan {
     planes_per_segment: usize,
     fixed_grid_bytes: usize,
 }
 
+#[cfg(any(all(target_os = "macos", not(coverage)), test))]
 fn plan_awproject_metal_plane_segments(
     grid_width: usize,
     grid_height: usize,
@@ -10015,6 +10166,7 @@ fn awproject_metal_packed_sample_bytes(
         })
 }
 
+#[cfg(any(all(target_os = "macos", not(coverage)), test))]
 fn awproject_metal_packed_batch_budget_bytes(
     grid_width: usize,
     grid_height: usize,
@@ -10071,17 +10223,33 @@ struct AwProjectMetalCompensation {
     buffer: objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>>,
 }
 
-#[cfg(all(target_os = "macos", not(coverage)))]
+#[cfg(all(target_os = "macos", not(coverage), test))]
 fn copy_awproject_metal_centered_f64_planes(
     grid: &crate::apple_fft::MetalSharedF32DirtyGridBatch,
     compensation: &AwProjectMetalCompensation,
 ) -> Result<Vec<Array2<Complex64>>, ImagingError> {
+    (0..grid.plane_count())
+        .map(|plane| copy_awproject_metal_centered_f64_plane(grid, compensation, plane))
+        .collect()
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn copy_awproject_metal_centered_f64_plane(
+    grid: &crate::apple_fft::MetalSharedF32DirtyGridBatch,
+    compensation: &AwProjectMetalCompensation,
+    plane: usize,
+) -> Result<Array2<Complex64>, ImagingError> {
     use std::{mem, slice};
 
     use objc2_metal::MTLBuffer;
 
     let [rows, columns] = grid.shape();
     let plane_count = grid.plane_count();
+    if plane >= plane_count {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject Metal compensated readback requested plane {plane}, but the grid has {plane_count} planes"
+        )));
+    }
     let plane_elements = rows.checked_mul(columns).ok_or_else(|| {
         ImagingError::InvalidRequest(
             "AWProject Metal compensated grid shape overflowed".to_string(),
@@ -10119,47 +10287,16 @@ fn copy_awproject_metal_centered_f64_planes(
             element_count,
         )
     };
-    Ok((0..plane_count)
-        .map(|plane| {
-            let plane_offset = plane * plane_elements;
-            Array2::from_shape_fn((rows, columns), |(row, column)| {
-                let fft_row = (row + rows / 2) % rows;
-                let fft_column = (column + columns / 2) % columns;
-                let index = plane_offset + fft_row * columns + fft_column;
-                Complex64::new(
-                    f64::from(values[index].re) + f64::from(corrections[index].re),
-                    f64::from(values[index].im) + f64::from(corrections[index].im),
-                )
-            })
-        })
-        .collect())
-}
-
-#[cfg(all(target_os = "macos", not(coverage)))]
-fn split_mosaic_mtmfs_host_planes(
-    mut planes: Vec<Array2<Complex64>>,
-    psf_term_count: usize,
-    residual_term_count: usize,
-) -> Result<MosaicMtmfsHostGrids, ImagingError> {
-    let expected = psf_term_count
-        .checked_mul(2)
-        .and_then(|value| value.checked_add(residual_term_count))
-        .ok_or_else(|| {
-            ImagingError::InvalidRequest("mosaic MT-MFS host plane topology overflowed".to_string())
-        })?;
-    if planes.len() != expected {
-        return Err(ImagingError::Normalization(format!(
-            "mosaic MT-MFS host plane split received {} planes, expected {expected}",
-            planes.len()
-        )));
-    }
-    let weight_grids = planes.split_off(psf_term_count + residual_term_count);
-    let residual_grids = planes.split_off(psf_term_count);
-    Ok(MosaicMtmfsHostGrids {
-        psf_grids: planes,
-        residual_grids,
-        weight_grids,
-    })
+    let plane_offset = plane * plane_elements;
+    Ok(Array2::from_shape_fn((rows, columns), |(row, column)| {
+        let fft_row = (row + rows / 2) % rows;
+        let fft_column = (column + columns / 2) % columns;
+        let index = plane_offset + fft_row * columns + fft_column;
+        Complex64::new(
+            f64::from(values[index].re) + f64::from(corrections[index].re),
+            f64::from(values[index].im) + f64::from(corrections[index].im),
+        )
+    }))
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -10388,6 +10525,7 @@ fn awproject_compact_degrid_sample(
 }
 
 #[repr(C)]
+#[cfg(target_os = "macos")]
 struct AwProjectCppComplex32 {
     re: f32,
     im: f32,
@@ -17040,13 +17178,20 @@ fn awproject_model_fft_plan(policy: DirtyProductFftPolicy) -> AwProjectModelFftP
             source: "experiment",
         };
     }
-    if crate::fftw_local::configured_f32() {
+    if let Some(resolution_source) = crate::fftw_local::resolution_source_f32() {
         return AwProjectModelFftPlan {
             backend: FftBackendChoice::Fftw,
             casacore_layout: true,
             threads,
             threads_source,
-            source: "casa-parity-auto",
+            source: match resolution_source {
+                crate::fftw_local::FftwResolutionSource::ExplicitDirectory => {
+                    "explicit-pinned-fftw"
+                }
+                crate::fftw_local::FftwResolutionSource::ConventionalDirectory => {
+                    "conventional-fftw-auto"
+                }
+            },
         };
     }
     AwProjectModelFftPlan {
@@ -20005,6 +20150,1920 @@ fn add_awproject_sample_stats(total: &mut AwProjectSampleStats, increment: &AwPr
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_RESIDUAL_PREFIX_FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Clone, Copy)]
+struct AwProjectResidualInputRoleAudit {
+    raw_key: AwConvolutionFunctionKey,
+    compact_key: AwConvolutionFunctionKey,
+    raw_plan: gridder::AwProjectSamplePlan,
+    compact_plan: AwProjectCompactSamplePlan,
+    compact_off_x: isize,
+    compact_off_y: isize,
+    compact_conjugate_for_grid: bool,
+    raw_tap_hash: u64,
+    compact_tap_hash: u64,
+    tap_count: usize,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectResidualInputAudit {
+    raw_hash: u64,
+    compact_hash: u64,
+    source_count: usize,
+    role_count: usize,
+    tap_count: usize,
+    first_mismatch: Option<String>,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectResidualInputBlockAudit {
+    ordinal: usize,
+    window_count: usize,
+    source_count: usize,
+    role_count: usize,
+    tap_count: usize,
+    raw_hash: AwProjectResidualPrefixHash,
+    compact_hash: AwProjectResidualPrefixHash,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectResidualInputCampaign {
+    path: std::path::PathBuf,
+    expected_blocks: usize,
+    next_block: usize,
+    current_block: Option<AwProjectResidualInputBlockAudit>,
+    output: std::fs::File,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Clone, Copy)]
+struct AwProjectResidualInputRoleSeed {
+    source_position: usize,
+    role_ordinal: usize,
+    raw_key: AwConvolutionFunctionKey,
+    compact_key: AwConvolutionFunctionKey,
+    compact_plan: AwProjectCompactSamplePlan,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Clone, Copy)]
+struct AwProjectResidualPrefixHash(u64);
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl AwProjectResidualPrefixHash {
+    fn new() -> Self {
+        Self(AWPROJECT_RESIDUAL_PREFIX_FNV_OFFSET)
+    }
+
+    fn bytes(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.0 ^= u64::from(byte);
+            self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+
+    fn u64(&mut self, value: u64) {
+        self.bytes(&value.to_le_bytes());
+    }
+
+    fn u32(&mut self, value: u32) {
+        self.bytes(&value.to_le_bytes());
+    }
+
+    fn usize(&mut self, value: usize) {
+        self.u64(value as u64);
+    }
+
+    fn isize(&mut self, value: isize) {
+        self.u64(value as i64 as u64);
+    }
+
+    fn bool(&mut self, value: bool) {
+        self.bytes(&[u8::from(value)]);
+    }
+
+    fn f32(&mut self, value: f32) {
+        self.u32(value.to_bits());
+    }
+
+    fn f64(&mut self, value: f64) {
+        self.u64(value.to_bits());
+    }
+
+    fn complex32(&mut self, value: Complex32) {
+        self.f32(value.re);
+        self.f32(value.im);
+    }
+
+    fn complex64(&mut self, value: Complex64) {
+        self.f64(value.re);
+        self.f64(value.im);
+    }
+
+    fn cell_key(&mut self, key: AwConvolutionFunctionKey) {
+        self.u64(key.frequency_hz.to_bits());
+        self.u64(key.w_value_lambda.to_bits());
+        self.u32(key.mueller_element as u32);
+        self.u64(key.parallactic_angle_deg.to_bits());
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV: &str = "CASA_RS_AW_BRACKET_OUTPUT";
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV: &str = "CASA_RS_INTERNAL_AW_BRACKET_SELECTION_V1";
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS: usize = 325;
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_IDS_HASH: u64 = 15_058_004_568_616_189_240;
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_FLAGS_HASH: u64 = 3_526_571_572_021_233_857;
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_DATATOGRID_BRACKET_FIRST_FLAGGED_ROWS: usize = 48;
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_DATATOGRID_BRACKET_FIRST_SOURCE_COUNT: usize = 12_359;
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AwProjectDataToGridBracketSelection {
+    field_id: i32,
+    requested_spws: String,
+    first_batch_spw: i32,
+    first_batch_rows: usize,
+    planned_source_blocks: usize,
+    first_row_ids_hash: u64,
+    first_row_flags_hash: u64,
+    first_flagged_rows: usize,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Clone, Copy)]
+struct AwProjectDataToGridBracketConfig {
+    expected_nxy: usize,
+    target_blocks: usize,
+    terms: usize,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Clone, Copy)]
+struct AwProjectDataToGridPortableCallHash {
+    call: usize,
+    block: usize,
+    term: usize,
+    source_count: usize,
+    geometry_hash: u64,
+    input_hash: u64,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_datatogrid_bracket_required_usize(name: &str) -> Result<usize, ImagingError> {
+    let value = env::var(name).map_err(|_| {
+        ImagingError::InvalidRequest(format!("the AWProject DataToGrid bracket requires {name}"))
+    })?;
+    value.parse::<usize>().map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "invalid AWProject DataToGrid bracket integer in {name}: {error}"
+        ))
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_datatogrid_bracket_config()
+-> Result<Option<(PathBuf, AwProjectDataToGridBracketConfig)>, ImagingError> {
+    let Some(output) = env::var_os(AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV) else {
+        return Ok(None);
+    };
+    let output = PathBuf::from(output);
+    if !output.is_absolute() {
+        return Err(ImagingError::InvalidRequest(format!(
+            "{AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV} must be an absolute path"
+        )));
+    }
+    if output.exists() {
+        return Err(ImagingError::InvalidRequest(format!(
+            "refusing to overwrite AWProject DataToGrid bracket receipt {}",
+            output.display()
+        )));
+    }
+    let expected_nxy =
+        awproject_datatogrid_bracket_required_usize("CASA_RS_AW_BRACKET_EXPECT_NXY")?;
+    let target_blocks = awproject_datatogrid_bracket_required_usize("CASA_RS_AW_BRACKET_BLOCKS")?;
+    let terms = awproject_datatogrid_bracket_required_usize("CASA_RS_AW_BRACKET_TERMS")?;
+    if expected_nxy != 4096 {
+        return Err(ImagingError::InvalidRequest(
+            "the frozen casa-rs AWProject DataToGrid bracket requires exactly 4096 pixels per side"
+                .to_string(),
+        ));
+    }
+    if target_blocks != 1 {
+        return Err(ImagingError::InvalidRequest(
+            "the bounded casa-rs AWProject DataToGrid bracket requires exactly one logical source block"
+                .to_string(),
+        ));
+    }
+    if terms != 2 {
+        return Err(ImagingError::InvalidRequest(
+            "the frozen casa-rs AWProject DataToGrid bracket requires exactly the TT0/TT1 pair"
+                .to_string(),
+        ));
+    }
+    Ok(Some((
+        output,
+        AwProjectDataToGridBracketConfig {
+            expected_nxy,
+            target_blocks,
+            terms,
+        },
+    )))
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_datatogrid_bracket_selection()
+-> Result<AwProjectDataToGridBracketSelection, ImagingError> {
+    let encoded = env::var(AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV).map_err(|_| {
+        ImagingError::InvalidRequest(format!(
+            "the AWProject DataToGrid bracket was not armed by the casars-imager selection preflight ({AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV})"
+        ))
+    })?;
+    let mut fields = BTreeMap::<&str, &str>::new();
+    for entry in encoded.split(';') {
+        let (name, value) = entry.split_once('=').ok_or_else(|| {
+            ImagingError::InvalidRequest(format!(
+                "malformed AWProject DataToGrid selection receipt entry {entry:?}"
+            ))
+        })?;
+        if fields.insert(name, value).is_some() {
+            return Err(ImagingError::InvalidRequest(format!(
+                "duplicate AWProject DataToGrid selection receipt field {name:?}"
+            )));
+        }
+    }
+    if fields.len() != 8 {
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject DataToGrid selection receipt has {} fields, expected 8",
+            fields.len()
+        )));
+    }
+    let parse_i32 = |name: &str| -> Result<i32, ImagingError> {
+        fields
+            .get(name)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "AWProject DataToGrid selection receipt is missing {name}"
+                ))
+            })?
+            .parse::<i32>()
+            .map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "invalid AWProject DataToGrid selection field {name}: {error}"
+                ))
+            })
+    };
+    let parse_usize = |name: &str| -> Result<usize, ImagingError> {
+        fields
+            .get(name)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "AWProject DataToGrid selection receipt is missing {name}"
+                ))
+            })?
+            .parse::<usize>()
+            .map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "invalid AWProject DataToGrid selection field {name}: {error}"
+                ))
+            })
+    };
+    let parse_u64 = |name: &str| -> Result<u64, ImagingError> {
+        fields
+            .get(name)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "AWProject DataToGrid selection receipt is missing {name}"
+                ))
+            })?
+            .parse::<u64>()
+            .map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "invalid AWProject DataToGrid selection field {name}: {error}"
+                ))
+            })
+    };
+    let selection = AwProjectDataToGridBracketSelection {
+        field_id: parse_i32("field")?,
+        requested_spws: fields
+            .get("spws")
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject DataToGrid selection receipt is missing spws".to_string(),
+                )
+            })?
+            .to_string(),
+        first_batch_spw: parse_i32("first_spw")?,
+        first_batch_rows: parse_usize("first_rows")?,
+        planned_source_blocks: parse_usize("source_blocks")?,
+        first_row_ids_hash: parse_u64("row_ids_hash")?,
+        first_row_flags_hash: parse_u64("row_flags_hash")?,
+        first_flagged_rows: parse_usize("flagged_rows")?,
+    };
+    if selection.field_id != 1525
+        || selection.requested_spws != "2-17"
+        || selection.first_batch_spw != 2
+        || selection.first_batch_rows != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || selection.planned_source_blocks == 0
+        || selection.first_row_ids_hash != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_IDS_HASH
+        || selection.first_row_flags_hash != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_FLAGS_HASH
+        || selection.first_flagged_rows != AWPROJECT_DATATOGRID_BRACKET_FIRST_FLAGGED_ROWS
+    {
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject DataToGrid selection receipt does not describe the frozen field=1525, \
+             SPW=2..17, CASA first-VB row: {selection:?}"
+        )));
+    }
+    Ok(selection)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn hash_awproject_datatogrid_grid_casa_order(grid: &Array2<Complex64>) -> u64 {
+    let [nx, ny] = [grid.shape()[0], grid.shape()[1]];
+    let mut hash = AwProjectResidualPrefixHash::new();
+    for extent in [nx, ny, 1, 1] {
+        hash.usize(extent);
+    }
+    // A casacore Array's first axis is contiguous. The ndarray grid is indexed
+    // `(x, y)` but stores `y` contiguously, so traverse explicitly in CASA's
+    // x-fastest order rather than hashing ndarray's memory order.
+    for y in 0..ny {
+        for x in 0..nx {
+            hash.complex64(grid[(x, y)]);
+        }
+    }
+    hash.0
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn hash_awproject_datatogrid_sumwt_casa_order(sumwt: f64) -> u64 {
+    let mut hash = AwProjectResidualPrefixHash::new();
+    hash.usize(1);
+    hash.usize(1);
+    hash.f64(sumwt);
+    hash.0
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_datatogrid_portable_call_hash(
+    request: &MtmfsRequest,
+    batch: &VisibilityBatch,
+    source_samples: &[AwProjectCompactSourceSample],
+    planned_samples: &[AwProjectCompactPlannedSample],
+    tap_requests: &[AwProjectCompactTapRequest],
+    call: usize,
+    term: usize,
+) -> Result<AwProjectDataToGridPortableCallHash, ImagingError> {
+    if source_samples.is_empty() || source_samples.len() != planned_samples.len() {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject DataToGrid bracket requires a non-empty one-to-one accepted source stream, got source_count={} planned_count={}",
+            source_samples.len(),
+            planned_samples.len()
+        )));
+    }
+    let mut geometry = AwProjectResidualPrefixHash::new();
+    let mut input = AwProjectResidualPrefixHash::new();
+    for hash in [&mut geometry, &mut input] {
+        hash.usize(call);
+        hash.usize(0);
+        hash.usize(term);
+        hash.usize(planned_samples.len());
+    }
+    for (accepted_ordinal, (source, planned)) in
+        source_samples.iter().zip(planned_samples).enumerate()
+    {
+        if source.group_index != planned.group_index {
+            return Err(ImagingError::Normalization(format!(
+                "AWProject DataToGrid source group changed at accepted source {accepted_ordinal}"
+            )));
+        }
+        let sample_index = source.sample_index;
+        if sample_index >= batch.len() {
+            return Err(ImagingError::Normalization(format!(
+                "AWProject DataToGrid source {accepted_ordinal} references sample {sample_index} outside {}",
+                batch.len()
+            )));
+        }
+        let frequency_hz = planned.frequency_hz;
+        let basis = if term == 0 {
+            1.0
+        } else {
+            mtmfs_casa_taylor_x(frequency_hz, request.reffreq_hz)
+        };
+        let current_weight = mtmfs_casa_weighted_taylor_x(planned.weight, basis, term);
+        for (role, plan, residual) in [
+            (0usize, source.first_imaging_plan, planned.first_residual),
+            (1usize, source.second_imaging_plan, planned.second_residual),
+        ] {
+            let expected_mueller = if role == 0 { 0 } else { 15 };
+            let actual_mueller = tap_requests[plan.tap_bundle].cell_key.mueller_element;
+            if actual_mueller != expected_mueller {
+                return Err(ImagingError::Normalization(format!(
+                    "AWProject DataToGrid portable source {accepted_ordinal} role {role} selected Mueller {actual_mueller}, expected {expected_mueller}"
+                )));
+            }
+            for hash in [&mut geometry, &mut input] {
+                hash.usize(accepted_ordinal);
+                hash.usize(role);
+                hash.f64(frequency_hz);
+                hash.f64(batch.u_lambda[sample_index]);
+                hash.f64(batch.v_lambda[sample_index]);
+                hash.f64(batch.w_lambda[sample_index]);
+            }
+            input.f32(current_weight);
+            input.f32(basis);
+            input.complex32(residual);
+            input.complex32(awproject_prefix_casa_product(
+                Complex32::new(current_weight, 0.0),
+                residual,
+            ));
+        }
+    }
+    Ok(AwProjectDataToGridPortableCallHash {
+        call,
+        block: 0,
+        term,
+        source_count: planned_samples.len(),
+        geometry_hash: geometry.0,
+        input_hash: input.0,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_datatogrid_term_sumwt(
+    request: &MtmfsRequest,
+    samples: &[AwProjectCompactPlannedSample],
+    bundles: &[AwProjectCompactMaterializedTap],
+    term: usize,
+) -> f64 {
+    samples.iter().fold(0.0, |sumwt, sample| {
+        let current_weight = mtmfs_casa_weighted_taylor_term(
+            sample.weight,
+            sample.frequency_hz,
+            request.reffreq_hz,
+            term,
+        );
+        let first = awproject_ready_compact_tap(bundles, sample.first_imaging_plan.tap_bundle);
+        let second = awproject_ready_compact_tap(bundles, sample.second_imaging_plan.tap_bundle);
+        sumwt
+            + f64::from(current_weight)
+                * (first.grid_normalization.norm() + second.grid_normalization.norm())
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_datatogrid_json_escape(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            character if character < '\u{20}' => {
+                use std::fmt::Write as _;
+                let _ = write!(escaped, "\\u{:04x}", character as u32);
+            }
+            character => escaped.push(character),
+        }
+    }
+    escaped
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_datatogrid_atomic_receipt(path: &Path, payload: &[u8]) -> Result<(), ImagingError> {
+    if !path.is_absolute() {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject DataToGrid receipt path must be absolute".to_string(),
+        ));
+    }
+    let parent = path.parent().ok_or_else(|| {
+        ImagingError::InvalidRequest(format!(
+            "AWProject DataToGrid receipt path has no parent: {}",
+            path.display()
+        ))
+    })?;
+    if !parent.is_dir() {
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject DataToGrid receipt parent does not exist: {}",
+            parent.display()
+        )));
+    }
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject DataToGrid receipt name must be valid UTF-8".to_string(),
+            )
+        })?;
+    let temporary = parent.join(format!(".{file_name}.tmp.{}", std::process::id()));
+    let result = (|| {
+        let mut output = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)
+            .map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "create AWProject DataToGrid temporary receipt {}: {error}",
+                    temporary.display()
+                ))
+            })?;
+        output.write_all(payload).map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "write AWProject DataToGrid receipt {}: {error}",
+                temporary.display()
+            ))
+        })?;
+        output.sync_all().map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "sync AWProject DataToGrid receipt {}: {error}",
+                temporary.display()
+            ))
+        })?;
+        drop(output);
+        std::fs::hard_link(&temporary, path).map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "publish AWProject DataToGrid receipt {} without replacement: {error}",
+                path.display()
+            ))
+        })?;
+        std::fs::remove_file(&temporary).map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "remove AWProject DataToGrid receipt staging link {}: {error}",
+                temporary.display()
+            ))
+        })?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn maybe_run_awproject_datatogrid_bracket(
+    request: &MtmfsRequest,
+    mosaic: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    batch: &VisibilityBatch,
+    parallel_hands: &AwParallelHandVisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    source_samples: &[AwProjectCompactSourceSample],
+    planned_samples: &[AwProjectCompactPlannedSample],
+    tap_requests: &[AwProjectCompactTapRequest],
+    bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    groups: &[GroupedVisibilityMetadata],
+    cache: &AwConvolutionFunctionResidentCache,
+    controls: &AwProjectControls,
+    pa_deg: f64,
+    replay_block_ordinal: usize,
+    replay_window_ordinal: usize,
+    last_window_in_block: bool,
+) -> Result<(), ImagingError> {
+    let Some((output, config)) = awproject_datatogrid_bracket_config()? else {
+        return Ok(());
+    };
+    let selection = awproject_datatogrid_bracket_selection()?;
+    if request.geometry.image_shape != [config.expected_nxy, config.expected_nxy]
+        || gridder.grid_shape() != [config.expected_nxy, config.expected_nxy]
+        || request.nterms != config.terms
+        || request.plane_stokes != PlaneStokes::I
+        || request.w_term_mode != WTermMode::None
+        || request.w_project_planes != Some(32)
+    {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject DataToGrid bracket geometry is not the frozen 4096-square, 32-W-plane, Stokes-I, nterms=2 row"
+                .to_string(),
+        ));
+    }
+    let GridderMode::AwProject(awproject) = &request.gridder_mode else {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject DataToGrid bracket requires gridder='awproject'".to_string(),
+        ));
+    };
+    if !awproject.controls.use_pointing
+        || !awproject.controls.a_term
+        || awproject.controls.ps_term
+        || !awproject.controls.wb_awp
+        || !awproject.controls.conjugate_beams
+        || awproject.controls.facets != 1
+        || awproject.controls.w_plane_count != Some(32)
+    {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject DataToGrid bracket requires POINTING, A/WB/conjugate beams, facets=1, ps_term=false, and 32 W planes"
+                .to_string(),
+        ));
+    }
+    if replay_block_ordinal != 0 || replay_window_ordinal != 0 || config.target_blocks != 1 {
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject DataToGrid bracket expected exactly replay block=0 window=0, got block={replay_block_ordinal} window={replay_window_ordinal}"
+        )));
+    }
+    if batch.is_empty()
+        || source_samples.len() != AWPROJECT_DATATOGRID_BRACKET_FIRST_SOURCE_COUNT
+        || planned_samples.len() != AWPROJECT_DATATOGRID_BRACKET_FIRST_SOURCE_COUNT
+    {
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject DataToGrid bracket expected the CASA first-VB source count {}, got batch_samples={} source_samples={} planned_samples={}",
+            AWPROJECT_DATATOGRID_BRACKET_FIRST_SOURCE_COUNT,
+            batch.len(),
+            source_samples.len(),
+            planned_samples.len(),
+        )));
+    }
+    let input_audit = audit_awproject_residual_inputs(
+        request,
+        mosaic,
+        gridder,
+        batch,
+        parallel_hands,
+        sample_frequencies_hz,
+        source_samples,
+        planned_samples,
+        tap_requests,
+        bundles,
+        phase_tables,
+        groups,
+        cache,
+        controls,
+        pa_deg,
+        replay_block_ordinal,
+    )?;
+    if let Some(mismatch) = input_audit.first_mismatch.as_deref() {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject DataToGrid bracket direct/raw and compact inputs differ: {mismatch}"
+        )));
+    }
+
+    let calls = (0..config.terms)
+        .map(|term| {
+            awproject_datatogrid_portable_call_hash(
+                request,
+                batch,
+                source_samples,
+                planned_samples,
+                tap_requests,
+                term,
+                term,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut portable_input_stream_hash = AwProjectResidualPrefixHash::new();
+    for call in &calls {
+        portable_input_stream_hash.usize(call.call);
+        portable_input_stream_hash.usize(call.source_count);
+        portable_input_stream_hash.u64(call.geometry_hash);
+        portable_input_stream_hash.u64(call.input_hash);
+    }
+
+    let mut bracket_grids = MosaicMtmfsHostGrids {
+        psf_grids: Vec::new(),
+        residual_grids: (0..config.terms)
+            .map(|_| Array2::<Complex64>::zeros((config.expected_nxy, config.expected_nxy)))
+            .collect(),
+        weight_grids: Vec::new(),
+    };
+    let tile_stats = grid_awproject_compact_samples_host_f64(
+        &mut bracket_grids,
+        planned_samples,
+        bundles,
+        phase_tables,
+        false,
+        None,
+        false,
+        request.reffreq_hz,
+        1,
+    )?;
+    if tile_stats.is_some() || bracket_grids.residual_grids.len() != config.terms {
+        return Err(ImagingError::Normalization(
+            "AWProject DataToGrid bracket did not use the serial exact-source-order HostF64 path"
+                .to_string(),
+        ));
+    }
+    let term_boundaries = bracket_grids
+        .residual_grids
+        .iter()
+        .enumerate()
+        .map(|(term, grid)| {
+            let sumwt = awproject_datatogrid_term_sumwt(request, planned_samples, bundles, term);
+            (
+                hash_awproject_datatogrid_grid_casa_order(grid),
+                hash_awproject_datatogrid_sumwt_casa_order(sumwt),
+                sumwt,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let calls_json = calls
+        .iter()
+        .map(|call| {
+            format!(
+                "{{\"call\":{},\"block\":{},\"term\":{},\"source_count\":{},\
+                 \"stream_hash\":null,\"geometry_hash\":null,\"input_hash\":null,\
+                 \"portable_geometry_hash\":{},\"portable_input_hash\":{}}}",
+                call.call,
+                call.block,
+                call.term,
+                call.source_count,
+                call.geometry_hash,
+                call.input_hash,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let terms_json = term_boundaries
+        .iter()
+        .enumerate()
+        .map(|(term, (grid_hash, sumwt_hash, sumwt))| {
+            format!(
+                "{{\"term\":{term},\"grid_hash\":{grid_hash},\"sumwt_hash\":{sumwt_hash},\
+                 \"grid_values_hashed\":{},\"sumwt_values_hashed\":1,\
+                 \"sumwt_value_bits\":{}}}",
+                config.expected_nxy.saturating_mul(config.expected_nxy),
+                sumwt.to_bits()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let evidence = format!(
+        "{{\n\
+         \"schema\":\"casa-rs-aw-datagrid-bracket-v1\",\n\
+         \"status\":\"completed-before-finalize\",\n\
+         \"reason\":\"configured-native-equivalent-window-boundary\",\n\
+         \"role\":\"bounded-correctness-oracle-not-performance-evidence\",\n\
+         \"producer\":\"casa-rs\",\n\
+         \"original_invocation\":\"compact-replay-serial-host-f64\",\n\
+         \"dispatch_identity\":\"exact-source-order-tt0-then-tt1\",\n\
+         \"probe_serialization\":\"single-thread\",\n\
+         \"formed_image\":false,\n\
+         \"normalization\":\"not-entered\",\n\
+         \"fft\":\"not-entered\",\n\
+         \"products\":\"not-entered\",\n\
+         \"grid_dispatch\":\"serial-host-f64-exact-source-order-tt0-then-tt1\",\n\
+         \"replay_block_ordinal\":0,\n\
+         \"replay_window_ordinal\":0,\n\
+         \"last_window_in_replay_block\":{},\n\
+         \"requested_wterm\":\"wproject\",\n\
+         \"core_wterm\":\"none-awproject-owns-w\",\n\
+         \"grid_hash_contract\":\"fnv1a64-shape-4096-4096-1-1-axis0-fast-complex64-bits\",\n\
+         \"sumwt_hash_contract\":\"fnv1a64-shape-1-1-f64-bits\",\n\
+         \"portable_hash_contract\":\"fnv1a64-little-endian-call-block-term-accepted-source-ordinal-rr-then-ll-frequency-uvw-current-weight-basis-residual-value\",\n\
+         \"cross_producer_comparison_contract\":\"source-count-and-term-order-then-cumulative-raw-complex64-grid-and-sumwt-fnv64-only\",\n\
+         \"native_casa_input_hash\":\"unavailable-in-VisibilityBatch\",\n\
+         \"row_channel_provenance\":\"unavailable-in-VisibilityBatch-not-inferred\",\n\
+         \"expected_grid_nxy\":{},\n\
+         \"target_blocks\":{},\n\
+         \"terms_per_block\":{},\n\
+         \"completed_calls\":{},\n\
+         \"completed_blocks\":1,\n\
+         \"selection\":{{\"field_id\":{},\"requested_spws\":\"{}\",\
+         \"first_batch_spw\":{},\"first_batch_rows\":{},\"planned_source_blocks\":{},\
+         \"first_row_ids_hash\":{},\"first_row_flags_hash\":{},\
+         \"first_flagged_rows\":{}}},\n\
+         \"native_first_vb_reference\":{{\"begin_row\":0,\"end_row\":325,\"n_row\":325,\
+         \"spw_id\":2,\"row_ids_count\":325,\"row_ids_hash\":15058004568616189240,\
+         \"row_id_first\":0,\"row_id_last\":324,\"row_flags_count\":325,\
+         \"row_flags_hash\":3526571572021233857,\"flagged_rows\":48,\
+         \"n_data_chan\":64,\"n_data_pol\":4,\"chan_map_count\":64,\
+         \"chan_map_hash\":2111453637644839429,\"pol_map_count\":4,\
+         \"pol_map_hash\":13222926617229668273,\"freq_count\":64,\
+         \"freq_hash\":17711728193083539473,\
+         \"freq_first_bits\":4746028312096267298,\
+         \"freq_last_bits\":4746556774954748567}},\n\
+         \"direct_raw_input_hash\":{},\n\
+         \"compact_input_hash\":{},\n\
+         \"direct_compact_exact_match\":true,\n\
+         \"input_stream_hash\":null,\n\
+         \"portable_input_stream_hash\":{},\n\
+         \"calls\":[{}],\n\
+         \"block_boundaries\":[{{\"block\":0,\"stream_hash\":null,\
+         \"input_stream_hash\":null,\"portable_input_stream_hash\":{},\
+         \"terms\":[{}]}}]\n\
+         }}\n",
+        last_window_in_block,
+        config.expected_nxy,
+        config.target_blocks,
+        config.terms,
+        calls.len(),
+        selection.field_id,
+        awproject_datatogrid_json_escape(&selection.requested_spws),
+        selection.first_batch_spw,
+        selection.first_batch_rows,
+        selection.planned_source_blocks,
+        selection.first_row_ids_hash,
+        selection.first_row_flags_hash,
+        selection.first_flagged_rows,
+        input_audit.raw_hash,
+        input_audit.compact_hash,
+        portable_input_stream_hash.0,
+        calls_json,
+        portable_input_stream_hash.0,
+        terms_json,
+    );
+    let embedded_evidence = evidence.trim();
+    let evidence_sha256 = format!("{:x}", Sha256::digest(embedded_evidence.as_bytes()));
+    let payload = format!(
+        "{{\n\
+         \"schema\":\"casa-rs-aw-datagrid-bracket-envelope-v1\",\n\
+         \"content_address\":{{\"algorithm\":\"sha256\",\
+         \"scope\":\"embedded-evidence-json-utf8\",\"digest\":\"{evidence_sha256}\"}},\n\
+         \"evidence\":{}\n\
+         }}\n",
+        embedded_evidence
+    );
+    awproject_datatogrid_atomic_receipt(&output, payload.as_bytes())?;
+    Err(ImagingError::InvalidRequest(format!(
+        "AWProject DataToGrid bracket completed the first native-equivalent TT0/TT1 source window before FFT, normalization, image formation, or products; receipt={} evidence_sha256={evidence_sha256}",
+        output.display()
+    )))
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_residual_prefix_record_mismatch(
+    first_mismatch: &mut Option<String>,
+    detail: impl FnOnce() -> String,
+) {
+    if first_mismatch.is_none() {
+        *first_mismatch = Some(detail());
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectResidualInputCellContext<'a> {
+    request: &'a MtmfsRequest,
+    mosaic: &'a MosaicGridderConfig,
+    gridder: &'a StandardGridder,
+    batch: &'a VisibilityBatch,
+    source_samples: &'a [AwProjectCompactSourceSample],
+    groups: &'a [GroupedVisibilityMetadata],
+    tap_requests: &'a [AwProjectCompactTapRequest],
+    bundles: &'a [AwProjectCompactMaterializedTap],
+    phase_tables: Option<&'a AwProjectPhaseTables>,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn audit_awproject_residual_input_cell<K: AwProjectKernelPixels + ?Sized>(
+    context: &AwProjectResidualInputCellContext<'_>,
+    metadata: &AwConvolutionFunctionKernelMetadata,
+    kernel: &K,
+    seeds: &[AwProjectResidualInputRoleSeed],
+    role_audits: &mut [Option<AwProjectResidualInputRoleAudit>],
+    first_mismatch: &mut Option<String>,
+) -> Result<(), ImagingError> {
+    for seed in seeds {
+        let source = context.source_samples[seed.source_position];
+        let sample_index = source.sample_index;
+        let group = &context.groups[source.group_index];
+        let phase_gradient = mosaic_projector_phase_gradient_rad_per_sample_for_group(
+            context.request.geometry,
+            context.mosaic.phase_center_direction_rad,
+            group.pointing_direction_rad,
+            group.pointing_pixel_position,
+            metadata.sampling,
+        );
+        let projector = AwProjector::new(context.gridder, metadata, kernel, phase_gradient)?;
+        let raw_plan = projector
+            .plan_sample_detailed(
+                context.batch.u_lambda[sample_index],
+                context.batch.v_lambda[sample_index],
+                context.batch.w_lambda[sample_index],
+            )
+            .map_err(|reason| {
+                ImagingError::Normalization(format!(
+                    "direct AWProject residual-prefix plan rejected block-local source \
+                     {sample_index} role {} after compact classification: {reason:?}",
+                    seed.role_ordinal,
+                ))
+            })?;
+        let raw_taps = projector.packed_taps(&raw_plan);
+        let compact_request = context.tap_requests[seed.compact_plan.tap_bundle];
+        let compact_bundle =
+            awproject_ready_compact_tap(context.bundles, seed.compact_plan.tap_bundle);
+        let compact_phase_table =
+            awproject_compact_phase_table(compact_bundle, source.group_index, context.phase_tables);
+
+        let raw_stable_key = awproject_stable_cell_key(seed.raw_key);
+        let compact_stable_key = awproject_stable_cell_key(seed.compact_key);
+        if raw_stable_key != compact_stable_key {
+            awproject_residual_prefix_record_mismatch(first_mismatch, || {
+                format!(
+                    "reason=cf-key source={sample_index} role={} raw={raw_stable_key:?} \
+                     compact={compact_stable_key:?}",
+                    seed.role_ordinal,
+                )
+            });
+        }
+        if raw_plan.loc_x != seed.compact_plan.loc_x
+            || raw_plan.loc_y != seed.compact_plan.loc_y
+            || raw_plan.off_x != compact_request.key.off_x
+            || raw_plan.off_y != compact_request.key.off_y
+            || raw_plan.conjugate_for_grid != compact_request.key.conjugate_for_grid
+        {
+            awproject_residual_prefix_record_mismatch(first_mismatch, || {
+                format!(
+                    "reason=placement source={sample_index} role={} \
+                     raw_loc={},{} compact_loc={},{} raw_off={},{} compact_off={},{} \
+                     raw_conjugate={} compact_conjugate={}",
+                    seed.role_ordinal,
+                    raw_plan.loc_x,
+                    raw_plan.loc_y,
+                    seed.compact_plan.loc_x,
+                    seed.compact_plan.loc_y,
+                    raw_plan.off_x,
+                    raw_plan.off_y,
+                    compact_request.key.off_x,
+                    compact_request.key.off_y,
+                    raw_plan.conjugate_for_grid,
+                    compact_request.key.conjugate_for_grid,
+                )
+            });
+        }
+        if raw_plan.normalization.re.to_bits() != compact_bundle.normalization.re.to_bits()
+            || raw_plan.normalization.im.to_bits() != compact_bundle.normalization.im.to_bits()
+            || raw_plan.grid_normalization.re.to_bits()
+                != compact_bundle.grid_normalization.re.to_bits()
+            || raw_plan.grid_normalization.im.to_bits()
+                != compact_bundle.grid_normalization.im.to_bits()
+        {
+            awproject_residual_prefix_record_mismatch(first_mismatch, || {
+                format!(
+                    "reason=normalization source={sample_index} role={} \
+                     raw_f32={}:{} compact_f32={}:{} raw_f64={}:{} compact_f64={}:{}",
+                    seed.role_ordinal,
+                    raw_plan.normalization.re.to_bits(),
+                    raw_plan.normalization.im.to_bits(),
+                    compact_bundle.normalization.re.to_bits(),
+                    compact_bundle.normalization.im.to_bits(),
+                    raw_plan.grid_normalization.re.to_bits(),
+                    raw_plan.grid_normalization.im.to_bits(),
+                    compact_bundle.grid_normalization.re.to_bits(),
+                    compact_bundle.grid_normalization.im.to_bits(),
+                )
+            });
+        }
+        if raw_taps.x_support != compact_bundle.x_support
+            || raw_taps.y_support != compact_bundle.y_support
+            || raw_taps.values.len() != compact_bundle.values.len()
+        {
+            awproject_residual_prefix_record_mismatch(first_mismatch, || {
+                format!(
+                    "reason=tap-shape source={sample_index} role={} raw_support={}x{} \
+                     compact_support={}x{} raw_count={} compact_count={}",
+                    seed.role_ordinal,
+                    raw_taps.x_support,
+                    raw_taps.y_support,
+                    compact_bundle.x_support,
+                    compact_bundle.y_support,
+                    raw_taps.values.len(),
+                    compact_bundle.values.len(),
+                )
+            });
+        }
+
+        let mut raw_tap_hash = AwProjectResidualPrefixHash::new();
+        let mut compact_tap_hash = AwProjectResidualPrefixHash::new();
+        let tap_width = 2 * compact_bundle.x_support + 1;
+        for (tap_index, &raw_tap) in raw_taps.values.iter().enumerate() {
+            raw_tap_hash.complex32(raw_tap);
+            let compact_tap = if tap_index < compact_bundle.values.len() {
+                let ix = (tap_index % tap_width) as isize - compact_bundle.x_support as isize;
+                let iy = (tap_index / tap_width) as isize - compact_bundle.y_support as isize;
+                awproject_compact_replay_tap(compact_bundle, compact_phase_table, ix, iy, tap_index)
+            } else {
+                Complex32::new(f32::NAN, f32::NAN)
+            };
+            compact_tap_hash.complex32(compact_tap);
+            if raw_tap.re.to_bits() != compact_tap.re.to_bits()
+                || raw_tap.im.to_bits() != compact_tap.im.to_bits()
+            {
+                awproject_residual_prefix_record_mismatch(first_mismatch, || {
+                    format!(
+                        "reason=phased-tap source={sample_index} role={} tap={tap_index} \
+                         raw_re={} raw_im={} compact_re={} compact_im={}",
+                        seed.role_ordinal,
+                        raw_tap.re.to_bits(),
+                        raw_tap.im.to_bits(),
+                        compact_tap.re.to_bits(),
+                        compact_tap.im.to_bits(),
+                    )
+                });
+            }
+        }
+        if compact_bundle.values.len() > raw_taps.values.len() {
+            for tap_index in raw_taps.values.len()..compact_bundle.values.len() {
+                let ix = (tap_index % tap_width) as isize - compact_bundle.x_support as isize;
+                let iy = (tap_index / tap_width) as isize - compact_bundle.y_support as isize;
+                let compact_tap = awproject_compact_replay_tap(
+                    compact_bundle,
+                    compact_phase_table,
+                    ix,
+                    iy,
+                    tap_index,
+                );
+                compact_tap_hash.complex32(compact_tap);
+            }
+        }
+        let role_index = seed
+            .source_position
+            .checked_mul(2)
+            .and_then(|index| index.checked_add(seed.role_ordinal))
+            .expect("bounded residual-prefix role index");
+        role_audits[role_index] = Some(AwProjectResidualInputRoleAudit {
+            raw_key: seed.raw_key,
+            compact_key: seed.compact_key,
+            raw_plan,
+            compact_plan: seed.compact_plan,
+            compact_off_x: compact_request.key.off_x,
+            compact_off_y: compact_request.key.off_y,
+            compact_conjugate_for_grid: compact_request.key.conjugate_for_grid,
+            raw_tap_hash: raw_tap_hash.0,
+            compact_tap_hash: compact_tap_hash.0,
+            tap_count: raw_taps.values.len().max(compact_bundle.values.len()),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn audit_awproject_residual_inputs(
+    request: &MtmfsRequest,
+    mosaic: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    batch: &VisibilityBatch,
+    parallel_hands: &AwParallelHandVisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    source_samples: &[AwProjectCompactSourceSample],
+    planned_samples: &[AwProjectCompactPlannedSample],
+    tap_requests: &[AwProjectCompactTapRequest],
+    bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    groups: &[GroupedVisibilityMetadata],
+    cache: &AwConvolutionFunctionResidentCache,
+    controls: &AwProjectControls,
+    pa_deg: f64,
+    replay_block_ordinal: usize,
+) -> Result<AwProjectResidualInputAudit, ImagingError> {
+    let mut first_mismatch = None;
+    if source_samples.len() != planned_samples.len() {
+        awproject_residual_prefix_record_mismatch(&mut first_mismatch, || {
+            format!(
+                "reason=source-plan-cardinality source_count={} planned_count={}",
+                source_samples.len(),
+                planned_samples.len(),
+            )
+        });
+    }
+    let compared_source_count = source_samples.len().min(planned_samples.len());
+    let mut roles_by_cell =
+        BTreeMap::<AwProjectStableCellKey, Vec<AwProjectResidualInputRoleSeed>>::new();
+    for (source_position, source) in source_samples
+        .iter()
+        .copied()
+        .take(compared_source_count)
+        .enumerate()
+    {
+        let sample_index = source.sample_index;
+        for (role_ordinal, mueller_element, compact_plan) in [
+            (0usize, 0, source.first_imaging_plan),
+            (1usize, 15, source.second_imaging_plan),
+        ] {
+            let raw_key = cache
+                .cache()
+                .select_key_for_sample(
+                    sample_frequencies_hz[sample_index],
+                    request.reffreq_hz,
+                    batch.w_lambda[sample_index],
+                    mueller_element,
+                    pa_deg,
+                    controls.conjugate_beams,
+                )
+                .ok_or_else(|| {
+                    ImagingError::ConvolutionFunctionCache(format!(
+                        "direct AWProject residual-prefix key selection failed for \
+                         block-local source {sample_index} role {role_ordinal}"
+                    ))
+                })?;
+            let compact_key = tap_requests[compact_plan.tap_bundle].cell_key;
+            roles_by_cell
+                .entry(awproject_stable_cell_key(raw_key))
+                .or_default()
+                .push(AwProjectResidualInputRoleSeed {
+                    source_position,
+                    role_ordinal,
+                    raw_key,
+                    compact_key,
+                    compact_plan,
+                });
+        }
+    }
+    let mut role_audits = vec![None; compared_source_count.saturating_mul(2)];
+    let cell_context = AwProjectResidualInputCellContext {
+        request,
+        mosaic,
+        gridder,
+        batch,
+        source_samples,
+        groups,
+        tap_requests,
+        bundles,
+        phase_tables,
+    };
+    for seeds in roles_by_cell.into_values() {
+        let raw_key = seeds[0].raw_key;
+        let cell = cache.get_replay(raw_key)?;
+        match cell.as_ref() {
+            awprojection::AwConvolutionFunctionReplayCell::Owned(cell) => {
+                audit_awproject_residual_input_cell(
+                    &cell_context,
+                    &cell.metadata.imaging,
+                    &cell.imaging,
+                    &seeds,
+                    &mut role_audits,
+                    &mut first_mismatch,
+                )?;
+            }
+            #[cfg(unix)]
+            awprojection::AwConvolutionFunctionReplayCell::Mapped(cell) => {
+                audit_awproject_residual_input_cell(
+                    &cell_context,
+                    &cell.metadata.imaging,
+                    &cell.imaging,
+                    &seeds,
+                    &mut role_audits,
+                    &mut first_mismatch,
+                )?;
+            }
+        }
+    }
+
+    let mut raw_hash = AwProjectResidualPrefixHash::new();
+    let mut compact_hash = AwProjectResidualPrefixHash::new();
+    let mut tap_count = 0usize;
+    for (source_position, (&source, &planned)) in source_samples
+        .iter()
+        .zip(planned_samples)
+        .take(compared_source_count)
+        .enumerate()
+    {
+        let sample_index = source.sample_index;
+        let frequency_hz = sample_frequencies_hz[sample_index];
+        let weight = batch.weight[sample_index];
+        let taylor_x = mtmfs_casa_taylor_x(frequency_hz, request.reffreq_hz);
+        let term_weight =
+            mtmfs_casa_weighted_taylor_term(weight, frequency_hz, request.reffreq_hz, 0);
+        for (role_ordinal, compact_residual) in [
+            (0usize, planned.first_residual),
+            (1usize, planned.second_residual),
+        ] {
+            let role = role_audits[source_position * 2 + role_ordinal]
+                .expect("every bounded residual-prefix role must be audited");
+            let raw_residual = aw_stokes_i_visibility_for_mueller(
+                role.raw_key.mueller_element,
+                parallel_hands.first_visibility[sample_index],
+                parallel_hands.second_visibility[sample_index],
+            )?;
+            let raw_value = raw_residual * term_weight;
+            let compact_value = compact_residual * term_weight;
+            if raw_residual.re.to_bits() != compact_residual.re.to_bits()
+                || raw_residual.im.to_bits() != compact_residual.im.to_bits()
+                || raw_value.re.to_bits() != compact_value.re.to_bits()
+                || raw_value.im.to_bits() != compact_value.im.to_bits()
+            {
+                awproject_residual_prefix_record_mismatch(&mut first_mismatch, || {
+                    format!(
+                        "reason=value source={sample_index} role={role_ordinal} \
+                         raw_residual={}:{} compact_residual={}:{} \
+                         raw_value={}:{} compact_value={}:{}",
+                        raw_residual.re.to_bits(),
+                        raw_residual.im.to_bits(),
+                        compact_residual.re.to_bits(),
+                        compact_residual.im.to_bits(),
+                        raw_value.re.to_bits(),
+                        raw_value.im.to_bits(),
+                        compact_value.re.to_bits(),
+                        compact_value.im.to_bits(),
+                    )
+                });
+            }
+            for hash in [&mut raw_hash, &mut compact_hash] {
+                hash.usize(replay_block_ordinal);
+                hash.usize(sample_index);
+                // The core batch intentionally has no surviving MS row or
+                // channel identifiers. Hash explicit sentinels instead of
+                // manufacturing a false provenance mapping.
+                hash.u64(u64::MAX);
+                hash.u64(u64::MAX);
+                hash.usize(source.group_index);
+                hash.usize(role_ordinal);
+                hash.u64(frequency_hz.to_bits());
+                hash.u64(batch.u_lambda[sample_index].to_bits());
+                hash.u64(batch.v_lambda[sample_index].to_bits());
+                hash.u64(batch.w_lambda[sample_index].to_bits());
+                hash.u32(weight.to_bits());
+                hash.u32(taylor_x.to_bits());
+                hash.u32(term_weight.to_bits());
+            }
+            raw_hash.complex32(raw_residual);
+            raw_hash.complex32(raw_value);
+            raw_hash.cell_key(role.raw_key);
+            raw_hash.isize(role.raw_plan.loc_x);
+            raw_hash.isize(role.raw_plan.loc_y);
+            raw_hash.isize(role.raw_plan.off_x);
+            raw_hash.isize(role.raw_plan.off_y);
+            raw_hash.bool(role.raw_plan.conjugate_for_grid);
+            raw_hash.complex32(role.raw_plan.normalization);
+            raw_hash.complex64(role.raw_plan.grid_normalization);
+            raw_hash.usize(role.tap_count);
+            raw_hash.u64(role.raw_tap_hash);
+
+            compact_hash.complex32(compact_residual);
+            compact_hash.complex32(compact_value);
+            compact_hash.cell_key(role.compact_key);
+            compact_hash.isize(role.compact_plan.loc_x);
+            compact_hash.isize(role.compact_plan.loc_y);
+            compact_hash.isize(role.compact_off_x);
+            compact_hash.isize(role.compact_off_y);
+            compact_hash.bool(role.compact_conjugate_for_grid);
+            let compact_bundle = awproject_ready_compact_tap(bundles, role.compact_plan.tap_bundle);
+            compact_hash.complex32(compact_bundle.normalization);
+            compact_hash.complex64(compact_bundle.grid_normalization);
+            compact_hash.usize(role.tap_count);
+            compact_hash.u64(role.compact_tap_hash);
+            tap_count = tap_count.saturating_add(role.tap_count);
+        }
+    }
+    if raw_hash.0 != compact_hash.0 {
+        awproject_residual_prefix_record_mismatch(&mut first_mismatch, || {
+            format!(
+                "reason=rolling-hash raw={} compact={}",
+                raw_hash.0, compact_hash.0
+            )
+        });
+    }
+    Ok(AwProjectResidualInputAudit {
+        raw_hash: raw_hash.0,
+        compact_hash: compact_hash.0,
+        source_count: compared_source_count,
+        role_count: compared_source_count.saturating_mul(2),
+        tap_count,
+        first_mismatch,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn maybe_audit_awproject_residual_inputs_all_blocks(
+    request: &MtmfsRequest,
+    mosaic: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    batch: &VisibilityBatch,
+    parallel_hands: &AwParallelHandVisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    source_samples: &[AwProjectCompactSourceSample],
+    planned_samples: &[AwProjectCompactPlannedSample],
+    tap_requests: &[AwProjectCompactTapRequest],
+    bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    groups: &[GroupedVisibilityMetadata],
+    cache: &AwConvolutionFunctionResidentCache,
+    controls: &AwProjectControls,
+    pa_deg: f64,
+    replay_block_ordinal: usize,
+    replay_window_ordinal: usize,
+    last_window_in_block: bool,
+) -> Result<bool, ImagingError> {
+    static CAMPAIGN: OnceLock<Mutex<Option<AwProjectResidualInputCampaign>>> = OnceLock::new();
+    let Some(path) = env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_INPUT_AUDIT_DUMP") else {
+        return Ok(false);
+    };
+    let path = std::path::PathBuf::from(path);
+    let expected_blocks = env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_INPUT_AUDIT_BLOCKS")
+        .map_err(|_| {
+            ImagingError::InvalidRequest(
+                "the all-block AWProject input audit requires its expected block count".to_string(),
+            )
+        })?
+        .parse::<usize>()
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "invalid all-block AWProject input-audit block count: {error}"
+            ))
+        })?;
+    if expected_blocks == 0 {
+        return Err(ImagingError::InvalidRequest(
+            "the all-block AWProject input-audit block count must be positive".to_string(),
+        ));
+    }
+
+    let audit = audit_awproject_residual_inputs(
+        request,
+        mosaic,
+        gridder,
+        batch,
+        parallel_hands,
+        sample_frequencies_hz,
+        source_samples,
+        planned_samples,
+        tap_requests,
+        bundles,
+        phase_tables,
+        groups,
+        cache,
+        controls,
+        pa_deg,
+        replay_block_ordinal,
+    )?;
+    let campaign = CAMPAIGN.get_or_init(|| Mutex::new(None));
+    let mut campaign = campaign.lock().map_err(|_| {
+        ImagingError::InvalidRequest(
+            "the all-block AWProject input-audit state was poisoned".to_string(),
+        )
+    })?;
+    if campaign.is_none() {
+        let mut output = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&path)
+            .map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "create all-block AWProject input-audit dump {}: {error}",
+                    path.display()
+                ))
+            })?;
+        writeln!(
+            output,
+            "meta\tversion=1\trole=initial-dirty-residual-inputs\t\
+             expected_blocks={expected_blocks}\tformed_image=false\tran_casa_tclean=false\t\
+             grid_dispatch=skipped\trow_provenance=unavailable-in-VisibilityBatch\t\
+             channel_provenance=unavailable-in-VisibilityBatch\t\
+             tap_hash_contract=fnv1a64-nested-y-outer-x-inner-complex32-bits\t\
+             block_hash_contract=fnv1a64-window-ordinal-counts-and-window-hash"
+        )
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "write all-block AWProject input-audit metadata: {error}"
+            ))
+        })?;
+        *campaign = Some(AwProjectResidualInputCampaign {
+            path: path.clone(),
+            expected_blocks,
+            next_block: 0,
+            current_block: None,
+            output,
+        });
+    }
+    let campaign = campaign
+        .as_mut()
+        .expect("all-block AWProject input-audit campaign initialized");
+    if campaign.path != path || campaign.expected_blocks != expected_blocks {
+        return Err(ImagingError::InvalidRequest(
+            "the all-block AWProject input-audit environment changed during one process"
+                .to_string(),
+        ));
+    }
+    if replay_block_ordinal != campaign.next_block {
+        return Err(ImagingError::InvalidRequest(format!(
+            "all-block AWProject input audit received block {replay_block_ordinal}, expected {}",
+            campaign.next_block,
+        )));
+    }
+    if campaign.current_block.is_none() {
+        if replay_window_ordinal != 0 {
+            return Err(ImagingError::InvalidRequest(format!(
+                "all-block AWProject input audit began block {replay_block_ordinal} at window \
+                 {replay_window_ordinal}"
+            )));
+        }
+        campaign.current_block = Some(AwProjectResidualInputBlockAudit {
+            ordinal: replay_block_ordinal,
+            window_count: 0,
+            source_count: 0,
+            role_count: 0,
+            tap_count: 0,
+            raw_hash: AwProjectResidualPrefixHash::new(),
+            compact_hash: AwProjectResidualPrefixHash::new(),
+        });
+    }
+    let block = campaign
+        .current_block
+        .as_mut()
+        .expect("all-block AWProject input-audit block initialized");
+    if block.ordinal != replay_block_ordinal || block.window_count != replay_window_ordinal {
+        return Err(ImagingError::InvalidRequest(format!(
+            "all-block AWProject input audit window sequence changed: block={} window={}, \
+             expected block={} window={}",
+            replay_block_ordinal, replay_window_ordinal, block.ordinal, block.window_count,
+        )));
+    }
+    for hash in [&mut block.raw_hash, &mut block.compact_hash] {
+        hash.usize(replay_window_ordinal);
+        hash.usize(audit.source_count);
+        hash.usize(audit.role_count);
+        hash.usize(audit.tap_count);
+    }
+    block.raw_hash.u64(audit.raw_hash);
+    block.compact_hash.u64(audit.compact_hash);
+    block.window_count += 1;
+    block.source_count = block.source_count.saturating_add(audit.source_count);
+    block.role_count = block.role_count.saturating_add(audit.role_count);
+    block.tap_count = block.tap_count.saturating_add(audit.tap_count);
+
+    writeln!(
+        campaign.output,
+        "window\tblock={replay_block_ordinal}\twindow={replay_window_ordinal}\t\
+         source_count={}\trole_count={}\ttap_count={}\traw_hash={}\tcompact_hash={}\t\
+         exact_match={}\tlast_window={last_window_in_block}",
+        audit.source_count,
+        audit.role_count,
+        audit.tap_count,
+        audit.raw_hash,
+        audit.compact_hash,
+        audit.first_mismatch.is_none(),
+    )
+    .map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "write all-block AWProject input-audit window: {error}"
+        ))
+    })?;
+    if let Some(first_mismatch) = audit.first_mismatch.as_deref() {
+        writeln!(
+            campaign.output,
+            "mismatch\tblock={replay_block_ordinal}\twindow={replay_window_ordinal}\t\
+             {first_mismatch}"
+        )
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "write all-block AWProject input-audit mismatch: {error}"
+            ))
+        })?;
+        campaign.output.flush().map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "flush all-block AWProject input-audit mismatch: {error}"
+            ))
+        })?;
+        return Err(ImagingError::Normalization(format!(
+            "all-block direct/raw and compact AWProject residual input streams diverged: \
+             {first_mismatch}; receipt={}",
+            campaign.path.display(),
+        )));
+    }
+    if !last_window_in_block {
+        campaign.output.flush().map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "flush all-block AWProject input-audit window: {error}"
+            ))
+        })?;
+        return Ok(true);
+    }
+
+    let block = campaign
+        .current_block
+        .take()
+        .expect("final all-block AWProject input-audit window has block state");
+    writeln!(
+        campaign.output,
+        "block\tblock={}\twindow_count={}\tsource_count={}\trole_count={}\t\
+         tap_count={}\traw_hash={}\tcompact_hash={}\texact_match={}",
+        block.ordinal,
+        block.window_count,
+        block.source_count,
+        block.role_count,
+        block.tap_count,
+        block.raw_hash.0,
+        block.compact_hash.0,
+        block.raw_hash.0 == block.compact_hash.0,
+    )
+    .map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "write all-block AWProject input-audit block: {error}"
+        ))
+    })?;
+    campaign.next_block += 1;
+    campaign.output.flush().map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "flush all-block AWProject input-audit block: {error}"
+        ))
+    })?;
+    if campaign.next_block == campaign.expected_blocks {
+        return Err(ImagingError::InvalidRequest(format!(
+            "all-block AWProject input audit completed before every grid dispatch; \
+             blocks={}; receipt={}",
+            campaign.expected_blocks,
+            campaign.path.display(),
+        )));
+    }
+    Ok(true)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Clone, Copy, Default)]
+struct AwProjectResidualPrefixCell {
+    contribution_count: usize,
+    contribution_norm_sum: f64,
+    casa_accumulator: Complex64,
+    host_accumulator: Complex64,
+    fixed_re: i128,
+    fixed_im: i128,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[inline(never)]
+fn awproject_prefix_rounded_mul(left: f32, right: f32) -> f32 {
+    std::hint::black_box(left * right)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[inline(never)]
+fn awproject_prefix_rounded_add(left: f32, right: f32) -> f32 {
+    std::hint::black_box(left + right)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[inline(never)]
+fn awproject_prefix_rounded_sub(left: f32, right: f32) -> f32 {
+    std::hint::black_box(left - right)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_prefix_casa_product(value: Complex32, tap: Complex32) -> Complex32 {
+    Complex32::new(
+        awproject_prefix_rounded_sub(
+            awproject_prefix_rounded_mul(value.re, tap.re),
+            awproject_prefix_rounded_mul(value.im, tap.im),
+        ),
+        awproject_prefix_rounded_add(
+            awproject_prefix_rounded_mul(value.re, tap.im),
+            awproject_prefix_rounded_mul(value.im, tap.re),
+        ),
+    )
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_prefix_fixed_readback(fixed: i128, inverse_scale: f32) -> f64 {
+    let fixed = i64::try_from(fixed).expect("bounded AWProject prefix must fit i64");
+    let fixed_high = fixed as f32;
+    let fixed_remainder = fixed - fixed_high as i64;
+    let value_high = fixed_high * inverse_scale;
+    let value_low = fixed_remainder as f32 * inverse_scale;
+    let first_sum = value_high;
+    let virtual_second = first_sum - 0.0;
+    let first_error = (0.0 - (first_sum - virtual_second)) + (value_high - virtual_second);
+    let correction = value_low + first_error;
+    let final_sum = first_sum + correction;
+    let virtual_correction = final_sum - first_sum;
+    let compensation =
+        (first_sum - (final_sum - virtual_correction)) + (correction - virtual_correction);
+    f64::from(final_sum) + f64::from(compensation)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn maybe_dump_awproject_residual_prefix(
+    request: &MtmfsRequest,
+    mosaic: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    batch: &VisibilityBatch,
+    parallel_hands: &AwParallelHandVisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    source_samples: &[AwProjectCompactSourceSample],
+    planned_samples: &[AwProjectCompactPlannedSample],
+    tap_requests: &[AwProjectCompactTapRequest],
+    bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    groups: &[GroupedVisibilityMetadata],
+    cache: &AwConvolutionFunctionResidentCache,
+    controls: &AwProjectControls,
+    pa_deg: f64,
+    replay_block_ordinal: usize,
+) -> Result<(), ImagingError> {
+    static DUMPED: AtomicBool = AtomicBool::new(false);
+    let Some(path) = env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_PREFIX_DUMP") else {
+        return Ok(());
+    };
+    if DUMPED.swap(true, Ordering::AcqRel) {
+        return Ok(());
+    }
+    let fixed_scale = env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_PREFIX_FIXED_SCALE")
+        .map_err(|_| {
+            ImagingError::InvalidRequest(
+                "the AWProject residual-prefix dump requires its frozen segment scale".to_string(),
+            )
+        })?
+        .parse::<f32>()
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "invalid AWProject residual-prefix fixed scale: {error}"
+            ))
+        })?;
+    if !(fixed_scale.is_finite() && fixed_scale > 0.0) {
+        return Err(ImagingError::InvalidRequest(
+            "the AWProject residual-prefix fixed scale must be finite and positive".to_string(),
+        ));
+    }
+    let inverse_scale = fixed_scale.recip();
+    let input_audit = audit_awproject_residual_inputs(
+        request,
+        mosaic,
+        gridder,
+        batch,
+        parallel_hands,
+        sample_frequencies_hz,
+        source_samples,
+        planned_samples,
+        tap_requests,
+        bundles,
+        phase_tables,
+        groups,
+        cache,
+        controls,
+        pa_deg,
+        replay_block_ordinal,
+    )?;
+    let mut output = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&path)
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "create AWProject residual-prefix dump {}: {error}",
+                path.to_string_lossy()
+            ))
+        })?;
+    writeln!(
+        output,
+        "input-meta\tversion=2\trole=initial-dirty-residual\tblock={replay_block_ordinal}\t\
+         source_count={}\trole_count={}\ttap_count={}\traw_hash={}\tcompact_hash={}\t\
+         exact_match={}\trow_provenance=unavailable-in-VisibilityBatch\t\
+         channel_provenance=unavailable-in-VisibilityBatch\t\
+         tap_hash_contract=fnv1a64-nested-y-outer-x-inner-complex32-bits",
+        input_audit.source_count,
+        input_audit.role_count,
+        input_audit.tap_count,
+        input_audit.raw_hash,
+        input_audit.compact_hash,
+        input_audit.first_mismatch.is_none(),
+    )
+    .map_err(|error| ImagingError::InvalidRequest(format!("write input metadata: {error}")))?;
+    if let Some(first_mismatch) = input_audit.first_mismatch.as_deref() {
+        writeln!(output, "input-mismatch\t{first_mismatch}").map_err(|error| {
+            ImagingError::InvalidRequest(format!("write input mismatch: {error}"))
+        })?;
+        output.flush().map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "flush AWProject residual-prefix mismatch dump: {error}"
+            ))
+        })?;
+        return Err(ImagingError::Normalization(format!(
+            "direct/raw and compact AWProject residual input streams first diverged: \
+             {first_mismatch}; receipt={}",
+            path.to_string_lossy(),
+        )));
+    }
+    let mut cells = HashMap::<(isize, isize), AwProjectResidualPrefixCell>::with_capacity(
+        planned_samples.len().saturating_mul(2),
+    );
+    for sample in planned_samples {
+        cells
+            .entry((
+                sample.first_imaging_plan.loc_x,
+                sample.first_imaging_plan.loc_y,
+            ))
+            .or_default();
+        cells
+            .entry((
+                sample.second_imaging_plan.loc_x,
+                sample.second_imaging_plan.loc_y,
+            ))
+            .or_default();
+    }
+
+    let mut observe = |sample: AwProjectCompactPlannedSample,
+                       plan: AwProjectCompactSamplePlan,
+                       residual: Complex32| {
+        let bundle = awproject_ready_compact_tap(bundles, plan.tap_bundle);
+        let phase_table = awproject_compact_phase_table(bundle, sample.group_index, phase_tables);
+        let term_weight = mtmfs_casa_weighted_taylor_term(
+            sample.weight,
+            sample.frequency_hz,
+            request.reffreq_hz,
+            0,
+        );
+        let value = residual * term_weight;
+        let mut tap_index = 0usize;
+        for iy in -(bundle.y_support as isize)..=bundle.y_support as isize {
+            for ix in -(bundle.x_support as isize)..=bundle.x_support as isize {
+                let cell_key = (plan.loc_x + ix, plan.loc_y + iy);
+                if let Some(cell) = cells.get_mut(&cell_key) {
+                    let tap = awproject_compact_replay_tap(bundle, phase_table, ix, iy, tap_index);
+                    let casa_product = awproject_prefix_casa_product(value, tap);
+                    let host_product = value * tap;
+                    let fixed_re = awproject_prefix_rounded_mul(casa_product.re, fixed_scale)
+                        .round_ties_even() as i64;
+                    let fixed_im = awproject_prefix_rounded_mul(casa_product.im, fixed_scale)
+                        .round_ties_even() as i64;
+                    cell.contribution_count += 1;
+                    cell.contribution_norm_sum +=
+                        f64::from(casa_product.re).hypot(f64::from(casa_product.im));
+                    cell.casa_accumulator +=
+                        Complex64::new(f64::from(casa_product.re), f64::from(casa_product.im));
+                    cell.host_accumulator +=
+                        Complex64::new(f64::from(host_product.re), f64::from(host_product.im));
+                    cell.fixed_re += i128::from(fixed_re);
+                    cell.fixed_im += i128::from(fixed_im);
+                }
+                tap_index += 1;
+            }
+        }
+    };
+    for &sample in planned_samples {
+        observe(sample, sample.first_imaging_plan, sample.first_residual);
+        observe(sample, sample.second_imaging_plan, sample.second_residual);
+    }
+
+    let mut selected = None::<((isize, isize), AwProjectResidualPrefixCell, f64, f64, f64)>;
+    for (&cell_key, &cell) in &cells {
+        if cell.contribution_count < 32 {
+            continue;
+        }
+        let casa_norm = cell.casa_accumulator.norm();
+        let cancellation_ratio = cell.contribution_norm_sum / casa_norm.max(f64::MIN_POSITIVE);
+        let metal = Complex64::new(
+            awproject_prefix_fixed_readback(cell.fixed_re, inverse_scale),
+            awproject_prefix_fixed_readback(cell.fixed_im, inverse_scale),
+        );
+        let host_difference = (cell.host_accumulator - cell.casa_accumulator).norm();
+        let metal_difference = (metal - cell.casa_accumulator).norm();
+        let score = cancellation_ratio.ln_1p() * host_difference.max(metal_difference)
+            / casa_norm.max(f64::MIN_POSITIVE);
+        if selected
+            .as_ref()
+            .is_none_or(|(_, _, _, _, selected_score)| score > *selected_score)
+        {
+            selected = Some((cell_key, cell, cancellation_ratio, metal_difference, score));
+        }
+    }
+    let ((selected_x, selected_y), selected_cell, cancellation_ratio, metal_difference, score) =
+        selected.ok_or_else(|| {
+            ImagingError::Normalization(
+                "AWProject residual-prefix scan found no plan-center cell with 32 contributions"
+                    .to_string(),
+            )
+        })?;
+
+    writeln!(
+        output,
+        "meta\tversion=2\trole=residual_tt0\tblock={replay_block_ordinal}\tsegment=0\t\
+         planned_samples={}\tgrid_width={}\tgrid_height={}\t\
+         motivating_image_crossing_x=1542\tmotivating_image_crossing_y=3144\t\
+         selected_grid_cell_x={selected_x}\tselected_grid_cell_y={selected_y}\t\
+         grid_cell_selection=highest-policy-difference-among-first-block-plan-centers\t\
+         image_to_grid_mapping=global-fft-no-unique-cell\tfixed_scale_bits={}\t\
+         fixed_inverse_scale_bits={}\tcontribution_count={}\t\
+         cancellation_ratio={cancellation_ratio:.17e}\t\
+         metal_difference={metal_difference:.17e}\tselection_score={score:.17e}",
+        planned_samples.len(),
+        request.geometry.image_shape[0],
+        request.geometry.image_shape[1],
+        fixed_scale.to_bits(),
+        inverse_scale.to_bits(),
+        selected_cell.contribution_count,
+    )
+    .map_err(|error| ImagingError::InvalidRequest(format!("write prefix metadata: {error}")))?;
+
+    let mut casa_accumulator = Complex64::new(0.0, 0.0);
+    let mut host_accumulator = Complex64::new(0.0, 0.0);
+    let mut fixed_re = 0i128;
+    let mut fixed_im = 0i128;
+    let mut prefix_ordinal = 0usize;
+    for (planned_ordinal, &sample) in planned_samples.iter().enumerate() {
+        for (role_ordinal, plan, residual) in [
+            (0usize, sample.first_imaging_plan, sample.first_residual),
+            (1usize, sample.second_imaging_plan, sample.second_residual),
+        ] {
+            let bundle = awproject_ready_compact_tap(bundles, plan.tap_bundle);
+            let phase_table =
+                awproject_compact_phase_table(bundle, sample.group_index, phase_tables);
+            let term_weight = mtmfs_casa_weighted_taylor_term(
+                sample.weight,
+                sample.frequency_hz,
+                request.reffreq_hz,
+                0,
+            );
+            let value = residual * term_weight;
+            let ix = selected_x - plan.loc_x;
+            let iy = selected_y - plan.loc_y;
+            if ix < -(bundle.x_support as isize)
+                || ix > bundle.x_support as isize
+                || iy < -(bundle.y_support as isize)
+                || iy > bundle.y_support as isize
+            {
+                continue;
+            }
+            let tap_width = 2 * bundle.x_support + 1;
+            let tap_index = (iy + bundle.y_support as isize) as usize * tap_width
+                + (ix + bundle.x_support as isize) as usize;
+            let tap = awproject_compact_replay_tap(bundle, phase_table, ix, iy, tap_index);
+            let casa_product = awproject_prefix_casa_product(value, tap);
+            let host_product = value * tap;
+            let contribution_fixed_re =
+                awproject_prefix_rounded_mul(casa_product.re, fixed_scale).round_ties_even() as i64;
+            let contribution_fixed_im =
+                awproject_prefix_rounded_mul(casa_product.im, fixed_scale).round_ties_even() as i64;
+            casa_accumulator +=
+                Complex64::new(f64::from(casa_product.re), f64::from(casa_product.im));
+            host_accumulator +=
+                Complex64::new(f64::from(host_product.re), f64::from(host_product.im));
+            fixed_re += i128::from(contribution_fixed_re);
+            fixed_im += i128::from(contribution_fixed_im);
+            let metal_re = awproject_prefix_fixed_readback(fixed_re, inverse_scale);
+            let metal_im = awproject_prefix_fixed_readback(fixed_im, inverse_scale);
+            let source_ordinal = source_samples[planned_ordinal].sample_index;
+            let cell_key = tap_requests[plan.tap_bundle].cell_key;
+            writeln!(
+                output,
+                "contribution\tprefix={prefix_ordinal}\tblock={replay_block_ordinal}\t\
+                 source={source_ordinal}\trow=unavailable\tchannel=unavailable\t\
+                 planned={planned_ordinal}\tgroup={}\trole={role_ordinal}\ttap={tap_index}\t\
+                 ix={ix}\tiy={iy}\tcf_frequency_bits={}\tcf_w_bits={}\tcf_mueller={}\t\
+                 cf_pa_bits={}\tfrequency_bits={}\tweight_bits={}\tterm_weight_bits={}\t\
+                 residual_re_bits={}\tresidual_im_bits={}\tvalue_re_bits={}\t\
+                 value_im_bits={}\ttap_re_bits={}\ttap_im_bits={}\t\
+                 casa_product_re_bits={}\tcasa_product_im_bits={}\t\
+                 host_product_re_bits={}\thost_product_im_bits={}\t\
+                 fixed_re={contribution_fixed_re}\tfixed_im={contribution_fixed_im}\t\
+                 casa_acc_re_bits={}\tcasa_acc_im_bits={}\thost_acc_re_bits={}\t\
+                 host_acc_im_bits={}\tmetal_acc_re_bits={}\tmetal_acc_im_bits={}",
+                sample.group_index,
+                cell_key.frequency_hz.to_bits(),
+                cell_key.w_value_lambda.to_bits(),
+                cell_key.mueller_element,
+                cell_key.parallactic_angle_deg.to_bits(),
+                sample.frequency_hz.to_bits(),
+                sample.weight.to_bits(),
+                term_weight.to_bits(),
+                residual.re.to_bits(),
+                residual.im.to_bits(),
+                value.re.to_bits(),
+                value.im.to_bits(),
+                tap.re.to_bits(),
+                tap.im.to_bits(),
+                casa_product.re.to_bits(),
+                casa_product.im.to_bits(),
+                host_product.re.to_bits(),
+                host_product.im.to_bits(),
+                casa_accumulator.re.to_bits(),
+                casa_accumulator.im.to_bits(),
+                host_accumulator.re.to_bits(),
+                host_accumulator.im.to_bits(),
+                metal_re.to_bits(),
+                metal_im.to_bits(),
+            )
+            .map_err(|error| {
+                ImagingError::InvalidRequest(format!("write prefix contribution: {error}"))
+            })?;
+            prefix_ordinal += 1;
+        }
+    }
+    output.flush().map_err(|error| {
+        ImagingError::InvalidRequest(format!("flush AWProject residual-prefix dump: {error}"))
+    })?;
+    eprintln!(
+        "awproject_residual_prefix_dump path={} block={} samples={} input_hash={} \
+         selected_cell={},{} contributions={} cancellation_ratio={:.9e} metal_difference={:.9e}",
+        path.to_string_lossy(),
+        replay_block_ordinal,
+        planned_samples.len(),
+        input_audit.raw_hash,
+        selected_x,
+        selected_y,
+        prefix_ordinal,
+        cancellation_ratio,
+        metal_difference,
+    );
+    if env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_PREFIX_STOP_AFTER_DUMP").is_some() {
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject residual-prefix diagnostic completed before gridding; receipt={}",
+            path.to_string_lossy(),
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn replay_awproject_metal_global_program(
     request: &MtmfsRequest,
     model_grids: &[Array2<Complex32>],
@@ -20107,12 +22166,30 @@ fn replay_awproject_metal_global_program(
     Ok(())
 }
 
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_gpu_residual_replay_is_admitted(
+    model_grids_present: bool,
+    requested: bool,
+    resident_program_present: bool,
+    metal_grid_storage: bool,
+) -> bool {
+    model_grids_present && requested && resident_program_present && metal_grid_storage
+}
+
 #[allow(clippy::too_many_arguments)]
 fn replay_awproject_compact_window(
     request: &MtmfsRequest,
+    mosaic: &MosaicGridderConfig,
     batch: &VisibilityBatch,
     parallel_hands: &AwParallelHandVisibilityBatch,
     sample_frequencies_hz: &[f64],
+    groups: &[GroupedVisibilityMetadata],
+    gridder: &StandardGridder,
+    cache: &AwConvolutionFunctionResidentCache,
+    controls: &AwProjectControls,
+    pa_deg: f64,
+    replay_block_ordinal: usize,
+    last_window_in_block: bool,
     model_grids: Option<&[Array2<Complex32>]>,
     source_samples: &[AwProjectCompactSourceSample],
     tap_requests: &[AwProjectCompactTapRequest],
@@ -20124,16 +22201,39 @@ fn replay_awproject_compact_window(
     accumulation: &mut MosaicMtmfsStreamGridAccumulation,
     taylor_weights: &mut Vec<f32>,
     replay_stats: &mut AwProjectCompactReplayStats,
-    persistent_metal_batch: Option<&mut Option<AwProjectMetalBatch>>,
-    mut persistent_metal_resident_program: Option<&mut Option<AwProjectMetalResidentProgram>>,
+    _persistent_metal_batch: Option<&mut Option<AwProjectMetalBatch>>,
+    persistent_metal_resident_program: Option<&mut Option<AwProjectMetalResidentProgram>>,
 ) -> Result<(), ImagingError> {
     let prepare_started = Instant::now();
     #[cfg(all(target_os = "macos", not(coverage)))]
-    let gpu_residual_replay = model_grids.is_some()
-        && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GPU_RESIDUAL_REPLAY").is_some()
-        && persistent_metal_resident_program
-            .as_ref()
-            .is_some_and(|slot| slot.is_some());
+    let mut persistent_metal_resident_program = persistent_metal_resident_program;
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    let gpu_residual_replay_requested = model_grids.is_some()
+        && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GPU_RESIDUAL_REPLAY").is_some();
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    let resident_metal_program_present = persistent_metal_resident_program
+        .as_ref()
+        .is_some_and(|slot| slot.is_some());
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    let gpu_residual_replay = awproject_gpu_residual_replay_is_admitted(
+        model_grids.is_some(),
+        gpu_residual_replay_requested,
+        resident_metal_program_present,
+        accumulation.storage.is_metal_shared(),
+    );
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    if gpu_residual_replay_requested
+        && resident_metal_program_present
+        && !accumulation.storage.is_metal_shared()
+        && source_samples.is_empty()
+        && tap_requests.is_empty()
+        && bundles.is_empty()
+    {
+        return Err(ImagingError::InvalidRequest(
+            "a compacted AWProject Metal replay program cannot be replayed into host grid storage"
+                .to_string(),
+        ));
+    }
     #[cfg(any(not(target_os = "macos"), coverage))]
     let gpu_residual_replay = false;
     let normalization_sumwt_before = accumulation.normalization_sumwt;
@@ -20163,7 +22263,7 @@ fn replay_awproject_compact_window(
             taylor_weights,
         )?
     };
-    let prepared_metadata = AwProjectMetalResidentMetadata {
+    let _prepared_metadata = AwProjectMetalResidentMetadata {
         normalization_sumwt: accumulation.normalization_sumwt - normalization_sumwt_before,
         gridded_samples: accumulation
             .gridded_samples
@@ -20177,6 +22277,72 @@ fn replay_awproject_compact_window(
         ),
     };
     replay_stats.prepare_elapsed += prepare_started.elapsed();
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    if model_grids.is_none()
+        && maybe_audit_awproject_residual_inputs_all_blocks(
+            request,
+            mosaic,
+            gridder,
+            batch,
+            parallel_hands,
+            sample_frequencies_hz,
+            source_samples,
+            &planned_samples,
+            tap_requests,
+            bundles,
+            phase_tables,
+            groups,
+            cache,
+            controls,
+            pa_deg,
+            replay_block_ordinal,
+            replay_stats.windows,
+            last_window_in_block,
+        )?
+    {
+        return Ok(());
+    }
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    if model_grids.is_none() {
+        maybe_run_awproject_datatogrid_bracket(
+            request,
+            mosaic,
+            gridder,
+            batch,
+            parallel_hands,
+            sample_frequencies_hz,
+            source_samples,
+            &planned_samples,
+            tap_requests,
+            bundles,
+            phase_tables,
+            groups,
+            cache,
+            controls,
+            pa_deg,
+            replay_block_ordinal,
+            replay_stats.windows,
+            last_window_in_block,
+        )?;
+        maybe_dump_awproject_residual_prefix(
+            request,
+            mosaic,
+            gridder,
+            batch,
+            parallel_hands,
+            sample_frequencies_hz,
+            source_samples,
+            &planned_samples,
+            tap_requests,
+            bundles,
+            phase_tables,
+            groups,
+            cache,
+            controls,
+            pa_deg,
+            replay_block_ordinal,
+        )?;
+    }
     #[cfg(all(target_os = "macos", not(coverage)))]
     if !gpu_residual_replay
         && model_grids.is_none()
@@ -20207,7 +22373,7 @@ fn replay_awproject_compact_window(
                 tap_requests,
                 bundles,
                 phase_tables,
-                prepared_metadata.clone(),
+                _prepared_metadata.clone(),
             )?);
             if profile::standard_mfs_profile_detail_enabled() {
                 eprintln!(
@@ -20357,7 +22523,7 @@ fn replay_awproject_compact_window(
                         tap_requests,
                         bundles,
                         phase_tables,
-                        prepared_metadata.clone(),
+                        _prepared_metadata.clone(),
                     )?);
                 }
                 let build_elapsed = build_started.elapsed();
@@ -20480,7 +22646,7 @@ fn replay_awproject_compact_window(
                     )?)
                 };
                 let metal_batch = if persistent_pack {
-                    let slot = persistent_metal_batch.ok_or_else(|| {
+                    let slot = _persistent_metal_batch.ok_or_else(|| {
                         ImagingError::InvalidRequest(
                             "persistent AWProject Metal packing requires a replay-cache window"
                                 .to_string(),
@@ -20555,6 +22721,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                 "validated AWProject cache has no parallactic-angle bin".to_string(),
             )
         })?;
+    let aw_cf_cache = cache;
     let mut replay_cache = replay_cache;
     #[cfg(all(target_os = "macos", not(coverage)))]
     let (metal_packed_batch_budget_bytes, metal_psf_term_count) = match &accumulation.storage {
@@ -20589,8 +22756,16 @@ fn accumulate_awproject_mtmfs_metadata_batch(
     let residual_only = accumulation.storage.is_residual_only()
         && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_LIVE_CFS_ONLY").is_some();
     let active_tap_role_count = if residual_only { 4 } else { 8 };
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    let metal_packed_batch_ceiling_bytes = metal_packed_batch_budget_bytes.unwrap_or(usize::MAX);
+    #[cfg(any(not(target_os = "macos"), coverage))]
+    let metal_packed_batch_ceiling_bytes = usize::MAX;
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    let metal_packed_batch_report_bytes = metal_packed_batch_budget_bytes.unwrap_or(0);
+    #[cfg(any(not(target_os = "macos"), coverage))]
+    let metal_packed_batch_report_bytes = 0usize;
     let tap_budget_bytes = awproject_compact_tap_budget_bytes(controls.cf_resident_bytes)
-        .min(metal_packed_batch_budget_bytes.unwrap_or(usize::MAX));
+        .min(metal_packed_batch_ceiling_bytes);
     let plan_workers = awproject_compact_plan_workers();
     let plan_chunk_samples = awproject_compact_plan_chunk_samples();
     let pack_workers = awproject_compact_pack_workers();
@@ -20602,8 +22777,13 @@ fn accumulate_awproject_mtmfs_metadata_batch(
     // batch ceiling, not the legacy per-arena cap.
     let priming_prediction_taps = model_grids.is_none()
         && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PRIME_REPLAY_INITIAL_DIRTY").is_some();
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    let metal_packed_batch_or_tap_budget_bytes =
+        metal_packed_batch_budget_bytes.unwrap_or(tap_budget_bytes);
+    #[cfg(any(not(target_os = "macos"), coverage))]
+    let metal_packed_batch_or_tap_budget_bytes = tap_budget_bytes;
     let compact_tap_materialization_budget_bytes = if tapless_phase || priming_prediction_taps {
-        metal_packed_batch_budget_bytes.unwrap_or(tap_budget_bytes)
+        metal_packed_batch_or_tap_budget_bytes
     } else {
         tap_budget_bytes
     };
@@ -20708,12 +22888,21 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                 .skipped_samples
                 .saturating_add(block.classification_skipped_samples);
             cursor = block.cached_cursor_end;
-            for window in &mut block.windows {
+            let window_count = block.windows.len();
+            for (window_index, window) in block.windows.iter_mut().enumerate() {
                 replay_awproject_compact_window(
                     request,
+                    mosaic,
                     batch,
                     parallel_hands,
                     sample_frequencies_hz,
+                    groups,
+                    gridder,
+                    aw_cf_cache,
+                    controls,
+                    pa_deg,
+                    replay_block_ordinal,
+                    window_index + 1 == window_count,
                     model_grids,
                     &window.source_samples,
                     &window.tap_requests,
@@ -20878,7 +23067,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                 if source_samples.is_empty() {
                     return Err(ImagingError::InvalidRequest(format!(
                         "one AWProject source sample needs {next_logical_tap_bytes} logical tap bytes, {next_tap_bytes} compact resident tap bytes, and {next_packed_batch_bytes} packed Metal bytes, above the admitted {tap_budget_bytes}-byte logical-tap and {}-byte packed-batch ceilings",
-                        metal_packed_batch_budget_bytes.unwrap_or(usize::MAX),
+                        metal_packed_batch_ceiling_bytes,
                     )));
                 }
                 pending_outcomes.push_front(Ok(Ok(specs)));
@@ -20959,7 +23148,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
             mosaic,
             gridder,
             groups,
-            cache,
+            aw_cf_cache,
             &tap_requests,
             phase_tables.as_ref(),
             compact_tap_materialization_budget_bytes,
@@ -21026,9 +23215,17 @@ fn accumulate_awproject_mtmfs_metadata_batch(
         let mut persistent_metal_resident_program = None;
         replay_awproject_compact_window(
             request,
+            mosaic,
             batch,
             parallel_hands,
             sample_frequencies_hz,
+            groups,
+            gridder,
+            cache,
+            controls,
+            pa_deg,
+            replay_block_ordinal,
+            cursor == batch.len(),
             model_grids,
             &source_samples,
             &tap_requests,
@@ -21231,7 +23428,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
             replay_stats.peak_tap_bytes,
             tap_budget_bytes,
             compact_tap_materialization_budget_bytes,
-            metal_packed_batch_budget_bytes.unwrap_or(0),
+            metal_packed_batch_report_bytes,
             packed_sample_bytes,
             source_group_route.len(),
             plan_workers,
@@ -26815,13 +29012,6 @@ pub fn run_mtmfs(
     let mut warnings = Vec::new();
 
     let scale_sizes = effective_mtmfs_multiscale_scales(request);
-    let scale_hessians = mtmfs_scale_hessians_for_clean(
-        &psf_state.psf_terms,
-        request.nterms,
-        &scale_sizes,
-        request.clean.niter,
-        &mut warnings,
-    )?;
     let multiscale_basis = if request.clean.niter == 0 || request.multiscale_scales.is_empty() {
         None
     } else {
@@ -26835,7 +29025,40 @@ pub fn run_mtmfs(
         stage_timings.deconvolver_setup += setup_started.elapsed();
         Some(basis)
     };
+    let scale_hessians = if mtmfs_use_full_fft_basis()
+        && let Some(basis) = multiscale_basis.as_ref()
+    {
+        mtmfs_scale_hessians_from_basis(basis, request.nterms)?
+    } else {
+        mtmfs_scale_hessians_for_clean(
+            &psf_state.psf_terms,
+            request.nterms,
+            &scale_sizes,
+            request.clean.niter,
+            &mut warnings,
+        )?
+    };
     let principal_hessian = &scale_hessians[0];
+    if profile::standard_mfs_profile_detail_enabled() {
+        for scale_hessian in &scale_hessians {
+            eprintln!(
+                "standard_mfs_mtmfs_scale_hessian scale_pixels={} hessian={:?} inverse={:?} hessian_f32_bits={:?} inverse_f32_bits={:?}",
+                scale_hessian.scale_size,
+                scale_hessian.hessian,
+                scale_hessian.inverse,
+                scale_hessian
+                    .hessian
+                    .iter()
+                    .map(|row| row.iter().map(|value| value.to_bits()).collect::<Vec<_>>())
+                    .collect::<Vec<_>>(),
+                scale_hessian
+                    .inverse
+                    .iter()
+                    .map(|row| row.iter().map(|value| value.to_bits()).collect::<Vec<_>>())
+                    .collect::<Vec<_>>(),
+            );
+        }
+    }
 
     let controller_started = Instant::now();
     let mut reported_minor_iterations = 0usize;
@@ -33494,15 +35717,36 @@ fn flat_sky_mosaic_model_for_prediction(
             "mosaic model prediction weight peak is non-finite or zero".to_string(),
         ));
     }
-    let pb_scale_factor = weight_peak.sqrt();
+    // SIImageStoreMultiTerm stores getPbMax() in a Double, but explicitly
+    // materializes `sqrt(abs(weight)) / pbScale` as LatticeExpr<Float> before
+    // constructing the Float mask and ratio expressions. Preserve that Float
+    // denominator boundary and the subsequent mask arithmetic exactly.
+    let pb_scale_factor = f64::from(weight_peak.sqrt());
+    let pb_limit = pb_limit.abs();
     let mut prediction_model = Array2::<f32>::zeros(model.dim());
     for ((x, y), model_value) in model.indexed_iter() {
-        let deno = weight_image[(x, y)].abs().sqrt() / pb_scale_factor;
-        if deno.is_finite() && deno > pb_limit.abs() {
-            prediction_model[(x, y)] = *model_value / deno;
-        }
+        prediction_model[(x, y)] = casa_flat_sky_model_prediction_pixel(
+            *model_value,
+            weight_image[(x, y)],
+            pb_scale_factor,
+            pb_limit,
+        );
     }
     Ok(prediction_model)
+}
+
+#[inline]
+fn casa_flat_sky_model_prediction_pixel(
+    model_value: f32,
+    weight_value: f32,
+    pb_scale_factor: f64,
+    pb_limit: f32,
+) -> f32 {
+    let denominator = (f64::from(weight_value.abs().sqrt()) / pb_scale_factor) as f32;
+    let above_limit = denominator > pb_limit;
+    let mask = if above_limit { 1.0_f32 } else { 0.0_f32 };
+    let mask_inverse = if above_limit { 0.0_f32 } else { 1.0_f32 };
+    (model_value * mask) / (denominator + mask_inverse)
 }
 
 fn sparse_flat_sky_awproject_model_casacore_storage(
@@ -33528,7 +35772,8 @@ fn sparse_flat_sky_awproject_model_casacore_storage(
     }
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let [grid_x0, grid_y0] = gridder.image_grid_origin();
-    let pb_scale_factor = weight_peak.sqrt();
+    let pb_scale_factor = f64::from(weight_peak.sqrt());
+    let pb_limit = pb_limit.abs();
     let mut prepared = Array2::<Complex32>::zeros((grid_ny, grid_nx));
     for &(x, y) in model_support_positions {
         if x >= model.dim().0 || y >= model.dim().1 {
@@ -33536,10 +35781,15 @@ fn sparse_flat_sky_awproject_model_casacore_storage(
                 "sparse AWProject model support escaped the model image".to_string(),
             ));
         }
-        let deno = weight_image[(x, y)].abs().sqrt() / pb_scale_factor;
-        if deno.is_finite() && deno > pb_limit.abs() {
-            prepared[(grid_y0 + y, grid_x0 + x)] = Complex32::new(model[(x, y)] / deno, 0.0);
-        }
+        prepared[(grid_y0 + y, grid_x0 + x)] = Complex32::new(
+            casa_flat_sky_model_prediction_pixel(
+                model[(x, y)],
+                weight_image[(x, y)],
+                pb_scale_factor,
+                pb_limit,
+            ),
+            0.0,
+        );
     }
     Ok(prepared)
 }
@@ -41930,7 +44180,11 @@ fn make_multiscale_kernel(shape: (usize, usize), scale_size: f32) -> Array2<f32>
             let rad2 = (f64::from(ypart) + ((refi - i as f64) / scale_size_f64).powi(2)) as f32;
             if rad2 < 1.0 {
                 let rad = if rad2 <= 0.0 { 0.0 } else { rad2.sqrt() };
-                let value = (1.0 - rad2) * multiscale_spheroidal(rad);
+                // MatrixCleaner::makeScale spells the literal as `1.0`.
+                // C++ therefore promotes the Float operands to Double for
+                // this expression, then rounds once when assigning iscale.
+                let value =
+                    ((1.0f64 - f64::from(rad2)) * f64::from(multiscale_spheroidal(rad))) as f32;
                 kernel[(i, j)] = value;
                 volume += value;
             }
@@ -41975,6 +44229,8 @@ fn multiscale_spheroidal(nu: f32) -> f32 {
             1.0f32,
         )
     };
+    // CASA 6.7.5.18 evaluates the powers, subtraction, and following
+    // polynomial as separate Float operations despite the source literal.
     let delnusq = nu.powf(2.0) - nuend.powf(2.0);
     let mut numerator = p[0];
     for (power, coefficient) in p.iter().enumerate().skip(1) {
@@ -43273,6 +45529,36 @@ fn mtmfs_scale_hessians(
         .collect()
 }
 
+fn mtmfs_scale_hessians_from_basis(
+    basis: &MtmfsMultiscaleBasis,
+    nterms: usize,
+) -> Result<Vec<MtmfsScaleHessian>, ImagingError> {
+    basis
+        .scale_sizes
+        .iter()
+        .enumerate()
+        .map(|(scale_index, &scale_size)| {
+            let patch = basis.psf_pair_patch(scale_index, scale_index, 0);
+            let center = (patch.dim().0 / 2, patch.dim().1 / 2);
+            let hessian = (0..nterms)
+                .map(|row| {
+                    (0..nterms)
+                        .map(|col| {
+                            basis.psf_pair_patch(scale_index, scale_index, row + col)[center]
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            let inverse = invert_symmetric_definite(&hessian)?;
+            Ok(MtmfsScaleHessian {
+                scale_size,
+                hessian,
+                inverse,
+            })
+        })
+        .collect()
+}
+
 fn mtmfs_scale_hessians_for_clean(
     psf_terms: &[Array2<f32>],
     nterms: usize,
@@ -43407,21 +45693,24 @@ fn invert_symmetric_definite(matrix: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, Imagi
     // The normal equations are then negative definite but remain invertible;
     // orient them for Cholesky and restore the inverse sign afterward.
     let orientation = if values[0] < 0.0 { -1.0 } else { 1.0 };
-    let oriented_values = values
+    let oriented_rows = matrix
         .iter()
-        .map(|value| orientation * value)
+        .map(|row| {
+            row.iter()
+                .map(|value| orientation * f64::from(*value))
+                .collect::<Vec<_>>()
+        })
         .collect::<Vec<_>>();
-    let matrix = DMatrix::from_row_slice(n, n, &oriented_values);
-    let inverse = matrix.cholesky().ok_or_else(|| {
+    let inverse = invert_symmetric_positive_definite_casacore(&oriented_rows).ok_or_else(|| {
         ImagingError::Unsupported(format!(
             "MTMFS Hessian is not symmetric definite at the CASA PSF peak: {values:?}"
         ))
     })?;
-    let inverse = inverse.inverse();
-    Ok((0..n)
+    Ok(inverse
+        .into_iter()
         .map(|row| {
-            (0..n)
-                .map(|col| (orientation * inverse[(row, col)]) as f32)
+            row.into_iter()
+                .map(|value| (orientation * value) as f32)
                 .collect::<Vec<_>>()
         })
         .collect())
@@ -43888,16 +46177,36 @@ enum MtmfsScaleRhs {
 enum MtmfsScaleFftBackend {
     RustFft,
     FftwF32,
+    CasaFft0F32 { threads: usize },
 }
 
 impl MtmfsScaleFftBackend {
     fn from_policy(policy: DirtyProductFftPolicy) -> Self {
+        if env::var_os("CASA_RS_EXPERIMENTAL_MT_MFS_CASA_FFT0").is_some() {
+            assert!(
+                policy.backend == FftBackendChoice::Fftw && crate::fftw_local::configured_f32(),
+                "CASA_RS_EXPERIMENTAL_MT_MFS_CASA_FFT0 requires the configured FFTW f32 backend"
+            );
+            let threads = env::var("CASA_RS_EXPERIMENTAL_MT_MFS_CASA_FFT0_THREADS")
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok())
+                .filter(|value| *value > 0)
+                .unwrap_or_else(|| {
+                    thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+                });
+            return Self::CasaFft0F32 { threads };
+        }
         if policy.backend == FftBackendChoice::Fftw && crate::fftw_local::configured_f32() {
             Self::FftwF32
         } else {
             Self::RustFft
         }
     }
+}
+
+fn mtmfs_use_full_fft_basis() -> bool {
+    env::var_os("CASA_RS_EXPERIMENTAL_MT_MFS_FULL_FFT_BASIS").is_some()
+        || env::var_os("CASA_RS_EXPERIMENTAL_MT_MFS_CASA_FFT0").is_some()
 }
 
 struct MtmfsMultiscaleBasis {
@@ -43935,6 +46244,8 @@ impl MtmfsMultiscaleBasis {
         sparse_experiment: bool,
         fft_policy: DirtyProductFftPolicy,
     ) -> Self {
+        let scale_fft_backend = MtmfsScaleFftBackend::from_policy(fft_policy);
+        let casa_fft0 = matches!(scale_fft_backend, MtmfsScaleFftBackend::CasaFft0F32 { .. });
         let compact_scale_kernels = scale_sizes
             .iter()
             .map(|scale| make_compact_multiscale_kernel(*scale))
@@ -43943,14 +46254,18 @@ impl MtmfsMultiscaleBasis {
         let scale_bias = if max_scale > 0.0 && scale_sizes.len() > 1 {
             scale_sizes
                 .iter()
-                .map(|scale| 1.0 - request.small_scale_bias * (*scale / max_scale))
+                // MultiTermMatrixCleaner evaluates the Float expression as
+                // `(small_scale_bias * scale) / maximum_scale` before the
+                // subtraction. Preserve that grouping because the biased
+                // cross-scale score can differ by one ULP.
+                .map(|scale| 1.0 - (request.small_scale_bias * *scale) / max_scale)
                 .collect::<Vec<_>>()
         } else {
             vec![1.0; scale_sizes.len()]
         };
         let image_pixels =
             request.geometry.image_shape[0].saturating_mul(request.geometry.image_shape[1]);
-        let sparse_scale_search_positions = sparse_experiment
+        let sparse_scale_search_positions = (sparse_experiment && !casa_fft0)
             .then(|| {
                 request.clean_mask.as_ref().and_then(|mask| {
                     build_sparse_mtmfs_scale_search_positions(
@@ -43972,33 +46287,34 @@ impl MtmfsMultiscaleBasis {
                     .collect::<Vec<Option<Vec<(usize, usize)>>>>(),
             )
         } else {
-            let scale_masks = request
-                .clean_mask
-                .as_ref()
-                .map(|mask| build_mtmfs_scale_masks(mask, &compact_scale_kernels, scale_sizes));
+            let mut scale_masks = request.clean_mask.as_ref().map(|mask| {
+                build_mtmfs_scale_masks_with_backend(
+                    mask,
+                    &compact_scale_kernels,
+                    scale_sizes,
+                    scale_fft_backend,
+                )
+            });
             let scale_search_positions = scale_masks
                 .as_ref()
-                .map(|masks| {
-                    masks
-                        .iter()
-                        .map(|mask| {
-                            let positions = mask
-                                .indexed_iter()
-                                .filter_map(|(position, cleanable)| cleanable.then_some(position))
-                                .collect::<Vec<_>>();
-                            (positions.len().saturating_mul(8) <= image_pixels).then_some(positions)
-                        })
-                        .collect::<Vec<_>>()
-                })
+                .map(|masks| mtmfs_scale_search_positions_from_masks(masks, image_pixels))
                 .unwrap_or_else(|| vec![None; scale_sizes.len()]);
+            if casa_fft0 && sparse_experiment && scale_search_positions.iter().all(Option::is_some)
+            {
+                // CASA obtains these positions from the exact Float
+                // FFTServer mask convolution. Once the ordered positions have
+                // been retained, the dense masks no longer have a next use.
+                scale_masks = None;
+            }
             (scale_masks, scale_search_positions)
         };
         let sparse_rhs = sparse_experiment
             && request.clean_mask.is_some()
             && scale_search_positions.iter().all(Option::is_some)
             && scale_masks.is_none();
-        let sparse_rhs_fft_seed =
-            sparse_rhs && env::var_os("CASA_RS_EXPERIMENTAL_MT_MFS_SPARSE_RHS_FFT_SEED").is_some();
+        let sparse_rhs_fft_seed = sparse_rhs
+            && (casa_fft0
+                || env::var_os("CASA_RS_EXPERIMENTAL_MT_MFS_SPARSE_RHS_FFT_SEED").is_some());
         if sparse_experiment {
             let position_counts = scale_search_positions
                 .iter()
@@ -44035,28 +46351,59 @@ impl MtmfsMultiscaleBasis {
         let psf_peak_position =
             casa_mtmfs_psf_peak_position(psf_terms.first().expect("PSF term"), max_scale);
         let psf_support = casa_mtmfs_psf_patch_support(psf_terms[0].dim(), max_scale);
-        let mut psf_pair_patches =
-            Vec::with_capacity(scale_sizes.len() * (scale_sizes.len() + 1) / 2);
-        for high_scale in 0..scale_sizes.len() {
-            for low_scale in 0..=high_scale {
-                let combined_kernel = convolve_compact_scale_kernels(
-                    &compact_scale_kernels[high_scale],
-                    &compact_scale_kernels[low_scale],
-                );
-                psf_pair_patches.push(
-                    psf_terms
-                        .iter()
-                        .map(|psf| {
-                            bounded_circular_convolution_patch(
-                                psf,
-                                &combined_kernel,
-                                psf_peak_position,
-                                psf_support,
-                            )
-                        })
-                        .collect(),
-                );
+        let full_fft_basis = mtmfs_use_full_fft_basis();
+        let psf_pair_patches = if full_fft_basis {
+            match scale_fft_backend {
+                MtmfsScaleFftBackend::CasaFft0F32 { threads } => mtmfs_psf_pair_patches_casa_fft0(
+                    psf_terms,
+                    &compact_scale_kernels,
+                    psf_peak_position,
+                    psf_support,
+                    threads,
+                ),
+                _ => mtmfs_psf_pair_patches_fft(
+                    psf_terms,
+                    &compact_scale_kernels,
+                    psf_peak_position,
+                    psf_support,
+                    scale_fft_backend,
+                ),
             }
+        } else {
+            let mut patches = Vec::with_capacity(scale_sizes.len() * (scale_sizes.len() + 1) / 2);
+            for high_scale in 0..scale_sizes.len() {
+                for low_scale in 0..=high_scale {
+                    let combined_kernel = convolve_compact_scale_kernels(
+                        &compact_scale_kernels[high_scale],
+                        &compact_scale_kernels[low_scale],
+                    );
+                    patches.push(
+                        psf_terms
+                            .iter()
+                            .map(|psf| {
+                                bounded_circular_convolution_patch(
+                                    psf,
+                                    &combined_kernel,
+                                    psf_peak_position,
+                                    psf_support,
+                                )
+                            })
+                            .collect(),
+                    );
+                }
+            }
+            patches
+        };
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "mtmfs_multiscale_basis route={} fft_backend={:?} psf_support={psf_support}",
+                if full_fft_basis {
+                    "full-float-fft"
+                } else {
+                    "direct-compact-convolution"
+                },
+                scale_fft_backend,
+            );
         }
 
         Self {
@@ -44068,7 +46415,7 @@ impl MtmfsMultiscaleBasis {
             psf_pair_patches,
             sparse_rhs,
             sparse_rhs_fft_seed,
-            scale_fft_backend: MtmfsScaleFftBackend::from_policy(fft_policy),
+            scale_fft_backend,
         }
     }
 
@@ -44322,6 +46669,27 @@ fn materialize_centered_compact_kernel(
     image
 }
 
+fn materialize_centered_compact_kernel_real(
+    image_shape: (usize, usize),
+    compact_kernel: &Array2<f32>,
+) -> Array2<f32> {
+    let mut image = Array2::<f32>::zeros(image_shape);
+    let image_center = (image_shape.0 / 2, image_shape.1 / 2);
+    let kernel_center = (compact_kernel.dim().0 / 2, compact_kernel.dim().1 / 2);
+    for ((kernel_x, kernel_y), value) in compact_kernel.indexed_iter() {
+        let image_x = image_center.0 as isize + kernel_x as isize - kernel_center.0 as isize;
+        let image_y = image_center.1 as isize + kernel_y as isize - kernel_center.1 as isize;
+        if image_x >= 0
+            && image_y >= 0
+            && image_x < image_shape.0 as isize
+            && image_y < image_shape.1 as isize
+        {
+            image[(image_x as usize, image_y as usize)] = *value;
+        }
+    }
+    image
+}
+
 fn compact_kernel_is_unit_impulse(compact_kernel: &Array2<f32>) -> bool {
     compact_kernel.dim() == (1, 1) && compact_kernel[(0, 0)] == 1.0
 }
@@ -44364,7 +46732,181 @@ fn mtmfs_scale_fft(
             }
             output
         }
+        MtmfsScaleFftBackend::CasaFft0F32 { .. } => {
+            unreachable!("CASA FFTServer-compatible real transforms use the dedicated R2C path")
+        }
     }
+}
+
+fn mtmfs_casa_fft0_product(
+    left: &crate::fftw_local::FftwRealHalfSpectrumF32,
+    right: &crate::fftw_local::FftwRealHalfSpectrumF32,
+) -> crate::fftw_local::FftwRealHalfSpectrumF32 {
+    assert_eq!(
+        left.logical_shape(),
+        right.logical_shape(),
+        "CASA MT-MFS FFT0 products require matching logical shapes"
+    );
+    let mut product = left.clone();
+    Zip::from(product.values_mut())
+        .and(right.values())
+        .for_each(|value, right| *value *= *right);
+    product
+}
+
+fn casa_fftserver_flip_real(input: &Array2<f32>) -> Array2<f32> {
+    let (nx, ny) = input.dim();
+    let shift_x = nx.div_ceil(2);
+    let shift_y = ny.div_ceil(2);
+    let mut output = Array2::<f32>::zeros((nx, ny).f());
+    for y in 0..ny {
+        let source_y = (y + shift_y) % ny;
+        for x in 0..nx {
+            let source_x = (x + shift_x) % nx;
+            output[(x, y)] = input[(source_x, source_y)];
+        }
+    }
+    output
+}
+
+fn mtmfs_psf_pair_patches_casa_fft0(
+    psf_terms: &[Array2<f32>],
+    compact_scale_kernels: &[Array2<f32>],
+    psf_peak_position: (usize, usize),
+    psf_support: usize,
+    threads: usize,
+) -> Vec<Vec<Array2<f32>>> {
+    let image_shape = psf_terms[0].dim();
+    let psf_spectra = psf_terms
+        .iter()
+        .map(|psf| {
+            crate::fftw_local::fft0_r2c_f32_casacore_layout(psf, threads)
+                .expect("configured CASA-compatible MT-MFS PSF R2C transform must run")
+        })
+        .collect::<Vec<_>>();
+    let scale_spectra = compact_scale_kernels
+        .iter()
+        .map(|kernel| {
+            let full_kernel = materialize_centered_compact_kernel_real(image_shape, kernel);
+            crate::fftw_local::fft0_r2c_f32_casacore_layout(&full_kernel, threads)
+                .expect("configured CASA-compatible MT-MFS scale R2C transform must run")
+        })
+        .collect::<Vec<_>>();
+    let patch_center = psf_support / 2;
+    let x0 = psf_peak_position
+        .0
+        .checked_sub(patch_center)
+        .expect("CASA MT-MFS PSF patch must fit before the PSF peak");
+    let y0 = psf_peak_position
+        .1
+        .checked_sub(patch_center)
+        .expect("CASA MT-MFS PSF patch must fit before the PSF peak");
+    let x1 = x0 + psf_support;
+    let y1 = y0 + psf_support;
+    assert!(
+        x1 <= image_shape.0 && y1 <= image_shape.1,
+        "CASA MT-MFS PSF patch must fit within the image"
+    );
+
+    let mut patches =
+        Vec::with_capacity(compact_scale_kernels.len() * (compact_scale_kernels.len() + 1) / 2);
+    for high_scale in 0..compact_scale_kernels.len() {
+        for low_scale in 0..=high_scale {
+            patches.push(
+                psf_spectra
+                    .iter()
+                    .map(|psf_spectrum| {
+                        // Preserve CASA's left-associated
+                        // `psfFT * scaleFT[high] * scaleFT[low]` Float
+                        // complex arithmetic.
+                        let high_product =
+                            mtmfs_casa_fft0_product(psf_spectrum, &scale_spectra[high_scale]);
+                        let product =
+                            mtmfs_casa_fft0_product(&high_product, &scale_spectra[low_scale]);
+                        let convolved =
+                            crate::fftw_local::fft0_c2r_f32_casacore_layout(&product, threads)
+                                .expect(
+                                    "configured CASA-compatible MT-MFS PSF C2R transform must run",
+                                );
+                        convolved.slice(s![x0..x1, y0..y1]).to_owned()
+                    })
+                    .collect(),
+            );
+        }
+    }
+    patches
+}
+
+fn mtmfs_psf_pair_patches_fft(
+    psf_terms: &[Array2<f32>],
+    compact_scale_kernels: &[Array2<f32>],
+    psf_peak_position: (usize, usize),
+    psf_support: usize,
+    fft_backend: MtmfsScaleFftBackend,
+) -> Vec<Vec<Array2<f32>>> {
+    let image_shape = psf_terms[0].dim();
+    let psf_spectra = psf_terms
+        .iter()
+        .map(|psf| {
+            mtmfs_scale_fft(
+                psf.mapv(|value| Complex32::new(value, 0.0)),
+                FftDirection::Forward,
+                fft_backend,
+            )
+        })
+        .collect::<Vec<_>>();
+    let scale_spectra = compact_scale_kernels
+        .iter()
+        .map(|kernel| {
+            mtmfs_scale_fft(
+                materialize_centered_compact_kernel(image_shape, kernel),
+                FftDirection::Forward,
+                fft_backend,
+            )
+        })
+        .collect::<Vec<_>>();
+    let patch_center = psf_support / 2;
+    let x0 = psf_peak_position
+        .0
+        .checked_sub(patch_center)
+        .expect("CASA MT-MFS PSF patch must fit before the PSF peak");
+    let y0 = psf_peak_position
+        .1
+        .checked_sub(patch_center)
+        .expect("CASA MT-MFS PSF patch must fit before the PSF peak");
+    let x1 = x0 + psf_support;
+    let y1 = y0 + psf_support;
+    assert!(
+        x1 <= image_shape.0 && y1 <= image_shape.1,
+        "CASA MT-MFS PSF patch must fit within the image"
+    );
+
+    let mut patches =
+        Vec::with_capacity(compact_scale_kernels.len() * (compact_scale_kernels.len() + 1) / 2);
+    for high_scale in 0..compact_scale_kernels.len() {
+        for low_scale in 0..=high_scale {
+            patches.push(
+                psf_spectra
+                    .iter()
+                    .map(|psf_spectrum| {
+                        // MultiTermMatrixCleaner evaluates
+                        // `psfFT * scaleFT[high] * scaleFT[low]` in this
+                        // left-associated Complex<Float> order.
+                        let mut work = psf_spectrum.clone();
+                        Zip::from(&mut work)
+                            .and(&scale_spectra[high_scale])
+                            .for_each(|value, scale| *value *= *scale);
+                        Zip::from(&mut work)
+                            .and(&scale_spectra[low_scale])
+                            .for_each(|value, scale| *value *= *scale);
+                        let convolved = mtmfs_scale_fft(work, FftDirection::Inverse, fft_backend);
+                        convolved.slice(s![x0..x1, y0..y1]).mapv(|value| value.re)
+                    })
+                    .collect(),
+            );
+        }
+    }
+    patches
 }
 
 fn convolve_mtmfs_terms_for_scale(
@@ -44372,7 +46914,31 @@ fn convolve_mtmfs_terms_for_scale(
     compact_kernel: &Array2<f32>,
     fft_backend: MtmfsScaleFftBackend,
 ) -> Vec<Array2<f32>> {
-    if compact_kernel_is_unit_impulse(compact_kernel) {
+    if let MtmfsScaleFftBackend::CasaFft0F32 { threads } = fft_backend {
+        let shape = terms[0].dim();
+        let full_kernel = materialize_centered_compact_kernel_real(shape, compact_kernel);
+        let kernel_spectrum =
+            crate::fftw_local::fft0_r2c_f32_casacore_layout(&full_kernel, threads)
+                .expect("configured CASA-compatible MT-MFS scale R2C transform must run");
+        return terms
+            .iter()
+            .map(|term| {
+                let term_spectrum = crate::fftw_local::fft0_r2c_f32_casacore_layout(term, threads)
+                    .expect("configured CASA-compatible MT-MFS RHS R2C transform must run");
+                let product = mtmfs_casa_fft0_product(&term_spectrum, &kernel_spectrum);
+                let convolved = crate::fftw_local::fft0_c2r_f32_casacore_layout(&product, threads)
+                    .expect("configured CASA-compatible MT-MFS RHS C2R transform must run");
+                // MultiTermMatrixCleaner::computeRHS and setupUserMask call
+                // FFTServer::flip(..., false, false) after the uncentered
+                // inverse transform. Scale-zero deliberately follows this
+                // path too; CASA does not bypass the FFT round trip.
+                casa_fftserver_flip_real(&convolved)
+            })
+            .collect();
+    }
+    if compact_kernel_is_unit_impulse(compact_kernel)
+        && env::var_os("CASA_RS_EXPERIMENTAL_MT_MFS_FORCE_UNIT_SCALE_FFT").is_none()
+    {
         return terms.to_vec();
     }
     let shape = terms[0].dim();
@@ -44499,6 +47065,7 @@ fn subtract_shifted_kernel_at_positions_casa_mtmfs_rhs(
     }
 }
 
+#[cfg(test)]
 fn fft_convolve_real_compact(image: &Array2<f32>, compact_kernel: &Array2<f32>) -> Array2<f32> {
     convolve_mtmfs_terms_for_scale(
         std::slice::from_ref(image),
@@ -44516,10 +47083,11 @@ fn build_sparse_mtmfs_scale_search_positions(
 ) -> Option<Vec<Vec<(usize, usize)>>> {
     let (nx, ny) = mask.dim();
     let image_pixels = nx.saturating_mul(ny);
-    let source_positions = mask
+    let mut source_positions = mask
         .indexed_iter()
         .filter_map(|(position, cleanable)| cleanable.then_some(position))
         .collect::<Vec<_>>();
+    source_positions.sort_unstable_by_key(|&(x, y)| (y, x));
     let maximum_kernel_taps = compact_kernels
         .iter()
         .map(|kernel| kernel.iter().filter(|value| **value != 0.0).count())
@@ -44583,7 +47151,9 @@ fn build_sparse_mtmfs_scale_search_positions(
                 convolved > 0.1
             })
             .collect::<Vec<_>>();
-        positions.sort_unstable();
+        // casacore arrays keep x contiguous, so findMaxAbsMask traverses x
+        // inside y. Preserve that order for deterministic equal-score ties.
+        positions.sort_unstable_by_key(|&(x, y)| (y, x));
         if positions.len().saturating_mul(8) > image_pixels {
             return None;
         }
@@ -44592,10 +47162,25 @@ fn build_sparse_mtmfs_scale_search_positions(
     Some(scale_positions)
 }
 
+#[cfg(test)]
 fn build_mtmfs_scale_masks(
     mask: &Array2<bool>,
     compact_kernels: &[Array2<f32>],
     scale_sizes: &[f32],
+) -> Vec<Array2<bool>> {
+    build_mtmfs_scale_masks_with_backend(
+        mask,
+        compact_kernels,
+        scale_sizes,
+        MtmfsScaleFftBackend::RustFft,
+    )
+}
+
+fn build_mtmfs_scale_masks_with_backend(
+    mask: &Array2<bool>,
+    compact_kernels: &[Array2<f32>],
+    scale_sizes: &[f32],
+    fft_backend: MtmfsScaleFftBackend,
 ) -> Vec<Array2<bool>> {
     let mask_values = mask.mapv(|cleanable| if cleanable { 1.0 } else { 0.0 });
     compact_kernels
@@ -44603,7 +47188,13 @@ fn build_mtmfs_scale_masks(
         .zip(scale_sizes.iter().copied())
         .enumerate()
         .map(|(scale_index, (compact_kernel, scale_size))| {
-            let convolved = fft_convolve_real_compact(&mask_values, compact_kernel);
+            let convolved = convolve_mtmfs_terms_for_scale(
+                std::slice::from_ref(&mask_values),
+                compact_kernel,
+                fft_backend,
+            )
+            .pop()
+            .expect("one MT-MFS scale-mask input should produce one output");
             // MultiTermMatrixCleaner::setupUserMask uses a fixed 0.1
             // threshold here (independent of MatrixCleaner's 0.9 default).
             let mut scale_mask = convolved.mapv(|value| value > 0.1);
@@ -44611,6 +47202,29 @@ fn build_mtmfs_scale_masks(
                 apply_casa_multiscale_edge_mask(&mut scale_mask, scale_size);
             }
             scale_mask
+        })
+        .collect()
+}
+
+fn mtmfs_scale_search_positions_from_masks(
+    masks: &[Array2<bool>],
+    image_pixels: usize,
+) -> Vec<Option<Vec<(usize, usize)>>> {
+    masks
+        .iter()
+        .map(|mask| {
+            let (nx, ny) = mask.dim();
+            let mut positions = Vec::new();
+            // casacore stores x contiguously and findMaxAbsMask traverses x
+            // inside y. Keep this order independent of ndarray layout.
+            for y in 0..ny {
+                for x in 0..nx {
+                    if mask[(x, y)] {
+                        positions.push((x, y));
+                    }
+                }
+            }
+            (positions.len().saturating_mul(8) <= image_pixels).then_some(positions)
         })
         .collect()
 }
@@ -44674,8 +47288,9 @@ fn find_mtmfs_multiscale_component(
                     }
                 } else {
                     let search_mask = basis.scale_masks.as_ref().map(|masks| &masks[scale_index]);
-                    for x in 0..nx {
-                        for y in 0..ny {
+                    // CASA's first logical (x) axis is contiguous.
+                    for y in 0..ny {
+                        for x in 0..nx {
                             if search_mask.is_none_or(|mask| mask[(x, y)]) {
                                 consider_position((x, y));
                             }
@@ -52329,6 +54944,71 @@ mod tests {
         trace_cube_channel_residual_refresh_model_channel_lambda, trace_residual_refresh,
         trace_w_project_plan, trace_weighting,
     };
+
+    fn compact_replay_test_block(
+        samples: usize,
+        cached_cursor_end: usize,
+    ) -> super::AwProjectCompactReplayBlock {
+        super::AwProjectCompactReplayBlock {
+            shape: super::AwProjectCompactReplayBlockShape {
+                samples,
+                groups: 1,
+                first_frequency_bits: None,
+                last_frequency_bits: None,
+                first_u_bits: None,
+                last_u_bits: None,
+                first_v_bits: None,
+                last_v_bits: None,
+                first_w_bits: None,
+                last_w_bits: None,
+            },
+            cached_cursor_end,
+            classification_stats: super::AwProjectSampleStats::default(),
+            classification_skipped_samples: 0,
+            windows: Vec::new(),
+            resident_bytes: 0,
+        }
+    }
+
+    #[test]
+    fn compact_replay_cache_accounts_compiled_bytes_and_prefix_completeness() {
+        let mut cache = super::AwProjectCompactReplayCache::new(usize::MAX);
+        assert!(
+            cache
+                .store(0, compact_replay_test_block(8, 8))
+                .expect("store full block")
+        );
+        let first_bytes = cache.block(0).expect("resident full block").resident_bytes;
+        assert!(first_bytes > 0);
+        assert_eq!(cache.compiled_total_bytes, first_bytes);
+        assert!(cache.compiled_total_bytes_complete);
+
+        assert!(
+            cache
+                .store(1, compact_replay_test_block(8, 4))
+                .expect("store retained prefix")
+        );
+        let second_bytes = cache
+            .block(1)
+            .expect("resident partial block")
+            .resident_bytes;
+        assert_eq!(
+            cache.compiled_total_bytes,
+            first_bytes.saturating_add(second_bytes)
+        );
+        assert!(
+            !cache.compiled_total_bytes_complete,
+            "a retained prefix cannot attest the complete replay working set"
+        );
+    }
+
+    #[test]
+    fn compact_replay_cache_marks_unmeasured_budget_rejection_incomplete() {
+        let mut cache = super::AwProjectCompactReplayCache::new(0);
+        cache.mark_exceeds_budget(0);
+        assert_eq!(cache.compiled_total_bytes, 0);
+        assert!(!cache.compiled_total_bytes_complete);
+    }
     #[cfg(all(target_os = "macos", not(coverage)))]
     use super::{
         FftUseCase, StandardMfsDirtyAccumulation, StandardMfsDirtyGridStorage,
@@ -52561,10 +55241,20 @@ mod tests {
         );
 
         assert!(plan.casacore_layout);
-        if crate::fftw_local::configured_f32() {
+        if let Some(resolution_source) = crate::fftw_local::resolution_source_f32() {
             assert_eq!(plan.backend, FftBackendChoice::Fftw);
             assert_eq!(plan.threads, 3);
-            assert_eq!(plan.source, "casa-parity-auto");
+            assert_eq!(
+                plan.source,
+                match resolution_source {
+                    crate::fftw_local::FftwResolutionSource::ExplicitDirectory => {
+                        "explicit-pinned-fftw"
+                    }
+                    crate::fftw_local::FftwResolutionSource::ConventionalDirectory => {
+                        "conventional-fftw-auto"
+                    }
+                },
+            );
         } else {
             assert_eq!(plan.backend, FftBackendChoice::RustFft);
             assert_eq!(plan.threads, 1);
@@ -52635,6 +55325,39 @@ mod tests {
         )
         .unwrap();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn awproject_model_preparation_preserves_casa_lel_float_denominator_boundary() {
+        let model_value = f32::from_bits(0x3fcb_5f9b);
+        let weight_value = f32::from_bits(0x3f45_8f9d);
+        let weight_peak = f32::from_bits(0x3f9e_064b);
+        let model = Array2::from_shape_vec((1, 2), vec![model_value, 0.0]).unwrap();
+        let weight = Array2::from_shape_vec((1, 2), vec![weight_value, weight_peak]).unwrap();
+
+        let prepared =
+            super::flat_sky_mosaic_model_for_prediction(&model, &weight, 0.0001).unwrap();
+
+        assert_eq!(prepared[(0, 0)].to_bits(), 0x4000_9d65);
+        let retained_double_denominator =
+            f64::from(weight_value.abs().sqrt()) / f64::from(weight_peak.sqrt());
+        assert_eq!(
+            ((f64::from(model_value) / retained_double_denominator) as f32).to_bits(),
+            0x4000_9d64
+        );
+        let rounded_denominator = weight_value.abs().sqrt() / weight_peak.sqrt();
+        assert_eq!((model_value / rounded_denominator).to_bits(), 0x4000_9d65);
+    }
+
+    #[test]
+    fn awproject_model_preparation_preserves_casa_masked_signed_zero() {
+        let model = Array2::from_shape_vec((1, 2), vec![-1.0, 0.0]).unwrap();
+        let weight = Array2::from_shape_vec((1, 2), vec![0.0, 1.0]).unwrap();
+
+        let prepared =
+            super::flat_sky_mosaic_model_for_prediction(&model, &weight, 0.0001).unwrap();
+
+        assert_eq!(prepared[(0, 0)].to_bits(), (-0.0_f32).to_bits());
     }
 
     #[test]
@@ -52886,6 +55609,24 @@ mod tests {
             psf_grids: vec![Array2::zeros((5, 5))],
             residual_grids: vec![Array2::zeros((5, 5))],
             weight_grids: vec![Array2::zeros((5, 5))],
+        }
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn awproject_gpu_residual_replay_requires_metal_grid_storage() {
+        assert!(super::awproject_gpu_residual_replay_is_admitted(
+            true, true, true, true,
+        ));
+        for inputs in [
+            (false, true, true, true),
+            (true, false, true, true),
+            (true, true, false, true),
+            (true, true, true, false),
+        ] {
+            assert!(!super::awproject_gpu_residual_replay_is_admitted(
+                inputs.0, inputs.1, inputs.2, inputs.3,
+            ));
         }
     }
 
@@ -55074,6 +57815,15 @@ mod tests {
             segmented_compensation.as_ref().unwrap(),
         )
         .unwrap();
+        for (plane_index, expected) in segmented_planes.iter().enumerate() {
+            let sequential = super::copy_awproject_metal_centered_f64_plane(
+                &segmented_grid,
+                segmented_compensation.as_ref().unwrap(),
+                plane_index,
+            )
+            .unwrap();
+            assert_eq!(&sequential, expected);
+        }
 
         let mut full_grid = crate::apple_fft::MetalSharedF32DirtyGridBatch::new(8, 8, 8).unwrap();
         let mut full_compensation = None;
@@ -61182,6 +63932,994 @@ mod tests {
     }
 
     #[test]
+    fn mtmfs_scale_bits_match_casa_67518_oracle() {
+        fn hash_word(hash: &mut u64, word: u32) {
+            const FNV_PRIME: u64 = 1_099_511_628_211;
+            for shift in [0, 8, 16, 24] {
+                *hash ^= u64::from(((word >> shift) & 0xff) as u8);
+                *hash = hash.wrapping_mul(FNV_PRIME);
+            }
+        }
+
+        // These receipts come from the installed CASA 6.7.5.18
+        // MatrixCleaner::makeScale implementation, invoked directly by
+        // tools/perf/imager/experiments/casa_mtmfs_arithmetic_oracle.cc.
+        for (scale_size, expected_nonzero, expected_sum, expected_center, expected_support_hash) in [
+            (5.0, 69, 0x3f80_0004, 0x3d8d_eb8a, 0xae2b_09e6_7aa1_603c),
+            (12.0, 437, 0x3f7f_fff1, 0x3c45_1bdf, 0x4681_401d_54d1_59e6),
+        ] {
+            let kernel = super::make_compact_multiscale_kernel(scale_size);
+            let radius = scale_size as usize;
+            let image_origin = 4096 / 2 - radius;
+            let mut support_hash = 14_695_981_039_346_656_037_u64;
+            let mut nonzero = 0_usize;
+            let mut sum = 0.0_f32;
+            for y in 0..kernel.dim().1 {
+                for x in 0..kernel.dim().0 {
+                    let value = kernel[(x, y)];
+                    let bits = value.to_bits();
+                    sum += value;
+                    if bits != 0 {
+                        nonzero += 1;
+                        hash_word(&mut support_hash, (image_origin + x) as u32);
+                        hash_word(&mut support_hash, (image_origin + y) as u32);
+                        hash_word(&mut support_hash, bits);
+                    }
+                }
+            }
+
+            assert_eq!(nonzero, expected_nonzero, "scale {scale_size}");
+            assert_eq!(sum.to_bits(), expected_sum, "scale {scale_size}");
+            assert_eq!(
+                kernel[(radius, radius)].to_bits(),
+                expected_center,
+                "scale {scale_size}"
+            );
+            assert_eq!(support_hash, expected_support_hash, "scale {scale_size}");
+        }
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn awproject_datatogrid_bracket_hashes_casa_axis0_fast_grid_and_sumwt() {
+        fn reference_fnv(words: impl IntoIterator<Item = Vec<u8>>) -> u64 {
+            let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+            for word in words {
+                for byte in word {
+                    hash ^= u64::from(byte);
+                    hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+                }
+            }
+            hash
+        }
+
+        let grid = Array2::from_shape_vec(
+            (2, 2),
+            vec![
+                Complex64::new(1.0, 2.0),
+                Complex64::new(5.0, 6.0),
+                Complex64::new(3.0, 4.0),
+                Complex64::new(7.0, 8.0),
+            ],
+        )
+        .unwrap();
+        let casa_axis0_fast = [grid[(0, 0)], grid[(1, 0)], grid[(0, 1)], grid[(1, 1)]];
+        let mut grid_words = [2_u64, 2, 1, 1]
+            .into_iter()
+            .map(|value| value.to_le_bytes().to_vec())
+            .collect::<Vec<_>>();
+        for value in casa_axis0_fast {
+            grid_words.push(value.re.to_bits().to_le_bytes().to_vec());
+            grid_words.push(value.im.to_bits().to_le_bytes().to_vec());
+        }
+        assert_eq!(
+            super::hash_awproject_datatogrid_grid_casa_order(&grid),
+            reference_fnv(grid_words)
+        );
+
+        let sumwt = -3.25_f64;
+        let sumwt_words = [
+            1_u64.to_le_bytes().to_vec(),
+            1_u64.to_le_bytes().to_vec(),
+            sumwt.to_bits().to_le_bytes().to_vec(),
+        ];
+        assert_eq!(
+            super::hash_awproject_datatogrid_sumwt_casa_order(sumwt),
+            reference_fnv(sumwt_words)
+        );
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    #[serial_test::serial]
+    fn awproject_datatogrid_bracket_parses_exact_first_vb_selection_marker() {
+        let marker = "field=1525;spws=2-17;first_spw=2;first_rows=325;\
+                      source_blocks=32;row_ids_hash=15058004568616189240;\
+                      row_flags_hash=3526571572021233857;flagged_rows=48";
+        unsafe {
+            std::env::set_var(super::AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV, marker);
+        }
+        let selection = super::awproject_datatogrid_bracket_selection();
+        unsafe {
+            std::env::remove_var(super::AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV);
+        }
+        let selection = selection.expect("parse frozen first-VB selection marker");
+        assert_eq!(selection.field_id, 1525);
+        assert_eq!(selection.requested_spws, "2-17");
+        assert_eq!(selection.first_batch_spw, 2);
+        assert_eq!(selection.first_batch_rows, 325);
+        assert_eq!(selection.planned_source_blocks, 32);
+        assert_eq!(selection.first_row_ids_hash, 15_058_004_568_616_189_240);
+        assert_eq!(selection.first_row_flags_hash, 3_526_571_572_021_233_857);
+        assert_eq!(selection.first_flagged_rows, 48);
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    #[ignore = "requires the frozen casa-rs one-block AW DataToGrid bracket receipt"]
+    fn vlass_aw_datatogrid_bracket_stops_before_fft_with_content_addressed_hashes() {
+        use sha2::{Digest, Sha256};
+
+        let path = std::path::PathBuf::from(
+            std::env::var_os("CASA_RS_VLASS_AW_DATATOGRID_BRACKET_RECEIPT")
+                .expect("set CASA_RS_VLASS_AW_DATATOGRID_BRACKET_RECEIPT"),
+        );
+        let payload = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        let value: serde_json::Value = serde_json::from_str(&payload)
+            .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()));
+        let casa_path = std::path::PathBuf::from(
+            std::env::var_os("CASA_VLASS_AW_DATATOGRID_BRACKET_RECEIPT")
+                .expect("set CASA_VLASS_AW_DATATOGRID_BRACKET_RECEIPT"),
+        );
+        let casa_payload = std::fs::read_to_string(&casa_path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", casa_path.display()));
+        let casa: serde_json::Value = serde_json::from_str(&casa_payload)
+            .unwrap_or_else(|error| panic!("parse {}: {error}", casa_path.display()));
+        assert_eq!(value["schema"], "casa-rs-aw-datagrid-bracket-envelope-v1");
+        let evidence = &value["evidence"];
+        assert_eq!(evidence["schema"], "casa-rs-aw-datagrid-bracket-v1");
+        assert_eq!(evidence["status"], "completed-before-finalize");
+        assert_eq!(evidence["formed_image"], false);
+        assert_eq!(evidence["normalization"], "not-entered");
+        assert_eq!(evidence["fft"], "not-entered");
+        assert_eq!(evidence["products"], "not-entered");
+        assert_eq!(evidence["expected_grid_nxy"], 4096);
+        assert_eq!(evidence["completed_calls"], 2);
+        assert_eq!(evidence["completed_blocks"], 1);
+        assert_eq!(evidence["selection"]["field_id"], 1525);
+        assert_eq!(evidence["selection"]["requested_spws"], "2-17");
+        assert_eq!(evidence["selection"]["first_batch_rows"], 325);
+        assert_eq!(
+            evidence["selection"]["first_row_ids_hash"],
+            15_058_004_568_616_189_240_u64
+        );
+        assert_eq!(
+            evidence["selection"]["first_row_flags_hash"],
+            3_526_571_572_021_233_857_u64
+        );
+        assert_eq!(evidence["selection"]["first_flagged_rows"], 48);
+        assert!(
+            evidence["selection"]["planned_source_blocks"]
+                .as_u64()
+                .is_some_and(|blocks| blocks > 0)
+        );
+        assert_eq!(evidence["calls"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            evidence["block_boundaries"][0]["terms"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            evidence["direct_raw_input_hash"],
+            evidence["compact_input_hash"]
+        );
+        for (term, call) in evidence["calls"].as_array().unwrap().iter().enumerate() {
+            assert_eq!(call["call"], term);
+            assert_eq!(call["block"], 0);
+            assert_eq!(call["term"], term);
+            assert_eq!(call["source_count"], 12_359);
+            assert!(call["stream_hash"].is_null());
+            assert!(call["geometry_hash"].is_null());
+            assert!(call["input_hash"].is_null());
+            assert!(call["portable_geometry_hash"].as_u64().is_some());
+            assert!(call["portable_input_hash"].as_u64().is_some());
+        }
+        assert_eq!(casa["schema"], "casa-aw-datagrid-bracket-v1");
+        assert_eq!(casa["status"], "completed-before-finalize");
+        assert_eq!(casa["formed_image"], false);
+        assert_eq!(casa["normalization"], "not-entered");
+        assert_eq!(casa["fft"], "not-entered");
+        assert_eq!(casa["completed_calls"], evidence["completed_calls"]);
+        assert_eq!(casa["completed_blocks"], evidence["completed_blocks"]);
+        for field in [
+            "begin_row",
+            "end_row",
+            "n_row",
+            "spw_id",
+            "row_ids_count",
+            "row_ids_hash",
+            "row_id_first",
+            "row_id_last",
+            "n_data_chan",
+            "n_data_pol",
+            "chan_map_count",
+            "chan_map_hash",
+            "pol_map_count",
+            "pol_map_hash",
+            "freq_count",
+            "freq_hash",
+            "freq_first_bits",
+            "freq_last_bits",
+            "row_flags_count",
+            "row_flags_hash",
+            "flagged_rows",
+        ] {
+            assert_eq!(
+                casa["native_first_vb"][field], evidence["native_first_vb_reference"][field],
+                "frozen first-VB field {field}"
+            );
+        }
+        let casa_calls = casa["calls"].as_array().expect("CASA call array");
+        let rust_calls = evidence["calls"].as_array().expect("casa-rs call array");
+        for (casa_call, rust_call) in casa_calls.iter().zip(rust_calls) {
+            for field in ["call", "block", "term", "source_count"] {
+                assert_eq!(
+                    casa_call[field], rust_call[field],
+                    "cross-producer call field {field}"
+                );
+            }
+        }
+        assert_eq!(
+            casa_calls[0]["stream_hash"], casa_calls[1]["stream_hash"],
+            "CASA TT0 and TT1 must have the same native source stream"
+        );
+        let casa_terms = casa["block_boundaries"][0]["terms"]
+            .as_array()
+            .expect("CASA term boundary array");
+        let rust_terms = evidence["block_boundaries"][0]["terms"]
+            .as_array()
+            .expect("casa-rs term boundary array");
+        for (casa_term, rust_term) in casa_terms.iter().zip(rust_terms) {
+            for field in [
+                "term",
+                "grid_hash",
+                "sumwt_hash",
+                "grid_values_hashed",
+                "sumwt_values_hashed",
+            ] {
+                assert_eq!(
+                    casa_term[field], rust_term[field],
+                    "cross-producer term field {field}"
+                );
+            }
+        }
+
+        let evidence_marker = "\"evidence\":";
+        let evidence_start = payload
+            .find(evidence_marker)
+            .expect("embedded evidence marker")
+            + evidence_marker.len();
+        let evidence_end = payload.rfind("\n}").expect("outer envelope close");
+        let embedded_evidence = &payload[evidence_start..evidence_end];
+        let observed_digest = format!("{:x}", Sha256::digest(embedded_evidence.as_bytes()));
+        assert_eq!(
+            value["content_address"]["scope"],
+            "embedded-evidence-json-utf8"
+        );
+        assert_eq!(
+            value["content_address"]["digest"].as_str(),
+            Some(observed_digest.as_str())
+        );
+    }
+
+    #[test]
+    #[ignore = "requires the frozen VLASS initial-dirty residual-prefix TSV receipt"]
+    fn vlass_aw_residual_prefix_matches_raw_inputs_and_casa_complex_order() {
+        fn fields(line: &str) -> std::collections::BTreeMap<&str, &str> {
+            line.split('\t')
+                .skip(1)
+                .map(|field| {
+                    field
+                        .split_once('=')
+                        .unwrap_or_else(|| panic!("malformed receipt field {field:?}"))
+                })
+                .collect()
+        }
+
+        let path = std::path::PathBuf::from(
+            std::env::var_os("CASA_RS_VLASS_AW_RESIDUAL_PREFIX_RECEIPT")
+                .expect("set CASA_RS_VLASS_AW_RESIDUAL_PREFIX_RECEIPT"),
+        );
+        let receipt = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        let mut lines = receipt.lines();
+        let input = fields(lines.next().expect("input metadata"));
+        assert_eq!(input["version"], "2");
+        assert_eq!(input["block"], "0");
+        assert_eq!(input["source_count"], "25031");
+        assert_eq!(input["role_count"], "50062");
+        assert_eq!(input["tap_count"], "14998926");
+        assert_eq!(input["raw_hash"], "13953044337494127029");
+        assert_eq!(input["compact_hash"], input["raw_hash"]);
+        assert_eq!(input["exact_match"], "true");
+        assert_eq!(input["row_provenance"], "unavailable-in-VisibilityBatch");
+        assert_eq!(
+            input["channel_provenance"],
+            "unavailable-in-VisibilityBatch"
+        );
+
+        let metadata = fields(lines.next().expect("prefix metadata"));
+        assert_eq!(metadata["role"], "residual_tt0");
+        assert_eq!(metadata["fixed_scale_bits"], "1468006400");
+        assert_eq!(metadata["contribution_count"], "52");
+        assert_eq!(metadata["selected_grid_cell_x"], "1811");
+        assert_eq!(metadata["selected_grid_cell_y"], "1683");
+        assert_eq!(
+            metadata["image_to_grid_mapping"],
+            "global-fft-no-unique-cell"
+        );
+
+        let contributions = lines
+            .map(fields)
+            .collect::<Vec<std::collections::BTreeMap<&str, &str>>>();
+        assert_eq!(contributions.len(), 52);
+        for contribution in &contributions {
+            assert_eq!(
+                contribution["casa_product_re_bits"],
+                contribution["host_product_re_bits"]
+            );
+            assert_eq!(
+                contribution["casa_product_im_bits"],
+                contribution["host_product_im_bits"]
+            );
+            assert_eq!(
+                contribution["casa_acc_re_bits"],
+                contribution["host_acc_re_bits"]
+            );
+            assert_eq!(
+                contribution["casa_acc_im_bits"],
+                contribution["host_acc_im_bits"]
+            );
+        }
+        let first_metal_divergence = contributions
+            .iter()
+            .position(|contribution| {
+                contribution["casa_acc_re_bits"] != contribution["metal_acc_re_bits"]
+                    || contribution["casa_acc_im_bits"] != contribution["metal_acc_im_bits"]
+            })
+            .expect("fixed64 scale-round-readback must differ in this selected prefix");
+        assert_eq!(first_metal_divergence, 0);
+
+        let final_prefix = contributions.last().expect("final prefix");
+        assert_eq!(final_prefix["prefix"], "51");
+        assert_eq!(final_prefix["casa_acc_re_bits"], "4602588048433900388");
+        assert_eq!(final_prefix["casa_acc_im_bits"], "13825895198044714836");
+        assert_eq!(
+            final_prefix["host_acc_re_bits"],
+            final_prefix["casa_acc_re_bits"]
+        );
+        assert_eq!(
+            final_prefix["host_acc_im_bits"],
+            final_prefix["casa_acc_im_bits"]
+        );
+        assert_eq!(final_prefix["metal_acc_re_bits"], "4602588048433900288");
+        assert_eq!(final_prefix["metal_acc_im_bits"], "13825895198044714944");
+    }
+
+    #[test]
+    #[ignore = "requires the frozen VLASS all-block AW input-audit TSV receipt"]
+    fn vlass_aw_all_block_inputs_match_direct_raw_projector() {
+        fn fields(line: &str) -> std::collections::BTreeMap<&str, &str> {
+            line.split('\t')
+                .skip(1)
+                .map(|field| {
+                    field
+                        .split_once('=')
+                        .unwrap_or_else(|| panic!("malformed receipt field {field:?}"))
+                })
+                .collect()
+        }
+
+        let path = std::path::PathBuf::from(
+            std::env::var_os("CASA_RS_VLASS_AW_INPUT_AUDIT_RECEIPT")
+                .expect("set CASA_RS_VLASS_AW_INPUT_AUDIT_RECEIPT"),
+        );
+        let receipt = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        let lines = receipt.lines().collect::<Vec<_>>();
+        let metadata = fields(lines[0]);
+        assert_eq!(metadata["version"], "1");
+        assert_eq!(metadata["expected_blocks"], "16");
+        assert_eq!(metadata["formed_image"], "false");
+        assert_eq!(metadata["ran_casa_tclean"], "false");
+        assert_eq!(metadata["grid_dispatch"], "skipped");
+        assert_eq!(metadata["row_provenance"], "unavailable-in-VisibilityBatch");
+        assert_eq!(
+            metadata["channel_provenance"],
+            "unavailable-in-VisibilityBatch"
+        );
+        assert!(!lines.iter().any(|line| line.starts_with("mismatch\t")));
+
+        let windows = lines
+            .iter()
+            .filter(|line| line.starts_with("window\t"))
+            .map(|line| fields(line))
+            .collect::<Vec<_>>();
+        let blocks = lines
+            .iter()
+            .filter(|line| line.starts_with("block\t"))
+            .map(|line| fields(line))
+            .collect::<Vec<_>>();
+        assert_eq!(windows.len(), 20);
+        assert_eq!(blocks.len(), 16);
+        for row in windows.iter().chain(&blocks) {
+            assert_eq!(row["raw_hash"], row["compact_hash"]);
+            assert_eq!(row["exact_match"], "true");
+        }
+
+        assert_eq!(
+            blocks
+                .iter()
+                .map(|row| row["window_count"].parse::<usize>().unwrap())
+                .collect::<Vec<_>>(),
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2]
+        );
+        assert_eq!(
+            blocks
+                .iter()
+                .map(|row| row["raw_hash"].parse::<u64>().unwrap())
+                .collect::<Vec<_>>(),
+            [
+                9_097_106_265_699_941_883,
+                15_906_511_807_505_342_435,
+                640_687_761_952_359_294,
+                16_544_499_613_444_298_939,
+                8_037_762_146_853_727_204,
+                2_696_296_964_333_757_458,
+                9_777_442_011_687_819_981,
+                14_184_921_276_407_444_850,
+                10_457_666_883_494_682_059,
+                390_144_161_369_008_844,
+                137_514_403_840_981_671,
+                1_785_139_699_569_129_096,
+                4_462_548_453_902_160_242,
+                14_438_987_650_126_062_275,
+                9_955_307_572_635_415_155,
+                13_193_520_216_256_117_128,
+            ]
+        );
+        assert_eq!(
+            blocks
+                .iter()
+                .map(|row| row["source_count"].parse::<usize>().unwrap())
+                .sum::<usize>(),
+            385_862
+        );
+        assert_eq!(
+            blocks
+                .iter()
+                .map(|row| row["role_count"].parse::<usize>().unwrap())
+                .sum::<usize>(),
+            771_724
+        );
+        assert_eq!(
+            blocks
+                .iter()
+                .map(|row| row["tap_count"].parse::<usize>().unwrap())
+                .sum::<usize>(),
+            470_070_348
+        );
+    }
+
+    #[test]
+    #[ignore = "requires the frozen 4096 full-16-SPW CASA product directory"]
+    fn vlass_casa_fft0_hessian_matches_frozen_casa_67518_oracle() {
+        fn read_plane(path: &std::path::Path) -> Array2<f32> {
+            let image = casa_images::PagedImage::<f32>::open(path)
+                .unwrap_or_else(|error| panic!("open {}: {error}", path.display()));
+            let shape = image.shape();
+            assert!(
+                shape.len() == 2 || shape == [shape[0], shape[1], 1, 1],
+                "unexpected oracle image shape {shape:?}"
+            );
+            let pixels = image
+                .get()
+                .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+            Array2::from_shape_fn((shape[0], shape[1]), |(x, y)| {
+                if shape.len() == 2 {
+                    pixels[ndarray::IxDyn(&[x, y])]
+                } else {
+                    pixels[ndarray::IxDyn(&[x, y, 0, 0])]
+                }
+            })
+        }
+
+        let products = std::path::PathBuf::from(
+            std::env::var_os("CASA_RS_VLASS_MTMFS_ORACLE_PRODUCTS")
+                .expect("set CASA_RS_VLASS_MTMFS_ORACLE_PRODUCTS"),
+        );
+        let psf_terms = (0..3)
+            .map(|term| read_plane(&products.join(format!("casa.psf.tt{term}"))))
+            .collect::<Vec<_>>();
+        let scale_sizes = vec![0.0, 5.0, 12.0];
+        let compact_scale_kernels = scale_sizes
+            .iter()
+            .map(|scale| super::make_compact_multiscale_kernel(*scale))
+            .collect::<Vec<_>>();
+        let peak = super::casa_mtmfs_psf_peak_position(&psf_terms[0], 12.0);
+        let support = super::casa_mtmfs_psf_patch_support(psf_terms[0].dim(), 12.0);
+        let basis = super::MtmfsMultiscaleBasis {
+            scale_sizes: scale_sizes.clone(),
+            compact_scale_kernels: compact_scale_kernels.clone(),
+            scale_bias: vec![1.0; 3],
+            scale_masks: None,
+            scale_search_positions: vec![None; 3],
+            psf_pair_patches: super::mtmfs_psf_pair_patches_casa_fft0(
+                &psf_terms,
+                &compact_scale_kernels,
+                peak,
+                support,
+                10,
+            ),
+            sparse_rhs: false,
+            sparse_rhs_fft_seed: false,
+            scale_fft_backend: super::MtmfsScaleFftBackend::CasaFft0F32 { threads: 10 },
+        };
+        let hessians =
+            super::mtmfs_scale_hessians_from_basis(&basis, 2).expect("exact FFT0 Hessians");
+        let expected = [
+            [[0x3f7f_ffff, 0x3d27_966e], [0x3d27_966e, 0x3d0f_b1b6]],
+            [[0x3ee2_418e, 0xba0e_a3ac], [0xba0e_a3ac, 0x3c78_bfe6]],
+            [[0x3e19_9816, 0xbb58_e85e], [0xbb58_e85e, 0x3ba9_073c]],
+        ];
+        for (scale_index, (hessian, expected)) in hessians.iter().zip(expected).enumerate() {
+            let actual = [
+                [
+                    hessian.hessian[0][0].to_bits(),
+                    hessian.hessian[0][1].to_bits(),
+                ],
+                [
+                    hessian.hessian[1][0].to_bits(),
+                    hessian.hessian[1][1].to_bits(),
+                ],
+            ];
+            assert_eq!(
+                actual, expected,
+                "CASA 6.7.5.18 Hessian bits for scale {}",
+                scale_sizes[scale_index]
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the frozen 4096 full-16-SPW CASA product directory"]
+    fn vlass_casa_fft0_first_component_matches_frozen_casa_67518_oracle() {
+        fn read_plane(path: &std::path::Path) -> Array2<f32> {
+            let image = casa_images::PagedImage::<f32>::open(path)
+                .unwrap_or_else(|error| panic!("open {}: {error}", path.display()));
+            let shape = image.shape();
+            assert!(
+                shape.len() == 2 || shape == [shape[0], shape[1], 1, 1],
+                "unexpected oracle image shape {shape:?}"
+            );
+            let pixels = image
+                .get()
+                .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+            Array2::from_shape_fn((shape[0], shape[1]), |(x, y)| {
+                if shape.len() == 2 {
+                    pixels[ndarray::IxDyn(&[x, y])]
+                } else {
+                    pixels[ndarray::IxDyn(&[x, y, 0, 0])]
+                }
+            })
+        }
+
+        assert!(
+            super::fftw_local::configured_f32(),
+            "the frozen CASA FFT0 oracle requires a configured f32 FFTW library"
+        );
+        let products = std::path::PathBuf::from(
+            std::env::var_os("CASA_RS_VLASS_MTMFS_ORACLE_PRODUCTS")
+                .expect("set CASA_RS_VLASS_MTMFS_ORACLE_PRODUCTS"),
+        );
+        let psf_terms = (0..3)
+            .map(|term| read_plane(&products.join(format!("casa.psf.tt{term}"))))
+            .collect::<Vec<_>>();
+        let residual_terms = (0..2)
+            .map(|term| read_plane(&products.join(format!("casa.residual.tt{term}"))))
+            .collect::<Vec<_>>();
+        let clean_mask = read_plane(&products.join("casa.mask")).mapv(|value| value > 0.0);
+        let scale_sizes = vec![0.0, 5.0, 12.0];
+        let compact_scale_kernels = scale_sizes
+            .iter()
+            .map(|scale| super::make_compact_multiscale_kernel(*scale))
+            .collect::<Vec<_>>();
+        let fft_backend = super::MtmfsScaleFftBackend::CasaFft0F32 { threads: 10 };
+        let scale_masks = super::build_mtmfs_scale_masks_with_backend(
+            &clean_mask,
+            &compact_scale_kernels,
+            &scale_sizes,
+            fft_backend,
+        );
+        let scale_search_positions =
+            super::mtmfs_scale_search_positions_from_masks(&scale_masks, clean_mask.len());
+        let peak = super::casa_mtmfs_psf_peak_position(&psf_terms[0], 12.0);
+        let support = super::casa_mtmfs_psf_patch_support(psf_terms[0].dim(), 12.0);
+        let basis = super::MtmfsMultiscaleBasis {
+            scale_sizes: scale_sizes.clone(),
+            compact_scale_kernels: compact_scale_kernels.clone(),
+            // This is the exact 0.6 small-scale bias used by the bounded
+            // installed-CASA oracle, not the VLASS production setting.
+            scale_bias: vec![1.0, 0.75, 0.4],
+            scale_masks: Some(scale_masks),
+            scale_search_positions,
+            psf_pair_patches: super::mtmfs_psf_pair_patches_casa_fft0(
+                &psf_terms,
+                &compact_scale_kernels,
+                peak,
+                support,
+                10,
+            ),
+            sparse_rhs: false,
+            sparse_rhs_fft_seed: false,
+            scale_fft_backend: fft_backend,
+        };
+        let hessians =
+            super::mtmfs_scale_hessians_from_basis(&basis, 2).expect("exact FFT0 Hessians");
+        let rhs = basis.convolve_residual_terms(&residual_terms);
+        let candidate = super::find_mtmfs_multiscale_component(&rhs, &basis, &hessians, None)
+            .expect("one frozen-product component");
+
+        assert_eq!(candidate.scale_index, 0);
+        assert_eq!(candidate.position, (617, 2161));
+        assert_eq!(
+            candidate
+                .rhs_values
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>(),
+            [0xbafa_30ee, 0xba02_199a]
+        );
+        assert_eq!(
+            candidate
+                .coefficients
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>(),
+            [0xbab7_0f59, 0xbc4d_1800]
+        );
+        assert_eq!(candidate.signed_score.to_bits(), 0x3714_f4b1);
+        assert_eq!(candidate.biased_signed_score.to_bits(), 0x3714_f4b1);
+        assert_eq!(
+            hessians[0]
+                .inverse
+                .iter()
+                .map(|row| row.iter().map(|value| value.to_bits()).collect::<Vec<_>>())
+                .collect::<Vec<_>>(),
+            [[0x3f86_69fd, 0xbf9c_c3ac], [0xbf9c_c3ac, 0x41ef_7780]]
+        );
+
+        let mut model_terms = vec![Array2::<f32>::zeros(clean_mask.dim()); 2];
+        for (term, model) in model_terms.iter_mut().enumerate() {
+            super::add_shifted_kernel_casa_mtmfs_model(
+                model,
+                &compact_scale_kernels[candidate.scale_index],
+                candidate.position,
+                0.1,
+                candidate.coefficients[term],
+            );
+        }
+        assert_eq!(model_terms[0][candidate.position].to_bits(), 0xb912_72ae);
+        assert_eq!(model_terms[1][candidate.position].to_bits(), 0xbaa4_1333);
+    }
+
+    #[test]
+    #[ignore = "requires the frozen full-16-SPW CASA and casa-rs prediction products"]
+    fn vlass_frozen_prediction_triplets_report_cycle_zero_rhs_bits() {
+        fn read_plane(path: &std::path::Path) -> Array2<f32> {
+            let image = casa_images::PagedImage::<f32>::open(path)
+                .unwrap_or_else(|error| panic!("open {}: {error}", path.display()));
+            let shape = image.shape();
+            assert!(
+                shape.len() == 2 || shape == [shape[0], shape[1], 1, 1],
+                "unexpected oracle image shape {shape:?}"
+            );
+            let pixels = image
+                .get()
+                .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+            Array2::from_shape_fn((shape[0], shape[1]), |(x, y)| {
+                if shape.len() == 2 {
+                    pixels[ndarray::IxDyn(&[x, y])]
+                } else {
+                    pixels[ndarray::IxDyn(&[x, y, 0, 0])]
+                }
+            })
+        }
+
+        fn reconstruct_dirty_terms(
+            term_zero: &std::path::Path,
+            term_one: &std::path::Path,
+            combined: &std::path::Path,
+            image_prefix: &str,
+        ) -> Vec<Array2<f32>> {
+            (0..2)
+                .map(|term| {
+                    let image_name = format!("{image_prefix}.residual.tt{term}");
+                    let mut reconstructed = read_plane(&term_zero.join(&image_name));
+                    let term_one = read_plane(&term_one.join(&image_name));
+                    let combined = read_plane(&combined.join(&image_name));
+                    assert_eq!(reconstructed.dim(), term_one.dim());
+                    assert_eq!(reconstructed.dim(), combined.dim());
+                    for ((output, term_one), combined) in reconstructed
+                        .iter_mut()
+                        .zip(term_one.iter())
+                        .zip(combined.iter())
+                    {
+                        // Residual(model0) + residual(model1)
+                        // - residual(model0 + model1) reconstructs the dirty
+                        // residual without executing a gridder.
+                        *output = (*output + *term_one) - *combined;
+                    }
+                    reconstructed
+                })
+                .collect()
+        }
+
+        fn rhs_at(
+            rhs: &super::MtmfsScaleRhs,
+            positions: Option<&[(usize, usize)]>,
+            position: (usize, usize),
+        ) -> Vec<f32> {
+            match rhs {
+                super::MtmfsScaleRhs::Dense(terms) => {
+                    terms.iter().map(|term| term[position]).collect()
+                }
+                super::MtmfsScaleRhs::Sparse(terms) => {
+                    let position_index = positions
+                        .expect("sparse RHS positions")
+                        .iter()
+                        .position(|candidate| *candidate == position)
+                        .expect("selected CASA position must exist in the Rust search set");
+                    terms.iter().map(|term| term[position_index]).collect()
+                }
+            }
+        }
+
+        fn bits(values: &[f32]) -> Vec<String> {
+            values
+                .iter()
+                .map(|value| format!("0x{:08x}", value.to_bits()))
+                .collect()
+        }
+
+        assert!(
+            super::fftw_local::configured_f32(),
+            "the frozen prediction diagnostic requires a configured f32 FFTW library"
+        );
+        let root = std::path::PathBuf::from(
+            std::env::var_os("CASA_RS_VLASS_FROZEN_PREDICTION_ROOT")
+                .expect("set CASA_RS_VLASS_FROZEN_PREDICTION_ROOT"),
+        );
+        let casa_combined =
+            root.join("artifacts/experiments/vlass-full16-frozen-v21-prediction-trace");
+        let casa_term_zero =
+            root.join("artifacts/experiments/vlass-full16-frozen-effective-term0-only-trace");
+        let casa_term_one =
+            root.join("artifacts/experiments/vlass-full16-frozen-effective-term1-only-trace");
+        let rust_combined = root.join(
+            "artifacts/products/vlass-clean4096-full16-frozen-casa-effective-model-prediction-trace-v25",
+        );
+        let rust_term_zero = root.join(
+            "artifacts/products/vlass-clean4096-full16-frozen-casa-effective-term0-only-prediction-trace-v33",
+        );
+        let rust_term_one = root.join(
+            "artifacts/products/vlass-clean4096-full16-frozen-casa-effective-term1-only-prediction-trace-v34",
+        );
+        let oracle_products = root.join("casa-reduced-clean/4096-full-16-spw");
+
+        let casa_dirty =
+            reconstruct_dirty_terms(&casa_term_zero, &casa_term_one, &casa_combined, "casa");
+        let rust_dirty =
+            reconstruct_dirty_terms(&rust_term_zero, &rust_term_one, &rust_combined, "rust");
+        assert_eq!(casa_dirty[0].dim(), (4096, 4096));
+        assert_eq!(rust_dirty[0].dim(), casa_dirty[0].dim());
+
+        let psf_terms = (0..3)
+            .map(|term| read_plane(&oracle_products.join(format!("casa.psf.tt{term}"))))
+            .collect::<Vec<_>>();
+        let clean_mask = read_plane(&oracle_products.join("casa.mask")).mapv(|value| value > 0.0);
+        let scale_sizes = vec![0.0, 5.0, 12.0];
+        let compact_scale_kernels = scale_sizes
+            .iter()
+            .map(|scale| super::make_compact_multiscale_kernel(*scale))
+            .collect::<Vec<_>>();
+        let fft_backend = super::MtmfsScaleFftBackend::CasaFft0F32 { threads: 10 };
+        let scale_masks = super::build_mtmfs_scale_masks_with_backend(
+            &clean_mask,
+            &compact_scale_kernels,
+            &scale_sizes,
+            fft_backend,
+        );
+        let scale_search_positions =
+            super::mtmfs_scale_search_positions_from_masks(&scale_masks, clean_mask.len());
+        assert_eq!(
+            scale_search_positions
+                .iter()
+                .map(|positions| positions.as_ref().map(Vec::len))
+                .collect::<Vec<_>>(),
+            [Some(4096), Some(4604), Some(5136)]
+        );
+        let peak = super::casa_mtmfs_psf_peak_position(&psf_terms[0], 12.0);
+        let support = super::casa_mtmfs_psf_patch_support(psf_terms[0].dim(), 12.0);
+        let basis = super::MtmfsMultiscaleBasis {
+            scale_sizes: scale_sizes.clone(),
+            compact_scale_kernels: compact_scale_kernels.clone(),
+            scale_bias: vec![1.0; 3],
+            scale_masks: None,
+            scale_search_positions,
+            psf_pair_patches: super::mtmfs_psf_pair_patches_casa_fft0(
+                &psf_terms,
+                &compact_scale_kernels,
+                peak,
+                support,
+                10,
+            ),
+            sparse_rhs: true,
+            sparse_rhs_fft_seed: true,
+            scale_fft_backend: fft_backend,
+        };
+        let hessians =
+            super::mtmfs_scale_hessians_from_basis(&basis, 2).expect("exact FFT0 Hessians");
+        let mut casa_rhs = basis.convolve_residual_terms(&casa_dirty);
+        let mut rust_rhs = basis.convolve_residual_terms(&rust_dirty);
+
+        let casa_weight = read_plane(&casa_combined.join("casa.weight.tt0"));
+        let rust_weight = read_plane(&rust_combined.join("rust.weight.tt0"));
+        let casa_weight_peak = casa_weight.iter().copied().fold(0.0_f32, f32::max);
+        let rust_weight_peak = rust_weight.iter().copied().fold(0.0_f32, f32::max);
+
+        for iteration in 0..8 {
+            let casa_candidate =
+                super::find_mtmfs_multiscale_component(&casa_rhs, &basis, &hessians, None)
+                    .expect("one reconstructed CASA component");
+            let rust_candidate =
+                super::find_mtmfs_multiscale_component(&rust_rhs, &basis, &hessians, None)
+                    .expect("one reconstructed casa-rs component");
+            let rust_at_casa = rhs_at(
+                &rust_rhs[casa_candidate.scale_index],
+                basis.scale_search_positions[casa_candidate.scale_index].as_deref(),
+                casa_candidate.position,
+            );
+            let rust_coefficients = super::solve_mtmfs_coefficients(
+                &rust_at_casa,
+                &hessians[casa_candidate.scale_index].inverse,
+            );
+            let rust_score = rust_coefficients
+                .iter()
+                .zip(&rust_at_casa)
+                .map(|(coefficient, rhs)| coefficient * rhs)
+                .sum::<f32>();
+            let position = casa_candidate.position;
+            let casa_pre_weight = casa_dirty[0][position]
+                * (casa_weight[position].max(0.0) * casa_weight_peak).sqrt();
+            let rust_pre_weight = rust_dirty[0][position]
+                * (rust_weight[position].max(0.0) * rust_weight_peak).sqrt();
+            eprintln!(
+                "vlass_frozen_cycle_zero_rhs iteration={iteration} casa_scale={} casa_position={:?} casa_rhs={:?} rust_rhs_at_casa={:?} casa_coefficients={:?} rust_coefficients_at_casa={:?} casa_score_bits=0x{:08x} rust_score_at_casa_bits=0x{:08x} rust_selected_scale={} rust_selected_position={:?} casa_dirty_tt0_bits=0x{:08x} rust_dirty_tt0_bits=0x{:08x} casa_weight_bits=0x{:08x} rust_weight_bits=0x{:08x} casa_pre_weight_bits=0x{:08x} rust_pre_weight_bits=0x{:08x}",
+                casa_candidate.scale_index,
+                position,
+                bits(&casa_candidate.rhs_values),
+                bits(&rust_at_casa),
+                bits(&casa_candidate.coefficients),
+                bits(&rust_coefficients),
+                casa_candidate.signed_score.to_bits(),
+                rust_score.to_bits(),
+                rust_candidate.scale_index,
+                rust_candidate.position,
+                casa_dirty[0][position].to_bits(),
+                rust_dirty[0][position].to_bits(),
+                casa_weight[position].to_bits(),
+                rust_weight[position].to_bits(),
+                casa_pre_weight.to_bits(),
+                rust_pre_weight.to_bits(),
+            );
+            if iteration == 0 {
+                assert_eq!(casa_candidate.scale_index, 0);
+                assert_eq!(casa_candidate.position, (606, 2156));
+                assert_eq!(rust_candidate.scale_index, 0);
+                assert_eq!(rust_candidate.position, casa_candidate.position);
+            }
+            basis.subtract_rhs_component(
+                &mut casa_rhs,
+                casa_candidate.scale_index,
+                casa_candidate.position,
+                0.1,
+                &casa_candidate.coefficients,
+            );
+            basis.subtract_rhs_component(
+                &mut rust_rhs,
+                rust_candidate.scale_index,
+                rust_candidate.position,
+                0.1,
+                &rust_candidate.coefficients,
+            );
+        }
+    }
+
+    #[test]
+    fn casa_fftserver_flip_real_matches_casacore_even_and_odd_rotation() {
+        let cases = [
+            (
+                (4, 6),
+                vec![
+                    vec![302.0, 303.0, 300.0, 301.0],
+                    vec![402.0, 403.0, 400.0, 401.0],
+                    vec![502.0, 503.0, 500.0, 501.0],
+                    vec![2.0, 3.0, 0.0, 1.0],
+                    vec![102.0, 103.0, 100.0, 101.0],
+                    vec![202.0, 203.0, 200.0, 201.0],
+                ],
+            ),
+            (
+                (5, 3),
+                vec![
+                    vec![203.0, 204.0, 200.0, 201.0, 202.0],
+                    vec![3.0, 4.0, 0.0, 1.0, 2.0],
+                    vec![103.0, 104.0, 100.0, 101.0, 102.0],
+                ],
+            ),
+        ];
+        for (shape, expected_by_y) in cases {
+            let input = Array2::from_shape_fn(shape, |(x, y)| (100 * y + x) as f32);
+            let actual = super::casa_fftserver_flip_real(&input);
+            for y in 0..shape.1 {
+                for x in 0..shape.0 {
+                    assert_eq!(actual[(x, y)], expected_by_y[y][x]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn casa_fft0_scale_rhs_preserves_centered_convolution_alignment() {
+        if !super::fftw_local::configured_f32() {
+            return;
+        }
+        let shape = (32, 28);
+        let term = Array2::from_shape_fn(shape, |(x, y)| {
+            ((x * 11 + y * 7) as f32 * 0.03125).sin()
+                + 0.2 * ((x as f32 - 13.0).powi(2) + (y as f32 - 9.0).powi(2)).sqrt()
+        });
+        for scale in [0.0, 5.0] {
+            let compact = super::make_compact_multiscale_kernel(scale);
+            let actual = super::convolve_mtmfs_terms_for_scale(
+                std::slice::from_ref(&term),
+                &compact,
+                super::MtmfsScaleFftBackend::CasaFft0F32 { threads: 2 },
+            )
+            .pop()
+            .expect("one exact CASA FFT0 convolution");
+            let expected = if scale == 0.0 {
+                term.clone()
+            } else {
+                super::fft_convolve_real_compact(&term, &compact)
+            };
+            let max_error = actual
+                .iter()
+                .zip(expected.iter())
+                .map(|(actual, expected)| (actual - expected).abs())
+                .fold(0.0_f32, f32::max);
+            assert!(
+                max_error < 2.0e-4,
+                "scale {scale} CASA FFT0 alignment error was {max_error}"
+            );
+        }
+    }
+
+    #[test]
     fn mtmfs_sparse_scale_rhs_samples_match_dense_convolution() {
         let shape = (32, 28);
         let terms = vec![
@@ -61227,12 +64965,15 @@ mod tests {
             super::build_sparse_mtmfs_scale_search_positions(&mask, &kernels, &scale_sizes)
                 .expect("small mask should use sparse positions");
 
-        for (dense_mask, sparse_positions) in dense_masks.iter().zip(&sparse_positions) {
-            let dense_positions = dense_mask
-                .indexed_iter()
-                .filter_map(|(position, cleanable)| cleanable.then_some(position))
-                .collect::<Vec<_>>();
-            assert_eq!(*sparse_positions, dense_positions);
+        let dense_positions =
+            super::mtmfs_scale_search_positions_from_masks(&dense_masks, shape.0 * shape.1);
+        for (dense_positions, sparse_positions) in dense_positions.iter().zip(&sparse_positions) {
+            assert_eq!(
+                dense_positions
+                    .as_ref()
+                    .expect("small dense mask positions"),
+                sparse_positions
+            );
         }
     }
 

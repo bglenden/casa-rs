@@ -41,15 +41,18 @@ use casa_imaging::{
     DirtyProductFftPolicy, GaussianUvTaper, GridderMode, GroupedVisibilityMetadata,
     GroupedVisibilityMetadataBatch, HogbomIterationMode, HogbomPlaneMinorCycleControl,
     ImageGeometry, ImageProduct, ImageProductMetadata, ImageProductRole, ImageProductSet,
-    ImagingDiagnostics, ImagingError, ImagingExecutionPlan, ImagingExecutionPolicy,
-    ImagingMemoryAllocation, ImagingPlanAdmission, ImagingRequest, ImagingResolvedPlan,
-    ImagingResources, ImagingResult, ImagingSpectralSchedule, ImagingStageTimings,
-    ImagingTileAnchor, ImagingWorkloadShape, MinorCycleTrace, MosaicGridderConfig,
-    ParallelHandBatch, ParallelWorkerCalibrationRequest, PlaneStokes, PrimaryBeamModel,
-    PrimaryBeamProductRequest, PrimaryBeamWeightSample, ResidualRefreshDiagnostics,
-    RestoringBeamMode, ScalarVisibilitySample, StandardMfsBackend, StandardMfsCleanFinishPlan,
-    StandardMfsCleanPlan, StandardMfsCleanSession, StandardMfsDensitySourcePlan,
-    StandardMfsDensitySourcePlanRequest, StandardMfsDirtyAccumulator,
+    ImagingDetectedResources, ImagingDiagnostics, ImagingError, ImagingExecutionPlan,
+    ImagingExecutionPolicy, ImagingMemoryAllocation, ImagingMemoryAllocationLifecycle,
+    ImagingMemoryBacking, ImagingMemoryLifetimeLedger, ImagingMemoryNextUse,
+    ImagingMemoryPressurePolicy as CoreImagingMemoryPressurePolicy, ImagingMemoryResidency,
+    ImagingMemoryStage, ImagingPlanAdmission, ImagingPlanningContext, ImagingRequest,
+    ImagingResolvedPlan, ImagingResources, ImagingResult, ImagingSpectralSchedule,
+    ImagingStageTimings, ImagingTileAnchor, ImagingWorkloadShape, MinorCycleTrace,
+    MosaicGridderConfig, ParallelHandBatch, ParallelWorkerCalibrationRequest, PlaneStokes,
+    PrimaryBeamModel, PrimaryBeamProductRequest, PrimaryBeamWeightSample,
+    ResidualRefreshDiagnostics, RestoringBeamMode, ScalarVisibilitySample, StandardMfsBackend,
+    StandardMfsCleanFinishPlan, StandardMfsCleanPlan, StandardMfsCleanSession,
+    StandardMfsDensitySourcePlan, StandardMfsDensitySourcePlanRequest, StandardMfsDirtyAccumulator,
     StandardMfsDirtyAccumulatorRequest, StandardMfsDirtyGridResult, StandardMfsDirtyPlan,
     StandardMfsExecutionPlan, StandardMfsMinorCycleBackend, StandardMfsModelPredictor,
     StandardMfsObservabilityCallback, StandardMfsObservabilityEvent,
@@ -63,22 +66,23 @@ use casa_imaging::{
     WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
     accumulate_standard_mfs_density_row_from_arrays,
     accumulate_standard_mfs_density_row_from_visibility_block, admit_imaging_execution,
-    build_image_coordinate_system, casa_cube_briggs_density_cell_from_lambda, casa_cube_briggs_f2,
+    admit_imaging_execution_with_context, build_image_coordinate_system,
+    casa_cube_briggs_density_cell_from_lambda, casa_cube_briggs_f2,
     casa_cube_briggs_gridft_density_cell_from_lambda, casa_cube_briggs_weight_denominator,
     clean_cycle_threshold, clean_mask_pixel_count,
     clean_peak_location_masked_with_relative_tolerance, cube_image_product_set,
     estimate_psf_sidelobe_from_psf, extract_mfs_plane_product,
     finish_standard_mfs_dirty_grid_results, mfs_image_product_peak_abs_masked,
     mfs_image_product_set, mtmfs_image_product_set, phase_rotate_visibility,
-    plan_imaging_execution, plan_standard_mfs_density_source, primary_beam_correct_alpha_product,
-    primary_beam_output_products, primary_beam_product, restore_standard_mfs_model,
-    run_hogbom_plane_minor_cycle, run_imaging, run_mosaic_mfs_from_single_plane_stream,
-    run_mosaic_mtmfs_from_single_plane_stream, run_mtmfs, run_standard_mfs_dirty_grid_plan,
-    run_standard_mfs_plan, single_plane_image_product, standard_mfs_kernel_halo,
-    standard_mfs_materialized_plan_bytes, standard_mfs_metal_grouped_cache_bytes_per_lane,
-    standard_mfs_tile_queue_entry_bytes, topology_parallel_worker_candidates,
-    trace_cube_channel_residual_refresh, trace_cube_channel_residual_refresh_model_channel_lambda,
-    trace_w_project_plan,
+    plan_imaging_execution_with_context, plan_standard_mfs_density_source,
+    primary_beam_correct_alpha_product, primary_beam_output_products, primary_beam_product,
+    restore_standard_mfs_model, run_hogbom_plane_minor_cycle, run_imaging,
+    run_mosaic_mfs_from_single_plane_stream, run_mosaic_mtmfs_from_single_plane_stream, run_mtmfs,
+    run_standard_mfs_dirty_grid_plan, run_standard_mfs_plan, single_plane_image_product,
+    standard_mfs_kernel_halo, standard_mfs_materialized_plan_bytes,
+    standard_mfs_metal_grouped_cache_bytes_per_lane, standard_mfs_tile_queue_entry_bytes,
+    topology_parallel_worker_candidates, trace_cube_channel_residual_refresh,
+    trace_cube_channel_residual_refresh_model_channel_lambda, trace_w_project_plan,
 };
 #[cfg(test)]
 use casa_imaging::{
@@ -4192,6 +4196,8 @@ fn standard_mfs_observability_extent(config: &CliConfig) -> ImagerObservabilityE
 
 #[derive(Default)]
 struct StandardMfsProgressResourceGuards {
+    last_stage_memory_phase: Option<StandardMfsProgressPhase>,
+    stage_pressure: StandardMfsStagePressureTracker,
     initial_grid_span: Option<ImagerObservationSpanGuard>,
     initial_grid: Option<ImagerProgressResourceGuard>,
     minor_cycle_span: Option<ImagerObservationSpanGuard>,
@@ -4292,16 +4298,408 @@ fn standard_mfs_observability_callback(
     }))
 }
 
+fn standard_mfs_stage_memory_labels(
+    phase: StandardMfsProgressPhase,
+) -> (&'static str, &'static str) {
+    match phase {
+        StandardMfsProgressPhase::InitialGridStart => ("initial_grid_start", "initial-grid"),
+        StandardMfsProgressPhase::InitialGridEnd => ("initial_grid_end", "initial-grid"),
+        StandardMfsProgressPhase::MinorCycleStart => ("minor_cycle_start", "minor-cycle"),
+        StandardMfsProgressPhase::MinorCycleProgress => ("minor_cycle_progress", "minor-cycle"),
+        StandardMfsProgressPhase::MinorCycleEnd => ("minor_cycle_end", "minor-cycle"),
+        StandardMfsProgressPhase::ResidualRefreshStart => {
+            ("residual_refresh_start", "residual-refresh")
+        }
+        StandardMfsProgressPhase::ResidualRefreshEnd => {
+            ("residual_refresh_end", "residual-refresh")
+        }
+        StandardMfsProgressPhase::ResidualGridStart => ("residual_grid_start", "residual-grid"),
+        StandardMfsProgressPhase::ResidualGridEnd => ("residual_grid_end", "residual-grid"),
+        StandardMfsProgressPhase::FftStart => ("fft_start", "fft"),
+        StandardMfsProgressPhase::FftEnd => ("fft_end", "fft"),
+        StandardMfsProgressPhase::WeightedMosaicStart => {
+            ("weighted_mosaic_start", "weighted-mosaic")
+        }
+        StandardMfsProgressPhase::WeightedMosaicEnd => ("weighted_mosaic_end", "weighted-mosaic"),
+    }
+}
+
+fn standard_mfs_stage_memory_optional_bytes(bytes: Option<u64>) -> String {
+    bytes.map_or_else(|| "unavailable".to_string(), |bytes| bytes.to_string())
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct StandardMfsStagePressureSnapshot {
+    process_physical_footprint_bytes: Option<u64>,
+    current_rss_bytes: Option<u64>,
+    lifetime_peak_rss_bytes: Option<u64>,
+    current_cpu_allocated_bytes: Option<u64>,
+    current_metal_allocated_bytes: Option<u64>,
+    current_unified_memory_allocated_bytes: Option<u64>,
+    host_compressed_memory_bytes: Option<u64>,
+    swap_used_bytes: Option<u64>,
+    swapin_bytes_total: Option<u64>,
+    swapout_bytes_total: Option<u64>,
+    process_page_faults_total: Option<u64>,
+    process_disk_read_bytes_total: Option<u64>,
+    process_disk_write_bytes_total: Option<u64>,
+    external_disk_read_bytes_total: Option<u64>,
+    external_disk_write_bytes_total: Option<u64>,
+    gpu_stall_ms_total: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct StandardMfsStagePressureObservation {
+    current: StandardMfsStagePressureSnapshot,
+    stage_observed_peak: StandardMfsStagePressureSnapshot,
+    swapin_bytes_delta: Option<u64>,
+    swapout_bytes_delta: Option<u64>,
+    process_page_faults_delta: Option<u64>,
+    process_disk_read_bytes_delta: Option<u64>,
+    process_disk_write_bytes_delta: Option<u64>,
+    external_disk_read_bytes_delta: Option<u64>,
+    external_disk_write_bytes_delta: Option<u64>,
+    gpu_stall_ms: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct StandardMfsStagePressureTracker {
+    stage: Option<&'static str>,
+    entry: StandardMfsStagePressureSnapshot,
+    observed_peak: StandardMfsStagePressureSnapshot,
+}
+
+fn standard_mfs_stage_observed_max(peak: &mut Option<u64>, current: Option<u64>) {
+    if let Some(current) = current {
+        *peak = Some(peak.map_or(current, |peak| peak.max(current)));
+    }
+}
+
+fn standard_mfs_stage_counter_delta(current: Option<u64>, entry: Option<u64>) -> Option<u64> {
+    current
+        .zip(entry)
+        .and_then(|(current, entry)| current.checked_sub(entry))
+}
+
+impl StandardMfsStagePressureTracker {
+    fn observe(
+        &mut self,
+        stage: &'static str,
+        current: StandardMfsStagePressureSnapshot,
+    ) -> StandardMfsStagePressureObservation {
+        if self.stage != Some(stage) {
+            self.stage = Some(stage);
+            self.entry = current;
+            self.observed_peak = current;
+        } else {
+            standard_mfs_stage_observed_max(
+                &mut self.observed_peak.process_physical_footprint_bytes,
+                current.process_physical_footprint_bytes,
+            );
+            standard_mfs_stage_observed_max(
+                &mut self.observed_peak.current_rss_bytes,
+                current.current_rss_bytes,
+            );
+            standard_mfs_stage_observed_max(
+                &mut self.observed_peak.current_cpu_allocated_bytes,
+                current.current_cpu_allocated_bytes,
+            );
+            standard_mfs_stage_observed_max(
+                &mut self.observed_peak.current_metal_allocated_bytes,
+                current.current_metal_allocated_bytes,
+            );
+            standard_mfs_stage_observed_max(
+                &mut self.observed_peak.current_unified_memory_allocated_bytes,
+                current.current_unified_memory_allocated_bytes,
+            );
+            standard_mfs_stage_observed_max(
+                &mut self.observed_peak.host_compressed_memory_bytes,
+                current.host_compressed_memory_bytes,
+            );
+            standard_mfs_stage_observed_max(
+                &mut self.observed_peak.swap_used_bytes,
+                current.swap_used_bytes,
+            );
+        }
+        StandardMfsStagePressureObservation {
+            current,
+            stage_observed_peak: self.observed_peak,
+            swapin_bytes_delta: standard_mfs_stage_counter_delta(
+                current.swapin_bytes_total,
+                self.entry.swapin_bytes_total,
+            ),
+            swapout_bytes_delta: standard_mfs_stage_counter_delta(
+                current.swapout_bytes_total,
+                self.entry.swapout_bytes_total,
+            ),
+            process_page_faults_delta: standard_mfs_stage_counter_delta(
+                current.process_page_faults_total,
+                self.entry.process_page_faults_total,
+            ),
+            process_disk_read_bytes_delta: standard_mfs_stage_counter_delta(
+                current.process_disk_read_bytes_total,
+                self.entry.process_disk_read_bytes_total,
+            ),
+            process_disk_write_bytes_delta: standard_mfs_stage_counter_delta(
+                current.process_disk_write_bytes_total,
+                self.entry.process_disk_write_bytes_total,
+            ),
+            external_disk_read_bytes_delta: standard_mfs_stage_counter_delta(
+                current.external_disk_read_bytes_total,
+                self.entry.external_disk_read_bytes_total,
+            ),
+            external_disk_write_bytes_delta: standard_mfs_stage_counter_delta(
+                current.external_disk_write_bytes_total,
+                self.entry.external_disk_write_bytes_total,
+            ),
+            gpu_stall_ms: standard_mfs_stage_counter_delta(
+                current.gpu_stall_ms_total,
+                self.entry.gpu_stall_ms_total,
+            ),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn current_standard_mfs_platform_pressure_snapshot() -> StandardMfsStagePressureSnapshot {
+    let mut snapshot = StandardMfsStagePressureSnapshot::default();
+
+    let mut usage = unsafe { std::mem::zeroed::<libc::rusage_info_v4>() };
+    let usage_status = unsafe {
+        libc::proc_pid_rusage(
+            libc::getpid(),
+            libc::RUSAGE_INFO_V4,
+            std::ptr::addr_of_mut!(usage).cast::<libc::rusage_info_t>(),
+        )
+    };
+    if usage_status == 0 {
+        snapshot.process_physical_footprint_bytes = Some(usage.ri_phys_footprint);
+        snapshot.process_disk_read_bytes_total = Some(usage.ri_diskio_bytesread);
+        snapshot.process_disk_write_bytes_total = Some(usage.ri_diskio_byteswritten);
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct ProcTaskInfo {
+        virtual_size: u64,
+        resident_size: u64,
+        total_user: u64,
+        total_system: u64,
+        threads_user: u64,
+        threads_system: u64,
+        policy: i32,
+        faults: i32,
+        pageins: i32,
+        cow_faults: i32,
+        messages_sent: i32,
+        messages_received: i32,
+        syscalls_mach: i32,
+        syscalls_unix: i32,
+        csw: i32,
+        threadnum: i32,
+        numrunning: i32,
+        priority: i32,
+    }
+
+    const PROC_PIDTASKINFO: i32 = 4;
+    unsafe extern "C" {
+        fn proc_pidinfo(
+            pid: libc::c_int,
+            flavor: libc::c_int,
+            arg: u64,
+            buffer: *mut libc::c_void,
+            buffersize: libc::c_int,
+        ) -> libc::c_int;
+    }
+    let mut task_info = ProcTaskInfo::default();
+    let task_info_size = std::mem::size_of::<ProcTaskInfo>();
+    let task_info_status = unsafe {
+        proc_pidinfo(
+            libc::getpid(),
+            PROC_PIDTASKINFO,
+            0,
+            std::ptr::addr_of_mut!(task_info).cast::<libc::c_void>(),
+            task_info_size as libc::c_int,
+        )
+    };
+    if task_info_status == task_info_size as libc::c_int {
+        snapshot.process_page_faults_total = u64::try_from(task_info.faults).ok();
+    }
+
+    #[allow(deprecated)]
+    {
+        let mut statistics = unsafe { std::mem::zeroed::<libc::vm_statistics64>() };
+        let mut count = libc::HOST_VM_INFO64_COUNT;
+        let statistics_status = unsafe {
+            libc::host_statistics64(
+                libc::mach_host_self(),
+                libc::HOST_VM_INFO64,
+                (&mut statistics as *mut libc::vm_statistics64).cast(),
+                &mut count,
+            )
+        };
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        if statistics_status == libc::KERN_SUCCESS && page_size > 0 {
+            let page_size = page_size as u64;
+            snapshot.host_compressed_memory_bytes =
+                u64::from(statistics.compressor_page_count).checked_mul(page_size);
+            snapshot.swapin_bytes_total = statistics.swapins.checked_mul(page_size);
+            snapshot.swapout_bytes_total = statistics.swapouts.checked_mul(page_size);
+        }
+    }
+
+    let mut swap_usage = unsafe { std::mem::zeroed::<libc::xsw_usage>() };
+    let mut swap_usage_size = std::mem::size_of::<libc::xsw_usage>() as libc::size_t;
+    let swap_usage_status = unsafe {
+        libc::sysctlbyname(
+            c"vm.swapusage".as_ptr(),
+            std::ptr::addr_of_mut!(swap_usage).cast(),
+            &mut swap_usage_size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if swap_usage_status == 0 {
+        snapshot.swap_used_bytes = Some(swap_usage.xsu_used);
+    }
+
+    snapshot
+}
+
+#[cfg(not(target_os = "macos"))]
+fn current_standard_mfs_platform_pressure_snapshot() -> StandardMfsStagePressureSnapshot {
+    StandardMfsStagePressureSnapshot::default()
+}
+
+fn current_standard_mfs_stage_pressure_snapshot() -> StandardMfsStagePressureSnapshot {
+    let mut snapshot = current_standard_mfs_platform_pressure_snapshot();
+    let process_memory = spectral_slab::current_process_memory_snapshot();
+    snapshot.current_rss_bytes = process_memory
+        .current_rss_bytes
+        .and_then(|bytes| u64::try_from(bytes).ok());
+    snapshot.lifetime_peak_rss_bytes = process_memory
+        .peak_rss_bytes
+        .and_then(|bytes| u64::try_from(bytes).ok());
+
+    let metal = imaging_metal_memory_detection();
+    snapshot.current_metal_allocated_bytes = metal
+        .current_allocated_bytes
+        .and_then(|bytes| u64::try_from(bytes).ok());
+    if metal.has_unified_memory == Some(true) {
+        snapshot.current_unified_memory_allocated_bytes = snapshot.current_metal_allocated_bytes;
+    }
+    snapshot
+}
+
+fn standard_mfs_stage_memory_line(
+    event: &StandardMfsProgressEvent,
+    pressure: StandardMfsStagePressureObservation,
+    elapsed: Duration,
+) -> String {
+    let (phase, stage) = standard_mfs_stage_memory_labels(event.phase);
+    format!(
+        "standard_mfs_stage_memory phase={} stage={} major_cycle={} minor_iterations={} process_physical_footprint_bytes={} stage_observed_peak_process_physical_footprint_bytes={} current_rss_bytes={} stage_observed_peak_rss_bytes={} lifetime_peak_rss_bytes={} current_cpu_allocated_bytes={} stage_observed_peak_cpu_allocated_bytes={} current_metal_allocated_bytes={} stage_observed_peak_metal_allocated_bytes={} current_unified_memory_allocated_bytes={} stage_observed_peak_unified_memory_allocated_bytes={} host_compressed_memory_bytes={} stage_observed_peak_host_compressed_memory_bytes={} swap_used_bytes={} stage_observed_peak_swap_used_bytes={} swapin_bytes_delta={} swapout_bytes_delta={} process_page_faults_delta={} process_disk_read_bytes_delta={} process_disk_write_bytes_delta={} external_disk_read_bytes_delta={} external_disk_write_bytes_delta={} gpu_stall_ms={} peak_observation_complete=false observation_scope=phase-transition-samples-not-transient-peak elapsed_monotonic_ms={:.3}",
+        phase,
+        stage,
+        event.major_cycle,
+        event.minor_iterations,
+        standard_mfs_stage_memory_optional_bytes(pressure.current.process_physical_footprint_bytes),
+        standard_mfs_stage_memory_optional_bytes(
+            pressure
+                .stage_observed_peak
+                .process_physical_footprint_bytes
+        ),
+        standard_mfs_stage_memory_optional_bytes(pressure.current.current_rss_bytes),
+        standard_mfs_stage_memory_optional_bytes(pressure.stage_observed_peak.current_rss_bytes),
+        standard_mfs_stage_memory_optional_bytes(pressure.current.lifetime_peak_rss_bytes),
+        standard_mfs_stage_memory_optional_bytes(pressure.current.current_cpu_allocated_bytes),
+        standard_mfs_stage_memory_optional_bytes(
+            pressure.stage_observed_peak.current_cpu_allocated_bytes
+        ),
+        standard_mfs_stage_memory_optional_bytes(pressure.current.current_metal_allocated_bytes),
+        standard_mfs_stage_memory_optional_bytes(
+            pressure.stage_observed_peak.current_metal_allocated_bytes
+        ),
+        standard_mfs_stage_memory_optional_bytes(
+            pressure.current.current_unified_memory_allocated_bytes
+        ),
+        standard_mfs_stage_memory_optional_bytes(
+            pressure
+                .stage_observed_peak
+                .current_unified_memory_allocated_bytes
+        ),
+        standard_mfs_stage_memory_optional_bytes(pressure.current.host_compressed_memory_bytes),
+        standard_mfs_stage_memory_optional_bytes(
+            pressure.stage_observed_peak.host_compressed_memory_bytes
+        ),
+        standard_mfs_stage_memory_optional_bytes(pressure.current.swap_used_bytes),
+        standard_mfs_stage_memory_optional_bytes(pressure.stage_observed_peak.swap_used_bytes),
+        standard_mfs_stage_memory_optional_bytes(pressure.swapin_bytes_delta),
+        standard_mfs_stage_memory_optional_bytes(pressure.swapout_bytes_delta),
+        standard_mfs_stage_memory_optional_bytes(pressure.process_page_faults_delta),
+        standard_mfs_stage_memory_optional_bytes(pressure.process_disk_read_bytes_delta),
+        standard_mfs_stage_memory_optional_bytes(pressure.process_disk_write_bytes_delta),
+        standard_mfs_stage_memory_optional_bytes(pressure.external_disk_read_bytes_delta),
+        standard_mfs_stage_memory_optional_bytes(pressure.external_disk_write_bytes_delta),
+        standard_mfs_stage_memory_optional_bytes(pressure.gpu_stall_ms),
+        elapsed.as_secs_f64() * 1_000.0,
+    )
+}
+
+fn standard_mfs_stage_memory_transition_line(
+    last_phase: &mut Option<StandardMfsProgressPhase>,
+    event: &StandardMfsProgressEvent,
+    pressure: StandardMfsStagePressureObservation,
+    elapsed: Duration,
+) -> Option<String> {
+    if *last_phase == Some(event.phase) {
+        return None;
+    }
+    *last_phase = Some(event.phase);
+    Some(standard_mfs_stage_memory_line(event, pressure, elapsed))
+}
+
 fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgressCallback> {
-    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+    standard_mfs_progress_callback_for_modes(
+        config,
+        IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed),
+        standard_mfs_profile_detail_enabled(),
+    )
+}
+
+fn standard_mfs_progress_callback_for_modes(
+    config: &CliConfig,
+    progress_active: bool,
+    profile_detail_enabled: bool,
+) -> Option<StandardMfsProgressCallback> {
+    if !progress_active && !profile_detail_enabled {
         return None;
     }
     let config = config.clone();
     let guards = Arc::new(Mutex::new(StandardMfsProgressResourceGuards::default()));
+    let callback_started_at = Instant::now();
     Some(Arc::new(move |event: StandardMfsProgressEvent| {
         let Ok(mut guards) = guards.lock() else {
             return;
         };
+        if guards.last_stage_memory_phase != Some(event.phase) {
+            let (_, memory_stage) = standard_mfs_stage_memory_labels(event.phase);
+            let current_pressure = current_standard_mfs_stage_pressure_snapshot();
+            let pressure = guards
+                .stage_pressure
+                .observe(memory_stage, current_pressure);
+            if let Some(line) = standard_mfs_stage_memory_transition_line(
+                &mut guards.last_stage_memory_phase,
+                &event,
+                pressure,
+                callback_started_at.elapsed(),
+            ) {
+                eprintln!("{line}");
+            }
+        }
+        if !progress_active {
+            return;
+        }
         let (phase, active_threads) = match event.phase {
             StandardMfsProgressPhase::InitialGridStart => {
                 guards.initial_grid_span = begin_imager_observation_span(
@@ -5252,6 +5650,13 @@ fn oracle_parameter_manifest(config: &CliConfig) -> BTreeMap<String, String> {
             .unwrap_or_else(|| "auto".to_string()),
     );
     manifest.insert(
+        "imaging_memory_pressure_policy".to_string(),
+        config
+            .imaging_memory_pressure_policy
+            .as_cli_value()
+            .to_string(),
+    );
+    manifest.insert(
         "imaging_prepare_buffer_mb".to_string(),
         config
             .imaging_prepare_buffer_mb
@@ -5388,6 +5793,8 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
         extract_option_value(&filtered_args, "--ms-imaging-read-probe")?;
     let (spectral_plan_probe, filtered_args) =
         extract_option_value(&filtered_args, "--spectral-plan-probe")?;
+    let (standard_mfs_plan_probe, filtered_args) =
+        extract_option_value(&filtered_args, "--standard-mfs-plan-probe")?;
     let (managed_output, filtered_args) = extract_option_value(&filtered_args, "--managed-output")?;
     let config = CliConfig::parse(filtered_args)?;
     if read_essentials_probe {
@@ -5407,6 +5814,24 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
         } else {
             println!(
                 "Completed diagnostic imaging run for prefix {} (no CASA image products written)",
+                result.request.image_name.display(),
+            );
+        }
+        return Ok(());
+    }
+    if standard_mfs_plan_probe {
+        let summary = run_standard_mfs_plan_probe_from_config(&config)?;
+        let result =
+            ImagerRunTaskResult::from_run(ImagerRunTaskRequest::from_cli_config(&config), &summary);
+        if managed_output {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&ManagedImagingOutput::from_task_result(&result))
+                    .map_err(|error| format!("serialize managed imaging output: {error}"))?
+            );
+        } else {
+            println!(
+                "Completed standard-MFS planner preflight for prefix {} (no visibility streaming, grids, or CASA image products)",
                 result.request.image_name.display(),
             );
         }
@@ -5791,6 +6216,7 @@ pub fn run_ms_imaging_essentials_read_probe_from_config(config: &CliConfig) -> R
 
 /// Execute only the standard spectral-cube memory planner and source-range logs.
 pub fn run_spectral_plan_probe_from_config(config: &CliConfig) -> Result<RunSummary, String> {
+    validate_imaging_memory_policy_request(config, false)?;
     let total_start = Instant::now();
     let stage_start = Instant::now();
     let ms_paths = measurement_set_paths(config)?;
@@ -5816,6 +6242,182 @@ pub fn run_spectral_plan_probe_from_config(config: &CliConfig) -> Result<RunSumm
         total_start,
         true,
     )
+}
+
+/// Execute the production standard-MFS selection and memory-admission path only.
+///
+/// The probe opens the MeasurementSet and the configured AWProject CF cache,
+/// resolves the real MAIN/DDID/SPW/POINTING selection, detects host and Metal
+/// resources, and emits the same execution/lifetime ledger used by production.
+/// It stops before visibility-column streaming, replay compilation, grid
+/// allocation, FFT execution, deconvolution, or product materialization.
+fn run_standard_mfs_plan_probe_from_config(config: &CliConfig) -> Result<RunSummary, String> {
+    let total_start = Instant::now();
+    let normalized = normalize_awproject_core_projection(config)?;
+    let config = normalized.as_ref();
+    validate_save_model_request(config)?;
+    validate_start_model_request(config)?;
+    validate_auto_mask_config(config.use_mask, &config.auto_mask)?;
+    validate_imaging_memory_policy_request(config, true)?;
+    let ms_paths = measurement_set_paths(config)?;
+    if ms_paths.len() != 1 {
+        return Err(format!(
+            "standard-MFS planner preflight requires exactly one MeasurementSet, found {}",
+            ms_paths.len()
+        ));
+    }
+    let planned_runtime = apply_standard_mfs_runtime_plan(config, false, ms_paths.len());
+    let planned_config = planned_runtime.applied(config);
+    let config = &planned_config;
+    if !can_run_mosaic_mtmfs_from_single_plane_stream(config, false, ms_paths.len()) {
+        return Err(format!(
+            "standard-MFS planner preflight currently requires the shared single-plane \
+             mosaic/AWProject MT-MFS execution path: {}",
+            bounded_source_stream_rejection(config, false, ms_paths.len())
+        ));
+    }
+
+    let open_started = Instant::now();
+    let ms = MeasurementSet::open(&ms_paths[0]).map_err(|error| format!("open MS: {error}"))?;
+    let open_measurement_set = open_started.elapsed();
+    let data_column = resolve_data_column(&ms, config.datacolumn.as_deref())?;
+    let data_description = ms
+        .data_description()
+        .map_err(|error| format!("open DATA_DESCRIPTION: {error}"))?;
+    let ddid_info = data_description_index(&data_description)?;
+    let spectral_window = ms
+        .spectral_window()
+        .map_err(|error| format!("open SPECTRAL_WINDOW: {error}"))?;
+    let polarization = ms
+        .polarization()
+        .map_err(|error| format!("open POLARIZATION: {error}"))?;
+    let selection = select_main_rows(&ms, config, &ddid_info)?;
+    if !can_finish_mfs_mosaic_without_trace(config, &selection) {
+        return Err(
+            "standard-MFS planner preflight resolved an ineligible mosaic row selection"
+                .to_string(),
+        );
+    }
+    let retain_flagged_rows_for_casa_aw_pointing_groups = config
+        .aw_project
+        .as_ref()
+        .is_some_and(|controls| controls.use_pointing);
+    let active_selected_rows = selection
+        .selected_rows
+        .iter()
+        .filter(|selected_row| {
+            retain_flagged_rows_for_casa_aw_pointing_groups
+                || selection
+                    .flag_row
+                    .get(selected_row.row_index)
+                    .copied()
+                    .map(|flagged| !flagged)
+                    .unwrap_or(true)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if active_selected_rows.is_empty() {
+        return Err("selection resolved to no active mosaic MT-MFS rows".to_string());
+    }
+
+    let requires_frequency_engine =
+        selection
+            .selected_ddids
+            .iter()
+            .try_fold(false, |requires, &ddid| {
+                let spw_id = ddid_info
+                    .get(ddid)
+                    .copied()
+                    .flatten()
+                    .map(|(spw_id, _)| spw_id)
+                    .ok_or_else(|| format!("map selected DDID {ddid} to SPW/POLARIZATION"))?;
+                let freq_ref = FrequencyRef::from_casacore_code(
+                    spectral_window
+                        .meas_freq_ref(spw_id)
+                        .map_err(|error| format!("read MEAS_FREQ_REF: {error}"))?,
+                )
+                .unwrap_or(FrequencyRef::TOPO);
+                Ok::<_, String>(requires || freq_ref != FrequencyRef::LSRK)
+            })?;
+    let derived_engine = if selection.needs_geometry_engine || requires_frequency_engine {
+        Some(MsCalEngine::new(&ms).map_err(|error| format!("build derived engine: {error}"))?)
+    } else {
+        None
+    };
+    let active_row_count = active_selected_rows.len();
+    let ddid_plans = prepare_mfs_ddid_plans(
+        config,
+        &selection,
+        active_selected_rows,
+        &ddid_info,
+        &spectral_window,
+        &polarization,
+        derived_engine.as_ref(),
+    )?;
+    let selected_channel_count = ddid_plans
+        .iter()
+        .map(|plan| plan.selected_channel_count)
+        .max()
+        .unwrap_or(1);
+    let correlation_count = ddid_plans
+        .iter()
+        .map(|plan| plan.table_values.corr_types.len())
+        .max()
+        .unwrap_or(1);
+    let base_strategy = standard_mfs_memory_plan_for_ms(
+        config,
+        &ms,
+        data_column,
+        selected_channel_count,
+        active_row_count,
+        correlation_count,
+    )?;
+    let row_block_rows = base_strategy.ingest.source_row_block_rows.max(1);
+    let stream_block_count = ddid_plans
+        .iter()
+        .map(|plan| plan.active_selected_rows.len().div_ceil(row_block_rows))
+        .sum::<usize>();
+    let strategy = if !clean_is_dirty(config) && config.aw_project.is_some() {
+        admit_awproject_compact_replay_retention(base_strategy, stream_block_count)?
+    } else {
+        base_strategy
+    };
+    log_standard_mfs_memory_plan_actual(
+        &strategy,
+        active_row_count,
+        0,
+        0,
+        "planner_preflight_mosaic_mtmfs_single_plane_stream",
+    );
+    let lifetime_peak_stage = strategy
+        .memory_lifetime_ledger
+        .peak_stage
+        .map_or("none", ImagingMemoryStage::label);
+    let lifetime_stored_peak_stage = strategy
+        .memory_lifetime_ledger
+        .peak_stored_stage
+        .map_or("none", ImagingMemoryStage::label);
+    eprintln!(
+        "standard_mfs_planner_preflight status=admitted execution_mode=mosaic_mtmfs_single_plane_stream rows_total={} ddids={} selected_channels={} correlations={} stream_blocks={} row_block_rows={} memory_pressure_policy={} memory_target_bytes={} planned_peak_bytes={} lifetime_peak_bytes={} lifetime_peak_stage={} lifetime_stored_peak_bytes={} lifetime_stored_peak_stage={} lifetime_logical_bytes={} visibility_streamed=false replay_compiled=false grids_allocated=false products_materialized=false",
+        active_row_count,
+        ddid_plans.len(),
+        selected_channel_count,
+        correlation_count,
+        stream_block_count,
+        strategy.ingest.source_row_block_rows,
+        config.imaging_memory_pressure_policy.as_cli_value(),
+        strategy.usable_memory_bytes,
+        strategy.maximum_planned_resident_bytes,
+        strategy.memory_lifetime_ledger.maximum_resident_bytes,
+        lifetime_peak_stage,
+        strategy.memory_lifetime_ledger.maximum_stored_bytes,
+        lifetime_stored_peak_stage,
+        strategy.memory_lifetime_ledger.total_logical_bytes,
+    );
+    Ok(diagnostic_plan_probe_summary(
+        open_measurement_set,
+        total_start,
+    ))
 }
 
 /// Options for exporting a compact standard-MFS sample fixture for Metal experiments.
@@ -6665,7 +7267,185 @@ pub fn run_from_request(request: &ImagerRunTaskRequest) -> Result<RunSummary, St
     result
 }
 
+const AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV: &str = "CASA_RS_AW_BRACKET_OUTPUT";
+const AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV: &str = "CASA_RS_INTERNAL_AW_BRACKET_SELECTION_V1";
+const AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS: usize = 325;
+const AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_IDS_HASH: u64 = 15_058_004_568_616_189_240;
+const AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_FLAGS_HASH: u64 = 3_526_571_572_021_233_857;
+const AWPROJECT_DATATOGRID_BRACKET_FIRST_FLAGGED_ROWS: usize = 48;
+
+fn awproject_datatogrid_bracket_fnv_u64(hash: &mut u64, value: u64) {
+    for byte in value.to_le_bytes() {
+        *hash ^= u64::from(byte);
+        *hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+}
+
+fn awproject_datatogrid_bracket_first_row_receipt(
+    first_rows: &[SelectedMainRow],
+    flag_row: &[bool],
+) -> Result<(u64, u64, usize), String> {
+    let mut row_ids_hash = 0xcbf2_9ce4_8422_2325_u64;
+    let mut row_flags_hash = 0xcbf2_9ce4_8422_2325_u64;
+    awproject_datatogrid_bracket_fnv_u64(&mut row_ids_hash, first_rows.len() as u64);
+    awproject_datatogrid_bracket_fnv_u64(&mut row_flags_hash, first_rows.len() as u64);
+    let mut flagged_rows = 0usize;
+    for (ordinal, row) in first_rows.iter().enumerate() {
+        if row.row_index != ordinal {
+            return Err(format!(
+                "the frozen AWProject DataToGrid first source block expected ordered MS row ID \
+                 {ordinal}, got {}",
+                row.row_index
+            ));
+        }
+        awproject_datatogrid_bracket_fnv_u64(&mut row_ids_hash, row.row_index as u64);
+        let flagged = flag_row.get(row.row_index).copied().ok_or_else(|| {
+            format!(
+                "the frozen AWProject DataToGrid first source block row {} has no FLAG_ROW value",
+                row.row_index
+            )
+        })?;
+        row_flags_hash ^= u64::from(flagged);
+        row_flags_hash = row_flags_hash.wrapping_mul(0x0000_0100_0000_01b3);
+        flagged_rows += usize::from(flagged);
+    }
+    Ok((row_ids_hash, row_flags_hash, flagged_rows))
+}
+
+fn validate_awproject_datatogrid_bracket_cli(config: &CliConfig) -> Result<(), String> {
+    let Some(output) = env::var_os(AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV) else {
+        return Ok(());
+    };
+    // This marker is process-private state installed only after the actual
+    // selected rows and DDID plans have also passed the checks below.
+    unsafe {
+        env::remove_var(AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV);
+    }
+    let output = PathBuf::from(output);
+    if !output.is_absolute() {
+        return Err(format!(
+            "{AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV} must be an absolute path"
+        ));
+    }
+    if output.exists() {
+        return Err(format!(
+            "refusing to overwrite AWProject DataToGrid bracket receipt {}",
+            output.display()
+        ));
+    }
+    for (name, expected) in [
+        ("CASA_RS_AW_BRACKET_EXPECT_NXY", "4096"),
+        ("CASA_RS_AW_BRACKET_BLOCKS", "1"),
+        ("CASA_RS_AW_BRACKET_TERMS", "2"),
+    ] {
+        if env::var(name).ok().as_deref() != Some(expected) {
+            return Err(format!(
+                "the frozen AWProject DataToGrid bracket requires {name}={expected}"
+            ));
+        }
+    }
+    let expected_spws = (2..=17).collect::<BTreeSet<_>>();
+    if config.imsize != 4096
+        || config.cell_arcsec.to_bits() != 0.6_f64.to_bits()
+        || config.field_ids.as_deref() != Some(&[1525])
+        || config.phasecenter_field != Some(1525)
+        || config.phasecenter.is_some()
+        || selected_spw_ids(config)? != expected_spws
+        || config.ddid.is_some()
+        || config.channel_start != Some(0)
+        || config.channel_count != Some(64)
+        || config.correlation.as_deref() != Some("I")
+        || config.spectral_mode != SpectralMode::Mfs
+        || config.deconvolver != Deconvolver::Mtmfs
+        || config.nterms != 2
+        || config.force_standard_gridder
+        || config.w_term_mode != WTermMode::WProject
+        || config.w_project_planes != Some(32)
+        || config.outlier_file.is_some()
+        || config.imaging_row_block_rows != Some(AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS)
+    {
+        return Err(
+            "the AWProject DataToGrid bracket requires the frozen 4096-square, 0.6-arcsec, field/phasecenter=1525, SPW=2~17, channels=0+64, Stokes-I MT-MFS nterms=2, 32-W-plane single-field row with imaging_row_block_rows=325"
+                .to_string(),
+        );
+    }
+    let controls = config.aw_project.as_ref().ok_or_else(|| {
+        "the AWProject DataToGrid bracket requires gridder='awproject'".to_string()
+    })?;
+    if !config.use_pointing
+        || !controls.use_pointing
+        || !controls.a_term
+        || controls.ps_term
+        || !controls.wb_awp
+        || !controls.conjugate_beams
+        || controls.facets != 1
+        || controls.w_plane_count != Some(32)
+        || controls.normalization != AwProjectNormalization::FlatNoise
+    {
+        return Err(
+            "the AWProject DataToGrid bracket requires POINTING, A/WB/conjugate beams, facets=1, ps_term=false, normtype=flatnoise, and 32 W planes"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn install_awproject_datatogrid_bracket_selection(
+    config: &CliConfig,
+    actual_field_ids: &BTreeSet<i32>,
+    actual_spws: &BTreeSet<i32>,
+    first_batch_spw: i32,
+    first_rows: &[SelectedMainRow],
+    flag_row: &[bool],
+    planned_source_blocks: usize,
+) -> Result<(), String> {
+    if env::var_os(AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV).is_none() {
+        return Ok(());
+    }
+    // `run_from_cli_config` validated the user-facing request while it still
+    // carried `wterm='wproject'`. AWProject owns that W projection, so the
+    // shared stream receives the normalized core projection (`None`) rather
+    // than the separate W-only gridder mode.
+    if config.w_term_mode != WTermMode::None || config.w_project_planes != Some(32) {
+        return Err(
+            "the AWProject DataToGrid bracket did not receive the expected normalized \
+             core projection (AWProject-owned W term, 32 W planes)"
+                .to_string(),
+        );
+    }
+    let (first_row_ids_hash, first_row_flags_hash, first_flagged_rows) =
+        awproject_datatogrid_bracket_first_row_receipt(first_rows, flag_row)?;
+    let expected_spws = (2..=17).collect::<BTreeSet<_>>();
+    if actual_field_ids != &BTreeSet::from([1525])
+        || actual_spws != &expected_spws
+        || first_batch_spw != 2
+        || first_rows.len() != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || first_row_ids_hash != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_IDS_HASH
+        || first_row_flags_hash != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_FLAGS_HASH
+        || first_flagged_rows != AWPROJECT_DATATOGRID_BRACKET_FIRST_FLAGGED_ROWS
+        || planned_source_blocks == 0
+    {
+        return Err(format!(
+            "the actual AWProject DataToGrid source plan is not the frozen CASA first-VB row: fields={actual_field_ids:?} spws={actual_spws:?} first_spw={first_batch_spw} first_rows={} first_row_ids_hash={first_row_ids_hash} first_row_flags_hash={first_row_flags_hash} first_flagged_rows={first_flagged_rows} source_blocks={planned_source_blocks}",
+            first_rows.len()
+        ));
+    }
+    let marker = format!(
+        "field=1525;spws=2-17;first_spw={first_batch_spw};first_rows={};source_blocks={planned_source_blocks};row_ids_hash={first_row_ids_hash};row_flags_hash={first_row_flags_hash};flagged_rows={first_flagged_rows}",
+        first_rows.len()
+    );
+    // The bracket is an explicitly single-process, abort-before-FFT
+    // diagnostic. Install its private selection handoff before any imaging
+    // worker is started; normal execution never mutates the environment.
+    unsafe {
+        env::set_var(AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV, marker);
+    }
+    Ok(())
+}
+
 fn run_from_cli_config(config: &CliConfig) -> Result<RunSummary, String> {
+    validate_imaging_memory_policy_request(config, false)?;
+    validate_awproject_datatogrid_bracket_cli(config)?;
     if config.outlier_file.is_some() {
         return run_outlier_file_from_config(config);
     }
@@ -8451,6 +9231,27 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         first_plan.table_values.spw_id,
     )?;
     let first_rows_len = row_block_rows.min(first_plan.active_selected_rows.len());
+    let actual_field_ids = ddid_plans
+        .iter()
+        .flat_map(|plan| {
+            plan.active_selected_rows
+                .iter()
+                .map(|row| row.field_id as i32)
+        })
+        .collect::<BTreeSet<_>>();
+    let actual_spws = ddid_plans
+        .iter()
+        .map(|plan| plan.table_values.spw_id as i32)
+        .collect::<BTreeSet<_>>();
+    install_awproject_datatogrid_bracket_selection(
+        config,
+        &actual_field_ids,
+        &actual_spws,
+        first_plan.table_values.spw_id as i32,
+        &first_plan.active_selected_rows[..first_rows_len],
+        flag_row,
+        stream_block_count,
+    )?;
     let mut first_plane = prepare_mfs_mosaic_source_row_block_plane(
         ms,
         config,
@@ -21341,6 +22142,36 @@ fn validate_save_model_request(config: &CliConfig) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_imaging_memory_policy_request(
+    config: &CliConfig,
+    planner_probe: bool,
+) -> Result<(), String> {
+    if config.imaging_memory_pressure_policy == ImagingMemoryPressurePolicy::Oversubscribe
+        && config.imaging_memory_target_mb.is_none()
+        && config.standard_mfs_memory_target_mb.is_none()
+    {
+        return Err(
+            "imaging_memory_pressure_policy='oversubscribe' requires an explicit \
+             imaging_memory_target_mb (or the compatibility standard_mfs_memory_target_mb)"
+                .to_string(),
+        );
+    }
+    if !planner_probe
+        && matches!(
+            config.imaging_memory_pressure_policy,
+            ImagingMemoryPressurePolicy::StageAware | ImagingMemoryPressurePolicy::Hybrid
+        )
+    {
+        return Err(format!(
+            "imaging_memory_pressure_policy='{}' is currently available only to \
+             --standard-mfs-plan-probe; production execution remains disabled until product \
+             streaming, replay spill/demotion, and the requested next-use policy are active",
+            config.imaging_memory_pressure_policy.as_cli_value()
+        ));
+    }
+    Ok(())
+}
+
 fn validate_start_model_request(config: &CliConfig) -> Result<(), String> {
     let Some(start_model) = config.start_model.as_ref() else {
         return Ok(());
@@ -22356,8 +23187,9 @@ fn plan_standard_mfs_runtime_with_metal_device(
         };
 
     eprintln!(
-        "standard_mfs_runtime_plan policy={} imaging_fft_precision={} imaging_fft_backend={} eligible={} auto_multi_cpu={} auto_metal={} auto_metal_reason={} metal_device_available={} assigned_cpu_capacity={} backend={} backend_source={} grid_threads={} grid_threads_source={} density_threads={} density_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={} minor_cycle_backend={} minor_cycle_backend_reason={} metal_minor_cycle_chunk={} metal_minor_cycle_chunk_source={} mtmfs_metal_backend={} mtmfs_metal_input_cache={}",
+        "standard_mfs_runtime_plan policy={} imaging_memory_pressure_policy={} imaging_fft_precision={} imaging_fft_backend={} eligible={} auto_multi_cpu={} auto_metal={} auto_metal_reason={} metal_device_available={} assigned_cpu_capacity={} backend={} backend_source={} grid_threads={} grid_threads_source={} density_threads={} density_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={} minor_cycle_backend={} minor_cycle_backend_reason={} metal_minor_cycle_chunk={} metal_minor_cycle_chunk_source={} mtmfs_metal_backend={} mtmfs_metal_input_cache={}",
         standard_mfs_acceleration_policy_label(config.standard_mfs_acceleration),
+        imaging_memory_pressure_policy_label(config.imaging_memory_pressure_policy),
         imaging_fft_precision_policy_label(config.imaging_fft_precision),
         imaging_fft_backend_policy_label(config.imaging_fft_backend),
         eligible,
@@ -22717,6 +23549,10 @@ fn imaging_fft_precision_policy_label(policy: ImagingFftPrecisionPolicy) -> &'st
         ImagingFftPrecisionPolicy::F64 => "f64",
         ImagingFftPrecisionPolicy::F32 => "f32",
     }
+}
+
+fn imaging_memory_pressure_policy_label(policy: ImagingMemoryPressurePolicy) -> &'static str {
+    policy.as_cli_value()
 }
 
 fn imaging_fft_backend_policy_label(policy: ImagingFftBackendPolicy) -> &'static str {
@@ -23191,6 +24027,8 @@ pub struct CliConfig {
     pub standard_mfs_prepare_buffer_mb: Option<usize>,
     /// Optional shared imaging source-stream memory target in MiB.
     pub imaging_memory_target_mb: Option<usize>,
+    /// Shared imaging memory-pressure policy.
+    pub imaging_memory_pressure_policy: ImagingMemoryPressurePolicy,
     /// Optional shared imaging source-stream prepare-buffer budget in MiB.
     pub imaging_prepare_buffer_mb: Option<usize>,
     /// Optional shared imaging source-stream row-block override.
@@ -23205,6 +24043,54 @@ pub struct CliConfig {
     pub imaging_fft_backend: ImagingFftBackendPolicy,
     /// Write PNG preview sidecars for the CASA image products.
     pub write_preview_pngs: bool,
+}
+
+/// Imaging-wide memory-pressure and stage-residency policy.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImagingMemoryPressurePolicy {
+    /// Select a safe resource-adaptive policy without intentional swap dependence.
+    #[default]
+    Auto,
+    /// Admit only plans expected to remain within physical-memory headroom.
+    ConservativeNoSwap,
+    /// Use most available physical memory and tolerate compression or modest incidental swapping.
+    Aggressive,
+    /// Intentionally admit a plan beyond physical-memory headroom for bounded experiments.
+    Oversubscribe,
+    /// Request stage-lifetime release/demotion planning.
+    ///
+    /// Currently accepted only by the standard-MFS planner probe; production
+    /// execution remains disabled until every requested action is active.
+    StageAware,
+    /// Request high utilization with explicit next-use-aware eviction.
+    ///
+    /// Currently accepted only by the standard-MFS planner probe; production
+    /// execution remains disabled until every requested action is active.
+    Hybrid,
+}
+
+impl ImagingMemoryPressurePolicy {
+    fn as_cli_value(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::ConservativeNoSwap => "conservative-no-swap",
+            Self::Aggressive => "aggressive",
+            Self::Oversubscribe => "oversubscribe",
+            Self::StageAware => "stage-aware",
+            Self::Hybrid => "hybrid",
+        }
+    }
 }
 
 /// Imaging-wide dirty/residual FFT precision policy.
@@ -23379,6 +24265,7 @@ impl CliConfig {
         let mut standard_mfs_memory_target_mb = None::<usize>;
         let mut standard_mfs_prepare_buffer_mb = None::<usize>;
         let mut imaging_memory_target_mb = None::<usize>;
+        let mut imaging_memory_pressure_policy = ImagingMemoryPressurePolicy::Auto;
         let mut imaging_prepare_buffer_mb = None::<usize>;
         let mut imaging_row_block_rows = None::<usize>;
         let mut imaging_prepare_workers = None::<usize>;
@@ -23973,6 +24860,12 @@ impl CliConfig {
                     imaging_memory_target_mb = Some(value);
                     continue;
                 }
+                "--imaging-memory-pressure-policy" => {
+                    imaging_memory_pressure_policy = parse_imaging_memory_pressure_policy(
+                        &next_value(&mut args, "--imaging-memory-pressure-policy")?,
+                    )?;
+                    continue;
+                }
                 "--standard-mfs-prepare-buffer-mb" => {
                     let value = next_value(&mut args, "--standard-mfs-prepare-buffer-mb")?
                         .parse::<usize>()
@@ -24185,6 +25078,7 @@ impl CliConfig {
             standard_mfs_memory_target_mb,
             standard_mfs_prepare_buffer_mb,
             imaging_memory_target_mb,
+            imaging_memory_pressure_policy,
             imaging_prepare_buffer_mb,
             imaging_row_block_rows,
             imaging_prepare_workers,
@@ -35389,12 +36283,426 @@ fn standard_mfs_memory_plan_for_ms(
     )
 }
 
+fn standard_mfs_memory_allocation_id(component: &str, occurrence: usize) -> String {
+    let mut slug = String::with_capacity(component.len());
+    let mut previous_was_separator = false;
+    for character in component.chars() {
+        if character.is_ascii_alphanumeric() {
+            slug.push(character.to_ascii_lowercase());
+            previous_was_separator = false;
+        } else if !previous_was_separator && !slug.is_empty() {
+            slug.push('-');
+            previous_was_separator = true;
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    if slug.is_empty() {
+        slug.push_str("allocation");
+    }
+    format!("standard-mfs-{slug}-{occurrence}")
+}
+
+fn standard_mfs_memory_residency(
+    backing: ImagingMemoryBacking,
+    bytes: usize,
+    live_from: ImagingMemoryStage,
+    live_through: ImagingMemoryStage,
+    next_use: ImagingMemoryNextUse,
+) -> ImagingMemoryResidency {
+    ImagingMemoryResidency {
+        backing,
+        resident_bytes: bytes,
+        stored_bytes: 0,
+        live_from,
+        live_through,
+        next_use,
+    }
+}
+
+fn standard_mfs_memory_allocation_lifetimes(
+    plan: &ImagingResolvedPlan,
+    has_clean_cycles: bool,
+) -> Result<Vec<ImagingMemoryAllocationLifecycle>, String> {
+    use ImagingMemoryNextUse::{AtStage, NoFurtherUse};
+    use ImagingMemoryStage::{
+        DirtyTransform, Finish, InitialGrid, MinorCycle, ModelTransform, Prepare,
+        ProductMaterialization, ProductWrite, ResidualGrid, ResidualTransform, SourceIngest,
+        Weighting,
+    };
+
+    let host = ImagingMemoryBacking::HostHeap;
+    let grid_backing = if plan.metal.eligible {
+        ImagingMemoryBacking::UnifiedMemory
+    } else {
+        host
+    };
+    let mut component_occurrences = HashMap::<&str, usize>::new();
+
+    plan.memory_allocations
+        .iter()
+        .map(|allocation| {
+            let occurrence = component_occurrences
+                .entry(allocation.component)
+                .and_modify(|count| *count += 1)
+                .or_insert(1);
+            let bytes = allocation.bytes;
+            let backing = match allocation.component {
+                "grids" | "Metal grouped input cache" | "direct Metal host scratch"
+                    if plan.metal.eligible =>
+                {
+                    grid_backing
+                }
+                _ => host,
+            };
+            let residencies = match allocation.component {
+                // The compensated AW grid is reused as one logical
+                // allocation. The initial pass owns all PSF and residual
+                // planes. Residual refreshes physically allocate only one
+                // compensated plane per Taylor residual term, so charging the
+                // original eight-plane MT-MFS grid here would hide replay
+                // headroom that is genuinely available after the dirty
+                // transform.
+                "grids" => {
+                    let initial_plane_count = plan.workload.grid_planes.max(1);
+                    let residual_plane_count =
+                        plan.workload.taylor_terms.max(1).min(initial_plane_count);
+                    if bytes % initial_plane_count != 0 {
+                        return Err(format!(
+                            "standard-MFS grid allocation {bytes} is not divisible by its \
+                             {initial_plane_count}-plane workload shape"
+                        ));
+                    }
+                    let residual_bytes = (bytes / initial_plane_count)
+                        .checked_mul(residual_plane_count)
+                        .ok_or_else(|| {
+                            "standard-MFS residual-grid residency overflowed".to_string()
+                        })?;
+                    let initial_next_use = if has_clean_cycles {
+                        AtStage(ResidualGrid)
+                    } else {
+                        NoFurtherUse
+                    };
+                    let mut residencies = vec![standard_mfs_memory_residency(
+                        backing,
+                        bytes,
+                        InitialGrid,
+                        DirtyTransform,
+                        initial_next_use,
+                    )];
+                    if has_clean_cycles {
+                        residencies.push(standard_mfs_memory_residency(
+                            backing,
+                            residual_bytes,
+                            ResidualGrid,
+                            ResidualTransform,
+                            NoFurtherUse,
+                        ));
+                    }
+                    residencies
+                }
+                "FFT chunks" => {
+                    let mut residencies = vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        DirtyTransform,
+                        DirtyTransform,
+                        if has_clean_cycles {
+                            AtStage(ResidualTransform)
+                        } else {
+                            NoFurtherUse
+                        },
+                    )];
+                    if has_clean_cycles {
+                        residencies.push(standard_mfs_memory_residency(
+                            host,
+                            bytes,
+                            ResidualTransform,
+                            ResidualTransform,
+                            NoFurtherUse,
+                        ));
+                    }
+                    residencies
+                }
+                // A compensated Metal grid is read back into one owned
+                // Complex64 plane at a time. The same bounded host allocation
+                // is reused for the initial products and residual refreshes.
+                "AWProject compensated f64 readback" => {
+                    let mut residencies = vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        DirtyTransform,
+                        DirtyTransform,
+                        if has_clean_cycles {
+                            AtStage(ResidualTransform)
+                        } else {
+                            NoFurtherUse
+                        },
+                    )];
+                    if has_clean_cycles {
+                        residencies.push(standard_mfs_memory_residency(
+                            host,
+                            bytes,
+                            ResidualTransform,
+                            ResidualTransform,
+                            NoFurtherUse,
+                        ));
+                    }
+                    residencies
+                }
+                "source row blocks" => {
+                    let mut residencies = vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        SourceIngest,
+                        InitialGrid,
+                        if has_clean_cycles {
+                            AtStage(ResidualGrid)
+                        } else {
+                            NoFurtherUse
+                        },
+                    )];
+                    if has_clean_cycles {
+                        residencies.push(standard_mfs_memory_residency(
+                            host,
+                            bytes,
+                            ResidualGrid,
+                            ResidualGrid,
+                            NoFurtherUse,
+                        ));
+                    }
+                    residencies
+                }
+                "worker scratch"
+                | "resident tiles"
+                | "tile queue"
+                | "direct Metal host scratch" => {
+                    let mut residencies = vec![standard_mfs_memory_residency(
+                        backing,
+                        bytes,
+                        InitialGrid,
+                        InitialGrid,
+                        if has_clean_cycles {
+                            AtStage(ResidualGrid)
+                        } else {
+                            NoFurtherUse
+                        },
+                    )];
+                    if has_clean_cycles {
+                        residencies.push(standard_mfs_memory_residency(
+                            backing,
+                            bytes,
+                            ResidualGrid,
+                            ResidualGrid,
+                            NoFurtherUse,
+                        ));
+                    }
+                    residencies
+                }
+                "weighting density" | "mosaic weighting density maps" => {
+                    vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        Weighting,
+                        if has_clean_cycles {
+                            ResidualGrid
+                        } else {
+                            InitialGrid
+                        },
+                        NoFurtherUse,
+                    )]
+                }
+                // This reflects current production retention. A later
+                // measured stage-aware policy may shorten the interval.
+                "AWProject MT-MFS run state" => vec![standard_mfs_memory_residency(
+                    host,
+                    bytes,
+                    DirtyTransform,
+                    Finish,
+                    NoFurtherUse,
+                )],
+                "AWProject CF pixels" | "AWProject CF index" | "POINTING index" => {
+                    vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        Prepare,
+                        if has_clean_cycles {
+                            ResidualGrid
+                        } else {
+                            InitialGrid
+                        },
+                        NoFurtherUse,
+                    )]
+                }
+                "AWProject source-order tap scratch" => {
+                    vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        InitialGrid,
+                        if has_clean_cycles {
+                            ResidualGrid
+                        } else {
+                            InitialGrid
+                        },
+                        NoFurtherUse,
+                    )]
+                }
+                "AWProject safety margin" => vec![standard_mfs_memory_residency(
+                    host,
+                    bytes,
+                    Prepare,
+                    ProductWrite,
+                    NoFurtherUse,
+                )],
+                "AWProject CASA-layout model FFT staging" => {
+                    vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        ModelTransform,
+                        ModelTransform,
+                        NoFurtherUse,
+                    )]
+                }
+                "AWProject MT-MFS bounded multiscale scratch" => {
+                    vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        MinorCycle,
+                        MinorCycle,
+                        NoFurtherUse,
+                    )]
+                }
+                "AWProject MT-MFS finish state" => vec![standard_mfs_memory_residency(
+                    host,
+                    bytes,
+                    Finish,
+                    Finish,
+                    NoFurtherUse,
+                )],
+                "AWProject MT-MFS product state" => {
+                    vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        ProductMaterialization,
+                        ProductWrite,
+                        NoFurtherUse,
+                    )]
+                }
+                "product writer scratch" => vec![standard_mfs_memory_residency(
+                    host,
+                    bytes,
+                    ProductWrite,
+                    ProductWrite,
+                    NoFurtherUse,
+                )],
+                // Safe automatic execution does not prime compact replay while
+                // the initial compensated grid is resident. Programs begin
+                // accumulating during the first residual-grid pass and remain
+                // pinned, without eviction, through its transform.
+                "AWProject compact replay retention" => {
+                    vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        ResidualGrid,
+                        ResidualTransform,
+                        NoFurtherUse,
+                    )]
+                }
+                // These non-AW caches are currently kept resident across both
+                // gridding passes.
+                "materialized sample plan"
+                | "Metal grouped input cache"
+                | "routed replay cache" => {
+                    vec![standard_mfs_memory_residency(
+                        backing,
+                        bytes,
+                        InitialGrid,
+                        if has_clean_cycles {
+                            ResidualGrid
+                        } else {
+                            InitialGrid
+                        },
+                        NoFurtherUse,
+                    )]
+                }
+                // Unknown application state is conservatively kept for the
+                // entire operation so it cannot silently disappear from a
+                // full-geometry peak.
+                _ => vec![standard_mfs_memory_residency(
+                    backing,
+                    bytes,
+                    Prepare,
+                    ProductWrite,
+                    NoFurtherUse,
+                )],
+            };
+
+            Ok(ImagingMemoryAllocationLifecycle {
+                allocation_id: standard_mfs_memory_allocation_id(allocation.component, *occurrence),
+                component: allocation.component.to_string(),
+                logical_bytes: bytes,
+                residencies,
+            })
+        })
+        .collect()
+}
+
+fn rebuild_standard_mfs_memory_lifetime_ledger(
+    plan: &mut ImagingResolvedPlan,
+    has_clean_cycles: bool,
+) -> Result<Vec<ImagingMemoryAllocationLifecycle>, String> {
+    let lifetimes = standard_mfs_memory_allocation_lifetimes(plan, has_clean_cycles)?;
+    let ledger =
+        ImagingMemoryLifetimeLedger::build(lifetimes.clone()).map_err(|error| error.to_string())?;
+    // Every entry in `memory_allocations` is mapped into the semantic
+    // lifecycle list above. Its exact overlap therefore replaces the older
+    // conservative estimate; retaining the old maximum would make planned
+    // releases and demotions unable to free any admission headroom.
+    plan.maximum_planned_resident_bytes = ledger.maximum_resident_bytes;
+    if plan.maximum_planned_resident_bytes > plan.usable_memory_bytes {
+        return Err(format!(
+            "standard-MFS semantic memory lifetime peak {} exceeds admitted memory target {}",
+            plan.maximum_planned_resident_bytes, plan.usable_memory_bytes
+        ));
+    }
+    plan.memory_lifetime_ledger = ledger;
+    Ok(lifetimes)
+}
+
+fn admit_standard_mfs_plan_with_lifetimes(
+    mut plan: ImagingResolvedPlan,
+    has_clean_cycles: bool,
+) -> Result<ImagingResolvedPlan, String> {
+    let planning_context = plan.planning_context.clone();
+    let memory_lifetimes =
+        rebuild_standard_mfs_memory_lifetime_ledger(&mut plan, has_clean_cycles)?;
+    admit_imaging_execution_with_context(
+        ImagingPlanAdmission {
+            workload: plan.workload,
+            usable_memory_bytes: plan.usable_memory_bytes,
+            workers: plan.workers,
+            worker_partition_rows: plan.worker_partition_rows,
+            ingest: plan.ingest,
+            fft: plan.fft,
+            tile: plan.tile,
+            spectral: plan.spectral,
+            metal: plan.metal,
+            caches: plan.caches,
+            memory_allocations: plan.memory_allocations,
+            maximum_planned_resident_bytes: plan.maximum_planned_resident_bytes,
+            decisions: plan.decisions,
+        },
+        planning_context,
+        Some(memory_lifetimes),
+    )
+    .map_err(|error| error.to_string())
+}
+
 fn admit_awproject_compact_replay_retention(
     mut plan: ImagingResolvedPlan,
     stream_block_count: usize,
 ) -> Result<ImagingResolvedPlan, String> {
-    const ADAPTIVE_TAP_ARENAS_PER_STREAM_BLOCK: usize = 2;
-
     if stream_block_count == 0 {
         return Ok(plan);
     }
@@ -35402,30 +36710,25 @@ fn admit_awproject_compact_replay_retention(
     if tap_bytes_per_block == 0 {
         return Ok(plan);
     }
-    let tap_candidate_bytes = checked_imaging_product(
-        [
-            tap_bytes_per_block,
-            stream_block_count,
-            ADAPTIVE_TAP_ARENAS_PER_STREAM_BLOCK,
-        ],
-        "AWProject compact replay tap retention",
-    )?;
-    // The lower-level replay structs are private. The same conservative
-    // per-sample allowance used for transient AW plans bounds retained source
-    // plans, tap descriptors, vector capacities, and block directories.
-    let metadata_candidate_bytes = checked_imaging_product(
-        [plan.workload.sample_count, 256],
-        "AWProject compact replay metadata retention",
-    )?;
-    let candidate_bytes = checked_imaging_sum(
-        [tap_candidate_bytes, metadata_candidate_bytes],
-        "AWProject compact replay retention",
-    )?;
-    let resource_cap_bytes = plan.usable_memory_bytes / 4;
+    let replay_stage_peak_bytes = [
+        ImagingMemoryStage::ResidualGrid,
+        ImagingMemoryStage::ResidualTransform,
+    ]
+    .into_iter()
+    .filter_map(|stage| plan.memory_lifetime_ledger.stage_peak(stage))
+    .map(|peak| peak.resident_bytes)
+    .max()
+    .unwrap_or(plan.maximum_planned_resident_bytes);
     let headroom_bytes = plan
         .usable_memory_bytes
-        .saturating_sub(plan.maximum_planned_resident_bytes);
-    let admitted_bytes = candidate_bytes.min(resource_cap_bytes).min(headroom_bytes);
+        .saturating_sub(replay_stage_peak_bytes);
+    // This is a reservation ceiling, not an estimate of replay size.
+    // AwProjectCompactReplayCache charges the actual capacities of compact
+    // source samples, tap requests/values, packed Metal batches, and resident
+    // programs as each block is compiled. Let exact resident bytes consume
+    // only the stage-overlap headroom already assigned to this process; do not
+    // impose a machine-size fraction or a per-sample proxy.
+    let admitted_bytes = headroom_bytes;
     if admitted_bytes == 0 {
         plan.decisions.push(casa_imaging::ImagingPlanDecision {
             name: "awproject_compact_replay_retention_bytes",
@@ -35443,18 +36746,22 @@ fn admit_awproject_compact_replay_retention(
             stage: "run",
             bytes: admitted_bytes,
         });
-    plan.maximum_planned_resident_bytes = plan
-        .maximum_planned_resident_bytes
-        .checked_add(admitted_bytes)
-        .ok_or_else(|| "AWProject compact replay planned peak overflowed".to_string())?;
     plan.decisions.push(casa_imaging::ImagingPlanDecision {
         name: "awproject_compact_replay_retention_bytes",
         value: admitted_bytes.to_string(),
         origin: casa_imaging::ImagingPlanOrigin::Resources,
         reason: format!(
-            "retain exact source-order AW tap windows across clean major cycles; the candidate allows {ADAPTIVE_TAP_ARENAS_PER_STREAM_BLOCK} adaptive tap arenas per stream block and the runtime retains a bounded prefix when a block needs more; candidate_bytes={candidate_bytes}, stream_blocks={stream_block_count}, resource_cap_bytes={resource_cap_bytes}, prior_headroom_bytes={headroom_bytes}"
+            "reserve residual-grid/transform overlap headroom for exact source-order AW replay; runtime charges actual compact resident-program capacities, pins the full {stream_block_count}-block cyclic working set when it fits, and otherwise retains a pinned no-eviction subset admitted in source order; prior_replay_stage_peak_bytes={replay_stage_peak_bytes}, prior_headroom_bytes={headroom_bytes}, artificial_fraction_cap=none, per_sample_proxy=none"
         ),
     });
+    plan.decisions.push(casa_imaging::ImagingPlanDecision {
+        name: "awproject_compact_replay_resident_accounting",
+        value: "runtime-exact-capacities".to_string(),
+        origin: casa_imaging::ImagingPlanOrigin::Workload,
+        reason: "source, tap-request, bundle metadata/value, packed Metal batch, and resident Metal program capacities are charged after compacting each compiled block"
+            .to_string(),
+    });
+    rebuild_standard_mfs_memory_lifetime_ledger(&mut plan, true)?;
     Ok(plan)
 }
 
@@ -35692,8 +36999,8 @@ fn awproject_mtmfs_product_state_bytes(
     image_pixels: usize,
 ) -> Result<usize, String> {
     // Returned products plus the mosaic/PB products and shared masks built by
-    // `run_products_to_image_product_set`. Writer scratch is charged
-    // separately because it is reused one product at a time.
+    // `run_products_to_image_product_set`. Product pixels are written through a
+    // borrowed lattice view; mask persistence scratch is charged separately.
     let f32_planes = nterms
         .checked_mul(7)
         .and_then(|value| value.checked_add(4))
@@ -35716,11 +37023,8 @@ fn awproject_mtmfs_product_state_bytes(
 
 fn awproject_product_writer_scratch_bytes(image_pixels: usize) -> Result<usize, String> {
     checked_imaging_product(
-        [
-            image_pixels,
-            std::mem::size_of::<f32>() + std::mem::size_of::<bool>(),
-        ],
-        "AWProject product writer scratch",
+        [image_pixels, std::mem::size_of::<bool>()],
+        "AWProject product mask writer scratch",
     )
 }
 
@@ -36120,9 +37424,21 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     } else {
         0
     };
+    let aw_compensated_f64_readback_bytes = if awproject_mtmfs {
+        checked_imaging_product(
+            [image_pixels, std::mem::size_of::<Complex64>()],
+            "AWProject compensated f64 readback plane",
+        )?
+    } else {
+        0
+    };
     let aw_model_fft_staging_bytes = if awproject_mtmfs && !clean_is_dirty(config) {
         checked_imaging_product(
-            [image_pixels, std::mem::size_of::<Complex32>()],
+            [
+                image_pixels,
+                config.nterms,
+                std::mem::size_of::<Complex32>(),
+            ],
             "AWProject CASA-layout model FFT staging",
         )?
     } else {
@@ -36193,12 +37509,34 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
                 stage: "run",
                 bytes: aw_safety_margin_bytes,
             },
-            ImagingMemoryAllocation {
+        ]);
+        if aw_model_fft_staging_bytes > 0 {
+            fixed_allocations.push(ImagingMemoryAllocation {
                 component: "AWProject CASA-layout model FFT staging",
                 stage: "major-cycle",
                 bytes: aw_model_fft_staging_bytes,
-            },
-        ]);
+            });
+        }
+    }
+    // The generic planner predates semantic allocation lifetimes and treats
+    // every workload fixed allocation as if it overlapped the initial grid.
+    // Keep initial-grid state in that conservative sizing pass, but defer the
+    // two allocations whose production lifetimes begin only after the initial
+    // grid has been consumed. They are restored to the resolved plan below
+    // before the exact lifetime ledger performs final admission.
+    let mut deferred_lifetime_allocations = Vec::new();
+    if awproject_mtmfs {
+        fixed_allocations.retain(|allocation| {
+            if matches!(
+                allocation.component,
+                "AWProject MT-MFS run state" | "AWProject CASA-layout model FFT staging"
+            ) {
+                deferred_lifetime_allocations.push(allocation.clone());
+                false
+            } else {
+                true
+            }
+        });
     }
     let fft_bytes_per_plane = if awproject_mtmfs && awproject_mtmfs_in_place_fft_eligible(config) {
         checked_imaging_product(
@@ -36212,7 +37550,12 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         )?
     };
 
-    let mut plan = plan_imaging_execution(
+    let planning_resources = imaging_planning_resource_assignment(
+        config,
+        memory_target,
+        direct_metal_scratch_candidate_bytes,
+    );
+    let mut plan = plan_imaging_execution_with_context(
         &ImagingWorkloadShape {
             selected_rows: active_row_count,
             correlations: visibility_shape.corr_count,
@@ -36250,8 +37593,8 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         &ImagingResources {
             usable_memory_bytes: memory_target.target_bytes,
             cpu_capacity: imaging_process_cpu_capacity(mosaic_full_grid),
-            metal_available: casa_imaging::standard_mfs_metal_device_available(),
-            metal_device_budget_bytes: memory_target.target_bytes,
+            metal_available: planning_resources.metal_device_available,
+            metal_device_budget_bytes: planning_resources.metal_device_budget_bytes,
         },
         &ImagingExecutionPolicy {
             memory_limit_bytes: Some(memory_target.target_bytes),
@@ -36274,10 +37617,46 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             allow_materialized_sample_plan: materialized_sample_plan_candidate_bytes > 0,
             direct_metal_scratch_limit_bytes: None,
         },
+        &planning_resources.context,
     )
     .map_err(|error| error.to_string())?;
+    if !deferred_lifetime_allocations.is_empty() {
+        plan.workload
+            .fixed_allocations
+            .extend(deferred_lifetime_allocations.iter().cloned());
+        plan.memory_allocations
+            .extend(deferred_lifetime_allocations);
+    }
 
     plan.decisions.extend([
+        casa_imaging::ImagingPlanDecision {
+            name: "memory_target_semantics",
+            value: "incremental-operation-residency".to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "the planner budget covers operation allocations in addition to the already-resident process baseline"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "process_baseline_bytes",
+            value: memory_target.baseline_process_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "measured process physical footprint before operation residency is admitted"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "process_total_ceiling_bytes",
+            value: optional_usize_resource_value(memory_target.process_total_ceiling_bytes),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: memory_target.process_total_ceiling_origin.to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "incremental_operation_budget_bytes",
+            value: optional_usize_resource_value(
+                memory_target.incremental_operation_budget_bytes,
+            ),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "process total ceiling minus the process baseline exactly once".to_string(),
+        },
         casa_imaging::ImagingPlanDecision {
             name: "grid_planes",
             value: grid_planes.to_string(),
@@ -36306,9 +37685,14 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     ]);
 
     if !awproject_mtmfs {
-        return Ok(plan);
+        return admit_standard_mfs_plan_with_lifetimes(plan, !clean_is_dirty(config));
     }
 
+    let aw_compensated_f64_readback_bytes = if plan.metal.eligible {
+        aw_compensated_f64_readback_bytes
+    } else {
+        0
+    };
     let multiscale_minor_cycle_scratch_bytes = if clean_is_dirty(config) {
         0
     } else {
@@ -36321,6 +37705,13 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     let finish_state_bytes = awproject_mtmfs_finish_state_bytes(config.nterms, image_pixels)?;
     let product_state_bytes = awproject_mtmfs_product_state_bytes(config.nterms, image_pixels)?;
     let product_writer_scratch_bytes = awproject_product_writer_scratch_bytes(image_pixels)?;
+    if aw_compensated_f64_readback_bytes > 0 {
+        plan.memory_allocations.push(ImagingMemoryAllocation {
+            component: "AWProject compensated f64 readback",
+            stage: "dirty-transform",
+            bytes: aw_compensated_f64_readback_bytes,
+        });
+    }
     if multiscale_minor_cycle_scratch_bytes > 0 {
         plan.memory_allocations.push(ImagingMemoryAllocation {
             component: "AWProject MT-MFS bounded multiscale scratch",
@@ -36464,6 +37855,18 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             reason: "selected FFT precision/backend and even unpadded grid geometry".to_string(),
         },
         casa_imaging::ImagingPlanDecision {
+            name: "awproject_compensated_f64_readback_bytes",
+            value: aw_compensated_f64_readback_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: if aw_compensated_f64_readback_bytes == 0 {
+                "the resolved plan does not use the direct Metal compensated-grid path"
+                    .to_string()
+            } else {
+                "one reusable host Complex64 plane overlaps each compensated Metal grid during initial and residual transforms"
+                    .to_string()
+            },
+        },
+        casa_imaging::ImagingPlanDecision {
             name: "awproject_model_fft_backend",
             value: aw_model_fft_backend.to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Resources,
@@ -36488,7 +37891,7 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             name: "awproject_model_fft_staging_bytes",
             value: aw_model_fft_staging_bytes.to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Workload,
-            reason: "one Complex32 image-sized transpose buffer produces a first-axis-contiguous in-place FFT result"
+            reason: "one prepared Complex32 image plane per Taylor term coexists with the prediction grids already charged to the run state"
                 .to_string(),
         },
         casa_imaging::ImagingPlanDecision {
@@ -36514,27 +37917,12 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             name: "awproject_product_peak_bytes",
             value: product_peak_bytes.to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Workload,
-            reason: "returned products, derived PB/masks, and one reusable writer buffer"
+            reason: "returned products and derived PB/masks coexist; product pixels are written through borrowed views and only one reusable mask buffer is charged"
                 .to_string(),
         },
     ]);
 
-    admit_imaging_execution(ImagingPlanAdmission {
-        workload: plan.workload,
-        usable_memory_bytes: plan.usable_memory_bytes,
-        workers: plan.workers,
-        worker_partition_rows: plan.worker_partition_rows,
-        ingest: plan.ingest,
-        fft: plan.fft,
-        tile: plan.tile,
-        spectral: plan.spectral,
-        metal: plan.metal,
-        caches: plan.caches,
-        memory_allocations: plan.memory_allocations,
-        maximum_planned_resident_bytes: plan.maximum_planned_resident_bytes,
-        decisions: plan.decisions,
-    })
-    .map_err(|error| error.to_string())
+    admit_standard_mfs_plan_with_lifetimes(plan, !clean_is_dirty(config))
 }
 
 fn standard_mfs_memory_plan_with_visibility_shape(
@@ -36671,6 +38059,48 @@ fn estimate_standard_mfs_max_abs_w_lambda_from_geometry(
     }
 }
 
+fn standard_mfs_plan_decision_value<'a>(
+    strategy: &'a ImagingResolvedPlan,
+    name: &str,
+) -> Option<&'a str> {
+    strategy
+        .decisions
+        .iter()
+        .find(|decision| decision.name == name)
+        .map(|decision| decision.value.as_str())
+}
+
+fn standard_mfs_plan_decision_usize(strategy: &ImagingResolvedPlan, name: &str) -> Option<usize> {
+    standard_mfs_plan_decision_value(strategy, name)?
+        .parse()
+        .ok()
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct StandardMfsProcessProjection {
+    baseline_bytes: Option<usize>,
+    total_ceiling_bytes: Option<usize>,
+    projected_total_bytes: Option<usize>,
+    projected_excess_bytes: Option<usize>,
+}
+
+fn standard_mfs_process_projection(strategy: &ImagingResolvedPlan) -> StandardMfsProcessProjection {
+    let baseline_bytes = standard_mfs_plan_decision_usize(strategy, "process_baseline_bytes");
+    let total_ceiling_bytes =
+        standard_mfs_plan_decision_usize(strategy, "process_total_ceiling_bytes");
+    let projected_total_bytes = baseline_bytes
+        .and_then(|baseline| baseline.checked_add(strategy.maximum_planned_resident_bytes));
+    let projected_excess_bytes = projected_total_bytes
+        .zip(total_ceiling_bytes)
+        .map(|(projected, ceiling)| projected.saturating_sub(ceiling));
+    StandardMfsProcessProjection {
+        baseline_bytes,
+        total_ceiling_bytes,
+        projected_total_bytes,
+        projected_excess_bytes,
+    }
+}
+
 fn log_standard_mfs_memory_plan_actual(
     strategy: &ImagingResolvedPlan,
     rows_total: usize,
@@ -36681,15 +38111,39 @@ fn log_standard_mfs_memory_plan_actual(
     if !standard_mfs_profile_detail_enabled() {
         return;
     }
+    let lifetime_peak_stage = strategy
+        .memory_lifetime_ledger
+        .peak_stage
+        .map_or("none", ImagingMemoryStage::label);
+    let lifetime_stored_peak_stage = strategy
+        .memory_lifetime_ledger
+        .peak_stored_stage
+        .map_or("none", ImagingMemoryStage::label);
+    let process_projection = standard_mfs_process_projection(strategy);
     eprintln!(
-        "standard_mfs_execution_plan execution_mode={} rows_total={} selected_channels={} row_block_rows={} workers={} memory_target_bytes={} planned_peak_bytes={} fft_chunk_planes={} tile_edge={} resident_tiles={} queue_capacity={} metal_eligible={} executor_plan_bytes_estimate={} local_grid_bytes_estimate={} product_status={}",
+        "standard_mfs_memory_runtime_actions {}",
+        strategy.memory_runtime_action_log_fields(),
+    );
+    eprintln!(
+        "standard_mfs_execution_plan execution_mode={} rows_total={} selected_channels={} row_block_rows={} workers={} memory_target_bytes={} memory_target_semantics={} process_baseline_bytes={} process_total_ceiling_bytes={} projected_process_total_bytes={} projected_process_excess_bytes={} planned_peak_bytes={} lifetime_peak_bytes={} lifetime_peak_stage={} lifetime_stored_peak_bytes={} lifetime_stored_peak_stage={} lifetime_logical_bytes={} fft_chunk_planes={} tile_edge={} resident_tiles={} queue_capacity={} metal_eligible={} executor_plan_bytes_estimate={} local_grid_bytes_estimate={} product_status={}",
         execution_mode,
         rows_total,
         strategy.workload.channels,
         strategy.ingest.source_row_block_rows,
         strategy.workers,
         strategy.usable_memory_bytes,
+        standard_mfs_plan_decision_value(strategy, "memory_target_semantics")
+            .unwrap_or("unavailable"),
+        optional_usize_resource_value(process_projection.baseline_bytes),
+        optional_usize_resource_value(process_projection.total_ceiling_bytes),
+        optional_usize_resource_value(process_projection.projected_total_bytes),
+        optional_usize_resource_value(process_projection.projected_excess_bytes),
         strategy.maximum_planned_resident_bytes,
+        strategy.memory_lifetime_ledger.maximum_resident_bytes,
+        lifetime_peak_stage,
+        strategy.memory_lifetime_ledger.maximum_stored_bytes,
+        lifetime_stored_peak_stage,
+        strategy.memory_lifetime_ledger.total_logical_bytes,
         strategy.fft.chunk_planes,
         strategy.tile.edge,
         strategy.tile.resident_tiles,
@@ -36699,11 +38153,59 @@ fn log_standard_mfs_memory_plan_actual(
         local_grid_bytes_estimate,
         standard_mfs_product_status_for_frontend(strategy),
     );
-    for allocation in &strategy.memory_allocations {
+    for (allocation_index, allocation) in strategy.memory_allocations.iter().enumerate() {
+        let allocation_id = strategy
+            .memory_lifetime_ledger
+            .allocations
+            .get(allocation_index)
+            .map(|lifecycle| lifecycle.allocation_id.as_str())
+            .unwrap_or("missing-lifecycle");
         eprintln!(
-            "standard_mfs_execution_allocation component={} stage={} bytes={}",
-            allocation.component, allocation.stage, allocation.bytes
+            "standard_mfs_execution_allocation allocation_id={} component={} stage={} bytes={}",
+            allocation_id, allocation.component, allocation.stage, allocation.bytes
         );
+    }
+    for stage_peak in &strategy.memory_lifetime_ledger.stage_peaks {
+        eprintln!(
+            "standard_mfs_execution_lifetime_stage stage={} resident_bytes={} stored_bytes={} host_heap_bytes={} unified_memory_bytes={} metal_private_bytes={} memory_mapped_bytes={} temporary_spill_bytes={} memory_mapped_stored_bytes={} temporary_spill_stored_bytes={}",
+            stage_peak.stage.label(),
+            stage_peak.resident_bytes,
+            stage_peak.stored_bytes,
+            stage_peak.bytes_for_backing(ImagingMemoryBacking::HostHeap),
+            stage_peak.bytes_for_backing(ImagingMemoryBacking::UnifiedMemory),
+            stage_peak.bytes_for_backing(ImagingMemoryBacking::MetalPrivate),
+            stage_peak.bytes_for_backing(ImagingMemoryBacking::MemoryMapped),
+            stage_peak.bytes_for_backing(ImagingMemoryBacking::TemporarySpill),
+            stage_peak.stored_bytes_for_backing(ImagingMemoryBacking::MemoryMapped),
+            stage_peak.stored_bytes_for_backing(ImagingMemoryBacking::TemporarySpill),
+        );
+    }
+    for allocation in &strategy.memory_lifetime_ledger.allocations {
+        for (residency_index, residency) in allocation.residencies.iter().enumerate() {
+            let next_use = match residency.next_use {
+                ImagingMemoryNextUse::NoFurtherUse => "none".to_string(),
+                ImagingMemoryNextUse::AtStage(stage) => {
+                    format!("stage:{}", stage.label())
+                }
+                ImagingMemoryNextUse::Cyclic {
+                    next_stage,
+                    intervening_uses,
+                } => format!("cyclic:{}:{intervening_uses}", next_stage.label()),
+            };
+            eprintln!(
+                "standard_mfs_execution_lifetime allocation_id={} component={} logical_bytes={} residency_index={} backing={:?} resident_bytes={} stored_bytes={} live_from={} live_through={} next_use={}",
+                allocation.allocation_id,
+                allocation.component,
+                allocation.logical_bytes,
+                residency_index,
+                residency.backing,
+                residency.resident_bytes,
+                residency.stored_bytes,
+                residency.live_from.label(),
+                residency.live_through.label(),
+                next_use,
+            );
+        }
     }
     for decision in &strategy.decisions {
         eprintln!(
@@ -36717,24 +38219,426 @@ fn log_standard_mfs_memory_plan_actual(
 struct ImagingProcessMemoryLedger {
     system_memory_bytes: Option<usize>,
     available_memory_bytes: Option<usize>,
+    process_physical_footprint_bytes: Option<usize>,
     baseline_process_bytes: usize,
     non_process_resident_bytes: Option<usize>,
+    process_total_ceiling_bytes: Option<usize>,
+    incremental_operation_budget_bytes: Option<usize>,
     target_bytes: usize,
     source: &'static str,
+    process_total_ceiling_origin: &'static str,
+    system_memory_origin: &'static str,
+    available_memory_origin: &'static str,
+    process_physical_footprint_origin: &'static str,
+}
+
+impl ImagingProcessMemoryLedger {
+    fn projected_process_total_bytes(self, planned_resident_bytes: usize) -> Option<usize> {
+        self.baseline_process_bytes
+            .checked_add(planned_resident_bytes)
+    }
+
+    fn projected_process_excess_bytes(self, planned_resident_bytes: usize) -> Option<usize> {
+        self.projected_process_total_bytes(planned_resident_bytes)
+            .zip(self.process_total_ceiling_bytes)
+            .map(|(projected, ceiling)| projected.saturating_sub(ceiling))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ImagingCpuResourceDetection {
+    logical_threads: Option<usize>,
+    performance_cores: Option<usize>,
+    logical_threads_origin: &'static str,
+    performance_cores_origin: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ImagingMetalMemoryDetection {
+    device_available: bool,
+    has_unified_memory: Option<bool>,
+    recommended_working_set_bytes: Option<usize>,
+    current_allocated_bytes: Option<usize>,
+    origin: &'static str,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ImagingPlanningResourceAssignment {
+    context: ImagingPlanningContext,
+    metal_device_available: bool,
+    metal_device_budget_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ImagingStorageBandwidthDetection {
+    read_bytes_per_second: Option<u64>,
+    write_bytes_per_second: Option<u64>,
+    read_origin: &'static str,
+    write_origin: &'static str,
+}
+
+fn core_imaging_memory_pressure_policy(
+    policy: ImagingMemoryPressurePolicy,
+) -> CoreImagingMemoryPressurePolicy {
+    match policy {
+        ImagingMemoryPressurePolicy::Auto => CoreImagingMemoryPressurePolicy::AutoSafe,
+        ImagingMemoryPressurePolicy::ConservativeNoSwap => {
+            CoreImagingMemoryPressurePolicy::ConservativeNoSwap
+        }
+        ImagingMemoryPressurePolicy::Aggressive => {
+            CoreImagingMemoryPressurePolicy::AggressiveMemoryUse
+        }
+        ImagingMemoryPressurePolicy::Oversubscribe => {
+            CoreImagingMemoryPressurePolicy::IntentionalOversubscription
+        }
+        ImagingMemoryPressurePolicy::StageAware => {
+            CoreImagingMemoryPressurePolicy::StageAwareRelease
+        }
+        ImagingMemoryPressurePolicy::Hybrid => CoreImagingMemoryPressurePolicy::Hybrid,
+    }
+}
+
+fn imaging_planning_resource_assignment(
+    config: &CliConfig,
+    memory_target: ImagingProcessMemoryLedger,
+    unified_memory_requirement_bytes: usize,
+) -> ImagingPlanningResourceAssignment {
+    let cpu = imaging_cpu_resource_detection();
+    let metal = imaging_metal_memory_detection();
+    let storage = imaging_storage_bandwidth_detection();
+    let context = imaging_planning_context_from_detection(
+        config,
+        memory_target,
+        unified_memory_requirement_bytes,
+        cpu,
+        metal,
+        storage,
+    );
+    let metal_device_budget_bytes = imaging_metal_device_budget_bytes(memory_target, metal);
+    log_imaging_planning_resource_detection(
+        &context,
+        memory_target,
+        cpu,
+        metal,
+        metal_device_budget_bytes,
+        storage,
+    );
+    ImagingPlanningResourceAssignment {
+        context,
+        metal_device_available: metal.device_available,
+        metal_device_budget_bytes,
+    }
+}
+
+fn imaging_planning_context_from_detection(
+    config: &CliConfig,
+    memory_target: ImagingProcessMemoryLedger,
+    unified_memory_requirement_bytes: usize,
+    cpu: ImagingCpuResourceDetection,
+    metal: ImagingMetalMemoryDetection,
+    storage: ImagingStorageBandwidthDetection,
+) -> ImagingPlanningContext {
+    ImagingPlanningContext {
+        memory_pressure_policy: core_imaging_memory_pressure_policy(
+            config.imaging_memory_pressure_policy,
+        ),
+        detected_resources: ImagingDetectedResources {
+            physical_memory_bytes: memory_target.system_memory_bytes,
+            current_memory_headroom_bytes: memory_target.available_memory_bytes,
+            process_physical_footprint_bytes: memory_target.process_physical_footprint_bytes,
+            logical_cpu_threads: cpu.logical_threads,
+            performance_cpu_cores: cpu.performance_cores,
+            metal_recommended_working_set_bytes: metal.recommended_working_set_bytes,
+            metal_current_allocated_bytes: metal.current_allocated_bytes,
+            unified_memory_requirement_bytes: Some(unified_memory_requirement_bytes),
+            storage_read_bytes_per_second: storage.read_bytes_per_second,
+            storage_write_bytes_per_second: storage.write_bytes_per_second,
+        },
+    }
+}
+
+fn imaging_cpu_resource_detection() -> ImagingCpuResourceDetection {
+    let logical_threads = std::thread::available_parallelism()
+        .ok()
+        .map(|count| count.get());
+    let system_performance_cores = system_performance_cpu_count();
+    let performance_cores = system_performance_cores
+        .zip(logical_threads)
+        .map(|(performance, logical)| performance.min(logical))
+        .or(system_performance_cores);
+    ImagingCpuResourceDetection {
+        logical_threads,
+        performance_cores,
+        logical_threads_origin: if logical_threads.is_some() {
+            "std-available-parallelism"
+        } else {
+            "unavailable"
+        },
+        performance_cores_origin: system_performance_cpu_origin(),
+    }
+}
+
+fn unavailable_imaging_metal_memory_detection(origin: &'static str) -> ImagingMetalMemoryDetection {
+    ImagingMetalMemoryDetection {
+        device_available: false,
+        has_unified_memory: None,
+        recommended_working_set_bytes: None,
+        current_allocated_bytes: None,
+        origin,
+    }
+}
+
+#[allow(unexpected_cfgs)]
+mod imaging_metal_platform_detection {
+    use super::{ImagingMetalMemoryDetection, unavailable_imaging_metal_memory_detection};
+
+    #[cfg(any(test, all(target_os = "macos", not(coverage))))]
+    pub(super) fn from_device_snapshot(
+        has_unified_memory: bool,
+        recommended_working_set_bytes: u64,
+        current_allocated_bytes: usize,
+    ) -> ImagingMetalMemoryDetection {
+        ImagingMetalMemoryDetection {
+            device_available: true,
+            has_unified_memory: Some(has_unified_memory),
+            recommended_working_set_bytes: usize::try_from(recommended_working_set_bytes)
+                .ok()
+                .filter(|bytes| *bytes > 0),
+            current_allocated_bytes: Some(current_allocated_bytes),
+            origin: "metal-default-device-snapshot",
+        }
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    pub(super) fn detect() -> ImagingMetalMemoryDetection {
+        use objc2_metal::{MTLCreateSystemDefaultDevice, MTLDevice};
+
+        let Some(device) = MTLCreateSystemDefaultDevice() else {
+            return unavailable_imaging_metal_memory_detection("metal-device-unavailable");
+        };
+        from_device_snapshot(
+            device.hasUnifiedMemory(),
+            device.recommendedMaxWorkingSetSize(),
+            device.currentAllocatedSize(),
+        )
+    }
+
+    #[cfg(coverage)]
+    pub(super) fn detect() -> ImagingMetalMemoryDetection {
+        unavailable_imaging_metal_memory_detection("metal-detection-disabled-under-coverage")
+    }
+
+    #[cfg(all(not(target_os = "macos"), not(coverage)))]
+    pub(super) fn detect() -> ImagingMetalMemoryDetection {
+        unavailable_imaging_metal_memory_detection("metal-detection-unsupported-on-this-platform")
+    }
+}
+
+fn imaging_metal_memory_detection() -> ImagingMetalMemoryDetection {
+    imaging_metal_platform_detection::detect()
+}
+
+fn assigned_unified_memory_budget_bytes(memory_target: ImagingProcessMemoryLedger) -> usize {
+    memory_target
+        .available_memory_bytes
+        .map_or(memory_target.target_bytes, |headroom| {
+            memory_target.target_bytes.min(headroom)
+        })
+}
+
+fn imaging_metal_device_budget_bytes(
+    memory_target: ImagingProcessMemoryLedger,
+    metal: ImagingMetalMemoryDetection,
+) -> usize {
+    if !metal.device_available {
+        return 0;
+    }
+    let Some(device_headroom_bytes) = metal
+        .recommended_working_set_bytes
+        .zip(metal.current_allocated_bytes)
+        .map(|(recommended, current)| recommended.saturating_sub(current))
+    else {
+        return 0;
+    };
+    match metal.has_unified_memory {
+        Some(true) => {
+            // Unified Metal resources already consume the same physical-memory
+            // headroom assigned to the process. Cap the device view of that
+            // shared pool instead of treating it as an additional budget.
+            device_headroom_bytes.min(assigned_unified_memory_budget_bytes(memory_target))
+        }
+        Some(false) => device_headroom_bytes,
+        None => 0,
+    }
+}
+
+const IMAGING_SPILL_READ_BANDWIDTH_ENV: &str = "CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND";
+const IMAGING_SPILL_WRITE_BANDWIDTH_ENV: &str = "CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND";
+
+fn parse_positive_bytes_per_second(value: &str) -> Option<u64> {
+    value.trim().parse::<u64>().ok().filter(|value| *value > 0)
+}
+
+fn configured_storage_bandwidth(
+    environment_name: &'static str,
+    configured_origin: &'static str,
+) -> (Option<u64>, &'static str) {
+    let Some(value) = env::var_os(environment_name) else {
+        return (None, "unconfigured");
+    };
+    let Some(value) = value.to_str() else {
+        eprintln!(
+            "imaging_planner_resource_warning resource={} reason=non_utf8_value",
+            environment_name
+        );
+        return (None, "invalid-environment-value");
+    };
+    let Some(bytes_per_second) = parse_positive_bytes_per_second(value) else {
+        eprintln!(
+            "imaging_planner_resource_warning resource={} reason=expected_positive_integer_bytes_per_second",
+            environment_name
+        );
+        return (None, "invalid-environment-value");
+    };
+    (Some(bytes_per_second), configured_origin)
+}
+
+fn imaging_storage_bandwidth_detection() -> ImagingStorageBandwidthDetection {
+    let (read_bytes_per_second, read_origin) = configured_storage_bandwidth(
+        IMAGING_SPILL_READ_BANDWIDTH_ENV,
+        "env-CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND",
+    );
+    let (write_bytes_per_second, write_origin) = configured_storage_bandwidth(
+        IMAGING_SPILL_WRITE_BANDWIDTH_ENV,
+        "env-CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND",
+    );
+    ImagingStorageBandwidthDetection {
+        read_bytes_per_second,
+        write_bytes_per_second,
+        read_origin,
+        write_origin,
+    }
+}
+
+fn optional_usize_resource_value(value: Option<usize>) -> String {
+    value.map_or_else(|| "none".to_string(), |value| value.to_string())
+}
+
+fn optional_u64_resource_value(value: Option<u64>) -> String {
+    value.map_or_else(|| "none".to_string(), |value| value.to_string())
+}
+
+fn optional_bool_resource_value(value: Option<bool>) -> &'static str {
+    match value {
+        Some(true) => "true",
+        Some(false) => "false",
+        None => "none",
+    }
+}
+
+fn imaging_planning_resource_log_line(
+    context: &ImagingPlanningContext,
+    memory_target: ImagingProcessMemoryLedger,
+    cpu: ImagingCpuResourceDetection,
+    metal: ImagingMetalMemoryDetection,
+    metal_device_budget_bytes: usize,
+    storage: ImagingStorageBandwidthDetection,
+) -> String {
+    let resources = &context.detected_resources;
+    format!(
+        "standard_mfs_planning_resources memory_pressure_policy={} memory_target_bytes={} memory_target_semantics=incremental-operation-residency memory_target_origin={} incremental_operation_budget_bytes={} process_baseline_bytes={} process_total_ceiling_bytes={} process_total_ceiling_origin={} target_projected_process_total_bytes={} target_projected_process_excess_bytes={} physical_memory_bytes={} physical_memory_origin={} no_swap_headroom_bytes={} no_swap_headroom_origin={} process_physical_footprint_bytes={} process_physical_footprint_origin={} logical_cpu_threads={} logical_cpu_threads_origin={} performance_cpu_cores={} performance_cpu_cores_origin={} metal_device_available={} metal_has_unified_memory={} metal_recommended_working_set_bytes={} metal_current_allocated_bytes={} metal_device_budget_bytes={} metal_memory_origin={} unified_memory_requirement_bytes={} unified_memory_requirement_origin=workload-direct-metal-scratch-candidate storage_read_bytes_per_second={} storage_read_origin={} storage_write_bytes_per_second={} storage_write_origin={}",
+        context.memory_pressure_policy.label(),
+        memory_target.target_bytes,
+        memory_target.source,
+        optional_usize_resource_value(memory_target.incremental_operation_budget_bytes),
+        memory_target.baseline_process_bytes,
+        optional_usize_resource_value(memory_target.process_total_ceiling_bytes),
+        memory_target.process_total_ceiling_origin,
+        optional_usize_resource_value(
+            memory_target.projected_process_total_bytes(memory_target.target_bytes)
+        ),
+        optional_usize_resource_value(
+            memory_target.projected_process_excess_bytes(memory_target.target_bytes)
+        ),
+        optional_usize_resource_value(resources.physical_memory_bytes),
+        memory_target.system_memory_origin,
+        optional_usize_resource_value(resources.current_memory_headroom_bytes),
+        memory_target.available_memory_origin,
+        optional_usize_resource_value(resources.process_physical_footprint_bytes),
+        memory_target.process_physical_footprint_origin,
+        optional_usize_resource_value(resources.logical_cpu_threads),
+        cpu.logical_threads_origin,
+        optional_usize_resource_value(resources.performance_cpu_cores),
+        cpu.performance_cores_origin,
+        metal.device_available,
+        optional_bool_resource_value(metal.has_unified_memory),
+        optional_usize_resource_value(resources.metal_recommended_working_set_bytes),
+        optional_usize_resource_value(resources.metal_current_allocated_bytes),
+        metal_device_budget_bytes,
+        metal.origin,
+        optional_usize_resource_value(resources.unified_memory_requirement_bytes),
+        optional_u64_resource_value(resources.storage_read_bytes_per_second),
+        storage.read_origin,
+        optional_u64_resource_value(resources.storage_write_bytes_per_second),
+        storage.write_origin,
+    )
+}
+
+fn log_imaging_planning_resource_detection(
+    context: &ImagingPlanningContext,
+    memory_target: ImagingProcessMemoryLedger,
+    cpu: ImagingCpuResourceDetection,
+    metal: ImagingMetalMemoryDetection,
+    metal_device_budget_bytes: usize,
+    storage: ImagingStorageBandwidthDetection,
+) {
+    eprintln!(
+        "{}",
+        imaging_planning_resource_log_line(
+            context,
+            memory_target,
+            cpu,
+            metal,
+            metal_device_budget_bytes,
+            storage,
+        )
+    );
 }
 
 fn imaging_process_memory_ledger(config: &CliConfig) -> ImagingProcessMemoryLedger {
     let system_memory_bytes = system_physical_memory_bytes();
     let available_memory_bytes = system_available_memory_bytes();
-    let baseline_process_bytes = spectral_slab::current_process_memory_snapshot()
-        .current_rss_bytes
-        .unwrap_or(0);
-    imaging_process_memory_ledger_from_snapshot(
+    let process_physical_footprint_bytes = current_process_physical_footprint_bytes();
+    let mut ledger = imaging_process_memory_ledger_from_snapshot(
         config,
         system_memory_bytes,
         available_memory_bytes,
-        baseline_process_bytes,
-    )
+        process_physical_footprint_bytes.unwrap_or(0),
+    );
+    ledger.process_physical_footprint_bytes = process_physical_footprint_bytes;
+    ledger.system_memory_origin = system_physical_memory_origin();
+    ledger.available_memory_origin = system_available_memory_origin();
+    ledger.process_physical_footprint_origin = current_process_physical_footprint_origin();
+    ledger
+}
+
+fn process_total_ceiling_from_snapshot(
+    system_memory_bytes: Option<usize>,
+    available_memory_bytes: Option<usize>,
+    baseline_process_bytes: usize,
+) -> (Option<usize>, &'static str) {
+    match (system_memory_bytes, available_memory_bytes) {
+        (Some(physical), Some(available)) => (
+            Some(physical.min(baseline_process_bytes.saturating_add(available))),
+            "baseline-plus-no-swap-headroom-capped-to-physical",
+        ),
+        (Some(physical), None) => (Some(physical), "physical-memory-ceiling"),
+        (None, Some(available)) => (
+            baseline_process_bytes.checked_add(available),
+            "baseline-plus-no-swap-headroom",
+        ),
+        (None, None) => (None, "unavailable"),
+    }
 }
 
 fn imaging_process_memory_ledger_from_snapshot(
@@ -36751,55 +38655,160 @@ fn imaging_process_memory_ledger_from_snapshot(
                     .saturating_sub(available)
                     .saturating_sub(baseline_process_bytes)
             });
-    if let Some(target_mb) = config.imaging_memory_target_mb.filter(|value| *value > 0) {
-        return ImagingProcessMemoryLedger {
+    let (process_total_ceiling_bytes, process_total_ceiling_origin) =
+        process_total_ceiling_from_snapshot(
             system_memory_bytes,
             available_memory_bytes,
             baseline_process_bytes,
-            non_process_resident_bytes,
-            // An explicit target is an operator-selected process budget, not a
-            // request for the kernel's current free-page count. Honoring it is
-            // what permits deliberate, observable swap-backed runs; automatic
-            // planning below remains bounded by the kernel snapshot.
-            target_bytes: target_mb.saturating_mul(1024 * 1024),
-            source: "cli-imaging",
-        };
-    }
-    if let Some(target_mb) = config
-        .standard_mfs_memory_target_mb
+        );
+    let incremental_operation_budget_bytes =
+        process_total_ceiling_bytes.map(|ceiling| ceiling.saturating_sub(baseline_process_bytes));
+    let explicit_target = config
+        .imaging_memory_target_mb
         .filter(|value| *value > 0)
-    {
-        return ImagingProcessMemoryLedger {
-            system_memory_bytes,
-            available_memory_bytes,
-            baseline_process_bytes,
-            non_process_resident_bytes,
-            target_bytes: target_mb.saturating_mul(1024 * 1024),
-            source: "cli-standard-mfs",
-        };
-    }
-    if let Some(target_bytes) = available_memory_bytes {
-        // The runtime snapshot is the resource assignment: it excludes pages
-        // currently needed by this process, the OS, and other applications,
-        // while including only memory the kernel reports as immediately free
-        // or reclaimable. No machine-size percentage is used.
-        return ImagingProcessMemoryLedger {
-            system_memory_bytes,
-            available_memory_bytes,
-            baseline_process_bytes,
-            non_process_resident_bytes,
-            target_bytes,
-            source: "available-memory-ledger",
-        };
-    }
+        .map(|target_mb| {
+            (
+                target_mb.saturating_mul(1024 * 1024),
+                "cli-imaging" as &'static str,
+            )
+        })
+        .or_else(|| {
+            config
+                .standard_mfs_memory_target_mb
+                .filter(|value| *value > 0)
+                .map(|target_mb| {
+                    (
+                        target_mb.saturating_mul(1024 * 1024),
+                        "cli-standard-mfs" as &'static str,
+                    )
+                })
+        });
+
+    let (target_bytes, source) = match config.imaging_memory_pressure_policy {
+        ImagingMemoryPressurePolicy::Oversubscribe => explicit_target
+            .map(|(bytes, _)| (bytes, "cli-intentional-oversubscription"))
+            .unwrap_or((0, "oversubscribe-requires-explicit-target")),
+        ImagingMemoryPressurePolicy::Aggressive | ImagingMemoryPressurePolicy::Hybrid => {
+            let (
+                explicit_ceiling_source,
+                explicit_without_snapshot_source,
+                physical_source,
+                available_source,
+                unavailable_source,
+            ) = if config.imaging_memory_pressure_policy == ImagingMemoryPressurePolicy::Hybrid {
+                (
+                    "cli-hybrid-physical-ceiling",
+                    "cli-hybrid-no-physical-snapshot",
+                    "hybrid-physical-ledger",
+                    "hybrid-available-ledger",
+                    "hybrid-resources-unavailable",
+                )
+            } else {
+                (
+                    "cli-aggressive-physical-ceiling",
+                    "cli-aggressive-no-physical-snapshot",
+                    "aggressive-physical-ledger",
+                    "aggressive-available-ledger",
+                    "aggressive-resources-unavailable",
+                )
+            };
+            match (
+                explicit_target,
+                incremental_operation_budget_bytes,
+                available_memory_bytes,
+            ) {
+                (Some((requested, _)), Some(operation_budget), _) => {
+                    (requested.min(operation_budget), explicit_ceiling_source)
+                }
+                (Some((requested, _)), None, _) => (requested, explicit_without_snapshot_source),
+                (None, Some(operation_budget), _) if system_memory_bytes.is_some() => {
+                    (operation_budget, physical_source)
+                }
+                (None, Some(operation_budget), _) => (operation_budget, available_source),
+                (None, None, Some(available)) => (available, available_source),
+                (None, None, None) => (0, unavailable_source),
+            }
+        }
+        ImagingMemoryPressurePolicy::Auto
+        | ImagingMemoryPressurePolicy::ConservativeNoSwap
+        | ImagingMemoryPressurePolicy::StageAware => {
+            match (
+                explicit_target,
+                available_memory_bytes,
+                incremental_operation_budget_bytes,
+            ) {
+                (Some((requested, requested_source)), _, Some(operation_budget)) => (
+                    requested.min(operation_budget),
+                    if requested <= operation_budget {
+                        requested_source
+                    } else {
+                        "cli-capped-to-no-swap-headroom"
+                    },
+                ),
+                (Some((requested, requested_source)), _, None) => (requested, requested_source),
+                (None, Some(available), Some(operation_budget)) => {
+                    (available.min(operation_budget), "available-memory-ledger")
+                }
+                (None, Some(available), None) => (available, "available-memory-ledger"),
+                (None, None, _) => (0, "unavailable-requires-explicit-target"),
+            }
+        }
+    };
+
     ImagingProcessMemoryLedger {
         system_memory_bytes,
-        available_memory_bytes: None,
+        available_memory_bytes,
+        process_physical_footprint_bytes: (baseline_process_bytes > 0)
+            .then_some(baseline_process_bytes),
         baseline_process_bytes,
         non_process_resident_bytes,
-        target_bytes: 0,
-        source: "unavailable-requires-explicit-target",
+        process_total_ceiling_bytes,
+        incremental_operation_budget_bytes,
+        target_bytes,
+        source,
+        process_total_ceiling_origin,
+        system_memory_origin: "injected-snapshot",
+        available_memory_origin: "injected-snapshot",
+        process_physical_footprint_origin: "injected-snapshot",
     }
+}
+
+#[cfg(target_os = "macos")]
+fn current_process_physical_footprint_bytes() -> Option<usize> {
+    let mut usage = unsafe { std::mem::zeroed::<libc::rusage_info_v0>() };
+    let status = unsafe {
+        libc::proc_pid_rusage(
+            libc::getpid(),
+            libc::RUSAGE_INFO_V0,
+            std::ptr::addr_of_mut!(usage).cast::<libc::rusage_info_t>(),
+        )
+    };
+    if status != 0 {
+        return None;
+    }
+    usize::try_from(usage.ri_phys_footprint)
+        .ok()
+        .filter(|bytes| *bytes > 0)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn current_process_physical_footprint_bytes() -> Option<usize> {
+    // Linux and the other supported targets do not expose Darwin's physical
+    // footprint accounting. RSS is the conservative process-residency fact
+    // already available to this frontend, so use it explicitly as a fallback.
+    spectral_slab::current_process_memory_snapshot()
+        .current_rss_bytes
+        .filter(|bytes| *bytes > 0)
+}
+
+#[cfg(target_os = "macos")]
+const fn current_process_physical_footprint_origin() -> &'static str {
+    "proc-pid-rusage-v0-physical-footprint"
+}
+
+#[cfg(not(target_os = "macos"))]
+const fn current_process_physical_footprint_origin() -> &'static str {
+    "rss-fallback-no-platform-physical-footprint"
 }
 
 #[cfg(target_os = "macos")]
@@ -36858,6 +38867,26 @@ fn system_available_memory_bytes() -> Option<usize> {
 }
 
 #[cfg(target_os = "macos")]
+const fn system_available_memory_origin() -> &'static str {
+    "host-statistics64-free-inactive-speculative"
+}
+
+#[cfg(target_os = "linux")]
+const fn system_available_memory_origin() -> &'static str {
+    "proc-meminfo-MemAvailable"
+}
+
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
+const fn system_available_memory_origin() -> &'static str {
+    "sysconf-available-physical-pages"
+}
+
+#[cfg(not(unix))]
+const fn system_available_memory_origin() -> &'static str {
+    "unavailable"
+}
+
+#[cfg(target_os = "macos")]
 fn system_physical_memory_bytes() -> Option<usize> {
     let mut value = 0u64;
     let mut size = std::mem::size_of::<u64>() as libc::size_t;
@@ -36871,14 +38900,16 @@ fn system_physical_memory_bytes() -> Option<usize> {
             0,
         )
     };
-    (result == 0 && value > 0).then_some(value as usize)
+    (result == 0 && value > 0)
+        .then(|| usize::try_from(value).ok())
+        .flatten()
 }
 
 #[cfg(target_os = "macos")]
 fn system_performance_cpu_count() -> Option<usize> {
     let mut value = 0u32;
     let mut size = std::mem::size_of::<u32>() as libc::size_t;
-    let name = b"hw.perflevel0.logicalcpu\0";
+    let name = b"hw.perflevel0.physicalcpu\0";
     let result = unsafe {
         libc::sysctlbyname(
             name.as_ptr().cast(),
@@ -36894,6 +38925,16 @@ fn system_performance_cpu_count() -> Option<usize> {
 #[cfg(not(target_os = "macos"))]
 fn system_performance_cpu_count() -> Option<usize> {
     None
+}
+
+#[cfg(target_os = "macos")]
+const fn system_performance_cpu_origin() -> &'static str {
+    "sysctl-hw.perflevel0.physicalcpu-capped-to-process-parallelism"
+}
+
+#[cfg(not(target_os = "macos"))]
+const fn system_performance_cpu_origin() -> &'static str {
+    "unavailable-no-portable-performance-core-topology"
 }
 
 fn assigned_cpu_capacity_for_topology(
@@ -36976,6 +39017,21 @@ fn system_physical_memory_bytes() -> Option<usize> {
 #[cfg(not(unix))]
 fn system_physical_memory_bytes() -> Option<usize> {
     None
+}
+
+#[cfg(target_os = "macos")]
+const fn system_physical_memory_origin() -> &'static str {
+    "sysctl-hw.memsize"
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+const fn system_physical_memory_origin() -> &'static str {
+    "sysconf-physical-pages"
+}
+
+#[cfg(not(unix))]
+const fn system_physical_memory_origin() -> &'static str {
+    "unavailable"
 }
 
 fn standard_mfs_grid_threads_for_config(config: &CliConfig) -> usize {
@@ -45883,7 +47939,7 @@ fn write_single_product_inner(spec: SingleProductWrite<'_>) -> Result<(), String
     let mut image = PagedImage::<f32>::create(data.shape().to_vec(), coords.clone(), path)
         .map_err(|error| format!("create image {}: {error}", path.display()))?;
     image
-        .put_slice(&data.clone().into_dyn(), &[0, 0, 0, 0])
+        .put_slice_view(data.view().into_dyn(), &[0, 0, 0, 0])
         .map_err(|error| format!("write pixels {}: {error}", path.display()))?;
     if let Some(mask) = mask {
         image
@@ -46263,6 +48319,20 @@ fn parse_imaging_fft_precision_policy(text: &str) -> Result<ImagingFftPrecisionP
         }
         _ => Err(format!(
             "unsupported --imaging-fft-precision value {text:?}; expected auto, f64, or f32"
+        )),
+    }
+}
+
+fn parse_imaging_memory_pressure_policy(text: &str) -> Result<ImagingMemoryPressurePolicy, String> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "" | "auto" | "default" => Ok(ImagingMemoryPressurePolicy::Auto),
+        "conservative-no-swap" => Ok(ImagingMemoryPressurePolicy::ConservativeNoSwap),
+        "aggressive" => Ok(ImagingMemoryPressurePolicy::Aggressive),
+        "oversubscribe" => Ok(ImagingMemoryPressurePolicy::Oversubscribe),
+        "stage-aware" => Ok(ImagingMemoryPressurePolicy::StageAware),
+        "hybrid" => Ok(ImagingMemoryPressurePolicy::Hybrid),
+        _ => Err(format!(
+            "unsupported --imaging-memory-pressure-policy value {text:?}; expected auto, conservative-no-swap, aggressive, oversubscribe, stage-aware, or hybrid"
         )),
     }
 }
@@ -50114,6 +52184,11 @@ Options:
                             compatibility alias for --imaging-prepare-buffer-mb
   --imaging-memory-target-mb N
                             override shared bounded source-stream memory target in MiB
+  --imaging-memory-pressure-policy POLICY
+                            auto, conservative-no-swap, aggressive, oversubscribe, stage-aware, or hybrid (default auto)
+  CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND=N
+  CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND=N
+                            measured spill-volume bandwidth evidence; no startup benchmark is run
   --imaging-prepare-buffer-mb N
                             override shared bounded source-stream prepare-buffer budget in MiB
   --imaging-row-block-rows N
@@ -50128,6 +52203,8 @@ Options:
                             read selected MS imaging row blocks and report raw throughput only
   --spectral-plan-probe true|false
                             run the standard spectral cube slab memory/source-read planner and stop before imaging
+  --standard-mfs-plan-probe true|false
+                            open real standard-MFS inputs, emit the production memory/lifetime plan, and stop before allocation or execution
   -h, --help                show this help
 "
     .to_string()
@@ -51766,6 +53843,236 @@ mod tests {
         drop(context_guard);
         drop(run_span);
         drop(progress_guard);
+    }
+
+    #[test]
+    fn standard_mfs_profile_detail_preserves_stage_memory_callback_without_ui_progress() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("/tmp/stage-memory.ms"),
+            OsString::from("--imagename"),
+            OsString::from("/tmp/stage-memory-image"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--niter"),
+            OsString::from("100"),
+        ])
+        .expect("parse config");
+        assert!(standard_mfs_progress_callback_for_modes(&config, false, false).is_none());
+        let callback = standard_mfs_progress_callback_for_modes(&config, false, true)
+            .expect("profile detail preserves the stage-memory callback");
+        let event = StandardMfsProgressEvent {
+            phase: StandardMfsProgressPhase::MinorCycleStart,
+            deconvolver: Deconvolver::Clark,
+            minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
+            major_cycle: 2,
+            minor_iterations: 17,
+            minor_iteration_limit: 100,
+            cycle_iteration_limit: 40,
+            peak_residual_jy_per_beam: Some(0.003),
+            cycle_threshold_jy_per_beam: Some(0.001),
+        };
+        callback(event.clone());
+
+        let pressure = StandardMfsStagePressureObservation {
+            current: StandardMfsStagePressureSnapshot {
+                process_physical_footprint_bytes: Some(6_144),
+                current_rss_bytes: Some(4_096),
+                lifetime_peak_rss_bytes: Some(8_192),
+                current_cpu_allocated_bytes: None,
+                current_metal_allocated_bytes: Some(2_048),
+                current_unified_memory_allocated_bytes: Some(2_048),
+                host_compressed_memory_bytes: Some(512),
+                swap_used_bytes: Some(256),
+                ..Default::default()
+            },
+            stage_observed_peak: StandardMfsStagePressureSnapshot {
+                process_physical_footprint_bytes: Some(7_168),
+                current_rss_bytes: Some(5_120),
+                current_cpu_allocated_bytes: None,
+                current_metal_allocated_bytes: Some(3_072),
+                current_unified_memory_allocated_bytes: Some(3_072),
+                host_compressed_memory_bytes: Some(768),
+                swap_used_bytes: Some(384),
+                ..Default::default()
+            },
+            swapin_bytes_delta: Some(64),
+            swapout_bytes_delta: Some(32),
+            process_page_faults_delta: Some(9),
+            process_disk_read_bytes_delta: Some(1_024),
+            process_disk_write_bytes_delta: Some(2_048),
+            external_disk_read_bytes_delta: None,
+            external_disk_write_bytes_delta: None,
+            gpu_stall_ms: None,
+        };
+        let mut last_phase = None;
+        let line = standard_mfs_stage_memory_transition_line(
+            &mut last_phase,
+            &event,
+            pressure,
+            Duration::from_millis(1_250),
+        )
+        .expect("first phase emits a memory line");
+        assert_eq!(
+            line.split_whitespace().next(),
+            Some("standard_mfs_stage_memory")
+        );
+        let fields = line
+            .split_whitespace()
+            .skip(1)
+            .map(|field| field.split_once('=').expect("key=value field"))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(fields.get("phase"), Some(&"minor_cycle_start"));
+        assert_eq!(fields.get("stage"), Some(&"minor-cycle"));
+        assert_eq!(fields.get("major_cycle"), Some(&"2"));
+        assert_eq!(fields.get("minor_iterations"), Some(&"17"));
+        assert_eq!(
+            fields.get("process_physical_footprint_bytes"),
+            Some(&"6144")
+        );
+        assert_eq!(
+            fields.get("stage_observed_peak_process_physical_footprint_bytes"),
+            Some(&"7168")
+        );
+        assert_eq!(fields.get("current_rss_bytes"), Some(&"4096"));
+        assert_eq!(fields.get("stage_observed_peak_rss_bytes"), Some(&"5120"));
+        assert_eq!(fields.get("lifetime_peak_rss_bytes"), Some(&"8192"));
+        assert_eq!(
+            fields.get("current_cpu_allocated_bytes"),
+            Some(&"unavailable")
+        );
+        assert_eq!(fields.get("current_metal_allocated_bytes"), Some(&"2048"));
+        assert_eq!(
+            fields.get("stage_observed_peak_metal_allocated_bytes"),
+            Some(&"3072")
+        );
+        assert_eq!(
+            fields.get("external_disk_read_bytes_delta"),
+            Some(&"unavailable")
+        );
+        assert_eq!(fields.get("gpu_stall_ms"), Some(&"unavailable"));
+        assert_eq!(fields.get("peak_observation_complete"), Some(&"false"));
+        assert_eq!(
+            fields.get("observation_scope"),
+            Some(&"phase-transition-samples-not-transient-peak")
+        );
+        assert_eq!(fields.get("elapsed_monotonic_ms"), Some(&"1250.000"));
+        for required in [
+            "process_physical_footprint_bytes",
+            "stage_observed_peak_process_physical_footprint_bytes",
+            "current_rss_bytes",
+            "stage_observed_peak_rss_bytes",
+            "current_cpu_allocated_bytes",
+            "stage_observed_peak_cpu_allocated_bytes",
+            "current_metal_allocated_bytes",
+            "stage_observed_peak_metal_allocated_bytes",
+            "current_unified_memory_allocated_bytes",
+            "stage_observed_peak_unified_memory_allocated_bytes",
+            "host_compressed_memory_bytes",
+            "stage_observed_peak_host_compressed_memory_bytes",
+            "swap_used_bytes",
+            "stage_observed_peak_swap_used_bytes",
+            "swapin_bytes_delta",
+            "swapout_bytes_delta",
+            "process_page_faults_delta",
+            "process_disk_read_bytes_delta",
+            "process_disk_write_bytes_delta",
+            "external_disk_read_bytes_delta",
+            "external_disk_write_bytes_delta",
+            "gpu_stall_ms",
+            "elapsed_monotonic_ms",
+        ] {
+            assert!(fields.contains_key(required), "missing {required}");
+        }
+        assert!(
+            fields["elapsed_monotonic_ms"].parse::<f64>().is_ok(),
+            "elapsed monotonic time must remain machine-parseable"
+        );
+        assert!(
+            standard_mfs_stage_memory_transition_line(
+                &mut last_phase,
+                &event,
+                pressure,
+                Duration::from_millis(1_500),
+            )
+            .is_none(),
+            "repeated events in one phase stay bounded"
+        );
+
+        let mut next_event = event;
+        next_event.phase = StandardMfsProgressPhase::MinorCycleEnd;
+        assert!(
+            standard_mfs_stage_memory_transition_line(
+                &mut last_phase,
+                &next_event,
+                pressure,
+                Duration::from_millis(1_750),
+            )
+            .is_some(),
+            "the next phase transition emits"
+        );
+    }
+
+    #[test]
+    fn standard_mfs_stage_pressure_tracks_observed_peaks_and_counter_deltas() {
+        let mut tracker = StandardMfsStagePressureTracker::default();
+        let entry = StandardMfsStagePressureSnapshot {
+            process_physical_footprint_bytes: Some(100),
+            current_rss_bytes: Some(80),
+            current_metal_allocated_bytes: Some(20),
+            swap_used_bytes: Some(5),
+            swapin_bytes_total: Some(1_000),
+            process_page_faults_total: Some(200),
+            process_disk_read_bytes_total: Some(3_000),
+            ..Default::default()
+        };
+        let first = tracker.observe("initial-grid", entry);
+        assert_eq!(
+            first.stage_observed_peak.process_physical_footprint_bytes,
+            Some(100)
+        );
+        assert_eq!(first.swapin_bytes_delta, Some(0));
+
+        let later = tracker.observe(
+            "initial-grid",
+            StandardMfsStagePressureSnapshot {
+                process_physical_footprint_bytes: Some(160),
+                current_rss_bytes: Some(120),
+                current_metal_allocated_bytes: Some(15),
+                swap_used_bytes: Some(9),
+                swapin_bytes_total: Some(1_256),
+                process_page_faults_total: Some(230),
+                process_disk_read_bytes_total: Some(4_024),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            later.stage_observed_peak.process_physical_footprint_bytes,
+            Some(160)
+        );
+        assert_eq!(
+            later.stage_observed_peak.current_metal_allocated_bytes,
+            Some(20)
+        );
+        assert_eq!(later.swapin_bytes_delta, Some(256));
+        assert_eq!(later.process_page_faults_delta, Some(30));
+        assert_eq!(later.process_disk_read_bytes_delta, Some(1_024));
+
+        let reset = tracker.observe(
+            "minor-cycle",
+            StandardMfsStagePressureSnapshot {
+                process_physical_footprint_bytes: Some(110),
+                swapin_bytes_total: Some(1_500),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            reset.stage_observed_peak.process_physical_footprint_bytes,
+            Some(110)
+        );
+        assert_eq!(reset.swapin_bytes_delta, Some(0));
     }
 
     #[test]
@@ -53685,6 +55992,8 @@ mod tests {
             OsString::from("512"),
             OsString::from("--imaging-memory-target-mb"),
             OsString::from("2048"),
+            OsString::from("--imaging-memory-pressure-policy"),
+            OsString::from("hybrid"),
             OsString::from("--imaging-prepare-buffer-mb"),
             OsString::from("256"),
             OsString::from("--imaging-row-block-rows"),
@@ -53712,6 +56021,10 @@ mod tests {
         assert_eq!(config.standard_mfs_memory_target_mb, Some(4096));
         assert_eq!(config.standard_mfs_prepare_buffer_mb, Some(512));
         assert_eq!(config.imaging_memory_target_mb, Some(2048));
+        assert_eq!(
+            config.imaging_memory_pressure_policy,
+            ImagingMemoryPressurePolicy::Hybrid
+        );
         assert_eq!(config.imaging_prepare_buffer_mb, Some(256));
         assert_eq!(config.imaging_row_block_rows, Some(8192));
         assert_eq!(config.imaging_prepare_workers, Some(2));
@@ -53720,6 +56033,40 @@ mod tests {
             config.imaging_fft_backend,
             ImagingFftBackendPolicy::MetalMpsGraph
         );
+    }
+
+    #[test]
+    fn cli_memory_pressure_policy_is_safe_by_default_and_rejects_unknown_values() {
+        let default_config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+        ])
+        .expect("parse default memory pressure policy");
+        assert_eq!(
+            default_config.imaging_memory_pressure_policy,
+            ImagingMemoryPressurePolicy::Auto
+        );
+
+        let error = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--imaging-memory-pressure-policy"),
+            OsString::from("lru"),
+        ])
+        .expect_err("unknown memory policy must fail closed");
+        assert!(error.contains("expected auto, conservative-no-swap"));
     }
 
     #[test]
@@ -55617,10 +57964,13 @@ mod tests {
         assert!(plan.allocation_bytes("AWProject MT-MFS bounded multiscale scratch") > 0);
         assert!(plan.allocation_bytes("AWProject MT-MFS finish state") > 0);
         assert!(plan.allocation_bytes("AWProject MT-MFS product state") > 0);
-        assert!(plan.allocation_bytes("product writer scratch") > 0);
+        assert_eq!(
+            plan.allocation_bytes("product writer scratch"),
+            config.imsize * config.imsize * std::mem::size_of::<bool>()
+        );
         assert_eq!(
             plan.allocation_bytes("AWProject CASA-layout model FFT staging"),
-            config.imsize * config.imsize * std::mem::size_of::<Complex32>()
+            config.imsize * config.imsize * config.nterms * std::mem::size_of::<Complex32>()
         );
         assert_eq!(
             plan.allocation_bytes("FFT chunks"),
@@ -55640,8 +57990,11 @@ mod tests {
         assert!(plan.decisions.iter().any(|decision| {
             decision.name == "awproject_model_fft_staging_bytes"
                 && decision.value
-                    == (config.imsize * config.imsize * std::mem::size_of::<Complex32>())
-                        .to_string()
+                    == (config.imsize
+                        * config.imsize
+                        * config.nterms
+                        * std::mem::size_of::<Complex32>())
+                    .to_string()
         }));
         assert!(plan.decisions.iter().any(|decision| {
             decision.name == "awproject_model_fft_backend"
@@ -55689,6 +58042,260 @@ mod tests {
             decision.name == "awproject_multiscale_minor_cycle_peak_bytes"
                 && decision.reason.contains("dirty-only")
         }));
+        assert!(
+            dirty_plan
+                .memory_lifetime_ledger
+                .allocations
+                .iter()
+                .all(|allocation| {
+                    allocation.component != "AWProject CASA-layout model FFT staging"
+                        && allocation.component != "AWProject MT-MFS bounded multiscale scratch"
+                        && allocation.component != "AWProject compact replay retention"
+                        && allocation.residencies.iter().all(|residency| {
+                            !matches!(
+                                residency.live_from,
+                                ImagingMemoryStage::MinorCycle
+                                    | ImagingMemoryStage::ModelTransform
+                                    | ImagingMemoryStage::ResidualGrid
+                                    | ImagingMemoryStage::ResidualTransform
+                            ) && !matches!(
+                                residency.live_through,
+                                ImagingMemoryStage::MinorCycle
+                                    | ImagingMemoryStage::ModelTransform
+                                    | ImagingMemoryStage::ResidualGrid
+                                    | ImagingMemoryStage::ResidualTransform
+                            )
+                        })
+                }),
+            "dirty-only execution must not retain clean-only allocation intervals"
+        );
+        for component in ["grids", "source row blocks", "FFT chunks"] {
+            let allocation = dirty_plan
+                .memory_lifetime_ledger
+                .allocations
+                .iter()
+                .find(|allocation| allocation.component == component)
+                .expect("dirty allocation must have a semantic lifetime");
+            assert_eq!(
+                allocation.residencies.len(),
+                1,
+                "{component} must have no residual-cycle residency in dirty mode"
+            );
+            assert_eq!(
+                allocation.residencies[0].next_use,
+                ImagingMemoryNextUse::NoFurtherUse
+            );
+        }
+    }
+
+    #[test]
+    fn awproject_mtmfs_full_geometry_lifetime_charges_residual_only_grid() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("full-geometry-lifetime-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let mut config = awproject_mtmfs_planner_config(cf_cache, 65_536);
+        config.imsize = 12_150;
+        config.imaging_memory_pressure_policy = ImagingMemoryPressurePolicy::Oversubscribe;
+
+        let plan = standard_mfs_memory_plan(&config, 64, 1024);
+        let grid = plan
+            .memory_lifetime_ledger
+            .allocations
+            .iter()
+            .find(|allocation| allocation.component == "grids")
+            .expect("full-geometry grid lifetime");
+
+        assert_eq!(grid.logical_bytes, 18_895_680_000);
+        assert_eq!(grid.residencies.len(), 2);
+        assert_eq!(grid.residencies[0].resident_bytes, 18_895_680_000);
+        assert_eq!(
+            grid.residencies[1].resident_bytes, 4_723_920_000,
+            "residual-only storage has two compensated Taylor planes, not the initial eight"
+        );
+    }
+
+    #[test]
+    fn standard_mfs_semantic_memory_lifetimes_record_aw_stage_overlap() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("semantic-ledger-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 2);
+        let config = awproject_mtmfs_planner_config(cf_cache, 4096);
+        let mut plan = standard_mfs_memory_plan(&config, 64, 1024);
+        plan.usable_memory_bytes = usize::MAX;
+        plan.maximum_planned_resident_bytes = 0;
+        plan.metal.eligible = true;
+        plan.memory_allocations = vec![
+            ImagingMemoryAllocation {
+                component: "grids",
+                stage: "run",
+                bytes: 96,
+            },
+            ImagingMemoryAllocation {
+                component: "source row blocks",
+                stage: "ingest",
+                bytes: 31,
+            },
+            ImagingMemoryAllocation {
+                component: "FFT chunks",
+                stage: "fft",
+                bytes: 20,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject compensated f64 readback",
+                stage: "dirty-transform",
+                bytes: 13,
+            },
+            ImagingMemoryAllocation {
+                component: "weighting density",
+                stage: "weighting",
+                bytes: 10,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject MT-MFS run state",
+                stage: "run",
+                bytes: 30,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject CF pixels",
+                stage: "run",
+                bytes: 5,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject source-order tap scratch",
+                stage: "run",
+                bytes: 7,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject CASA-layout model FFT staging",
+                stage: "major-cycle",
+                bytes: 11,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject MT-MFS product state",
+                stage: "products",
+                bytes: 19,
+            },
+            ImagingMemoryAllocation {
+                component: "product writer scratch",
+                stage: "products",
+                bytes: 23,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject compact replay retention",
+                stage: "run",
+                bytes: 29,
+            },
+        ];
+
+        let lifetimes =
+            rebuild_standard_mfs_memory_lifetime_ledger(&mut plan, true).expect("semantic ledger");
+        let grid = lifetimes
+            .iter()
+            .find(|allocation| allocation.component == "grids")
+            .expect("grid lifetime");
+        assert_eq!(grid.allocation_id, "standard-mfs-grids-1");
+        assert_eq!(grid.residencies.len(), 2);
+        assert_eq!(
+            grid.residencies[0].backing,
+            ImagingMemoryBacking::UnifiedMemory
+        );
+        assert_eq!(
+            (
+                grid.residencies[0].live_from,
+                grid.residencies[0].live_through,
+                grid.residencies[0].next_use,
+            ),
+            (
+                ImagingMemoryStage::InitialGrid,
+                ImagingMemoryStage::DirtyTransform,
+                ImagingMemoryNextUse::AtStage(ImagingMemoryStage::ResidualGrid),
+            )
+        );
+        assert_eq!(
+            (
+                grid.residencies[1].live_from,
+                grid.residencies[1].live_through,
+            ),
+            (
+                ImagingMemoryStage::ResidualGrid,
+                ImagingMemoryStage::ResidualTransform,
+            )
+        );
+
+        let run_state = lifetimes
+            .iter()
+            .find(|allocation| allocation.component == "AWProject MT-MFS run state")
+            .expect("run-state lifetime");
+        assert_eq!(
+            (
+                run_state.residencies[0].live_from,
+                run_state.residencies[0].live_through,
+            ),
+            (
+                ImagingMemoryStage::DirtyTransform,
+                ImagingMemoryStage::Finish,
+            )
+        );
+        let replay = lifetimes
+            .iter()
+            .find(|allocation| allocation.component == "AWProject compact replay retention")
+            .expect("replay lifetime");
+        assert_eq!(
+            (
+                replay.residencies[0].live_from,
+                replay.residencies[0].live_through,
+            ),
+            (
+                ImagingMemoryStage::ResidualGrid,
+                ImagingMemoryStage::ResidualTransform,
+            )
+        );
+        assert_eq!(
+            replay.residencies[0].backing,
+            ImagingMemoryBacking::HostHeap
+        );
+
+        let readback = lifetimes
+            .iter()
+            .find(|allocation| allocation.component == "AWProject compensated f64 readback")
+            .expect("readback lifetime");
+        assert_eq!(readback.residencies.len(), 2);
+        assert!(
+            readback
+                .residencies
+                .iter()
+                .all(|residency| residency.backing == ImagingMemoryBacking::HostHeap)
+        );
+        assert_eq!(
+            (
+                readback.residencies[0].live_from,
+                readback.residencies[0].live_through,
+                readback.residencies[1].live_from,
+                readback.residencies[1].live_through,
+            ),
+            (
+                ImagingMemoryStage::DirtyTransform,
+                ImagingMemoryStage::DirtyTransform,
+                ImagingMemoryStage::ResidualTransform,
+                ImagingMemoryStage::ResidualTransform,
+            )
+        );
+
+        let residual_peak = plan
+            .memory_lifetime_ledger
+            .stage_peaks
+            .iter()
+            .find(|peak| peak.stage == ImagingMemoryStage::ResidualGrid)
+            .expect("residual-grid stage");
+        assert_eq!(
+            residual_peak.bytes_for_backing(ImagingMemoryBacking::UnifiedMemory),
+            24,
+            "nterms=2 residual refreshes must retain only two of the eight initial grid planes"
+        );
+        assert_eq!(
+            plan.maximum_planned_resident_bytes,
+            plan.memory_lifetime_ledger.maximum_resident_bytes
+        );
     }
 
     #[test]
@@ -55699,36 +58306,41 @@ mod tests {
         let config = awproject_mtmfs_planner_config(cf_cache, 4096);
         let base = standard_mfs_memory_plan(&config, 64, 1024);
         let base_peak = base.maximum_planned_resident_bytes;
+        let replay_stage_peak = [
+            ImagingMemoryStage::ResidualGrid,
+            ImagingMemoryStage::ResidualTransform,
+        ]
+        .into_iter()
+        .filter_map(|stage| base.memory_lifetime_ledger.stage_peak(stage))
+        .map(|peak| peak.resident_bytes)
+        .max()
+        .expect("replay stage peak");
 
         let admitted =
             admit_awproject_compact_replay_retention(base.clone(), 4).expect("replay admission");
         let retention = admitted.allocation_bytes("AWProject compact replay retention");
         assert!(retention > 0);
-        assert!(retention <= admitted.usable_memory_bytes / 4);
+        assert_eq!(retention, admitted.usable_memory_bytes - replay_stage_peak);
         assert_eq!(
             admitted.maximum_planned_resident_bytes,
-            base_peak + retention
+            admitted.usable_memory_bytes
         );
+        assert!(admitted.maximum_planned_resident_bytes >= base_peak);
         assert!(admitted.maximum_planned_resident_bytes <= admitted.usable_memory_bytes);
         assert!(admitted.decisions.iter().any(|decision| {
             decision.name == "awproject_compact_replay_retention_bytes"
                 && decision.value == retention.to_string()
-                && decision.reason.contains("stream_blocks=4")
+                && decision.reason.contains("full 4-block cyclic working set")
+                && decision.reason.contains("pinned no-eviction subset")
+                && decision.reason.contains(&format!(
+                    "prior_replay_stage_peak_bytes={replay_stage_peak}"
+                ))
+                && decision.reason.contains("artificial_fraction_cap=none")
         }));
-
-        let mut headroom_limited = base;
-        headroom_limited.maximum_planned_resident_bytes =
-            headroom_limited.usable_memory_bytes - 4096;
-        let capped = admit_awproject_compact_replay_retention(headroom_limited, 64)
-            .expect("headroom-limited replay admission");
-        assert_eq!(
-            capped.allocation_bytes("AWProject compact replay retention"),
-            4096
-        );
-        assert_eq!(
-            capped.maximum_planned_resident_bytes,
-            capped.usable_memory_bytes
-        );
+        assert!(admitted.decisions.iter().any(|decision| {
+            decision.name == "awproject_compact_replay_resident_accounting"
+                && decision.value == "runtime-exact-capacities"
+        }));
     }
 
     #[test]
@@ -55820,6 +58432,10 @@ mod tests {
         let mut full = awproject_mtmfs_planner_config(cf_cache.clone(), 32 * 1024);
         full.imsize = 12_150;
         full.imaging_fft_precision = ImagingFftPrecisionPolicy::Auto;
+        // This is a plan-only fixture with an exact synthetic target, not a
+        // production default. Explicit oversubscription prevents live host
+        // headroom from making the 32/24/16 GiB comparison nondeterministic.
+        full.imaging_memory_pressure_policy = ImagingMemoryPressurePolicy::Oversubscribe;
         let visibility_shape =
             prepared_single_plane_visibility_source_shape(&full, active_rows, 64);
         let plan = standard_mfs_memory_plan_with_visibility_shape_and_pointing_rows(
@@ -55831,6 +58447,8 @@ mod tests {
             pointing_table_rows,
         )
         .expect("32 GiB must admit the serial full-geometry AWProject plan");
+        let plan = admit_awproject_compact_replay_retention(plan, 16)
+            .expect("32 GiB must retain its residual-stage replay reservation");
 
         assert_eq!(plan.workload.grid_width, 12_150);
         assert_eq!(plan.workload.grid_planes, 8);
@@ -55844,15 +58462,22 @@ mod tests {
                 + AWPROJECT_CF_INDEX_HEAP_AND_TREE_ALLOWANCE_BYTES_PER_PAIR)
         );
         eprintln!(
-            "vlass_awproject_memory_fixture target_gib=32 decision=admit grid_side={} grid_planes={} grid_bytes={} fft_scratch_bytes={} run_state_bytes={} multiscale_scratch_bytes={} cf_pixel_bytes={} source_order_tap_bytes={} cf_index_bytes={} pointing_index_bytes={} safety_margin_bytes={} source_row_block_rows={} planned_peak_bytes={}",
+            "vlass_awproject_memory_fixture target_gib=32 decision=admit grid_side={} grid_planes={} grid_bytes={} residual_grid_bytes={} fft_scratch_bytes={} run_state_bytes={} multiscale_scratch_bytes={} cf_pixel_bytes={} source_order_tap_bytes={} replay_retention_reservation_bytes={} cf_index_bytes={} pointing_index_bytes={} safety_margin_bytes={} source_row_block_rows={} planned_peak_bytes={}",
             plan.workload.grid_width,
             plan.workload.grid_planes,
             plan.allocation_bytes("grids"),
+            plan.memory_lifetime_ledger
+                .allocations
+                .iter()
+                .find(|allocation| allocation.component == "grids")
+                .and_then(|allocation| allocation.residencies.get(1))
+                .map_or(0, |residency| residency.resident_bytes),
             plan.allocation_bytes("FFT chunks"),
             plan.allocation_bytes("AWProject MT-MFS run state"),
             plan.allocation_bytes("AWProject MT-MFS bounded multiscale scratch"),
             plan.allocation_bytes("AWProject CF pixels"),
             plan.allocation_bytes("AWProject source-order tap scratch"),
+            plan.allocation_bytes("AWProject compact replay retention"),
             plan.allocation_bytes("AWProject CF index"),
             plan.allocation_bytes("POINTING index"),
             plan.allocation_bytes("AWProject safety margin"),
@@ -55871,9 +58496,11 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            error_24.contains("needs")
+            (error_24.contains("needs")
                 && error_24.contains("bytes")
-                && error_24.contains("assigned"),
+                && error_24.contains("assigned"))
+                || (error_24.contains("semantic memory lifetime peak")
+                    && error_24.contains("exceeds admitted memory target")),
             "{error_24}"
         );
         eprintln!("vlass_awproject_memory_fixture target_gib=24 decision=reject reason={error_24}");
@@ -55889,7 +58516,9 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            error.contains("needs") && error.contains("bytes") && error.contains("assigned"),
+            (error.contains("needs") && error.contains("bytes") && error.contains("assigned"))
+                || (error.contains("semantic memory lifetime peak")
+                    && error.contains("exceeds admitted memory target")),
             "{error}"
         );
         eprintln!("vlass_awproject_memory_fixture target_gib=16 decision=reject reason={error}");
@@ -55921,7 +58550,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_imaging_memory_target_can_exceed_kernel_available_memory() {
+    fn safe_auto_memory_target_is_capped_to_kernel_available_memory() {
         let mut config =
             minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
         config.imaging_memory_target_mb = Some(32 * 1024);
@@ -55933,9 +58562,501 @@ mod tests {
             256 * 1024 * 1024,
         );
 
-        assert_eq!(target.target_bytes, 32 * 1024 * 1024 * 1024);
+        assert_eq!(target.target_bytes, 15 * 1024 * 1024 * 1024);
         assert_eq!(target.available_memory_bytes, Some(15 * 1024 * 1024 * 1024));
-        assert_eq!(target.source, "cli-imaging");
+        assert_eq!(target.source, "cli-capped-to-no-swap-headroom");
+    }
+
+    #[test]
+    fn memory_pressure_policies_resolve_distinct_admission_targets() {
+        const GIB: usize = 1024 * 1024 * 1024;
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imaging_memory_target_mb = None;
+        config.standard_mfs_memory_target_mb = None;
+        let system_bytes = Some(32 * GIB);
+        let no_swap_headroom_bytes = Some(12 * GIB);
+        let baseline_process_bytes = 2 * GIB;
+        let process_total_ceiling_bytes = 14 * GIB;
+        let incremental_operation_budget_bytes = 12 * GIB;
+
+        let cases = [
+            (
+                ImagingMemoryPressurePolicy::Auto,
+                12 * GIB,
+                "available-memory-ledger",
+            ),
+            (
+                ImagingMemoryPressurePolicy::ConservativeNoSwap,
+                12 * GIB,
+                "available-memory-ledger",
+            ),
+            (
+                ImagingMemoryPressurePolicy::Aggressive,
+                incremental_operation_budget_bytes,
+                "aggressive-physical-ledger",
+            ),
+            (
+                ImagingMemoryPressurePolicy::Oversubscribe,
+                0,
+                "oversubscribe-requires-explicit-target",
+            ),
+            (
+                ImagingMemoryPressurePolicy::StageAware,
+                12 * GIB,
+                "available-memory-ledger",
+            ),
+            (
+                ImagingMemoryPressurePolicy::Hybrid,
+                incremental_operation_budget_bytes,
+                "hybrid-physical-ledger",
+            ),
+        ];
+        for (policy, expected_bytes, expected_source) in cases {
+            config.imaging_memory_pressure_policy = policy;
+            let target = imaging_process_memory_ledger_from_snapshot(
+                &config,
+                system_bytes,
+                no_swap_headroom_bytes,
+                baseline_process_bytes,
+            );
+            assert_eq!(target.target_bytes, expected_bytes, "policy={policy:?}");
+            assert_eq!(target.source, expected_source, "policy={policy:?}");
+            assert_eq!(
+                target.process_total_ceiling_bytes,
+                Some(process_total_ceiling_bytes),
+                "policy={policy:?}"
+            );
+            assert_eq!(
+                target.incremental_operation_budget_bytes,
+                Some(incremental_operation_budget_bytes),
+                "policy={policy:?}"
+            );
+        }
+
+        config.imaging_memory_pressure_policy = ImagingMemoryPressurePolicy::Oversubscribe;
+        config.imaging_memory_target_mb = Some(20 * 1024);
+        let oversubscribed = imaging_process_memory_ledger_from_snapshot(
+            &config,
+            system_bytes,
+            no_swap_headroom_bytes,
+            baseline_process_bytes,
+        );
+        assert_eq!(oversubscribed.target_bytes, 20 * GIB);
+        assert_eq!(oversubscribed.source, "cli-intentional-oversubscription");
+
+        for (policy, expected_source) in [
+            (
+                ImagingMemoryPressurePolicy::Aggressive,
+                "cli-aggressive-physical-ceiling",
+            ),
+            (
+                ImagingMemoryPressurePolicy::Hybrid,
+                "cli-hybrid-physical-ceiling",
+            ),
+        ] {
+            config.imaging_memory_pressure_policy = policy;
+            let capped = imaging_process_memory_ledger_from_snapshot(
+                &config,
+                system_bytes,
+                no_swap_headroom_bytes,
+                baseline_process_bytes,
+            );
+            assert_eq!(capped.target_bytes, incremental_operation_budget_bytes);
+            assert_eq!(capped.source, expected_source);
+        }
+    }
+
+    #[test]
+    fn incremental_operation_target_never_grows_with_process_baseline() {
+        const GIB: usize = 1024 * 1024 * 1024;
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imaging_memory_target_mb = None;
+        config.standard_mfs_memory_target_mb = None;
+
+        for policy in [
+            ImagingMemoryPressurePolicy::Auto,
+            ImagingMemoryPressurePolicy::ConservativeNoSwap,
+            ImagingMemoryPressurePolicy::Aggressive,
+            ImagingMemoryPressurePolicy::StageAware,
+            ImagingMemoryPressurePolicy::Hybrid,
+        ] {
+            config.imaging_memory_pressure_policy = policy;
+            let ledgers = [GIB, 2 * GIB, 8 * GIB, 24 * GIB, 32 * GIB].map(|baseline| {
+                imaging_process_memory_ledger_from_snapshot(
+                    &config,
+                    Some(32 * GIB),
+                    Some(12 * GIB),
+                    baseline,
+                )
+            });
+            for pair in ledgers.windows(2) {
+                assert!(
+                    pair[1].target_bytes <= pair[0].target_bytes,
+                    "policy={policy:?}: raising the baseline from {} to {} raised the operation target from {} to {}",
+                    pair[0].baseline_process_bytes,
+                    pair[1].baseline_process_bytes,
+                    pair[0].target_bytes,
+                    pair[1].target_bytes,
+                );
+            }
+            for ledger in ledgers {
+                assert!(
+                    ledger
+                        .projected_process_total_bytes(ledger.target_bytes)
+                        .is_some_and(|projected| {
+                            ledger
+                                .process_total_ceiling_bytes
+                                .is_some_and(|ceiling| projected <= ceiling)
+                        }),
+                    "policy={policy:?}: baseline plus operation target must fit the process-total ceiling: {ledger:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn non_oversubscription_explicit_targets_cap_to_incremental_budget() {
+        const GIB: usize = 1024 * 1024 * 1024;
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imaging_memory_target_mb = Some(20 * 1024);
+
+        for policy in [
+            ImagingMemoryPressurePolicy::Auto,
+            ImagingMemoryPressurePolicy::ConservativeNoSwap,
+            ImagingMemoryPressurePolicy::Aggressive,
+            ImagingMemoryPressurePolicy::StageAware,
+            ImagingMemoryPressurePolicy::Hybrid,
+        ] {
+            config.imaging_memory_pressure_policy = policy;
+            let ledger = imaging_process_memory_ledger_from_snapshot(
+                &config,
+                Some(32 * GIB),
+                Some(12 * GIB),
+                2 * GIB,
+            );
+            assert_eq!(ledger.target_bytes, 12 * GIB, "policy={policy:?}");
+            assert_eq!(
+                ledger.projected_process_total_bytes(ledger.target_bytes),
+                ledger.process_total_ceiling_bytes,
+                "policy={policy:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn oversubscription_receipt_reports_projected_process_excess() {
+        const GIB: usize = 1024 * 1024 * 1024;
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imaging_memory_pressure_policy = ImagingMemoryPressurePolicy::Oversubscribe;
+        config.imaging_memory_target_mb = Some(20 * 1024);
+        let ledger = imaging_process_memory_ledger_from_snapshot(
+            &config,
+            Some(32 * GIB),
+            Some(12 * GIB),
+            2 * GIB,
+        );
+        assert_eq!(ledger.target_bytes, 20 * GIB);
+        assert_eq!(ledger.process_total_ceiling_bytes, Some(14 * GIB));
+        assert_eq!(
+            ledger.projected_process_total_bytes(ledger.target_bytes),
+            Some(22 * GIB)
+        );
+        assert_eq!(
+            ledger.projected_process_excess_bytes(ledger.target_bytes),
+            Some(8 * GIB)
+        );
+
+        let cpu = ImagingCpuResourceDetection {
+            logical_threads: Some(4),
+            performance_cores: Some(4),
+            logical_threads_origin: "test",
+            performance_cores_origin: "test",
+        };
+        let metal = unavailable_imaging_metal_memory_detection("test");
+        let storage = ImagingStorageBandwidthDetection {
+            read_bytes_per_second: None,
+            write_bytes_per_second: None,
+            read_origin: "test",
+            write_origin: "test",
+        };
+        let context =
+            imaging_planning_context_from_detection(&config, ledger, 0, cpu, metal, storage);
+        let line = imaging_planning_resource_log_line(&context, ledger, cpu, metal, 0, storage);
+        assert!(line.contains("memory_target_semantics=incremental-operation-residency"));
+        assert!(line.contains(&format!("process_total_ceiling_bytes={}", 14 * GIB)));
+        assert!(line.contains(&format!(
+            "target_projected_process_total_bytes={}",
+            22 * GIB
+        )));
+        assert!(line.contains(&format!(
+            "target_projected_process_excess_bytes={}",
+            8 * GIB
+        )));
+    }
+
+    #[test]
+    fn resolved_plan_projection_adds_baseline_to_planned_residency() {
+        const GIB: usize = 1024 * 1024 * 1024;
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imaging_memory_pressure_policy = ImagingMemoryPressurePolicy::Oversubscribe;
+        config.imaging_memory_target_mb = Some(512);
+        let ledger =
+            imaging_process_memory_ledger_from_snapshot(&config, Some(32 * GIB), Some(1), 2 * GIB);
+        let visibility_shape = prepared_single_plane_visibility_source_shape(&config, 1_000, 64);
+        let plan = plan_standard_mfs_execution_shape_with_memory_ledger(
+            &config,
+            64,
+            64,
+            1_000,
+            &visibility_shape,
+            ledger,
+        )
+        .expect("oversubscription planner fixture");
+        let projection = standard_mfs_process_projection(&plan);
+        assert_eq!(projection.baseline_bytes, Some(2 * GIB));
+        assert_eq!(projection.total_ceiling_bytes, Some(2 * GIB + 1));
+        assert_eq!(
+            projection.projected_total_bytes,
+            Some(2 * GIB + plan.maximum_planned_resident_bytes)
+        );
+        assert_eq!(
+            projection.projected_excess_bytes,
+            Some(plan.maximum_planned_resident_bytes.saturating_sub(1))
+        );
+        assert!(
+            projection
+                .projected_excess_bytes
+                .is_some_and(|value| value > 0)
+        );
+    }
+
+    #[test]
+    fn memory_policy_validation_rejects_unimplemented_execution_and_targetless_oversubscription() {
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+
+        for policy in [
+            ImagingMemoryPressurePolicy::StageAware,
+            ImagingMemoryPressurePolicy::Hybrid,
+        ] {
+            config.imaging_memory_pressure_policy = policy;
+            assert!(
+                validate_imaging_memory_policy_request(&config, false)
+                    .unwrap_err()
+                    .contains("available only to --standard-mfs-plan-probe")
+            );
+            validate_imaging_memory_policy_request(&config, true)
+                .expect("planner probes must preserve truthful negative policy evidence");
+        }
+
+        config.imaging_memory_pressure_policy = ImagingMemoryPressurePolicy::Oversubscribe;
+        assert!(
+            validate_imaging_memory_policy_request(&config, true)
+                .unwrap_err()
+                .contains("requires an explicit imaging_memory_target_mb")
+        );
+        config.imaging_memory_target_mb = Some(40 * 1024);
+        validate_imaging_memory_policy_request(&config, false)
+            .expect("bounded oversubscription with an explicit target is an authorized experiment");
+    }
+
+    #[test]
+    fn resource_detection_metal_snapshot_and_unavailable_reason_are_explicit() {
+        let detected = imaging_metal_platform_detection::from_device_snapshot(
+            true,
+            24 * 1024 * 1024 * 1024,
+            256 * 1024 * 1024,
+        );
+        assert!(detected.device_available);
+        assert_eq!(detected.has_unified_memory, Some(true));
+        assert_eq!(
+            detected.recommended_working_set_bytes,
+            Some(24 * 1024 * 1024 * 1024)
+        );
+        assert_eq!(detected.current_allocated_bytes, Some(256 * 1024 * 1024));
+        assert_eq!(detected.origin, "metal-default-device-snapshot");
+
+        let unavailable = unavailable_imaging_metal_memory_detection("test-device-unavailable");
+        assert!(!unavailable.device_available);
+        assert_eq!(unavailable.has_unified_memory, None);
+        assert_eq!(unavailable.recommended_working_set_bytes, None);
+        assert_eq!(unavailable.current_allocated_bytes, None);
+        assert_eq!(unavailable.origin, "test-device-unavailable");
+    }
+
+    #[test]
+    fn resource_assignment_unified_metal_uses_shared_process_and_device_headroom() {
+        const GIB: usize = 1024 * 1024 * 1024;
+        let memory_target = ImagingProcessMemoryLedger {
+            system_memory_bytes: Some(32 * GIB),
+            available_memory_bytes: Some(12 * GIB),
+            process_physical_footprint_bytes: Some(GIB),
+            baseline_process_bytes: GIB,
+            non_process_resident_bytes: Some(19 * GIB),
+            process_total_ceiling_bytes: Some(13 * GIB),
+            incremental_operation_budget_bytes: Some(12 * GIB),
+            target_bytes: 12 * GIB,
+            source: "test",
+            process_total_ceiling_origin: "test",
+            system_memory_origin: "test",
+            available_memory_origin: "test",
+            process_physical_footprint_origin: "test",
+        };
+        let unified = ImagingMetalMemoryDetection {
+            device_available: true,
+            has_unified_memory: Some(true),
+            recommended_working_set_bytes: Some(24 * GIB),
+            current_allocated_bytes: Some(4 * GIB),
+            origin: "test",
+        };
+        assert_eq!(
+            imaging_metal_device_budget_bytes(memory_target, unified),
+            12 * GIB,
+            "unified allocations share the smaller no-swap process headroom"
+        );
+        let process_target_limited = ImagingProcessMemoryLedger {
+            target_bytes: 8 * GIB,
+            ..memory_target
+        };
+        assert_eq!(
+            imaging_metal_device_budget_bytes(process_target_limited, unified),
+            8 * GIB,
+            "the process assignment remains binding even with more system headroom"
+        );
+
+        let device_limited = ImagingMetalMemoryDetection {
+            current_allocated_bytes: Some(20 * GIB),
+            ..unified
+        };
+        assert_eq!(
+            imaging_metal_device_budget_bytes(memory_target, device_limited),
+            4 * GIB,
+            "recommended working set minus current allocation is also binding"
+        );
+
+        let unknown_memory_topology = ImagingMetalMemoryDetection {
+            has_unified_memory: None,
+            ..unified
+        };
+        assert_eq!(
+            imaging_metal_device_budget_bytes(memory_target, unknown_memory_topology),
+            0,
+            "unknown memory topology must not invent a second memory pool"
+        );
+    }
+
+    #[test]
+    fn resource_detection_storage_bandwidth_requires_positive_integer_bytes_per_second() {
+        assert_eq!(
+            parse_positive_bytes_per_second("1500000000"),
+            Some(1_500_000_000)
+        );
+        assert_eq!(
+            parse_positive_bytes_per_second(" 1000000000 "),
+            Some(1_000_000_000)
+        );
+        assert_eq!(parse_positive_bytes_per_second("0"), None);
+        assert_eq!(parse_positive_bytes_per_second("-1"), None);
+        assert_eq!(parse_positive_bytes_per_second("1.5e9"), None);
+        assert_eq!(
+            parse_positive_bytes_per_second("18446744073709551616"),
+            None
+        );
+    }
+
+    #[test]
+    fn resource_detection_context_preserves_evidence_and_safe_policy() {
+        let config = minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        let memory_target = ImagingProcessMemoryLedger {
+            system_memory_bytes: Some(32 * 1024 * 1024 * 1024),
+            available_memory_bytes: Some(18 * 1024 * 1024 * 1024),
+            process_physical_footprint_bytes: Some(512 * 1024 * 1024),
+            baseline_process_bytes: 512 * 1024 * 1024,
+            non_process_resident_bytes: Some(13_500 * 1024 * 1024),
+            process_total_ceiling_bytes: Some(18_500 * 1024 * 1024),
+            incremental_operation_budget_bytes: Some(18 * 1024 * 1024 * 1024),
+            target_bytes: 16 * 1024 * 1024 * 1024,
+            source: "test",
+            process_total_ceiling_origin: "test",
+            system_memory_origin: "test-physical",
+            available_memory_origin: "test-headroom",
+            process_physical_footprint_origin: "test-footprint",
+        };
+        let cpu = ImagingCpuResourceDetection {
+            logical_threads: Some(10),
+            performance_cores: Some(4),
+            logical_threads_origin: "test-logical",
+            performance_cores_origin: "test-performance",
+        };
+        let metal = ImagingMetalMemoryDetection {
+            device_available: true,
+            has_unified_memory: Some(true),
+            recommended_working_set_bytes: Some(24 * 1024 * 1024 * 1024),
+            current_allocated_bytes: Some(256 * 1024 * 1024),
+            origin: "test-metal",
+        };
+        let storage = ImagingStorageBandwidthDetection {
+            read_bytes_per_second: Some(1_500_000_000),
+            write_bytes_per_second: Some(1_000_000_000),
+            read_origin: "test-read",
+            write_origin: "test-write",
+        };
+
+        let context = imaging_planning_context_from_detection(
+            &config,
+            memory_target,
+            3 * 1024 * 1024 * 1024,
+            cpu,
+            metal,
+            storage,
+        );
+
+        assert_eq!(
+            context.memory_pressure_policy,
+            CoreImagingMemoryPressurePolicy::AutoSafe
+        );
+        assert_eq!(
+            context.detected_resources,
+            ImagingDetectedResources {
+                physical_memory_bytes: Some(32 * 1024 * 1024 * 1024),
+                current_memory_headroom_bytes: Some(18 * 1024 * 1024 * 1024),
+                process_physical_footprint_bytes: Some(512 * 1024 * 1024),
+                logical_cpu_threads: Some(10),
+                performance_cpu_cores: Some(4),
+                metal_recommended_working_set_bytes: Some(24 * 1024 * 1024 * 1024),
+                metal_current_allocated_bytes: Some(256 * 1024 * 1024),
+                unified_memory_requirement_bytes: Some(3 * 1024 * 1024 * 1024),
+                storage_read_bytes_per_second: Some(1_500_000_000),
+                storage_write_bytes_per_second: Some(1_000_000_000),
+            }
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn resource_detection_macos_reports_physical_footprint_and_cpu_bounds() {
+        assert!(
+            current_process_physical_footprint_bytes().is_some_and(|bytes| bytes > 0),
+            "proc_pid_rusage must report a nonzero physical footprint"
+        );
+        let cpu = imaging_cpu_resource_detection();
+        if let (Some(performance), Some(logical)) = (cpu.performance_cores, cpu.logical_threads) {
+            assert!(performance <= logical);
+        }
+        let metal = imaging_metal_memory_detection();
+        if metal.device_available {
+            assert!(metal.has_unified_memory.is_some());
+            assert!(metal.recommended_working_set_bytes.is_some());
+            assert!(metal.current_allocated_bytes.is_some());
+            assert_eq!(metal.origin, "metal-default-device-snapshot");
+        } else {
+            assert_eq!(metal.origin, "metal-device-unavailable");
+        }
     }
 
     #[test]
@@ -56087,10 +59208,17 @@ mod tests {
         let ledger = ImagingProcessMemoryLedger {
             system_memory_bytes: Some(32 * 1024 * 1024 * 1024),
             available_memory_bytes: Some(assigned_bytes),
+            process_physical_footprint_bytes: Some(128 * 1024 * 1024),
             baseline_process_bytes: 128 * 1024 * 1024,
             non_process_resident_bytes: Some(30 * 1024 * 1024 * 1024),
+            process_total_ceiling_bytes: Some(assigned_bytes + 128 * 1024 * 1024),
+            incremental_operation_budget_bytes: Some(assigned_bytes),
             target_bytes: assigned_bytes,
             source: "test-snapshot",
+            process_total_ceiling_origin: "test",
+            system_memory_origin: "test",
+            available_memory_origin: "test",
+            process_physical_footprint_origin: "test",
         };
         let visibility_shape = prepared_single_plane_visibility_source_shape(&config, 10_000, 64);
 
@@ -56186,6 +59314,53 @@ mod tests {
                 .iter()
                 .all(|category| category.tracked_live_bytes.is_none())
         );
+    }
+
+    #[test]
+    fn standard_mfs_tiled_grid_lifetime_peak_respects_assigned_memory_slices() {
+        for target_mib in [1024, 2048, 4096] {
+            let config =
+                minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+            let target_bytes = target_mib * 1024 * 1024;
+            let visibility_shape =
+                prepared_single_plane_visibility_source_shape(&config, 20_000, 512);
+            let plan = plan_standard_mfs_execution_shape_with_memory_ledger(
+                &config,
+                512,
+                512,
+                20_000,
+                &visibility_shape,
+                ImagingProcessMemoryLedger {
+                    system_memory_bytes: Some(8 * 1024 * 1024 * 1024),
+                    available_memory_bytes: Some(target_bytes),
+                    process_physical_footprint_bytes: None,
+                    baseline_process_bytes: 0,
+                    non_process_resident_bytes: Some(8 * 1024 * 1024 * 1024 - target_bytes),
+                    process_total_ceiling_bytes: Some(target_bytes),
+                    incremental_operation_budget_bytes: Some(target_bytes),
+                    target_bytes,
+                    source: "test-snapshot",
+                    process_total_ceiling_origin: "test",
+                    system_memory_origin: "test",
+                    available_memory_origin: "test",
+                    process_physical_footprint_origin: "test",
+                },
+            )
+            .expect("assigned memory slice should admit the bounded tile plan");
+            let initial_grid_peak = plan
+                .memory_lifetime_ledger
+                .stage_peak(ImagingMemoryStage::InitialGrid)
+                .expect("initial grid lifetime peak");
+
+            assert_eq!(plan.usable_memory_bytes, target_bytes);
+            assert!(
+                initial_grid_peak.resident_bytes <= plan.usable_memory_bytes,
+                "target_mib={target_mib} peak={} budget={}",
+                initial_grid_peak.resident_bytes,
+                plan.usable_memory_bytes
+            );
+            assert!(plan.maximum_planned_resident_bytes <= plan.usable_memory_bytes);
+        }
     }
 
     #[test]
@@ -58504,6 +61679,7 @@ mod tests {
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -58582,6 +61758,7 @@ mod tests {
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -58676,6 +61853,7 @@ mod tests {
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -58762,6 +61940,7 @@ mod tests {
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -58851,6 +62030,7 @@ mod tests {
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -58937,6 +62117,7 @@ mod tests {
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -59015,6 +62196,7 @@ mod tests {
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -60882,6 +64064,7 @@ mod tests {
         assert!(help_text().contains("--json-schema"));
         assert!(help_text().contains("--protocol-info"));
         assert!(help_text().contains("--json-run <SOURCE>"));
+        assert!(help_text().contains("--standard-mfs-plan-probe"));
     }
 
     #[test]
@@ -61017,6 +64200,10 @@ mod tests {
         );
         assert_eq!(manifest.get("mask_boxes").unwrap(), "1,2,3,4");
         assert_eq!(manifest.get("w_term_mode").unwrap(), "direct");
+        assert_eq!(
+            manifest.get("imaging_memory_pressure_policy").unwrap(),
+            "auto"
+        );
 
         let args = vec![
             OsString::from("--managed-output"),
@@ -61110,6 +64297,19 @@ mod tests {
         let (json_run, filtered) = extract_string_option(&filtered, "--json-run").unwrap();
         assert_eq!(json_run.as_deref(), Some("bundle.json"));
         assert_eq!(filtered, vec![non_utf8]);
+
+        let args = vec![
+            OsString::from("--standard-mfs-plan-probe"),
+            OsString::from("true"),
+            OsString::from("--ms"),
+            OsString::from("fixture.ms"),
+        ];
+        let (probe, filtered) = extract_option_value(&args, "--standard-mfs-plan-probe").unwrap();
+        assert!(probe);
+        assert_eq!(
+            filtered,
+            vec![OsString::from("--ms"), OsString::from("fixture.ms")]
+        );
     }
 
     #[test]
@@ -61579,6 +64779,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -62160,6 +65361,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -62283,6 +65485,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -62402,6 +65605,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -62573,6 +65777,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -62724,6 +65929,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -62828,6 +66034,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -62964,6 +66171,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -63095,6 +66303,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -63208,6 +66417,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -63712,6 +66922,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -63831,6 +67042,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -63951,6 +67163,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -64066,6 +67279,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -64197,6 +67411,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -64336,6 +67551,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -64452,6 +67668,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -64760,6 +67977,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -64889,6 +68107,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -65035,6 +68254,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -65179,6 +68399,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -65338,6 +68559,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -65675,6 +68897,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -66143,6 +69366,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -66537,6 +69761,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -66782,6 +70007,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -66915,6 +70141,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -67079,6 +70306,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: Some(1),
             imaging_prepare_workers: Some(1),
@@ -67289,6 +70517,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -67431,6 +70660,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -67572,6 +70802,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -67689,6 +70920,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -67802,6 +71034,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -67916,6 +71149,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -68033,6 +71267,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,

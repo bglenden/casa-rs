@@ -463,6 +463,9 @@ current workload harness:
 - `imaging_memory_target_mb`, `imaging_prepare_buffer_mb`,
   `imaging_row_block_rows`, and `imaging_prepare_workers` control the shared
   source-stream plan.
+- `imaging_memory_pressure_policy` selects `auto`, `conservative-no-swap`,
+  `aggressive`, `oversubscribe`, `stage-aware`, or `hybrid`. `auto` remains the
+  safe resource-adaptive default and does not intentionally depend on swap.
 - `imaging_read_ahead_blocks` is the maximum number of live row blocks, not
   queue capacity. It is currently capped at two. The two-block configuration
   accounts for one producer-owned block and one consumer-owned block and uses
