@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: LGPL-3.0-or-later
 
-# One-shot launcher for the casa-rs native-component V5 diagnostic.  The
+# One-shot launcher for the casa-rs native-component V6 diagnostic.  The
 # immutable case directory is reserved only after every source/input preflight
 # and the release build have succeeded.
 
@@ -12,7 +12,7 @@ experiment_dir="${repo_root}/tools/perf/imager/experiments"
 external_root="${CASA_RS_VLASS_EXPERIMENT_ROOT:-/Volumes/GLENDENNING/casa-rs-vlass/issue-446}"
 expected_head="${1:-${CASA_RS_VLASS_EXPECTED_HEAD:-}}"
 branch="codex/vlass-w1-evidence-fiducials"
-case_name="casa-rs-aw-datagrid-native-components-4096-full16-first-vb-v5"
+case_name="casa-rs-aw-datagrid-native-components-4096-full16-first-vb-v6"
 case_dir="${external_root}/artifacts/experiments/${case_name}"
 receipt="${case_dir}/receipt.json"
 run_log="${case_dir}/casars-imager.log"
@@ -49,10 +49,10 @@ dataset_receipt_sha="ba6fe4482b89297da3cb1d2856a2d47037e767f016d7c63efa7a186ec7c
 dataset_geometry_sha="28b1350f2754e4439a0ac94480eb4efb054ecf03f221c805e98cf34c6b5f77f1"
 mask_tree_sha="2673e626301031fd85efb863167766e59f34338d4f8e77b1b2709ffaee411126"
 cf_cache_tree_sha="f8fd10b133235e04f75f903fde38d68aa446e1892143fb6bf12b82b1e3cfff68"
-controlled_stop_marker="AWProject native-components-v5 audit stopped before casa-imaging core/CF/cache/grid dispatch"
+controlled_stop_marker="AWProject native-components-v6 audit stopped before casa-imaging core/CF/cache/grid dispatch"
 
 fail() {
-    echo "VLASS casa-rs native-component V5 audit: $*" >&2
+    echo "VLASS casa-rs native-component V6 audit: $*" >&2
     exit 1
 }
 
@@ -229,7 +229,7 @@ rustc_vv="$(rustc -Vv | tr '\n' '|' | sed 's/|$//')"
 
 mkdir "${case_dir}"
 {
-    printf 'schema\tcasa-rs-vlass-aw-native-components-provenance-v5\n'
+    printf 'schema\tcasa-rs-vlass-aw-native-components-provenance-v6\n'
     printf 'case_name\t%s\n' "${case_name}"
     printf 'started_at_utc\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf 'branch\t%s\n' "${branch}"
@@ -270,10 +270,10 @@ set +e
     CASA_RS_FFTW_LIBRARY_DIR="${fftw_dir}" \
     DYLD_LIBRARY_PATH="${fftw_dir}" \
     CASA_RS_FFTW_THREADS=1 \
-    CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_OUTPUT_V5="${receipt}" \
-    CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V5=4096 \
-    CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V5=1 \
-    CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V5=2 \
+    CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_OUTPUT_V6="${receipt}" \
+    CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V6=4096 \
+    CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V6=1 \
+    CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V6=2 \
     "${binary}" \
     --ms "${ms}" \
     --imagename "${image_prefix}" \
@@ -408,7 +408,7 @@ assert scope["raw_slots_compared"] == 20800
 printf 'comparison_sha256\t%s\n' "$(sha256 "${comparison}")" >>"${provenance}"
 printf 'classification\t%s\n' "${classification}" >>"${provenance}"
 printf 'completed_at_utc\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"${provenance}"
-printf 'result\tvalidly-classified-native-components-v5\n' >>"${provenance}"
+printf 'result\tvalidly-classified-native-components-v6\n' >>"${provenance}"
 require_clean_checkout
 require_exact_checkpoint
-echo "VLASS casa-rs native-component V5 evidence classified as ${classification}: ${comparison}"
+echo "VLASS casa-rs native-component V6 evidence classified as ${classification}: ${comparison}"
