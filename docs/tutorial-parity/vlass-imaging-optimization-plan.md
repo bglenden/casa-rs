@@ -3842,9 +3842,10 @@ default.
 
 Scientific and performance iteration stopped at the explicit checkpoint
 boundary. No replacement VLASS diagnostic, CASA timing/reference call, or
-imaging workload was started. The already-complete CASA v5 bracket remains the
-final VLASS/CASA imaging call in this checkpoint: it stopped before finalize,
-normalization, FFT, or image formation, and its immutable receipt SHA-256 is
+scientific/performance imaging workload was started. The already-complete CASA
+v5 bracket remains the final VLASS/CASA imaging call in this checkpoint: it
+stopped before finalize, normalization, FFT, or image formation, and its
+immutable receipt SHA-256 is
 `fe3d5ba3bff1ba925f63f0f088df602692655131c86d6319210ffa90e067ea1f`.
 The preceding v4 grid/sumwt receipt remains
 `dd6ca70a03a3fb27f2298c3ec5115fd67ca26dd2e4eea34e6b937f897015155d`.
@@ -3906,6 +3907,20 @@ workspace test suite did discover CASA and execute its existing bounded
 that test opened a temporary generated synthetic MeasurementSet through
 `casatools.table`, completed in `36.80` seconds, and did not call `tclean` or
 perform imaging. No further CASA-backed test or workload was started.
+
+The first checkpoint CI run exposed and repaired two wave-caused checkpoint
+blockers. Linux warning-denying Clippy required the macOS-only compact-replay
+audit arguments to be explicitly allowed as unused on non-macOS/coverage
+builds. After that repair, CI formatting and lint, docs, and the packaged
+Python job passed. The remaining workspace-test failure was only a stale
+diagnostic allowlist: the 32-square synthetic fixture completed successfully,
+but its test did not yet accept the new
+`standard_mfs_planning_resources` telemetry line. The allowlist now accepts
+that named line; its exact regression test passes (`1` passed, `389` filtered
+out), as do `cargo fmt --all --check`, warning-denying `casars` Clippy, and
+`git diff --check`. This focused fixture regression was the only image-forming
+test rerun for the CI repair; it was not a VLASS, CASA, correctness, or
+performance workload.
 
 ## Iteration Rules
 

@@ -9418,6 +9418,7 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
             || stderr
                 .lines()
                 .all(|line| line.starts_with("standard_mfs_runtime_plan ")
+                    || line.starts_with("standard_mfs_planning_resources ")
                     || line.starts_with("single_plane_execution_plan ")
                     || line.starts_with("standard_one_channel_cube_acceleration ")
                     || line.starts_with("imaging_source_read_ahead_summary ")
