@@ -1486,10 +1486,13 @@ fn casa_vis_imaging_weight_density_sums(density: &Array2<f32>) -> (f64, f64) {
     // iteration order is the opposite for our `(u, v)` array shape.
     for v in 0..ny {
         for u in 0..nx {
-            let value = f64::from(density[(u, v)]);
-            density_weight_sum += value;
+            let value = density[(u, v)];
+            density_weight_sum += f64::from(value);
             if value > 0.0 {
-                sumlocwt += value * value;
+                // casacore overloads `square(Float) -> Float`, so CASA rounds
+                // the density square before promoting it into the Double
+                // `sumlocwt` accumulator.
+                sumlocwt += f64::from(value * value);
             }
         }
     }
@@ -2398,11 +2401,16 @@ fn reweight_density_sample(
     }
 }
 
-/// CASA's optimized C++ build contracts the ordinary Briggs denominator's
-/// multiply and add. Make that rounding boundary explicit and portable.
+/// Reproduce CASA's ordinary Briggs denominator as separate Float multiply
+/// and add operations.
+///
+/// CASA 6.7.5.18's arm64 `VisImagingWeight::weightUniform` symbol emits
+/// `fmul` followed by `fadd` for this expression. Keeping the intermediate
+/// product explicit preserves the corresponding Float rounding boundary.
 #[inline]
 fn casa_briggs_denominator(density: f32, f2: f32) -> f32 {
-    f2.mul_add(density, 1.0)
+    let product = density * f2;
+    product + 1.0
 }
 
 fn reweight_owned_batch_in_place(
@@ -3378,7 +3386,7 @@ mod tests {
                 2.0,
                 f2,
             ),
-            f2.mul_add(2.0, 1.0)
+            f2 * 2.0 + 1.0
         );
         assert_eq!(
             casa_cube_briggs_weight_denominator(
@@ -3395,18 +3403,18 @@ mod tests {
     }
 
     #[test]
-    fn briggs_denominator_preserves_casa_fused_rounding() {
+    fn briggs_denominator_preserves_casa_separate_multiply_add_rounding() {
         let input_weight = f32::from_bits(1_107_661_012);
         let density = f32::from_bits(1_139_490_708);
         let f2 = f32::from_bits(0x3a57_d92b);
 
         assert_eq!(
             (input_weight / casa_briggs_denominator(density, f2)).to_bits(),
-            1_103_137_365
+            1_103_137_364
         );
         assert_eq!(
-            (input_weight / (f2 * density + 1.0)).to_bits(),
-            1_103_137_364
+            (input_weight / density.mul_add(f2, 1.0)).to_bits(),
+            1_103_137_365
         );
     }
 
@@ -3432,6 +3440,19 @@ mod tests {
         let (density_cell_sum, _) = casa_vis_imaging_weight_density_sums(density);
         assert_eq!(density_cell_sum, 33_554_432.0);
         assert_ne!(plan.density_weight_sum, density_cell_sum);
+    }
+
+    #[test]
+    fn streaming_briggs_rounds_density_square_before_double_accumulation() {
+        let value = f32::from_bits(0x3f80_0001);
+        let density = Array2::from_shape_vec((1, 1), vec![value]).unwrap();
+
+        let (_, sumlocwt) = casa_vis_imaging_weight_density_sums(&density);
+        let casa_float_square = f64::from(value * value);
+        let premature_double_square = f64::from(value) * f64::from(value);
+
+        assert_eq!(sumlocwt.to_bits(), casa_float_square.to_bits());
+        assert_ne!(sumlocwt.to_bits(), premature_double_square.to_bits());
     }
 
     #[test]

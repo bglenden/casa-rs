@@ -215,8 +215,39 @@ def candidate_evidence(
         "role": "bounded-correctness-oracle-not-performance-evidence",
         "producer": "casa-rs",
         "diagnostic_hook_added": True,
-        "normal_execution_behavior_changed": False,
-        "production_science_arithmetic_changed": False,
+        "normal_execution_behavior_changed": True,
+        "production_science_arithmetic_changed": True,
+        "production_change": {
+            "owner": "shared-standard-mfs-briggs",
+            "sumlocwt_term": "f64-from-rounded-f32-density-square",
+            "denominator": "separate-f32-multiply-then-add",
+            "casa_source_contract": (
+                "casacore-square-Float-returns-Float-before-Double-accumulation"
+            ),
+            "casa_binary_contract": {
+                "artifact_sha256": (
+                    "1a2c9ab9031842466b5d8291c0da35e839a33519b01394e3fcb99c1221b8228a"
+                ),
+                "symbol": "casa::VisImagingWeight::weightUniform",
+                "architecture": "arm64",
+                "multiply_address": "0x1f6dd0",
+                "add_address": "0x1f6de4",
+                "instructions": ["fmul", "fadd"],
+            },
+            "negative_control": {
+                "case": (
+                    "casa-rs-aw-datagrid-native-components-4096-full16-first-vb-v5"
+                ),
+                "receipt_sha256": (
+                    "3e108cfa315253ae8f1d2861407dd16a6ad85573d9d9e154c98f37d7021aa0da"
+                ),
+                "embedded_evidence_sha256": (
+                    "f98ce8b0df66ed2905bb18c0fcf1faa01345aa6a0adfdcf09e8d4b4cc26d69bb"
+                ),
+                "imaging_weights_hash": 6_417_129_240_768_820_313,
+                "mismatched_slots": 865,
+            },
+        },
         "density_pass": "diagnostic-only-completed-with-production-weighting-plan",
         "density_source_blocks": 32,
         "production_dispatch": "not-entered",
@@ -236,7 +267,16 @@ def candidate_evidence(
             "casa_native_components_v1": {
                 "schema": subject.CASA_EVIDENCE_SCHEMA,
                 "receipt_sha256": casa_sha,
-            }
+            },
+            "casa_rs_native_components_v5": {
+                "schema": "casa-rs-aw-datatogrid-native-components-audit-v5",
+                "receipt_sha256": (
+                    "3e108cfa315253ae8f1d2861407dd16a6ad85573d9d9e154c98f37d7021aa0da"
+                ),
+                "embedded_evidence_sha256": (
+                    "f98ce8b0df66ed2905bb18c0fcf1faa01345aa6a0adfdcf09e8d4b4cc26d69bb"
+                ),
+            },
         },
         "header": copy.deepcopy(header),
         "component_hashes": {},
@@ -251,7 +291,7 @@ def candidate_evidence(
     return evidence
 
 
-class NativeComponentsV5ValidatorTests(unittest.TestCase):
+class NativeComponentsV6ValidatorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)

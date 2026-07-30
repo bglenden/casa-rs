@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Validate and classify the casa-rs VLASS native-component V5 receipt.
+"""Validate and classify the casa-rs VLASS native-component V6 receipt.
 
 This validator is deliberately independent of the Rust diagnostic.  It
 reconstructs every FNV-1a component, admission decision, STREAM hash, TT0
@@ -26,12 +26,12 @@ from typing import Any, Iterable
 CASA_RECEIPT_SHA256 = "cc30d5492f6654336f46617a696f9a7fc8da9006df4e5ae9a3c64a6a9f401644"
 CASA_ENVELOPE_SCHEMA = "casa-aw-datagrid-native-components-envelope-v1"
 CASA_EVIDENCE_SCHEMA = "casa-aw-datagrid-native-components-v1"
-CANDIDATE_ENVELOPE_SCHEMA = "casa-rs-aw-datatogrid-native-components-audit-envelope-v5"
-CANDIDATE_EVIDENCE_SCHEMA = "casa-rs-aw-datatogrid-native-components-audit-v5"
+CANDIDATE_ENVELOPE_SCHEMA = "casa-rs-aw-datatogrid-native-components-audit-envelope-v6"
+CANDIDATE_EVIDENCE_SCHEMA = "casa-rs-aw-datatogrid-native-components-audit-v6"
 COMPARISON_ENVELOPE_SCHEMA = (
-    "casa-rs-aw-datatogrid-native-components-comparison-envelope-v5"
+    "casa-rs-aw-datatogrid-native-components-comparison-envelope-v6"
 )
-COMPARISON_SCHEMA = "casa-rs-aw-datatogrid-native-components-comparison-v5"
+COMPARISON_SCHEMA = "casa-rs-aw-datatogrid-native-components-comparison-v6"
 
 FNV_OFFSET = 0xCBF29CE484222325
 FNV_PRIME = 0x00000100000001B3
@@ -233,6 +233,7 @@ CANDIDATE_EVIDENCE_KEYS = frozenset(
         "diagnostic_hook_added",
         "normal_execution_behavior_changed",
         "production_science_arithmetic_changed",
+        "production_change",
         "density_pass",
         "density_source_blocks",
         "production_dispatch",
@@ -1019,8 +1020,39 @@ def validate_candidate(
         "role": "bounded-correctness-oracle-not-performance-evidence",
         "producer": "casa-rs",
         "diagnostic_hook_added": True,
-        "normal_execution_behavior_changed": False,
-        "production_science_arithmetic_changed": False,
+        "normal_execution_behavior_changed": True,
+        "production_science_arithmetic_changed": True,
+        "production_change": {
+            "owner": "shared-standard-mfs-briggs",
+            "sumlocwt_term": "f64-from-rounded-f32-density-square",
+            "denominator": "separate-f32-multiply-then-add",
+            "casa_source_contract": (
+                "casacore-square-Float-returns-Float-before-Double-accumulation"
+            ),
+            "casa_binary_contract": {
+                "artifact_sha256": (
+                    "1a2c9ab9031842466b5d8291c0da35e839a33519b01394e3fcb99c1221b8228a"
+                ),
+                "symbol": "casa::VisImagingWeight::weightUniform",
+                "architecture": "arm64",
+                "multiply_address": "0x1f6dd0",
+                "add_address": "0x1f6de4",
+                "instructions": ["fmul", "fadd"],
+            },
+            "negative_control": {
+                "case": (
+                    "casa-rs-aw-datagrid-native-components-4096-full16-first-vb-v5"
+                ),
+                "receipt_sha256": (
+                    "3e108cfa315253ae8f1d2861407dd16a6ad85573d9d9e154c98f37d7021aa0da"
+                ),
+                "embedded_evidence_sha256": (
+                    "f98ce8b0df66ed2905bb18c0fcf1faa01345aa6a0adfdcf09e8d4b4cc26d69bb"
+                ),
+                "imaging_weights_hash": 6_417_129_240_768_820_313,
+                "mismatched_slots": 865,
+            },
+        },
         "density_pass": "diagnostic-only-completed-with-production-weighting-plan",
         "density_source_blocks": 32,
         "production_dispatch": "not-entered",
@@ -1040,7 +1072,16 @@ def validate_candidate(
             "casa_native_components_v1": {
                 "schema": CASA_EVIDENCE_SCHEMA,
                 "receipt_sha256": CASA_RECEIPT_SHA256,
-            }
+            },
+            "casa_rs_native_components_v5": {
+                "schema": "casa-rs-aw-datatogrid-native-components-audit-v5",
+                "receipt_sha256": (
+                    "3e108cfa315253ae8f1d2861407dd16a6ad85573d9d9e154c98f37d7021aa0da"
+                ),
+                "embedded_evidence_sha256": (
+                    "f98ce8b0df66ed2905bb18c0fcf1faa01345aa6a0adfdcf09e8d4b4cc26d69bb"
+                ),
+            },
         },
     }.items():
         _exact(evidence[key], expected, f"{label}.{key}")
@@ -1085,9 +1126,7 @@ def validate_candidate(
         )
         _exact(
             claimed["auxiliary"]["negated_uv_transform_uvw_bits"],
-            _negated_raw_uvw(
-                claimed["auxiliary"]["casa_rs_internal_uvw_bits"]
-            ),
+            _negated_raw_uvw(claimed["auxiliary"]["casa_rs_internal_uvw_bits"]),
             f"{label}.rows[{row}]: independently reexpressed internal UVW",
         )
     _validate_candidate_comparison_claims(evidence, components, calls, label=label)
