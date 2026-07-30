@@ -4144,6 +4144,66 @@ receipt. `docs-check` and `git diff --check` pass. No 4,096-square imaging row,
 12,150-square development clean, full-geometry memory-policy row, or CASA
 imaging/reference run was launched for this repair.
 
+After that repair was durably committed, pushed, and green in exact-SHA CI,
+the single authorized v4 first-buffer discriminator ran at revision
+`11cdeec698b63b9023233f3d7855d6c07d47284f`. It stopped at its intended
+post-grid comparison boundary and preserved only `receipt.json`,
+`casars-imager.log`, `comparison.log`, and `provenance.tsv` under the immutable
+external directory
+`casa-rs-aw-datagrid-bracket-4096-full16-first-vb-v4`. Their SHA-256 digests
+are, respectively,
+`1c52961a3058f8f362e9d554c64b69a077f9414a7a44c738bed5351e6df59b40`,
+`c9d75afca00dedc5e3083dbf18e493c2d8edf27e7a62fa7e6936ee9af65359e2`,
+`479b6871ca3279e2a77b7ef2e6dfb391244a704a96166440b6e916350f8bc570`,
+and
+`8c510bfee7945898ff288b4aa84acbf145fe255dbdbadbfa46cf22a05c063888`.
+The receipt's embedded evidence digest is
+`5783293d3401f97b12742d8c89bd98e2b0d1303cabf4e19505f245db7cbe9e0a`;
+the release binary and launcher SHA-256 digests are
+`2968ce458ae6e258102cf901bd686be05f42bbaed11adad74a32499134febac5`
+and
+`8692df29392346690b62d2d3cd6a9318d379f0b4c41557f5fda0ed3682b3f52d`.
+The provenance continues to bind the unchanged CASA v5 receipt
+`fe3d5ba3bff1ba925f63f0f088df602692655131c86d6319210ffa90e067ea1f`;
+CASA was not rerun.
+
+The v4 positive result is exact producer-boundary alignment through selection
+and frequency preparation. CASA and casa-rs now agree on rows 0 through 324, 48
+flagged rows, the 64-channel map, the `[0,-1,-1,0]` polarization map, `12,359`
+accepted sources in each Taylor term, both frequency endpoint bits, and the
+full frequency-vector hash `17711728193083539473`. The direct/raw and compact
+input hashes are also identical at `7924638447934945938`; the portable input
+stream hash is `17219742412056116454`. This promotes the per-channel frequency
+repair itself past the frozen metadata boundary, but it does not promote
+AWProject gridding or the integrated row.
+
+The v4 negative result is the first actual common-boundary grid mismatch.
+CASA's frozen TT0 grid hash is `9328098071914194885`, while casa-rs records
+`9898952817250783852`; the comparator stops fail-closed at that field. The
+receipt also records casa-rs TT0 `sumwt` hash
+`5891270812598592054`, TT1 grid hash `6319697587634581816`, and TT1 `sumwt`
+hash `1755995775961608899`, versus frozen CASA values
+`5773668711911205477`, `9296706034202754823`, and
+`6979414366695050184`, respectively. Those later values are evidence for
+localization, not independently promoted boundaries after the first failed
+field. The repaired frequency path leaves the casa-rs grid and `sumwt` hashes
+unchanged from v3, so the legacy scalar conversion was a real semantic defect
+but is not the owner of the remaining grid mismatch.
+
+No normalization, FFT, image, clean, deconvolution, product creation, CASA
+call, or performance measurement occurred in v4. The integrated correctness
+blocker therefore remains the two exact `.alpha` and `.alpha.error` topology
+pixels in the unpromoted 4,096-square full-16-SPW row. Promotion now fails
+earlier at a differing TT0 `DataToGrid` boundary after matching
+cross-producer selection and frequency preparation and matching casa-rs
+direct/raw versus compact inputs; whether that boundary difference causes the
+two final topology pixels is not yet proven. The next justified changed
+diagnostic is a bounded CASA/casa-rs tap-prefix oracle for the first divergent
+grid accumulation. No unchanged v1-v4 casa-rs bracket and no unchanged CASA
+bracket/reference may be rerun. The full-geometry memory campaign remains
+implemented but unexecuted, with no 12,150-square policy receipt or production
+memory-policy promotion.
+
 The intentional checkpoint set consists only of the Rust production-boundary
 and Metal-rounding changes, the per-channel MFS frequency repair, their tests,
 this plan receipt, and the reusable fail-closed launcher. Rebuildable `target/`
