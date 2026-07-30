@@ -4197,12 +4197,75 @@ pixels in the unpromoted 4,096-square full-16-SPW row. Promotion now fails
 earlier at a differing TT0 `DataToGrid` boundary after matching
 cross-producer selection and frequency preparation and matching casa-rs
 direct/raw versus compact inputs; whether that boundary difference causes the
-two final topology pixels is not yet proven. The next justified changed
-diagnostic is a bounded CASA/casa-rs tap-prefix oracle for the first divergent
-grid accumulation. No unchanged v1-v4 casa-rs bracket and no unchanged CASA
-bracket/reference may be rerun. The full-geometry memory campaign remains
-implemented but unexecuted, with no 12,150-square policy receipt or production
-memory-policy promotion.
+two final topology pixels is not yet proven.
+
+A same-conversation Oracle evidence-delta review rejected immediate invasive
+CASA tap-loop tracing. Source inspection resolves one of its requested
+controls: for the frozen circular-basis row, `PlaneStokes::I` selects RR
+correlation index 0 and then LL index 3, casars-imager preserves that order in
+the parallel-hand batch, the compact classifier assigns Mueller 0 and then
+Mueller 15, and the serial replay visits first then second before its
+`iy`-then-`ix` tap traversal. The next changed discriminator therefore records
+that exact role order and tests the narrower arithmetic boundary first. It
+allocates a fresh 4,096-square DComplex TT0 grid for each of five sequential
+variants: the unchanged production arithmetic; CASA-prefix nvalue only;
+CASA-prefix contribution only; both CASA-prefix operations; and both
+CASA-prefix operations with an explicit component-wise DComplex accumulator
+add. The production control must reproduce the frozen v4 TT0 hash before any
+candidate is classified.
+
+This arithmetic-compatibility diagnostic remains deliberately narrower than
+the common DataToGrid boundary. It is one first-buffer, one-block, TT0-only,
+serial exact-source-order experiment using the already prephased compact
+bundles. Phase application, CF preparation and conjugation, `sumwt`, TT1,
+normalization, FFT, products, deconvolution, and production dispatch are not
+controlled or entered. Consequently, even an exact CASA TT0 grid match would
+identify a candidate arithmetic boundary rather than promote DataToGrid or the
+integrated clean row. A negative result promotes an ordered source-role prefix
+as the next discriminator; only after that remains inconclusive is a
+destination/tap prefix, followed by invasive CASA tap tracing, justified.
+
+The discriminator is implemented but has not yet been executed. Its private
+casars-imager preflight preserves the frozen v4 27-field handoff unchanged and
+uses a separate 31-field v1 marker that additionally binds RR index/code
+`0/5` and LL index/code `3/8`. The core independently requires the frozen 32
+source blocks, channel-map hash `2111453637644839429`, polarization-map hash
+`13222926617229668273`, frequency hash `17711728193083539473`, and endpoint
+bits `4746028312096267298` / `4746556774954748567`. Its production control
+must reproduce TT0 hash `9898952817250783852`; the comparison target remains
+the frozen CASA v5 TT0 hash `9328098071914194885`. Any marker drift,
+production-control drift, nonfinite grid value, out-of-grid support, malformed
+content address, or inconsistent result classification fails closed.
+
+The reusable launcher refuses a dirty checkout, a non-checkpoint local or
+remote SHA, an existing output directory, changed parent receipt/data hashes,
+unexpected process exit, or any image product. It records the release-binary,
+launcher, validator, `Cargo.lock`, `num-complex`, and `rustc -Vv` identities.
+The independent validator structurally binds the exact top-level evidence JSON
+and uses type-exact comparisons, so nested or duplicate decoy members and
+Python Boolean/integer aliases cannot satisfy the receipt. Comparator success
+means only that the experiment was validly classified; it does not mean a
+variant matched CASA.
+
+Pre-execution verification is green: workspace SPDX, formatting, and
+warning-denying Clippy passed; `casa-imaging` reported `385` passed and `9`
+ignored; `casars-imager` reported `354` passed and `14` ignored; the focused
+arithmetic, frozen-bracket, and frontend diagnostic filters passed `7`, `4`,
+and `6` tests; the independent comparator suite passed `13`; the unchanged
+full-geometry memory-campaign suite passed `31` with Ruff lint and format
+checks; task-host conformance passed all `18` binaries; the macOS GUI
+acceptance suite passed `7`; and architecture, documentation, launcher syntax,
+and final diff checks passed. The workspace gate's only failure was the known
+sandbox denial for two localhost-socket `casa-notebook` tests; exactly those
+two passed outside the socket-denying sandbox. One standard synthetic-MS unit
+test opened its temporary table with CASA in `36.32` seconds, but did not call
+`tclean`, read VLASS data, form an image, or create a correctness or timing
+reference.
+
+No unchanged v1-v4 casa-rs bracket and no unchanged CASA bracket/reference may
+be rerun. The full-geometry memory campaign remains implemented but
+unexecuted, with no 12,150-square policy receipt or production memory-policy
+promotion.
 
 The intentional checkpoint set consists only of the Rust production-boundary
 and Metal-rounding changes, the per-channel MFS frequency repair, their tests,

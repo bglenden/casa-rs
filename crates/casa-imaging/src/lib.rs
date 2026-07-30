@@ -10362,7 +10362,154 @@ fn awproject_compact_replay_tap(
     tap * gridder::casa_aw_phase_gradient_from_axes(phases.x(x_coordinate), phases.y(y_coordinate))
 }
 
-fn awproject_compact_grid_sample_f64(
+trait AwProjectCompactF64Arithmetic {
+    fn contribution(value: Complex32, tap: Complex32) -> Complex32;
+
+    #[inline]
+    fn accumulate(cell: &mut Complex64, contribution: Complex32) {
+        *cell += Complex64::new(f64::from(contribution.re), f64::from(contribution.im));
+    }
+}
+
+struct AwProjectProductionHostF64Arithmetic;
+
+impl AwProjectCompactF64Arithmetic for AwProjectProductionHostF64Arithmetic {
+    #[inline]
+    fn contribution(value: Complex32, tap: Complex32) -> Complex32 {
+        value * tap
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+trait AwProjectTt0ArithmeticCompatV1: AwProjectCompactF64Arithmetic {
+    const NAME: &'static str;
+    const NVALUE_CONTRACT: &'static str;
+    const CONTRIBUTION_CONTRACT: &'static str;
+    const ACCUMULATOR_CONTRACT: &'static str;
+
+    fn nvalue(residual: Complex32, weight: f32) -> Complex32;
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl AwProjectTt0ArithmeticCompatV1 for AwProjectProductionHostF64Arithmetic {
+    const NAME: &'static str = "production_host_f64_baseline";
+    const NVALUE_CONTRACT: &'static str = "native-complex32-residual-times-real-weight";
+    const CONTRIBUTION_CONTRACT: &'static str = "native-complex32-value-times-tap";
+    const ACCUMULATOR_CONTRACT: &'static str = "native-complex64-add-assign";
+
+    #[inline]
+    fn nvalue(residual: Complex32, weight: f32) -> Complex32 {
+        residual * weight
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectCasaNvalueNativeContributionV1;
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl AwProjectCompactF64Arithmetic for AwProjectCasaNvalueNativeContributionV1 {
+    #[inline]
+    fn contribution(value: Complex32, tap: Complex32) -> Complex32 {
+        value * tap
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl AwProjectTt0ArithmeticCompatV1 for AwProjectCasaNvalueNativeContributionV1 {
+    const NAME: &'static str = "casa_nvalue_native_contribution";
+    const NVALUE_CONTRACT: &'static str = "casa-prefix-complex32-weight-plus-zero-i-times-residual";
+    const CONTRIBUTION_CONTRACT: &'static str = "native-complex32-value-times-tap";
+    const ACCUMULATOR_CONTRACT: &'static str = "native-complex64-add-assign";
+
+    #[inline]
+    fn nvalue(residual: Complex32, weight: f32) -> Complex32 {
+        awproject_prefix_casa_product(Complex32::new(weight, 0.0), residual)
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectNativeNvalueCasaContributionV1;
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl AwProjectCompactF64Arithmetic for AwProjectNativeNvalueCasaContributionV1 {
+    #[inline]
+    fn contribution(value: Complex32, tap: Complex32) -> Complex32 {
+        awproject_prefix_casa_product(value, tap)
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl AwProjectTt0ArithmeticCompatV1 for AwProjectNativeNvalueCasaContributionV1 {
+    const NAME: &'static str = "native_nvalue_casa_contribution";
+    const NVALUE_CONTRACT: &'static str = "native-complex32-residual-times-real-weight";
+    const CONTRIBUTION_CONTRACT: &'static str = "casa-prefix-complex32-value-times-tap";
+    const ACCUMULATOR_CONTRACT: &'static str = "native-complex64-add-assign";
+
+    #[inline]
+    fn nvalue(residual: Complex32, weight: f32) -> Complex32 {
+        residual * weight
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectCasaNvalueCasaContributionV1;
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl AwProjectCompactF64Arithmetic for AwProjectCasaNvalueCasaContributionV1 {
+    #[inline]
+    fn contribution(value: Complex32, tap: Complex32) -> Complex32 {
+        awproject_prefix_casa_product(value, tap)
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl AwProjectTt0ArithmeticCompatV1 for AwProjectCasaNvalueCasaContributionV1 {
+    const NAME: &'static str = "casa_nvalue_casa_contribution";
+    const NVALUE_CONTRACT: &'static str = "casa-prefix-complex32-weight-plus-zero-i-times-residual";
+    const CONTRIBUTION_CONTRACT: &'static str = "casa-prefix-complex32-value-times-tap";
+    const ACCUMULATOR_CONTRACT: &'static str = "native-complex64-add-assign";
+
+    #[inline]
+    fn nvalue(residual: Complex32, weight: f32) -> Complex32 {
+        awproject_prefix_casa_product(Complex32::new(weight, 0.0), residual)
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectCasaNvalueCasaContributionComponentwiseF64AccumulatorV1;
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl AwProjectCompactF64Arithmetic
+    for AwProjectCasaNvalueCasaContributionComponentwiseF64AccumulatorV1
+{
+    #[inline]
+    fn contribution(value: Complex32, tap: Complex32) -> Complex32 {
+        awproject_prefix_casa_product(value, tap)
+    }
+
+    #[inline]
+    fn accumulate(cell: &mut Complex64, contribution: Complex32) {
+        cell.re += f64::from(contribution.re);
+        cell.im += f64::from(contribution.im);
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl AwProjectTt0ArithmeticCompatV1
+    for AwProjectCasaNvalueCasaContributionComponentwiseF64AccumulatorV1
+{
+    const NAME: &'static str = "casa_nvalue_casa_contribution_componentwise_f64_accumulator";
+    const NVALUE_CONTRACT: &'static str = "casa-prefix-complex32-weight-plus-zero-i-times-residual";
+    const CONTRIBUTION_CONTRACT: &'static str = "casa-prefix-complex32-value-times-tap";
+    const ACCUMULATOR_CONTRACT: &'static str = "explicit-componentwise-f64-grid-re-plus-equals-contribution-re-and-im-plus-equals-contribution-im";
+
+    #[inline]
+    fn nvalue(residual: Complex32, weight: f32) -> Complex32 {
+        awproject_prefix_casa_product(Complex32::new(weight, 0.0), residual)
+    }
+}
+
+fn awproject_compact_grid_sample_f64_with_arithmetic<A: AwProjectCompactF64Arithmetic>(
     grid: &mut Array2<Complex64>,
     plan: AwProjectCompactSamplePlan,
     bundle: &AwProjectCompactTapBundle,
@@ -10387,10 +10534,9 @@ fn awproject_compact_grid_sample_f64(
                 let y_index = (iy + y_support) as usize;
                 let packed_index = y_index * tap_width + x_index;
                 let tap = awproject_compact_replay_tap(bundle, phase_table, ix, iy, packed_index);
-                let contribution = value * tap;
+                let contribution = A::contribution(value, tap);
                 let grid_y = (plan.loc_y + iy) as usize;
-                storage[grid_x * columns + grid_y] +=
-                    Complex64::new(f64::from(contribution.re), f64::from(contribution.im));
+                A::accumulate(&mut storage[grid_x * columns + grid_y], contribution);
             }
         }
         tap_index = bundle.values.len();
@@ -10398,11 +10544,10 @@ fn awproject_compact_grid_sample_f64(
         for iy in -y_support..=y_support {
             for ix in -x_support..=x_support {
                 let tap = awproject_compact_replay_tap(bundle, phase_table, ix, iy, tap_index);
-                let contribution = value * tap;
+                let contribution = A::contribution(value, tap);
                 let grid_x = (plan.loc_x + ix) as usize;
                 let grid_y = (plan.loc_y + iy) as usize;
-                storage[grid_x * columns + grid_y] +=
-                    Complex64::new(f64::from(contribution.re), f64::from(contribution.im));
+                A::accumulate(&mut storage[grid_x * columns + grid_y], contribution);
                 tap_index += 1;
             }
         }
@@ -10410,14 +10555,36 @@ fn awproject_compact_grid_sample_f64(
         for iy in -y_support..=y_support {
             for ix in -x_support..=x_support {
                 let tap = awproject_compact_replay_tap(bundle, phase_table, ix, iy, tap_index);
-                let contribution = value * tap;
-                grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)] +=
-                    Complex64::new(f64::from(contribution.re), f64::from(contribution.im));
+                let contribution = A::contribution(value, tap);
+                A::accumulate(
+                    &mut grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)],
+                    contribution,
+                );
                 tap_index += 1;
             }
         }
     }
     debug_assert_eq!(tap_index, bundle.values.len());
+}
+
+fn awproject_compact_grid_sample_f64(
+    grid: &mut Array2<Complex64>,
+    plan: AwProjectCompactSamplePlan,
+    bundle: &AwProjectCompactTapBundle,
+    group_index: usize,
+    phase_tables: Option<&AwProjectPhaseTables>,
+    contiguous_grid_taps: bool,
+    value: Complex32,
+) {
+    awproject_compact_grid_sample_f64_with_arithmetic::<AwProjectProductionHostF64Arithmetic>(
+        grid,
+        plan,
+        bundle,
+        group_index,
+        phase_tables,
+        contiguous_grid_taps,
+        value,
+    );
 }
 
 fn awproject_compact_grid_sample_f32(
@@ -20276,6 +20443,36 @@ const AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV: &str = "CASA_RS_AW_BRACKET_OUTPUT
 #[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV: &str = "CASA_RS_INTERNAL_AW_BRACKET_SELECTION_V4";
 #[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV_V1: &str =
+    "CASA_RS_AW_TT0_ARITHMETIC_COMPAT_OUTPUT_V1";
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV_V1: &str =
+    "CASA_RS_INTERNAL_AW_TT0_ARITHMETIC_COMPAT_SELECTION_V1";
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_TT0_ARITHMETIC_COMPAT_EXPECT_NXY_ENV_V1: &str =
+    "CASA_RS_AW_TT0_ARITHMETIC_COMPAT_EXPECT_NXY";
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_TT0_ARITHMETIC_COMPAT_BLOCKS_ENV_V1: &str =
+    "CASA_RS_AW_TT0_ARITHMETIC_COMPAT_BLOCKS";
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_TT0_ARITHMETIC_COMPAT_TERMS_ENV_V1: &str = "CASA_RS_AW_TT0_ARITHMETIC_COMPAT_TERMS";
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_TT0_ARITHMETIC_COMPAT_BASELINE_HASH_V1: u64 = 9_898_952_817_250_783_852;
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_TT0_ARITHMETIC_COMPAT_CASA_TARGET_HASH_V1: u64 = 9_328_098_071_914_194_885;
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_TT0_ARITHMETIC_COMPAT_PLANNED_SOURCE_BLOCKS_V1: usize = 32;
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_TT0_ARITHMETIC_COMPAT_CHAN_MAP_HASH_V1: u64 = 2_111_453_637_644_839_429;
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_TT0_ARITHMETIC_COMPAT_POL_MAP_HASH_V1: u64 = 13_222_926_617_229_668_273;
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_TT0_ARITHMETIC_COMPAT_FREQ_HASH_V1: u64 = 17_711_728_193_083_539_473;
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_TT0_ARITHMETIC_COMPAT_FREQ_FIRST_BITS_V1: u64 = 4_746_028_312_096_267_298;
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_TT0_ARITHMETIC_COMPAT_FREQ_LAST_BITS_V1: u64 = 4_746_556_774_954_748_567;
+#[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS: usize = 325;
 #[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_DATATOGRID_BRACKET_FIRST_SELECTED_ROW_IDS_HASH: u64 = 15_058_004_568_616_189_240;
@@ -20325,8 +20522,26 @@ struct AwProjectDataToGridBracketSelection {
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AwProjectTt0ArithmeticCompatSelectionV1 {
+    common: AwProjectDataToGridBracketSelection,
+    selected_corr_first_index: usize,
+    selected_corr_second_index: usize,
+    selected_corr_first_code: usize,
+    selected_corr_second_code: usize,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Clone, Copy)]
 struct AwProjectDataToGridBracketConfig {
+    expected_nxy: usize,
+    target_blocks: usize,
+    terms: usize,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Clone, Copy)]
+struct AwProjectTt0ArithmeticCompatConfigV1 {
     expected_nxy: usize,
     target_blocks: usize,
     terms: usize,
@@ -20398,6 +20613,75 @@ fn awproject_datatogrid_bracket_config()
     Ok(Some((
         output,
         AwProjectDataToGridBracketConfig {
+            expected_nxy,
+            target_blocks,
+            terms,
+        },
+    )))
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_tt0_arithmetic_compat_required_usize_v1(name: &str) -> Result<usize, ImagingError> {
+    let value = env::var(name).map_err(|_| {
+        ImagingError::InvalidRequest(format!(
+            "the AWProject TT0 arithmetic-compatibility diagnostic requires {name}"
+        ))
+    })?;
+    value.parse::<usize>().map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "invalid AWProject TT0 arithmetic-compatibility integer in {name}: {error}"
+        ))
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_tt0_arithmetic_compat_config_v1()
+-> Result<Option<(PathBuf, AwProjectTt0ArithmeticCompatConfigV1)>, ImagingError> {
+    let Some(output) = env::var_os(AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV_V1) else {
+        return Ok(None);
+    };
+    let output = PathBuf::from(output);
+    if !output.is_absolute() {
+        return Err(ImagingError::InvalidRequest(format!(
+            "{AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV_V1} must be an absolute path"
+        )));
+    }
+    if output.exists() {
+        return Err(ImagingError::InvalidRequest(format!(
+            "refusing to overwrite AWProject TT0 arithmetic-compatibility receipt {}",
+            output.display()
+        )));
+    }
+    let expected_nxy = awproject_tt0_arithmetic_compat_required_usize_v1(
+        AWPROJECT_TT0_ARITHMETIC_COMPAT_EXPECT_NXY_ENV_V1,
+    )?;
+    let target_blocks = awproject_tt0_arithmetic_compat_required_usize_v1(
+        AWPROJECT_TT0_ARITHMETIC_COMPAT_BLOCKS_ENV_V1,
+    )?;
+    let terms = awproject_tt0_arithmetic_compat_required_usize_v1(
+        AWPROJECT_TT0_ARITHMETIC_COMPAT_TERMS_ENV_V1,
+    )?;
+    if expected_nxy != 4096 {
+        return Err(ImagingError::InvalidRequest(
+            "the frozen AWProject TT0 arithmetic-compatibility diagnostic requires exactly 4096 pixels per side"
+                .to_string(),
+        ));
+    }
+    if target_blocks != 1 {
+        return Err(ImagingError::InvalidRequest(
+            "the bounded AWProject TT0 arithmetic-compatibility diagnostic requires exactly one logical source block"
+                .to_string(),
+        ));
+    }
+    if terms != 1 {
+        return Err(ImagingError::InvalidRequest(
+            "the bounded AWProject TT0 arithmetic-compatibility diagnostic evaluates exactly TT0"
+                .to_string(),
+        ));
+    }
+    Ok(Some((
+        output,
+        AwProjectTt0ArithmeticCompatConfigV1 {
             expected_nxy,
             target_blocks,
             terms,
@@ -20546,6 +20830,173 @@ fn awproject_datatogrid_bracket_selection()
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_tt0_arithmetic_compat_selection_v1()
+-> Result<AwProjectTt0ArithmeticCompatSelectionV1, ImagingError> {
+    let encoded = env::var(AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV_V1).map_err(|_| {
+        ImagingError::InvalidRequest(format!(
+            "the AWProject TT0 arithmetic-compatibility diagnostic was not armed by the \
+             casars-imager selection preflight \
+             ({AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV_V1})"
+        ))
+    })?;
+    let mut fields = BTreeMap::<&str, &str>::new();
+    for entry in encoded.split(';') {
+        let (name, value) = entry.split_once('=').ok_or_else(|| {
+            ImagingError::InvalidRequest(format!(
+                "malformed AWProject TT0 arithmetic-compatibility selection receipt entry \
+                 {entry:?}"
+            ))
+        })?;
+        if fields.insert(name, value).is_some() {
+            return Err(ImagingError::InvalidRequest(format!(
+                "duplicate AWProject TT0 arithmetic-compatibility selection receipt field \
+                 {name:?}"
+            )));
+        }
+    }
+    if fields.len() != 31 {
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject TT0 arithmetic-compatibility selection receipt has {} fields, expected 31",
+            fields.len()
+        )));
+    }
+    let parse_i32 = |name: &str| -> Result<i32, ImagingError> {
+        fields
+            .get(name)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "AWProject TT0 arithmetic-compatibility selection receipt is missing {name}"
+                ))
+            })?
+            .parse::<i32>()
+            .map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "invalid AWProject TT0 arithmetic-compatibility selection field \
+                     {name}: {error}"
+                ))
+            })
+    };
+    let parse_usize = |name: &str| -> Result<usize, ImagingError> {
+        fields
+            .get(name)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "AWProject TT0 arithmetic-compatibility selection receipt is missing {name}"
+                ))
+            })?
+            .parse::<usize>()
+            .map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "invalid AWProject TT0 arithmetic-compatibility selection field \
+                     {name}: {error}"
+                ))
+            })
+    };
+    let parse_u64 = |name: &str| -> Result<u64, ImagingError> {
+        fields
+            .get(name)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "AWProject TT0 arithmetic-compatibility selection receipt is missing {name}"
+                ))
+            })?
+            .parse::<u64>()
+            .map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "invalid AWProject TT0 arithmetic-compatibility selection field \
+                     {name}: {error}"
+                ))
+            })
+    };
+    let common = AwProjectDataToGridBracketSelection {
+        field_id: parse_i32("field")?,
+        requested_spws: fields
+            .get("spws")
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject TT0 arithmetic-compatibility selection receipt is missing spws"
+                        .to_string(),
+                )
+            })?
+            .to_string(),
+        first_batch_spw: parse_i32("first_spw")?,
+        planned_source_blocks: parse_usize("source_blocks")?,
+        selected_row_begin: parse_usize("selected_row_begin")?,
+        selected_row_end: parse_usize("selected_row_end")?,
+        selected_row_count: parse_usize("selected_row_count")?,
+        selected_row_hash: parse_u64("selected_row_hash")?,
+        selected_row_first: parse_usize("selected_row_first")?,
+        selected_row_last: parse_usize("selected_row_last")?,
+        absolute_main_row_count: parse_usize("absolute_main_row_count")?,
+        absolute_main_row_hash: parse_u64("absolute_main_row_hash")?,
+        absolute_main_row_first: parse_usize("absolute_main_row_first")?,
+        absolute_main_row_last: parse_usize("absolute_main_row_last")?,
+        row_flags_count: parse_usize("row_flags_count")?,
+        row_flags_hash: parse_u64("row_flags_hash")?,
+        flagged_rows: parse_usize("flagged_rows")?,
+        n_data_chan: parse_usize("n_data_chan")?,
+        n_data_pol: parse_usize("n_data_pol")?,
+        chan_map_count: parse_usize("chan_map_count")?,
+        chan_map_hash: parse_u64("chan_map_hash")?,
+        pol_map_count: parse_usize("pol_map_count")?,
+        pol_map_hash: parse_u64("pol_map_hash")?,
+        freq_count: parse_usize("freq_count")?,
+        freq_hash: parse_u64("freq_hash")?,
+        freq_first_bits: parse_u64("freq_first_bits")?,
+        freq_last_bits: parse_u64("freq_last_bits")?,
+    };
+    let selection = AwProjectTt0ArithmeticCompatSelectionV1 {
+        common,
+        selected_corr_first_index: parse_usize("selected_corr_first_index")?,
+        selected_corr_second_index: parse_usize("selected_corr_second_index")?,
+        selected_corr_first_code: parse_usize("selected_corr_first_code")?,
+        selected_corr_second_code: parse_usize("selected_corr_second_code")?,
+    };
+    if selection.common.field_id != 1525
+        || selection.common.requested_spws != "2-17"
+        || selection.common.first_batch_spw != 2
+        || selection.common.planned_source_blocks
+            != AWPROJECT_TT0_ARITHMETIC_COMPAT_PLANNED_SOURCE_BLOCKS_V1
+        || selection.common.selected_row_begin != 0
+        || selection.common.selected_row_end != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || selection.common.selected_row_count != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || selection.common.selected_row_hash
+            != AWPROJECT_DATATOGRID_BRACKET_FIRST_SELECTED_ROW_IDS_HASH
+        || selection.common.selected_row_first != 0
+        || selection.common.selected_row_last != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS - 1
+        || selection.common.absolute_main_row_count != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || selection.common.absolute_main_row_hash
+            != AWPROJECT_DATATOGRID_BRACKET_FIRST_ABSOLUTE_ROW_IDS_HASH
+        || selection.common.absolute_main_row_first
+            != AWPROJECT_DATATOGRID_BRACKET_FIRST_ABSOLUTE_ROW
+        || selection.common.absolute_main_row_last != AWPROJECT_DATATOGRID_BRACKET_LAST_ABSOLUTE_ROW
+        || selection.common.row_flags_count != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || selection.common.row_flags_hash != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_FLAGS_HASH
+        || selection.common.flagged_rows != AWPROJECT_DATATOGRID_BRACKET_FIRST_FLAGGED_ROWS
+        || selection.common.n_data_chan != 64
+        || selection.common.n_data_pol != 4
+        || selection.common.chan_map_count != 64
+        || selection.common.chan_map_hash != AWPROJECT_TT0_ARITHMETIC_COMPAT_CHAN_MAP_HASH_V1
+        || selection.common.pol_map_count != 4
+        || selection.common.pol_map_hash != AWPROJECT_TT0_ARITHMETIC_COMPAT_POL_MAP_HASH_V1
+        || selection.common.freq_count != 64
+        || selection.common.freq_hash != AWPROJECT_TT0_ARITHMETIC_COMPAT_FREQ_HASH_V1
+        || selection.common.freq_first_bits != AWPROJECT_TT0_ARITHMETIC_COMPAT_FREQ_FIRST_BITS_V1
+        || selection.common.freq_last_bits != AWPROJECT_TT0_ARITHMETIC_COMPAT_FREQ_LAST_BITS_V1
+        || selection.selected_corr_first_index != 0
+        || selection.selected_corr_second_index != 3
+        || selection.selected_corr_first_code != 5
+        || selection.selected_corr_second_code != 8
+    {
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject TT0 arithmetic-compatibility selection receipt does not describe the \
+             frozen field=1525, SPW=2..17, CASA first-VB row: {selection:?}"
+        )));
+    }
+    Ok(selection)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn hash_awproject_datatogrid_grid_casa_order(grid: &Array2<Complex64>) -> u64 {
     let [nx, ny] = [grid.shape()[0], grid.shape()[1]];
     let mut hash = AwProjectResidualPrefixHash::new();
@@ -20561,6 +21012,26 @@ fn hash_awproject_datatogrid_grid_casa_order(grid: &Array2<Complex64>) -> u64 {
         }
     }
     hash.0
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn hash_awproject_tt0_arithmetic_compat_grid_v1(grid: &Array2<Complex64>) -> (u64, usize) {
+    let [nx, ny] = [grid.shape()[0], grid.shape()[1]];
+    let mut hash = AwProjectResidualPrefixHash::new();
+    for extent in [nx, ny, 1, 1] {
+        hash.usize(extent);
+    }
+    let mut nonfinite_grid_value_count = 0usize;
+    for y in 0..ny {
+        for x in 0..nx {
+            let value = grid[(x, y)];
+            hash.complex64(value);
+            if !(value.re.is_finite() && value.im.is_finite()) {
+                nonfinite_grid_value_count = nonfinite_grid_value_count.saturating_add(1);
+            }
+        }
+    }
+    (hash.0, nonfinite_grid_value_count)
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -20841,6 +21312,649 @@ fn awproject_datatogrid_atomic_receipt(path: &Path, payload: &[u8]) -> Result<()
         let _ = std::fs::remove_file(&temporary);
     }
     result
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AwProjectTt0ArithmeticCompatTraversalV1 {
+    source_count: usize,
+    logical_role_count: usize,
+    tap_count: usize,
+    traversal_hash: u64,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AwProjectTt0ArithmeticCompatVariantV1 {
+    name: &'static str,
+    nvalue_contract: &'static str,
+    contribution_contract: &'static str,
+    accumulator_contract: &'static str,
+    grid_hash: u64,
+    nonfinite_grid_value_count: usize,
+    source_count: usize,
+    logical_role_count: usize,
+    tap_count: usize,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Debug, PartialEq, Eq)]
+struct AwProjectTt0ArithmeticCompatClassificationV1 {
+    result: &'static str,
+    casa_target_matching_variants: Vec<&'static str>,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_tt0_arithmetic_compat_traversal_v1(
+    grid_shape: [usize; 2],
+    samples: &[AwProjectCompactPlannedSample],
+    bundles: &[AwProjectCompactMaterializedTap],
+) -> Result<AwProjectTt0ArithmeticCompatTraversalV1, ImagingError> {
+    let mut hash = AwProjectResidualPrefixHash::new();
+    hash.usize(grid_shape[0]);
+    hash.usize(grid_shape[1]);
+    let mut logical_role_count = 0usize;
+    let mut tap_count = 0usize;
+    for (source_ordinal, sample) in samples.iter().enumerate() {
+        for (logical_role, plan) in [
+            (0usize, sample.first_imaging_plan),
+            (1usize, sample.second_imaging_plan),
+        ] {
+            let bundle = match bundles.get(plan.tap_bundle) {
+                Some(AwProjectCompactMaterializedTap::Ready(bundle)) => bundle,
+                Some(AwProjectCompactMaterializedTap::Rejected(reason)) => {
+                    return Err(ImagingError::Normalization(format!(
+                        "AWProject TT0 arithmetic-compatibility source {source_ordinal} role \
+                         {logical_role} selected rejected compact tap {}: {reason:?}",
+                        plan.tap_bundle
+                    )));
+                }
+                None => {
+                    return Err(ImagingError::Normalization(format!(
+                        "AWProject TT0 arithmetic-compatibility source {source_ordinal} role \
+                         {logical_role} selected missing compact tap {}",
+                        plan.tap_bundle
+                    )));
+                }
+            };
+            if !bundle.phase_applied {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "AWProject TT0 arithmetic-compatibility source {source_ordinal} role \
+                     {logical_role} requires a prephased production tap bundle"
+                )));
+            }
+            let x_support = isize::try_from(bundle.x_support).map_err(|_| {
+                ImagingError::Normalization(
+                    "AWProject TT0 arithmetic-compatibility X support exceeds isize".to_string(),
+                )
+            })?;
+            let y_support = isize::try_from(bundle.y_support).map_err(|_| {
+                ImagingError::Normalization(
+                    "AWProject TT0 arithmetic-compatibility Y support exceeds isize".to_string(),
+                )
+            })?;
+            let x_begin = plan.loc_x.checked_sub(x_support);
+            let x_end = plan.loc_x.checked_add(x_support);
+            let y_begin = plan.loc_y.checked_sub(y_support);
+            let y_end = plan.loc_y.checked_add(y_support);
+            if x_begin.is_none_or(|value| value < 0)
+                || y_begin.is_none_or(|value| value < 0)
+                || x_end.is_none_or(|value| {
+                    usize::try_from(value).map_or(true, |value| value >= grid_shape[0])
+                })
+                || y_end.is_none_or(|value| {
+                    usize::try_from(value).map_or(true, |value| value >= grid_shape[1])
+                })
+            {
+                return Err(ImagingError::Normalization(format!(
+                    "AWProject TT0 arithmetic-compatibility source {source_ordinal} role \
+                     {logical_role} support extends outside the diagnostic grid"
+                )));
+            }
+            let expected_taps = bundle
+                .x_support
+                .checked_mul(2)
+                .and_then(|value| value.checked_add(1))
+                .and_then(|width| {
+                    bundle
+                        .y_support
+                        .checked_mul(2)
+                        .and_then(|value| value.checked_add(1))
+                        .and_then(|height| width.checked_mul(height))
+                })
+                .ok_or_else(|| {
+                    ImagingError::Normalization(
+                        "AWProject TT0 arithmetic-compatibility tap extent overflowed".to_string(),
+                    )
+                })?;
+            if bundle.values.len() != expected_taps {
+                return Err(ImagingError::Normalization(format!(
+                    "AWProject TT0 arithmetic-compatibility source {source_ordinal} role \
+                     {logical_role} has {} taps, expected {expected_taps}",
+                    bundle.values.len()
+                )));
+            }
+            hash.usize(source_ordinal);
+            hash.usize(logical_role);
+            hash.usize(sample.group_index);
+            hash.usize(plan.tap_bundle);
+            hash.isize(plan.loc_x);
+            hash.isize(plan.loc_y);
+            hash.usize(bundle.x_support);
+            hash.usize(bundle.y_support);
+            hash.bool(bundle.phase_applied);
+            let mut tap_ordinal = 0usize;
+            for iy in -y_support..=y_support {
+                for ix in -x_support..=x_support {
+                    hash.usize(source_ordinal);
+                    hash.usize(logical_role);
+                    hash.isize(iy);
+                    hash.isize(ix);
+                    hash.usize(tap_ordinal);
+                    hash.isize(plan.loc_x + ix);
+                    hash.isize(plan.loc_y + iy);
+                    tap_ordinal += 1;
+                }
+            }
+            logical_role_count = logical_role_count.saturating_add(1);
+            tap_count = tap_count.saturating_add(tap_ordinal);
+        }
+    }
+    Ok(AwProjectTt0ArithmeticCompatTraversalV1 {
+        source_count: samples.len(),
+        logical_role_count,
+        tap_count,
+        traversal_hash: hash.0,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn run_awproject_tt0_arithmetic_compat_variant_v1<A: AwProjectTt0ArithmeticCompatV1>(
+    grid_shape: [usize; 2],
+    samples: &[AwProjectCompactPlannedSample],
+    bundles: &[AwProjectCompactMaterializedTap],
+    reffreq_hz: f64,
+) -> Result<AwProjectTt0ArithmeticCompatVariantV1, ImagingError> {
+    let mut grid = Array2::<Complex64>::zeros((grid_shape[0], grid_shape[1]));
+    let mut logical_role_count = 0usize;
+    let mut tap_count = 0usize;
+    for sample in samples {
+        let weight =
+            mtmfs_casa_weighted_taylor_term(sample.weight, sample.frequency_hz, reffreq_hz, 0);
+        for (plan, residual) in [
+            (sample.first_imaging_plan, sample.first_residual),
+            (sample.second_imaging_plan, sample.second_residual),
+        ] {
+            let bundle = awproject_ready_compact_tap(bundles, plan.tap_bundle);
+            debug_assert!(bundle.phase_applied);
+            awproject_compact_grid_sample_f64_with_arithmetic::<A>(
+                &mut grid,
+                plan,
+                bundle,
+                sample.group_index,
+                None,
+                false,
+                A::nvalue(residual, weight),
+            );
+            logical_role_count = logical_role_count.saturating_add(1);
+            tap_count = tap_count.saturating_add(bundle.values.len());
+        }
+    }
+    let (grid_hash, nonfinite_grid_value_count) =
+        hash_awproject_tt0_arithmetic_compat_grid_v1(&grid);
+    drop(grid);
+    Ok(AwProjectTt0ArithmeticCompatVariantV1 {
+        name: A::NAME,
+        nvalue_contract: A::NVALUE_CONTRACT,
+        contribution_contract: A::CONTRIBUTION_CONTRACT,
+        accumulator_contract: A::ACCUMULATOR_CONTRACT,
+        grid_hash,
+        nonfinite_grid_value_count,
+        source_count: samples.len(),
+        logical_role_count,
+        tap_count,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn classify_awproject_tt0_arithmetic_compat_v1(
+    variants: &[AwProjectTt0ArithmeticCompatVariantV1],
+) -> AwProjectTt0ArithmeticCompatClassificationV1 {
+    let casa_target_matching_variants = variants
+        .iter()
+        .filter(|variant| variant.grid_hash == AWPROJECT_TT0_ARITHMETIC_COMPAT_CASA_TARGET_HASH_V1)
+        .map(|variant| variant.name)
+        .collect::<Vec<_>>();
+    let result = if variants.first().map(|variant| variant.grid_hash)
+        != Some(AWPROJECT_TT0_ARITHMETIC_COMPAT_BASELINE_HASH_V1)
+    {
+        "rejected-parent-boundary-drift"
+    } else {
+        match casa_target_matching_variants.len() {
+            0 => "completed-no-tested-variant-matched-casa",
+            1 => "completed-single-tested-variant-matched-casa",
+            _ => "completed-multiple-tested-variants-matched-casa",
+        }
+    };
+    AwProjectTt0ArithmeticCompatClassificationV1 {
+        result,
+        casa_target_matching_variants,
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_tt0_arithmetic_compat_variant_json_v1(
+    ordinal: usize,
+    variant: &AwProjectTt0ArithmeticCompatVariantV1,
+    grid_values_hashed: usize,
+) -> String {
+    format!(
+        "{{\"ordinal\":{ordinal},\"name\":\"{}\",\"nvalue_contract\":\"{}\",\
+         \"contribution_contract\":\"{}\",\"accumulator_contract\":\"{}\",\
+         \"traversal_contract\":\"source-then-first-rr-logical-mueller-0-then-second-ll-logical-mueller-15-then-iy-then-ix\",\
+         \"grid_hash_contract\":\"fnv1a64-shape-axis0-fast-complex64-bits\",\
+         \"grid_hash\":{},\"grid_values_hashed\":{grid_values_hashed},\
+         \"nonfinite_grid_value_count\":{},\
+         \"source_count\":{},\"logical_role_count\":{},\"tap_count\":{},\
+         \"matches_frozen_production_baseline\":{},\"matches_casa_target\":{}}}",
+        variant.name,
+        variant.nvalue_contract,
+        variant.contribution_contract,
+        variant.accumulator_contract,
+        variant.grid_hash,
+        variant.nonfinite_grid_value_count,
+        variant.source_count,
+        variant.logical_role_count,
+        variant.tap_count,
+        variant.grid_hash == AWPROJECT_TT0_ARITHMETIC_COMPAT_BASELINE_HASH_V1,
+        variant.grid_hash == AWPROJECT_TT0_ARITHMETIC_COMPAT_CASA_TARGET_HASH_V1,
+    )
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_tt0_arithmetic_compat_envelope_v1(evidence: &str) -> (String, String) {
+    let embedded_evidence = evidence.trim();
+    let evidence_sha256 = format!("{:x}", Sha256::digest(embedded_evidence.as_bytes()));
+    let payload = format!(
+        "{{\n\
+         \"schema\":\"casa-rs-aw-datagrid-tt0-arithmetic-compat-envelope-v1\",\n\
+         \"content_address\":{{\"algorithm\":\"sha256\",\
+         \"scope\":\"embedded-evidence-json-utf8\",\"digest\":\"{evidence_sha256}\"}},\n\
+         \"evidence\":{}\n\
+         }}\n",
+        embedded_evidence
+    );
+    (payload, evidence_sha256)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn maybe_run_awproject_tt0_arithmetic_compat_v1(
+    request: &MtmfsRequest,
+    mosaic: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    batch: &VisibilityBatch,
+    parallel_hands: &AwParallelHandVisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    source_samples: &[AwProjectCompactSourceSample],
+    planned_samples: &[AwProjectCompactPlannedSample],
+    tap_requests: &[AwProjectCompactTapRequest],
+    bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    groups: &[GroupedVisibilityMetadata],
+    cache: &AwConvolutionFunctionResidentCache,
+    controls: &AwProjectControls,
+    pa_deg: f64,
+    replay_block_ordinal: usize,
+    replay_window_ordinal: usize,
+    last_window_in_block: bool,
+) -> Result<(), ImagingError> {
+    let Some((output, config)) = awproject_tt0_arithmetic_compat_config_v1()? else {
+        return Ok(());
+    };
+    let selection = awproject_tt0_arithmetic_compat_selection_v1()?;
+    if request.geometry.image_shape != [config.expected_nxy, config.expected_nxy]
+        || gridder.grid_shape() != [config.expected_nxy, config.expected_nxy]
+        || request.nterms != 2
+        || config.terms != 1
+        || request.plane_stokes != PlaneStokes::I
+        || request.w_term_mode != WTermMode::None
+        || request.w_project_planes != Some(32)
+    {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject TT0 arithmetic-compatibility geometry is not the frozen 4096-square, \
+             32-W-plane, Stokes-I, nterms=2 row with TT0-only diagnostic evaluation"
+                .to_string(),
+        ));
+    }
+    let GridderMode::AwProject(awproject) = &request.gridder_mode else {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject TT0 arithmetic-compatibility diagnostic requires gridder='awproject'"
+                .to_string(),
+        ));
+    };
+    if !awproject.controls.use_pointing
+        || !awproject.controls.a_term
+        || awproject.controls.ps_term
+        || !awproject.controls.wb_awp
+        || !awproject.controls.conjugate_beams
+        || awproject.controls.facets != 1
+        || awproject.controls.w_plane_count != Some(32)
+    {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject TT0 arithmetic-compatibility diagnostic requires POINTING, \
+             A/WB/conjugate beams, facets=1, ps_term=false, and 32 W planes"
+                .to_string(),
+        ));
+    }
+    if replay_block_ordinal != 0
+        || replay_window_ordinal != 0
+        || !last_window_in_block
+        || config.target_blocks != 1
+    {
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject TT0 arithmetic-compatibility diagnostic expected exactly one complete \
+             replay block at block=0 window=0, got block={replay_block_ordinal} \
+             window={replay_window_ordinal} last_window_in_block={last_window_in_block}"
+        )));
+    }
+    if batch.is_empty()
+        || source_samples.len() != AWPROJECT_DATATOGRID_BRACKET_FIRST_SOURCE_COUNT
+        || planned_samples.len() != AWPROJECT_DATATOGRID_BRACKET_FIRST_SOURCE_COUNT
+    {
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject TT0 arithmetic-compatibility diagnostic expected the CASA first-VB \
+             source count {}, got batch_samples={} source_samples={} planned_samples={}",
+            AWPROJECT_DATATOGRID_BRACKET_FIRST_SOURCE_COUNT,
+            batch.len(),
+            source_samples.len(),
+            planned_samples.len(),
+        )));
+    }
+    let input_audit = audit_awproject_residual_inputs(
+        request,
+        mosaic,
+        gridder,
+        batch,
+        parallel_hands,
+        sample_frequencies_hz,
+        source_samples,
+        planned_samples,
+        tap_requests,
+        bundles,
+        phase_tables,
+        groups,
+        cache,
+        controls,
+        pa_deg,
+        replay_block_ordinal,
+    )?;
+    if let Some(mismatch) = input_audit.first_mismatch.as_deref() {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject TT0 arithmetic-compatibility direct/raw and compact inputs differ: \
+             {mismatch}"
+        )));
+    }
+    let portable_call = awproject_datatogrid_portable_call_hash(
+        request,
+        batch,
+        source_samples,
+        planned_samples,
+        tap_requests,
+        0,
+        0,
+    )?;
+    let grid_shape = [config.expected_nxy, config.expected_nxy];
+    let traversal =
+        awproject_tt0_arithmetic_compat_traversal_v1(grid_shape, planned_samples, bundles)?;
+    if input_audit.source_count != traversal.source_count
+        || input_audit.role_count != traversal.logical_role_count
+        || input_audit.tap_count != traversal.tap_count
+        || portable_call.source_count != traversal.source_count
+    {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject TT0 arithmetic-compatibility source census changed: \
+             direct_source={} direct_roles={} direct_taps={} portable_source={} \
+             traversal_source={} traversal_roles={} traversal_taps={}",
+            input_audit.source_count,
+            input_audit.role_count,
+            input_audit.tap_count,
+            portable_call.source_count,
+            traversal.source_count,
+            traversal.logical_role_count,
+            traversal.tap_count,
+        )));
+    }
+
+    let variants =
+        [
+            run_awproject_tt0_arithmetic_compat_variant_v1::<AwProjectProductionHostF64Arithmetic>(
+                grid_shape,
+                planned_samples,
+                bundles,
+                request.reffreq_hz,
+            )?,
+            run_awproject_tt0_arithmetic_compat_variant_v1::<
+                AwProjectCasaNvalueNativeContributionV1,
+            >(grid_shape, planned_samples, bundles, request.reffreq_hz)?,
+            run_awproject_tt0_arithmetic_compat_variant_v1::<
+                AwProjectNativeNvalueCasaContributionV1,
+            >(grid_shape, planned_samples, bundles, request.reffreq_hz)?,
+            run_awproject_tt0_arithmetic_compat_variant_v1::<AwProjectCasaNvalueCasaContributionV1>(
+                grid_shape,
+                planned_samples,
+                bundles,
+                request.reffreq_hz,
+            )?,
+            run_awproject_tt0_arithmetic_compat_variant_v1::<
+                AwProjectCasaNvalueCasaContributionComponentwiseF64AccumulatorV1,
+            >(grid_shape, planned_samples, bundles, request.reffreq_hz)?,
+        ];
+    if variants.iter().any(|variant| {
+        variant.source_count != traversal.source_count
+            || variant.logical_role_count != traversal.logical_role_count
+            || variant.tap_count != traversal.tap_count
+    }) {
+        return Err(ImagingError::Normalization(
+            "AWProject TT0 arithmetic-compatibility variant traversal census changed".to_string(),
+        ));
+    }
+    let classification = classify_awproject_tt0_arithmetic_compat_v1(&variants);
+    let grid_values_hashed = config.expected_nxy.saturating_mul(config.expected_nxy);
+    let variants_json = variants
+        .iter()
+        .enumerate()
+        .map(|(ordinal, variant)| {
+            awproject_tt0_arithmetic_compat_variant_json_v1(ordinal, variant, grid_values_hashed)
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let casa_target_matching_variants_json = classification
+        .casa_target_matching_variants
+        .iter()
+        .map(|name| format!("\"{name}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    let common_selection = &selection.common;
+    let mut correlation_mueller_order_hash = AwProjectResidualPrefixHash::new();
+    for (role_ordinal, correlation_index, correlation_code, logical_mueller) in [
+        (
+            0usize,
+            selection.selected_corr_first_index,
+            selection.selected_corr_first_code,
+            0usize,
+        ),
+        (
+            1usize,
+            selection.selected_corr_second_index,
+            selection.selected_corr_second_code,
+            15usize,
+        ),
+    ] {
+        correlation_mueller_order_hash.usize(role_ordinal);
+        correlation_mueller_order_hash.usize(correlation_index);
+        correlation_mueller_order_hash.usize(correlation_code);
+        correlation_mueller_order_hash.usize(logical_mueller);
+    }
+    let nonfinite_grid_value_count = variants
+        .iter()
+        .map(|variant| variant.nonfinite_grid_value_count)
+        .sum::<usize>();
+    let selection_json = format!(
+        "{{\"field_id\":{},\"requested_spws\":\"{}\",\"first_batch_spw\":{},\
+         \"planned_source_blocks\":{}}}",
+        common_selection.field_id,
+        awproject_datatogrid_json_escape(&common_selection.requested_spws),
+        common_selection.first_batch_spw,
+        common_selection.planned_source_blocks,
+    );
+    let observed_first_buffer_json = format!(
+        "{{\"begin_row\":{},\"end_row\":{},\"n_row\":{},\"spw_id\":{},\
+         \"row_ids_count\":{},\"row_ids_hash\":{},\"row_id_first\":{},\
+         \"row_id_last\":{},\"row_flags_count\":{},\"row_flags_hash\":{},\
+         \"flagged_rows\":{},\"n_data_chan\":{},\"n_data_pol\":{},\
+         \"chan_map_count\":{},\"chan_map_hash\":{},\"pol_map_count\":{},\
+         \"pol_map_hash\":{},\"freq_count\":{},\"freq_hash\":{},\
+         \"freq_first_bits\":{},\"freq_last_bits\":{}}}",
+        common_selection.selected_row_begin,
+        common_selection.selected_row_end,
+        common_selection.selected_row_count,
+        common_selection.first_batch_spw,
+        common_selection.selected_row_count,
+        common_selection.selected_row_hash,
+        common_selection.selected_row_first,
+        common_selection.selected_row_last,
+        common_selection.row_flags_count,
+        common_selection.row_flags_hash,
+        common_selection.flagged_rows,
+        common_selection.n_data_chan,
+        common_selection.n_data_pol,
+        common_selection.chan_map_count,
+        common_selection.chan_map_hash,
+        common_selection.pol_map_count,
+        common_selection.pol_map_hash,
+        common_selection.freq_count,
+        common_selection.freq_hash,
+        common_selection.freq_first_bits,
+        common_selection.freq_last_bits,
+    );
+    let absolute_main_rows_json = format!(
+        "{{\"semantics\":\"physical-MAIN-table-row-index\",\
+         \"count\":{},\"hash\":{},\"first\":{},\"last\":{}}}",
+        common_selection.absolute_main_row_count,
+        common_selection.absolute_main_row_hash,
+        common_selection.absolute_main_row_first,
+        common_selection.absolute_main_row_last,
+    );
+    let evidence = format!(
+        "{{\n\
+         \"schema\":\"casa-rs-aw-datagrid-tt0-arithmetic-compat-v1\",\n\
+         \"status\":\"completed-controlled-stop\",\n\
+         \"result\":\"{}\",\n\
+         \"result_taxonomy\":[\"rejected-parent-boundary-drift\",\
+         \"completed-no-tested-variant-matched-casa\",\
+         \"completed-single-tested-variant-matched-casa\",\
+         \"completed-multiple-tested-variants-matched-casa\"],\n\
+         \"role\":\"bounded-correctness-oracle-not-performance-evidence\",\n\
+         \"producer\":\"casa-rs\",\n\
+         \"production_path_changed\":false,\n\
+         \"production_dispatch\":\"not-entered\",\n\
+         \"formed_image\":false,\n\
+         \"normalization\":\"not-entered\",\n\
+         \"fft\":\"not-entered\",\n\
+         \"products\":\"not-entered\",\n\
+         \"tt1\":false,\n\
+         \"terms_evaluated\":[0],\n\
+         \"sumwt\":\"not-controlled\",\n\
+         \"phase_application\":\"inherited-prephased-production-bundles-not-controlled\",\n\
+         \"grid_dispatch\":\"serial-host-f64-exact-source-order-tt0-arithmetic-variants\",\n\
+         \"traversal_contract\":\"source-then-first-rr-logical-mueller-0-then-second-ll-logical-mueller-15-then-iy-then-ix\",\n\
+         \"correlation_mueller_role_order\":{{\
+         \"contract\":\"first-is-RR-logical-mueller-0-second-is-LL-logical-mueller-15-selected-CF-mueller-may-w-sign-conjugate\",\
+         \"count\":2,\
+         \"hash_contract\":\"fnv1a64-little-endian-role-ordinal-selected-correlation-index-selected-correlation-code-logical-mueller\",\
+         \"hash\":{},\
+         \"roles\":[{{\"ordinal\":0,\"role\":\"first\",\"correlation\":\"RR\",\
+         \"selected_corr_index\":{},\"selected_corr_code\":{},\"logical_mueller\":0}},\
+         {{\"ordinal\":1,\"role\":\"second\",\"correlation\":\"LL\",\
+         \"selected_corr_index\":{},\"selected_corr_code\":{},\"logical_mueller\":15}}]}},\n\
+         \"grid_hash_contract\":\"fnv1a64-shape-4096-4096-1-1-axis0-fast-complex64-bits\",\n\
+         \"portable_hash_contract\":\"fnv1a64-little-endian-call-block-term-accepted-source-ordinal-selected-mueller-0-then-15-frequency-uvw-current-weight-basis-residual-value\",\n\
+         \"expected_grid_nxy\":{},\n\
+         \"target_blocks\":{},\n\
+         \"diagnostic_terms\":{},\n\
+         \"request_nterms\":{},\n\
+         \"replay_block_ordinal\":0,\n\
+         \"replay_window_ordinal\":0,\n\
+         \"last_window_in_replay_block\":{},\n\
+         \"frozen_production_baseline_hash\":{},\n\
+         \"casa_target_hash\":{},\n\
+         \"baseline_gate\":\"{}\",\n\
+         \"casa_target_matching_variants\":[{}],\n\
+         \"selection\":{},\n\
+         \"observed_first_buffer\":{},\n\
+         \"absolute_main_rows\":{},\n\
+         \"input_hashes\":{{\"direct_raw\":{},\"compact\":{},\
+         \"direct_compact_exact_match\":true,\"portable_geometry\":{},\
+         \"portable_input\":{}}},\n\
+         \"portable_call\":{{\"call\":{},\"block\":{},\"term\":{},\
+         \"source_count\":{}}},\n\
+         \"counts\":{{\"source\":{},\"logical_role\":{},\"tap\":{},\
+         \"grid_values_per_variant\":{},\"variant_count\":{},\
+         \"nonfinite_grid_value\":{},\"out_of_grid_support_attempt\":0}},\n\
+         \"nonfinite_grid_value_contract\":\"complex64-cell-with-nonfinite-real-or-imaginary-component-across-all-variant-grids\",\n\
+         \"out_of_grid_support_attempt_contract\":\"planned-support-cell-outside-grid-fails-closed-before-receipt\",\n\
+         \"traversal_hash\":{},\n\
+         \"variants\":[{}]\n\
+         }}\n",
+        classification.result,
+        correlation_mueller_order_hash.0,
+        selection.selected_corr_first_index,
+        selection.selected_corr_first_code,
+        selection.selected_corr_second_index,
+        selection.selected_corr_second_code,
+        config.expected_nxy,
+        config.target_blocks,
+        config.terms,
+        request.nterms,
+        last_window_in_block,
+        AWPROJECT_TT0_ARITHMETIC_COMPAT_BASELINE_HASH_V1,
+        AWPROJECT_TT0_ARITHMETIC_COMPAT_CASA_TARGET_HASH_V1,
+        if variants[0].grid_hash == AWPROJECT_TT0_ARITHMETIC_COMPAT_BASELINE_HASH_V1 {
+            "matched-frozen-production-baseline"
+        } else {
+            "rejected-parent-boundary-drift"
+        },
+        casa_target_matching_variants_json,
+        selection_json,
+        observed_first_buffer_json,
+        absolute_main_rows_json,
+        input_audit.raw_hash,
+        input_audit.compact_hash,
+        portable_call.geometry_hash,
+        portable_call.input_hash,
+        portable_call.call,
+        portable_call.block,
+        portable_call.term,
+        portable_call.source_count,
+        traversal.source_count,
+        traversal.logical_role_count,
+        traversal.tap_count,
+        grid_values_hashed,
+        variants.len(),
+        nonfinite_grid_value_count,
+        traversal.traversal_hash,
+        variants_json,
+    );
+    let (payload, evidence_sha256) = awproject_tt0_arithmetic_compat_envelope_v1(&evidence);
+    awproject_datatogrid_atomic_receipt(&output, payload.as_bytes())?;
+    Err(ImagingError::InvalidRequest(format!(
+        "AWProject TT0 arithmetic-compatibility diagnostic stopped before production dispatch, \
+         TT1, sumwt, normalization, FFT, image formation, or products; result={} receipt={} \
+         evidence_sha256={evidence_sha256}",
+        classification.result,
+        output.display(),
+    )))
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -22484,6 +23598,26 @@ fn replay_awproject_compact_window(
     }
     #[cfg(all(target_os = "macos", not(coverage)))]
     if model_grids.is_none() {
+        maybe_run_awproject_tt0_arithmetic_compat_v1(
+            request,
+            mosaic,
+            gridder,
+            batch,
+            parallel_hands,
+            sample_frequencies_hz,
+            source_samples,
+            &planned_samples,
+            tap_requests,
+            bundles,
+            phase_tables,
+            groups,
+            cache,
+            controls,
+            pa_deg,
+            replay_block_ordinal,
+            replay_stats.windows,
+            last_window_in_block,
+        )?;
         maybe_run_awproject_datatogrid_bracket(
             request,
             mosaic,
@@ -64159,6 +65293,492 @@ mod tests {
             );
             assert_eq!(support_hash, expected_support_hash, "scale {scale_size}");
         }
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn awproject_tt0_arithmetic_compat_fixture_v1() -> (
+        Vec<super::AwProjectCompactPlannedSample>,
+        Vec<super::AwProjectCompactMaterializedTap>,
+    ) {
+        let bundles = (0..2)
+            .map(|bundle_ordinal| {
+                super::AwProjectCompactMaterializedTap::Ready(super::AwProjectCompactTapBundle {
+                    values: (0..9)
+                        .map(|tap_ordinal| {
+                            Complex32::new(
+                                0.125 + bundle_ordinal as f32 * 0.25 + tap_ordinal as f32 * 0.03125,
+                                -0.375
+                                    + bundle_ordinal as f32 * 0.0625
+                                    + tap_ordinal as f32 * 0.015625,
+                            )
+                        })
+                        .collect(),
+                    x_support: 1,
+                    y_support: 1,
+                    normalization: Complex32::new(1.0, 0.0),
+                    grid_normalization: Complex64::new(1.0, 0.0),
+                    sampling: 1,
+                    off_x: 0,
+                    off_y: 0,
+                    phase_applied: true,
+                })
+            })
+            .collect::<Vec<_>>();
+        let plan = |loc_x, loc_y, tap_bundle| super::AwProjectCompactSamplePlan {
+            loc_x,
+            loc_y,
+            tap_bundle,
+        };
+        let sample = |first_plan, second_plan, weight, first_residual, second_residual| {
+            super::AwProjectCompactPlannedSample {
+                group_index: 0,
+                first_imaging_plan: first_plan,
+                second_imaging_plan: second_plan,
+                first_psf_plan: first_plan,
+                second_psf_plan: second_plan,
+                first_weight_plan: first_plan,
+                second_weight_plan: second_plan,
+                frequency_hz: 2.0e9,
+                weight,
+                first_residual,
+                second_residual,
+            }
+        };
+        let samples = vec![
+            sample(
+                plan(2, 2, 0),
+                plan(3, 3, 1),
+                0.75,
+                Complex32::new(0.5, -0.25),
+                Complex32::new(-0.125, 0.75),
+            ),
+            sample(
+                plan(3, 2, 1),
+                plan(2, 3, 0),
+                1.25,
+                Complex32::new(-0.375, -0.625),
+                Complex32::new(0.875, 0.125),
+            ),
+        ];
+        (samples, bundles)
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn awproject_tt0_arithmetic_compat_proves_nvalue_bits_and_contribution_contract_v1() {
+        use super::{
+            AwProjectCasaNvalueCasaContributionComponentwiseF64AccumulatorV1,
+            AwProjectCasaNvalueCasaContributionV1, AwProjectCasaNvalueNativeContributionV1,
+            AwProjectCompactF64Arithmetic, AwProjectNativeNvalueCasaContributionV1,
+            AwProjectProductionHostF64Arithmetic, AwProjectTt0ArithmeticCompatV1,
+        };
+
+        let residual = Complex32::new(1.0, -0.0);
+        let weight = 2.0;
+        let native_nvalue =
+            <AwProjectProductionHostF64Arithmetic as AwProjectTt0ArithmeticCompatV1>::nvalue(
+                residual, weight,
+            );
+        let casa_nvalue =
+            <AwProjectCasaNvalueNativeContributionV1 as AwProjectTt0ArithmeticCompatV1>::nvalue(
+                residual, weight,
+            );
+        assert_eq!(native_nvalue.re.to_bits(), 2.0_f32.to_bits());
+        assert_eq!(native_nvalue.im.to_bits(), (-0.0_f32).to_bits());
+        assert_eq!(casa_nvalue.re.to_bits(), 2.0_f32.to_bits());
+        assert_eq!(casa_nvalue.im.to_bits(), 0.0_f32.to_bits());
+        assert_ne!(native_nvalue.im.to_bits(), casa_nvalue.im.to_bits());
+
+        let value = Complex32::new(f32::from_bits(0x3f12_3456), f32::from_bits(0xbe98_7654));
+        let tap = Complex32::new(f32::from_bits(0x3eab_cdef), f32::from_bits(0x3f01_2345));
+        let native_contribution =
+            <AwProjectCasaNvalueNativeContributionV1 as AwProjectCompactF64Arithmetic>::contribution(
+                value, tap,
+            );
+        let casa_contribution =
+            <AwProjectNativeNvalueCasaContributionV1 as AwProjectCompactF64Arithmetic>::contribution(
+                value, tap,
+            );
+        let expected_casa = super::awproject_prefix_casa_product(value, tap);
+        assert_eq!(
+            [
+                casa_contribution.re.to_bits(),
+                casa_contribution.im.to_bits()
+            ],
+            [expected_casa.re.to_bits(), expected_casa.im.to_bits()]
+        );
+        assert_eq!(
+            [
+                native_contribution.re.to_bits(),
+                native_contribution.im.to_bits()
+            ],
+            [(value * tap).re.to_bits(), (value * tap).im.to_bits()]
+        );
+        assert_ne!(
+            <AwProjectCasaNvalueNativeContributionV1 as AwProjectTt0ArithmeticCompatV1>::CONTRIBUTION_CONTRACT,
+            <AwProjectNativeNvalueCasaContributionV1 as AwProjectTt0ArithmeticCompatV1>::CONTRIBUTION_CONTRACT,
+        );
+        // The contribution paths intentionally have the same unoptimized
+        // operation order. The CASA helper's rounded black-box stages become a
+        // code-generation discriminator only in the optimized diagnostic; the
+        // frozen release-grid hashes, not debug-only bits, decide that axis.
+
+        let mut native_cell = Complex64::new(-1.25, 0.375);
+        let mut componentwise_cell = native_cell;
+        <AwProjectCasaNvalueCasaContributionV1 as AwProjectCompactF64Arithmetic>::accumulate(
+            &mut native_cell,
+            casa_contribution,
+        );
+        <AwProjectCasaNvalueCasaContributionComponentwiseF64AccumulatorV1 as AwProjectCompactF64Arithmetic>::accumulate(
+            &mut componentwise_cell,
+            casa_contribution,
+        );
+        assert_eq!(
+            [native_cell.re.to_bits(), native_cell.im.to_bits()],
+            [
+                componentwise_cell.re.to_bits(),
+                componentwise_cell.im.to_bits()
+            ]
+        );
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn awproject_tt0_arithmetic_compat_baseline_is_exact_production_host_f64_v1() {
+        let (samples, bundles) = awproject_tt0_arithmetic_compat_fixture_v1();
+        let mut production = super::MosaicMtmfsHostGrids {
+            psf_grids: Vec::new(),
+            residual_grids: vec![Array2::zeros((6, 6))],
+            weight_grids: Vec::new(),
+        };
+        assert!(
+            super::grid_awproject_compact_samples_host_f64(
+                &mut production,
+                &samples,
+                &bundles,
+                None,
+                false,
+                None,
+                false,
+                2.0e9,
+                1,
+            )
+            .unwrap()
+            .is_none()
+        );
+        let (production_hash, production_nonfinite) =
+            super::hash_awproject_tt0_arithmetic_compat_grid_v1(&production.residual_grids[0]);
+        let baseline = super::run_awproject_tt0_arithmetic_compat_variant_v1::<
+            super::AwProjectProductionHostF64Arithmetic,
+        >([6, 6], &samples, &bundles, 2.0e9)
+        .unwrap();
+
+        assert_eq!(baseline.name, "production_host_f64_baseline");
+        assert_eq!(baseline.grid_hash, production_hash);
+        assert_eq!(baseline.nonfinite_grid_value_count, production_nonfinite);
+        assert_eq!(baseline.source_count, 2);
+        assert_eq!(baseline.logical_role_count, 4);
+        assert_eq!(baseline.tap_count, 36);
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn awproject_tt0_arithmetic_compat_preserves_five_variant_contract_order_v1() {
+        let (samples, bundles) = awproject_tt0_arithmetic_compat_fixture_v1();
+        let variants = [
+            super::run_awproject_tt0_arithmetic_compat_variant_v1::<
+                super::AwProjectProductionHostF64Arithmetic,
+            >([6, 6], &samples, &bundles, 2.0e9)
+            .unwrap(),
+            super::run_awproject_tt0_arithmetic_compat_variant_v1::<
+                super::AwProjectCasaNvalueNativeContributionV1,
+            >([6, 6], &samples, &bundles, 2.0e9)
+            .unwrap(),
+            super::run_awproject_tt0_arithmetic_compat_variant_v1::<
+                super::AwProjectNativeNvalueCasaContributionV1,
+            >([6, 6], &samples, &bundles, 2.0e9)
+            .unwrap(),
+            super::run_awproject_tt0_arithmetic_compat_variant_v1::<
+                super::AwProjectCasaNvalueCasaContributionV1,
+            >([6, 6], &samples, &bundles, 2.0e9)
+            .unwrap(),
+            super::run_awproject_tt0_arithmetic_compat_variant_v1::<
+                super::AwProjectCasaNvalueCasaContributionComponentwiseF64AccumulatorV1,
+            >([6, 6], &samples, &bundles, 2.0e9)
+            .unwrap(),
+        ];
+        assert_eq!(
+            variants
+                .iter()
+                .map(|variant| variant.name)
+                .collect::<Vec<_>>(),
+            [
+                "production_host_f64_baseline",
+                "casa_nvalue_native_contribution",
+                "native_nvalue_casa_contribution",
+                "casa_nvalue_casa_contribution",
+                "casa_nvalue_casa_contribution_componentwise_f64_accumulator",
+            ]
+        );
+        assert_eq!(
+            variants
+                .iter()
+                .map(|variant| variant.accumulator_contract)
+                .collect::<Vec<_>>(),
+            [
+                "native-complex64-add-assign",
+                "native-complex64-add-assign",
+                "native-complex64-add-assign",
+                "native-complex64-add-assign",
+                "explicit-componentwise-f64-grid-re-plus-equals-contribution-re-and-im-plus-equals-contribution-im",
+            ]
+        );
+        assert!(
+            variants
+                .iter()
+                .all(|variant| variant.nonfinite_grid_value_count == 0)
+        );
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn awproject_tt0_arithmetic_compat_traversal_is_source_role_y_x_v1() {
+        let (samples, bundles) = awproject_tt0_arithmetic_compat_fixture_v1();
+        let traversal =
+            super::awproject_tt0_arithmetic_compat_traversal_v1([6, 6], &samples, &bundles)
+                .unwrap();
+        assert_eq!(traversal.source_count, 2);
+        assert_eq!(traversal.logical_role_count, 4);
+        assert_eq!(traversal.tap_count, 36);
+
+        let reversed = [samples[1], samples[0]];
+        let reversed_traversal =
+            super::awproject_tt0_arithmetic_compat_traversal_v1([6, 6], &reversed, &bundles)
+                .unwrap();
+        assert_ne!(traversal.traversal_hash, reversed_traversal.traversal_hash);
+
+        let mut swapped = samples;
+        let sample = &mut swapped[0];
+        std::mem::swap(
+            &mut sample.first_imaging_plan,
+            &mut sample.second_imaging_plan,
+        );
+        let swapped_traversal =
+            super::awproject_tt0_arithmetic_compat_traversal_v1([6, 6], &swapped, &bundles)
+                .unwrap();
+        assert_ne!(traversal.traversal_hash, swapped_traversal.traversal_hash);
+
+        let (_, mut tapless) = awproject_tt0_arithmetic_compat_fixture_v1();
+        let super::AwProjectCompactMaterializedTap::Ready(bundle) = &mut tapless[0] else {
+            unreachable!();
+        };
+        bundle.phase_applied = false;
+        assert!(
+            super::awproject_tt0_arithmetic_compat_traversal_v1([6, 6], &swapped, &tapless)
+                .is_err()
+        );
+
+        let (mut outside, bundles) = awproject_tt0_arithmetic_compat_fixture_v1();
+        outside[0].first_imaging_plan.loc_x = 0;
+        assert!(
+            super::awproject_tt0_arithmetic_compat_traversal_v1([6, 6], &outside, &bundles)
+                .is_err()
+        );
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn awproject_tt0_arithmetic_compat_classifies_parent_and_casa_hash_gates_v1() {
+        let make_variant =
+            |name: &'static str, grid_hash| super::AwProjectTt0ArithmeticCompatVariantV1 {
+                name,
+                nvalue_contract: "nvalue",
+                contribution_contract: "contribution",
+                accumulator_contract: "accumulator",
+                grid_hash,
+                nonfinite_grid_value_count: 0,
+                source_count: 1,
+                logical_role_count: 2,
+                tap_count: 2,
+            };
+        let baseline = super::AWPROJECT_TT0_ARITHMETIC_COMPAT_BASELINE_HASH_V1;
+        let casa = super::AWPROJECT_TT0_ARITHMETIC_COMPAT_CASA_TARGET_HASH_V1;
+
+        let drift = super::classify_awproject_tt0_arithmetic_compat_v1(&[
+            make_variant("baseline", baseline.wrapping_add(1)),
+            make_variant("casa", casa),
+        ]);
+        assert_eq!(drift.result, "rejected-parent-boundary-drift");
+
+        let no_match = super::classify_awproject_tt0_arithmetic_compat_v1(&[
+            make_variant("baseline", baseline),
+            make_variant("other", casa.wrapping_add(1)),
+        ]);
+        assert_eq!(no_match.result, "completed-no-tested-variant-matched-casa");
+        assert!(no_match.casa_target_matching_variants.is_empty());
+
+        let single = super::classify_awproject_tt0_arithmetic_compat_v1(&[
+            make_variant("baseline", baseline),
+            make_variant("single", casa),
+        ]);
+        assert_eq!(
+            single.result,
+            "completed-single-tested-variant-matched-casa"
+        );
+        assert_eq!(single.casa_target_matching_variants, ["single"]);
+
+        let multiple = super::classify_awproject_tt0_arithmetic_compat_v1(&[
+            make_variant("baseline", baseline),
+            make_variant("first", casa),
+            make_variant("second", casa),
+        ]);
+        assert_eq!(
+            multiple.result,
+            "completed-multiple-tested-variants-matched-casa"
+        );
+        assert_eq!(multiple.casa_target_matching_variants, ["first", "second"]);
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn awproject_tt0_arithmetic_compat_hash_and_envelope_are_content_addressed_v1() {
+        use sha2::{Digest, Sha256};
+
+        let grid = Array2::from_shape_vec(
+            (2, 2),
+            vec![
+                Complex64::new(1.0, 2.0),
+                Complex64::new(f64::NAN, 0.0),
+                Complex64::new(3.0, 4.0),
+                Complex64::new(5.0, 6.0),
+            ],
+        )
+        .unwrap();
+        let (hash, nonfinite) = super::hash_awproject_tt0_arithmetic_compat_grid_v1(&grid);
+        assert_eq!(
+            hash,
+            super::hash_awproject_datatogrid_grid_casa_order(&grid)
+        );
+        assert_eq!(nonfinite, 1);
+
+        let evidence =
+            " {\"schema\":\"casa-rs-aw-datagrid-tt0-arithmetic-compat-v1\",\"value\":7} ";
+        let (payload, digest) = super::awproject_tt0_arithmetic_compat_envelope_v1(evidence);
+        let parsed: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(
+            parsed["schema"],
+            "casa-rs-aw-datagrid-tt0-arithmetic-compat-envelope-v1"
+        );
+        assert_eq!(
+            parsed["evidence"]["schema"],
+            "casa-rs-aw-datagrid-tt0-arithmetic-compat-v1"
+        );
+        assert_eq!(parsed["content_address"]["algorithm"], "sha256");
+        assert_eq!(
+            parsed["content_address"]["scope"],
+            "embedded-evidence-json-utf8"
+        );
+        let expected = format!("{:x}", Sha256::digest(evidence.trim().as_bytes()));
+        assert_eq!(digest, expected);
+        assert_eq!(parsed["content_address"]["digest"], expected);
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    #[serial_test::serial]
+    fn awproject_tt0_arithmetic_compat_parses_only_31_field_role_marker_v1() {
+        struct EnvironmentGuard {
+            name: &'static str,
+            previous: Option<std::ffi::OsString>,
+        }
+
+        impl EnvironmentGuard {
+            fn set(name: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+                let previous = std::env::var_os(name);
+                unsafe {
+                    std::env::set_var(name, value);
+                }
+                Self { name, previous }
+            }
+
+            fn replace(&self, value: impl AsRef<std::ffi::OsStr>) {
+                unsafe {
+                    std::env::set_var(self.name, value);
+                }
+            }
+        }
+
+        impl Drop for EnvironmentGuard {
+            fn drop(&mut self) {
+                unsafe {
+                    if let Some(previous) = self.previous.take() {
+                        std::env::set_var(self.name, previous);
+                    } else {
+                        std::env::remove_var(self.name);
+                    }
+                }
+            }
+        }
+
+        let marker = "field=1525;spws=2-17;first_spw=2;source_blocks=32;\
+                      selected_row_begin=0;selected_row_end=325;selected_row_count=325;\
+                      selected_row_hash=15058004568616189240;selected_row_first=0;\
+                      selected_row_last=324;absolute_main_row_count=325;\
+                      absolute_main_row_hash=8652707267842020204;\
+                      absolute_main_row_first=353600;absolute_main_row_last=353924;\
+                      row_flags_count=325;row_flags_hash=3526571572021233857;\
+                      flagged_rows=48;n_data_chan=64;n_data_pol=4;\
+                      chan_map_count=64;chan_map_hash=2111453637644839429;\
+                      pol_map_count=4;pol_map_hash=13222926617229668273;\
+                      freq_count=64;freq_hash=17711728193083539473;\
+                      freq_first_bits=4746028312096267298;\
+                      freq_last_bits=4746556774954748567;\
+                      selected_corr_first_index=0;selected_corr_second_index=3;\
+                      selected_corr_first_code=5;selected_corr_second_code=8";
+        let selection_environment = EnvironmentGuard::set(
+            super::AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV_V1,
+            marker,
+        );
+        let selection = super::awproject_tt0_arithmetic_compat_selection_v1()
+            .expect("parse V1 first-VB role marker");
+        assert_eq!(selection.common.field_id, 1525);
+        assert_eq!(selection.selected_corr_first_index, 0);
+        assert_eq!(selection.selected_corr_second_index, 3);
+        assert_eq!(selection.selected_corr_first_code, 5);
+        assert_eq!(selection.selected_corr_second_code, 8);
+        assert_eq!(selection.common.planned_source_blocks, 32);
+        assert_eq!(
+            selection.common.chan_map_hash,
+            super::AWPROJECT_TT0_ARITHMETIC_COMPAT_CHAN_MAP_HASH_V1
+        );
+        assert_eq!(
+            selection.common.pol_map_hash,
+            super::AWPROJECT_TT0_ARITHMETIC_COMPAT_POL_MAP_HASH_V1
+        );
+        assert_eq!(
+            selection.common.freq_hash,
+            super::AWPROJECT_TT0_ARITHMETIC_COMPAT_FREQ_HASH_V1
+        );
+
+        let wrong_order =
+            marker.replace("selected_corr_first_code=5", "selected_corr_first_code=8");
+        selection_environment.replace(wrong_order);
+        assert!(super::awproject_tt0_arithmetic_compat_selection_v1().is_err());
+
+        let wrong_block_count = marker.replace("source_blocks=32", "source_blocks=31");
+        selection_environment.replace(wrong_block_count);
+        assert!(super::awproject_tt0_arithmetic_compat_selection_v1().is_err());
+
+        let wrong_channel_map_hash = marker.replace(
+            "chan_map_hash=2111453637644839429",
+            "chan_map_hash=2111453637644839430",
+        );
+        selection_environment.replace(wrong_channel_map_hash);
+        assert!(super::awproject_tt0_arithmetic_compat_selection_v1().is_err());
+
+        let old_marker = marker.split(';').take(27).collect::<Vec<_>>().join(";");
+        selection_environment.replace(old_marker);
+        assert!(super::awproject_tt0_arithmetic_compat_selection_v1().is_err());
     }
 
     #[cfg(all(target_os = "macos", not(coverage)))]
