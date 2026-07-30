@@ -5,7 +5,9 @@
 The candidate evaluates both values of CASA's private
 ``use_conjugate_frequency_cf`` dispatch flag.  This independent validator binds
 the candidate to the frozen CASA-v5 call hashes and classifies the deepest
-common prefix reached by one complete TT0/TT1 hypothesis.
+common prefix reached by one complete TT0/TT1 hypothesis.  V2 explicitly tests
+negating U/V before CASA's ``girarUVW`` under a same-field identity assumption;
+it does not claim to replay CASA's actual ``girarUVW``/refocus bits.
 
 Exit status zero means that the evidence was validly classified.  It does not
 promote CF selection, placement, tap processing, gridding, imaging products, or
@@ -54,6 +56,36 @@ LITERAL_V1_COMPARISON_EVIDENCE_SHA256 = (
 )
 LITERAL_V1_REVISION = "9604e540fb90482774eab20f858ec0930e556a53"
 
+NATIVE_GEOMETRY_V1_RECEIPT_SHA256 = (
+    "9336cc0c0cf96a8efd9c5be5e3225b3beb333a52cb7c8bc19fc29df7bb0866e2"
+)
+NATIVE_GEOMETRY_V1_EVIDENCE_SHA256 = (
+    "5585ced995d75446aee8df3a50a1ea1153d5c0247ad10ab28ba573f817bee148"
+)
+NATIVE_GEOMETRY_V1_COMPARISON_SHA256 = (
+    "86112da1456ea4ad3bb5b9b4da345f4e6dc5bcbac357c19ff720cd17da62f87d"
+)
+NATIVE_GEOMETRY_V1_COMPARISON_EVIDENCE_SHA256 = (
+    "4b1bf691ae33362f986d863a8c386f42473ae5ffb42ec89452bef90fb0a78944"
+)
+NATIVE_GEOMETRY_V1_PROVENANCE_SHA256 = (
+    "19fc0ee9d84caae9f630f6867d3bb9250cc24c8a12e492a9cc600c4d8780be00"
+)
+NATIVE_GEOMETRY_V1_REVISION = "f9079065689910f718884fb80a43b22b320b1bf6"
+NATIVE_GEOMETRY_V1_ENVELOPE_SCHEMA = (
+    "casa-rs-aw-datatogrid-native-geometry-audit-envelope-v1"
+)
+NATIVE_GEOMETRY_V1_EVIDENCE_SCHEMA = "casa-rs-aw-datatogrid-native-geometry-audit-v1"
+NATIVE_GEOMETRY_V1_COMPARISON_ENVELOPE_SCHEMA = (
+    "casa-rs-aw-datatogrid-native-geometry-audit-comparison-envelope-v1"
+)
+NATIVE_GEOMETRY_V1_COMPARISON_SCHEMA = (
+    "casa-rs-aw-datatogrid-native-geometry-audit-comparison-v1"
+)
+NATIVE_GEOMETRY_V1_PROVENANCE_SCHEMA = (
+    "casa-rs-vlass-aw-datagrid-native-geometry-provenance-v1"
+)
+
 SOURCE_COUNT = arithmetic.SOURCE_COUNT
 IM_REF_FREQ_BITS = 4_748_556_467_228_999_524
 EXPECTED_GRID_SHAPE = [4096, 4096, 1, 1]
@@ -76,12 +108,12 @@ EXPECTED_CASA_CALLS = [
     },
 ]
 
-CANDIDATE_ENVELOPE_SCHEMA = "casa-rs-aw-datatogrid-native-geometry-audit-envelope-v1"
-CANDIDATE_EVIDENCE_SCHEMA = "casa-rs-aw-datatogrid-native-geometry-audit-v1"
+CANDIDATE_ENVELOPE_SCHEMA = "casa-rs-aw-datatogrid-native-geometry-audit-envelope-v2"
+CANDIDATE_EVIDENCE_SCHEMA = "casa-rs-aw-datatogrid-native-geometry-audit-v2"
 COMPARISON_ENVELOPE_SCHEMA = (
-    "casa-rs-aw-datatogrid-native-geometry-audit-comparison-envelope-v1"
+    "casa-rs-aw-datatogrid-native-geometry-audit-comparison-envelope-v2"
 )
-COMPARISON_SCHEMA = "casa-rs-aw-datatogrid-native-geometry-audit-comparison-v1"
+COMPARISON_SCHEMA = "casa-rs-aw-datatogrid-native-geometry-audit-comparison-v2"
 
 RESULT_TAXONOMY = [
     "completed-source-count-mismatch",
@@ -90,13 +122,13 @@ RESULT_TAXONOMY = [
     "completed-native-stream-and-geometry-exact",
 ]
 CLASSIFICATIONS = {
-    "completed-source-count-mismatch": "localized-native-source-count-mismatch",
-    "completed-native-stream-mismatch": "localized-native-call-stream-mismatch",
+    "completed-source-count-mismatch": "localized-uvw-hypothesis-source-count-mismatch",
+    "completed-native-stream-mismatch": "localized-uvw-hypothesis-call-stream-mismatch",
     "completed-native-stream-exact-geometry-mismatch": (
-        "localized-native-source-geometry-mismatch"
+        "localized-uvw-hypothesis-source-geometry-mismatch"
     ),
     "completed-native-stream-and-geometry-exact": (
-        "exact-native-stream-and-geometry-boundary-match"
+        "exact-uvw-hypothesis-stream-and-geometry-boundary-match"
     ),
 }
 DISPOSITIONS = {
@@ -104,30 +136,45 @@ DISPOSITIONS = {
         "stop-inspect-source-admission-before-native-stream-comparison"
     ),
     "completed-native-stream-mismatch": (
-        "stop-inspect-native-header-row-uvw-dphase-frequency-and-flag-stream"
+        "stop-resolve-actual-casa-girar-refocus-uvw-dphase-bits-or-flags-"
+        "no-production-defect-identified"
     ),
     "completed-native-stream-exact-geometry-mismatch": (
-        "stop-inspect-positive-weight-source-order-channel-and-flag-geometry"
+        "stop-inspect-hypothesis-positive-weight-source-order-channel-and-flag-"
+        "geometry-without-identifying-production-defect"
     ),
     "completed-native-stream-and-geometry-exact": (
-        "advance-to-cf-selection-placement-and-tap-localization-without-promotion"
+        "advance-to-cf-selection-placement-and-tap-localization-without-casa-"
+        "girar-refocus-equivalence-or-promotion"
     ),
 }
 
-HASH_REFERENCE = "casa-6.7.5.18-AWVisResampler-hash_call_inputs-stream-and-geometry"
+UVW_HYPOTHESIS = "casa-awproject-negate-uv-before-girar-assumed-same-field-identity"
+PHASE_HYPOTHESIS = (
+    "casa-rs-current-same-field-phase-shift-m-retained-not-casa-girar-refocus-"
+    "bit-replay"
+)
+HASH_REFERENCE = (
+    "casa-6.7.5.18-AWVisResampler-hash_call_inputs-stream-and-geometry-"
+    "negate-uv-before-girar-same-field-identity-hypothesis"
+)
 HASH_CONTRACTS = {
     "algorithm": "fnv1a64",
     "serialization": (
         "bool-one-byte-u64-little-endian-f32-native-bits-little-endian-"
         "f64-native-bits-little-endian"
     ),
+    "uvw_hypothesis": UVW_HYPOTHESIS,
+    "phase_hypothesis": PHASE_HYPOTHESIS,
     "stream": (
-        "header-then-row-index-row-flag-then-unflagged-transformed-uvw-m-"
-        "dphase-then-valid-target-channel-index-frequency-and-all-pol-flags"
+        "header-then-row-index-row-flag-then-unflagged-negate-uv-before-girar-"
+        "assumed-same-field-identity-uvw-m-casa-rs-current-phase-shift-m-then-"
+        "valid-target-channel-index-frequency-and-all-pol-flags"
     ),
     "geometry": (
         "call-block-term-then-header-then-row-index-row-flag-then-unflagged-"
-        "transformed-uvw-m-dphase-then-positive-weight-source-ordinal-channel-"
+        "negate-uv-before-girar-assumed-same-field-identity-uvw-m-casa-rs-"
+        "current-phase-shift-m-then-positive-weight-source-ordinal-channel-"
         "frequency-and-all-pol-flags"
     ),
 }
@@ -152,6 +199,14 @@ FROZEN_PARENT_RECEIPTS = {
         LITERAL_V1_COMPARISON_EVIDENCE_SHA256
     ),
     "literal_v1_revision": LITERAL_V1_REVISION,
+    "native_geometry_v1_sha256": NATIVE_GEOMETRY_V1_RECEIPT_SHA256,
+    "native_geometry_v1_embedded_evidence_sha256": (NATIVE_GEOMETRY_V1_EVIDENCE_SHA256),
+    "native_geometry_v1_comparison_sha256": (NATIVE_GEOMETRY_V1_COMPARISON_SHA256),
+    "native_geometry_v1_comparison_embedded_evidence_sha256": (
+        NATIVE_GEOMETRY_V1_COMPARISON_EVIDENCE_SHA256
+    ),
+    "native_geometry_v1_provenance_sha256": (NATIVE_GEOMETRY_V1_PROVENANCE_SHA256),
+    "native_geometry_v1_revision": NATIVE_GEOMETRY_V1_REVISION,
 }
 
 ENVELOPE_KEYS = frozenset({"schema", "content_address", "evidence"})
@@ -180,6 +235,7 @@ EVIDENCE_KEYS = frozenset(
         "terms_evaluated",
         "hash_reference",
         "hash_contracts",
+        "uvw_hypothesis",
         "expected_grid_shape",
         "target_blocks",
         "request_nterms",
@@ -333,6 +389,137 @@ def _canonical_json(value: Any) -> bytes:
     ).encode()
 
 
+def _load_tsv_strict(path: Path) -> dict[str, str]:
+    try:
+        payload = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise ContractError(f"read {path}: {error}") from error
+    fields: dict[str, str] = {}
+    for ordinal, line in enumerate(payload.splitlines(), start=1):
+        _require(
+            line.count("\t") == 1,
+            f"{path}: line {ordinal} must contain exactly one tab",
+        )
+        key, value = line.split("\t")
+        _require(key not in fields, f"{path}: duplicate TSV key {key!r}")
+        fields[key] = value
+    return fields
+
+
+def _validate_native_geometry_v1(
+    receipt_path: Path,
+    comparison_path: Path,
+    provenance_path: Path,
+) -> None:
+    _require(
+        sha256_path(receipt_path) == NATIVE_GEOMETRY_V1_RECEIPT_SHA256,
+        f"{receipt_path}: frozen native-geometry-v1 whole-file SHA-256 changed",
+    )
+    receipt_payload, receipt = _load_json_strict(receipt_path)
+    _exact(
+        receipt.get("schema"),
+        NATIVE_GEOMETRY_V1_ENVELOPE_SCHEMA,
+        f"{receipt_path}: schema",
+    )
+    receipt_address = _mapping(
+        receipt.get("content_address"),
+        f"{receipt_path}: content_address",
+    )
+    _exact(
+        receipt_address,
+        {
+            "algorithm": "sha256",
+            "scope": "embedded-evidence-json-utf8",
+            "digest": NATIVE_GEOMETRY_V1_EVIDENCE_SHA256,
+        },
+        f"{receipt_path}: content_address",
+    )
+    receipt_evidence = _mapping(receipt.get("evidence"), f"{receipt_path}: evidence")
+    arithmetic._require_fields(
+        receipt_evidence,
+        {
+            "schema": NATIVE_GEOMETRY_V1_EVIDENCE_SCHEMA,
+            "status": "completed-controlled-stop",
+            "result": "completed-native-stream-mismatch",
+        },
+        f"{receipt_path}: evidence",
+    )
+    _exact(
+        hashlib.sha256(
+            arithmetic._raw_json_member(receipt_payload, "evidence", receipt_path)
+        ).hexdigest(),
+        NATIVE_GEOMETRY_V1_EVIDENCE_SHA256,
+        f"{receipt_path}: embedded evidence digest",
+    )
+
+    _require(
+        sha256_path(comparison_path) == NATIVE_GEOMETRY_V1_COMPARISON_SHA256,
+        f"{comparison_path}: frozen native-geometry-v1 comparison SHA-256 changed",
+    )
+    _, comparison_envelope = _load_json_strict(comparison_path)
+    _exact(
+        comparison_envelope.get("schema"),
+        NATIVE_GEOMETRY_V1_COMPARISON_ENVELOPE_SCHEMA,
+        f"{comparison_path}: schema",
+    )
+    comparison_address = _mapping(
+        comparison_envelope.get("content_address"),
+        f"{comparison_path}: content_address",
+    )
+    _exact(
+        comparison_address,
+        {
+            "algorithm": "sha256",
+            "scope": "canonical-embedded-comparison-json-utf8",
+            "digest": NATIVE_GEOMETRY_V1_COMPARISON_EVIDENCE_SHA256,
+        },
+        f"{comparison_path}: content_address",
+    )
+    comparison = _mapping(
+        comparison_envelope.get("comparison"),
+        f"{comparison_path}: comparison",
+    )
+    _exact(
+        hashlib.sha256(_canonical_json(comparison)).hexdigest(),
+        NATIVE_GEOMETRY_V1_COMPARISON_EVIDENCE_SHA256,
+        f"{comparison_path}: embedded comparison digest",
+    )
+    arithmetic._require_fields(
+        comparison,
+        {
+            "schema": NATIVE_GEOMETRY_V1_COMPARISON_SCHEMA,
+            "status": "valid-classification",
+            "classification": "localized-native-call-stream-mismatch",
+        },
+        f"{comparison_path}: comparison",
+    )
+    arithmetic._require_fields(
+        _mapping(comparison.get("candidate"), f"{comparison_path}: candidate"),
+        {
+            "sha256": NATIVE_GEOMETRY_V1_RECEIPT_SHA256,
+            "embedded_evidence_sha256": NATIVE_GEOMETRY_V1_EVIDENCE_SHA256,
+            "result": "completed-native-stream-mismatch",
+        },
+        f"{comparison_path}: candidate",
+    )
+
+    _require(
+        sha256_path(provenance_path) == NATIVE_GEOMETRY_V1_PROVENANCE_SHA256,
+        f"{provenance_path}: frozen native-geometry-v1 provenance SHA-256 changed",
+    )
+    provenance = _load_tsv_strict(provenance_path)
+    for key, expected in {
+        "schema": NATIVE_GEOMETRY_V1_PROVENANCE_SCHEMA,
+        "revision": NATIVE_GEOMETRY_V1_REVISION,
+        "receipt_sha256": NATIVE_GEOMETRY_V1_RECEIPT_SHA256,
+        "comparison_exit": "0",
+        "comparison_sha256": NATIVE_GEOMETRY_V1_COMPARISON_SHA256,
+        "classification": "localized-native-call-stream-mismatch",
+        "result": "validly-classified-native-geometry-evidence",
+    }.items():
+        _exact(provenance.get(key), expected, f"{provenance_path}: {key}")
+
+
 def _validate_literal_comparison(path: Path) -> None:
     _require(
         sha256_path(path) == LITERAL_V1_COMPARISON_SHA256,
@@ -389,6 +576,9 @@ def validate_frozen_parents(
     arithmetic_v1_comparison_path: Path,
     literal_v1_path: Path,
     literal_v1_comparison_path: Path,
+    native_geometry_v1_path: Path,
+    native_geometry_v1_comparison_path: Path,
+    native_geometry_v1_provenance_path: Path,
 ) -> dict[str, Any]:
     """Validate the frozen lineage and return the CASA-v5 receipt."""
 
@@ -416,6 +606,11 @@ def validate_frozen_parents(
         f"{literal_v1_path}: result",
     )
     _validate_literal_comparison(literal_v1_comparison_path)
+    _validate_native_geometry_v1(
+        native_geometry_v1_path,
+        native_geometry_v1_comparison_path,
+        native_geometry_v1_provenance_path,
+    )
 
     _, casa_v5 = _load_json_strict(casa_v5_path)
     calls = _sequence(casa_v5.get("calls"), f"{casa_v5_path}: calls")
@@ -590,6 +785,7 @@ def validate_candidate(
             "terms_evaluated": [0, 1],
             "hash_reference": HASH_REFERENCE,
             "hash_contracts": HASH_CONTRACTS,
+            "uvw_hypothesis": UVW_HYPOTHESIS,
             "expected_grid_shape": EXPECTED_GRID_SHAPE,
             "target_blocks": 1,
             "request_nterms": 2,
@@ -616,6 +812,9 @@ def build_comparison(
     arithmetic_v1_comparison_path: Path,
     literal_v1_path: Path,
     literal_v1_comparison_path: Path,
+    native_geometry_v1_path: Path,
+    native_geometry_v1_comparison_path: Path,
+    native_geometry_v1_provenance_path: Path,
 ) -> dict[str, Any]:
     validate_frozen_parents(
         casa_rs_v4_path,
@@ -624,6 +823,9 @@ def build_comparison(
         arithmetic_v1_comparison_path,
         literal_v1_path,
         literal_v1_comparison_path,
+        native_geometry_v1_path,
+        native_geometry_v1_comparison_path,
+        native_geometry_v1_provenance_path,
     )
     candidate, candidate_sha, candidate_evidence_sha, selected_flag, matches = (
         validate_candidate(candidate_path)
@@ -648,6 +850,8 @@ def build_comparison(
             "selection_relative_rows": [0, 325],
             "terms": [0, 1],
             "grid_shape": EXPECTED_GRID_SHAPE,
+            "uvw_hypothesis": UVW_HYPOTHESIS,
+            "phase_hypothesis": PHASE_HYPOTHESIS,
             "grid_dispatch": "not-entered",
             "cf_selection": "not-entered",
             "placement": "not-entered",
@@ -683,6 +887,19 @@ def build_comparison(
                 "comparison_sha256": LITERAL_V1_COMPARISON_SHA256,
                 "revision": LITERAL_V1_REVISION,
             },
+            "native_geometry_v1": {
+                "path": str(native_geometry_v1_path),
+                "sha256": NATIVE_GEOMETRY_V1_RECEIPT_SHA256,
+                "embedded_evidence_sha256": NATIVE_GEOMETRY_V1_EVIDENCE_SHA256,
+                "comparison_path": str(native_geometry_v1_comparison_path),
+                "comparison_sha256": NATIVE_GEOMETRY_V1_COMPARISON_SHA256,
+                "comparison_embedded_evidence_sha256": (
+                    NATIVE_GEOMETRY_V1_COMPARISON_EVIDENCE_SHA256
+                ),
+                "provenance_path": str(native_geometry_v1_provenance_path),
+                "provenance_sha256": NATIVE_GEOMETRY_V1_PROVENANCE_SHA256,
+                "revision": NATIVE_GEOMETRY_V1_REVISION,
+            },
         },
         "candidate": {
             "path": str(candidate_path),
@@ -695,13 +912,17 @@ def build_comparison(
         "claims": {
             "valid_structural_classification": True,
             "source_count_exact": source_exact,
-            "native_stream_exact": stream_exact,
-            "native_geometry_exact": geometry_exact,
+            "hypothesis_stream_exact": stream_exact,
+            "hypothesis_geometry_exact": geometry_exact,
             "native_input_payload_exact": False,
             "cf_selection_equivalence_proven": False,
             "placement_equivalence_proven": False,
             "tap_stream_equivalence_proven": False,
             "whole_grid_equivalence_proven": False,
+            "actual_casa_girar_refocus_uvw_dphase_and_flags_equivalence_proven": (
+                False
+            ),
+            "production_defect_identified": False,
             "production_path_changed": False,
             "production_promotion_authorized": False,
             "integrated_4096_row_promoted": False,
@@ -756,6 +977,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--arithmetic-v1-comparison", required=True, type=Path)
     parser.add_argument("--literal-v1", required=True, type=Path)
     parser.add_argument("--literal-v1-comparison", required=True, type=Path)
+    parser.add_argument("--native-geometry-v1", required=True, type=Path)
+    parser.add_argument("--native-geometry-v1-comparison", required=True, type=Path)
+    parser.add_argument("--native-geometry-v1-provenance", required=True, type=Path)
     parser.add_argument("--candidate", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--validate-parents-only", action="store_true")
@@ -777,6 +1001,9 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.arithmetic_v1_comparison,
                 arguments.literal_v1,
                 arguments.literal_v1_comparison,
+                arguments.native_geometry_v1,
+                arguments.native_geometry_v1_comparison,
+                arguments.native_geometry_v1_provenance,
             )
             print(
                 json.dumps(
@@ -786,6 +1013,9 @@ def main(argv: list[str] | None = None) -> int:
                         "casa_v5_sha256": CASA_V5_RECEIPT_SHA256,
                         "arithmetic_v1_sha256": ARITHMETIC_V1_RECEIPT_SHA256,
                         "literal_v1_sha256": LITERAL_V1_RECEIPT_SHA256,
+                        "native_geometry_v1_sha256": (
+                            NATIVE_GEOMETRY_V1_RECEIPT_SHA256
+                        ),
                     },
                     sort_keys=True,
                 )
@@ -801,6 +1031,13 @@ def main(argv: list[str] | None = None) -> int:
             arithmetic_v1_comparison_path=arguments.arithmetic_v1_comparison,
             literal_v1_path=arguments.literal_v1,
             literal_v1_comparison_path=arguments.literal_v1_comparison,
+            native_geometry_v1_path=arguments.native_geometry_v1,
+            native_geometry_v1_comparison_path=(
+                arguments.native_geometry_v1_comparison
+            ),
+            native_geometry_v1_provenance_path=(
+                arguments.native_geometry_v1_provenance
+            ),
         )
         atomic_write_json(arguments.output, comparison)
         print(json.dumps(comparison["comparison"], sort_keys=True))

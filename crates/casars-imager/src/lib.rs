@@ -7279,9 +7279,9 @@ const AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV: &str =
 const AWPROJECT_LITERAL_COEFFICIENT_AUDIT_SELECTION_ENV: &str =
     "CASA_RS_INTERNAL_AW_LITERAL_COEFFICIENT_AUDIT_SELECTION_V1";
 const AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV: &str =
-    "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_OUTPUT_V1";
+    "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_OUTPUT_V2";
 const AWPROJECT_NATIVE_GEOMETRY_AUDIT_SELECTION_ENV: &str =
-    "CASA_RS_INTERNAL_AW_NATIVE_GEOMETRY_AUDIT_SELECTION_V1";
+    "CASA_RS_INTERNAL_AW_NATIVE_GEOMETRY_AUDIT_SELECTION_V2";
 #[allow(unexpected_cfgs)]
 const AWPROJECT_LITERAL_COEFFICIENT_AUDIT_CORE_HOOK_COMPILED: bool =
     cfg!(all(target_os = "macos", not(coverage)));
@@ -7298,7 +7298,7 @@ enum AwProjectDataToGridDiagnosticMode {
     FrozenV4,
     Tt0ArithmeticCompatV1,
     LiteralCoefficientAuditV1,
-    NativeGeometryAuditV1,
+    NativeGeometryAuditV2,
 }
 
 impl AwProjectDataToGridDiagnosticMode {
@@ -7307,7 +7307,7 @@ impl AwProjectDataToGridDiagnosticMode {
             Self::FrozenV4 => AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV,
             Self::Tt0ArithmeticCompatV1 => AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV,
             Self::LiteralCoefficientAuditV1 => AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV,
-            Self::NativeGeometryAuditV1 => AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV,
+            Self::NativeGeometryAuditV2 => AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV,
         }
     }
 
@@ -7316,7 +7316,7 @@ impl AwProjectDataToGridDiagnosticMode {
             Self::FrozenV4 => AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV,
             Self::Tt0ArithmeticCompatV1 => AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV,
             Self::LiteralCoefficientAuditV1 => AWPROJECT_LITERAL_COEFFICIENT_AUDIT_SELECTION_ENV,
-            Self::NativeGeometryAuditV1 => AWPROJECT_NATIVE_GEOMETRY_AUDIT_SELECTION_ENV,
+            Self::NativeGeometryAuditV2 => AWPROJECT_NATIVE_GEOMETRY_AUDIT_SELECTION_ENV,
         }
     }
 
@@ -7337,10 +7337,10 @@ impl AwProjectDataToGridDiagnosticMode {
                 ("CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_BLOCKS", "1"),
                 ("CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_TERMS", "1"),
             ],
-            Self::NativeGeometryAuditV1 => [
-                ("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_EXPECT_NXY", "4096"),
-                ("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_BLOCKS", "1"),
-                ("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_TERMS", "2"),
+            Self::NativeGeometryAuditV2 => [
+                ("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_EXPECT_NXY_V2", "4096"),
+                ("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_BLOCKS_V2", "1"),
+                ("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_TERMS_V2", "2"),
             ],
         }
     }
@@ -7373,7 +7373,7 @@ fn awproject_datatogrid_diagnostic_request()
             literal_coefficient_audit_output,
         ),
         (
-            AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV1,
+            AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2,
             native_geometry_audit_output,
         ),
     ]
@@ -7620,7 +7620,7 @@ fn validate_awproject_datatogrid_bracket_cli(config: &CliConfig) -> Result<(), S
             AwProjectDataToGridDiagnosticMode::LiteralCoefficientAuditV1 => {
                 "literal-coefficient audit"
             }
-            AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV1 => {
+            AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2 => {
                 "native stream/geometry audit"
             }
         };
@@ -7746,7 +7746,7 @@ fn awproject_datatogrid_selection_marker_for_mode(
         mode,
         AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1
             | AwProjectDataToGridDiagnosticMode::LiteralCoefficientAuditV1
-            | AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV1
+            | AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2
     ) {
         marker.push_str(&format!(
             ";selected_corr_first_index={};selected_corr_second_index={};\
@@ -7856,7 +7856,7 @@ fn install_awproject_datatogrid_bracket_selection(
         request.mode,
         AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1
             | AwProjectDataToGridDiagnosticMode::LiteralCoefficientAuditV1
-            | AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV1
+            | AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2
     ) {
         validate_awproject_tt0_arithmetic_compat_corr_order(&observed)?;
     }
@@ -7879,6 +7879,10 @@ const AWPROJECT_NATIVE_GEOMETRY_EXPECTED_SOURCE_COUNT: usize = 12_359;
 const AWPROJECT_NATIVE_GEOMETRY_EXPECTED_STREAM_HASH: u64 = 4_740_440_223_154_359_747;
 const AWPROJECT_NATIVE_GEOMETRY_EXPECTED_GEOMETRY_HASHES: [u64; 2] =
     [15_079_793_846_523_608_377, 14_381_099_959_812_707_833];
+const AWPROJECT_NATIVE_GEOMETRY_UVW_HYPOTHESIS: &str =
+    "casa-awproject-negate-uv-before-girar-assumed-same-field-identity";
+const AWPROJECT_NATIVE_GEOMETRY_PHASE_HYPOTHESIS: &str =
+    "casa-rs-current-same-field-phase-shift-m-retained-not-casa-girar-refocus-bit-replay";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct AwProjectNativeGeometryCall {
@@ -7958,6 +7962,14 @@ fn awproject_native_geometry_hash_header(
     }
 }
 
+fn awproject_native_geometry_negate_uv_hypothesis_m(internal_uvw_m: [f64; 3]) -> [f64; 3] {
+    let [u_m, v_m, w_m] = internal_uvw_m;
+    // CASA AWProjectFT::put negates U and V before girarUVW/refocus. This
+    // diagnostic hypothesis assumes those later operations are the same-field
+    // identity; it is not a bit-exact replay of CASA's UVWMachine work.
+    [-u_m, -v_m, w_m]
+}
+
 fn awproject_native_geometry_hypothesis(
     source_block: &ColumnarPreparedSource,
     flag_row: &[bool],
@@ -8034,7 +8046,9 @@ fn awproject_native_geometry_hypothesis(
             if row_flagged {
                 continue;
             }
-            for component in geometry_row.transform.uvw_m {
+            for component in
+                awproject_native_geometry_negate_uv_hypothesis_m(geometry_row.transform.uvw_m)
+            {
                 stream.f64(component);
                 geometry.f64(component);
             }
@@ -8246,7 +8260,7 @@ fn maybe_run_awproject_native_geometry_audit(
     let Some(request) = awproject_datatogrid_diagnostic_request()? else {
         return Ok(());
     };
-    if request.mode != AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV1 {
+    if request.mode != AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2 {
         return Ok(());
     }
     let im_ref_freq_hz = im_ref_freq_hz.ok_or_else(|| {
@@ -8267,7 +8281,7 @@ fn maybe_run_awproject_native_geometry_audit(
         )
     })?;
     let expected_marker = awproject_datatogrid_selection_marker_for_mode(
-        AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV1,
+        AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2,
         2,
         32,
         &AwProjectDataToGridObservedFirstBuffer {
@@ -8377,8 +8391,10 @@ fn maybe_run_awproject_native_geometry_audit(
     let hash_contracts = serde_json::json!({
         "algorithm": "fnv1a64",
         "serialization": "bool-one-byte-u64-little-endian-f32-native-bits-little-endian-f64-native-bits-little-endian",
-        "stream": "header-then-row-index-row-flag-then-unflagged-transformed-uvw-m-dphase-then-valid-target-channel-index-frequency-and-all-pol-flags",
-        "geometry": "call-block-term-then-header-then-row-index-row-flag-then-unflagged-transformed-uvw-m-dphase-then-positive-weight-source-ordinal-channel-frequency-and-all-pol-flags"
+        "uvw_hypothesis": AWPROJECT_NATIVE_GEOMETRY_UVW_HYPOTHESIS,
+        "phase_hypothesis": AWPROJECT_NATIVE_GEOMETRY_PHASE_HYPOTHESIS,
+        "stream": "header-then-row-index-row-flag-then-unflagged-negate-uv-before-girar-assumed-same-field-identity-uvw-m-casa-rs-current-phase-shift-m-then-valid-target-channel-index-frequency-and-all-pol-flags",
+        "geometry": "call-block-term-then-header-then-row-index-row-flag-then-unflagged-negate-uv-before-girar-assumed-same-field-identity-uvw-m-casa-rs-current-phase-shift-m-then-positive-weight-source-ordinal-channel-frequency-and-all-pol-flags"
     });
     let selection = serde_json::json!({
         "field_id": 1525,
@@ -8431,7 +8447,13 @@ fn maybe_run_awproject_native_geometry_audit(
         "literal_v1_embedded_evidence_sha256": "dfb6f809c9e96b6007321b293ee147b961a39bfc65968c21637f65058afc8d38",
         "literal_v1_comparison_sha256": "7d5567e9f9d570536dd3406b5a7d8a59a330b29321fd5142b319dbf70d65908d",
         "literal_v1_comparison_embedded_evidence_sha256": "a8b10b7e5fd73185762a4e55e2883e1422c96a320718e00d26c08bf0a05bdd8c",
-        "literal_v1_revision": "9604e540fb90482774eab20f858ec0930e556a53"
+        "literal_v1_revision": "9604e540fb90482774eab20f858ec0930e556a53",
+        "native_geometry_v1_sha256": "9336cc0c0cf96a8efd9c5be5e3225b3beb333a52cb7c8bc19fc29df7bb0866e2",
+        "native_geometry_v1_embedded_evidence_sha256": "5585ced995d75446aee8df3a50a1ea1153d5c0247ad10ab28ba573f817bee148",
+        "native_geometry_v1_comparison_sha256": "86112da1456ea4ad3bb5b9b4da345f4e6dc5bcbac357c19ff720cd17da62f87d",
+        "native_geometry_v1_comparison_embedded_evidence_sha256": "4b1bf691ae33362f986d863a8c386f42473ae5ffb42ec89452bef90fb0a78944",
+        "native_geometry_v1_provenance_sha256": "19fc0ee9d84caae9f630f6867d3bb9250cc24c8a12e492a9cc600c4d8780be00",
+        "native_geometry_v1_revision": "f9079065689910f718884fb80a43b22b320b1bf6"
     });
     let hypotheses_json = hypotheses
         .iter()
@@ -8443,7 +8465,7 @@ fn maybe_run_awproject_native_geometry_audit(
         })
         .collect::<Vec<_>>();
     let evidence = serde_json::json!({
-        "schema": "casa-rs-aw-datatogrid-native-geometry-audit-v1",
+        "schema": "casa-rs-aw-datatogrid-native-geometry-audit-v2",
         "status": "completed-controlled-stop",
         "result": result,
         "result_taxonomy": result_taxonomy,
@@ -8463,8 +8485,9 @@ fn maybe_run_awproject_native_geometry_audit(
         "fft": "not-entered",
         "products": "not-entered",
         "terms_evaluated": [0, 1],
-        "hash_reference": "casa-6.7.5.18-AWVisResampler-hash_call_inputs-stream-and-geometry",
+        "hash_reference": "casa-6.7.5.18-AWVisResampler-hash_call_inputs-stream-and-geometry-negate-uv-before-girar-same-field-identity-hypothesis",
         "hash_contracts": hash_contracts,
+        "uvw_hypothesis": AWPROJECT_NATIVE_GEOMETRY_UVW_HYPOTHESIS,
         "expected_grid_shape": [4096, 4096, 1, 1],
         "target_blocks": 1,
         "request_nterms": 2,
@@ -8479,14 +8502,14 @@ fn maybe_run_awproject_native_geometry_audit(
         .map_err(|error| format!("serialize AWProject native-geometry evidence: {error}"))?;
     let evidence_sha256 = format!("{:x}", Sha256::digest(evidence_json.as_bytes()));
     let payload = format!(
-        "{{\"schema\":\"casa-rs-aw-datatogrid-native-geometry-audit-envelope-v1\",\
+        "{{\"schema\":\"casa-rs-aw-datatogrid-native-geometry-audit-envelope-v2\",\
          \"content_address\":{{\"algorithm\":\"sha256\",\
          \"scope\":\"embedded-evidence-json-utf8\",\"digest\":\"{evidence_sha256}\"}},\
          \"evidence\":{evidence_json}}}\n"
     );
     awproject_native_geometry_atomic_receipt(&request.output, payload.as_bytes())?;
     Err(format!(
-        "AWProject native-geometry audit stopped before production dispatch; receipt={} \
+        "AWProject native-geometry-v2 audit stopped before production dispatch; receipt={} \
          evidence_sha256={evidence_sha256} result={result}",
         request.output.display()
     ))
@@ -53381,9 +53404,9 @@ mod tests {
         "CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_EXPECT_NXY",
         "CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_BLOCKS",
         "CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_TERMS",
-        "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_EXPECT_NXY",
-        "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_BLOCKS",
-        "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_TERMS",
+        "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_EXPECT_NXY_V2",
+        "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_BLOCKS_V2",
+        "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_TERMS_V2",
     ];
 
     struct AwProjectDiagnosticTestEnv {
@@ -53480,9 +53503,9 @@ mod tests {
     }
 
     fn set_aw_native_geometry_audit_controls(test_env: &AwProjectDiagnosticTestEnv) {
-        test_env.set("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_EXPECT_NXY", "4096");
-        test_env.set("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_BLOCKS", "1");
-        test_env.set("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_TERMS", "2");
+        test_env.set("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_EXPECT_NXY_V2", "4096");
+        test_env.set("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_BLOCKS_V2", "1");
+        test_env.set("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_TERMS_V2", "2");
     }
 
     #[test]
@@ -53741,8 +53764,24 @@ mod tests {
             .lock()
             .expect("AWProject diagnostic environment lock");
         let test_env = AwProjectDiagnosticTestEnv::isolated();
+        assert_eq!(
+            AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV,
+            "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_OUTPUT_V2"
+        );
+        assert_eq!(
+            AWPROJECT_NATIVE_GEOMETRY_AUDIT_SELECTION_ENV,
+            "CASA_RS_INTERNAL_AW_NATIVE_GEOMETRY_AUDIT_SELECTION_V2"
+        );
+        assert_eq!(
+            AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2.expected_controls(),
+            [
+                ("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_EXPECT_NXY_V2", "4096"),
+                ("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_BLOCKS_V2", "1"),
+                ("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_TERMS_V2", "2"),
+            ]
+        );
         let temp = tempdir().expect("temporary output parent");
-        let output = temp.path().join("native-geometry-audit-v1.json");
+        let output = temp.path().join("native-geometry-audit-v2.json");
         test_env.set(AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV, &output);
         set_aw_native_geometry_audit_controls(&test_env);
 
@@ -53755,7 +53794,7 @@ mod tests {
         assert_eq!(
             request,
             AwProjectDataToGridDiagnosticRequest {
-                mode: AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV1,
+                mode: AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2,
                 output,
             }
         );
@@ -53865,6 +53904,26 @@ mod tests {
     }
 
     #[test]
+    fn awproject_native_geometry_uses_explicit_negate_uv_hypothesis() {
+        assert_eq!(
+            AWPROJECT_NATIVE_GEOMETRY_UVW_HYPOTHESIS,
+            "casa-awproject-negate-uv-before-girar-assumed-same-field-identity"
+        );
+        assert_eq!(
+            AWPROJECT_NATIVE_GEOMETRY_PHASE_HYPOTHESIS,
+            "casa-rs-current-same-field-phase-shift-m-retained-not-casa-girar-refocus-bit-replay"
+        );
+        assert_eq!(
+            awproject_native_geometry_negate_uv_hypothesis_m([1.5, -2.25, 3.75]),
+            [-1.5, 2.25, 3.75]
+        );
+        let signed_zero = awproject_native_geometry_negate_uv_hypothesis_m([0.0, -0.0, -0.0]);
+        assert_eq!(signed_zero[0].to_bits(), (-0.0_f64).to_bits());
+        assert_eq!(signed_zero[1].to_bits(), 0.0_f64.to_bits());
+        assert_eq!(signed_zero[2].to_bits(), (-0.0_f64).to_bits());
+    }
+
+    #[test]
     fn awproject_native_geometry_receipt_publish_is_atomic_and_no_clobber() {
         let temp = tempdir().expect("temporary receipt parent");
         let output = temp.path().join("receipt.json");
@@ -53894,7 +53953,7 @@ mod tests {
         );
         test_env.set(
             AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV,
-            "/tmp/native-geometry-v1.json",
+            "/tmp/native-geometry-v2.json",
         );
 
         let error = validate_awproject_datatogrid_bracket_cli(&aw_bracket_valid_cli_config())
