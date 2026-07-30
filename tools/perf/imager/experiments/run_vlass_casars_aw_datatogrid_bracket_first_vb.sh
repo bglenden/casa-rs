@@ -7,7 +7,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 external_root="${CASA_RS_VLASS_EXPERIMENT_ROOT:-/Volumes/GLENDENNING/casa-rs-vlass/issue-446}"
 expected_head="${1:-${CASA_RS_VLASS_EXPECTED_HEAD:-}}"
 branch="codex/vlass-w1-evidence-fiducials"
-case_dir="${external_root}/artifacts/experiments/casa-rs-aw-datagrid-bracket-4096-full16-first-vb-v1"
+case_dir="${external_root}/artifacts/experiments/casa-rs-aw-datagrid-bracket-4096-full16-first-vb-v2"
 receipt="${case_dir}/receipt.json"
 run_log="${case_dir}/casars-imager.log"
 comparison_log="${case_dir}/comparison.log"
@@ -18,12 +18,18 @@ tclean_last="${external_root}/data/frozen-clean-b80d5e87487a/tclean.last"
 cf_cache="${external_root}/cf-cache/6.7.5.18/single-field-4096-full-16-spw"
 mask="${external_root}/masks/vlass-single-field-peak-box-4096.mask"
 casa_receipt="${external_root}/artifacts/experiments/casa-aw-datagrid-bracket-4096-full16-one-block-v5/receipt.json"
+source_archive="${CASA_RS_VLASS_SOURCE_ARCHIVE:-/Volumes/GLENDENNING/vlass_test.tgz}"
+dataset_geometry="${repo_root}/tools/perf/imager/recipes/vlass-fragment-dataset-geometry.json"
 measures_dir="${CASA_RS_VLASS_MEASURES_DIR:-${HOME}/.casa/data}"
 fftw_dir="${CASA_RS_VLASS_FFTW_LIBRARY_DIR:-/opt/homebrew/opt/fftw/lib}"
 timeout_command="/opt/homebrew/bin/timeout"
 binary="${repo_root}/target/release/casars-imager"
 casa_receipt_sha="fe3d5ba3bff1ba925f63f0f088df602692655131c86d6319210ffa90e067ea1f"
 tclean_last_sha="a64e6213d66436fee6d602eb5bbda3ac8667b8df2491ea7310557748bbbf15b5"
+source_archive_sha="b80d5e87487ab8ab01faa064c4cd48db6d93446fd0add208c051dd574e0d353a"
+ms_tree_sha="037db124913cdf66de670698536f1bb38c9dbac3725a561fd79eee8bb055fd91"
+dataset_receipt_sha="ba6fe4482b89297da3cb1d2856a2d47037e767f016d7c63efa7a186ec7c89628"
+dataset_geometry_sha="28b1350f2754e4439a0ac94480eb4efb054ecf03f221c805e98cf34c6b5f77f1"
 
 fail() {
     echo "VLASS casa-rs first-VB bracket: $*" >&2
@@ -57,6 +63,8 @@ for required_path in \
     "${cf_cache}" \
     "${mask}" \
     "${casa_receipt}" \
+    "${source_archive}" \
+    "${dataset_geometry}" \
     "${measures_dir}" \
     "${fftw_dir}"; do
     [[ -e "${required_path}" ]] || fail "missing required input ${required_path}"
@@ -66,6 +74,13 @@ done
     fail "frozen CASA v5 receipt SHA-256 changed"
 [[ "$(sha256 "${tclean_last}")" == "${tclean_last_sha}" ]] ||
     fail "frozen tclean.last SHA-256 changed"
+[[ "$(sha256 "${source_archive}")" == "${source_archive_sha}" ]] ||
+    fail "frozen VLASS source archive SHA-256 changed"
+[[ "$(sha256 "${dataset_geometry}")" == "${dataset_geometry_sha}" ]] ||
+    fail "frozen VLASS dataset-geometry receipt SHA-256 changed"
+python3 -c \
+    'import json,sys; r=json.load(open(sys.argv[1])); d=r["dataset"]; assert d["archive_sha256"] == sys.argv[2]; assert d["tree_sha256"] == sys.argv[3]; assert r["source_receipts"]["dataset_receipt_sha256"] == sys.argv[4]; assert r["selections"]["single_field"]["selected_rows"] == 10400' \
+    "${dataset_geometry}" "${source_archive_sha}" "${ms_tree_sha}" "${dataset_receipt_sha}"
 [[ "$(find "${cf_cache}" -maxdepth 1 -type d -name 'CFS*' | wc -l | tr -d ' ')" == "1024" ]] ||
     fail "CF cache does not contain exactly 1024 CFS entries"
 [[ "$(find "${cf_cache}" -maxdepth 1 -type d -name 'WTCFS*' | wc -l | tr -d ' ')" == "1024" ]] ||
@@ -88,13 +103,19 @@ require_clean_checkout
 
 mkdir "${case_dir}"
 {
-    printf 'schema\tcasa-rs-vlass-aw-datagrid-bracket-provenance-v1\n'
+    printf 'schema\tcasa-rs-vlass-aw-datagrid-bracket-provenance-v2\n'
     printf 'started_at_utc\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf 'branch\t%s\n' "${branch}"
     printf 'revision\t%s\n' "${expected_head}"
     printf 'binary_sha256\t%s\n' "$(sha256 "${binary}")"
+    printf 'launcher_sha256\t%s\n' "$(sha256 "${BASH_SOURCE[0]}")"
     printf 'casa_receipt_sha256\t%s\n' "${casa_receipt_sha}"
     printf 'tclean_last_sha256\t%s\n' "${tclean_last_sha}"
+    printf 'source_archive_sha256\t%s\n' "${source_archive_sha}"
+    printf 'declared_measurement_set_tree_sha256\t%s\n' "${ms_tree_sha}"
+    printf 'dataset_receipt_sha256\t%s\n' "${dataset_receipt_sha}"
+    printf 'dataset_geometry_sha256\t%s\n' "${dataset_geometry_sha}"
+    printf 'source_archive\t%s\n' "${source_archive}"
     printf 'measurement_set\t%s\n' "${ms}"
     printf 'cf_cache\t%s\n' "${cf_cache}"
     printf 'mask\t%s\n' "${mask}"
@@ -190,14 +211,14 @@ printf 'casars_imager_exit\t%s\n' "${run_status}" >>"${provenance}"
 [[ -s "${receipt}" ]] ||
     fail "diagnostic exit 1 did not create a non-empty receipt; preserve ${case_dir}"
 rg -F \
-    'AWProject DataToGrid bracket captured the first verified-selection TT0/TT1 complete source block' \
+    'AWProject DataToGrid bracket captured the first observed-selection TT0/TT1 complete source block' \
     "${run_log}" >/dev/null ||
     fail "completion marker is absent from ${run_log}; preserve ${case_dir}"
 [[ -z "$(find "${case_dir}" -maxdepth 1 -name 'rust.*' -print -quit)" ]] ||
     fail "the bracket unexpectedly wrote an imaging product; preserve ${case_dir}"
 
 python3 -c \
-    'import json,sys; r=json.load(open(sys.argv[1])); e=r["evidence"]; assert e["status"] == "completed-before-finalize"; assert e["reason"] == "verified-selection-fields-grid-and-production-sumwt-boundary"; assert e["formed_image"] is False; assert e["normalization"] == "not-entered"; assert e["fft"] == "not-entered"; assert e["products"] == "not-entered"; assert e["completed_calls"] == 2; assert e["completed_blocks"] == 1; assert e["last_window_in_replay_block"] is True; assert len(e["block_boundaries"]) == 1; assert len(e["block_boundaries"][0]["terms"]) == 2' \
+    'import json,sys; r=json.load(open(sys.argv[1])); assert r["schema"] == "casa-rs-aw-datagrid-bracket-envelope-v2"; e=r["evidence"]; assert e["schema"] == "casa-rs-aw-datagrid-bracket-v2"; assert e["status"] == "completed-before-finalize"; assert e["reason"] == "observed-selection-grid-and-production-sumwt-boundary"; assert e["formed_image"] is False; assert e["normalization"] == "not-entered"; assert e["fft"] == "not-entered"; assert e["products"] == "not-entered"; assert e["completed_calls"] == 2; assert e["completed_blocks"] == 1; assert e["last_window_in_replay_block"] is True; assert e["observed_first_buffer"]["row_ids_count"] == 325; assert e["absolute_main_rows"]["first"] == 353600; assert e["absolute_main_rows"]["last"] == 353924; assert len(e["block_boundaries"]) == 1; assert len(e["block_boundaries"][0]["terms"]) == 2' \
     "${receipt}"
 
 set +e
@@ -221,4 +242,4 @@ printf 'completed_at_utc\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"${provenance
     fail "frozen CASA comparison failed; preserve ${case_dir} and inspect ${comparison_log}"
 require_clean_checkout
 printf 'result\texact-grid-and-production-sumwt-match\n' >>"${provenance}"
-echo "VLASS casa-rs first-VB bracket exactly matched the frozen CASA v5 grid and production sumwt boundaries for the verified field/SPW/row/flag/source-count selection: ${receipt}"
+echo "VLASS casa-rs first-buffer bracket exactly matched the frozen CASA v5 observed selection/map/frequency, grid, and production sumwt boundaries: ${receipt}"

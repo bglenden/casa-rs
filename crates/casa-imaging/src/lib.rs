@@ -20280,11 +20280,17 @@ impl AwProjectResidualPrefixHash {
 #[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV: &str = "CASA_RS_AW_BRACKET_OUTPUT";
 #[cfg(all(target_os = "macos", not(coverage)))]
-const AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV: &str = "CASA_RS_INTERNAL_AW_BRACKET_SELECTION_V1";
+const AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV: &str = "CASA_RS_INTERNAL_AW_BRACKET_SELECTION_V2";
 #[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS: usize = 325;
 #[cfg(all(target_os = "macos", not(coverage)))]
-const AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_IDS_HASH: u64 = 15_058_004_568_616_189_240;
+const AWPROJECT_DATATOGRID_BRACKET_FIRST_SELECTED_ROW_IDS_HASH: u64 = 15_058_004_568_616_189_240;
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_DATATOGRID_BRACKET_FIRST_ABSOLUTE_ROW_IDS_HASH: u64 = 8_652_707_267_842_020_204;
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_DATATOGRID_BRACKET_FIRST_ABSOLUTE_ROW: usize = 353_600;
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_DATATOGRID_BRACKET_LAST_ABSOLUTE_ROW: usize = 353_924;
 #[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_FLAGS_HASH: u64 = 3_526_571_572_021_233_857;
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -20298,11 +20304,30 @@ struct AwProjectDataToGridBracketSelection {
     field_id: i32,
     requested_spws: String,
     first_batch_spw: i32,
-    first_batch_rows: usize,
     planned_source_blocks: usize,
-    first_row_ids_hash: u64,
-    first_row_flags_hash: u64,
-    first_flagged_rows: usize,
+    selected_row_begin: usize,
+    selected_row_end: usize,
+    selected_row_count: usize,
+    selected_row_hash: u64,
+    selected_row_first: usize,
+    selected_row_last: usize,
+    absolute_main_row_count: usize,
+    absolute_main_row_hash: u64,
+    absolute_main_row_first: usize,
+    absolute_main_row_last: usize,
+    row_flags_count: usize,
+    row_flags_hash: u64,
+    flagged_rows: usize,
+    n_data_chan: usize,
+    n_data_pol: usize,
+    chan_map_count: usize,
+    chan_map_hash: u64,
+    pol_map_count: usize,
+    pol_map_hash: u64,
+    freq_count: usize,
+    freq_hash: u64,
+    freq_first_bits: u64,
+    freq_last_bits: u64,
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -20407,9 +20432,9 @@ fn awproject_datatogrid_bracket_selection()
             )));
         }
     }
-    if fields.len() != 8 {
+    if fields.len() != 27 {
         return Err(ImagingError::InvalidRequest(format!(
-            "AWProject DataToGrid selection receipt has {} fields, expected 8",
+            "AWProject DataToGrid selection receipt has {} fields, expected 27",
             fields.len()
         )));
     }
@@ -20469,20 +20494,54 @@ fn awproject_datatogrid_bracket_selection()
             })?
             .to_string(),
         first_batch_spw: parse_i32("first_spw")?,
-        first_batch_rows: parse_usize("first_rows")?,
         planned_source_blocks: parse_usize("source_blocks")?,
-        first_row_ids_hash: parse_u64("row_ids_hash")?,
-        first_row_flags_hash: parse_u64("row_flags_hash")?,
-        first_flagged_rows: parse_usize("flagged_rows")?,
+        selected_row_begin: parse_usize("selected_row_begin")?,
+        selected_row_end: parse_usize("selected_row_end")?,
+        selected_row_count: parse_usize("selected_row_count")?,
+        selected_row_hash: parse_u64("selected_row_hash")?,
+        selected_row_first: parse_usize("selected_row_first")?,
+        selected_row_last: parse_usize("selected_row_last")?,
+        absolute_main_row_count: parse_usize("absolute_main_row_count")?,
+        absolute_main_row_hash: parse_u64("absolute_main_row_hash")?,
+        absolute_main_row_first: parse_usize("absolute_main_row_first")?,
+        absolute_main_row_last: parse_usize("absolute_main_row_last")?,
+        row_flags_count: parse_usize("row_flags_count")?,
+        row_flags_hash: parse_u64("row_flags_hash")?,
+        flagged_rows: parse_usize("flagged_rows")?,
+        n_data_chan: parse_usize("n_data_chan")?,
+        n_data_pol: parse_usize("n_data_pol")?,
+        chan_map_count: parse_usize("chan_map_count")?,
+        chan_map_hash: parse_u64("chan_map_hash")?,
+        pol_map_count: parse_usize("pol_map_count")?,
+        pol_map_hash: parse_u64("pol_map_hash")?,
+        freq_count: parse_usize("freq_count")?,
+        freq_hash: parse_u64("freq_hash")?,
+        freq_first_bits: parse_u64("freq_first_bits")?,
+        freq_last_bits: parse_u64("freq_last_bits")?,
     };
     if selection.field_id != 1525
         || selection.requested_spws != "2-17"
         || selection.first_batch_spw != 2
-        || selection.first_batch_rows != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
         || selection.planned_source_blocks == 0
-        || selection.first_row_ids_hash != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_IDS_HASH
-        || selection.first_row_flags_hash != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_FLAGS_HASH
-        || selection.first_flagged_rows != AWPROJECT_DATATOGRID_BRACKET_FIRST_FLAGGED_ROWS
+        || selection.selected_row_begin != 0
+        || selection.selected_row_end != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || selection.selected_row_count != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || selection.selected_row_hash != AWPROJECT_DATATOGRID_BRACKET_FIRST_SELECTED_ROW_IDS_HASH
+        || selection.selected_row_first != 0
+        || selection.selected_row_last != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS - 1
+        || selection.absolute_main_row_count != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || selection.absolute_main_row_hash
+            != AWPROJECT_DATATOGRID_BRACKET_FIRST_ABSOLUTE_ROW_IDS_HASH
+        || selection.absolute_main_row_first != AWPROJECT_DATATOGRID_BRACKET_FIRST_ABSOLUTE_ROW
+        || selection.absolute_main_row_last != AWPROJECT_DATATOGRID_BRACKET_LAST_ABSOLUTE_ROW
+        || selection.row_flags_count != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || selection.row_flags_hash != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_FLAGS_HASH
+        || selection.flagged_rows != AWPROJECT_DATATOGRID_BRACKET_FIRST_FLAGGED_ROWS
+        || selection.n_data_chan != 64
+        || selection.n_data_pol != 4
+        || selection.chan_map_count != 64
+        || selection.pol_map_count != 4
+        || selection.freq_count != 64
     {
         return Err(ImagingError::InvalidRequest(format!(
             "AWProject DataToGrid selection receipt does not describe the frozen field=1525, \
@@ -20928,11 +20987,57 @@ fn maybe_run_awproject_datatogrid_bracket(
         })
         .collect::<Vec<_>>()
         .join(",");
+    let selection_json = format!(
+        "{{\"field_id\":{},\"requested_spws\":\"{}\",\"first_batch_spw\":{},\
+         \"planned_source_blocks\":{}}}",
+        selection.field_id,
+        awproject_datatogrid_json_escape(&selection.requested_spws),
+        selection.first_batch_spw,
+        selection.planned_source_blocks,
+    );
+    let observed_first_buffer_json = format!(
+        "{{\"begin_row\":{},\"end_row\":{},\"n_row\":{},\"spw_id\":{},\
+         \"row_ids_count\":{},\"row_ids_hash\":{},\"row_id_first\":{},\
+         \"row_id_last\":{},\"row_flags_count\":{},\"row_flags_hash\":{},\
+         \"flagged_rows\":{},\"n_data_chan\":{},\"n_data_pol\":{},\
+         \"chan_map_count\":{},\"chan_map_hash\":{},\"pol_map_count\":{},\
+         \"pol_map_hash\":{},\"freq_count\":{},\"freq_hash\":{},\
+         \"freq_first_bits\":{},\"freq_last_bits\":{}}}",
+        selection.selected_row_begin,
+        selection.selected_row_end,
+        selection.selected_row_count,
+        selection.first_batch_spw,
+        selection.selected_row_count,
+        selection.selected_row_hash,
+        selection.selected_row_first,
+        selection.selected_row_last,
+        selection.row_flags_count,
+        selection.row_flags_hash,
+        selection.flagged_rows,
+        selection.n_data_chan,
+        selection.n_data_pol,
+        selection.chan_map_count,
+        selection.chan_map_hash,
+        selection.pol_map_count,
+        selection.pol_map_hash,
+        selection.freq_count,
+        selection.freq_hash,
+        selection.freq_first_bits,
+        selection.freq_last_bits,
+    );
+    let absolute_main_rows_json = format!(
+        "{{\"semantics\":\"physical-MAIN-table-row-index\",\
+         \"count\":{},\"hash\":{},\"first\":{},\"last\":{}}}",
+        selection.absolute_main_row_count,
+        selection.absolute_main_row_hash,
+        selection.absolute_main_row_first,
+        selection.absolute_main_row_last,
+    );
     let evidence = format!(
         "{{\n\
-         \"schema\":\"casa-rs-aw-datagrid-bracket-v1\",\n\
+         \"schema\":\"casa-rs-aw-datagrid-bracket-v2\",\n\
          \"status\":\"completed-before-finalize\",\n\
-         \"reason\":\"verified-selection-fields-grid-and-production-sumwt-boundary\",\n\
+         \"reason\":\"observed-selection-grid-and-production-sumwt-boundary\",\n\
          \"role\":\"bounded-correctness-oracle-not-performance-evidence\",\n\
          \"producer\":\"casa-rs\",\n\
          \"original_invocation\":\"compact-replay-serial-host-f64\",\n\
@@ -20951,28 +21056,17 @@ fn maybe_run_awproject_datatogrid_bracket(
          \"grid_hash_contract\":\"fnv1a64-shape-4096-4096-1-1-axis0-fast-complex64-bits\",\n\
          \"sumwt_hash_contract\":\"fnv1a64-shape-1-1-f64-bits\",\n\
          \"portable_hash_contract\":\"fnv1a64-little-endian-call-block-term-accepted-source-ordinal-rr-then-ll-frequency-uvw-current-weight-basis-residual-value\",\n\
-         \"cross_producer_comparison_contract\":\"source-count-and-term-order-then-cumulative-raw-complex64-grid-and-sumwt-fnv64-only\",\n\
+         \"cross_producer_comparison_contract\":\"observed-first-buffer-selection-relative-rows-flags-channel-map-polarization-map-frequency-source-count-term-order-cumulative-raw-complex64-grid-and-sumwt-fnv64\",\n\
          \"native_casa_input_hash\":\"unavailable-in-VisibilityBatch\",\n\
-         \"row_channel_provenance\":\"unavailable-in-VisibilityBatch-not-inferred\",\n\
+         \"row_channel_provenance\":\"producer-observed-selection-relative-and-absolute-MAIN-row-domains-with-live-channel-polarization-frequency-hashes\",\n\
          \"expected_grid_nxy\":{},\n\
          \"target_blocks\":{},\n\
          \"terms_per_block\":{},\n\
          \"completed_calls\":{},\n\
          \"completed_blocks\":1,\n\
-         \"selection\":{{\"field_id\":{},\"requested_spws\":\"{}\",\
-         \"first_batch_spw\":{},\"first_batch_rows\":{},\"planned_source_blocks\":{},\
-         \"first_row_ids_hash\":{},\"first_row_flags_hash\":{},\
-         \"first_flagged_rows\":{}}},\n\
-         \"native_first_vb_reference\":{{\"begin_row\":0,\"end_row\":325,\"n_row\":325,\
-         \"spw_id\":2,\"row_ids_count\":325,\"row_ids_hash\":15058004568616189240,\
-         \"row_id_first\":0,\"row_id_last\":324,\"row_flags_count\":325,\
-         \"row_flags_hash\":3526571572021233857,\"flagged_rows\":48,\
-         \"n_data_chan\":64,\"n_data_pol\":4,\"chan_map_count\":64,\
-         \"chan_map_hash\":2111453637644839429,\"pol_map_count\":4,\
-         \"pol_map_hash\":13222926617229668273,\"freq_count\":64,\
-         \"freq_hash\":17711728193083539473,\
-         \"freq_first_bits\":4746028312096267298,\
-         \"freq_last_bits\":4746556774954748567}},\n\
+         \"selection\":{},\n\
+         \"observed_first_buffer\":{},\n\
+         \"absolute_main_rows\":{},\n\
          \"direct_raw_input_hash\":{},\n\
          \"compact_input_hash\":{},\n\
          \"direct_compact_exact_match\":true,\n\
@@ -20988,14 +21082,9 @@ fn maybe_run_awproject_datatogrid_bracket(
         config.target_blocks,
         config.terms,
         calls.len(),
-        selection.field_id,
-        awproject_datatogrid_json_escape(&selection.requested_spws),
-        selection.first_batch_spw,
-        selection.first_batch_rows,
-        selection.planned_source_blocks,
-        selection.first_row_ids_hash,
-        selection.first_row_flags_hash,
-        selection.first_flagged_rows,
+        selection_json,
+        observed_first_buffer_json,
+        absolute_main_rows_json,
         input_audit.raw_hash,
         input_audit.compact_hash,
         portable_input_stream_hash.0,
@@ -21007,7 +21096,7 @@ fn maybe_run_awproject_datatogrid_bracket(
     let evidence_sha256 = format!("{:x}", Sha256::digest(embedded_evidence.as_bytes()));
     let payload = format!(
         "{{\n\
-         \"schema\":\"casa-rs-aw-datagrid-bracket-envelope-v1\",\n\
+         \"schema\":\"casa-rs-aw-datagrid-bracket-envelope-v2\",\n\
          \"content_address\":{{\"algorithm\":\"sha256\",\
          \"scope\":\"embedded-evidence-json-utf8\",\"digest\":\"{evidence_sha256}\"}},\n\
          \"evidence\":{}\n\
@@ -21016,7 +21105,7 @@ fn maybe_run_awproject_datatogrid_bracket(
     );
     awproject_datatogrid_atomic_receipt(&output, payload.as_bytes())?;
     Err(ImagingError::InvalidRequest(format!(
-        "AWProject DataToGrid bracket captured the first verified-selection TT0/TT1 complete source block before FFT, normalization, image formation, or products; receipt={} evidence_sha256={evidence_sha256}",
+        "AWProject DataToGrid bracket captured the first observed-selection TT0/TT1 complete source block before FFT, normalization, image formation, or products; receipt={} evidence_sha256={evidence_sha256}",
         output.display()
     )))
 }
@@ -64112,10 +64201,20 @@ mod tests {
     #[cfg(all(target_os = "macos", not(coverage)))]
     #[test]
     #[serial_test::serial]
-    fn awproject_datatogrid_bracket_parses_exact_first_vb_selection_marker() {
-        let marker = "field=1525;spws=2-17;first_spw=2;first_rows=325;\
-                      source_blocks=32;row_ids_hash=15058004568616189240;\
-                      row_flags_hash=3526571572021233857;flagged_rows=48";
+    fn awproject_datatogrid_bracket_parses_observed_first_buffer_selection_marker() {
+        let marker = "field=1525;spws=2-17;first_spw=2;source_blocks=32;\
+                      selected_row_begin=0;selected_row_end=325;selected_row_count=325;\
+                      selected_row_hash=15058004568616189240;selected_row_first=0;\
+                      selected_row_last=324;absolute_main_row_count=325;\
+                      absolute_main_row_hash=8652707267842020204;\
+                      absolute_main_row_first=353600;absolute_main_row_last=353924;\
+                      row_flags_count=325;row_flags_hash=3526571572021233857;\
+                      flagged_rows=48;n_data_chan=64;n_data_pol=4;\
+                      chan_map_count=64;chan_map_hash=2111453637644839429;\
+                      pol_map_count=4;pol_map_hash=13222926617229668273;\
+                      freq_count=64;freq_hash=17711728193083539473;\
+                      freq_first_bits=4746028312096267298;\
+                      freq_last_bits=4746556774954748567";
         unsafe {
             std::env::set_var(super::AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV, marker);
         }
@@ -64127,11 +64226,16 @@ mod tests {
         assert_eq!(selection.field_id, 1525);
         assert_eq!(selection.requested_spws, "2-17");
         assert_eq!(selection.first_batch_spw, 2);
-        assert_eq!(selection.first_batch_rows, 325);
         assert_eq!(selection.planned_source_blocks, 32);
-        assert_eq!(selection.first_row_ids_hash, 15_058_004_568_616_189_240);
-        assert_eq!(selection.first_row_flags_hash, 3_526_571_572_021_233_857);
-        assert_eq!(selection.first_flagged_rows, 48);
+        assert_eq!(selection.selected_row_hash, 15_058_004_568_616_189_240);
+        assert_eq!(selection.absolute_main_row_hash, 8_652_707_267_842_020_204);
+        assert_eq!(selection.absolute_main_row_first, 353_600);
+        assert_eq!(selection.absolute_main_row_last, 353_924);
+        assert_eq!(selection.row_flags_hash, 3_526_571_572_021_233_857);
+        assert_eq!(selection.flagged_rows, 48);
+        assert_eq!(selection.chan_map_hash, 2_111_453_637_644_839_429);
+        assert_eq!(selection.pol_map_hash, 13_222_926_617_229_668_273);
+        assert_eq!(selection.freq_hash, 17_711_728_193_083_539_473);
     }
 
     #[cfg(all(target_os = "macos", not(coverage)))]
@@ -64156,10 +64260,14 @@ mod tests {
             .unwrap_or_else(|error| panic!("read {}: {error}", casa_path.display()));
         let casa: serde_json::Value = serde_json::from_str(&casa_payload)
             .unwrap_or_else(|error| panic!("parse {}: {error}", casa_path.display()));
-        assert_eq!(value["schema"], "casa-rs-aw-datagrid-bracket-envelope-v1");
+        assert_eq!(value["schema"], "casa-rs-aw-datagrid-bracket-envelope-v2");
         let evidence = &value["evidence"];
-        assert_eq!(evidence["schema"], "casa-rs-aw-datagrid-bracket-v1");
+        assert_eq!(evidence["schema"], "casa-rs-aw-datagrid-bracket-v2");
         assert_eq!(evidence["status"], "completed-before-finalize");
+        assert_eq!(
+            evidence["reason"],
+            "observed-selection-grid-and-production-sumwt-boundary"
+        );
         assert_eq!(evidence["formed_image"], false);
         assert_eq!(evidence["normalization"], "not-entered");
         assert_eq!(evidence["fft"], "not-entered");
@@ -64170,16 +64278,26 @@ mod tests {
         assert_eq!(evidence["last_window_in_replay_block"], true);
         assert_eq!(evidence["selection"]["field_id"], 1525);
         assert_eq!(evidence["selection"]["requested_spws"], "2-17");
-        assert_eq!(evidence["selection"]["first_batch_rows"], 325);
         assert_eq!(
-            evidence["selection"]["first_row_ids_hash"],
+            evidence["observed_first_buffer"]["row_ids_hash"],
             15_058_004_568_616_189_240_u64
         );
         assert_eq!(
-            evidence["selection"]["first_row_flags_hash"],
+            evidence["observed_first_buffer"]["row_flags_hash"],
             3_526_571_572_021_233_857_u64
         );
-        assert_eq!(evidence["selection"]["first_flagged_rows"], 48);
+        assert_eq!(evidence["observed_first_buffer"]["flagged_rows"], 48);
+        assert_eq!(
+            evidence["absolute_main_rows"]["semantics"],
+            "physical-MAIN-table-row-index"
+        );
+        assert_eq!(evidence["absolute_main_rows"]["count"], 325);
+        assert_eq!(
+            evidence["absolute_main_rows"]["hash"],
+            8_652_707_267_842_020_204_u64
+        );
+        assert_eq!(evidence["absolute_main_rows"]["first"], 353_600);
+        assert_eq!(evidence["absolute_main_rows"]["last"], 353_924);
         assert!(
             evidence["selection"]["planned_source_blocks"]
                 .as_u64()
@@ -64239,8 +64357,8 @@ mod tests {
             "flagged_rows",
         ] {
             assert_eq!(
-                casa["native_first_vb"][field], evidence["native_first_vb_reference"][field],
-                "frozen first-VB field {field}"
+                casa["native_first_vb"][field], evidence["observed_first_buffer"][field],
+                "producer-observed first-buffer field {field}"
             );
         }
         let casa_calls = casa["calls"].as_array().expect("CASA call array");

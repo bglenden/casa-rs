@@ -3939,26 +3939,46 @@ executing either workload and remain
 and
 `6fe0bdf804825b3afd3bbc5b01b6923e1e2bd4e1afd60c8e7356ff40776b52a0`.
 
-The unexecuted casa-rs first-buffer diagnostic now captures `sumwt` directly
-from the production accumulator rather than recomputing it in a diagnostic
-helper. It requires that replay block zero consist of one complete window,
-preserves the exact production f64 bits for TT0 and TT1, and fails closed for
-a partial block, nonzero prestate, zero terms, a non-finite result, or a
-nonpositive TT0 weight. Its receipt wording is intentionally limited to the
-verified selection fields plus the CASA-order grid and production-`sumwt`
-boundary. The reusable launcher SHA-256 at this checkpoint is
-`7045795dc42075cefc0c0ea6f237fc8bf9ca49ff88273817ffb5efc7f4423937`;
-the launcher has not been executed.
+The first casa-rs first-buffer diagnostic was executed once after the durable
+checkpoint at revision
+`0bb8b0bbe8e75cf7f74ae3d4c7381bd0536141eb`. It failed closed before
+gridding or receipt creation because its v1 selection preflight incorrectly
+compared casa-rs physical MAIN-table row `353600` with CASA's
+selection-relative row ordinal `0`. The preserved v1 directory contains only
+`casars-imager.log` and `provenance.tsv`, with SHA-256
+`c4482993c9c1de436184590e9595c2e4c0bef25773362f2f641025e48e51f0b1`
+and
+`f9bad4ed51cfe30b3108be12c6e75df1f5c3e7db67aaf23ec187abd39e585bf1`,
+respectively. The release binary SHA-256 was
+`2ebabeda31e4d53c6d797f6b681a4bca39004cb0947b4b38dd63570715ec1fc0`.
+No receipt, CASA call, grid, FFT, image, or product was created, and no
+replacement run was launched.
+
+CASA source and the two producer data models explain the mismatch: CASA VI2
+reports row IDs in the selected reference MeasurementSet, while
+`SelectedMainRow.row_index` is the absolute physical MAIN-table row. The v2
+diagnostic therefore maps each production row through the complete selected
+row order, records and validates selection-relative ordinals `0..324`
+separately from absolute MAIN rows `353600..353924`, and retains the
+absolute-row FNV hash `8652707267842020204`. It also derives the Stokes-I
+channel map, polarization map, and first-row LSRK frequency vector from the
+live casa-rs production selection path. Those observed hashes replace the
+hard-coded Rust copy of CASA's first-buffer values in the comparator.
 
 The completed Oracle review agreed that a complete replay block is required
 and that no tap-prefix trace is warranted before an actual common-boundary
-grid mismatch. It also identified a remaining provenance limit: independent
-observed channel-map and frequency hashes, rather than only frozen expected
-values, are required before a matching grid and `sumwt` may be described as
-proof of identical internal visibility visits. That larger diagnostic
-enhancement is recorded for post-checkpoint work; it was not opened during
-stabilization. A future exact common-boundary match may promote only the
-first-buffer DataToGrid boundary, never the integrated 4,096-square row.
+grid mismatch. The v2 receipt addresses its provenance objection by comparing
+producer-observed row, flag, channel-map, polarization-map, and frequency
+boundaries before comparing the CASA-order grids and production `sumwt`. The
+launcher additionally pins the frozen source archive, dataset tree receipt,
+dataset receipt, `tclean.last`, and CASA v5 receipt identities. This binds the
+current diagnostic to the declared frozen dataset, but it is not claimed as a
+retroactive byte-for-byte manifest of the mutable inputs at the time CASA v5
+was captured. The v2 launcher SHA-256 is
+`b580dd10777e4fdb80b861a75d9cefff3e199c2b31a31583bd98a233e5873dcd`;
+it has not yet been executed. A future exact common-boundary match may promote
+only the first-buffer DataToGrid boundary, never the integrated
+4,096-square row.
 
 A checkpoint-only actual-GPU regression exposed one wave-caused arithmetic
 blocker: Metal contracted CASA-style complex multiplication and changed the

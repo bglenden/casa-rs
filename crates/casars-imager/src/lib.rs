@@ -7268,11 +7268,41 @@ pub fn run_from_request(request: &ImagerRunTaskRequest) -> Result<RunSummary, St
 }
 
 const AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV: &str = "CASA_RS_AW_BRACKET_OUTPUT";
-const AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV: &str = "CASA_RS_INTERNAL_AW_BRACKET_SELECTION_V1";
+const AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV: &str = "CASA_RS_INTERNAL_AW_BRACKET_SELECTION_V2";
 const AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS: usize = 325;
-const AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_IDS_HASH: u64 = 15_058_004_568_616_189_240;
+const AWPROJECT_DATATOGRID_BRACKET_FIRST_SELECTED_ROW_IDS_HASH: u64 = 15_058_004_568_616_189_240;
+const AWPROJECT_DATATOGRID_BRACKET_FIRST_ABSOLUTE_ROW_IDS_HASH: u64 = 8_652_707_267_842_020_204;
+const AWPROJECT_DATATOGRID_BRACKET_FIRST_ABSOLUTE_ROW: usize = 353_600;
+const AWPROJECT_DATATOGRID_BRACKET_LAST_ABSOLUTE_ROW: usize = 353_924;
 const AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_FLAGS_HASH: u64 = 3_526_571_572_021_233_857;
 const AWPROJECT_DATATOGRID_BRACKET_FIRST_FLAGGED_ROWS: usize = 48;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AwProjectDataToGridObservedFirstBuffer {
+    selected_row_begin: usize,
+    selected_row_end: usize,
+    selected_row_count: usize,
+    selected_row_hash: u64,
+    selected_row_first: usize,
+    selected_row_last: usize,
+    absolute_main_row_count: usize,
+    absolute_main_row_hash: u64,
+    absolute_main_row_first: usize,
+    absolute_main_row_last: usize,
+    row_flags_count: usize,
+    row_flags_hash: u64,
+    flagged_rows: usize,
+    n_data_chan: usize,
+    n_data_pol: usize,
+    chan_map_count: usize,
+    chan_map_hash: u64,
+    pol_map_count: usize,
+    pol_map_hash: u64,
+    freq_count: usize,
+    freq_hash: u64,
+    freq_first_bits: u64,
+    freq_last_bits: u64,
+}
 
 fn awproject_datatogrid_bracket_fnv_u64(hash: &mut u64, value: u64) {
     for byte in value.to_le_bytes() {
@@ -7281,24 +7311,58 @@ fn awproject_datatogrid_bracket_fnv_u64(hash: &mut u64, value: u64) {
     }
 }
 
-fn awproject_datatogrid_bracket_first_row_receipt(
+fn awproject_datatogrid_bracket_observed_first_buffer(
+    all_selected_rows: &[SelectedMainRow],
     first_rows: &[SelectedMainRow],
     flag_row: &[bool],
-) -> Result<(u64, u64, usize), String> {
-    let mut row_ids_hash = 0xcbf2_9ce4_8422_2325_u64;
-    let mut row_flags_hash = 0xcbf2_9ce4_8422_2325_u64;
-    awproject_datatogrid_bracket_fnv_u64(&mut row_ids_hash, first_rows.len() as u64);
-    awproject_datatogrid_bracket_fnv_u64(&mut row_flags_hash, first_rows.len() as u64);
-    let mut flagged_rows = 0usize;
-    for (ordinal, row) in first_rows.iter().enumerate() {
-        if row.row_index != ordinal {
+    table_values: &PreparedSelectionTableValues,
+    channel_read_range: Option<SelectedChannelReadRange>,
+    derived_engine: Option<&MsCalEngine>,
+) -> Result<AwProjectDataToGridObservedFirstBuffer, String> {
+    if first_rows.is_empty() {
+        return Err("the AWProject DataToGrid first source block is empty".to_string());
+    }
+    let mut selected_ordinals = BTreeMap::new();
+    for (ordinal, row) in all_selected_rows.iter().enumerate() {
+        if selected_ordinals.insert(row.row_index, ordinal).is_some() {
             return Err(format!(
-                "the frozen AWProject DataToGrid first source block expected ordered MS row ID \
-                 {ordinal}, got {}",
+                "the AWProject DataToGrid selection contains duplicate absolute MAIN row {}",
                 row.row_index
             ));
         }
-        awproject_datatogrid_bracket_fnv_u64(&mut row_ids_hash, row.row_index as u64);
+    }
+    let mut selected_row_hash = 0xcbf2_9ce4_8422_2325_u64;
+    let mut absolute_main_row_hash = 0xcbf2_9ce4_8422_2325_u64;
+    let mut row_flags_hash = 0xcbf2_9ce4_8422_2325_u64;
+    awproject_datatogrid_bracket_fnv_u64(&mut selected_row_hash, first_rows.len() as u64);
+    awproject_datatogrid_bracket_fnv_u64(&mut absolute_main_row_hash, first_rows.len() as u64);
+    awproject_datatogrid_bracket_fnv_u64(&mut row_flags_hash, first_rows.len() as u64);
+    let mut selected_row_first = None;
+    let mut selected_row_last = None;
+    let mut flagged_rows = 0usize;
+    for (first_row_offset, row) in first_rows.iter().enumerate() {
+        let selected_ordinal = selected_ordinals
+            .get(&row.row_index)
+            .copied()
+            .ok_or_else(|| {
+                format!(
+                    "absolute MAIN row {} in the AWProject DataToGrid source block is absent from \
+                 the complete selected-row order",
+                    row.row_index
+                )
+            })?;
+        let first_selected_ordinal = *selected_row_first.get_or_insert(selected_ordinal);
+        let expected_ordinal = first_selected_ordinal.saturating_add(first_row_offset);
+        if selected_ordinal != expected_ordinal {
+            return Err(format!(
+                "the AWProject DataToGrid source block is not in complete-selection order: \
+                 source offset {first_row_offset} resolved to selected-row ordinal \
+                 {selected_ordinal}, expected {expected_ordinal}"
+            ));
+        }
+        selected_row_last = Some(selected_ordinal);
+        awproject_datatogrid_bracket_fnv_u64(&mut selected_row_hash, selected_ordinal as u64);
+        awproject_datatogrid_bracket_fnv_u64(&mut absolute_main_row_hash, row.row_index as u64);
         let flagged = flag_row.get(row.row_index).copied().ok_or_else(|| {
             format!(
                 "the frozen AWProject DataToGrid first source block row {} has no FLAG_ROW value",
@@ -7309,7 +7373,87 @@ fn awproject_datatogrid_bracket_first_row_receipt(
         row_flags_hash = row_flags_hash.wrapping_mul(0x0000_0100_0000_01b3);
         flagged_rows += usize::from(flagged);
     }
-    Ok((row_ids_hash, row_flags_hash, flagged_rows))
+    let selected_row_first = selected_row_first.expect("non-empty first_rows");
+    let selected_row_last = selected_row_last.expect("non-empty first_rows");
+    let channel_read_range = channel_read_range.ok_or_else(|| {
+        "the AWProject DataToGrid first source block has no contiguous channel read range"
+            .to_string()
+    })?;
+    let channel_end = channel_read_range.end_exclusive();
+    let source_frequencies_hz = table_values
+        .spw_freqs_hz
+        .get(channel_read_range.start..channel_end)
+        .ok_or_else(|| {
+            format!(
+                "the AWProject DataToGrid channel range {}..{} exceeds SPW {} channel count {}",
+                channel_read_range.start,
+                channel_end,
+                table_values.spw_id,
+                table_values.spw_freqs_hz.len()
+            )
+        })?;
+    let mut chan_map_hash = 0xcbf2_9ce4_8422_2325_u64;
+    awproject_datatogrid_bracket_fnv_u64(&mut chan_map_hash, source_frequencies_hz.len() as u64);
+    for _ in source_frequencies_hz {
+        awproject_datatogrid_bracket_fnv_u64(&mut chan_map_hash, 0);
+    }
+    let (parallel_hands, _) = PlaneStokes::I
+        .derive_pair_selection(&table_values.corr_types)
+        .map_err(|error| error.to_string())?;
+    let mut pol_map_hash = 0xcbf2_9ce4_8422_2325_u64;
+    awproject_datatogrid_bracket_fnv_u64(&mut pol_map_hash, table_values.corr_types.len() as u64);
+    for corr_index in 0..table_values.corr_types.len() {
+        let mapped = if corr_index == parallel_hands.0 || corr_index == parallel_hands.1 {
+            0_i64
+        } else {
+            -1_i64
+        };
+        awproject_datatogrid_bracket_fnv_u64(&mut pol_map_hash, mapped as u64);
+    }
+    let reference_frequency_hz = source_frequencies_hz.first().copied().ok_or_else(|| {
+        "the AWProject DataToGrid first source block selected no frequencies".to_string()
+    })?;
+    let frequency_scale = mfs_imaging_frequency_scale(
+        table_values.freq_ref,
+        reference_frequency_hz,
+        &first_rows[0],
+        derived_engine,
+    )?;
+    let mut freq_hash = 0xcbf2_9ce4_8422_2325_u64;
+    awproject_datatogrid_bracket_fnv_u64(&mut freq_hash, source_frequencies_hz.len() as u64);
+    let mut freq_first_bits = None;
+    let mut freq_last_bits = None;
+    for &source_frequency_hz in source_frequencies_hz {
+        let frequency_bits = (source_frequency_hz * frequency_scale).to_bits();
+        freq_first_bits.get_or_insert(frequency_bits);
+        freq_last_bits = Some(frequency_bits);
+        awproject_datatogrid_bracket_fnv_u64(&mut freq_hash, frequency_bits);
+    }
+    Ok(AwProjectDataToGridObservedFirstBuffer {
+        selected_row_begin: selected_row_first,
+        selected_row_end: selected_row_last.saturating_add(1),
+        selected_row_count: first_rows.len(),
+        selected_row_hash,
+        selected_row_first,
+        selected_row_last,
+        absolute_main_row_count: first_rows.len(),
+        absolute_main_row_hash,
+        absolute_main_row_first: first_rows[0].row_index,
+        absolute_main_row_last: first_rows.last().expect("non-empty first_rows").row_index,
+        row_flags_count: first_rows.len(),
+        row_flags_hash,
+        flagged_rows,
+        n_data_chan: source_frequencies_hz.len(),
+        n_data_pol: table_values.corr_types.len(),
+        chan_map_count: source_frequencies_hz.len(),
+        chan_map_hash,
+        pol_map_count: table_values.corr_types.len(),
+        pol_map_hash,
+        freq_count: source_frequencies_hz.len(),
+        freq_hash,
+        freq_first_bits: freq_first_bits.expect("non-empty source frequencies"),
+        freq_last_bits: freq_last_bits.expect("non-empty source frequencies"),
+    })
 }
 
 fn validate_awproject_datatogrid_bracket_cli(config: &CliConfig) -> Result<(), String> {
@@ -7390,14 +7534,20 @@ fn validate_awproject_datatogrid_bracket_cli(config: &CliConfig) -> Result<(), S
     Ok(())
 }
 
+struct AwProjectDataToGridBracketSelectionContext<'a> {
+    actual_field_ids: &'a BTreeSet<i32>,
+    actual_spws: &'a BTreeSet<i32>,
+    all_selected_rows: &'a [SelectedMainRow],
+    first_plan: &'a PreparedMfsDdidPlan,
+    first_rows: &'a [SelectedMainRow],
+    flag_row: &'a [bool],
+    planned_source_blocks: usize,
+    derived_engine: Option<&'a MsCalEngine>,
+}
+
 fn install_awproject_datatogrid_bracket_selection(
     config: &CliConfig,
-    actual_field_ids: &BTreeSet<i32>,
-    actual_spws: &BTreeSet<i32>,
-    first_batch_spw: i32,
-    first_rows: &[SelectedMainRow],
-    flag_row: &[bool],
-    planned_source_blocks: usize,
+    context: AwProjectDataToGridBracketSelectionContext<'_>,
 ) -> Result<(), String> {
     if env::var_os(AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV).is_none() {
         return Ok(());
@@ -7413,26 +7563,83 @@ fn install_awproject_datatogrid_bracket_selection(
                 .to_string(),
         );
     }
-    let (first_row_ids_hash, first_row_flags_hash, first_flagged_rows) =
-        awproject_datatogrid_bracket_first_row_receipt(first_rows, flag_row)?;
+    let observed = awproject_datatogrid_bracket_observed_first_buffer(
+        context.all_selected_rows,
+        context.first_rows,
+        context.flag_row,
+        &context.first_plan.table_values,
+        context.first_plan.channel_read_range,
+        context.derived_engine,
+    )?;
     let expected_spws = (2..=17).collect::<BTreeSet<_>>();
-    if actual_field_ids != &BTreeSet::from([1525])
-        || actual_spws != &expected_spws
-        || first_batch_spw != 2
-        || first_rows.len() != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
-        || first_row_ids_hash != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_IDS_HASH
-        || first_row_flags_hash != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_FLAGS_HASH
-        || first_flagged_rows != AWPROJECT_DATATOGRID_BRACKET_FIRST_FLAGGED_ROWS
-        || planned_source_blocks == 0
+    if context.actual_field_ids != &BTreeSet::from([1525])
+        || context.actual_spws != &expected_spws
+        || context.first_plan.table_values.spw_id != 2
+        || context.first_rows.len() != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || observed.selected_row_begin != 0
+        || observed.selected_row_end != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || observed.selected_row_count != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || observed.selected_row_hash != AWPROJECT_DATATOGRID_BRACKET_FIRST_SELECTED_ROW_IDS_HASH
+        || observed.selected_row_first != 0
+        || observed.selected_row_last != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS - 1
+        || observed.absolute_main_row_count != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || observed.absolute_main_row_hash
+            != AWPROJECT_DATATOGRID_BRACKET_FIRST_ABSOLUTE_ROW_IDS_HASH
+        || observed.absolute_main_row_first != AWPROJECT_DATATOGRID_BRACKET_FIRST_ABSOLUTE_ROW
+        || observed.absolute_main_row_last != AWPROJECT_DATATOGRID_BRACKET_LAST_ABSOLUTE_ROW
+        || observed.row_flags_count != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || observed.row_flags_hash != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_FLAGS_HASH
+        || observed.flagged_rows != AWPROJECT_DATATOGRID_BRACKET_FIRST_FLAGGED_ROWS
+        || observed.n_data_chan != 64
+        || observed.n_data_pol != 4
+        || observed.chan_map_count != 64
+        || observed.pol_map_count != 4
+        || observed.freq_count != 64
+        || context.planned_source_blocks == 0
     {
         return Err(format!(
-            "the actual AWProject DataToGrid source plan is not the frozen CASA first-VB row: fields={actual_field_ids:?} spws={actual_spws:?} first_spw={first_batch_spw} first_rows={} first_row_ids_hash={first_row_ids_hash} first_row_flags_hash={first_row_flags_hash} first_flagged_rows={first_flagged_rows} source_blocks={planned_source_blocks}",
-            first_rows.len()
+            "the actual AWProject DataToGrid source plan is not the frozen CASA first-VB boundary: fields={:?} spws={:?} first_spw={} observed={observed:?} source_blocks={}",
+            context.actual_field_ids,
+            context.actual_spws,
+            context.first_plan.table_values.spw_id,
+            context.planned_source_blocks,
         ));
     }
     let marker = format!(
-        "field=1525;spws=2-17;first_spw={first_batch_spw};first_rows={};source_blocks={planned_source_blocks};row_ids_hash={first_row_ids_hash};row_flags_hash={first_row_flags_hash};flagged_rows={first_flagged_rows}",
-        first_rows.len()
+        "field=1525;spws=2-17;first_spw={};source_blocks={};\
+         selected_row_begin={};selected_row_end={};selected_row_count={};\
+         selected_row_hash={};selected_row_first={};selected_row_last={};\
+         absolute_main_row_count={};absolute_main_row_hash={};\
+         absolute_main_row_first={};absolute_main_row_last={};\
+         row_flags_count={};row_flags_hash={};flagged_rows={};\
+         n_data_chan={};n_data_pol={};chan_map_count={};chan_map_hash={};\
+         pol_map_count={};pol_map_hash={};freq_count={};freq_hash={};\
+         freq_first_bits={};freq_last_bits={}",
+        context.first_plan.table_values.spw_id,
+        context.planned_source_blocks,
+        observed.selected_row_begin,
+        observed.selected_row_end,
+        observed.selected_row_count,
+        observed.selected_row_hash,
+        observed.selected_row_first,
+        observed.selected_row_last,
+        observed.absolute_main_row_count,
+        observed.absolute_main_row_hash,
+        observed.absolute_main_row_first,
+        observed.absolute_main_row_last,
+        observed.row_flags_count,
+        observed.row_flags_hash,
+        observed.flagged_rows,
+        observed.n_data_chan,
+        observed.n_data_pol,
+        observed.chan_map_count,
+        observed.chan_map_hash,
+        observed.pol_map_count,
+        observed.pol_map_hash,
+        observed.freq_count,
+        observed.freq_hash,
+        observed.freq_first_bits,
+        observed.freq_last_bits,
     );
     // The bracket is an explicitly single-process, abort-before-FFT
     // diagnostic. Install its private selection handoff before any imaging
@@ -9245,12 +9452,16 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         .collect::<BTreeSet<_>>();
     install_awproject_datatogrid_bracket_selection(
         config,
-        &actual_field_ids,
-        &actual_spws,
-        first_plan.table_values.spw_id as i32,
-        &first_plan.active_selected_rows[..first_rows_len],
-        flag_row,
-        stream_block_count,
+        AwProjectDataToGridBracketSelectionContext {
+            actual_field_ids: &actual_field_ids,
+            actual_spws: &actual_spws,
+            all_selected_rows: &selection.selected_rows,
+            first_plan,
+            first_rows: &first_plan.active_selected_rows[..first_rows_len],
+            flag_row,
+            planned_source_blocks: stream_block_count,
+            derived_engine: derived_engine.as_ref(),
+        },
     )?;
     let mut first_plane = prepare_mfs_mosaic_source_row_block_plane(
         ms,
@@ -52242,6 +52453,108 @@ mod tests {
 
     static IMAGER_PROGRESS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
     static SPECTRAL_SLAB_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    fn aw_bracket_test_row(row_index: usize) -> SelectedMainRow {
+        SelectedMainRow {
+            row_index,
+            field_id: 1525,
+            ddid: 2,
+            spw_id: 2,
+            polarization_id: 0,
+            antenna1_id: 0,
+            antenna2_id: 1,
+            time_mjd_seconds: Some(0.0),
+        }
+    }
+
+    fn aw_bracket_test_table_values(channel_count: usize) -> PreparedSelectionTableValues {
+        PreparedSelectionTableValues {
+            spw_id: 2,
+            spw_freqs_hz: (0..channel_count)
+                .map(|channel| 1.0e9 + channel as f64 * 2.0e6)
+                .collect(),
+            spw_widths_hz: vec![2.0e6; channel_count],
+            freq_ref: FrequencyRef::LSRK,
+            corr_types: vec![5, 6, 7, 8],
+        }
+    }
+
+    #[test]
+    fn awproject_datatogrid_bracket_distinguishes_absolute_and_selected_rows() {
+        let all_rows = (0..4)
+            .map(|offset| aw_bracket_test_row(100 + offset))
+            .collect::<Vec<_>>();
+        let mut flag_row = vec![false; 104];
+        flag_row[100] = true;
+        let observed = awproject_datatogrid_bracket_observed_first_buffer(
+            &all_rows,
+            &all_rows[..2],
+            &flag_row,
+            &aw_bracket_test_table_values(2),
+            Some(SelectedChannelReadRange::new(0, 2)),
+            None,
+        )
+        .expect("observe ordered first source rows");
+        assert_eq!(observed.selected_row_first, 0);
+        assert_eq!(observed.selected_row_last, 1);
+        assert_eq!(observed.absolute_main_row_first, 100);
+        assert_eq!(observed.absolute_main_row_last, 101);
+        assert_ne!(observed.selected_row_hash, observed.absolute_main_row_hash);
+        assert_eq!(observed.flagged_rows, 1);
+
+        let reordered = vec![all_rows[1].clone(), all_rows[0].clone()];
+        assert!(
+            awproject_datatogrid_bracket_observed_first_buffer(
+                &all_rows,
+                &reordered,
+                &flag_row,
+                &aw_bracket_test_table_values(2),
+                Some(SelectedChannelReadRange::new(0, 2)),
+                None,
+            )
+            .is_err()
+        );
+        let missing = vec![aw_bracket_test_row(999)];
+        assert!(
+            awproject_datatogrid_bracket_observed_first_buffer(
+                &all_rows,
+                &missing,
+                &flag_row,
+                &aw_bracket_test_table_values(2),
+                Some(SelectedChannelReadRange::new(0, 2)),
+                None,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn awproject_datatogrid_bracket_observes_production_maps_and_frequencies() {
+        let rows = vec![aw_bracket_test_row(0)];
+        let table_values = aw_bracket_test_table_values(64);
+        let observed = awproject_datatogrid_bracket_observed_first_buffer(
+            &rows,
+            &rows,
+            &[false],
+            &table_values,
+            Some(SelectedChannelReadRange::new(0, 64)),
+            None,
+        )
+        .expect("observe live MFS channel, polarization, and frequency route");
+        assert_eq!(observed.chan_map_count, 64);
+        assert_eq!(observed.chan_map_hash, 2_111_453_637_644_839_429);
+        assert_eq!(observed.pol_map_count, 4);
+        assert_eq!(observed.pol_map_hash, 13_222_926_617_229_668_273);
+        assert_eq!(observed.freq_count, 64);
+        assert_eq!(
+            observed.freq_first_bits,
+            table_values.spw_freqs_hz[0].to_bits()
+        );
+        assert_eq!(
+            observed.freq_last_bits,
+            table_values.spw_freqs_hz[63].to_bits()
+        );
+    }
 
     #[test]
     fn casa_obsinfo_longitude_uses_direct_two_pi_wrap() {
