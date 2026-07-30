@@ -4800,6 +4800,98 @@ image product, or performance measurement ran. The 4,096-square full-16-SPW
 row remains unpromoted, and the full-geometry memory campaign remains gated
 behind that promotion.
 
+### 2026-07-30 exact-geometry and Briggs V4 discriminator
+
+The two V3 owners were implemented as shared production corrections and
+checkpointed at
+`9a6e3516d56a7fb1eea778de4887c2e85d7c15fb`. The AW mosaic path now executes
+the two explicit fixed-J2000 `UVWMachine` stages used by CASA
+`FTMachine::girarUVW`, including the AW ingress and egress sign conventions
+and the image `DirectionCoordinate` radians-to-WCS-degrees rounding boundary.
+The ordinary same-field standard-imaging shortcut remains unchanged. The
+standard-MFS Briggs path now retains its robust scale as f64 and casts only at
+the f32 output boundary; the cube-specific f32 contract remains unchanged.
+
+A same-conversation Oracle review supported the shared `casa-ms` ownership,
+AW-only sign boundary, removal of the AW same-field shortcut, and the bounded
+325-row proof before another image. It recommended a non-fused scalar graph.
+That arithmetic recommendation was rejected for this checkpoint because an
+independent C++ probe linked against CASA 6.7.5.18's bundled casacore
+reproduced the frozen row-0 U, V, W, and differential-phase bits only with the
+observed contracted multiply-add graph. The receipt below, rather than either
+model's preference, remains authoritative.
+
+The V4 diagnostic was executed once from that exact clean, pushed revision.
+It stopped before opening the CF cache, allocating grid storage, dispatching
+gridding, FFT, image-product formation, or deconvolution. The immutable output
+directory is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/casa-rs-aw-datagrid-native-components-4096-full16-first-vb-v4`.
+The receipt, comparison, provenance, casa-rs log, and comparison-log
+whole-file SHA-256 digests are, respectively:
+
+- `e46219fa27c1c99867223c65efab77a5885a869ea91f0d3d789ea5797b34c8bd`;
+- `f027edd99db0e19acb5b769563339e7f1e15c6d414d5e1526c9095f6942d2ca1`;
+- `2c8854faffaa37555928ea5eb30bac4c57b1aed0a4052e0dfa5d0305e5ece7d2`;
+- `12d67a93576e13b1d2ecfa2497fda108272a156e232a68e3040a766fb5a161c0`;
+  and
+- `f13e6a3845b1b14aba13475b1e27649d352622cd19f22e3c40cc415f70a81a3e`.
+
+The receipt and comparison embedded-evidence digests are
+`9aff49bc26f1dfb05c24131c8ad9b39ec23e4736bdd2b54a73ebdc6b487f5a09`
+and
+`e7f88ad2a4c4bd4788ff7a0a2797a6a7d36261f832ca1826735dde60920533f3`.
+The exact binary, launcher, validator, and `Cargo.lock` SHA-256 digests are
+`51409b2bff7ddbe9ab3a60c248548e438068bf8bec21821e38c40f7cc6425829`,
+`6fd9289754c4246b3ea8e3ae7bcdb7bc9716314c04758e153302ed15ea7debce`,
+`ba18dd6d6519a6526ea89b496eea92763bd4c036d710570c895b024d7b6690ba`,
+and
+`0a30771fc5777290edf379b201ec828af0c8ab7ebb933cd5f3c7ed2c97a19b5c`.
+The independent validator classified the result as
+`valid-native-component-mismatch`.
+
+The eight previously exact components and every selection/count invariant
+remain exact. The admitted-source and nonzero-weight counts are `12,359`, the
+zero-weight count is `8,441`, and the flagged-row count is `48`. The two
+changed component hashes remain non-exact:
+
+- UVW and differential phase: casa-rs `6770548214471482891`, CASA
+  `6884923150254773287`; and
+- imaging weights: casa-rs `12103564886252216529`, CASA
+  `2430234571011807313`.
+
+The new geometry is materially closer and reproduces all four frozen row-0
+values bit for bit, but it is not exact over the complete source block. U is
+exact on `317/325` rows, V on `274/325`, W on `196/325`, and differential
+phase on `290/325`. The first difference is V at row 2 by one f64 ULP; maximum
+bit-distance differences are 21 ULPs for U, 9 for V, 404 for W, and 27 for
+differential phase. This rejects treating one exact row as proof of the whole
+CASA operation graph.
+
+The attempted Briggs correction also rejects the assumed final-cast boundary.
+It made `16,607/20,800` weights exact, leaving `4,193` mismatches: `4,186` by
+one f32 ULP and `7` by two ULPs. That is worse than V3's `865` mismatches, so
+the f64-through-division implementation is negative evidence rather than a
+promotion. The first difference is row 0 channel 20, casa-rs bits
+`1100089649` versus CASA bits `1100089650`. The next correction must reproduce
+CASA's exact intermediate cast and division boundary from source/instrumented
+values rather than continue formula guessing.
+
+The affected Rust suites passed with `341`, `390`, and `362` tests,
+respectively, plus `25` explicit ignored data fixtures. Warning-free clippy
+passed for `casa-ms`, `casa-imaging`, and `casars-imager`; all `13` independent
+Python validator tests passed in bounded chunks; Ruff, Python compilation,
+shell syntax, formatting, and `git diff --check` passed. No hosted-CI wait was
+added.
+
+The remaining correctness blocker is now narrower but still real: reproduce
+the exact per-row CASA `UVWMachine` scalar graph across all 325 rows and the
+exact standard-MFS Briggs cast boundary, then prove all ten native component
+hashes and both TT geometry hashes before returning to the 4,096-square
+four-SPW image gate. No CASA process, unchanged reference, 4,096-square image
+row, 12,150-square development clean, or full-geometry memory-policy row ran.
+The 4,096-square full-16-SPW row and the required memory campaign remain
+unpromoted.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
