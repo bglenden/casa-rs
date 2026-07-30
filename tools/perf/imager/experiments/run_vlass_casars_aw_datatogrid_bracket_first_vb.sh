@@ -7,7 +7,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 external_root="${CASA_RS_VLASS_EXPERIMENT_ROOT:-/Volumes/GLENDENNING/casa-rs-vlass/issue-446}"
 expected_head="${1:-${CASA_RS_VLASS_EXPECTED_HEAD:-}}"
 branch="codex/vlass-w1-evidence-fiducials"
-case_dir="${external_root}/artifacts/experiments/casa-rs-aw-datagrid-bracket-4096-full16-first-vb-v3"
+case_dir="${external_root}/artifacts/experiments/casa-rs-aw-datagrid-bracket-4096-full16-first-vb-v4"
 receipt="${case_dir}/receipt.json"
 run_log="${case_dir}/casars-imager.log"
 comparison_log="${case_dir}/comparison.log"
@@ -103,7 +103,7 @@ require_clean_checkout
 
 mkdir "${case_dir}"
 {
-    printf 'schema\tcasa-rs-vlass-aw-datagrid-bracket-provenance-v3\n'
+    printf 'schema\tcasa-rs-vlass-aw-datagrid-bracket-provenance-v4\n'
     printf 'started_at_utc\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf 'branch\t%s\n' "${branch}"
     printf 'revision\t%s\n' "${expected_head}"
@@ -218,7 +218,7 @@ rg -F \
     fail "the bracket unexpectedly wrote an imaging product; preserve ${case_dir}"
 
 python3 -c \
-    'import json,sys; r=json.load(open(sys.argv[1])); assert r["schema"] == "casa-rs-aw-datagrid-bracket-envelope-v3"; e=r["evidence"]; assert e["schema"] == "casa-rs-aw-datagrid-bracket-v3"; assert e["status"] == "completed-before-finalize"; assert e["reason"] == "observed-selection-grid-and-production-sumwt-boundary"; assert e["formed_image"] is False; assert e["normalization"] == "not-entered"; assert e["fft"] == "not-entered"; assert e["products"] == "not-entered"; assert e["completed_calls"] == 2; assert e["completed_blocks"] == 1; assert e["last_window_in_replay_block"] is True; assert e["observed_first_buffer"]["row_ids_count"] == 325; assert e["absolute_main_rows"]["first"] == 353600; assert e["absolute_main_rows"]["last"] == 353924; assert len(e["block_boundaries"]) == 1; assert len(e["block_boundaries"][0]["terms"]) == 2' \
+    'import json,sys; r=json.load(open(sys.argv[1])); assert r["schema"] == "casa-rs-aw-datagrid-bracket-envelope-v4"; e=r["evidence"]; assert e["schema"] == "casa-rs-aw-datagrid-bracket-v4"; assert e["status"] == "completed-before-finalize"; assert e["reason"] == "observed-selection-grid-and-production-sumwt-boundary"; assert e["formed_image"] is False; assert e["normalization"] == "not-entered"; assert e["fft"] == "not-entered"; assert e["products"] == "not-entered"; assert e["completed_calls"] == 2; assert e["completed_blocks"] == 1; assert e["last_window_in_replay_block"] is True; assert e["observed_first_buffer"]["row_ids_count"] == 325; assert e["absolute_main_rows"]["first"] == 353600; assert e["absolute_main_rows"]["last"] == 353924; assert len(e["block_boundaries"]) == 1; assert len(e["block_boundaries"][0]["terms"]) == 2' \
     "${receipt}"
 
 set +e

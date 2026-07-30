@@ -20280,7 +20280,7 @@ impl AwProjectResidualPrefixHash {
 #[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV: &str = "CASA_RS_AW_BRACKET_OUTPUT";
 #[cfg(all(target_os = "macos", not(coverage)))]
-const AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV: &str = "CASA_RS_INTERNAL_AW_BRACKET_SELECTION_V3";
+const AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV: &str = "CASA_RS_INTERNAL_AW_BRACKET_SELECTION_V4";
 #[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS: usize = 325;
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -21094,7 +21094,7 @@ fn maybe_run_awproject_datatogrid_bracket(
     );
     let evidence = format!(
         "{{\n\
-         \"schema\":\"casa-rs-aw-datagrid-bracket-v3\",\n\
+         \"schema\":\"casa-rs-aw-datagrid-bracket-v4\",\n\
          \"status\":\"completed-before-finalize\",\n\
          \"reason\":\"observed-selection-grid-and-production-sumwt-boundary\",\n\
          \"role\":\"bounded-correctness-oracle-not-performance-evidence\",\n\
@@ -21155,7 +21155,7 @@ fn maybe_run_awproject_datatogrid_bracket(
     let evidence_sha256 = format!("{:x}", Sha256::digest(embedded_evidence.as_bytes()));
     let payload = format!(
         "{{\n\
-         \"schema\":\"casa-rs-aw-datagrid-bracket-envelope-v3\",\n\
+         \"schema\":\"casa-rs-aw-datagrid-bracket-envelope-v4\",\n\
          \"content_address\":{{\"algorithm\":\"sha256\",\
          \"scope\":\"embedded-evidence-json-utf8\",\"digest\":\"{evidence_sha256}\"}},\n\
          \"evidence\":{}\n\
@@ -64348,9 +64348,9 @@ mod tests {
             .unwrap_or_else(|error| panic!("read {}: {error}", casa_path.display()));
         let casa: serde_json::Value = serde_json::from_str(&casa_payload)
             .unwrap_or_else(|error| panic!("parse {}: {error}", casa_path.display()));
-        assert_eq!(value["schema"], "casa-rs-aw-datagrid-bracket-envelope-v3");
+        assert_eq!(value["schema"], "casa-rs-aw-datagrid-bracket-envelope-v4");
         let evidence = &value["evidence"];
-        assert_eq!(evidence["schema"], "casa-rs-aw-datagrid-bracket-v3");
+        assert_eq!(evidence["schema"], "casa-rs-aw-datagrid-bracket-v4");
         assert_eq!(evidence["status"], "completed-before-finalize");
         assert_eq!(
             evidence["reason"],
