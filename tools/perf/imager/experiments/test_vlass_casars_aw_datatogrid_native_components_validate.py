@@ -85,7 +85,8 @@ def candidate_rows_from(
                     "absolute_main_row": 353_600 + row["row"],
                     "raw_uvw_bits": list(uvw),
                     "gridft_density_uvw_bits": list(uvw),
-                    "negated_uv_transform_uvw_bits": subject._negated_raw_uvw(uvw),
+                    "casa_rs_internal_uvw_bits": subject._negated_raw_uvw(uvw),
+                    "negated_uv_transform_uvw_bits": list(uvw),
                     "first_parallel_hand_natural_weight_bits": [f32_bits(1.0)]
                     * subject.CHANNEL_COUNT,
                     "second_parallel_hand_natural_weight_bits": [f32_bits(1.0)]
@@ -250,7 +251,7 @@ def candidate_evidence(
     return evidence
 
 
-class NativeComponentsV3ValidatorTests(unittest.TestCase):
+class NativeComponentsV4ValidatorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -342,7 +343,8 @@ class NativeComponentsV3ValidatorTests(unittest.TestCase):
         evidence = self.evidence()
         row = evidence["rows"][9]
         row["uvw_bits"][1] ^= 1
-        row["auxiliary"]["negated_uv_transform_uvw_bits"] = subject._negated_raw_uvw(
+        row["auxiliary"]["negated_uv_transform_uvw_bits"] = list(row["uvw_bits"])
+        row["auxiliary"]["casa_rs_internal_uvw_bits"] = subject._negated_raw_uvw(
             row["uvw_bits"]
         )
         refresh_candidate(evidence, self.casa_components, self.casa_calls)
@@ -438,7 +440,9 @@ class NativeComponentsV3ValidatorTests(unittest.TestCase):
         evidence = self.evidence(candidate_rows_from(raw_rows))
         comparison = self.compare(evidence)["comparison"]
         self.assertFalse(
-            comparison["uvw_hypotheses"]["internal"]["component_exact"]["uvw_dphase"]
+            comparison["uvw_hypotheses"]["published_casa_convention"][
+                "component_exact"
+            ]["uvw_dphase"]
         )
         self.assertFalse(
             comparison["uvw_hypotheses"]["raw"]["component_exact"]["uvw_dphase"]
@@ -447,6 +451,11 @@ class NativeComponentsV3ValidatorTests(unittest.TestCase):
             comparison["uvw_hypotheses"]["negated_raw"]["component_exact"]["uvw_dphase"]
         )
         self.assertTrue(
+            comparison["uvw_hypotheses"]["casa_rs_internal"]["component_exact"][
+                "uvw_dphase"
+            ]
+        )
+        self.assertFalse(
             comparison["uvw_hypotheses"]["negated_internal"]["component_exact"][
                 "uvw_dphase"
             ]
@@ -465,7 +474,7 @@ class NativeComponentsV3ValidatorTests(unittest.TestCase):
     def test_negated_internal_auxiliary_tampering_is_rejected(self) -> None:
         evidence = self.evidence()
         evidence["rows"][3]["auxiliary"]["negated_uv_transform_uvw_bits"][0] ^= 1
-        self.assert_candidate_rejected(evidence, "independently negated internal UVW")
+        self.assert_candidate_rejected(evidence, "published CASA-convention UVW")
 
     def test_row_checkpoint_tampering_is_rejected(self) -> None:
         evidence = self.evidence()

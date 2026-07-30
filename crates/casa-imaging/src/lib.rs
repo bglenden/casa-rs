@@ -39219,12 +39219,14 @@ pub fn build_image_coordinate_system(
 ) -> CoordinateSystem {
     let cell_rad = cell_arcsec * std::f64::consts::PI / (180.0 * 3600.0);
     // CASA's SynthesisParamsImage normalizes the right ascension only when it
-    // constructs the image DirectionCoordinate. Keep the observation-info
-    // pointing center in the original measure representation, but serialize
-    // the image reference longitude in casacore's canonical [0, 2π) range.
+    // constructs the image DirectionCoordinate. DirectionCoordinate then
+    // converts radians to WCS degrees and back; preserve that observable f64
+    // rounding boundary. Keep the observation-info pointing center in the
+    // original measure representation.
+    let to_degrees = 1.0 / (std::f64::consts::PI / 180.0);
     let image_phase_center = [
-        phase_center[0].rem_euclid(std::f64::consts::TAU),
-        phase_center[1],
+        (phase_center[0].rem_euclid(std::f64::consts::TAU) * to_degrees) / to_degrees,
+        (phase_center[1] * to_degrees) / to_degrees,
     ];
     let mut coords = CoordinateSystem::new();
     coords.add_coordinate(DirectionCoordinate::new(
@@ -59606,7 +59608,7 @@ mod tests {
 
         assert_eq!(
             coords.coordinate(0).reference_value(),
-            vec![3.545_602_179_904_208, 0.293_215_314_333_100_33]
+            vec![3.545_602_179_904_207_7, 0.293_215_314_333_100_33]
         );
         let world = coords.coordinate(0).to_world(&[0.0, 0.0]).unwrap();
         assert_eq!(world, vec![3.563_967_168_628_84, 0.275_496_026_491_076_3]);

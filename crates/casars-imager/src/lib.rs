@@ -7283,9 +7283,9 @@ const AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV: &str =
 const AWPROJECT_NATIVE_GEOMETRY_AUDIT_SELECTION_ENV: &str =
     "CASA_RS_INTERNAL_AW_NATIVE_GEOMETRY_AUDIT_SELECTION_V2";
 const AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV: &str =
-    "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_OUTPUT_V3";
+    "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_OUTPUT_V4";
 const AWPROJECT_NATIVE_COMPONENTS_AUDIT_SELECTION_ENV: &str =
-    "CASA_RS_INTERNAL_AW_NATIVE_COMPONENTS_AUDIT_SELECTION_V3";
+    "CASA_RS_INTERNAL_AW_NATIVE_COMPONENTS_AUDIT_SELECTION_V4";
 #[allow(unexpected_cfgs)]
 const AWPROJECT_LITERAL_COEFFICIENT_AUDIT_CORE_HOOK_COMPILED: bool =
     cfg!(all(target_os = "macos", not(coverage)));
@@ -7303,7 +7303,7 @@ enum AwProjectDataToGridDiagnosticMode {
     Tt0ArithmeticCompatV1,
     LiteralCoefficientAuditV1,
     NativeGeometryAuditV2,
-    NativeComponentsAuditV3,
+    NativeComponentsAuditV4,
 }
 
 impl AwProjectDataToGridDiagnosticMode {
@@ -7313,7 +7313,7 @@ impl AwProjectDataToGridDiagnosticMode {
             Self::Tt0ArithmeticCompatV1 => AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV,
             Self::LiteralCoefficientAuditV1 => AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV,
             Self::NativeGeometryAuditV2 => AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV,
-            Self::NativeComponentsAuditV3 => AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV,
+            Self::NativeComponentsAuditV4 => AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV,
         }
     }
 
@@ -7323,7 +7323,7 @@ impl AwProjectDataToGridDiagnosticMode {
             Self::Tt0ArithmeticCompatV1 => AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV,
             Self::LiteralCoefficientAuditV1 => AWPROJECT_LITERAL_COEFFICIENT_AUDIT_SELECTION_ENV,
             Self::NativeGeometryAuditV2 => AWPROJECT_NATIVE_GEOMETRY_AUDIT_SELECTION_ENV,
-            Self::NativeComponentsAuditV3 => AWPROJECT_NATIVE_COMPONENTS_AUDIT_SELECTION_ENV,
+            Self::NativeComponentsAuditV4 => AWPROJECT_NATIVE_COMPONENTS_AUDIT_SELECTION_ENV,
         }
     }
 
@@ -7349,10 +7349,10 @@ impl AwProjectDataToGridDiagnosticMode {
                 ("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_BLOCKS_V2", "1"),
                 ("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_TERMS_V2", "2"),
             ],
-            Self::NativeComponentsAuditV3 => [
-                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V3", "4096"),
-                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V3", "1"),
-                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V3", "2"),
+            Self::NativeComponentsAuditV4 => [
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V4", "4096"),
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V4", "1"),
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V4", "2"),
             ],
         }
     }
@@ -7390,7 +7390,7 @@ fn awproject_datatogrid_diagnostic_request()
             native_geometry_audit_output,
         ),
         (
-            AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV3,
+            AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV4,
             native_components_audit_output,
         ),
     ]
@@ -7641,7 +7641,7 @@ fn validate_awproject_datatogrid_bracket_cli(config: &CliConfig) -> Result<(), S
             AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2 => {
                 "native stream/geometry audit"
             }
-            AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV3 => "native component audit",
+            AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV4 => "native component audit",
         };
         return Err(format!(
             "refusing to overwrite AWProject {diagnostic} receipt {}",
@@ -7698,7 +7698,7 @@ fn validate_awproject_datatogrid_bracket_cli(config: &CliConfig) -> Result<(), S
                 .to_string(),
         );
     }
-    if request.mode == AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV3
+    if request.mode == AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV4
         && (!matches!(
             config.weighting,
             WeightingMode::Briggs { robust } if robust.to_bits() == 1.0_f32.to_bits()
@@ -7708,7 +7708,7 @@ fn validate_awproject_datatogrid_bracket_cli(config: &CliConfig) -> Result<(), S
             || standard_mfs_streaming_weight_density_mode(config) != WeightDensityMode::Combined)
     {
         return Err(
-            "the AWProject native-component-v3 audit requires the frozen uvrange='<12km', \
+            "the AWProject native-component-v4 audit requires the frozen uvrange='<12km', \
              Briggs robust=1.0, public perchanweightdensity=true MFS request, mosweight=false, \
              and resolved combined density mode"
                 .to_string(),
@@ -7782,7 +7782,7 @@ fn awproject_datatogrid_selection_marker_for_mode(
         AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1
             | AwProjectDataToGridDiagnosticMode::LiteralCoefficientAuditV1
             | AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2
-            | AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV3
+            | AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV4
     ) {
         marker.push_str(&format!(
             ";selected_corr_first_index={};selected_corr_second_index={};\
@@ -7893,7 +7893,7 @@ fn install_awproject_datatogrid_bracket_selection(
         AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1
             | AwProjectDataToGridDiagnosticMode::LiteralCoefficientAuditV1
             | AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2
-            | AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV3
+            | AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV4
     ) {
         validate_awproject_tt0_arithmetic_compat_corr_order(&observed)?;
     }
@@ -8610,7 +8610,7 @@ fn awproject_native_components_evidence(
         || frequencies_hz.len() != 64
     {
         return Err(format!(
-            "the AWProject native-component-v3 audit requires a 325-row, 64-channel, \
+            "the AWProject native-component-v4 audit requires a 325-row, 64-channel, \
              four-correlation source block beginning at channel zero; observed rows={} \
              channel_start={} channels={} correlations={} frequencies={}",
             source_block.row_count(),
@@ -8623,7 +8623,7 @@ fn awproject_native_components_evidence(
     let spw_id = source_block
         .geometry_rows
         .first()
-        .ok_or_else(|| "the AWProject native-component-v3 source block is empty".to_string())?
+        .ok_or_else(|| "the AWProject native-component-v4 source block is empty".to_string())?
         .selected_row
         .spw_id;
     if spw_id != 2
@@ -8633,7 +8633,7 @@ fn awproject_native_components_evidence(
             .any(|row| row.selected_row.spw_id != spw_id)
     {
         return Err(format!(
-            "the AWProject native-component-v3 audit requires homogeneous SPW 2 rows; \
+            "the AWProject native-component-v4 audit requires homogeneous SPW 2 rows; \
              observed first SPW {spw_id}"
         ));
     }
@@ -8723,9 +8723,11 @@ fn awproject_native_components_evidence(
             source_block.flag_row_value(flag_row, row_id, geometry_row.selected_row.row_index)?;
         flagged_rows += usize::from(row_flagged);
         row_flags_hash.boolean(row_flagged);
+        let casa_uvw_m =
+            awproject_native_geometry_negate_uv_hypothesis_m(geometry_row.transform.uvw_m);
 
         uvw_dphase_hash.u64(row_id as u64);
-        for component in geometry_row.transform.uvw_m {
+        for component in casa_uvw_m {
             uvw_dphase_hash.f64(component);
         }
         uvw_dphase_hash.f64(geometry_row.transform.phase_shift_m);
@@ -8737,7 +8739,7 @@ fn awproject_native_components_evidence(
         tt1_geometry_hash.u64(row_id as u64);
         tt1_geometry_hash.boolean(row_flagged);
         if !row_flagged {
-            for component in geometry_row.transform.uvw_m {
+            for component in casa_uvw_m {
                 stream_hash.f64(component);
                 tt0_geometry_hash.f64(component);
                 tt1_geometry_hash.f64(component);
@@ -8840,10 +8842,7 @@ fn awproject_native_components_evidence(
         raw_rows.push(serde_json::json!({
             "row": row_id,
             "row_flag": row_flagged,
-            "uvw_bits": geometry_row
-                .transform
-                .uvw_m
-                .map(f64::to_bits),
+            "uvw_bits": casa_uvw_m.map(f64::to_bits),
             "dphase_bits": geometry_row.transform.phase_shift_m.to_bits(),
             "flag_masks": row_flag_masks,
             "imaging_weight_bits": row_imaging_weight_bits,
@@ -8852,10 +8851,8 @@ fn awproject_native_components_evidence(
                 "absolute_main_row": geometry_row.selected_row.row_index,
                 "raw_uvw_bits": geometry_row.raw_uvw_m.map(f64::to_bits),
                 "gridft_density_uvw_bits": geometry_row.gridft_density_uvw_m.map(f64::to_bits),
-                "negated_uv_transform_uvw_bits":
-                    awproject_native_geometry_negate_uv_hypothesis_m(
-                        geometry_row.transform.uvw_m
-                    ).map(f64::to_bits),
+                "casa_rs_internal_uvw_bits": geometry_row.transform.uvw_m.map(f64::to_bits),
+                "negated_uv_transform_uvw_bits": casa_uvw_m.map(f64::to_bits),
                 "first_parallel_hand_natural_weight_bits": first_natural_weight_bits,
                 "second_parallel_hand_natural_weight_bits": second_natural_weight_bits,
                 "collapsed_natural_weight_bits": collapsed_natural_weight_bits,
@@ -8981,7 +8978,7 @@ fn awproject_native_components_evidence(
     };
 
     Ok(serde_json::json!({
-        "schema": "casa-rs-aw-datatogrid-native-components-audit-v3",
+        "schema": "casa-rs-aw-datatogrid-native-components-audit-v4",
         "status": "completed-controlled-stop",
         "result": result,
         "result_taxonomy": [
@@ -9015,7 +9012,7 @@ fn awproject_native_components_evidence(
             "float_encoding": "ieee754-bits-little-endian",
             "boolean_encoding": "one-byte-0-or-1",
             "recomposition": "casa-6.7.5.18-bracket-hash-call-inputs",
-            "actual_uvw": "casa-rs-prepared-geometry-transform-uvw-m",
+            "actual_uvw": "casa-convention-reexpression-of-casa-rs-prepared-geometry-transform-uvw-m",
             "actual_phase": "casa-rs-prepared-geometry-phase-shift-m",
             "flag_masks": "unmodified-four-correlation-source-FLAG",
             "imaging_weights": "production-global-Briggs-plan-with-raw-UVW-f32-rounded-density-lookup",
@@ -9055,7 +9052,7 @@ fn awproject_native_components_evidence(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn maybe_run_awproject_native_components_audit_v3(
+fn maybe_run_awproject_native_components_audit_v4(
     ms: &MeasurementSet,
     config: &CliConfig,
     data_column: VisibilityDataColumn,
@@ -9079,18 +9076,18 @@ fn maybe_run_awproject_native_components_audit_v3(
     let Some(request) = awproject_datatogrid_diagnostic_request()? else {
         return Ok(());
     };
-    if request.mode != AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV3 {
+    if request.mode != AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV4 {
         return Ok(());
     }
     if im_ref_freq_hz.to_bits() != 4_748_556_467_228_999_524 {
         return Err(format!(
-            "the AWProject native-component-v3 audit expected imRefFreq bits \
+            "the AWProject native-component-v4 audit expected imRefFreq bits \
              4748556467228999524, observed {}",
             im_ref_freq_hz.to_bits()
         ));
     }
     let controls = config.aw_project.as_ref().ok_or_else(|| {
-        "the AWProject native-component-v3 audit requires normalized AWProject controls".to_string()
+        "the AWProject native-component-v4 audit requires normalized AWProject controls".to_string()
     })?;
     if controls.mosaic_weighting
         || !matches!(
@@ -9100,7 +9097,7 @@ fn maybe_run_awproject_native_components_audit_v3(
         || standard_mfs_streaming_weight_density_mode(config) != WeightDensityMode::Combined
     {
         return Err(
-            "the AWProject native-component-v3 audit requires the production global \
+            "the AWProject native-component-v4 audit requires the production global \
              mosweight=false Briggs robust=1.0 combined-density plan"
                 .to_string(),
         );
@@ -9111,18 +9108,18 @@ fn maybe_run_awproject_native_components_audit_v3(
         .sum::<usize>();
     if density_source_blocks != 32 {
         return Err(format!(
-            "the AWProject native-component-v3 audit expected 32 density source blocks, \
+            "the AWProject native-component-v4 audit expected 32 density source blocks, \
              observed {density_source_blocks}"
         ));
     }
     let first_plan = ddid_plans
         .first()
-        .ok_or_else(|| "the AWProject native-component-v3 audit has no DDID plan".to_string())?;
+        .ok_or_else(|| "the AWProject native-component-v4 audit has no DDID plan".to_string())?;
     let first_rows = first_plan
         .active_selected_rows
         .get(..AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS)
         .ok_or_else(|| {
-            "the AWProject native-component-v3 audit has fewer than 325 first-SPW rows".to_string()
+            "the AWProject native-component-v4 audit has fewer than 325 first-SPW rows".to_string()
         })?;
     let observed = awproject_datatogrid_bracket_observed_first_buffer(
         &selection.selected_rows,
@@ -9133,20 +9130,20 @@ fn maybe_run_awproject_native_components_audit_v3(
         derived_engine,
     )?;
     let expected_marker = awproject_datatogrid_selection_marker_for_mode(
-        AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV3,
+        AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV4,
         2,
         32,
         &observed,
     );
     let marker = env::var(request.mode.selection_env()).map_err(|_| {
         format!(
-            "the AWProject native-component-v3 audit requires the live selection marker {}",
+            "the AWProject native-component-v4 audit requires the live selection marker {}",
             request.mode.selection_env()
         )
     })?;
     if marker != expected_marker {
         return Err(format!(
-            "the AWProject native-component-v3 audit selection marker differs from the \
+            "the AWProject native-component-v4 audit selection marker differs from the \
              observed frozen first source block: {marker}"
         ));
     }
@@ -9160,7 +9157,7 @@ fn maybe_run_awproject_native_components_audit_v3(
     .map_err(|error| error.to_string())?;
     if !weighting_plan.needs_density_pass() {
         return Err(
-            "the AWProject native-component-v3 audit did not create a Briggs density plan"
+            "the AWProject native-component-v4 audit did not create a Briggs density plan"
                 .to_string(),
         );
     }
@@ -9187,7 +9184,7 @@ fn maybe_run_awproject_native_components_audit_v3(
             prepare_stage_timings,
             accumulate_timings,
             None,
-            "native_components_v3_density",
+            "native_components_v4_density",
             |plane, _| {
                 let density_batches =
                     align_optional_density_batches(&plane.batches, plane.density_batches)?;
@@ -9225,7 +9222,7 @@ fn maybe_run_awproject_native_components_audit_v3(
         .get(channel_start..channel_end)
         .ok_or_else(|| {
             format!(
-                "the AWProject native-component-v3 channel range {channel_start}..{channel_end} \
+                "the AWProject native-component-v4 channel range {channel_start}..{channel_end} \
                  exceeds SPW {} channel count {}",
                 first_plan.table_values.spw_id,
                 first_plan.table_values.spw_freqs_hz.len()
@@ -9250,17 +9247,17 @@ fn maybe_run_awproject_native_components_audit_v3(
         .and_then(serde_json::Value::as_str)
         .unwrap_or("completed-native-components-mismatch");
     let evidence_json = serde_json::to_string(&evidence)
-        .map_err(|error| format!("serialize AWProject native-component-v3 evidence: {error}"))?;
+        .map_err(|error| format!("serialize AWProject native-component-v4 evidence: {error}"))?;
     let evidence_sha256 = format!("{:x}", Sha256::digest(evidence_json.as_bytes()));
     let payload = format!(
-        "{{\"schema\":\"casa-rs-aw-datatogrid-native-components-audit-envelope-v3\",\
+        "{{\"schema\":\"casa-rs-aw-datatogrid-native-components-audit-envelope-v4\",\
          \"content_address\":{{\"algorithm\":\"sha256\",\
          \"scope\":\"embedded-evidence-json-utf8\",\"digest\":\"{evidence_sha256}\"}},\
          \"evidence\":{evidence_json}}}\n"
     );
     awproject_native_geometry_atomic_receipt(&request.output, payload.as_bytes())?;
     Err(format!(
-        "AWProject native-components-v3 audit stopped before casa-imaging core/CF/cache/grid \
+        "AWProject native-components-v4 audit stopped before casa-imaging core/CF/cache/grid \
          dispatch; receipt={} evidence_sha256={evidence_sha256} result={result}",
         request.output.display()
     ))
@@ -11130,7 +11127,7 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         clean_mask: clean_mask.clone(),
         compatibility: CompatibilityMode::CasaStandardMfs,
     };
-    maybe_run_awproject_native_components_audit_v3(
+    maybe_run_awproject_native_components_audit_v4(
         ms,
         config,
         data_column,
@@ -43737,10 +43734,6 @@ enum CachedRowImagingTransform {
         uvrot: [[f64; 3]; 3],
         phrot: [f64; 3],
     },
-    Mosaic {
-        uvrot: [[f64; 3]; 3],
-        phrot: [f64; 3],
-    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -43761,25 +43754,6 @@ impl CachedPreparedGeometryTransform {
                 RowImagingTransform {
                     uvw_m,
                     phase_shift_m: phrot[0] * uvw_m[0] + phrot[1] * uvw_m[1] + phrot[2] * uvw_m[2],
-                }
-            }
-            CachedRowImagingTransform::Mosaic { uvrot, phrot } => {
-                let casa_input_uvw_m = [-raw_uvw_m[0], -raw_uvw_m[1], raw_uvw_m[2]];
-                let casa_output_uvw_m = [
-                    casa_input_uvw_m[0] * uvrot[0][0] + casa_input_uvw_m[1] * uvrot[1][0],
-                    casa_input_uvw_m[1] * uvrot[1][1] + casa_input_uvw_m[0] * uvrot[0][1],
-                    casa_input_uvw_m[0] * uvrot[0][2]
-                        + casa_input_uvw_m[1] * uvrot[1][2]
-                        + casa_input_uvw_m[2] * uvrot[2][2],
-                ];
-                RowImagingTransform {
-                    uvw_m: [
-                        -casa_output_uvw_m[0],
-                        -casa_output_uvw_m[1],
-                        casa_output_uvw_m[2],
-                    ],
-                    phase_shift_m: phrot[0] * casa_output_uvw_m[0]
-                        + phrot[1] * casa_output_uvw_m[1],
                 }
             }
         }
@@ -44300,10 +44274,32 @@ fn row_imaging_transform(
     derived_engine: Option<&MsCalEngine>,
     reprojection_mode: UvwReprojectionMode,
 ) -> Result<RowImagingTransform, String> {
-    if phase_center.field_id == Some(row_field_id) {
+    if reprojection_mode == UvwReprojectionMode::Standard
+        && phase_center.field_id == Some(row_field_id)
+    {
         return Ok(RowImagingTransform {
             uvw_m: raw_uvw_m,
             phase_shift_m: 0.0,
+        });
+    }
+    if reprojection_mode == UvwReprojectionMode::Mosaic {
+        let derived_engine = derived_engine.ok_or_else(|| {
+            "internal error: missing derived engine for mosaic row reprojection".to_string()
+        })?;
+        let image_phase_center = casa_image_direction_coordinate_angles(phase_center.angles_rad);
+        let target = MDirection::from_angles(
+            image_phase_center[0],
+            image_phase_center[1],
+            phase_center.reference,
+        );
+        let (uvw_m, phase_shift_m) = derived_engine
+            .reproject_raw_uvw_for_mosaic_to_direction(raw_uvw_m, row_field_id, &target)
+            .map_err(|error| {
+                format!("reproject UVW row {row} through CASA mosaic geometry: {error}")
+            })?;
+        return Ok(RowImagingTransform {
+            uvw_m,
+            phase_shift_m,
         });
     }
     let imaging_transform = if let Some(phase_center_field_id) = phase_center.field_id {
@@ -44339,6 +44335,13 @@ fn cached_prepared_geometry_transform_for_field(
     reprojection_mode: UvwReprojectionMode,
 ) -> Option<CachedPreparedGeometryTransform> {
     let density_rot = gridft_uvw_rotation_matrix(row_phase_center_rad, phase_center.angles_rad);
+    if reprojection_mode == UvwReprojectionMode::Mosaic {
+        // The shared casa-ms path preserves CASA's two explicit UVWMachine
+        // stages and their operation order. A single collapsed matrix changes
+        // f64 rounding, so mosaic rows deliberately bypass this frontend cache;
+        // MsCalEngine caches the exact prepared transform by field/direction.
+        return None;
+    }
     if phase_center.field_id == Some(row_field_id) {
         return Some(CachedPreparedGeometryTransform {
             imaging: CachedRowImagingTransform::Identity,
@@ -44357,13 +44360,9 @@ fn cached_prepared_geometry_transform_for_field(
                 row_phase_center_rad,
             ),
         },
-        UvwReprojectionMode::Mosaic => CachedRowImagingTransform::Mosaic {
-            uvrot: gridft_uvw_rotation_matrix(row_phase_center_rad, target_phase_center_rad),
-            phrot: uvw_phase_rotation_vector_from_angles(
-                row_phase_center_rad,
-                target_phase_center_rad,
-            ),
-        },
+        UvwReprojectionMode::Mosaic => {
+            unreachable!("mosaic transforms use the shared casa-ms path")
+        }
     };
     Some(CachedPreparedGeometryTransform {
         imaging,
@@ -44420,6 +44419,18 @@ fn reproject_row_uvw_to_phase_center(
                 .reproject_raw_uvw_for_mosaic_to_direction(raw_uvw_m, source_field_id, &target),
         };
     result.map_err(|error| format!("reproject UVW row {row} to explicit phase center: {error}"))
+}
+
+fn casa_image_direction_coordinate_angles(direction_rad: [f64; 2]) -> [f64; 2] {
+    // SynthesisParamsImage normalizes the longitude through MVAngle before
+    // DirectionCoordinate converts radians to WCS degrees and back. The latter
+    // multiply/divide pair is observable at f64 precision and is also the
+    // exact direction consumed by FTMachine::girarUVW().
+    let to_degrees = 1.0 / (std::f64::consts::PI / 180.0);
+    [
+        (direction_rad[0].rem_euclid(std::f64::consts::TAU) * to_degrees) / to_degrees,
+        (direction_rad[1] * to_degrees) / to_degrees,
+    ]
 }
 
 fn direction_cosines_from_angles(direction_rad: [f64; 2]) -> [f64; 3] {
@@ -54177,9 +54188,9 @@ mod tests {
         "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_EXPECT_NXY_V2",
         "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_BLOCKS_V2",
         "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_TERMS_V2",
-        "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V3",
-        "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V3",
-        "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V3",
+        "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V4",
+        "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V4",
+        "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V4",
     ];
 
     struct AwProjectDiagnosticTestEnv {
@@ -54282,9 +54293,9 @@ mod tests {
     }
 
     fn set_aw_native_components_audit_controls(test_env: &AwProjectDiagnosticTestEnv) {
-        test_env.set("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V3", "4096");
-        test_env.set("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V3", "1");
-        test_env.set("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V3", "2");
+        test_env.set("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V4", "4096");
+        test_env.set("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V4", "1");
+        test_env.set("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V4", "2");
     }
 
     #[test]
@@ -54617,22 +54628,22 @@ mod tests {
         let test_env = AwProjectDiagnosticTestEnv::isolated();
         assert_eq!(
             AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV,
-            "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_OUTPUT_V3"
+            "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_OUTPUT_V4"
         );
         assert_eq!(
             AWPROJECT_NATIVE_COMPONENTS_AUDIT_SELECTION_ENV,
-            "CASA_RS_INTERNAL_AW_NATIVE_COMPONENTS_AUDIT_SELECTION_V3"
+            "CASA_RS_INTERNAL_AW_NATIVE_COMPONENTS_AUDIT_SELECTION_V4"
         );
         assert_eq!(
-            AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV3.expected_controls(),
+            AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV4.expected_controls(),
             [
-                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V3", "4096"),
-                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V3", "1"),
-                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V3", "2"),
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V4", "4096"),
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V4", "1"),
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V4", "2"),
             ]
         );
         let temp = tempdir().expect("temporary output parent");
-        let output = temp.path().join("native-components-audit-v3.json");
+        let output = temp.path().join("native-components-audit-v4.json");
         test_env.set(AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV, &output);
         set_aw_native_components_audit_controls(&test_env);
 
@@ -54645,7 +54656,7 @@ mod tests {
         assert_eq!(
             request,
             AwProjectDataToGridDiagnosticRequest {
-                mode: AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV3,
+                mode: AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV4,
                 output,
             }
         );
@@ -54823,7 +54834,7 @@ mod tests {
         );
         test_env.set(
             AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV,
-            "/tmp/native-components-v3.json",
+            "/tmp/native-components-v4.json",
         );
 
         let error = validate_awproject_datatogrid_bracket_cli(&aw_bracket_valid_cli_config())
@@ -63630,6 +63641,52 @@ mod tests {
             angles_rad: [1.0, 0.5],
             reference: DirectionRef::J2000,
         }
+    }
+
+    #[test]
+    fn mosaic_same_field_row_matches_frozen_vlass_native_geometry_bits() {
+        let phase_center = PhaseCenter {
+            field_id: Some(0),
+            angles_rad: [-2.737_583_127_275_378, 0.293_215_314_333_100_33],
+            reference: DirectionRef::J2000,
+        };
+        assert_eq!(
+            casa_image_direction_coordinate_angles(phase_center.angles_rad).map(f64::to_bits),
+            [4_615_166_405_128_127_712, 4_598_953_717_439_385_414]
+        );
+        let engine = MsCalEngine::from_parts(
+            vec![MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z)],
+            vec![MDirection::from_angles(
+                phase_center.angles_rad[0],
+                phase_center.angles_rad[1],
+                DirectionRef::J2000,
+            )],
+            MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z),
+            casa_test_support::deterministic_measures_provider(),
+        );
+        let transform = row_imaging_transform(
+            0,
+            0,
+            &phase_center,
+            [
+                -1_236.664_060_532_996_5,
+                -2_033.447_768_019_716_7,
+                1_892.803_548_834_091,
+            ],
+            Some(&engine),
+            UvwReprojectionMode::Mosaic,
+        )
+        .unwrap();
+
+        assert_eq!(
+            transform.uvw_m.map(f64::to_bits),
+            [
+                13_876_525_758_357_962_531,
+                13_880_030_050_162_779_011,
+                4_656_039_453_490_506_920,
+            ]
+        );
+        assert_eq!(transform.phase_shift_m.to_bits(), 4_425_269_780_393_832_168);
     }
 
     fn test_visibility_batch(u_lambda: f64) -> VisibilityBatch {
