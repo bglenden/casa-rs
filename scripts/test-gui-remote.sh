@@ -143,6 +143,19 @@ if ! /usr/sbin/DevToolsSecurity -status 2>&1 | /usr/bin/grep -q enabled; then
   exit 2
 fi
 "$developer_dir/usr/bin/xcodebuild" -checkFirstLaunchStatus
+console_user="$(/usr/bin/stat -f %Su /dev/console)"
+if [[ "$console_user" != "$(/usr/bin/id -un)" ]]; then
+  echo "remote GUI worker has no interactive console session for $(/usr/bin/id -un)" >&2
+  exit 2
+fi
+console_lock_state="$(
+  /usr/sbin/ioreg -n Root -d1 \
+    | /usr/bin/awk -F'= ' '/"IOConsoleLocked"/ { gsub(/"/, "", $2); print $2; exit }'
+)"
+if [[ "$console_lock_state" == "Yes" ]]; then
+  echo "remote GUI worker console is locked; unlock it before running XCTest" >&2
+  exit 2
+fi
 
 checkout_changes="$(git -C "$repo_root" status --porcelain --untracked-files=all)"
 repo_target="$repo_root/target"
