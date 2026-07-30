@@ -303,7 +303,19 @@ struct TutorialNotebookPrototypeView: View {
                     Spacer()
                     Text(dataset.phase.label)
                         .workbenchFont(.caption, weight: .semibold)
-                        .foregroundStyle(dataset.phase.color(in: colorScheme))
+                        .foregroundStyle(
+                            dataset.phase.usesNeutralBadge
+                                ? (colorScheme == .dark ? Color.black : Color.white)
+                                : dataset.phase.color(in: colorScheme)
+                        )
+                        .padding(.horizontal, dataset.phase.usesNeutralBadge ? 6 : 0)
+                        .padding(.vertical, dataset.phase.usesNeutralBadge ? 2 : 0)
+                        .background(
+                            dataset.phase.usesNeutralBadge
+                                ? (colorScheme == .dark ? Color.white : Color.black)
+                                : Color.clear,
+                            in: Capsule()
+                        )
                         .accessibilityIdentifier("tutorialPrototype.dataset.status.\(dataset.id)")
                         .accessibilityValue(dataset.phase.rawValue)
                 }
@@ -644,6 +656,10 @@ private extension TutorialNotebookAcquisitionPhase {
         case .missing, .approvalRequired:
             colorScheme == .dark ? .white : .black
         }
+    }
+
+    var usesNeutralBadge: Bool {
+        self == .missing || self == .approvalRequired
     }
 
     var isFailure: Bool {
