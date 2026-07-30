@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Compare pixel and mask topology for two matching casacore image prefixes.
 
-use std::{env, ffi::OsString, path::PathBuf};
+use std::{
+    env,
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
 
 use casa_images::PagedImage;
 use serde_json::{Map, Value, json};
@@ -28,7 +32,7 @@ const PRODUCTS: &[&str] = &[
     ".weight.tt2",
 ];
 
-fn product_path(prefix: &PathBuf, suffix: &str) -> PathBuf {
+fn product_path(prefix: &Path, suffix: &str) -> PathBuf {
     let mut path = OsString::from(prefix.as_os_str());
     path.push(suffix);
     PathBuf::from(path)

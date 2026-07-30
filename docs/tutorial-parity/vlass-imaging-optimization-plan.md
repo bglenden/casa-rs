@@ -148,6 +148,63 @@ geometry; full CASA correctness for every required product; and an independent
 minimum 10x speedup for each final row on the acceptance laptop. Reduced rows
 are development evidence only.
 
+### Required Full-Geometry Memory Campaign
+
+Brian added memory as a measured optimization dimension on 2026-07-29 without
+changing the wave scope, correctness contract, or iteration ladder. Routine
+`12,150`-square clean development runs remain prohibited. First promote the
+`4,096`-square full-16-SPW candidate. Then use bounded planner dry-runs and the
+required full-size dirty row to reject untenable policies before launching a
+full clean row. Stop a run early when swap thrashing, memory-pressure stalls,
+or projected runtime is clearly destructive. Do not rerun any unchanged CASA
+reference.
+
+Every full-size receipt records per-stage and peak process physical footprint
+and RSS; CPU and Metal/unified-memory allocations; compressed memory; swap used
+and swap-in/swap-out deltas; page faults where available; external-disk read
+and write volume; replay-program, grid, FFT, product, CF, and transient
+materialization bytes; stage timings; and GPU stalls. The planner and receipt
+must also produce an explicit lifetime ledger. It must account in particular
+for the approximately 17.6 GiB initial compensated eight-plane AW grid, the
+current approximately 7.31 GiB compact replay programs, residual-cycle grids,
+model grids, FFT staging, product arrays, and temporary f64 conversion or
+readback storage. No promoted run may have an unaccounted allocation above the
+planner ledger.
+
+Compare each of these policies with bounded, non-repeated experiments:
+
+1. conservative no-swap admission with partial replay retention;
+2. aggressive use of nearly all physical memory while allowing compression
+   and modest swapping;
+3. intentional oversubscription only far enough to locate the boundary where
+   swapping changes from tolerable to destructive;
+4. application-managed, stage-aware release and demotion: release PSF/weight
+   and initial dirty grids immediately after final use; stream or memory-map
+   the 19 products; spill or memory-map compiled replay blocks while the
+   initial grids are live; and reload or prefetch them after that peak; and
+5. a hybrid of high physical-memory utilization and explicit eviction based
+   on known next use.
+
+Neither macOS swapping nor application-managed eviction is presumed superior.
+Ordinary LRU is specifically suspect because all 16 replay blocks are visited
+cyclically and a sub-working-set cache can thrash; prefer measured
+next-use-aware staging or pinned subsets. Replace the artificial quarter-memory
+replay ceiling with accounting based on actual compact resident-program bytes
+and their stage overlap.
+
+Promotion from this campaign requires unchanged CASA component selection and
+major-cycle trajectory; every 19-product numerical, topology, metadata, and
+inventory gate; no divergence; credible end-to-end and stage timings; a
+recorded peak-memory and swap receipt; no unexplained allocation; and
+successful operation on the 32 GiB laptop. The production planner must adapt
+to detected physical memory, current headroom, unified-memory requirements,
+CPU/GPU characteristics, measured storage bandwidth, and the selected
+memory-pressure policy. Public task and UI surfaces expose a memory target and
+memory-pressure policy with a safe automatic default. Intentional dependence
+on swap, a persisted replay-cache format, or another materially different
+production default still requires Brian's approval after the experiment
+evidence is presented.
+
 ### 2026-07-22 Mac Mini Continuation
 
 The 24 GiB M2 mini did not have the archived full VLASS MeasurementSet. A
@@ -3308,6 +3365,184 @@ The laptop oracle runtime is isolated at
 It reports `casatasks 6.7.5.18` and `casatools 6.7.5-18`. The checked-in
 `casasiteconfig_vlass.py` binds the existing measures data and disables
 automatic data and network updates so the one-time oracle is reproducible.
+
+### 2026-07-29 Full-16-SPW promotion checkpoint
+
+The promoted four-SPW stack now completes the frozen 4,096-square full-band
+workload with all 16 compact source-order replay blocks resident. Candidate
+`vlass-clean4096-full16-prime-compact-accounted-materialization-plan8-pack1-v21`
+completed in `39.84` seconds end to end and `35.423` seconds in the imaging
+core. Its retained replay programs occupy `6,982,003,552` bytes. PSF gridding
+took `22.565` seconds, PSF FFTs `3.543` seconds, normalization `3.653` seconds,
+model FFTs `0.916` seconds, residual degrid/grid `2.560` seconds, residual
+FFTs `2.961` seconds, major-cycle refresh `6.437` seconds, and the minor cycle
+`0.295` seconds.
+
+The candidate follows the same five compared CASA major-cycle boundaries and
+all `641` component updates, with zero discrete mismatch or divergence.
+Inventory, coordinate, metadata, ordinary numerical, and structured-difference
+checks pass. The normalized differences are `1.097` ppm for `.image.tt0`,
+`1.121` ppm for `.residual.tt0`, `0.440` ppm for `.model.tt0`, and about
+`0.025` ppm for the PSF. Promotion nevertheless remains blocked under the
+unchanged exact topology contract: `.alpha` and `.alpha.error` each differ at
+two pixels, `[2837,3114]` and `[309,3290]`. The mismatching casa-rs image-TT0
+values are `0.0007449517143` and `0.0007449507248`; the CASA values are
+`0.0007449504919` and `0.0007449501427`. CASA includes another pixel as low
+as `0.0007449507248`, so neither a scalar threshold change nor a guard band is
+semantically valid.
+
+Two bounded experiments narrowed both performance and correctness:
+
+- The exact factorized phase-atlas candidate preserved the initial fixed-point
+  window sequence and scales after separating logical segmentation bytes from
+  compact resident bytes. On the four-SPW 2,000-iteration row it took
+  `81.13` seconds versus the `28.65`-second promoted control, raised image and
+  residual differences to roughly 4--5 ppm, produced 25 alpha-topology
+  mismatches, and failed structured-difference checks. Reapplying POINTING
+  phase for every tap on every replay is both slower and numerically worse on
+  this CPU/GPU path. The implementation is rejected, but its memory result is
+  retained: a compact primed materialization may exceed the old 256 MiB
+  logical segmentation ceiling while remaining within the separately
+  accounted packed-program budget.
+- A forced final residual refresh accumulated on host f64 and disabled replay
+  reuse for that pass. It took `19.408` seconds for the final pass and
+  `72.63` seconds end to end, while reproducing the same two alpha pixels and
+  effectively identical numerical metrics: `1.097019` ppm image TT0,
+  `1.121071` ppm residual TT0, and `0.440304` ppm model TT0. Metal fixed64
+  residual accumulation is therefore not the remaining topology owner. The
+  experimental runtime branch was removed after measurement.
+
+A frozen-final-state restoration cross matrix then isolated the remaining
+owner without rerunning either clean:
+
+- CASA model plus CASA residual, restored by casa-rs, has zero alpha-topology
+  mismatches and image TT0 relative L2 error `1.2771e-7`;
+- casa-rs model plus CASA residual also has zero mismatches and relative L2
+  error `1.2936e-7`;
+- CASA model plus casa-rs residual reproduces the exact two mismatches and
+  relative L2 error `1.09687e-6`; and
+- casa-rs model plus casa-rs residual reproduces the same two mismatches and
+  relative L2 error `1.09662e-6`.
+
+The final model and the casa-rs restoration arithmetic are therefore excluded.
+The shared final residual prediction/subtraction operator owns both topology
+pixels and the approximately `1.1` ppm image error. The next bounded diagnostic
+uses the same frozen model on both sides and compares per-sample CASA and
+casa-rs AWProject predictions; it does not rerun an unchanged CASA reference.
+
+That prediction isolation is now complete. With both implementations using
+the frozen CASA model, the per-sample relative L2 differences were
+`1.049247e-6` for RR and `1.214855e-6` for LL. Separating the Taylor terms
+measured `5.710593e-7` and `6.994239e-7` for TT0-only RR/LL, and
+`4.520092e-7` and `5.164810e-7` for TT1-only RR/LL. The combined error is
+amplified by cancellation rather than owned by Taylor-frequency weighting.
+
+The following exact checks excluded the remaining compact-replay inputs:
+
+- all `1,274` traced POINTING direction-to-pixel conversions match CASA at
+  Float32 bits;
+- for the traced source sample, all `361` CF values read through CASA's image
+  tool reproduce the packed casa-rs taps bit-for-bit after the recorded
+  pointing phase is applied;
+- the packed complex normalization is identical at
+  `0.9300320148468018 + 0.03877667710185051i`;
+- reconstructing CASA's source order from the phase-aware degrid dump has zero
+  packed-tap mismatches and reproduces the casa-rs prediction; and
+- the image-cell geometry, phase-center shortcut, CF conjugation, support,
+  oversampling offset, and FFT input/output ordering match the inspected CASA
+  source and bounded traces.
+
+Using the frozen CASA `weight.tt0` for model preparation improved the
+same-model prediction trace but did not close it: TT0-only RR/LL became
+`5.006053e-7` and `6.160259e-7`, while the two-term RR/LL result became
+`9.340664e-7` and `1.047344e-6`. A direct flat-sky preparation cross matrix
+shows that CASA-vs-casa-rs weight pixels change the prepared CASA model by only
+about `0.006` ppm; the frozen final model differs by about `0.440` ppm in TT0
+and `0.352` ppm in TT1. The final persisted CASA model is not the exact
+temporary flat-sky lattice used during its preceding prediction, so this
+diagnostic does not justify importing CASA products into the production path.
+
+Two further bounded candidates were rejected:
+
+- Emulating CASA's destructive Float divide/predict/multiply model lifecycle
+  left the same two alpha-mask pixels, slightly worsened the image and residual
+  metrics, and took `56.84` seconds because a dense round trip scanned both
+  model planes after every major cycle. That branch was removed.
+- Strict source-order host Complex32 grids with f32 FFTs completed in `54.88`
+  seconds but diverged after four compared cycles (`637` updates versus
+  CASA's `641`). Image TT0 and residual TT0 errors rose to `1.854%` and
+  `1.337%`; model TT0 error rose to `8.000%`. CASA-equivalent behavior here is
+  therefore not obtained by replacing the compensated Metal/f64 path with a
+  naive f32 accumulator.
+
+The full-16 row remains unpromoted. The positive threshold evidence is
+particularly constraining: CASA and casa-rs both use the same strict
+`image.tt0 > max(temporary principal residual.tt0)/10` Float rule, and the
+lowest included CASA and casa-rs pixel has the same Float bit pattern
+`0x3a4348cc`. The two casa-rs-only pixels cross the discontinuity because their
+restored TT0 values are 10 and 21 ULP above the corresponding CASA values.
+Changing the scalar threshold, adding a guard band, or using an ordinary
+topology tolerance would exclude a different CASA-valid pixel with the
+identical value and is not an allowed parity fix. The required full-geometry
+memory campaign therefore remains gated; no `12,150`-square experiment has
+started.
+
+The first reduced replay-memory ledger also found and fixed an admission
+accounting defect without changing replay order or science arithmetic. The
+resident calculation had charged the large inline replay-window object twice
+and retained spare `Vec` capacity. In the bounded synthetic partial-retention
+gate this inflated a useful five-sample prefix from its compact `22,984` bytes
+to a rejected `30,472` bytes against a `28,672`-byte budget. Compacting the
+retained vectors and charging each allocation once admits that prefix, rejects
+the sixth sample at a projected `29,136` bytes, and reduces the following
+residual-refresh CF loads from `36` to `28`; every product remains bitwise
+equal to the uncached run. Detailed profile output now records each retention
+candidate's source, tap-request, bundle-metadata, bundle-value, persistent
+Metal-batch, and persistent Metal-program bytes. This is positive
+planner-accounting evidence only. It is not a full-geometry memory-policy
+result and does not relax the promotion gate above.
+
+The immutable full-16 evidence is:
+
+- promoted-stack candidate log:
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-clean4096-full16-prime-compact-accounted-materialization-plan8-pack1-v21.log`,
+  SHA-256
+  `99b7286384bfe3b5c8760b64ec6ad672913a560cde6d271eaae38865b0a03243`;
+- host-f64 negative log:
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-clean4096-full16-forced-final-host-f64-prime-compact-plan8-pack1-v23.log`,
+  SHA-256
+  `4146228c724c39bbf797348de2df88563b79ce7636aacc46e3f4e4f9254eecdb`;
+- host-f64 product comparison, SHA-256
+  `37a06346c6041b544308626ea1ebd82d068092faf9d348add1ac7db468d641d4`;
+  and
+- host-f64 trace comparison, SHA-256
+  `5491fe702dc9c4f792ba8d8263a57b6a288ff0a619053f9876c4b9d0e308d271`;
+  and
+- restoration cross matrix:
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-clean4096-full16-restoration-cross-v1.json`,
+  SHA-256
+  `9297b93218c767f1e69daf737cada11a3aeb5b74a2e07a4bc5cb5df1804d6eb5`;
+- flat-sky model/weight cross matrix:
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-prediction-model-compare-v2.json`,
+  SHA-256
+  `41ce5dec0b9ec57a127184822a03ec0de00423a23ca809e2a06ced283d2e14a9`;
+- frozen CASA-model/weight prediction comparison:
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-full16-frozen-casa-model-weight-prediction-comparison-v1.json`,
+  SHA-256
+  `ae7f89b4f83cb28153c171c1073e09a8739b44f336cfc91ce9a7f3c2fd4720e1`;
+- rejected model-round-trip comparison:
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-clean4096-full16-casa-model-roundtrip-plan8-pack1-v39.comparison.json`,
+  SHA-256
+  `27fb551c1ea9e9cb1477830ef444339713a1ca81180e4d76933f276ff82ab5d3`;
+  and
+- rejected host-f32 comparison:
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-clean4096-full16-strict-host-f32-plan8-pack1-cf512-v42.comparison.json`,
+  SHA-256
+  `6d77666bf37d002507f45263e37e3df1ab7c704869b7ea037425d95919b02995`.
+
+The required full-geometry memory campaign above remains queued behind this
+promotion gate. No 12,150-square development or memory-policy run has been
+started from this blocked candidate.
 
 ## Iteration Rules
 

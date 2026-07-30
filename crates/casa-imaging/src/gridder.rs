@@ -5,7 +5,7 @@ use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
 #[cfg(target_os = "macos")]
 use std::ffi::c_void;
-use std::{collections::HashMap, time::Instant};
+use std::{collections::HashMap, sync::OnceLock, time::Instant};
 
 use crate::{
     AwConvolutionFunctionKernelMetadata, ImageGeometry, ImagingError,
@@ -2407,7 +2407,10 @@ impl<'a, K: AwProjectKernelPixels + ?Sized> AwProjector<'a, K> {
                 }
                 normalization += tap;
                 grid_normalization += Complex64::new(f64::from(tap.re), f64::from(tap.im));
-                tap *= casa_aw_phase_gradient_from_axes(x_phases[ix_index], y_phases[iy_index]);
+                tap = casa_aw_tap_phase_multiply(
+                    tap,
+                    casa_aw_phase_gradient_from_axes(x_phases[ix_index], y_phases[iy_index]),
+                );
                 values.push(tap);
             }
         }
@@ -2468,7 +2471,10 @@ impl<'a, K: AwProjectKernelPixels + ?Sized> AwProjector<'a, K> {
                 }
                 normalization += tap;
                 grid_normalization += Complex64::new(f64::from(tap.re), f64::from(tap.im));
-                tap *= casa_aw_phase_gradient_from_axes(x_phase(x_coordinate), phase_y);
+                tap = casa_aw_tap_phase_multiply(
+                    tap,
+                    casa_aw_phase_gradient_from_axes(x_phase(x_coordinate), phase_y),
+                );
                 values.push(tap);
             }
         }
@@ -2525,7 +2531,7 @@ impl<'a, K: AwProjectKernelPixels + ?Sized> AwProjector<'a, K> {
                     * self.phase_gradient_rad_per_sample[0];
                 let phase_y = (iy * self.sampling as isize + plan.off_y) as f64
                     * self.phase_gradient_rad_per_sample[1];
-                tap *= casa_aw_phase_gradient(phase_x, phase_y);
+                tap = casa_aw_tap_phase_multiply(tap, casa_aw_phase_gradient(phase_x, phase_y));
                 operation((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize, tap);
             }
         }
@@ -2630,6 +2636,43 @@ pub(crate) fn casa_aw_phase_gradient_from_axes(x: Complex32, y: Complex32) -> Co
     let product = Complex64::new(f64::from(x.re), f64::from(x.im))
         * Complex64::new(f64::from(y.re), f64::from(y.im));
     Complex32::new(product.re as f32, product.im as f32)
+}
+
+fn casa_aw_cpp_complex_experiment_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED
+        .get_or_init(|| std::env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_CPP_COMPLEX").is_some())
+}
+
+#[inline(never)]
+fn casa_aw_rounded_mul(left: f32, right: f32) -> f32 {
+    std::hint::black_box(left * right)
+}
+
+#[inline(never)]
+fn casa_aw_rounded_add(left: f32, right: f32) -> f32 {
+    std::hint::black_box(left + right)
+}
+
+#[inline(never)]
+fn casa_aw_rounded_sub(left: f32, right: f32) -> f32 {
+    std::hint::black_box(left - right)
+}
+
+fn casa_aw_tap_phase_multiply(tap: Complex32, phase: Complex32) -> Complex32 {
+    if !casa_aw_cpp_complex_experiment_enabled() {
+        return tap * phase;
+    }
+    Complex32::new(
+        casa_aw_rounded_sub(
+            casa_aw_rounded_mul(tap.re, phase.re),
+            casa_aw_rounded_mul(tap.im, phase.im),
+        ),
+        casa_aw_rounded_add(
+            casa_aw_rounded_mul(tap.re, phase.im),
+            casa_aw_rounded_mul(tap.im, phase.re),
+        ),
+    )
 }
 
 fn aw_kernel_origin(length: usize) -> usize {

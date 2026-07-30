@@ -7,9 +7,14 @@ binary="${CASA_RS_VLASS_EXPERIMENT_BINARY:-$repo_root/target/release/casars-imag
 fftw_dir="${CASA_RS_VLASS_FFTW_LIBRARY_DIR:-/opt/homebrew/opt/fftw/lib}"
 fftw_threads="${CASA_RS_VLASS_FFTW_THREADS:-1}"
 grid_threads="${CASA_RS_VLASS_GRID_THREADS:-1}"
+plan_threads="${CASA_RS_VLASS_AW_PLAN_THREADS:-1}"
+pack_threads="${CASA_RS_VLASS_AW_PACK_THREADS:-1}"
 standard_mfs_acceleration="${CASA_RS_VLASS_STANDARD_MFS_ACCELERATION:-cpu}"
 niter="${CASA_RS_VLASS_NITER:-6}"
 residual_only_refresh="${CASA_RS_VLASS_RESIDUAL_ONLY_REFRESH:-0}"
+tapless_phase="${CASA_RS_VLASS_TAPLESS_PHASE:-0}"
+replay_compact_programs="${CASA_RS_VLASS_REPLAY_COMPACT_PROGRAMS:-0}"
+prime_replay_initial_dirty="${CASA_RS_VLASS_PRIME_REPLAY_INITIAL_DIRTY:-0}"
 model_sparsity_profile="${CASA_RS_VLASS_MODEL_SPARSITY_PROFILE:-0}"
 model_fft_threads="${CASA_RS_VLASS_MODEL_FFT_THREADS:-}"
 sparse_model_dft_max_pixels="${CASA_RS_VLASS_SPARSE_MODEL_DFT_MAX_PIXELS:-}"
@@ -41,12 +46,18 @@ incremental_model_runtime="${CASA_RS_VLASS_INCREMENTAL_MODEL_RUNTIME:-0}"
 selected_model_dft="${CASA_RS_VLASS_SELECTED_MODEL_DFT:-0}"
 image_response_cache="${CASA_RS_VLASS_IMAGE_RESPONSE_CACHE:-0}"
 image_response_dyadic_census="${CASA_RS_VLASS_IMAGE_RESPONSE_DYADIC_CENSUS:-0}"
+image_response_dyadic_tiles="${CASA_RS_VLASS_IMAGE_RESPONSE_DYADIC_TILES:-0}"
 incremental_model_max_delta_positions="${CASA_RS_VLASS_INCREMENTAL_MODEL_MAX_DELTA_POSITIONS:-1}"
 metal_tile_side="${CASA_RS_VLASS_METAL_TILE_SIDE:-16}"
 replay_retention_bytes="${CASA_RS_VLASS_REPLAY_RETENTION_BYTES:-}"
 measures_dir="${CASA_RS_VLASS_MEASURES_DIR:-$HOME/.casa/data}"
 ms="$root/data/frozen-clean-b80d5e87487a/VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms"
 residual_only_label=""
+tapless_phase_label=""
+replay_compact_programs_label=""
+prime_replay_initial_dirty_label=""
+plan_threads_label=""
+pack_threads_label=""
 model_fft_label=""
 sparse_model_dft_label=""
 linear_madfm_label=""
@@ -77,11 +88,45 @@ incremental_model_runtime_label=""
 selected_model_dft_label=""
 image_response_cache_label=""
 image_response_dyadic_census_label=""
+image_response_dyadic_tiles_label=""
 grid_threads_label=""
 acceleration_label=""
 parallel_label=""
 parallel_argument=(--no-parallel)
 experimental_environment=(CASA_RS_VLASS_EXPERIMENT_RUNNER=1)
+if [[ "$tapless_phase" == "1" ]]; then
+    tapless_phase_label="-tapless-phase-atlas"
+    experimental_environment+=(CASA_RS_AWPROJECT_TAPLESS_PHASE_EXPERIMENT=1)
+elif [[ "$tapless_phase" != "0" ]]; then
+    echo "CASA_RS_VLASS_TAPLESS_PHASE must be 0 or 1" >&2
+    exit 2
+fi
+if [[ "$replay_compact_programs" == "1" ]]; then
+    if [[ "$image_response_cache" != "1" ]]; then
+        echo "CASA_RS_VLASS_REPLAY_COMPACT_PROGRAMS requires CASA_RS_VLASS_IMAGE_RESPONSE_CACHE=1" >&2
+        exit 2
+    fi
+    replay_compact_programs_label="-compact-replay-programs"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_RESIDENT_PROGRAM_COMPACTION=1
+    )
+elif [[ "$replay_compact_programs" != "0" ]]; then
+    echo "CASA_RS_VLASS_REPLAY_COMPACT_PROGRAMS must be 0 or 1" >&2
+    exit 2
+fi
+if [[ "$prime_replay_initial_dirty" == "1" ]]; then
+    if [[ "$replay_compact_programs" != "1" ]]; then
+        echo "CASA_RS_VLASS_PRIME_REPLAY_INITIAL_DIRTY requires CASA_RS_VLASS_REPLAY_COMPACT_PROGRAMS=1" >&2
+        exit 2
+    fi
+    prime_replay_initial_dirty_label="-prime-replay-initial-dirty"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_PRIME_REPLAY_INITIAL_DIRTY=1
+    )
+elif [[ "$prime_replay_initial_dirty" != "0" ]]; then
+    echo "CASA_RS_VLASS_PRIME_REPLAY_INITIAL_DIRTY must be 0 or 1" >&2
+    exit 2
+fi
 if [[ "$residual_only_refresh" == "1" ]]; then
     residual_only_label="-residual-only"
     experimental_environment+=(CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_ONLY_REFRESH=1)
@@ -381,6 +426,19 @@ elif [[ "$image_response_dyadic_census" != "0" ]]; then
     echo "CASA_RS_VLASS_IMAGE_RESPONSE_DYADIC_CENSUS must be 0 or 1" >&2
     exit 2
 fi
+if [[ "$image_response_dyadic_tiles" == "1" ]]; then
+    if [[ "$image_response_cache" != "1" ]]; then
+        echo "CASA_RS_VLASS_IMAGE_RESPONSE_DYADIC_TILES requires CASA_RS_VLASS_IMAGE_RESPONSE_CACHE=1" >&2
+        exit 2
+    fi
+    image_response_dyadic_tiles_label="-dyadic-tiles"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_IMAGE_RESPONSE_DYADIC_TILES=1
+    )
+elif [[ "$image_response_dyadic_tiles" != "0" ]]; then
+    echo "CASA_RS_VLASS_IMAGE_RESPONSE_DYADIC_TILES must be 0 or 1" >&2
+    exit 2
+fi
 if [[ -n "$replay_retention_bytes" ]]; then
     case "$replay_retention_bytes" in
         *[!0-9]*)
@@ -428,6 +486,26 @@ case "$grid_threads" in
         exit 2
         ;;
 esac
+case "$plan_threads" in
+    ''|*[!0-9]*|0)
+        echo "CASA_RS_VLASS_AW_PLAN_THREADS must be a positive integer" >&2
+        exit 2
+        ;;
+esac
+if [[ "$plan_threads" != "1" ]]; then
+    plan_threads_label="-awplant${plan_threads}"
+    experimental_environment+=(CASA_RS_AWPROJECT_PLAN_THREADS="$plan_threads")
+fi
+case "$pack_threads" in
+    ''|*[!0-9]*|0)
+        echo "CASA_RS_VLASS_AW_PACK_THREADS must be a positive integer" >&2
+        exit 2
+        ;;
+esac
+if [[ "$pack_threads" != "1" ]]; then
+    pack_threads_label="-awpackt${pack_threads}"
+    experimental_environment+=(CASA_RS_AWPROJECT_PACK_THREADS="$pack_threads")
+fi
 case "$standard_mfs_acceleration" in
     cpu)
         ;;
@@ -457,7 +535,7 @@ if [[ "$grid_threads" != "1" ]]; then
     parallel_label="-parallel"
     parallel_argument=(--parallel)
 fi
-label="vlass-production-clean-4096-four-spw-sparse-fftw-t${fftw_threads}-niter${niter}${residual_only_label}${residual_live_cfs_only_label}${metal_f32_residual_fft_label}${metal_prediction_probe_label}${metal_tile_grid_probe_label}${metal_resident_chain_probe_label}${metal_resident_tile_chain_label}${metal_gpu_residual_replay_label}${metal_global_tile_replay_label}${prediction_grid_census_label}${model_delta_census_label}${incremental_model_probe_label}${incremental_model_runtime_label}${selected_model_dft_label}${image_response_cache_label}${image_response_dyadic_census_label}${model_fft_label}${sparse_model_dft_label}${linear_madfm_label}${keyed_madfm_label}${radix_madfm_label}${cache_refreshed_nsigma_label}${sparse_mask_peak_search_label}${parallel_model_term_fft_label}${model_fft_timing_label}${fftw_f64_timing_label}${fftw_f64_wisdom_label}${fftw_f32_wisdom_label}${sparse_model_prep_label}${parallel_residual_term_fft_label}${persistent_metal_pack_label}${grid_threads_label}${parallel_label}${acceleration_label}-v1"
+label="vlass-production-clean-4096-four-spw-sparse-fftw-t${fftw_threads}-niter${niter}${tapless_phase_label}${replay_compact_programs_label}${prime_replay_initial_dirty_label}${residual_only_label}${residual_live_cfs_only_label}${metal_f32_residual_fft_label}${metal_prediction_probe_label}${metal_tile_grid_probe_label}${metal_resident_chain_probe_label}${metal_resident_tile_chain_label}${metal_gpu_residual_replay_label}${metal_global_tile_replay_label}${prediction_grid_census_label}${model_delta_census_label}${incremental_model_probe_label}${incremental_model_runtime_label}${selected_model_dft_label}${image_response_cache_label}${image_response_dyadic_census_label}${image_response_dyadic_tiles_label}${model_fft_label}${sparse_model_dft_label}${linear_madfm_label}${keyed_madfm_label}${radix_madfm_label}${cache_refreshed_nsigma_label}${sparse_mask_peak_search_label}${parallel_model_term_fft_label}${model_fft_timing_label}${fftw_f64_timing_label}${fftw_f64_wisdom_label}${fftw_f32_wisdom_label}${sparse_model_prep_label}${parallel_residual_term_fft_label}${persistent_metal_pack_label}${plan_threads_label}${pack_threads_label}${grid_threads_label}${parallel_label}${acceleration_label}-v1"
 if [[ -n "${CASA_RS_VLASS_LABEL_OVERRIDE:-}" ]]; then
     case "$CASA_RS_VLASS_LABEL_OVERRIDE" in
         *[!A-Za-z0-9._-]*)

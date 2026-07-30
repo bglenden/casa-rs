@@ -22,5 +22,6 @@ fi
 
 shasum -a 256 "$casa_receipt" "$casa_task_log"
 CASA_RS_VLASS_IMAGE_RESPONSE_CACHE=1 \
+CASA_RS_VLASS_IMAGE_RESPONSE_DYADIC_TILES=1 \
 CASA_RS_VLASS_RADIX_MADFM=1 \
     bash "$(dirname "$0")/run_vlass_clean_4096_full_16_spw.sh"
