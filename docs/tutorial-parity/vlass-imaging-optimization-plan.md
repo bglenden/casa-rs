@@ -4221,9 +4221,11 @@ bundles. Phase application, CF preparation and conjugation, `sumwt`, TT1,
 normalization, FFT, products, deconvolution, and production dispatch are not
 controlled or entered. Consequently, even an exact CASA TT0 grid match would
 identify a candidate arithmetic boundary rather than promote DataToGrid or the
-integrated clean row. A negative result promotes an ordered source-role prefix
-as the next discriminator; only after that remains inconclusive is a
-destination/tap prefix, followed by invasive CASA tap tracing, justified.
+integrated clean row. At design time, a negative result would have promoted an
+ordered source-role prefix as the next discriminator, followed by a
+destination/tap prefix and then invasive CASA tap tracing. The completed
+negative result and subsequent exact CASA source audit below supersede that
+planned ordering before either prefix diagnostic was implemented or run.
 
 The discriminator was implemented behind a private casars-imager preflight
 that preserves the frozen v4 27-field handoff unchanged and uses a separate
@@ -4311,18 +4313,100 @@ Only the five receipt/log/provenance files were created; no `rust.*` image
 product exists.
 
 No unchanged v1-v4 casa-rs bracket, this arithmetic diagnostic, or unchanged
-CASA bracket/reference may be rerun. The next promoted discriminator is the
-ordered source-role prefix already selected by the same-conversation Oracle;
-only if that is inconclusive does the destination/tap prefix become eligible.
-The full-geometry memory campaign remains implemented but unexecuted, with no
-12,150-square policy receipt or production memory-policy promotion.
+CASA bracket/reference may be rerun. Exact CASA source inspection supersedes
+the previously planned ordered source-role prefix with the source-audited literal
+coefficient-formation discriminator below. The full-geometry memory campaign
+remains implemented but unexecuted, with no 12,150-square policy receipt or
+production memory-policy promotion.
 
-The intentional checkpoint set consists only of the Rust production-boundary
-and Metal-rounding changes, the per-channel MFS frequency repair, their tests,
-this plan receipt, and the reusable fail-closed launcher. Rebuildable `target/`
-content, CASA logs, TempLattice scratch, Python and Ruff caches, copied CASA
-products, MeasurementSets, CF caches, and all external runtime receipts remain
-generated or external evidence and are excluded from version control.
+### 2026-07-30 Literal CASA coefficient-formation discriminator
+
+The next discriminator is implemented in source but has not been executed.
+It is bound to the completed arithmetic diagnostic receipt
+`a9c7fc453d343a48745269744ffd257a5ca8c532ccefe4ac74ba5a85b0ce9271`
+and its embedded evidence digest
+`c2b2bc4daafe12aa0090d9d00e8cdd02ca627c2fa671f846fb6625aad912af99`.
+The parent comparison and its embedded digest are
+`e50bf9642a442688dc2f5f37390c63e1a04cd0ad19729f4daea4a0bf43be608e`
+and
+`dfcd28767cb60a727f1486a49a9a9b9ad96748114ff69d47d9a8e3c8dec5f73b`;
+the provenance digest is
+`9a042b639cbbcf738e0ada8a4a07836f95e963fdecef914f9ae93b56cb549307`.
+It also retains the exact casa-rs v4 and CASA v5 parents,
+`1c52961a3058f8f362e9d554c64b69a077f9414a7a44c738bed5351e6df59b40`
+and
+`fe3d5ba3bff1ba925f63f0f088df602692655131c86d6319210ffa90e067ea1f`.
+
+The source contract comes from CASA commit
+`418bb1a26df7c4aba663ff123b038b75a6fa0295` with casacore submodule
+`25b653f6963a78a1dcfc8e16954081e091a50fbe`. In the active
+`AWVisResampler.cc` / `accumulateToGrid.inc` / `PhaseGrad.cc` path, CASA loads
+the raw Complex32 convolution-function pixel, conjugates it only when the data
+W value is positive, adds that post-W but still unphased tap to the
+normalization sum, applies the Complex32 POINTING phase when the pointing
+offsets are finite, multiplies that phased Complex32 CF coefficient by the
+weighted Complex32 visibility value, and promotes the resulting contribution
+for addition to the DComplex grid. W equal to zero is non-positive. There is no
+runtime `cfArea` division in DataToGrid; the only such expression there is an
+inactive comment. Convolution-function generation may already have normalized
+the cached pixels, so adding another runtime division would not reproduce CASA.
+
+The private fail-closed audit rebuilds that literal coefficient from the
+frozen raw convolution-function pixel and records ordered hashes of the raw,
+post-W, POINTING-phase, literal-coefficient, packed-coefficient, destination,
+and cell streams in exact source, RR-then-LL role, Y-outer, X-inner order,
+plus the first differing operand if one exists. The frozen CASA v5 receipt
+does not expose ordered CASA tap bits, so this audit does not claim a
+cross-producer per-tap match. Instead it compares the source-exact literal
+coefficient stream with casa-rs's packed production coefficient stream. If
+they are identical, it classifies that coefficient-formation boundary as
+excluded without allocating a grid. Only if they differ may it allocate one
+fresh 4,096-square DComplex TT0 grid and compare the resulting whole-grid hash
+with the frozen CASA hash `9328098071914194885` and frozen casa-rs hash
+`9898952817250783852`. The normal production arithmetic and behavior remain
+unchanged; the added hook is inert unless the private fail-closed audit is
+explicitly armed.
+
+This is implementation and pre-execution status only. No literal-coefficient
+receipt exists yet, and no CASA call, imaging workload, normalization, FFT,
+product formation, deconvolution, or performance measurement was launched to
+create it. The 4,096-square full-16-SPW row therefore remains unpromoted, with
+the same two exact `.alpha` / `.alpha.error` topology pixels as its integrated
+correctness blocker. The discriminator has earned no correctness or
+performance claim, and the required full-geometry memory campaign remains
+gated behind full-16-SPW promotion.
+
+Checkpoint verification for the unexecuted discriminator is green on every
+affected surface. `cargo fmt --all`, affected-package warning-free `cargo
+check`, affected-package Clippy with `-D warnings`, and workspace SPDX,
+formatting, and warning-denying Clippy through `just lint` pass. The direct
+CASA W-sign/source-operand trace passed (`1`), the core literal-audit filter
+passed (`4`), the frontend diagnostic-mode filter passed (`4`), and the
+literal marker filter passed (`1`). The strict receipt-validator suite passed
+all `26` tests, the unchanged full-geometry memory-campaign suite passed all
+`31`, and Ruff check and format check pass for both tools and tests. Launcher
+syntax, `docs-check`, and `git diff --check` pass.
+
+The sandboxed `just quick` run passed its lint stages and every workspace test
+through the complete `casa-imaging` crate (`389` passed, `9` ignored), then
+stopped on the same two unrelated `casa-notebook` localhost HTTP tests because
+the managed sandbox denied their listener with `Operation not permitted`.
+Exactly those two tests pass outside the socket-denying sandbox (`2` passed,
+`15` filtered out). As part of the requested ordinary workspace gate, the
+pre-existing synthetic-MeasurementSet interoperability test again opened only
+its temporary generated table through CASA and passed; it did not call
+`tclean`, read VLASS data, grid, FFT, form an image, or create a reference or
+timing receipt. No literal discriminator, VLASS row, 12,150-square development
+clean, unchanged CASA reference, or replacement run was launched.
+
+The intentional checkpoint set consists only of the prior Rust
+production-boundary and Metal-rounding changes, the per-channel MFS frequency
+repair and tests, the unexecuted literal-coefficient audit hook and Rust
+regressions, this plan evidence, and the reusable fail-closed launcher,
+validator, and validator tests. Rebuildable `target/` content, CASA logs,
+TempLattice scratch, Python and Ruff caches, copied CASA products,
+MeasurementSets, CF caches, and all external runtime receipts remain generated
+or external evidence and are excluded from version control.
 
 ## Iteration Rules
 
