@@ -4821,6 +4821,13 @@ reproduced the frozen row-0 U, V, W, and differential-phase bits only with the
 observed contracted multiply-add graph. The receipt below, rather than either
 model's preference, remains authoritative.
 
+That was only the V4 decision and is superseded by the complete-block V5
+evidence below. Row zero did not discriminate the two graphs. Recompiling the
+exact `FTMachine::girarUVW` row expressions with contraction disabled matched
+all 325 frozen rows for U, V, W, and differential phase; contraction enabled
+did not. The Oracle's non-fused recommendation was therefore correct for the
+shipped synthesis-library operation graph.
+
 The V4 diagnostic was executed once from that exact clean, pushed revision.
 It stopped before opening the CF cache, allocating grid storage, dispatching
 gridding, FFT, image-product formation, or deconvolution. The immutable output
@@ -4891,6 +4898,94 @@ four-SPW image gate. No CASA process, unchanged reference, 4,096-square image
 row, 12,150-square development clean, or full-geometry memory-policy row ran.
 The 4,096-square full-16-SPW row and the required memory campaign remain
 unpromoted.
+
+### 2026-07-30 exact native geometry and Briggs V5 discriminator
+
+The complete-block scalar scorer resolved the V4 geometry residual before
+another image. casacore's matrix-construction loops and CASA's shipped
+`FTMachine::girarUVW` row graph both materialize separate multiply and add
+operations. Explicit fused operations happened to reproduce row zero but
+diverged later. The shared `casa-ms` fixed-J2000 matrix construction,
+matrix-vector transforms, AW UVW rows, and differential-phase dot products
+now preserve the source order without contraction. A 325-row source probe
+compiled with `-ffp-contract=off` matched every frozen U, V, W, and phase bit;
+the same expressions compiled with `-ffp-contract=fast` matched only
+`243/325` W values and `226/325` phase values.
+
+Read-only CASA source inspection also corrected the V3 Briggs inference.
+`VisImagingWeight` stores `f2_p` and `d2_p` as `Vector<Float>` and evaluates
+the ordinary denominator in Float. V4's f64 final division was therefore
+removed. The streaming density plan was additionally taught to retain CASA's
+separate source-order Double `sumwt` and to scan the Float density grid in
+CASA's v-outer/u-inner order. The new source-sum route is shared production
+behavior, not a frozen-value table.
+
+Those corrections and the V5 one-shot diagnostic were checkpointed and pushed
+at
+`757ce8edb45845e6c2af7de6acea0ba05d0d6072`. The diagnostic completed from
+that exact clean revision and stopped before opening the CF cache, allocating
+grid storage, dispatching gridding, FFT, image-product formation, or
+deconvolution. The immutable output directory is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/casa-rs-aw-datagrid-native-components-4096-full16-first-vb-v5`.
+The receipt, comparison, provenance, casa-rs log, and comparison-log
+whole-file SHA-256 digests are, respectively:
+
+- `3e108cfa315253ae8f1d2861407dd16a6ad85573d9d9e154c98f37d7021aa0da`;
+- `5c66514176669525bf2d96d7750e26e1ef2abd98f909c3c9344ba97048ca49e2`;
+- `e84118287b314012ddb717db7e6c1af7aa6e39937761ecc6a2e955219c245d78`;
+- `f2c8167c21a1a25aafa15206e3cae8cb03ae9fc006f9ed6f35aed4704de0eade`;
+  and
+- `d4e0f6138291aad6cee9d5b8dabc5ff29c2d0af1f9315f2057d942e6fc73d57a`.
+
+The receipt and comparison embedded-evidence digests are
+`f98ce8b0df66ed2905bb18c0fcf1faa01345aa6a0adfdcf09e8d4b4cc26d69bb`
+and
+`8a4e220715e32ba0da9266f76b38a25f8e1ccf6664c41e1f92574369a3379b9f`.
+The exact binary, launcher, validator, and `Cargo.lock` SHA-256 digests are
+`ecba04fbc40a24f4287291678681cc0f64a5ed780dd461a7698a2ecdeda7f88c`,
+`2371c48ca2f3c11833a0351976498e924e473011cd4a99bf667fc181bad2ca40`,
+`c4f3a5ada2063cadc52e679e78723ebd451ecec2cfe0ec52f3be92c5de72cc01`,
+and
+`0a30771fc5777290edf379b201ec828af0c8ab7ebb933cd5f3c7ed2c97a19b5c`.
+The independent validator classified the controlled stop as
+`valid-native-component-mismatch`.
+
+V5 proves exact native geometry. The UVW/differential-phase component hash is
+now CASA's `6884923150254773287` across all 325 rows. The recomputed TT0 and
+derived-TT1 geometry hashes are exactly `15079793846523608377` and
+`14381099959812707833`; both carry the exact source count `12,359` and stream
+hash `4740440223154359747`. Header, row IDs, channel map, polarization map,
+frequencies, row flags, flag masks, admission membership, and all selection
+counts also remain exact. Nine of ten native components therefore match CASA
+bit for bit.
+
+Only the imaging-weight component remains non-exact: casa-rs
+`6417129240768820313` versus CASA `2430234571011807313`. Of 20,800 slots,
+19,935 are exact and 865 differ: 690 by one f32 ULP and 175 by two ULPs.
+The first difference remains row 0 channel 11, casa-rs bits `1099309895`
+versus CASA bits `1099309896`. Admission and nonzero-weight membership remain
+slot-exact. Because this is exactly V3's weight residual, the separate
+source-order Double `sumwt` did not change this first-block output and V4's
+f64 division remains rejected. The remaining owner is a narrower Float
+Briggs intermediate or operation-order boundary, not selection, flags,
+density membership, UVW, phase, channel mapping, or polarization mapping.
+
+The CF cache remained byte-for-byte unchanged: its before/after metadata
+digest is
+`29cd6432bc16e91b80664d58f82c76857bd3846db48a302c691078b1db0ed7f7`
+and its content-tree digest is
+`f8fd10b133235e04f75f903fde38d68aa446e1892143fb6bf12b82b1e3cfff68`.
+The affected Rust suites passed with `341`, `390`, and `362` tests plus `25`
+ignored data fixtures; affected-crate clippy was warning-free. All `13`
+validator tests passed in bounded chunks, and Ruff, Python compilation, shell
+syntax, formatting, and `git diff --check` passed. No hosted-CI wait was added.
+
+The remaining correctness blocker is the exact standard-MFS Briggs Float
+operation graph. It must be localized from frozen values or a bounded
+source-level probe before another production change. No CASA process,
+unchanged CASA reference, 4,096-square image row, 12,150-square development
+clean, or full-geometry memory-policy row ran. The 4,096-square full-16-SPW
+row and required memory campaign remain unpromoted.
 
 ## Iteration Rules
 
