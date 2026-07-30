@@ -36479,6 +36479,12 @@ fn extract_phase_center(ms: &MeasurementSet, field_id: usize) -> Result<PhaseCen
     })
 }
 
+fn extract_phase_center_field(ms: &MeasurementSet, field_id: i32) -> Result<PhaseCenter, String> {
+    let field_id = usize::try_from(field_id)
+        .map_err(|_| format!("phasecenter FIELD_ID {field_id} must be non-negative"))?;
+    extract_phase_center(ms, field_id)
+}
+
 fn resolve_phase_center(
     ms: &MeasurementSet,
     selected_fields: &BTreeSet<i32>,
@@ -36488,16 +36494,13 @@ fn resolve_phase_center(
         return Err("selection resolved to no field".to_string());
     };
     if let Some(text) = config.phasecenter.as_deref() {
+        if let Ok(field_id) = text.trim().parse::<i32>() {
+            return extract_phase_center_field(ms, field_id);
+        }
         return parse_phase_center_literal(text);
     }
     if let Some(field_id) = config.phasecenter_field {
-        if !selected_fields.contains(&field_id) {
-            return Err(format!(
-                "phase-center FIELD_ID {field_id} is not part of the selected field set {:?}",
-                selected_fields
-            ));
-        }
-        return extract_phase_center(ms, field_id as usize);
+        return extract_phase_center_field(ms, field_id);
     }
     if selected_fields.len() == 1 {
         return extract_phase_center(ms, first_selected as usize);
@@ -46969,7 +46972,7 @@ fn help_text() -> String {
 Options:
   --field IDS               restrict to selected FIELD_IDs (CASA selector syntax)
   --phasecenter-field ID    FIELD_ID used as the image phase center
-  --phasecenter TEXT        explicit CASA-style direction used as the image phase center
+  --phasecenter VALUE       CASA-style direction or FIELD_ID used as the image phase center
   --ddid ID                 restrict to one DATA_DESC_ID
   --spw ID                  restrict to one spectral window when DDID is omitted
   --channel-start N         first selected channel
@@ -57545,6 +57548,42 @@ deconvolver=mtmfs
         assert_eq!(phase_center.reference, DirectionRef::J2000);
         assert!((phase_center.angles_rad[0] - 1.0).abs() < 1e-9);
         assert!((phase_center.angles_rad[1] - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn numeric_casa_phasecenter_resolves_field_direction() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("numeric_phasecenter.ms");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_vla_antenna_row(&mut ms);
+        add_field_row(&mut ms);
+        add_field_row(&mut ms);
+        add_field_row(&mut ms);
+        add_field_row_with_direction(
+            &mut ms,
+            MDirection::from_angles(1.25, 0.75, DirectionRef::J2000),
+            TEST_TIME_MJD_SEC,
+        );
+        ms.save().unwrap();
+
+        let mut config =
+            minimal_start_model_config(ms_path, tmp.path().join("numeric-phasecenter"));
+        config.phasecenter = Some("3".to_string());
+        let phase_center =
+            resolve_phase_center(&ms, &BTreeSet::from([0]), &config).expect("resolve FIELD_ID 3");
+
+        assert_eq!(phase_center.field_id, Some(3));
+        assert_eq!(phase_center.reference, DirectionRef::J2000);
+        assert!((phase_center.angles_rad[0] - 1.25).abs() < 1e-12);
+        assert!((phase_center.angles_rad[1] - 0.75).abs() < 1e-12);
+
+        config.phasecenter = Some("-1".to_string());
+        let error = resolve_phase_center(&ms, &BTreeSet::from([0]), &config).unwrap_err();
+        assert_eq!(error, "phasecenter FIELD_ID -1 must be non-negative");
     }
 
     #[test]
