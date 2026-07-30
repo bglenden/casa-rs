@@ -7283,9 +7283,9 @@ const AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV: &str =
 const AWPROJECT_NATIVE_GEOMETRY_AUDIT_SELECTION_ENV: &str =
     "CASA_RS_INTERNAL_AW_NATIVE_GEOMETRY_AUDIT_SELECTION_V2";
 const AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV: &str =
-    "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_OUTPUT_V4";
+    "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_OUTPUT_V5";
 const AWPROJECT_NATIVE_COMPONENTS_AUDIT_SELECTION_ENV: &str =
-    "CASA_RS_INTERNAL_AW_NATIVE_COMPONENTS_AUDIT_SELECTION_V4";
+    "CASA_RS_INTERNAL_AW_NATIVE_COMPONENTS_AUDIT_SELECTION_V5";
 #[allow(unexpected_cfgs)]
 const AWPROJECT_LITERAL_COEFFICIENT_AUDIT_CORE_HOOK_COMPILED: bool =
     cfg!(all(target_os = "macos", not(coverage)));
@@ -7303,7 +7303,7 @@ enum AwProjectDataToGridDiagnosticMode {
     Tt0ArithmeticCompatV1,
     LiteralCoefficientAuditV1,
     NativeGeometryAuditV2,
-    NativeComponentsAuditV4,
+    NativeComponentsAuditV5,
 }
 
 impl AwProjectDataToGridDiagnosticMode {
@@ -7313,7 +7313,7 @@ impl AwProjectDataToGridDiagnosticMode {
             Self::Tt0ArithmeticCompatV1 => AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV,
             Self::LiteralCoefficientAuditV1 => AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV,
             Self::NativeGeometryAuditV2 => AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV,
-            Self::NativeComponentsAuditV4 => AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV,
+            Self::NativeComponentsAuditV5 => AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV,
         }
     }
 
@@ -7323,7 +7323,7 @@ impl AwProjectDataToGridDiagnosticMode {
             Self::Tt0ArithmeticCompatV1 => AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV,
             Self::LiteralCoefficientAuditV1 => AWPROJECT_LITERAL_COEFFICIENT_AUDIT_SELECTION_ENV,
             Self::NativeGeometryAuditV2 => AWPROJECT_NATIVE_GEOMETRY_AUDIT_SELECTION_ENV,
-            Self::NativeComponentsAuditV4 => AWPROJECT_NATIVE_COMPONENTS_AUDIT_SELECTION_ENV,
+            Self::NativeComponentsAuditV5 => AWPROJECT_NATIVE_COMPONENTS_AUDIT_SELECTION_ENV,
         }
     }
 
@@ -7349,10 +7349,10 @@ impl AwProjectDataToGridDiagnosticMode {
                 ("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_BLOCKS_V2", "1"),
                 ("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_TERMS_V2", "2"),
             ],
-            Self::NativeComponentsAuditV4 => [
-                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V4", "4096"),
-                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V4", "1"),
-                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V4", "2"),
+            Self::NativeComponentsAuditV5 => [
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V5", "4096"),
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V5", "1"),
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V5", "2"),
             ],
         }
     }
@@ -7390,7 +7390,7 @@ fn awproject_datatogrid_diagnostic_request()
             native_geometry_audit_output,
         ),
         (
-            AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV4,
+            AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV5,
             native_components_audit_output,
         ),
     ]
@@ -7641,7 +7641,7 @@ fn validate_awproject_datatogrid_bracket_cli(config: &CliConfig) -> Result<(), S
             AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2 => {
                 "native stream/geometry audit"
             }
-            AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV4 => "native component audit",
+            AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV5 => "native component audit",
         };
         return Err(format!(
             "refusing to overwrite AWProject {diagnostic} receipt {}",
@@ -7698,7 +7698,7 @@ fn validate_awproject_datatogrid_bracket_cli(config: &CliConfig) -> Result<(), S
                 .to_string(),
         );
     }
-    if request.mode == AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV4
+    if request.mode == AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV5
         && (!matches!(
             config.weighting,
             WeightingMode::Briggs { robust } if robust.to_bits() == 1.0_f32.to_bits()
@@ -7708,7 +7708,7 @@ fn validate_awproject_datatogrid_bracket_cli(config: &CliConfig) -> Result<(), S
             || standard_mfs_streaming_weight_density_mode(config) != WeightDensityMode::Combined)
     {
         return Err(
-            "the AWProject native-component-v4 audit requires the frozen uvrange='<12km', \
+            "the AWProject native-component-v5 audit requires the frozen uvrange='<12km', \
              Briggs robust=1.0, public perchanweightdensity=true MFS request, mosweight=false, \
              and resolved combined density mode"
                 .to_string(),
@@ -7782,7 +7782,7 @@ fn awproject_datatogrid_selection_marker_for_mode(
         AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1
             | AwProjectDataToGridDiagnosticMode::LiteralCoefficientAuditV1
             | AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2
-            | AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV4
+            | AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV5
     ) {
         marker.push_str(&format!(
             ";selected_corr_first_index={};selected_corr_second_index={};\
@@ -7893,7 +7893,7 @@ fn install_awproject_datatogrid_bracket_selection(
         AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1
             | AwProjectDataToGridDiagnosticMode::LiteralCoefficientAuditV1
             | AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2
-            | AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV4
+            | AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV5
     ) {
         validate_awproject_tt0_arithmetic_compat_corr_order(&observed)?;
     }
@@ -8610,7 +8610,7 @@ fn awproject_native_components_evidence(
         || frequencies_hz.len() != 64
     {
         return Err(format!(
-            "the AWProject native-component-v4 audit requires a 325-row, 64-channel, \
+            "the AWProject native-component-v5 audit requires a 325-row, 64-channel, \
              four-correlation source block beginning at channel zero; observed rows={} \
              channel_start={} channels={} correlations={} frequencies={}",
             source_block.row_count(),
@@ -8623,7 +8623,7 @@ fn awproject_native_components_evidence(
     let spw_id = source_block
         .geometry_rows
         .first()
-        .ok_or_else(|| "the AWProject native-component-v4 source block is empty".to_string())?
+        .ok_or_else(|| "the AWProject native-component-v5 source block is empty".to_string())?
         .selected_row
         .spw_id;
     if spw_id != 2
@@ -8633,7 +8633,7 @@ fn awproject_native_components_evidence(
             .any(|row| row.selected_row.spw_id != spw_id)
     {
         return Err(format!(
-            "the AWProject native-component-v4 audit requires homogeneous SPW 2 rows; \
+            "the AWProject native-component-v5 audit requires homogeneous SPW 2 rows; \
              observed first SPW {spw_id}"
         ));
     }
@@ -8978,7 +8978,7 @@ fn awproject_native_components_evidence(
     };
 
     Ok(serde_json::json!({
-        "schema": "casa-rs-aw-datatogrid-native-components-audit-v4",
+        "schema": "casa-rs-aw-datatogrid-native-components-audit-v5",
         "status": "completed-controlled-stop",
         "result": result,
         "result_taxonomy": [
@@ -9052,7 +9052,7 @@ fn awproject_native_components_evidence(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn maybe_run_awproject_native_components_audit_v4(
+fn maybe_run_awproject_native_components_audit_v5(
     ms: &MeasurementSet,
     config: &CliConfig,
     data_column: VisibilityDataColumn,
@@ -9076,18 +9076,18 @@ fn maybe_run_awproject_native_components_audit_v4(
     let Some(request) = awproject_datatogrid_diagnostic_request()? else {
         return Ok(());
     };
-    if request.mode != AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV4 {
+    if request.mode != AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV5 {
         return Ok(());
     }
     if im_ref_freq_hz.to_bits() != 4_748_556_467_228_999_524 {
         return Err(format!(
-            "the AWProject native-component-v4 audit expected imRefFreq bits \
+            "the AWProject native-component-v5 audit expected imRefFreq bits \
              4748556467228999524, observed {}",
             im_ref_freq_hz.to_bits()
         ));
     }
     let controls = config.aw_project.as_ref().ok_or_else(|| {
-        "the AWProject native-component-v4 audit requires normalized AWProject controls".to_string()
+        "the AWProject native-component-v5 audit requires normalized AWProject controls".to_string()
     })?;
     if controls.mosaic_weighting
         || !matches!(
@@ -9097,7 +9097,7 @@ fn maybe_run_awproject_native_components_audit_v4(
         || standard_mfs_streaming_weight_density_mode(config) != WeightDensityMode::Combined
     {
         return Err(
-            "the AWProject native-component-v4 audit requires the production global \
+            "the AWProject native-component-v5 audit requires the production global \
              mosweight=false Briggs robust=1.0 combined-density plan"
                 .to_string(),
         );
@@ -9108,18 +9108,18 @@ fn maybe_run_awproject_native_components_audit_v4(
         .sum::<usize>();
     if density_source_blocks != 32 {
         return Err(format!(
-            "the AWProject native-component-v4 audit expected 32 density source blocks, \
+            "the AWProject native-component-v5 audit expected 32 density source blocks, \
              observed {density_source_blocks}"
         ));
     }
     let first_plan = ddid_plans
         .first()
-        .ok_or_else(|| "the AWProject native-component-v4 audit has no DDID plan".to_string())?;
+        .ok_or_else(|| "the AWProject native-component-v5 audit has no DDID plan".to_string())?;
     let first_rows = first_plan
         .active_selected_rows
         .get(..AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS)
         .ok_or_else(|| {
-            "the AWProject native-component-v4 audit has fewer than 325 first-SPW rows".to_string()
+            "the AWProject native-component-v5 audit has fewer than 325 first-SPW rows".to_string()
         })?;
     let observed = awproject_datatogrid_bracket_observed_first_buffer(
         &selection.selected_rows,
@@ -9130,20 +9130,20 @@ fn maybe_run_awproject_native_components_audit_v4(
         derived_engine,
     )?;
     let expected_marker = awproject_datatogrid_selection_marker_for_mode(
-        AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV4,
+        AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV5,
         2,
         32,
         &observed,
     );
     let marker = env::var(request.mode.selection_env()).map_err(|_| {
         format!(
-            "the AWProject native-component-v4 audit requires the live selection marker {}",
+            "the AWProject native-component-v5 audit requires the live selection marker {}",
             request.mode.selection_env()
         )
     })?;
     if marker != expected_marker {
         return Err(format!(
-            "the AWProject native-component-v4 audit selection marker differs from the \
+            "the AWProject native-component-v5 audit selection marker differs from the \
              observed frozen first source block: {marker}"
         ));
     }
@@ -9157,7 +9157,7 @@ fn maybe_run_awproject_native_components_audit_v4(
     .map_err(|error| error.to_string())?;
     if !weighting_plan.needs_density_pass() {
         return Err(
-            "the AWProject native-component-v4 audit did not create a Briggs density plan"
+            "the AWProject native-component-v5 audit did not create a Briggs density plan"
                 .to_string(),
         );
     }
@@ -9184,7 +9184,7 @@ fn maybe_run_awproject_native_components_audit_v4(
             prepare_stage_timings,
             accumulate_timings,
             None,
-            "native_components_v4_density",
+            "native_components_v5_density",
             |plane, _| {
                 let density_batches =
                     align_optional_density_batches(&plane.batches, plane.density_batches)?;
@@ -9222,7 +9222,7 @@ fn maybe_run_awproject_native_components_audit_v4(
         .get(channel_start..channel_end)
         .ok_or_else(|| {
             format!(
-                "the AWProject native-component-v4 channel range {channel_start}..{channel_end} \
+                "the AWProject native-component-v5 channel range {channel_start}..{channel_end} \
                  exceeds SPW {} channel count {}",
                 first_plan.table_values.spw_id,
                 first_plan.table_values.spw_freqs_hz.len()
@@ -9247,17 +9247,17 @@ fn maybe_run_awproject_native_components_audit_v4(
         .and_then(serde_json::Value::as_str)
         .unwrap_or("completed-native-components-mismatch");
     let evidence_json = serde_json::to_string(&evidence)
-        .map_err(|error| format!("serialize AWProject native-component-v4 evidence: {error}"))?;
+        .map_err(|error| format!("serialize AWProject native-component-v5 evidence: {error}"))?;
     let evidence_sha256 = format!("{:x}", Sha256::digest(evidence_json.as_bytes()));
     let payload = format!(
-        "{{\"schema\":\"casa-rs-aw-datatogrid-native-components-audit-envelope-v4\",\
+        "{{\"schema\":\"casa-rs-aw-datatogrid-native-components-audit-envelope-v5\",\
          \"content_address\":{{\"algorithm\":\"sha256\",\
          \"scope\":\"embedded-evidence-json-utf8\",\"digest\":\"{evidence_sha256}\"}},\
          \"evidence\":{evidence_json}}}\n"
     );
     awproject_native_geometry_atomic_receipt(&request.output, payload.as_bytes())?;
     Err(format!(
-        "AWProject native-components-v4 audit stopped before casa-imaging core/CF/cache/grid \
+        "AWProject native-components-v5 audit stopped before casa-imaging core/CF/cache/grid \
          dispatch; receipt={} evidence_sha256={evidence_sha256} result={result}",
         request.output.display()
     ))
@@ -11127,7 +11127,7 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         clean_mask: clean_mask.clone(),
         compatibility: CompatibilityMode::CasaStandardMfs,
     };
-    maybe_run_awproject_native_components_audit_v4(
+    maybe_run_awproject_native_components_audit_v5(
         ms,
         config,
         data_column,
@@ -54188,9 +54188,9 @@ mod tests {
         "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_EXPECT_NXY_V2",
         "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_BLOCKS_V2",
         "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_TERMS_V2",
-        "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V4",
-        "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V4",
-        "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V4",
+        "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V5",
+        "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V5",
+        "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V5",
     ];
 
     struct AwProjectDiagnosticTestEnv {
@@ -54293,9 +54293,9 @@ mod tests {
     }
 
     fn set_aw_native_components_audit_controls(test_env: &AwProjectDiagnosticTestEnv) {
-        test_env.set("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V4", "4096");
-        test_env.set("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V4", "1");
-        test_env.set("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V4", "2");
+        test_env.set("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V5", "4096");
+        test_env.set("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V5", "1");
+        test_env.set("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V5", "2");
     }
 
     #[test]
@@ -54628,22 +54628,22 @@ mod tests {
         let test_env = AwProjectDiagnosticTestEnv::isolated();
         assert_eq!(
             AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV,
-            "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_OUTPUT_V4"
+            "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_OUTPUT_V5"
         );
         assert_eq!(
             AWPROJECT_NATIVE_COMPONENTS_AUDIT_SELECTION_ENV,
-            "CASA_RS_INTERNAL_AW_NATIVE_COMPONENTS_AUDIT_SELECTION_V4"
+            "CASA_RS_INTERNAL_AW_NATIVE_COMPONENTS_AUDIT_SELECTION_V5"
         );
         assert_eq!(
-            AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV4.expected_controls(),
+            AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV5.expected_controls(),
             [
-                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V4", "4096"),
-                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V4", "1"),
-                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V4", "2"),
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V5", "4096"),
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V5", "1"),
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V5", "2"),
             ]
         );
         let temp = tempdir().expect("temporary output parent");
-        let output = temp.path().join("native-components-audit-v4.json");
+        let output = temp.path().join("native-components-audit-v5.json");
         test_env.set(AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV, &output);
         set_aw_native_components_audit_controls(&test_env);
 
@@ -54656,7 +54656,7 @@ mod tests {
         assert_eq!(
             request,
             AwProjectDataToGridDiagnosticRequest {
-                mode: AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV4,
+                mode: AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV5,
                 output,
             }
         );
@@ -54834,7 +54834,7 @@ mod tests {
         );
         test_env.set(
             AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV,
-            "/tmp/native-components-v4.json",
+            "/tmp/native-components-v5.json",
         );
 
         let error = validate_awproject_datatogrid_bracket_cli(&aw_bracket_valid_cli_config())

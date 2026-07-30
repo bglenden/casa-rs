@@ -12888,7 +12888,7 @@ impl MetalDirtyBackend {
                     2_u32,
                     Some(density),
                     metal_density_convention_code(convention),
-                    metal_standard_mfs_briggs_f2(f2),
+                    f2,
                 )
             }
         };
@@ -13221,7 +13221,7 @@ impl MetalDirtyBackend {
                     2_u32,
                     Some(density),
                     metal_density_convention_code(convention),
-                    metal_standard_mfs_briggs_f2(f2),
+                    f2,
                 )
             }
         };
@@ -14260,7 +14260,7 @@ impl MetalDirtyBackend {
                         shape[0],
                         shape[1],
                         metal_density_convention_code(convention),
-                        metal_standard_mfs_briggs_f2(f2),
+                        f2,
                     )
                 }
             };
@@ -15902,13 +15902,6 @@ fn metal_density_convention_code(convention: DensityCellConvention) -> u32 {
         DensityCellConvention::CubeBriggsWeightorDensity => 1,
         DensityCellConvention::CubeBriggsWeightorLookup => 2,
     }
-}
-
-/// Metal Shading Language does not provide `f64`; make the standard-MFS
-/// Briggs scale conversion at the backend boundary explicit.
-#[inline]
-fn metal_standard_mfs_briggs_f2(f2: f64) -> f32 {
-    f2 as f32
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]

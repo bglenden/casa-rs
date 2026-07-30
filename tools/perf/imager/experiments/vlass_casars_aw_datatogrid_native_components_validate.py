@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Validate and classify the casa-rs VLASS native-component V4 receipt.
+"""Validate and classify the casa-rs VLASS native-component V5 receipt.
 
 This validator is deliberately independent of the Rust diagnostic.  It
 reconstructs every FNV-1a component, admission decision, STREAM hash, TT0
@@ -26,12 +26,12 @@ from typing import Any, Iterable
 CASA_RECEIPT_SHA256 = "cc30d5492f6654336f46617a696f9a7fc8da9006df4e5ae9a3c64a6a9f401644"
 CASA_ENVELOPE_SCHEMA = "casa-aw-datagrid-native-components-envelope-v1"
 CASA_EVIDENCE_SCHEMA = "casa-aw-datagrid-native-components-v1"
-CANDIDATE_ENVELOPE_SCHEMA = "casa-rs-aw-datatogrid-native-components-audit-envelope-v4"
-CANDIDATE_EVIDENCE_SCHEMA = "casa-rs-aw-datatogrid-native-components-audit-v4"
+CANDIDATE_ENVELOPE_SCHEMA = "casa-rs-aw-datatogrid-native-components-audit-envelope-v5"
+CANDIDATE_EVIDENCE_SCHEMA = "casa-rs-aw-datatogrid-native-components-audit-v5"
 COMPARISON_ENVELOPE_SCHEMA = (
-    "casa-rs-aw-datatogrid-native-components-comparison-envelope-v4"
+    "casa-rs-aw-datatogrid-native-components-comparison-envelope-v5"
 )
-COMPARISON_SCHEMA = "casa-rs-aw-datatogrid-native-components-comparison-v4"
+COMPARISON_SCHEMA = "casa-rs-aw-datatogrid-native-components-comparison-v5"
 
 FNV_OFFSET = 0xCBF29CE484222325
 FNV_PRIME = 0x00000100000001B3
