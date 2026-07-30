@@ -22171,6 +22171,7 @@ fn awproject_gpu_residual_replay_is_admitted(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(unused_variables))]
 fn replay_awproject_compact_window(
     request: &MtmfsRequest,
     mosaic: &MosaicGridderConfig,
