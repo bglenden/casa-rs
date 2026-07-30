@@ -20274,7 +20274,7 @@ impl AwProjectResidualPrefixHash {
 #[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV: &str = "CASA_RS_AW_BRACKET_OUTPUT";
 #[cfg(all(target_os = "macos", not(coverage)))]
-const AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV: &str = "CASA_RS_INTERNAL_AW_BRACKET_SELECTION_V2";
+const AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV: &str = "CASA_RS_INTERNAL_AW_BRACKET_SELECTION_V3";
 #[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS: usize = 325;
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -20573,6 +20573,38 @@ fn hash_awproject_datatogrid_sumwt_casa_order(sumwt: f64) -> u64 {
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_datatogrid_expected_selected_mueller(
+    logical_role: usize,
+    w_lambda: f64,
+) -> Result<i32, ImagingError> {
+    let requested_mueller = match logical_role {
+        0 => 0,
+        1 => 15,
+        other => {
+            return Err(ImagingError::Normalization(format!(
+                "AWProject DataToGrid portable logical role {other} is outside the Stokes-I pair"
+            )));
+        }
+    };
+    Ok(if w_lambda > 0.0 {
+        requested_mueller
+    } else {
+        15 - requested_mueller
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_datatogrid_mueller_ordinal(mueller_element: i32) -> Result<usize, ImagingError> {
+    match mueller_element {
+        0 => Ok(0),
+        15 => Ok(1),
+        other => Err(ImagingError::Normalization(format!(
+            "AWProject DataToGrid portable selected unsupported Mueller {other}; expected 0 or 15"
+        ))),
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn awproject_datatogrid_portable_call_hash(
     request: &MtmfsRequest,
     batch: &VisibilityBatch,
@@ -20619,20 +20651,47 @@ fn awproject_datatogrid_portable_call_hash(
             mtmfs_casa_taylor_x(frequency_hz, request.reffreq_hz)
         };
         let current_weight = mtmfs_casa_weighted_taylor_x(planned.weight, basis, term);
-        for (role, plan, residual) in [
+        let mut canonical_roles = [None, None];
+        for (logical_role, plan, residual) in [
             (0usize, source.first_imaging_plan, planned.first_residual),
             (1usize, source.second_imaging_plan, planned.second_residual),
         ] {
-            let expected_mueller = if role == 0 { 0 } else { 15 };
+            let expected_mueller = awproject_datatogrid_expected_selected_mueller(
+                logical_role,
+                batch.w_lambda[sample_index],
+            )?;
             let actual_mueller = tap_requests[plan.tap_bundle].cell_key.mueller_element;
             if actual_mueller != expected_mueller {
                 return Err(ImagingError::Normalization(format!(
-                    "AWProject DataToGrid portable source {accepted_ordinal} role {role} selected Mueller {actual_mueller}, expected {expected_mueller}"
+                    "AWProject DataToGrid portable source {accepted_ordinal} logical role \
+                     {logical_role} selected Mueller {actual_mueller}, expected \
+                     {expected_mueller} for W={}",
+                    batch.w_lambda[sample_index],
                 )));
             }
+            let canonical_role = awproject_datatogrid_mueller_ordinal(actual_mueller)?;
+            if canonical_roles[canonical_role]
+                .replace((plan, residual))
+                .is_some()
+            {
+                return Err(ImagingError::Normalization(format!(
+                    "AWProject DataToGrid portable source {accepted_ordinal} selected duplicate \
+                     Mueller {actual_mueller}"
+                )));
+            }
+        }
+        for (role, role_value) in canonical_roles.into_iter().enumerate() {
+            let (_plan, residual) = role_value.ok_or_else(|| {
+                ImagingError::Normalization(format!(
+                    "AWProject DataToGrid portable source {accepted_ordinal} did not select \
+                     both Mueller 0 and 15"
+                ))
+            })?;
+            let actual_mueller = if role == 0 { 0 } else { 15 };
             for hash in [&mut geometry, &mut input] {
                 hash.usize(accepted_ordinal);
                 hash.usize(role);
+                hash.u64(actual_mueller);
                 hash.f64(frequency_hz);
                 hash.f64(batch.u_lambda[sample_index]);
                 hash.f64(batch.v_lambda[sample_index]);
@@ -21029,7 +21088,7 @@ fn maybe_run_awproject_datatogrid_bracket(
     );
     let evidence = format!(
         "{{\n\
-         \"schema\":\"casa-rs-aw-datagrid-bracket-v2\",\n\
+         \"schema\":\"casa-rs-aw-datagrid-bracket-v3\",\n\
          \"status\":\"completed-before-finalize\",\n\
          \"reason\":\"observed-selection-grid-and-production-sumwt-boundary\",\n\
          \"role\":\"bounded-correctness-oracle-not-performance-evidence\",\n\
@@ -21049,7 +21108,7 @@ fn maybe_run_awproject_datatogrid_bracket(
          \"core_wterm\":\"none-awproject-owns-w\",\n\
          \"grid_hash_contract\":\"fnv1a64-shape-4096-4096-1-1-axis0-fast-complex64-bits\",\n\
          \"sumwt_hash_contract\":\"fnv1a64-shape-1-1-f64-bits\",\n\
-         \"portable_hash_contract\":\"fnv1a64-little-endian-call-block-term-accepted-source-ordinal-rr-then-ll-frequency-uvw-current-weight-basis-residual-value\",\n\
+         \"portable_hash_contract\":\"fnv1a64-little-endian-call-block-term-accepted-source-ordinal-selected-mueller-0-then-15-frequency-uvw-current-weight-basis-residual-value\",\n\
          \"cross_producer_comparison_contract\":\"observed-first-buffer-selection-relative-rows-flags-channel-map-polarization-map-frequency-source-count-term-order-cumulative-raw-complex64-grid-and-sumwt-fnv64\",\n\
          \"native_casa_input_hash\":\"unavailable-in-VisibilityBatch\",\n\
          \"row_channel_provenance\":\"producer-observed-selection-relative-and-absolute-MAIN-row-domains-with-live-channel-polarization-frequency-hashes\",\n\
@@ -21090,7 +21149,7 @@ fn maybe_run_awproject_datatogrid_bracket(
     let evidence_sha256 = format!("{:x}", Sha256::digest(embedded_evidence.as_bytes()));
     let payload = format!(
         "{{\n\
-         \"schema\":\"casa-rs-aw-datagrid-bracket-envelope-v2\",\n\
+         \"schema\":\"casa-rs-aw-datagrid-bracket-envelope-v3\",\n\
          \"content_address\":{{\"algorithm\":\"sha256\",\
          \"scope\":\"embedded-evidence-json-utf8\",\"digest\":\"{evidence_sha256}\"}},\n\
          \"evidence\":{}\n\
@@ -64194,6 +64253,35 @@ mod tests {
 
     #[cfg(all(target_os = "macos", not(coverage)))]
     #[test]
+    fn awproject_datatogrid_bracket_canonicalizes_casa_w_sign_mueller_selection() {
+        for w_lambda in [1.0, f64::MIN_POSITIVE] {
+            assert_eq!(
+                super::awproject_datatogrid_expected_selected_mueller(0, w_lambda).unwrap(),
+                0
+            );
+            assert_eq!(
+                super::awproject_datatogrid_expected_selected_mueller(1, w_lambda).unwrap(),
+                15
+            );
+        }
+        for w_lambda in [0.0, -f64::MIN_POSITIVE, -1.0] {
+            assert_eq!(
+                super::awproject_datatogrid_expected_selected_mueller(0, w_lambda).unwrap(),
+                15
+            );
+            assert_eq!(
+                super::awproject_datatogrid_expected_selected_mueller(1, w_lambda).unwrap(),
+                0
+            );
+        }
+        assert_eq!(super::awproject_datatogrid_mueller_ordinal(0).unwrap(), 0);
+        assert_eq!(super::awproject_datatogrid_mueller_ordinal(15).unwrap(), 1);
+        assert!(super::awproject_datatogrid_mueller_ordinal(7).is_err());
+        assert!(super::awproject_datatogrid_expected_selected_mueller(2, 1.0).is_err());
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
     #[serial_test::serial]
     fn awproject_datatogrid_bracket_parses_observed_first_buffer_selection_marker() {
         let marker = "field=1525;spws=2-17;first_spw=2;source_blocks=32;\
@@ -64254,9 +64342,9 @@ mod tests {
             .unwrap_or_else(|error| panic!("read {}: {error}", casa_path.display()));
         let casa: serde_json::Value = serde_json::from_str(&casa_payload)
             .unwrap_or_else(|error| panic!("parse {}: {error}", casa_path.display()));
-        assert_eq!(value["schema"], "casa-rs-aw-datagrid-bracket-envelope-v2");
+        assert_eq!(value["schema"], "casa-rs-aw-datagrid-bracket-envelope-v3");
         let evidence = &value["evidence"];
-        assert_eq!(evidence["schema"], "casa-rs-aw-datagrid-bracket-v2");
+        assert_eq!(evidence["schema"], "casa-rs-aw-datagrid-bracket-v3");
         assert_eq!(evidence["status"], "completed-before-finalize");
         assert_eq!(
             evidence["reason"],
