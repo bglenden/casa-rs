@@ -4987,6 +4987,107 @@ unchanged CASA reference, 4,096-square image row, 12,150-square development
 clean, or full-geometry memory-policy row ran. The 4,096-square full-16-SPW
 row and required memory campaign remain unpromoted.
 
+### 2026-07-30 exact native-component V6 promotion
+
+CASA and casacore source inspection resolved the last weight mismatch without
+another CASA run. `VisImagingWeight` accumulates
+`square(a_gwt_p(ugrid,vgrid))` into a `Double`, while casacore overloads
+`square(Float) -> Float`. CASA therefore rounds each density square in f32
+before promoting it into the f64 `sumlocwt` accumulator. A read-only probe
+over both already-frozen 12,150-square density grids confirmed that they are
+identical and that this boundary is numerically material:
+
+- cell count `147,622,500`, positive-cell count `269,261`;
+- density sum `31,371,709.695687294`;
+- f32-square-then-f64 sum `9,525,097,868.6828308`;
+- premature f64-square sum `9,525,097,866.808569`; and
+- difference `-1.8742618560791016`.
+
+The rounded f32-square result is exactly the value printed by the retained
+CASA trace at its available precision, `9,525,097,868.68`. This supersedes
+the earlier inference drawn from one output-weight sample. That sample
+combined the old, slightly wrong `f2` with the denominator rounding and could
+not establish the denominator operation graph independently.
+
+A same-conversation Oracle review agreed that the typed `square(Float)`
+boundary plausibly explains the sparse one-to-two-ULP residual, retained the
+Double `f2` construction followed by one Float cast, and required the frozen
+V5 output as a negative control. It identified C++ multiply-add contraction
+as the only remaining source-level ambiguity. Read-only disassembly of the
+installed CASA 6.7.5.18 arm64
+`casa::VisImagingWeight::weightUniform` symbol resolved that ambiguity: the
+denominator uses separate `fmul` and `fadd` instructions at `0x1f6dd0` and
+`0x1f6de4`. The exact CASA synthesis library SHA-256 is
+`1a2c9ab9031842466b5d8291c0da35e839a33519b01394e3fcb99c1221b8228a`.
+
+The shared standard-MFS Briggs implementation now rounds every Float density
+square before Double accumulation and evaluates the ordinary Float
+denominator as a separate multiply followed by add. The V6 diagnostic binds
+this production change to the immutable V5 negative control: receipt
+`3e108cfa315253ae8f1d2861407dd16a6ad85573d9d9e154c98f37d7021aa0da`,
+embedded evidence
+`f98ce8b0df66ed2905bb18c0fcf1faa01345aa6a0adfdcf09e8d4b4cc26d69bb`,
+weight hash `6417129240768820313`, and `865` mismatched slots.
+
+The production correction, V6 diagnostic, independent validator, and launcher
+were checkpointed and pushed at
+`3d8a800764c47d12b2a5637cd0e1f17a485e13eb`. The one-time V6 diagnostic then
+completed from that exact clean revision. Its immutable output directory is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/casa-rs-aw-datagrid-native-components-4096-full16-first-vb-v6`.
+The receipt, comparison, provenance, casa-rs log, and comparison-log
+whole-file SHA-256 digests are, respectively:
+
+- `35c3281f882fbe61cc512b4e489f25253904575be1deb027226e4017020c37b7`;
+- `c14bef87061579af01fbeacea2d86f0a682e346d3c5a47ea7803b4335fb156f3`;
+- `6a5f77bdcdc0ff255018e60dafb9e4439536f74bbacaedeb520a50bc0ae19ea8`;
+- `6e290620bfcc0e939934955541ccbc1923bfe4e06e21c31741b8cb585c544797`;
+  and
+- `d7605d071e9a4d698c97d60d78933854ecadb5b35f3d191faddbbe8284554119`.
+
+The receipt and comparison embedded-evidence digests are
+`309b6df5406b0e0bdbe02ee77d776487ea17d898f51cca11c9a1e96dbd9d2650`
+and
+`f13db8f46f3d35b66dc43fe9171d903f90b0801e35994fe7ad310f451eabcfc4`.
+The exact binary, launcher, validator, and `Cargo.lock` SHA-256 digests are
+`70827148822a083e4d47e9f55ba291731a29e8a02f2bf1a6e0938b654d1df9ab`,
+`f8f0e7655477e4cce09e7da923cf23e842788051c363276dfd67066927f75d9f`,
+`da3480d031311469777c966a4f7a256c626eaddcd64bbdeadf7c7b14d3567b1d`,
+and
+`0a30771fc5777290edf379b201ec828af0c8ab7ebb933cd5f3c7ed2c97a19b5c`.
+
+The independent validator classified V6 as
+`exact-frozen-casa-native-components`. All ten native components and every
+underlying value are exact. In particular, all `20,800` imaging-weight slots
+match CASA, with weight hash `2430234571011807313` and no first difference.
+The UVW/differential-phase hash remains `6884923150254773287`; TT0 and TT1
+geometry hashes remain `15079793846523608377` and
+`14381099959812707833`; the stream hash remains
+`4740440223154359747`; and all counts remain exact: `12,359` admitted and
+nonzero slots, `8,441` zero slots, and `48` flagged rows.
+
+The controlled stop did not open the CF cache or enter production dispatch,
+CF selection, grid allocation, gridding, normalization, FFT, image-product
+formation, or deconvolution. The cache metadata and content-tree digests
+remain
+`29cd6432bc16e91b80664d58f82c76857bd3846db48a302c691078b1db0ed7f7`
+and
+`f8fd10b133235e04f75f903fde38d68aa446e1892143fb6bf12b82b1e3cfff68`.
+No CASA process, unchanged reference, 4,096-square image row, 12,150-square
+development clean, or full-geometry memory-policy row ran.
+
+The affected Rust suites passed with `391` and `362` tests plus `23` ignored
+data fixtures; affected-crate clippy was warning-free. All `13` independent
+validator tests passed; Ruff, shell syntax, formatting, and
+`git diff --check` passed. No hosted-CI wait was added.
+
+This promotes the frozen first-buffer native-component boundary, not the
+4,096-square full-16-SPW image row. The next correctness gate is the existing
+4,096-square four-SPW workload, including CASA component selection,
+major-cycle residual behavior, and the exact 19-product contract. Only after
+that row is correct and fast may the 4,096-square full-16-SPW row be promoted;
+the required full-geometry memory campaign remains gated behind that
+promotion.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
