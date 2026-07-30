@@ -1913,9 +1913,13 @@ final class CasarsMacUITests: XCTestCase {
         }
         if element("task.safety.confirm").exists { try clickIdentified("task.safety.confirm") }
         try clickIdentified("task.run")
+        let taskStatus = try XCTUnwrap(
+            waitForTaskRunTerminalStatus(timeout: 1_800),
+            "The tutorial imaging task did not reach a terminal state.\n\(app.debugDescription)"
+        )
         XCTAssertTrue(
-            waitForValue("task.run.status", containing: "succeeded", timeout: 1_800),
-            app.debugDescription
+            taskStatus.localizedCaseInsensitiveContains("succeeded"),
+            "The tutorial imaging task ended with status \(taskStatus).\n\(app.debugDescription)"
         )
         let taskReceipt = try waitForReceiptObject(in: runs, timeout: 30) {
             $0["operation_id"] as? String == "imager" && $0["status"] as? String == "succeeded"
@@ -3233,6 +3237,15 @@ final class CasarsMacUITests: XCTestCase {
             for: [XCTNSPredicateExpectation(predicate: predicate, object: element)],
             timeout: timeout
         ) == .completed
+    }
+
+    private func waitForTaskRunTerminalStatus(timeout: TimeInterval) -> String? {
+        pollForValue(timeout: timeout) {
+            guard let value = try? accessibilityValue("task.run.status") else { return nil }
+            return ["succeeded", "failed", "cancelled"].contains {
+                value.localizedCaseInsensitiveContains($0)
+            } ? value : nil
+        }
     }
 
     private func pollUntil(

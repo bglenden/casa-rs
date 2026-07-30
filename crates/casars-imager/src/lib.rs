@@ -7017,7 +7017,9 @@ fn can_run_standard_mfs_fixed_tile_streaming_clean(
         && config.use_mask == CleanMaskMode::User
         && config.uv_taper.is_none()
         && matches!(config.w_term_mode, WTermMode::None | WTermMode::WProject)
-        && !needs_single_field_primary_beam_products(config)
+        && (!needs_single_field_primary_beam_products(config)
+            || force_standard_gridder
+            || config.force_standard_gridder)
 }
 
 fn can_run_standard_mfs_dirty_streaming(
@@ -7039,7 +7041,9 @@ fn can_run_standard_mfs_dirty_streaming(
         && config.use_mask == CleanMaskMode::User
         && config.uv_taper.is_none()
         && matches!(config.w_term_mode, WTermMode::None | WTermMode::WProject)
-        && !needs_single_field_primary_beam_products(config)
+        && (!needs_single_field_primary_beam_products(config)
+            || force_standard_gridder
+            || config.force_standard_gridder)
         && (config.dirty_only || config.niter == 0)
 }
 
@@ -12214,12 +12218,23 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
         Some(run_result.estimated_product_payload_bytes()),
     );
     emit_imager_progress_product_write(config, &run_result, true);
+    let single_field_pb_context = if needs_single_field_primary_beam_products(config) {
+        Some(single_field_primary_beam_context_for_antennas(
+            ms,
+            phase_center.angles_rad,
+            active_selected_rows
+                .iter()
+                .flat_map(|row| [row.antenna1_id, row.antenna2_id]),
+        )?)
+    } else {
+        None
+    };
     write_products(
         config,
         &coords,
         &run_result,
         effective_clean_mask.as_ref(),
-        None,
+        single_field_pb_context,
     )?;
     drop(product_guard);
     emit_imager_progress_product_write(config, &run_result, false);
@@ -12542,12 +12557,23 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
         Some(run_result.estimated_product_payload_bytes()),
     );
     emit_imager_progress_product_write(config, &run_result, true);
+    let single_field_pb_context = if needs_single_field_primary_beam_products(config) {
+        Some(single_field_primary_beam_context_for_antennas(
+            ms,
+            phase_center.angles_rad,
+            active_selected_rows
+                .iter()
+                .flat_map(|row| [row.antenna1_id, row.antenna2_id]),
+        )?)
+    } else {
+        None
+    };
     write_products(
         config,
         &coords,
         &run_result,
         effective_clean_mask.as_ref(),
-        None,
+        single_field_pb_context,
     )?;
     drop(product_guard);
     emit_imager_progress_product_write(config, &run_result, false);
@@ -22083,7 +22109,9 @@ fn can_plan_standard_mfs_acceleration(
         && config.use_mask == CleanMaskMode::User
         && config.uv_taper.is_none()
         && matches!(config.w_term_mode, WTermMode::None | WTermMode::WProject)
-        && !needs_single_field_primary_beam_products(config)
+        && (!needs_single_field_primary_beam_products(config)
+            || force_standard_gridder
+            || config.force_standard_gridder)
 }
 
 fn standard_mfs_shared_acceleration_spectral_mode_is_eligible(config: &CliConfig) -> bool {
@@ -42426,9 +42454,23 @@ fn single_field_primary_beam_context(
     phase_center_direction_rad: [f64; 2],
     samples: &[PreparedVisibilitySampleTrace],
 ) -> Result<PrimaryBeamProductContext, String> {
+    single_field_primary_beam_context_for_antennas(
+        ms,
+        phase_center_direction_rad,
+        samples
+            .iter()
+            .flat_map(|sample| [sample.antenna1_id, sample.antenna2_id]),
+    )
+}
+
+fn single_field_primary_beam_context_for_antennas(
+    ms: &MeasurementSet,
+    phase_center_direction_rad: [f64; 2],
+    selected_antenna_ids: impl IntoIterator<Item = i32>,
+) -> Result<PrimaryBeamProductContext, String> {
     Ok(PrimaryBeamProductContext {
         phase_center_direction_rad,
-        primary_beam_model: infer_primary_beam_model(ms, samples)?,
+        primary_beam_model: infer_primary_beam_model_for_antennas(ms, selected_antenna_ids)?,
     })
 }
 
@@ -51247,6 +51289,50 @@ mod tests {
             &config, false, 1
         ));
         assert!(can_run_standard_mfs_dirty_streaming(&config, false, 1));
+    }
+
+    #[test]
+    fn explicit_standard_mfs_streaming_accepts_primary_beam_products() {
+        let dirty = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("standard"),
+            OsString::from("--niter"),
+            OsString::from("0"),
+            OsString::from("--dirty-only"),
+            OsString::from("--write-pb"),
+        ])
+        .expect("parse explicit standard-gridder PB config");
+
+        assert!(can_plan_standard_mfs_acceleration(&dirty, false, 1));
+        assert!(can_run_standard_mfs_dirty_streaming(&dirty, false, 1));
+
+        let mut clean = dirty.clone();
+        clean.dirty_only = false;
+        clean.niter = 100;
+        assert!(can_run_standard_mfs_fixed_tile_streaming_clean(
+            &clean, false, 1
+        ));
+
+        let mut inferred_gridder = dirty;
+        inferred_gridder.force_standard_gridder = false;
+        assert!(!can_plan_standard_mfs_acceleration(
+            &inferred_gridder,
+            false,
+            1
+        ));
+        assert!(!can_run_standard_mfs_dirty_streaming(
+            &inferred_gridder,
+            false,
+            1
+        ));
     }
 
     #[test]
