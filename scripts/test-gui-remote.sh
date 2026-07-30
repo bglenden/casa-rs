@@ -157,6 +157,53 @@ if [[ "$console_lock_state" == "Yes" ]]; then
   exit 2
 fi
 
+mkdir -p "$storage_root"
+worker_lock="$storage_root/worker.lock"
+acquire_worker_lock() {
+  if mkdir "$worker_lock" 2>/dev/null; then
+    printf '%s\n' "$$" >"$worker_lock/pid"
+    return
+  fi
+
+  lock_owner="$(cat "$worker_lock/pid" 2>/dev/null || true)"
+  if [[ "$lock_owner" =~ ^[0-9]+$ ]] && kill -0 "$lock_owner" 2>/dev/null; then
+    echo "remote GUI worker is already active (pid $lock_owner)" >&2
+    exit 2
+  fi
+
+  rm -f "$worker_lock/pid"
+  if ! rmdir "$worker_lock" 2>/dev/null || ! mkdir "$worker_lock" 2>/dev/null; then
+    echo "remote GUI worker lock is owned by another process: $worker_lock" >&2
+    exit 2
+  fi
+  printf '%s\n' "$$" >"$worker_lock/pid"
+}
+release_worker_lock() {
+  if [[ "$(cat "$worker_lock/pid" 2>/dev/null || true)" == "$$" ]]; then
+    rm -f "$worker_lock/pid"
+    rmdir "$worker_lock" 2>/dev/null || true
+  fi
+}
+acquire_worker_lock
+cleanup_worker() {
+  release_worker_lock
+  cleanup_request
+}
+trap cleanup_worker EXIT
+
+active_test_processes="$(
+  ps -axo pid=,command= \
+    | /usr/bin/awk -v derived="$derived_data" '
+        ($0 ~ /xcodebuild/ && index($0, derived) != 0) ||
+        $0 ~ /CasarsMacUITests-Runner[.]app/ { print }
+      '
+)"
+if [[ -n "$active_test_processes" ]]; then
+  echo "remote GUI worker found an XCTest process outside the worker lock:" >&2
+  printf '%s\n' "$active_test_processes" >&2
+  exit 2
+fi
+
 checkout_changes="$(git -C "$repo_root" status --porcelain --untracked-files=all)"
 repo_target="$repo_root/target"
 if [[ -L "$repo_target" && "$repo_target" -ef "$target_dir" ]]; then
@@ -186,7 +233,7 @@ gui_verify_signing_identity || {
 export CASA_RS_GUI_TEST_CODE_SIGN_IDENTITY CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN
 unset CASA_RS_GUI_TEST_CODE_SIGN_KEYCHAIN_PASSWORD
 
-mkdir -p "$storage_root" "$artifact_root" "$target_dir" "$derived_data"
+mkdir -p "$artifact_root" "$target_dir" "$derived_data"
 if [[ -e "$repo_target" || -L "$repo_target" ]]; then
   if [[ ! -L "$repo_target" || ! "$repo_target" -ef "$target_dir" ]]; then
     echo "remote checkout target must link to $target_dir" >&2
@@ -203,7 +250,7 @@ caffeinate_pid=$!
 stop_caffeinate() {
   kill "$caffeinate_pid" >/dev/null 2>&1 || true
   wait "$caffeinate_pid" 2>/dev/null || true
-  cleanup_request
+  cleanup_worker
 }
 trap stop_caffeinate EXIT
 cd "$repo_root"
