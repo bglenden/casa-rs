@@ -444,16 +444,17 @@ fn dump_weighting_density_csv(
 /// `[channel][row][correlation]` for `FLAG` and `WEIGHT_SPECTRUM`, and
 /// `[row][correlation]` for `WEIGHT`. `uvw_m` is supplied separately so
 /// frontends can pass either raw or already-reprojected coordinates without
-/// changing the source block contract.
+/// changing the source block contract. `imaging_frequencies_hz` contains the
+/// per-selected-channel frequencies in the imaging frame, in the same order as
+/// `source_channel_indices`.
 #[allow(clippy::too_many_arguments)]
 pub fn accumulate_standard_mfs_density_row_from_visibility_block(
     weighting_plan: &mut StandardMfsStreamingWeightingPlan,
     source: VisibilityBlockView<'_>,
     row_slot: usize,
     uvw_m: [f64; 3],
-    mfs_frequency_scale: f64,
     source_channel_indices: &[usize],
-    source_channel_frequencies_hz: &[f64],
+    imaging_frequencies_hz: &[f64],
     polarization: StandardMfsVisibilityPolarization,
 ) -> Result<usize, crate::ImagingError> {
     if row_slot >= source.row_count() {
@@ -477,9 +478,8 @@ pub fn accumulate_standard_mfs_density_row_from_visibility_block(
     accumulate_standard_mfs_density_row_with_accessors(
         weighting_plan,
         uvw_m,
-        mfs_frequency_scale,
         source_channel_indices,
-        source_channel_frequencies_hz,
+        imaging_frequencies_hz,
         polarization,
         |source_channel| {
             standard_mfs_density_local_channel(source_channel, source.channel_start, channel_count)
@@ -532,27 +532,27 @@ pub fn accumulate_standard_mfs_density_row_from_visibility_block(
 ///
 /// `flags` and `weight_spectrum` use `[correlation][local_channel]` layout,
 /// while `weights` is one value per correlation. `channel_origin` maps absolute
-/// source-channel indices onto the local channel axis.
+/// source-channel indices onto the local channel axis. `imaging_frequencies_hz`
+/// contains the per-selected-channel frequencies in the imaging frame, in the
+/// same order as `source_channel_indices`.
 #[allow(clippy::too_many_arguments)]
 pub fn accumulate_standard_mfs_density_row_from_arrays(
     weighting_plan: &mut StandardMfsStreamingWeightingPlan,
     uvw_m: [f64; 3],
-    mfs_frequency_scale: f64,
     channel_origin: usize,
     flags: &Array2<bool>,
     weights: &[f32],
     weight_spectrum: Option<&Array2<f32>>,
     source_channel_indices: &[usize],
-    source_channel_frequencies_hz: &[f64],
+    imaging_frequencies_hz: &[f64],
     polarization: StandardMfsVisibilityPolarization,
 ) -> Result<usize, crate::ImagingError> {
     let (corr_count, channel_count) = flags.dim();
     accumulate_standard_mfs_density_row_with_accessors(
         weighting_plan,
         uvw_m,
-        mfs_frequency_scale,
         source_channel_indices,
-        source_channel_frequencies_hz,
+        imaging_frequencies_hz,
         polarization,
         |source_channel| {
             standard_mfs_density_local_channel(source_channel, channel_origin, channel_count)
@@ -622,9 +622,8 @@ fn accumulate_standard_mfs_density_row_with_accessors<
 >(
     weighting_plan: &mut StandardMfsStreamingWeightingPlan,
     uvw_m: [f64; 3],
-    mfs_frequency_scale: f64,
     source_channel_indices: &[usize],
-    source_channel_frequencies_hz: &[f64],
+    imaging_frequencies_hz: &[f64],
     polarization: StandardMfsVisibilityPolarization,
     mut local_channel_for_source: Local,
     mut flag_at: Flag,
@@ -639,20 +638,20 @@ where
     Invariant: FnMut(usize) -> Result<Option<f32>, crate::ImagingError>,
     PairInvariant: FnMut(usize, usize) -> Result<Option<(f32, f32)>, crate::ImagingError>,
 {
-    if source_channel_indices.len() != source_channel_frequencies_hz.len() {
+    if source_channel_indices.len() != imaging_frequencies_hz.len() {
         return Err(crate::ImagingError::InvalidRequest(format!(
-            "standard MFS density source-channel count {} differs from frequency count {}",
+            "standard MFS density source-channel count {} differs from imaging-frequency count {}",
             source_channel_indices.len(),
-            source_channel_frequencies_hz.len()
+            imaging_frequencies_hz.len()
         )));
     }
     let mut accepted_samples = 0usize;
     match polarization {
         StandardMfsVisibilityPolarization::Explicit { corr_index, .. } => {
             let invariant_weight = channel_invariant_weight(corr_index)?;
-            for (&source_channel, &frequency_hz) in source_channel_indices
+            for (&source_channel, &imaging_frequency_hz) in source_channel_indices
                 .iter()
-                .zip(source_channel_frequencies_hz.iter())
+                .zip(imaging_frequencies_hz.iter())
             {
                 let local_channel = local_channel_for_source(source_channel)?;
                 if flag_at(corr_index, source_channel, local_channel)? {
@@ -666,7 +665,7 @@ where
                     continue;
                 }
                 let (u_lambda, v_lambda) =
-                    casa_vis_imaging_weight_uv_lambda(uvw_m, frequency_hz * mfs_frequency_scale);
+                    casa_vis_imaging_weight_uv_lambda(uvw_m, imaging_frequency_hz);
                 weighting_plan.accumulate_density_sample(u_lambda, v_lambda, weight);
                 accepted_samples += 1;
             }
@@ -678,9 +677,9 @@ where
         } => {
             let invariant_pair =
                 channel_invariant_pair_weights(first_corr_index, second_corr_index)?;
-            for (&source_channel, &frequency_hz) in source_channel_indices
+            for (&source_channel, &imaging_frequency_hz) in source_channel_indices
                 .iter()
-                .zip(source_channel_frequencies_hz.iter())
+                .zip(imaging_frequencies_hz.iter())
             {
                 let local_channel = local_channel_for_source(source_channel)?;
                 if flag_at(first_corr_index, source_channel, local_channel)?
@@ -707,7 +706,7 @@ where
                     continue;
                 }
                 let (u_lambda, v_lambda) =
-                    casa_vis_imaging_weight_uv_lambda(uvw_m, frequency_hz * mfs_frequency_scale);
+                    casa_vis_imaging_weight_uv_lambda(uvw_m, imaging_frequency_hz);
                 weighting_plan.accumulate_density_sample(u_lambda, v_lambda, combined_weight);
                 accepted_samples += 1;
             }
@@ -3166,18 +3165,17 @@ mod tests {
             Array2::from_shape_vec((2, 4), vec![0.0, 2.0, f32::NAN, 3.0, 4.0, 5.0, 6.0, 0.0])
                 .unwrap();
         let source_channels = [10, 11, 12, 13];
-        let source_frequencies_hz = [1.0e9, 1.1e9, 1.2e9, 1.3e9];
+        let imaging_frequencies_hz = [1.0e9, 1.1e9, 1.2e9, 1.3e9];
 
         let accepted = accumulate_standard_mfs_density_row_from_arrays(
             &mut explicit_plan,
             [12.0, -7.0, 0.0],
-            1.0,
             10,
             &flags,
             &[10.0, 20.0],
             Some(&weight_spectrum),
             &source_channels,
-            &source_frequencies_hz,
+            &imaging_frequencies_hz,
             StandardMfsVisibilityPolarization::Explicit {
                 corr_index: 0,
                 sumwt_factor: 1.0,
@@ -3196,13 +3194,12 @@ mod tests {
         let accepted = accumulate_standard_mfs_density_row_from_arrays(
             &mut paired_plan,
             [12.0, -7.0, 0.0],
-            1.0,
             10,
             &flags,
             &[10.0, 20.0],
             Some(&weight_spectrum),
             &source_channels,
-            &source_frequencies_hz,
+            &imaging_frequencies_hz,
             StandardMfsVisibilityPolarization::CollapsedPair {
                 first_corr_index: 0,
                 second_corr_index: 1,
@@ -3213,6 +3210,41 @@ mod tests {
         .unwrap();
 
         assert_eq!(accepted, 1);
+    }
+
+    #[test]
+    fn standard_mfs_density_rejects_mismatched_imaging_frequency_count() {
+        let mut plan = StandardMfsStreamingWeightingPlan::new(
+            ImageGeometry {
+                image_shape: [64, 64],
+                cell_size_rad: [1.0e-4, 1.0e-4],
+            },
+            WeightingMode::Uniform,
+            [1.0e9, 1.2e9],
+        )
+        .unwrap();
+        let flags = Array2::from_elem((1, 2), false);
+
+        let error = accumulate_standard_mfs_density_row_from_arrays(
+            &mut plan,
+            [12.0, -7.0, 0.0],
+            0,
+            &flags,
+            &[1.0],
+            None,
+            &[0, 1],
+            &[1.0e9],
+            StandardMfsVisibilityPolarization::Explicit {
+                corr_index: 0,
+                sumwt_factor: 1.0,
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "invalid request: standard MFS density source-channel count 2 differs from imaging-frequency count 1"
+        );
     }
 
     #[test]
@@ -3263,7 +3295,6 @@ mod tests {
             source,
             1,
             [9.0, 4.0, 0.0],
-            1.0,
             &[5, 6, 7],
             &[1.0e9, 1.1e9, 1.2e9],
             StandardMfsVisibilityPolarization::CollapsedPair {
