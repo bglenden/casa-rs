@@ -7273,6 +7273,13 @@ const AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV: &str =
     "CASA_RS_AW_TT0_ARITHMETIC_COMPAT_OUTPUT_V1";
 const AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV: &str =
     "CASA_RS_INTERNAL_AW_TT0_ARITHMETIC_COMPAT_SELECTION_V1";
+const AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV: &str =
+    "CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_OUTPUT_V1";
+const AWPROJECT_LITERAL_COEFFICIENT_AUDIT_SELECTION_ENV: &str =
+    "CASA_RS_INTERNAL_AW_LITERAL_COEFFICIENT_AUDIT_SELECTION_V1";
+#[allow(unexpected_cfgs)]
+const AWPROJECT_LITERAL_COEFFICIENT_AUDIT_CORE_HOOK_COMPILED: bool =
+    cfg!(all(target_os = "macos", not(coverage)));
 const AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS: usize = 325;
 const AWPROJECT_DATATOGRID_BRACKET_FIRST_SELECTED_ROW_IDS_HASH: u64 = 15_058_004_568_616_189_240;
 const AWPROJECT_DATATOGRID_BRACKET_FIRST_ABSOLUTE_ROW_IDS_HASH: u64 = 8_652_707_267_842_020_204;
@@ -7285,6 +7292,7 @@ const AWPROJECT_DATATOGRID_BRACKET_FIRST_FLAGGED_ROWS: usize = 48;
 enum AwProjectDataToGridDiagnosticMode {
     FrozenV4,
     Tt0ArithmeticCompatV1,
+    LiteralCoefficientAuditV1,
 }
 
 impl AwProjectDataToGridDiagnosticMode {
@@ -7292,6 +7300,7 @@ impl AwProjectDataToGridDiagnosticMode {
         match self {
             Self::FrozenV4 => AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV,
             Self::Tt0ArithmeticCompatV1 => AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV,
+            Self::LiteralCoefficientAuditV1 => AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV,
         }
     }
 
@@ -7299,6 +7308,7 @@ impl AwProjectDataToGridDiagnosticMode {
         match self {
             Self::FrozenV4 => AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV,
             Self::Tt0ArithmeticCompatV1 => AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV,
+            Self::LiteralCoefficientAuditV1 => AWPROJECT_LITERAL_COEFFICIENT_AUDIT_SELECTION_ENV,
         }
     }
 
@@ -7314,6 +7324,11 @@ impl AwProjectDataToGridDiagnosticMode {
                 ("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_BLOCKS", "1"),
                 ("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_TERMS", "1"),
             ],
+            Self::LiteralCoefficientAuditV1 => [
+                ("CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_EXPECT_NXY", "4096"),
+                ("CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_BLOCKS", "1"),
+                ("CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_TERMS", "1"),
+            ],
         }
     }
 }
@@ -7328,20 +7343,45 @@ fn awproject_datatogrid_diagnostic_request()
 -> Result<Option<AwProjectDataToGridDiagnosticRequest>, String> {
     let frozen_v4_output = env::var_os(AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV);
     let tt0_arithmetic_compat_output = env::var_os(AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV);
-    let (mode, output) = match (frozen_v4_output, tt0_arithmetic_compat_output) {
-        (None, None) => return Ok(None),
-        (Some(_), Some(_)) => {
+    let literal_coefficient_audit_output =
+        env::var_os(AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV);
+    let configured = [
+        (
+            AwProjectDataToGridDiagnosticMode::FrozenV4,
+            frozen_v4_output,
+        ),
+        (
+            AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1,
+            tt0_arithmetic_compat_output,
+        ),
+        (
+            AwProjectDataToGridDiagnosticMode::LiteralCoefficientAuditV1,
+            literal_coefficient_audit_output,
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(mode, output)| output.map(|output| (mode, output)))
+    .collect::<Vec<_>>();
+    let (mode, output) = match configured.as_slice() {
+        [] => return Ok(None),
+        [(mode, output)] => (*mode, output.clone()),
+        _ => {
             return Err(format!(
-                "{AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV} and \
-                 {AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV} are mutually exclusive"
+                "{AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV}, \
+                 {AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV}, and \
+                 {AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV} are mutually exclusive"
             ));
         }
-        (Some(output), None) => (AwProjectDataToGridDiagnosticMode::FrozenV4, output),
-        (None, Some(output)) => (
-            AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1,
-            output,
-        ),
     };
+    if mode == AwProjectDataToGridDiagnosticMode::LiteralCoefficientAuditV1
+        && !AWPROJECT_LITERAL_COEFFICIENT_AUDIT_CORE_HOOK_COMPILED
+    {
+        return Err(
+            "the AWProject literal-coefficient audit requires the macOS casa-imaging \
+             controlled-stop hook and is unavailable in this build"
+                .to_string(),
+        );
+    }
     Ok(Some(AwProjectDataToGridDiagnosticRequest {
         mode,
         output: PathBuf::from(output),
@@ -7558,6 +7598,9 @@ fn validate_awproject_datatogrid_bracket_cli(config: &CliConfig) -> Result<(), S
             AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1 => {
                 "TT0 arithmetic-compatibility"
             }
+            AwProjectDataToGridDiagnosticMode::LiteralCoefficientAuditV1 => {
+                "literal-coefficient audit"
+            }
         };
         return Err(format!(
             "refusing to overwrite AWProject {diagnostic} receipt {}",
@@ -7677,7 +7720,11 @@ fn awproject_datatogrid_selection_marker_for_mode(
 ) -> String {
     let mut marker =
         awproject_datatogrid_selection_marker(first_spw, planned_source_blocks, observed);
-    if mode == AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1 {
+    if matches!(
+        mode,
+        AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1
+            | AwProjectDataToGridDiagnosticMode::LiteralCoefficientAuditV1
+    ) {
         marker.push_str(&format!(
             ";selected_corr_first_index={};selected_corr_second_index={};\
              selected_corr_first_code={};selected_corr_second_code={}",
@@ -7782,7 +7829,11 @@ fn install_awproject_datatogrid_bracket_selection(
             context.planned_source_blocks,
         ));
     }
-    if request.mode == AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1 {
+    if matches!(
+        request.mode,
+        AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1
+            | AwProjectDataToGridDiagnosticMode::LiteralCoefficientAuditV1
+    ) {
         validate_awproject_tt0_arithmetic_compat_corr_order(&observed)?;
     }
     let marker = awproject_datatogrid_selection_marker_for_mode(
@@ -52656,17 +52707,22 @@ mod tests {
     static AWPROJECT_DIAGNOSTIC_ENV_TEST_LOCK: LazyLock<Mutex<()>> =
         LazyLock::new(|| Mutex::new(()));
 
-    const AWPROJECT_DIAGNOSTIC_TEST_ENV_NAMES: [&str; 10] = [
+    const AWPROJECT_DIAGNOSTIC_TEST_ENV_NAMES: [&str; 15] = [
         AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV,
         AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV,
         AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV,
         AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV,
+        AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV,
+        AWPROJECT_LITERAL_COEFFICIENT_AUDIT_SELECTION_ENV,
         "CASA_RS_AW_BRACKET_EXPECT_NXY",
         "CASA_RS_AW_BRACKET_BLOCKS",
         "CASA_RS_AW_BRACKET_TERMS",
         "CASA_RS_AW_TT0_ARITHMETIC_COMPAT_EXPECT_NXY",
         "CASA_RS_AW_TT0_ARITHMETIC_COMPAT_BLOCKS",
         "CASA_RS_AW_TT0_ARITHMETIC_COMPAT_TERMS",
+        "CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_EXPECT_NXY",
+        "CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_BLOCKS",
+        "CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_TERMS",
     ];
 
     struct AwProjectDiagnosticTestEnv {
@@ -52754,6 +52810,12 @@ mod tests {
         test_env.set("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_EXPECT_NXY", "4096");
         test_env.set("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_BLOCKS", "1");
         test_env.set("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_TERMS", "1");
+    }
+
+    fn set_aw_literal_coefficient_audit_controls(test_env: &AwProjectDiagnosticTestEnv) {
+        test_env.set("CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_EXPECT_NXY", "4096");
+        test_env.set("CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_BLOCKS", "1");
+        test_env.set("CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_TERMS", "1");
     }
 
     #[test]
@@ -52923,6 +52985,90 @@ mod tests {
     }
 
     #[test]
+    fn awproject_literal_coefficient_audit_reuses_exact_role_selection_marker() {
+        let _test_lock = AWPROJECT_DIAGNOSTIC_ENV_TEST_LOCK
+            .lock()
+            .expect("AWProject diagnostic environment lock");
+        let test_env = AwProjectDiagnosticTestEnv::isolated();
+        let temp = tempdir().expect("temporary output parent");
+        let output = temp.path().join("literal-coefficient-audit-v1.json");
+        test_env.set(AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV, &output);
+        set_aw_literal_coefficient_audit_controls(&test_env);
+        test_env.set(
+            AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV,
+            "arithmetic-role-marker",
+        );
+        test_env.set(
+            AWPROJECT_LITERAL_COEFFICIENT_AUDIT_SELECTION_ENV,
+            "stale-literal-role-marker",
+        );
+        if !AWPROJECT_LITERAL_COEFFICIENT_AUDIT_CORE_HOOK_COMPILED {
+            let error = awproject_datatogrid_diagnostic_request()
+                .expect_err("a build without the core controlled-stop hook must reject the audit");
+            assert!(error.contains("unavailable in this build"), "{error}");
+            return;
+        }
+
+        let config = aw_bracket_valid_cli_config();
+        validate_awproject_datatogrid_bracket_cli(&config)
+            .expect("validate the private literal-coefficient audit");
+        let request = awproject_datatogrid_diagnostic_request()
+            .expect("resolve diagnostic")
+            .expect("diagnostic is active");
+        assert_eq!(
+            request,
+            AwProjectDataToGridDiagnosticRequest {
+                mode: AwProjectDataToGridDiagnosticMode::LiteralCoefficientAuditV1,
+                output,
+            }
+        );
+        assert!(
+            env::var_os(AWPROJECT_LITERAL_COEFFICIENT_AUDIT_SELECTION_ENV).is_none(),
+            "the exact role marker is installed only after observing the live selection"
+        );
+        assert_eq!(
+            env::var(AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV).as_deref(),
+            Ok("arithmetic-role-marker"),
+            "the literal audit must not mutate the arithmetic diagnostic marker"
+        );
+
+        let rows = vec![aw_bracket_test_row(0)];
+        let table_values = aw_bracket_test_table_values(64);
+        let observed = awproject_datatogrid_bracket_observed_first_buffer(
+            &rows,
+            &rows,
+            &[false],
+            &table_values,
+            Some(SelectedChannelReadRange::new(0, 64)),
+            None,
+        )
+        .expect("observe the production role and frequency route");
+        let marker = awproject_datatogrid_selection_marker_for_mode(request.mode, 2, 32, &observed);
+        let arithmetic_marker = awproject_datatogrid_selection_marker_for_mode(
+            AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1,
+            2,
+            32,
+            &observed,
+        );
+        assert_eq!(
+            marker, arithmetic_marker,
+            "the dedicated literal marker must preserve the exact 31-field arithmetic bytes"
+        );
+        install_awproject_datatogrid_selection_marker(request.mode, &marker);
+
+        assert_eq!(marker.split(';').count(), 31);
+        assert!(marker.contains("source_blocks=32"));
+        assert!(marker.contains("selected_corr_first_index=0"));
+        assert!(marker.contains("selected_corr_second_index=3"));
+        assert!(marker.contains("selected_corr_first_code=5"));
+        assert!(marker.contains("selected_corr_second_code=8"));
+        assert_eq!(
+            env::var(AWPROJECT_LITERAL_COEFFICIENT_AUDIT_SELECTION_ENV).as_deref(),
+            Ok(marker.as_str())
+        );
+    }
+
+    #[test]
     fn awproject_datatogrid_diagnostic_modes_are_mutually_exclusive() {
         let _test_lock = AWPROJECT_DIAGNOSTIC_ENV_TEST_LOCK
             .lock()
@@ -52933,12 +53079,17 @@ mod tests {
             AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV,
             "/tmp/tt0-v1.json",
         );
+        test_env.set(
+            AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV,
+            "/tmp/literal-v1.json",
+        );
 
         let error = validate_awproject_datatogrid_bracket_cli(&aw_bracket_valid_cli_config())
             .expect_err("simultaneous private diagnostics must fail closed");
         assert!(error.contains("mutually exclusive"), "{error}");
         assert!(error.contains(AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV));
         assert!(error.contains(AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV));
+        assert!(error.contains(AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV));
     }
 
     #[test]

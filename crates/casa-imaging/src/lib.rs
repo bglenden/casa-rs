@@ -20473,6 +20473,32 @@ const AWPROJECT_TT0_ARITHMETIC_COMPAT_FREQ_FIRST_BITS_V1: u64 = 4_746_028_312_09
 #[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_TT0_ARITHMETIC_COMPAT_FREQ_LAST_BITS_V1: u64 = 4_746_556_774_954_748_567;
 #[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV_V1: &str =
+    "CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_OUTPUT_V1";
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_LITERAL_COEFFICIENT_AUDIT_SELECTION_ENV_V1: &str =
+    "CASA_RS_INTERNAL_AW_LITERAL_COEFFICIENT_AUDIT_SELECTION_V1";
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_LITERAL_COEFFICIENT_AUDIT_EXPECT_NXY_ENV_V1: &str =
+    "CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_EXPECT_NXY";
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_LITERAL_COEFFICIENT_AUDIT_BLOCKS_ENV_V1: &str =
+    "CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_BLOCKS";
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_LITERAL_COEFFICIENT_AUDIT_TERMS_ENV_V1: &str =
+    "CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_TERMS";
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_LITERAL_COEFFICIENT_AUDIT_INCOMPATIBLE_EXPERIMENT_ENVS_V1: [&str; 2] = [
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_CPP_COMPLEX",
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_DISABLE_POINTING_PHASE",
+];
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_LITERAL_COEFFICIENT_AUDIT_CASA_SOURCE_COMMIT_V1: &str =
+    "418bb1a26df7c4aba663ff123b038b75a6fa0295";
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_LITERAL_COEFFICIENT_AUDIT_CASACORE_SOURCE_COMMIT_V1: &str =
+    "25b653f6963a78a1dcfc8e16954081e091a50fbe";
+#[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS: usize = 325;
 #[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_DATATOGRID_BRACKET_FIRST_SELECTED_ROW_IDS_HASH: u64 = 15_058_004_568_616_189_240;
@@ -20542,6 +20568,14 @@ struct AwProjectDataToGridBracketConfig {
 #[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Clone, Copy)]
 struct AwProjectTt0ArithmeticCompatConfigV1 {
+    expected_nxy: usize,
+    target_blocks: usize,
+    terms: usize,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Clone, Copy)]
+struct AwProjectLiteralCoefficientAuditConfigV1 {
     expected_nxy: usize,
     target_blocks: usize,
     terms: usize,
@@ -20690,6 +20724,92 @@ fn awproject_tt0_arithmetic_compat_config_v1()
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_literal_coefficient_audit_required_usize_v1(
+    name: &str,
+) -> Result<usize, ImagingError> {
+    let value = env::var(name).map_err(|_| {
+        ImagingError::InvalidRequest(format!(
+            "the AWProject literal-coefficient audit requires {name}"
+        ))
+    })?;
+    value.parse::<usize>().map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "invalid AWProject literal-coefficient audit integer in {name}: {error}"
+        ))
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_literal_coefficient_audit_config_v1()
+-> Result<Option<(PathBuf, AwProjectLiteralCoefficientAuditConfigV1)>, ImagingError> {
+    let Some(output) = env::var_os(AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV_V1) else {
+        return Ok(None);
+    };
+    let output = PathBuf::from(output);
+    if !output.is_absolute() {
+        return Err(ImagingError::InvalidRequest(format!(
+            "{AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV_V1} must be an absolute path"
+        )));
+    }
+    if output.exists() {
+        return Err(ImagingError::InvalidRequest(format!(
+            "refusing to overwrite AWProject literal-coefficient audit receipt {}",
+            output.display()
+        )));
+    }
+    let expected_nxy = awproject_literal_coefficient_audit_required_usize_v1(
+        AWPROJECT_LITERAL_COEFFICIENT_AUDIT_EXPECT_NXY_ENV_V1,
+    )?;
+    let target_blocks = awproject_literal_coefficient_audit_required_usize_v1(
+        AWPROJECT_LITERAL_COEFFICIENT_AUDIT_BLOCKS_ENV_V1,
+    )?;
+    let terms = awproject_literal_coefficient_audit_required_usize_v1(
+        AWPROJECT_LITERAL_COEFFICIENT_AUDIT_TERMS_ENV_V1,
+    )?;
+    if expected_nxy != 4096 {
+        return Err(ImagingError::InvalidRequest(
+            "the frozen AWProject literal-coefficient audit requires exactly 4096 pixels per side"
+                .to_string(),
+        ));
+    }
+    if target_blocks != 1 {
+        return Err(ImagingError::InvalidRequest(
+            "the bounded AWProject literal-coefficient audit requires exactly one logical source block"
+                .to_string(),
+        ));
+    }
+    if terms != 1 {
+        return Err(ImagingError::InvalidRequest(
+            "the bounded AWProject literal-coefficient audit evaluates exactly TT0".to_string(),
+        ));
+    }
+    Ok(Some((
+        output,
+        AwProjectLiteralCoefficientAuditConfigV1 {
+            expected_nxy,
+            target_blocks,
+            terms,
+        },
+    )))
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn validate_awproject_literal_coefficient_audit_experiment_state_v1() -> Result<(), ImagingError> {
+    let configured = AWPROJECT_LITERAL_COEFFICIENT_AUDIT_INCOMPATIBLE_EXPERIMENT_ENVS_V1
+        .into_iter()
+        .filter(|name| env::var_os(name).is_some())
+        .collect::<Vec<_>>();
+    if configured.is_empty() {
+        return Ok(());
+    }
+    Err(ImagingError::InvalidRequest(format!(
+        "AWProject literal-coefficient audit requires the unchanged packed production \
+         coefficient and POINTING phase paths; unset {}",
+        configured.join(", ")
+    )))
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn awproject_datatogrid_bracket_selection()
 -> Result<AwProjectDataToGridBracketSelection, ImagingError> {
     let encoded = env::var(AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV).map_err(|_| {
@@ -20832,31 +20952,48 @@ fn awproject_datatogrid_bracket_selection()
 #[cfg(all(target_os = "macos", not(coverage)))]
 fn awproject_tt0_arithmetic_compat_selection_v1()
 -> Result<AwProjectTt0ArithmeticCompatSelectionV1, ImagingError> {
-    let encoded = env::var(AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV_V1).map_err(|_| {
+    awproject_source_role_selection_v1(
+        AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV_V1,
+        "TT0 arithmetic-compatibility",
+    )
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_literal_coefficient_audit_selection_v1()
+-> Result<AwProjectTt0ArithmeticCompatSelectionV1, ImagingError> {
+    awproject_source_role_selection_v1(
+        AWPROJECT_LITERAL_COEFFICIENT_AUDIT_SELECTION_ENV_V1,
+        "literal-coefficient audit",
+    )
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_source_role_selection_v1(
+    selection_env: &'static str,
+    diagnostic: &'static str,
+) -> Result<AwProjectTt0ArithmeticCompatSelectionV1, ImagingError> {
+    let encoded = env::var(selection_env).map_err(|_| {
         ImagingError::InvalidRequest(format!(
-            "the AWProject TT0 arithmetic-compatibility diagnostic was not armed by the \
-             casars-imager selection preflight \
-             ({AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV_V1})"
+            "the AWProject {diagnostic} diagnostic was not armed by the casars-imager selection \
+             preflight ({selection_env})"
         ))
     })?;
     let mut fields = BTreeMap::<&str, &str>::new();
     for entry in encoded.split(';') {
         let (name, value) = entry.split_once('=').ok_or_else(|| {
             ImagingError::InvalidRequest(format!(
-                "malformed AWProject TT0 arithmetic-compatibility selection receipt entry \
-                 {entry:?}"
+                "malformed AWProject {diagnostic} selection receipt entry {entry:?}"
             ))
         })?;
         if fields.insert(name, value).is_some() {
             return Err(ImagingError::InvalidRequest(format!(
-                "duplicate AWProject TT0 arithmetic-compatibility selection receipt field \
-                 {name:?}"
+                "duplicate AWProject {diagnostic} selection receipt field {name:?}"
             )));
         }
     }
     if fields.len() != 31 {
         return Err(ImagingError::InvalidRequest(format!(
-            "AWProject TT0 arithmetic-compatibility selection receipt has {} fields, expected 31",
+            "AWProject {diagnostic} selection receipt has {} fields, expected 31",
             fields.len()
         )));
     }
@@ -20865,14 +21002,13 @@ fn awproject_tt0_arithmetic_compat_selection_v1()
             .get(name)
             .ok_or_else(|| {
                 ImagingError::InvalidRequest(format!(
-                    "AWProject TT0 arithmetic-compatibility selection receipt is missing {name}"
+                    "AWProject {diagnostic} selection receipt is missing {name}"
                 ))
             })?
             .parse::<i32>()
             .map_err(|error| {
                 ImagingError::InvalidRequest(format!(
-                    "invalid AWProject TT0 arithmetic-compatibility selection field \
-                     {name}: {error}"
+                    "invalid AWProject {diagnostic} selection field {name}: {error}"
                 ))
             })
     };
@@ -20881,14 +21017,13 @@ fn awproject_tt0_arithmetic_compat_selection_v1()
             .get(name)
             .ok_or_else(|| {
                 ImagingError::InvalidRequest(format!(
-                    "AWProject TT0 arithmetic-compatibility selection receipt is missing {name}"
+                    "AWProject {diagnostic} selection receipt is missing {name}"
                 ))
             })?
             .parse::<usize>()
             .map_err(|error| {
                 ImagingError::InvalidRequest(format!(
-                    "invalid AWProject TT0 arithmetic-compatibility selection field \
-                     {name}: {error}"
+                    "invalid AWProject {diagnostic} selection field {name}: {error}"
                 ))
             })
     };
@@ -20897,14 +21032,13 @@ fn awproject_tt0_arithmetic_compat_selection_v1()
             .get(name)
             .ok_or_else(|| {
                 ImagingError::InvalidRequest(format!(
-                    "AWProject TT0 arithmetic-compatibility selection receipt is missing {name}"
+                    "AWProject {diagnostic} selection receipt is missing {name}"
                 ))
             })?
             .parse::<u64>()
             .map_err(|error| {
                 ImagingError::InvalidRequest(format!(
-                    "invalid AWProject TT0 arithmetic-compatibility selection field \
-                     {name}: {error}"
+                    "invalid AWProject {diagnostic} selection field {name}: {error}"
                 ))
             })
     };
@@ -20913,10 +21047,9 @@ fn awproject_tt0_arithmetic_compat_selection_v1()
         requested_spws: fields
             .get("spws")
             .ok_or_else(|| {
-                ImagingError::InvalidRequest(
-                    "AWProject TT0 arithmetic-compatibility selection receipt is missing spws"
-                        .to_string(),
-                )
+                ImagingError::InvalidRequest(format!(
+                    "AWProject {diagnostic} selection receipt is missing spws"
+                ))
             })?
             .to_string(),
         first_batch_spw: parse_i32("first_spw")?,
@@ -20989,8 +21122,8 @@ fn awproject_tt0_arithmetic_compat_selection_v1()
         || selection.selected_corr_second_code != 8
     {
         return Err(ImagingError::InvalidRequest(format!(
-            "AWProject TT0 arithmetic-compatibility selection receipt does not describe the \
-             frozen field=1525, SPW=2..17, CASA first-VB row: {selection:?}"
+            "AWProject {diagnostic} selection receipt does not describe the frozen field=1525, \
+             SPW=2..17, CASA first-VB row: {selection:?}"
         )));
     }
     Ok(selection)
@@ -21306,6 +21439,21 @@ fn awproject_datatogrid_atomic_receipt(path: &Path, payload: &[u8]) -> Result<()
                 temporary.display()
             ))
         })?;
+        #[cfg(unix)]
+        {
+            let directory = std::fs::File::open(parent).map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "open AWProject DataToGrid receipt parent {} for sync: {error}",
+                    parent.display()
+                ))
+            })?;
+            directory.sync_all().map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "sync AWProject DataToGrid receipt parent {}: {error}",
+                    parent.display()
+                ))
+            })?;
+        }
         Ok(())
     })();
     if result.is_err() {
@@ -21342,6 +21490,782 @@ struct AwProjectTt0ArithmeticCompatVariantV1 {
 struct AwProjectTt0ArithmeticCompatClassificationV1 {
     result: &'static str,
     casa_target_matching_variants: Vec<&'static str>,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectLiteralCoefficientBundleV1 {
+    cell_key: AwConvolutionFunctionKey,
+    group_index: usize,
+    conjugate_for_grid: bool,
+    x_support: usize,
+    y_support: usize,
+    values: Vec<gridder::AwProjectorLiteralCasaTap>,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct AwProjectLiteralCoefficientMismatchV1 {
+    source_ordinal: usize,
+    source_sample_index: usize,
+    pointing_group_index: usize,
+    logical_role: usize,
+    tap_bundle: usize,
+    tap_ordinal: usize,
+    ix: isize,
+    iy: isize,
+    grid_x: isize,
+    grid_y: isize,
+    cell_key: AwConvolutionFunctionKey,
+    conjugate_for_grid: bool,
+    raw_re_bits: u32,
+    raw_im_bits: u32,
+    post_w_re_bits: u32,
+    post_w_im_bits: u32,
+    phase_re_bits: u32,
+    phase_im_bits: u32,
+    literal_re_bits: u32,
+    literal_im_bits: u32,
+    packed_re_bits: u32,
+    packed_im_bits: u32,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct AwProjectLiteralCoefficientAuditV1 {
+    source_count: usize,
+    logical_role_count: usize,
+    tap_count: usize,
+    tap_request_count: usize,
+    unique_bundle_count: usize,
+    literal_operand_bytes: usize,
+    destination_hash: u64,
+    selected_cell_hash: u64,
+    raw_cf_hash: u64,
+    post_w_sign_hash: u64,
+    pointing_phase_hash: u64,
+    literal_coefficient_hash: u64,
+    packed_coefficient_hash: u64,
+    coefficient_mismatch_count: usize,
+    nonfinite_operand_count: usize,
+    first_mismatch: Option<AwProjectLiteralCoefficientMismatchV1>,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AwProjectLiteralCoefficientGridV1 {
+    grid_hash: u64,
+    grid_values_hashed: usize,
+    grid_bytes: usize,
+    nonfinite_grid_value_count: usize,
+    source_count: usize,
+    logical_role_count: usize,
+    tap_count: usize,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_LITERAL_COEFFICIENT_AUDIT_RESULT_TAXONOMY_V1: [&str; 4] = [
+    "completed-literal-packed-exact-no-grid",
+    "completed-literal-packed-mismatch-grid-matches-casa",
+    "completed-literal-packed-mismatch-grid-matches-rust",
+    "completed-literal-packed-mismatch-grid-matches-neither",
+];
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn classify_awproject_literal_coefficient_audit_v1(
+    coefficient_audit: &AwProjectLiteralCoefficientAuditV1,
+    conditional_grid: Option<AwProjectLiteralCoefficientGridV1>,
+) -> Result<&'static str, ImagingError> {
+    let has_mismatch = coefficient_audit.coefficient_mismatch_count > 0;
+    if has_mismatch != coefficient_audit.first_mismatch.is_some()
+        || has_mismatch != conditional_grid.is_some()
+    {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject literal-coefficient audit violated the mismatch receipt invariant: \
+             mismatch_count={} first_mismatch={} conditional_grid={}",
+            coefficient_audit.coefficient_mismatch_count,
+            coefficient_audit.first_mismatch.is_some(),
+            conditional_grid.is_some(),
+        )));
+    }
+    if !has_mismatch
+        && coefficient_audit.literal_coefficient_hash != coefficient_audit.packed_coefficient_hash
+    {
+        return Err(ImagingError::Normalization(
+            "AWProject literal-coefficient exact comparison produced different ordered hashes"
+                .to_string(),
+        ));
+    }
+    if has_mismatch
+        && coefficient_audit.literal_coefficient_hash == coefficient_audit.packed_coefficient_hash
+    {
+        return Err(ImagingError::Normalization(
+            "AWProject literal-coefficient mismatch produced identical ordered hashes".to_string(),
+        ));
+    }
+    Ok(match conditional_grid {
+        None => AWPROJECT_LITERAL_COEFFICIENT_AUDIT_RESULT_TAXONOMY_V1[0],
+        Some(grid) if grid.grid_hash == AWPROJECT_TT0_ARITHMETIC_COMPAT_CASA_TARGET_HASH_V1 => {
+            AWPROJECT_LITERAL_COEFFICIENT_AUDIT_RESULT_TAXONOMY_V1[1]
+        }
+        Some(grid) if grid.grid_hash == AWPROJECT_TT0_ARITHMETIC_COMPAT_BASELINE_HASH_V1 => {
+            AWPROJECT_LITERAL_COEFFICIENT_AUDIT_RESULT_TAXONOMY_V1[2]
+        }
+        Some(_) => AWPROJECT_LITERAL_COEFFICIENT_AUDIT_RESULT_TAXONOMY_V1[3],
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_literal_coefficient_audit_result_taxonomy_json_v1() -> String {
+    AWPROJECT_LITERAL_COEFFICIENT_AUDIT_RESULT_TAXONOMY_V1
+        .iter()
+        .map(|result| format!("\"{result}\""))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn build_awproject_literal_coefficient_bundle_from_kernel_v1<K: AwProjectKernelPixels + ?Sized>(
+    request: &MtmfsRequest,
+    mosaic: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    groups: &[GroupedVisibilityMetadata],
+    metadata: &AwConvolutionFunctionKernelMetadata,
+    kernel: &K,
+    tap_requests: &[AwProjectCompactTapRequest],
+    packed_bundles: &[AwProjectCompactMaterializedTap],
+    bundle_index: usize,
+) -> Result<AwProjectLiteralCoefficientBundleV1, ImagingError> {
+    let tap_request = tap_requests.get(bundle_index).copied().ok_or_else(|| {
+        ImagingError::Normalization(format!(
+            "AWProject literal-coefficient audit is missing tap request {bundle_index}"
+        ))
+    })?;
+    let packed_bundle = match packed_bundles.get(bundle_index) {
+        Some(AwProjectCompactMaterializedTap::Ready(bundle)) => bundle,
+        Some(AwProjectCompactMaterializedTap::Rejected(reason)) => {
+            return Err(ImagingError::Normalization(format!(
+                "AWProject literal-coefficient audit selected rejected tap bundle \
+                 {bundle_index}: {reason:?}"
+            )));
+        }
+        None => {
+            return Err(ImagingError::Normalization(format!(
+                "AWProject literal-coefficient audit is missing packed tap bundle {bundle_index}"
+            )));
+        }
+    };
+    if !packed_bundle.phase_applied {
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject literal-coefficient audit requires prephased production tap bundle \
+             {bundle_index}"
+        )));
+    }
+    let group = groups.get(tap_request.key.group_index).ok_or_else(|| {
+        ImagingError::Normalization(format!(
+            "AWProject literal-coefficient audit tap bundle {bundle_index} selected missing \
+             POINTING group {}",
+            tap_request.key.group_index
+        ))
+    })?;
+    let phase_gradient = mosaic_projector_phase_gradient_rad_per_sample_for_group(
+        request.geometry,
+        mosaic.phase_center_direction_rad,
+        group.pointing_direction_rad,
+        group.pointing_pixel_position,
+        metadata.sampling,
+    );
+    let projector = AwProjector::new(gridder, metadata, kernel, phase_gradient)?;
+    let (literal_plan, literal_taps) = projector
+        .plan_and_trace_literal_casa_geometry(tap_request.representative_geometry)
+        .map_err(|reason| {
+            ImagingError::Normalization(format!(
+                "AWProject literal-coefficient audit rejected tap bundle {bundle_index}: \
+                 {reason:?}"
+            ))
+        })?;
+    if literal_plan.loc_x != tap_request.representative_geometry.loc_x
+        || literal_plan.loc_y != tap_request.representative_geometry.loc_y
+        || literal_plan.off_x != tap_request.key.off_x
+        || literal_plan.off_y != tap_request.key.off_y
+        || literal_plan.conjugate_for_grid != tap_request.key.conjugate_for_grid
+        || literal_plan.normalization.re.to_bits() != packed_bundle.normalization.re.to_bits()
+        || literal_plan.normalization.im.to_bits() != packed_bundle.normalization.im.to_bits()
+        || literal_plan.grid_normalization.re.to_bits()
+            != packed_bundle.grid_normalization.re.to_bits()
+        || literal_plan.grid_normalization.im.to_bits()
+            != packed_bundle.grid_normalization.im.to_bits()
+        || literal_taps.x_support != packed_bundle.x_support
+        || literal_taps.y_support != packed_bundle.y_support
+        || literal_taps.values.len() != packed_bundle.values.len()
+    {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject literal-coefficient audit tap bundle {bundle_index} changed placement, \
+             normalization, support, or tap count"
+        )));
+    }
+    Ok(AwProjectLiteralCoefficientBundleV1 {
+        cell_key: tap_request.cell_key,
+        group_index: tap_request.key.group_index,
+        conjugate_for_grid: tap_request.key.conjugate_for_grid,
+        x_support: literal_taps.x_support,
+        y_support: literal_taps.y_support,
+        values: literal_taps.values,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn awproject_literal_coefficient_audited_bundle_indices_v1(
+    planned_samples: &[AwProjectCompactPlannedSample],
+    tap_requests: &[AwProjectCompactTapRequest],
+) -> Result<BTreeSet<usize>, ImagingError> {
+    let bundle_indices = planned_samples
+        .iter()
+        .flat_map(|sample| {
+            [
+                sample.first_imaging_plan.tap_bundle,
+                sample.second_imaging_plan.tap_bundle,
+            ]
+        })
+        .collect::<BTreeSet<_>>();
+    if bundle_indices.is_empty() {
+        return Err(ImagingError::Normalization(
+            "AWProject literal-coefficient audit selected no imaging tap bundles".to_string(),
+        ));
+    }
+    for &bundle_index in &bundle_indices {
+        let tap_request = tap_requests.get(bundle_index).ok_or_else(|| {
+            ImagingError::Normalization(format!(
+                "AWProject literal-coefficient audit selected missing imaging tap request \
+                 {bundle_index}"
+            ))
+        })?;
+        if tap_request.key.kernel_kind != AwProjectCompactKernelKind::Imaging {
+            return Err(ImagingError::Normalization(format!(
+                "AWProject literal-coefficient audit plan selected non-imaging tap bundle \
+                 {bundle_index}: {:?}",
+                tap_request.key.kernel_kind
+            )));
+        }
+    }
+    Ok(bundle_indices)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn build_awproject_literal_coefficient_bundles_v1(
+    request: &MtmfsRequest,
+    mosaic: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    groups: &[GroupedVisibilityMetadata],
+    cache: &AwConvolutionFunctionResidentCache,
+    planned_samples: &[AwProjectCompactPlannedSample],
+    tap_requests: &[AwProjectCompactTapRequest],
+    packed_bundles: &[AwProjectCompactMaterializedTap],
+) -> Result<(BTreeMap<usize, AwProjectLiteralCoefficientBundleV1>, usize), ImagingError> {
+    if tap_requests.len() != packed_bundles.len() {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject literal-coefficient audit request/bundle cardinality changed: {} versus {}",
+            tap_requests.len(),
+            packed_bundles.len()
+        )));
+    }
+    let audited_bundle_indices =
+        awproject_literal_coefficient_audited_bundle_indices_v1(planned_samples, tap_requests)?;
+    let mut by_cell = BTreeMap::<AwProjectStableCellKey, Vec<usize>>::new();
+    for &bundle_index in &audited_bundle_indices {
+        let tap_request = &tap_requests[bundle_index];
+        by_cell
+            .entry(awproject_stable_cell_key(tap_request.cell_key))
+            .or_default()
+            .push(bundle_index);
+    }
+    let mut literal_bundles = BTreeMap::new();
+    let mut literal_operand_bytes = 0usize;
+    for bundle_indices in by_cell.into_values() {
+        let first_bundle_index = bundle_indices[0];
+        let cell_key = tap_requests[first_bundle_index].cell_key;
+        let cell = cache.get_replay(cell_key)?;
+        for bundle_index in bundle_indices {
+            let literal = match cell.as_ref() {
+                awprojection::AwConvolutionFunctionReplayCell::Owned(cell) => {
+                    build_awproject_literal_coefficient_bundle_from_kernel_v1(
+                        request,
+                        mosaic,
+                        gridder,
+                        groups,
+                        &cell.metadata.imaging,
+                        &cell.imaging,
+                        tap_requests,
+                        packed_bundles,
+                        bundle_index,
+                    )?
+                }
+                #[cfg(unix)]
+                awprojection::AwConvolutionFunctionReplayCell::Mapped(cell) => {
+                    build_awproject_literal_coefficient_bundle_from_kernel_v1(
+                        request,
+                        mosaic,
+                        gridder,
+                        groups,
+                        &cell.metadata.imaging,
+                        &cell.imaging,
+                        tap_requests,
+                        packed_bundles,
+                        bundle_index,
+                    )?
+                }
+            };
+            literal_operand_bytes = literal_operand_bytes
+                .checked_add(
+                    literal
+                        .values
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<gridder::AwProjectorLiteralCasaTap>()),
+                )
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "AWProject literal-coefficient operand byte count overflowed".to_string(),
+                    )
+                })?;
+            if literal_bundles.insert(bundle_index, literal).is_some() {
+                return Err(ImagingError::Normalization(format!(
+                    "AWProject literal-coefficient audit materialized duplicate tap bundle \
+                     {bundle_index}"
+                )));
+            }
+        }
+    }
+    if literal_bundles.len() != audited_bundle_indices.len() {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject literal-coefficient audit materialized {} imaging tap bundles, expected {}",
+            literal_bundles.len(),
+            audited_bundle_indices.len()
+        )));
+    }
+    Ok((literal_bundles, literal_operand_bytes))
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn hash_awproject_literal_coefficient_route_v1(
+    hash: &mut AwProjectResidualPrefixHash,
+    source_ordinal: usize,
+    source_sample_index: usize,
+    group_index: usize,
+    logical_role: usize,
+    tap_bundle: usize,
+    tap_ordinal: usize,
+    iy: isize,
+    ix: isize,
+    grid_y: isize,
+    grid_x: isize,
+) {
+    hash.usize(source_ordinal);
+    hash.usize(source_sample_index);
+    hash.usize(group_index);
+    hash.usize(logical_role);
+    hash.usize(tap_bundle);
+    hash.usize(tap_ordinal);
+    hash.isize(iy);
+    hash.isize(ix);
+    hash.isize(grid_y);
+    hash.isize(grid_x);
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn audit_awproject_literal_coefficients_v1(
+    grid_shape: [usize; 2],
+    source_samples: &[AwProjectCompactSourceSample],
+    planned_samples: &[AwProjectCompactPlannedSample],
+    tap_requests: &[AwProjectCompactTapRequest],
+    packed_bundles: &[AwProjectCompactMaterializedTap],
+    literal_bundles: &BTreeMap<usize, AwProjectLiteralCoefficientBundleV1>,
+    literal_operand_bytes: usize,
+) -> Result<AwProjectLiteralCoefficientAuditV1, ImagingError> {
+    if source_samples.len() != planned_samples.len() {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject literal-coefficient audit source/planned cardinality changed: {} versus {}",
+            source_samples.len(),
+            planned_samples.len()
+        )));
+    }
+    let mut destination_hash = AwProjectResidualPrefixHash::new();
+    let mut selected_cell_hash = AwProjectResidualPrefixHash::new();
+    let mut raw_cf_hash = AwProjectResidualPrefixHash::new();
+    let mut post_w_sign_hash = AwProjectResidualPrefixHash::new();
+    let mut pointing_phase_hash = AwProjectResidualPrefixHash::new();
+    let mut literal_coefficient_hash = AwProjectResidualPrefixHash::new();
+    let mut packed_coefficient_hash = AwProjectResidualPrefixHash::new();
+    let mut logical_role_count = 0usize;
+    let mut tap_count = 0usize;
+    let mut coefficient_mismatch_count = 0usize;
+    let mut nonfinite_operand_count = 0usize;
+    let mut first_mismatch = None;
+    for (source_ordinal, (&source, planned)) in
+        source_samples.iter().zip(planned_samples).enumerate()
+    {
+        if source.group_index != planned.group_index {
+            return Err(ImagingError::Normalization(format!(
+                "AWProject literal-coefficient audit source {source_ordinal} changed POINTING \
+                 group {} versus {}",
+                source.group_index, planned.group_index
+            )));
+        }
+        for (logical_role, source_plan, planned_plan) in [
+            (
+                0usize,
+                source.first_imaging_plan,
+                planned.first_imaging_plan,
+            ),
+            (
+                1usize,
+                source.second_imaging_plan,
+                planned.second_imaging_plan,
+            ),
+        ] {
+            if source_plan.tap_bundle != planned_plan.tap_bundle
+                || source_plan.loc_x != planned_plan.loc_x
+                || source_plan.loc_y != planned_plan.loc_y
+            {
+                return Err(ImagingError::Normalization(format!(
+                    "AWProject literal-coefficient audit source {source_ordinal} role \
+                     {logical_role} changed compact plan"
+                )));
+            }
+            let tap_bundle = planned_plan.tap_bundle;
+            let literal = literal_bundles.get(&tap_bundle).ok_or_else(|| {
+                ImagingError::Normalization(format!(
+                    "AWProject literal-coefficient audit source {source_ordinal} role \
+                     {logical_role} selected missing literal tap bundle {tap_bundle}"
+                ))
+            })?;
+            let packed = match packed_bundles.get(tap_bundle) {
+                Some(AwProjectCompactMaterializedTap::Ready(bundle)) => bundle,
+                Some(AwProjectCompactMaterializedTap::Rejected(reason)) => {
+                    return Err(ImagingError::Normalization(format!(
+                        "AWProject literal-coefficient audit source {source_ordinal} role \
+                         {logical_role} selected rejected packed tap bundle {tap_bundle}: \
+                         {reason:?}"
+                    )));
+                }
+                None => {
+                    return Err(ImagingError::Normalization(format!(
+                        "AWProject literal-coefficient audit source {source_ordinal} role \
+                         {logical_role} selected missing packed tap bundle {tap_bundle}"
+                    )));
+                }
+            };
+            let tap_request = tap_requests.get(tap_bundle).ok_or_else(|| {
+                ImagingError::Normalization(format!(
+                    "AWProject literal-coefficient audit source {source_ordinal} role \
+                     {logical_role} selected missing tap request {tap_bundle}"
+                ))
+            })?;
+            if literal.cell_key != tap_request.cell_key
+                || literal.group_index != source.group_index
+                || literal.conjugate_for_grid != tap_request.key.conjugate_for_grid
+                || literal.x_support != packed.x_support
+                || literal.y_support != packed.y_support
+                || literal.values.len() != packed.values.len()
+            {
+                return Err(ImagingError::Normalization(format!(
+                    "AWProject literal-coefficient audit source {source_ordinal} role \
+                     {logical_role} changed bundle identity or shape"
+                )));
+            }
+            selected_cell_hash.usize(source_ordinal);
+            selected_cell_hash.usize(source.sample_index);
+            selected_cell_hash.usize(source.group_index);
+            selected_cell_hash.usize(logical_role);
+            selected_cell_hash.usize(tap_bundle);
+            selected_cell_hash.cell_key(literal.cell_key);
+            selected_cell_hash.bool(literal.conjugate_for_grid);
+            let x_support = isize::try_from(literal.x_support).map_err(|_| {
+                ImagingError::Normalization(
+                    "AWProject literal-coefficient X support exceeds isize".to_string(),
+                )
+            })?;
+            let y_support = isize::try_from(literal.y_support).map_err(|_| {
+                ImagingError::Normalization(
+                    "AWProject literal-coefficient Y support exceeds isize".to_string(),
+                )
+            })?;
+            let mut tap_ordinal = 0usize;
+            for iy in -y_support..=y_support {
+                for ix in -x_support..=x_support {
+                    let grid_x = planned_plan.loc_x + ix;
+                    let grid_y = planned_plan.loc_y + iy;
+                    if grid_x < 0
+                        || grid_y < 0
+                        || usize::try_from(grid_x).map_or(true, |x| x >= grid_shape[0])
+                        || usize::try_from(grid_y).map_or(true, |y| y >= grid_shape[1])
+                    {
+                        return Err(ImagingError::Normalization(format!(
+                            "AWProject literal-coefficient audit source {source_ordinal} role \
+                             {logical_role} tap {tap_ordinal} is outside the diagnostic grid"
+                        )));
+                    }
+                    let operand = literal.values[tap_ordinal];
+                    let packed_coefficient = packed.values[tap_ordinal];
+                    for hash in [
+                        &mut destination_hash,
+                        &mut raw_cf_hash,
+                        &mut post_w_sign_hash,
+                        &mut pointing_phase_hash,
+                        &mut literal_coefficient_hash,
+                        &mut packed_coefficient_hash,
+                    ] {
+                        hash_awproject_literal_coefficient_route_v1(
+                            hash,
+                            source_ordinal,
+                            source.sample_index,
+                            source.group_index,
+                            logical_role,
+                            tap_bundle,
+                            tap_ordinal,
+                            iy,
+                            ix,
+                            grid_y,
+                            grid_x,
+                        );
+                    }
+                    raw_cf_hash.complex32(operand.raw_cf);
+                    post_w_sign_hash.complex32(operand.post_w_sign);
+                    pointing_phase_hash.complex32(operand.pointing_phase);
+                    literal_coefficient_hash.complex32(operand.coefficient);
+                    packed_coefficient_hash.complex32(packed_coefficient);
+                    nonfinite_operand_count = nonfinite_operand_count.saturating_add(
+                        [
+                            operand.raw_cf,
+                            operand.post_w_sign,
+                            operand.pointing_phase,
+                            operand.coefficient,
+                            packed_coefficient,
+                        ]
+                        .into_iter()
+                        .filter(|value| !(value.re.is_finite() && value.im.is_finite()))
+                        .count(),
+                    );
+                    if operand.coefficient.re.to_bits() != packed_coefficient.re.to_bits()
+                        || operand.coefficient.im.to_bits() != packed_coefficient.im.to_bits()
+                    {
+                        coefficient_mismatch_count = coefficient_mismatch_count.saturating_add(1);
+                        first_mismatch.get_or_insert(AwProjectLiteralCoefficientMismatchV1 {
+                            source_ordinal,
+                            source_sample_index: source.sample_index,
+                            pointing_group_index: source.group_index,
+                            logical_role,
+                            tap_bundle,
+                            tap_ordinal,
+                            ix,
+                            iy,
+                            grid_x,
+                            grid_y,
+                            cell_key: literal.cell_key,
+                            conjugate_for_grid: literal.conjugate_for_grid,
+                            raw_re_bits: operand.raw_cf.re.to_bits(),
+                            raw_im_bits: operand.raw_cf.im.to_bits(),
+                            post_w_re_bits: operand.post_w_sign.re.to_bits(),
+                            post_w_im_bits: operand.post_w_sign.im.to_bits(),
+                            phase_re_bits: operand.pointing_phase.re.to_bits(),
+                            phase_im_bits: operand.pointing_phase.im.to_bits(),
+                            literal_re_bits: operand.coefficient.re.to_bits(),
+                            literal_im_bits: operand.coefficient.im.to_bits(),
+                            packed_re_bits: packed_coefficient.re.to_bits(),
+                            packed_im_bits: packed_coefficient.im.to_bits(),
+                        });
+                    }
+                    tap_ordinal += 1;
+                }
+            }
+            if tap_ordinal != literal.values.len() {
+                return Err(ImagingError::Normalization(format!(
+                    "AWProject literal-coefficient audit source {source_ordinal} role \
+                     {logical_role} traversed {tap_ordinal} taps, expected {}",
+                    literal.values.len()
+                )));
+            }
+            logical_role_count = logical_role_count.saturating_add(1);
+            tap_count = tap_count.saturating_add(tap_ordinal);
+        }
+    }
+    if nonfinite_operand_count != 0 {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject literal-coefficient audit observed {nonfinite_operand_count} nonfinite \
+             raw, W-adjusted, phase, literal, or packed operands"
+        )));
+    }
+    Ok(AwProjectLiteralCoefficientAuditV1 {
+        source_count: planned_samples.len(),
+        logical_role_count,
+        tap_count,
+        tap_request_count: tap_requests.len(),
+        unique_bundle_count: literal_bundles.len(),
+        literal_operand_bytes,
+        destination_hash: destination_hash.0,
+        selected_cell_hash: selected_cell_hash.0,
+        raw_cf_hash: raw_cf_hash.0,
+        post_w_sign_hash: post_w_sign_hash.0,
+        pointing_phase_hash: pointing_phase_hash.0,
+        literal_coefficient_hash: literal_coefficient_hash.0,
+        packed_coefficient_hash: packed_coefficient_hash.0,
+        coefficient_mismatch_count,
+        nonfinite_operand_count,
+        first_mismatch,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn run_awproject_literal_coefficient_grid_v1(
+    grid_shape: [usize; 2],
+    samples: &[AwProjectCompactPlannedSample],
+    literal_bundles: &BTreeMap<usize, AwProjectLiteralCoefficientBundleV1>,
+    reffreq_hz: f64,
+) -> Result<AwProjectLiteralCoefficientGridV1, ImagingError> {
+    let mut grid = Array2::<Complex64>::zeros((grid_shape[0], grid_shape[1]));
+    let mut logical_role_count = 0usize;
+    let mut tap_count = 0usize;
+    for sample in samples {
+        let weight =
+            mtmfs_casa_weighted_taylor_term(sample.weight, sample.frequency_hz, reffreq_hz, 0);
+        for (plan, residual) in [
+            (sample.first_imaging_plan, sample.first_residual),
+            (sample.second_imaging_plan, sample.second_residual),
+        ] {
+            let literal = literal_bundles.get(&plan.tap_bundle).ok_or_else(|| {
+                ImagingError::Normalization(format!(
+                    "AWProject literal-coefficient grid selected missing tap bundle {}",
+                    plan.tap_bundle
+                ))
+            })?;
+            let nvalue = awproject_prefix_casa_product(Complex32::new(weight, 0.0), residual);
+            let x_support = literal.x_support as isize;
+            let y_support = literal.y_support as isize;
+            let mut tap_ordinal = 0usize;
+            for iy in -y_support..=y_support {
+                for ix in -x_support..=x_support {
+                    let contribution = awproject_prefix_casa_product(
+                        nvalue,
+                        literal.values[tap_ordinal].coefficient,
+                    );
+                    let cell = &mut grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)];
+                    cell.re += f64::from(contribution.re);
+                    cell.im += f64::from(contribution.im);
+                    tap_ordinal += 1;
+                }
+            }
+            if tap_ordinal != literal.values.len() {
+                return Err(ImagingError::Normalization(
+                    "AWProject literal-coefficient grid traversal changed tap count".to_string(),
+                ));
+            }
+            logical_role_count = logical_role_count.saturating_add(1);
+            tap_count = tap_count.saturating_add(tap_ordinal);
+        }
+    }
+    let (grid_hash, nonfinite_grid_value_count) =
+        hash_awproject_tt0_arithmetic_compat_grid_v1(&grid);
+    let grid_values_hashed = grid_shape[0].saturating_mul(grid_shape[1]);
+    let grid_bytes = grid_values_hashed.saturating_mul(std::mem::size_of::<Complex64>());
+    drop(grid);
+    Ok(AwProjectLiteralCoefficientGridV1 {
+        grid_hash,
+        grid_values_hashed,
+        grid_bytes,
+        nonfinite_grid_value_count,
+        source_count: samples.len(),
+        logical_role_count,
+        tap_count,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_literal_coefficient_mismatch_json_v1(
+    mismatch: Option<AwProjectLiteralCoefficientMismatchV1>,
+) -> String {
+    let Some(mismatch) = mismatch else {
+        return "null".to_string();
+    };
+    format!(
+        "{{\"source_ordinal\":{},\"source_sample_index\":{},\"pointing_group_index\":{},\
+         \"logical_role\":{},\
+         \"tap_bundle\":{},\"tap_ordinal\":{},\"iy\":{},\"ix\":{},\
+         \"grid_y\":{},\"grid_x\":{},\
+         \"cell\":{{\"frequency_bits\":{},\"w_bits\":{},\"mueller\":{},\
+         \"parallactic_angle_bits\":{}}},\
+         \"conjugate_for_grid\":{},\
+         \"raw_cf_bits\":[{},{}],\"post_w_sign_bits\":[{},{}],\
+         \"pointing_phase_bits\":[{},{}],\"literal_coefficient_bits\":[{},{}],\
+         \"packed_coefficient_bits\":[{},{}]}}",
+        mismatch.source_ordinal,
+        mismatch.source_sample_index,
+        mismatch.pointing_group_index,
+        mismatch.logical_role,
+        mismatch.tap_bundle,
+        mismatch.tap_ordinal,
+        mismatch.iy,
+        mismatch.ix,
+        mismatch.grid_y,
+        mismatch.grid_x,
+        mismatch.cell_key.frequency_hz.to_bits(),
+        mismatch.cell_key.w_value_lambda.to_bits(),
+        mismatch.cell_key.mueller_element,
+        mismatch.cell_key.parallactic_angle_deg.to_bits(),
+        mismatch.conjugate_for_grid,
+        mismatch.raw_re_bits,
+        mismatch.raw_im_bits,
+        mismatch.post_w_re_bits,
+        mismatch.post_w_im_bits,
+        mismatch.phase_re_bits,
+        mismatch.phase_im_bits,
+        mismatch.literal_re_bits,
+        mismatch.literal_im_bits,
+        mismatch.packed_re_bits,
+        mismatch.packed_im_bits,
+    )
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_literal_coefficient_grid_json_v1(
+    grid: Option<AwProjectLiteralCoefficientGridV1>,
+) -> String {
+    let Some(grid) = grid else {
+        return "null".to_string();
+    };
+    format!(
+        "{{\"allocated\":true,\"allocation_count\":1,\"replay_count\":1,\
+         \"grid_hash\":{},\"matches_frozen_rust\":{},\
+         \"matches_frozen_casa\":{},\"grid_values_hashed\":{},\"grid_bytes\":{},\
+         \"nonfinite_grid_value_count\":{},\"source_count\":{},\
+         \"logical_role_count\":{},\"tap_count\":{}}}",
+        grid.grid_hash,
+        grid.grid_hash == AWPROJECT_TT0_ARITHMETIC_COMPAT_BASELINE_HASH_V1,
+        grid.grid_hash == AWPROJECT_TT0_ARITHMETIC_COMPAT_CASA_TARGET_HASH_V1,
+        grid.grid_values_hashed,
+        grid.grid_bytes,
+        grid.nonfinite_grid_value_count,
+        grid.source_count,
+        grid.logical_role_count,
+        grid.tap_count,
+    )
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_literal_coefficient_audit_envelope_v1(evidence: &str) -> (String, String) {
+    let embedded_evidence = evidence.trim();
+    let evidence_sha256 = format!("{:x}", Sha256::digest(embedded_evidence.as_bytes()));
+    let payload = format!(
+        "{{\n\
+         \"schema\":\"casa-rs-aw-datagrid-literal-coefficient-audit-envelope-v1\",\n\
+         \"content_address\":{{\"algorithm\":\"sha256\",\
+         \"scope\":\"embedded-evidence-json-utf8\",\"digest\":\"{evidence_sha256}\"}},\n\
+         \"evidence\":{}\n\
+         }}\n",
+        embedded_evidence
+    );
+    (payload, evidence_sha256)
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -21953,6 +22877,395 @@ fn maybe_run_awproject_tt0_arithmetic_compat_v1(
          TT1, sumwt, normalization, FFT, image formation, or products; result={} receipt={} \
          evidence_sha256={evidence_sha256}",
         classification.result,
+        output.display(),
+    )))
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn maybe_run_awproject_literal_coefficient_audit_v1(
+    request: &MtmfsRequest,
+    mosaic: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    batch: &VisibilityBatch,
+    parallel_hands: &AwParallelHandVisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    source_samples: &[AwProjectCompactSourceSample],
+    planned_samples: &[AwProjectCompactPlannedSample],
+    tap_requests: &[AwProjectCompactTapRequest],
+    bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    groups: &[GroupedVisibilityMetadata],
+    cache: &AwConvolutionFunctionResidentCache,
+    controls: &AwProjectControls,
+    pa_deg: f64,
+    replay_block_ordinal: usize,
+    replay_window_ordinal: usize,
+    last_window_in_block: bool,
+) -> Result<(), ImagingError> {
+    let Some((output, config)) = awproject_literal_coefficient_audit_config_v1()? else {
+        return Ok(());
+    };
+    validate_awproject_literal_coefficient_audit_experiment_state_v1()?;
+    let selection = awproject_literal_coefficient_audit_selection_v1()?;
+    if request.geometry.image_shape != [config.expected_nxy, config.expected_nxy]
+        || gridder.grid_shape() != [config.expected_nxy, config.expected_nxy]
+        || request.nterms != 2
+        || config.terms != 1
+        || request.plane_stokes != PlaneStokes::I
+        || request.w_term_mode != WTermMode::None
+        || request.w_project_planes != Some(32)
+    {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject literal-coefficient audit geometry is not the frozen 4096-square, \
+             32-W-plane, Stokes-I, nterms=2 row with TT0-only conditional evaluation"
+                .to_string(),
+        ));
+    }
+    let GridderMode::AwProject(awproject) = &request.gridder_mode else {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject literal-coefficient audit requires gridder='awproject'".to_string(),
+        ));
+    };
+    if !awproject.controls.use_pointing
+        || !awproject.controls.a_term
+        || awproject.controls.ps_term
+        || !awproject.controls.wb_awp
+        || !awproject.controls.conjugate_beams
+        || awproject.controls.facets != 1
+        || awproject.controls.w_plane_count != Some(32)
+    {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject literal-coefficient audit requires POINTING, A/WB/conjugate beams, \
+             facets=1, ps_term=false, and 32 W planes"
+                .to_string(),
+        ));
+    }
+    if phase_tables.is_some() {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject literal-coefficient audit requires the frozen prephased direct-projector \
+             path without tapless or phase-table experiments"
+                .to_string(),
+        ));
+    }
+    if replay_block_ordinal != 0
+        || replay_window_ordinal != 0
+        || !last_window_in_block
+        || config.target_blocks != 1
+    {
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject literal-coefficient audit expected exactly one complete replay block at \
+             block=0 window=0, got block={replay_block_ordinal} \
+             window={replay_window_ordinal} last_window_in_block={last_window_in_block}"
+        )));
+    }
+    if batch.is_empty()
+        || source_samples.len() != AWPROJECT_DATATOGRID_BRACKET_FIRST_SOURCE_COUNT
+        || planned_samples.len() != AWPROJECT_DATATOGRID_BRACKET_FIRST_SOURCE_COUNT
+    {
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject literal-coefficient audit expected the CASA first-VB source count {}, \
+             got batch_samples={} source_samples={} planned_samples={}",
+            AWPROJECT_DATATOGRID_BRACKET_FIRST_SOURCE_COUNT,
+            batch.len(),
+            source_samples.len(),
+            planned_samples.len(),
+        )));
+    }
+    let input_audit = audit_awproject_residual_inputs(
+        request,
+        mosaic,
+        gridder,
+        batch,
+        parallel_hands,
+        sample_frequencies_hz,
+        source_samples,
+        planned_samples,
+        tap_requests,
+        bundles,
+        phase_tables,
+        groups,
+        cache,
+        controls,
+        pa_deg,
+        replay_block_ordinal,
+    )?;
+    if let Some(mismatch) = input_audit.first_mismatch.as_deref() {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject literal-coefficient audit direct/raw and compact inputs differ: {mismatch}"
+        )));
+    }
+    let portable_call = awproject_datatogrid_portable_call_hash(
+        request,
+        batch,
+        source_samples,
+        planned_samples,
+        tap_requests,
+        0,
+        0,
+    )?;
+    let grid_shape = [config.expected_nxy, config.expected_nxy];
+    let traversal =
+        awproject_tt0_arithmetic_compat_traversal_v1(grid_shape, planned_samples, bundles)?;
+    if input_audit.source_count != traversal.source_count
+        || input_audit.role_count != traversal.logical_role_count
+        || input_audit.tap_count != traversal.tap_count
+        || portable_call.source_count != traversal.source_count
+    {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject literal-coefficient audit source census changed: \
+             direct_source={} direct_roles={} direct_taps={} portable_source={} \
+             traversal_source={} traversal_roles={} traversal_taps={}",
+            input_audit.source_count,
+            input_audit.role_count,
+            input_audit.tap_count,
+            portable_call.source_count,
+            traversal.source_count,
+            traversal.logical_role_count,
+            traversal.tap_count,
+        )));
+    }
+    let (literal_bundles, literal_operand_bytes) = build_awproject_literal_coefficient_bundles_v1(
+        request,
+        mosaic,
+        gridder,
+        groups,
+        cache,
+        planned_samples,
+        tap_requests,
+        bundles,
+    )?;
+    let coefficient_audit = audit_awproject_literal_coefficients_v1(
+        grid_shape,
+        source_samples,
+        planned_samples,
+        tap_requests,
+        bundles,
+        &literal_bundles,
+        literal_operand_bytes,
+    )?;
+    if coefficient_audit.source_count != traversal.source_count
+        || coefficient_audit.logical_role_count != traversal.logical_role_count
+        || coefficient_audit.tap_count != traversal.tap_count
+        || coefficient_audit.nonfinite_operand_count != 0
+    {
+        return Err(ImagingError::Normalization(
+            "AWProject literal-coefficient audit changed its frozen traversal census".to_string(),
+        ));
+    }
+    let conditional_grid = if coefficient_audit.coefficient_mismatch_count == 0 {
+        None
+    } else {
+        Some(run_awproject_literal_coefficient_grid_v1(
+            grid_shape,
+            planned_samples,
+            &literal_bundles,
+            request.reffreq_hz,
+        )?)
+    };
+    if let Some(grid) = conditional_grid
+        && (grid.nonfinite_grid_value_count != 0
+            || grid.source_count != traversal.source_count
+            || grid.logical_role_count != traversal.logical_role_count
+            || grid.tap_count != traversal.tap_count)
+    {
+        return Err(ImagingError::Normalization(
+            "AWProject literal-coefficient conditional grid changed its frozen traversal census \
+             or produced a nonfinite cell"
+                .to_string(),
+        ));
+    }
+    let result =
+        classify_awproject_literal_coefficient_audit_v1(&coefficient_audit, conditional_grid)?;
+    let result_taxonomy_json = awproject_literal_coefficient_audit_result_taxonomy_json_v1();
+    let common_selection = &selection.common;
+    let selection_json = format!(
+        "{{\"field_id\":{},\"requested_spws\":\"{}\",\"first_batch_spw\":{},\
+         \"planned_source_blocks\":{}}}",
+        common_selection.field_id,
+        awproject_datatogrid_json_escape(&common_selection.requested_spws),
+        common_selection.first_batch_spw,
+        common_selection.planned_source_blocks,
+    );
+    let observed_first_buffer_json = format!(
+        "{{\"begin_row\":{},\"end_row\":{},\"n_row\":{},\"spw_id\":{},\
+         \"row_ids_count\":{},\"row_ids_hash\":{},\"row_id_first\":{},\
+         \"row_id_last\":{},\"row_flags_count\":{},\"row_flags_hash\":{},\
+         \"flagged_rows\":{},\"n_data_chan\":{},\"n_data_pol\":{},\
+         \"chan_map_count\":{},\"chan_map_hash\":{},\"pol_map_count\":{},\
+         \"pol_map_hash\":{},\"freq_count\":{},\"freq_hash\":{},\
+         \"freq_first_bits\":{},\"freq_last_bits\":{}}}",
+        common_selection.selected_row_begin,
+        common_selection.selected_row_end,
+        common_selection.selected_row_count,
+        common_selection.first_batch_spw,
+        common_selection.selected_row_count,
+        common_selection.selected_row_hash,
+        common_selection.selected_row_first,
+        common_selection.selected_row_last,
+        common_selection.row_flags_count,
+        common_selection.row_flags_hash,
+        common_selection.flagged_rows,
+        common_selection.n_data_chan,
+        common_selection.n_data_pol,
+        common_selection.chan_map_count,
+        common_selection.chan_map_hash,
+        common_selection.pol_map_count,
+        common_selection.pol_map_hash,
+        common_selection.freq_count,
+        common_selection.freq_hash,
+        common_selection.freq_first_bits,
+        common_selection.freq_last_bits,
+    );
+    let absolute_main_rows_json = format!(
+        "{{\"semantics\":\"physical-MAIN-table-row-index\",\
+         \"count\":{},\"hash\":{},\"first\":{},\"last\":{}}}",
+        common_selection.absolute_main_row_count,
+        common_selection.absolute_main_row_hash,
+        common_selection.absolute_main_row_first,
+        common_selection.absolute_main_row_last,
+    );
+    let first_mismatch_json =
+        awproject_literal_coefficient_mismatch_json_v1(coefficient_audit.first_mismatch);
+    let conditional_grid_json = awproject_literal_coefficient_grid_json_v1(conditional_grid);
+    let evidence = format!(
+        "{{\n\
+         \"schema\":\"casa-rs-aw-datagrid-literal-coefficient-audit-v1\",\n\
+         \"status\":\"completed-controlled-stop\",\n\
+         \"result\":\"{result}\",\n\
+         \"result_taxonomy\":[{}],\n\
+         \"role\":\"bounded-correctness-oracle-not-performance-evidence\",\n\
+         \"producer\":\"casa-rs\",\n\
+         \"diagnostic_hook_added\":true,\n\
+         \"normal_execution_behavior_changed\":false,\n\
+         \"production_science_arithmetic_changed\":false,\n\
+         \"production_dispatch\":\"not-entered\",\n\
+         \"formed_image\":false,\n\
+         \"normalization\":\"not-entered\",\n\
+         \"fft\":\"not-entered\",\n\
+         \"products\":\"not-entered\",\n\
+         \"tt1\":false,\n\
+         \"terms_evaluated\":[0],\n\
+         \"sumwt\":\"not-controlled\",\n\
+         \"cross_producer_reference\":\"conditional-whole-TT0-grid-hash-only-from-frozen-CASA-v5\",\n\
+         \"coefficient_reference\":\"source-exact-casa-6.7.5.18-replay-over-frozen-casa-rs-CF-pixels\",\n\
+         \"casa_source\":{{\"casa_commit\":\"{}\",\
+         \"casacore_commit\":\"{}\",\
+         \"datatogrid\":\"casatools/src/code/synthesis/TransformMachines2/AWVisResampler.cc:233-400\",\
+         \"coefficient_loop\":\"casatools/src/code/synthesis/TransformMachines2/accumulateToGrid.inc:30-52\",\
+         \"phase_generation\":\"casatools/src/code/synthesis/TransformMachines2/PhaseGrad.cc:141-195\"}},\n\
+         \"literal_arithmetic\":{{\
+         \"raw_cf\":\"stored-complex32-pixel-already-cache-normalized\",\
+         \"runtime_cf_area_division\":false,\
+         \"w_sign\":\"strict-data-w-positive-conjugates-zero-and-negative-do-not\",\
+         \"normalization\":\"post-w-sign-unphased-complex32-and-component-promoted-complex64-sums\",\
+         \"pointing_phase\":\"double-axis-trig-to-complex32-double-axis-product-to-complex32\",\
+         \"phase_multiply\":\"explicit-separately-rounded-complex32-products-add-sub\",\
+         \"grid_nvalue\":\"complex32-weight-times-residual\",\
+         \"grid_contribution\":\"complex32-nvalue-times-coefficient\",\
+         \"grid_accumulator\":\"componentwise-complex64-add\"}},\n\
+         \"phase_path\":\"prephased-direct-projector-no-phase-table-no-tapless-replay\",\n\
+         \"traversal_contract\":\"source-then-first-rr-logical-mueller-0-then-second-ll-logical-mueller-15-then-iy-then-ix\",\n\
+         \"expected_grid_nxy\":{},\n\
+         \"target_blocks\":{},\n\
+         \"diagnostic_terms\":{},\n\
+         \"request_nterms\":{},\n\
+         \"replay_block_ordinal\":0,\n\
+         \"replay_window_ordinal\":0,\n\
+         \"last_window_in_replay_block\":{},\n\
+         \"frozen_parent_receipts\":{{\
+         \"casa_rs_v4_sha256\":\"1c52961a3058f8f362e9d554c64b69a077f9414a7a44c738bed5351e6df59b40\",\
+         \"casa_rs_v4_embedded_evidence_sha256\":\"5783293d3401f97b12742d8c89bd98e2b0d1303cabf4e19505f245db7cbe9e0a\",\
+         \"casa_rs_v4_revision\":\"11cdeec698b63b9023233f3d7855d6c07d47284f\",\
+         \"casa_v5_sha256\":\"fe3d5ba3bff1ba925f63f0f088df602692655131c86d6319210ffa90e067ea1f\",\
+         \"arithmetic_v1_sha256\":\"a9c7fc453d343a48745269744ffd257a5ca8c532ccefe4ac74ba5a85b0ce9271\",\
+         \"arithmetic_v1_embedded_evidence_sha256\":\"c2b2bc4daafe12aa0090d9d00e8cdd02ca627c2fa671f846fb6625aad912af99\",\
+         \"arithmetic_v1_comparison_sha256\":\"e50bf9642a442688dc2f5f37390c63e1a04cd0ad19729f4daea4a0bf43be608e\",\
+         \"arithmetic_v1_comparison_embedded_evidence_sha256\":\"dfcd28767cb60a727f1486a49a9a9b9ad96748114ff69d47d9a8e3c8dec5f73b\",\
+         \"arithmetic_v1_revision\":\"dc159dc629c5e09c83d2027d06b5d909bf4f4c0a\"}},\n\
+         \"frozen_grid_hashes\":{{\"rust_tt0\":{},\"casa_tt0\":{}}},\n\
+         \"selection\":{},\n\
+         \"observed_first_buffer\":{},\n\
+         \"absolute_main_rows\":{},\n\
+         \"correlation_mueller_role_order\":{{\
+         \"first\":{{\"correlation\":\"RR\",\"selected_corr_index\":{},\
+         \"selected_corr_code\":{},\"logical_mueller\":0}},\
+         \"second\":{{\"correlation\":\"LL\",\"selected_corr_index\":{},\
+         \"selected_corr_code\":{},\"logical_mueller\":15}}}},\n\
+         \"input_hashes\":{{\"direct_raw\":{},\"compact\":{},\
+         \"direct_compact_exact_match\":true,\"portable_geometry\":{},\
+         \"portable_input\":{}}},\n\
+         \"portable_call\":{{\"call\":{},\"block\":{},\"term\":{},\
+         \"source_count\":{}}},\n\
+         \"counts\":{{\"source\":{},\"logical_role\":{},\"tap\":{},\"tap_request\":{},\
+         \"unique_bundle\":{},\"nonfinite_operand\":{},\
+         \"out_of_grid_support_attempt\":0}},\n\
+         \"memory\":{{\"literal_operand_bytes\":{},\
+         \"conditional_grid_bytes\":{}}},\n\
+         \"ordered_hashes\":{{\
+         \"contracts\":{{\
+         \"destination\":\"fnv1a64-little-endian-source-sample-group-role-bundle-tap-iy-ix-grid-y-grid-x-route-only\",\
+         \"selected_cell\":\"fnv1a64-little-endian-source-sample-group-role-bundle-cell-key-conjugate-once-per-logical-role\",\
+         \"stage\":\"fnv1a64-little-endian-source-sample-group-role-bundle-tap-iy-ix-grid-y-grid-x-then-complex32-stage-value\"}},\
+         \"destination\":{},\"selected_cell\":{},\"raw_cf\":{},\
+         \"post_w_sign\":{},\"pointing_phase\":{},\
+         \"literal_coefficient\":{},\"packed_coefficient\":{}}},\n\
+         \"coefficient_comparison\":{{\"mismatch_count\":{},\
+         \"first_mismatch\":{}}},\n\
+         \"conditional_grid\":{},\n\
+         \"traversal_hash\":{}\n\
+         }}\n",
+        result_taxonomy_json,
+        AWPROJECT_LITERAL_COEFFICIENT_AUDIT_CASA_SOURCE_COMMIT_V1,
+        AWPROJECT_LITERAL_COEFFICIENT_AUDIT_CASACORE_SOURCE_COMMIT_V1,
+        config.expected_nxy,
+        config.target_blocks,
+        config.terms,
+        request.nterms,
+        last_window_in_block,
+        AWPROJECT_TT0_ARITHMETIC_COMPAT_BASELINE_HASH_V1,
+        AWPROJECT_TT0_ARITHMETIC_COMPAT_CASA_TARGET_HASH_V1,
+        selection_json,
+        observed_first_buffer_json,
+        absolute_main_rows_json,
+        selection.selected_corr_first_index,
+        selection.selected_corr_first_code,
+        selection.selected_corr_second_index,
+        selection.selected_corr_second_code,
+        input_audit.raw_hash,
+        input_audit.compact_hash,
+        portable_call.geometry_hash,
+        portable_call.input_hash,
+        portable_call.call,
+        portable_call.block,
+        portable_call.term,
+        portable_call.source_count,
+        coefficient_audit.source_count,
+        coefficient_audit.logical_role_count,
+        coefficient_audit.tap_count,
+        coefficient_audit.tap_request_count,
+        coefficient_audit.unique_bundle_count,
+        coefficient_audit.nonfinite_operand_count,
+        coefficient_audit.literal_operand_bytes,
+        conditional_grid.map_or(0, |grid| grid.grid_bytes),
+        coefficient_audit.destination_hash,
+        coefficient_audit.selected_cell_hash,
+        coefficient_audit.raw_cf_hash,
+        coefficient_audit.post_w_sign_hash,
+        coefficient_audit.pointing_phase_hash,
+        coefficient_audit.literal_coefficient_hash,
+        coefficient_audit.packed_coefficient_hash,
+        coefficient_audit.coefficient_mismatch_count,
+        first_mismatch_json,
+        conditional_grid_json,
+        traversal.traversal_hash,
+    );
+    let (payload, evidence_sha256) = awproject_literal_coefficient_audit_envelope_v1(&evidence);
+    awproject_datatogrid_atomic_receipt(&output, payload.as_bytes())?;
+    Err(ImagingError::InvalidRequest(format!(
+        "AWProject literal-coefficient audit stopped before production dispatch, TT1, sumwt, \
+         normalization, FFT, image formation, or products; result={result} receipt={} \
+         evidence_sha256={evidence_sha256}",
         output.display(),
     )))
 }
@@ -22973,29 +24286,8 @@ fn awproject_prefix_rounded_mul(left: f32, right: f32) -> f32 {
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
-#[inline(never)]
-fn awproject_prefix_rounded_add(left: f32, right: f32) -> f32 {
-    std::hint::black_box(left + right)
-}
-
-#[cfg(all(target_os = "macos", not(coverage)))]
-#[inline(never)]
-fn awproject_prefix_rounded_sub(left: f32, right: f32) -> f32 {
-    std::hint::black_box(left - right)
-}
-
-#[cfg(all(target_os = "macos", not(coverage)))]
 fn awproject_prefix_casa_product(value: Complex32, tap: Complex32) -> Complex32 {
-    Complex32::new(
-        awproject_prefix_rounded_sub(
-            awproject_prefix_rounded_mul(value.re, tap.re),
-            awproject_prefix_rounded_mul(value.im, tap.im),
-        ),
-        awproject_prefix_rounded_add(
-            awproject_prefix_rounded_mul(value.re, tap.im),
-            awproject_prefix_rounded_mul(value.im, tap.re),
-        ),
-    )
+    gridder::casa_aw_literal_complex_multiply(value, tap)
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -23598,6 +24890,26 @@ fn replay_awproject_compact_window(
     }
     #[cfg(all(target_os = "macos", not(coverage)))]
     if model_grids.is_none() {
+        maybe_run_awproject_literal_coefficient_audit_v1(
+            request,
+            mosaic,
+            gridder,
+            batch,
+            parallel_hands,
+            sample_frequencies_hz,
+            source_samples,
+            &planned_samples,
+            tap_requests,
+            bundles,
+            phase_tables,
+            groups,
+            cache,
+            controls,
+            pa_deg,
+            replay_block_ordinal,
+            replay_stats.windows,
+            last_window_in_block,
+        )?;
         maybe_run_awproject_tt0_arithmetic_compat_v1(
             request,
             mosaic,
@@ -56205,6 +57517,8 @@ mod tests {
     use ndarray::{Array2, Array4, s};
     use num_complex::{Complex32, Complex64};
     use serial_test::serial;
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    use std::collections::{BTreeMap, BTreeSet};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -65364,6 +66678,539 @@ mod tests {
     }
 
     #[cfg(all(target_os = "macos", not(coverage)))]
+    struct AwProjectLiteralCoefficientFixtureV1 {
+        source_samples: Vec<super::AwProjectCompactSourceSample>,
+        planned_samples: Vec<super::AwProjectCompactPlannedSample>,
+        tap_requests: Vec<super::AwProjectCompactTapRequest>,
+        packed_bundles: Vec<super::AwProjectCompactMaterializedTap>,
+        literal_bundles: BTreeMap<usize, super::AwProjectLiteralCoefficientBundleV1>,
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn awproject_literal_coefficient_fixture_v1() -> AwProjectLiteralCoefficientFixtureV1 {
+        let (planned_samples, packed_bundles) = awproject_tt0_arithmetic_compat_fixture_v1();
+        let source_samples = planned_samples
+            .iter()
+            .enumerate()
+            .map(
+                |(sample_index, planned)| super::AwProjectCompactSourceSample {
+                    sample_index,
+                    group_index: planned.group_index,
+                    first_imaging_plan: planned.first_imaging_plan,
+                    second_imaging_plan: planned.second_imaging_plan,
+                    first_prediction_plan: planned.first_imaging_plan,
+                    second_prediction_plan: planned.second_imaging_plan,
+                    first_psf_plan: planned.first_psf_plan,
+                    second_psf_plan: planned.second_psf_plan,
+                    first_weight_plan: planned.first_weight_plan,
+                    second_weight_plan: planned.second_weight_plan,
+                },
+            )
+            .collect::<Vec<_>>();
+        let cell_keys = [
+            super::AwConvolutionFunctionKey {
+                frequency_hz: 2.0e9,
+                w_value_lambda: -12.0,
+                mueller_element: 0,
+                parallactic_angle_deg: 3.0,
+            },
+            super::AwConvolutionFunctionKey {
+                frequency_hz: 2.0e9,
+                w_value_lambda: 12.0,
+                mueller_element: 15,
+                parallactic_angle_deg: 3.0,
+            },
+        ];
+        let tap_requests = cell_keys
+            .iter()
+            .enumerate()
+            .map(|(bundle_index, &cell_key)| {
+                let conjugate_for_grid = bundle_index == 1;
+                super::AwProjectCompactTapRequest {
+                    key: super::AwProjectCompactTapKey {
+                        group_index: 0,
+                        cell: super::awproject_stable_cell_key(cell_key),
+                        kernel_kind: super::AwProjectCompactKernelKind::Imaging,
+                        off_x: 0,
+                        off_y: 0,
+                        conjugate_for_grid,
+                    },
+                    cell_key,
+                    representative_geometry: super::gridder::AwProjectSampleGeometry {
+                        loc_x: 2,
+                        loc_y: 2,
+                        off_x: 0,
+                        off_y: 0,
+                        conjugate_for_grid,
+                    },
+                }
+            })
+            .collect::<Vec<_>>();
+        let literal_bundles = packed_bundles
+            .iter()
+            .enumerate()
+            .map(|(bundle_index, packed)| {
+                let super::AwProjectCompactMaterializedTap::Ready(packed) = packed else {
+                    unreachable!("the literal test fixture contains only ready tap bundles");
+                };
+                let conjugate_for_grid = bundle_index == 1;
+                let pointing_phase = Complex32::new(1.0, 0.0);
+                let values = packed
+                    .values
+                    .iter()
+                    .copied()
+                    .map(|post_w_sign| {
+                        let raw_cf = if conjugate_for_grid {
+                            post_w_sign.conj()
+                        } else {
+                            post_w_sign
+                        };
+                        super::gridder::AwProjectorLiteralCasaTap {
+                            raw_cf,
+                            post_w_sign,
+                            pointing_phase,
+                            coefficient: super::gridder::casa_aw_literal_complex_multiply(
+                                post_w_sign,
+                                pointing_phase,
+                            ),
+                        }
+                    })
+                    .collect();
+                (
+                    bundle_index,
+                    super::AwProjectLiteralCoefficientBundleV1 {
+                        cell_key: cell_keys[bundle_index],
+                        group_index: 0,
+                        conjugate_for_grid,
+                        x_support: packed.x_support,
+                        y_support: packed.y_support,
+                        values,
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        AwProjectLiteralCoefficientFixtureV1 {
+            source_samples,
+            planned_samples,
+            tap_requests,
+            packed_bundles,
+            literal_bundles,
+        }
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn awproject_literal_operand_bytes_v1(
+        literal_bundles: &BTreeMap<usize, super::AwProjectLiteralCoefficientBundleV1>,
+    ) -> usize {
+        literal_bundles
+            .values()
+            .map(|bundle| {
+                bundle.values.len().saturating_mul(std::mem::size_of::<
+                    super::gridder::AwProjectorLiteralCasaTap,
+                >())
+            })
+            .sum()
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn awproject_literal_test_grid_v1(grid_hash: u64) -> super::AwProjectLiteralCoefficientGridV1 {
+        super::AwProjectLiteralCoefficientGridV1 {
+            grid_hash,
+            grid_values_hashed: 36,
+            grid_bytes: 36 * std::mem::size_of::<Complex64>(),
+            nonfinite_grid_value_count: 0,
+            source_count: 1,
+            logical_role_count: 2,
+            tap_count: 18,
+        }
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    #[serial_test::serial]
+    fn awproject_literal_audit_rejects_coefficient_and_pointing_experiments_v1() {
+        struct EnvironmentRestore(Vec<(&'static str, Option<std::ffi::OsString>)>);
+
+        impl EnvironmentRestore {
+            fn isolate(names: impl IntoIterator<Item = &'static str>) -> Self {
+                let values = names
+                    .into_iter()
+                    .map(|name| {
+                        let previous = std::env::var_os(name);
+                        unsafe {
+                            std::env::remove_var(name);
+                        }
+                        (name, previous)
+                    })
+                    .collect();
+                Self(values)
+            }
+        }
+
+        impl Drop for EnvironmentRestore {
+            fn drop(&mut self) {
+                for (name, previous) in self.0.drain(..) {
+                    unsafe {
+                        if let Some(previous) = previous {
+                            std::env::set_var(name, previous);
+                        } else {
+                            std::env::remove_var(name);
+                        }
+                    }
+                }
+            }
+        }
+
+        let _restore = EnvironmentRestore::isolate(
+            super::AWPROJECT_LITERAL_COEFFICIENT_AUDIT_INCOMPATIBLE_EXPERIMENT_ENVS_V1,
+        );
+        assert!(super::validate_awproject_literal_coefficient_audit_experiment_state_v1().is_ok());
+        for name in super::AWPROJECT_LITERAL_COEFFICIENT_AUDIT_INCOMPATIBLE_EXPERIMENT_ENVS_V1 {
+            unsafe {
+                std::env::set_var(name, "1");
+            }
+            let error = super::validate_awproject_literal_coefficient_audit_experiment_state_v1()
+                .expect_err("the literal audit must reject changed arithmetic or pointing");
+            assert!(error.to_string().contains(name), "{error}");
+            unsafe {
+                std::env::remove_var(name);
+            }
+        }
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn awproject_literal_coefficients_preserve_source_exact_operands_and_match_packed_v1() {
+        let AwProjectLiteralCoefficientFixtureV1 {
+            source_samples,
+            planned_samples,
+            tap_requests,
+            packed_bundles,
+            literal_bundles,
+        } = awproject_literal_coefficient_fixture_v1();
+        let mut tap_requests_with_unused_weight = tap_requests.clone();
+        let mut unused_weight = tap_requests[0];
+        unused_weight.key.kernel_kind = super::AwProjectCompactKernelKind::Weight;
+        tap_requests_with_unused_weight.push(unused_weight);
+        assert_eq!(
+            super::awproject_literal_coefficient_audited_bundle_indices_v1(
+                &planned_samples,
+                &tap_requests_with_unused_weight,
+            )
+            .unwrap(),
+            BTreeSet::from([0, 1]),
+            "unreferenced PSF/weight roles must not enter the literal operand census"
+        );
+        let mut invalid_planned_samples = planned_samples.clone();
+        invalid_planned_samples[0].first_imaging_plan.tap_bundle = 2;
+        assert!(
+            super::awproject_literal_coefficient_audited_bundle_indices_v1(
+                &invalid_planned_samples,
+                &tap_requests_with_unused_weight,
+            )
+            .is_err(),
+            "an imaging plan must never select a weight-kernel bundle"
+        );
+        for (&bundle_index, literal) in &literal_bundles {
+            let super::AwProjectCompactMaterializedTap::Ready(packed) =
+                &packed_bundles[bundle_index]
+            else {
+                unreachable!();
+            };
+            for (operand, &packed_coefficient) in literal.values.iter().zip(&packed.values) {
+                assert_eq!(
+                    operand.post_w_sign,
+                    if literal.conjugate_for_grid {
+                        operand.raw_cf.conj()
+                    } else {
+                        operand.raw_cf
+                    },
+                    "the W-sign step is the only operation between raw and post-W CF pixels"
+                );
+                assert_eq!(operand.pointing_phase, Complex32::new(1.0, 0.0));
+                assert_eq!(
+                    operand.coefficient,
+                    super::gridder::casa_aw_literal_complex_multiply(
+                        operand.post_w_sign,
+                        operand.pointing_phase,
+                    )
+                );
+                assert_eq!(operand.coefficient, packed_coefficient);
+            }
+        }
+
+        let literal_operand_bytes = awproject_literal_operand_bytes_v1(&literal_bundles);
+        let audit = super::audit_awproject_literal_coefficients_v1(
+            [6, 6],
+            &source_samples,
+            &planned_samples,
+            &tap_requests,
+            &packed_bundles,
+            &literal_bundles,
+            literal_operand_bytes,
+        )
+        .unwrap();
+        assert_eq!(audit.source_count, 2);
+        assert_eq!(audit.logical_role_count, 4);
+        assert_eq!(audit.tap_count, 36);
+        assert_eq!(audit.tap_request_count, 2);
+        assert_eq!(audit.unique_bundle_count, 2);
+        assert_eq!(audit.literal_operand_bytes, literal_operand_bytes);
+        assert_eq!(audit.coefficient_mismatch_count, 0);
+        assert!(audit.first_mismatch.is_none());
+        assert_eq!(
+            audit.literal_coefficient_hash,
+            audit.packed_coefficient_hash
+        );
+        assert_eq!(
+            super::classify_awproject_literal_coefficient_audit_v1(&audit, None).unwrap(),
+            "completed-literal-packed-exact-no-grid"
+        );
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn awproject_literal_one_coefficient_mismatch_controls_grid_and_taxonomy_v1() {
+        let AwProjectLiteralCoefficientFixtureV1 {
+            mut source_samples,
+            mut planned_samples,
+            tap_requests,
+            packed_bundles,
+            mut literal_bundles,
+        } = awproject_literal_coefficient_fixture_v1();
+        source_samples.truncate(1);
+        planned_samples.truncate(1);
+        let literal_operand_bytes = awproject_literal_operand_bytes_v1(&literal_bundles);
+        let exact = super::audit_awproject_literal_coefficients_v1(
+            [6, 6],
+            &source_samples,
+            &planned_samples,
+            &tap_requests,
+            &packed_bundles,
+            &literal_bundles,
+            literal_operand_bytes,
+        )
+        .unwrap();
+
+        let coefficient = &mut literal_bundles
+            .get_mut(&0)
+            .expect("fixture bundle zero")
+            .values[0]
+            .coefficient;
+        coefficient.re = f32::from_bits(coefficient.re.to_bits() ^ 1);
+        let mismatch = super::audit_awproject_literal_coefficients_v1(
+            [6, 6],
+            &source_samples,
+            &planned_samples,
+            &tap_requests,
+            &packed_bundles,
+            &literal_bundles,
+            literal_operand_bytes,
+        )
+        .unwrap();
+        assert_eq!(mismatch.coefficient_mismatch_count, 1);
+        let first_mismatch = mismatch.first_mismatch.expect("one ordered mismatch");
+        assert_eq!(first_mismatch.source_ordinal, 0);
+        assert_eq!(first_mismatch.source_sample_index, 0);
+        assert_eq!(first_mismatch.pointing_group_index, 0);
+        assert_eq!(first_mismatch.logical_role, 0);
+        assert_eq!(first_mismatch.tap_bundle, 0);
+        assert_eq!(first_mismatch.tap_ordinal, 0);
+        let mismatch_json: serde_json::Value = serde_json::from_str(
+            &super::awproject_literal_coefficient_mismatch_json_v1(Some(first_mismatch)),
+        )
+        .unwrap();
+        assert_eq!(mismatch_json["source_sample_index"], 0);
+        assert_eq!(mismatch_json["pointing_group_index"], 0);
+        assert_eq!(mismatch.destination_hash, exact.destination_hash);
+        assert_eq!(mismatch.selected_cell_hash, exact.selected_cell_hash);
+        assert_eq!(mismatch.raw_cf_hash, exact.raw_cf_hash);
+        assert_eq!(mismatch.post_w_sign_hash, exact.post_w_sign_hash);
+        assert_eq!(mismatch.pointing_phase_hash, exact.pointing_phase_hash);
+        assert_ne!(
+            mismatch.literal_coefficient_hash,
+            exact.literal_coefficient_hash
+        );
+        assert_eq!(
+            mismatch.packed_coefficient_hash,
+            exact.packed_coefficient_hash
+        );
+
+        let grid = super::run_awproject_literal_coefficient_grid_v1(
+            [6, 6],
+            &planned_samples,
+            &literal_bundles,
+            2.0e9,
+        )
+        .unwrap();
+        assert_eq!(grid.source_count, 1);
+        assert_eq!(grid.logical_role_count, 2);
+        assert_eq!(grid.tap_count, 18);
+        assert_eq!(grid.grid_values_hashed, 36);
+        assert_eq!(grid.grid_bytes, 36 * std::mem::size_of::<Complex64>());
+        assert_eq!(grid.nonfinite_grid_value_count, 0);
+        let grid_json: serde_json::Value = serde_json::from_str(
+            &super::awproject_literal_coefficient_grid_json_v1(Some(grid)),
+        )
+        .unwrap();
+        assert_eq!(grid_json["allocated"], true);
+        assert_eq!(grid_json["allocation_count"], 1);
+        assert_eq!(grid_json["replay_count"], 1);
+
+        assert_eq!(
+            super::classify_awproject_literal_coefficient_audit_v1(
+                &mismatch,
+                Some(awproject_literal_test_grid_v1(
+                    super::AWPROJECT_TT0_ARITHMETIC_COMPAT_CASA_TARGET_HASH_V1,
+                )),
+            )
+            .unwrap(),
+            "completed-literal-packed-mismatch-grid-matches-casa"
+        );
+        assert_eq!(
+            super::classify_awproject_literal_coefficient_audit_v1(
+                &mismatch,
+                Some(awproject_literal_test_grid_v1(
+                    super::AWPROJECT_TT0_ARITHMETIC_COMPAT_BASELINE_HASH_V1,
+                )),
+            )
+            .unwrap(),
+            "completed-literal-packed-mismatch-grid-matches-rust"
+        );
+        assert_eq!(
+            super::classify_awproject_literal_coefficient_audit_v1(
+                &mismatch,
+                Some(awproject_literal_test_grid_v1(7)),
+            )
+            .unwrap(),
+            "completed-literal-packed-mismatch-grid-matches-neither"
+        );
+
+        assert!(
+            super::classify_awproject_literal_coefficient_audit_v1(
+                &exact,
+                Some(awproject_literal_test_grid_v1(7)),
+            )
+            .is_err(),
+            "an exact coefficient stream must have no conditional grid"
+        );
+        assert!(
+            super::classify_awproject_literal_coefficient_audit_v1(&mismatch, None).is_err(),
+            "a mismatch must have a first mismatch and a conditional grid"
+        );
+        let mut missing_first = mismatch;
+        missing_first.first_mismatch = None;
+        assert!(
+            super::classify_awproject_literal_coefficient_audit_v1(
+                &missing_first,
+                Some(awproject_literal_test_grid_v1(7)),
+            )
+            .is_err(),
+            "a nonzero mismatch count must name the first mismatch"
+        );
+        let mut colliding_mismatch_hash = mismatch;
+        colliding_mismatch_hash.literal_coefficient_hash =
+            colliding_mismatch_hash.packed_coefficient_hash;
+        assert!(
+            super::classify_awproject_literal_coefficient_audit_v1(
+                &colliding_mismatch_hash,
+                Some(awproject_literal_test_grid_v1(7)),
+            )
+            .is_err(),
+            "a nonzero mismatch count must change the ordered coefficient hash"
+        );
+
+        let emitted_results = [
+            super::classify_awproject_literal_coefficient_audit_v1(&exact, None).unwrap(),
+            super::classify_awproject_literal_coefficient_audit_v1(
+                &mismatch,
+                Some(awproject_literal_test_grid_v1(
+                    super::AWPROJECT_TT0_ARITHMETIC_COMPAT_CASA_TARGET_HASH_V1,
+                )),
+            )
+            .unwrap(),
+            super::classify_awproject_literal_coefficient_audit_v1(
+                &mismatch,
+                Some(awproject_literal_test_grid_v1(
+                    super::AWPROJECT_TT0_ARITHMETIC_COMPAT_BASELINE_HASH_V1,
+                )),
+            )
+            .unwrap(),
+            super::classify_awproject_literal_coefficient_audit_v1(
+                &mismatch,
+                Some(awproject_literal_test_grid_v1(7)),
+            )
+            .unwrap(),
+        ];
+        assert_eq!(
+            super::AWPROJECT_LITERAL_COEFFICIENT_AUDIT_RESULT_TAXONOMY_V1,
+            emitted_results,
+            "the receipt taxonomy must advertise only runtime-emitted completed outcomes"
+        );
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn awproject_literal_receipt_is_content_addressed_and_published_once_v1() {
+        use sha2::{Digest, Sha256};
+
+        let taxonomy = super::awproject_literal_coefficient_audit_result_taxonomy_json_v1();
+        let evidence = format!(
+            " {{\"schema\":\"casa-rs-aw-datagrid-literal-coefficient-audit-v1\",\
+             \"result_taxonomy\":[{taxonomy}]}} "
+        );
+        let (payload, digest) = super::awproject_literal_coefficient_audit_envelope_v1(&evidence);
+        let parsed: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(
+            parsed["schema"],
+            "casa-rs-aw-datagrid-literal-coefficient-audit-envelope-v1"
+        );
+        assert_eq!(
+            parsed["evidence"]["schema"],
+            "casa-rs-aw-datagrid-literal-coefficient-audit-v1"
+        );
+        assert_eq!(
+            parsed["evidence"]["result_taxonomy"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| value.as_str().unwrap())
+                .collect::<Vec<_>>(),
+            super::AWPROJECT_LITERAL_COEFFICIENT_AUDIT_RESULT_TAXONOMY_V1
+        );
+        assert_eq!(parsed["content_address"]["algorithm"], "sha256");
+        assert_eq!(
+            parsed["content_address"]["scope"],
+            "embedded-evidence-json-utf8"
+        );
+        let expected = format!("{:x}", Sha256::digest(evidence.trim().as_bytes()));
+        assert_eq!(digest, expected);
+        assert_eq!(parsed["content_address"]["digest"], expected);
+        assert_eq!(
+            super::awproject_literal_coefficient_mismatch_json_v1(None),
+            "null"
+        );
+        assert_eq!(
+            super::awproject_literal_coefficient_grid_json_v1(None),
+            "null"
+        );
+
+        let temp = tempfile::tempdir().unwrap();
+        let receipt = temp.path().join("literal-receipt.json");
+        super::awproject_datatogrid_atomic_receipt(&receipt, payload.as_bytes()).unwrap();
+        assert_eq!(std::fs::read_to_string(&receipt).unwrap(), payload);
+        assert!(
+            super::awproject_datatogrid_atomic_receipt(&receipt, b"replacement").is_err(),
+            "the durable receipt publication path must refuse replacement"
+        );
+        assert_eq!(
+            std::fs::read_dir(temp.path()).unwrap().count(),
+            1,
+            "failed replacement must not leave a staging link"
+        );
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
     #[test]
     fn awproject_tt0_arithmetic_compat_proves_nvalue_bits_and_contribution_contract_v1() {
         use super::{
@@ -65777,8 +67624,19 @@ mod tests {
         assert!(super::awproject_tt0_arithmetic_compat_selection_v1().is_err());
 
         let old_marker = marker.split(';').take(27).collect::<Vec<_>>().join(";");
-        selection_environment.replace(old_marker);
+        selection_environment.replace(&old_marker);
         assert!(super::awproject_tt0_arithmetic_compat_selection_v1().is_err());
+
+        selection_environment.replace(marker);
+        let literal_selection_environment = EnvironmentGuard::set(
+            super::AWPROJECT_LITERAL_COEFFICIENT_AUDIT_SELECTION_ENV_V1,
+            marker,
+        );
+        let literal_selection = super::awproject_literal_coefficient_audit_selection_v1()
+            .expect("parse the dedicated literal-audit marker");
+        assert_eq!(literal_selection, selection);
+        literal_selection_environment.replace(&old_marker);
+        assert!(super::awproject_literal_coefficient_audit_selection_v1().is_err());
     }
 
     #[cfg(all(target_os = "macos", not(coverage)))]
