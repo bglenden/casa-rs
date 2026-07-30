@@ -3266,8 +3266,9 @@ final class CasarsMacUITests: XCTestCase {
             "unsafe_archive",
             "destination_collision",
         ]
-        return pollForValue(timeout: timeout) {
-            guard let status = try? accessibilityValue("tutorial.dataset.\(datasetID)") else {
+        return pollForValue(timeout: timeout, interval: 0.25) {
+            let dataset = element("tutorial.dataset.\(datasetID)")
+            guard dataset.exists, let status = dataset.value as? String else {
                 return nil
             }
             if status == "ready" || terminalFailures.contains(status) {
