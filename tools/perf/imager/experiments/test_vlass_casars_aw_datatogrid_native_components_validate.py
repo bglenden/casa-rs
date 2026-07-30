@@ -251,7 +251,7 @@ def candidate_evidence(
     return evidence
 
 
-class NativeComponentsV4ValidatorTests(unittest.TestCase):
+class NativeComponentsV5ValidatorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)

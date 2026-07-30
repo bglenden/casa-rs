@@ -786,17 +786,15 @@ impl CasaGirarUvwTransform {
         let (intermediate, mut phase_shift_m) = self.frame_machine.convert_uvw(casa_input_uvw_m);
         let rot = self.phase_machine.uvrot;
         let casa_output_uvw_m = [
-            intermediate[1].mul_add(rot[1][0], intermediate[0] * rot[0][0]),
-            intermediate[0].mul_add(rot[0][1], intermediate[1] * rot[1][1]),
-            intermediate[2].mul_add(
-                rot[2][2],
-                intermediate[1].mul_add(rot[1][2], intermediate[0] * rot[0][2]),
-            ),
+            intermediate[0] * rot[0][0] + intermediate[1] * rot[1][0],
+            intermediate[1] * rot[1][1] + intermediate[0] * rot[0][1],
+            intermediate[0] * rot[0][2] + intermediate[1] * rot[1][2] + intermediate[2] * rot[2][2],
         ];
-        let phase_delta_m = self.phase_machine.phrot[1].mul_add(
-            casa_output_uvw_m[1],
-            self.phase_machine.phrot[0] * casa_output_uvw_m[0],
-        );
+        // CASA's shipped synthesis library evaluates these girarUVW row
+        // expressions with contraction disabled. Keep the source order;
+        // explicit mul_add matches row zero but diverges on later VLASS rows.
+        let phase_delta_m = self.phase_machine.phrot[0] * casa_output_uvw_m[0]
+            + self.phase_machine.phrot[1] * casa_output_uvw_m[1];
         phase_shift_m += phase_delta_m;
         (
             [
@@ -839,8 +837,12 @@ fn casa_mat3_mul(left: [[f64; 3]; 3], right: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
         let source = left[row];
         for column in 0..3 {
             let mut value = source[0] * right[0][column];
-            value = source[1].mul_add(right[1][column], value);
-            value = source[2].mul_add(right[2][column], value);
+            // casacore RotMatrix::operator*= materializes every multiply and
+            // addition as a separate statement. These construction-time
+            // cancellations are observably different from explicit fused
+            // multiply-add arithmetic.
+            value += source[1] * right[1][column];
+            value += source[2] * right[2][column];
             output[row][column] = value;
         }
     }
@@ -848,44 +850,33 @@ fn casa_mat3_mul(left: [[f64; 3]; 3], right: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
 }
 
 fn casa_row_vec3_mul_mat3(vector: [f64; 3], matrix: [[f64; 3]; 3]) -> [f64; 3] {
-    [
-        vector[2].mul_add(
-            matrix[2][0],
-            vector[1].mul_add(matrix[1][0], vector[0] * matrix[0][0]),
-        ),
-        vector[2].mul_add(
-            matrix[2][1],
-            vector[1].mul_add(matrix[1][1], vector[0] * matrix[0][1]),
-        ),
-        vector[2].mul_add(
-            matrix[2][2],
-            vector[1].mul_add(matrix[1][2], vector[0] * matrix[0][2]),
-        ),
-    ]
+    let mut output = [0.0; 3];
+    for column in 0..3 {
+        output[column] = vector[0] * matrix[0][column];
+        output[column] += vector[1] * matrix[1][column];
+        output[column] += vector[2] * matrix[2][column];
+    }
+    output
 }
 
 fn casa_mat3_mul_vec3(matrix: [[f64; 3]; 3], vector: [f64; 3]) -> [f64; 3] {
-    [
-        vector[2].mul_add(
-            matrix[0][2],
-            vector[1].mul_add(matrix[0][1], vector[0] * matrix[0][0]),
-        ),
-        vector[2].mul_add(
-            matrix[1][2],
-            vector[1].mul_add(matrix[1][1], vector[0] * matrix[1][0]),
-        ),
-        vector[2].mul_add(
-            matrix[2][2],
-            vector[1].mul_add(matrix[2][1], vector[0] * matrix[2][0]),
-        ),
-    ]
+    let mut output = [0.0; 3];
+    for row in 0..3 {
+        // casacore's RotMatrix * MVPosition loop accumulates these as three
+        // distinct operations in its prebuilt library.
+        output[row] += matrix[row][0] * vector[0];
+        output[row] += matrix[row][1] * vector[1];
+        output[row] += matrix[row][2] * vector[2];
+    }
+    output
 }
 
 fn casa_dot3(left: [f64; 3], right: [f64; 3]) -> f64 {
-    left[2].mul_add(
-        right[2],
-        left[1].mul_add(right[1], left[0].mul_add(right[0], 0.0)),
-    )
+    let mut result = 0.0;
+    for axis in 0..3 {
+        result += left[axis] * right[axis];
+    }
+    result
 }
 
 fn dot3(left: [f64; 3], right: [f64; 3]) -> f64 {
@@ -1547,12 +1538,6 @@ mod tests {
             0.293_215_314_333_100_33,
             DirectionRef::J2000,
         );
-        let engine = MsCalEngine::from_parts(
-            vec![MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z)],
-            vec![source_direction],
-            MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z),
-            casa_test_support::deterministic_measures_provider(),
-        );
         // This is the exact reference direction returned by CASA's
         // DirectionCoordinate after its radians -> WCS degrees -> radians
         // boundary for the frozen VLASS field.
@@ -1560,6 +1545,41 @@ mod tests {
             3.545_602_179_904_207_7,
             0.293_215_314_333_100_33,
             DirectionRef::J2000,
+        );
+        let prepared = CasaGirarUvwTransform::new(&source_direction, &image_direction);
+        let expected_rotation_bits = [
+            [4_607_182_418_800_017_408, 0, 0],
+            [0, 4_607_182_418_800_017_408, 4_363_988_038_922_010_624],
+            [0, 4_363_988_038_922_010_624, 4_607_182_418_800_017_409],
+        ];
+        assert_eq!(
+            prepared
+                .frame_machine
+                .uvrot
+                .map(|row| row.map(f64::to_bits)),
+            expected_rotation_bits
+        );
+        assert_eq!(
+            prepared
+                .phase_machine
+                .uvrot
+                .map(|row| row.map(f64::to_bits)),
+            expected_rotation_bits
+        );
+        assert_eq!(prepared.frame_machine.phrot.map(f64::to_bits), [0, 0, 0]);
+        assert_eq!(
+            prepared.phase_machine.phrot.map(f64::to_bits),
+            [
+                4_379_056_720_170_678_802,
+                13_570_113_653_343_543_584,
+                13_578_075_827_820_232_864,
+            ]
+        );
+        let engine = MsCalEngine::from_parts(
+            vec![MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z)],
+            vec![source_direction],
+            MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z),
+            casa_test_support::deterministic_measures_provider(),
         );
         let (uvw_m, phase_shift_m) = engine
             .reproject_raw_uvw_for_mosaic_to_direction(
