@@ -16003,9 +16003,16 @@ static inline long2 aw_complex_product_fixed64(float2 value, float2 tap, float s
 }
 
 static inline float2 aw_complex_multiply(float2 left, float2 right) {
+    // CASA's Complex multiplication rounds each Float product before the
+    // following add/subtract. Explicit fma-with-zero preserves that boundary
+    // even when the Metal compiler would otherwise contract the expression.
+    const float ac = fma(left.x, right.x, 0.0f);
+    const float bd = fma(left.y, right.y, 0.0f);
+    const float ad = fma(left.x, right.y, 0.0f);
+    const float bc = fma(left.y, right.x, 0.0f);
     return float2(
-        left.x * right.x - left.y * right.y,
-        left.x * right.y + left.y * right.x
+        ac - bd,
+        ad + bc
     );
 }
 
@@ -20598,25 +20605,38 @@ fn awproject_datatogrid_portable_call_hash(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
-fn awproject_datatogrid_term_sumwt(
-    request: &MtmfsRequest,
-    samples: &[AwProjectCompactPlannedSample],
-    bundles: &[AwProjectCompactMaterializedTap],
-    term: usize,
-) -> f64 {
-    samples.iter().fold(0.0, |sumwt, sample| {
-        let current_weight = mtmfs_casa_weighted_taylor_term(
-            sample.weight,
-            sample.frequency_hz,
-            request.reffreq_hz,
-            term,
-        );
-        let first = awproject_ready_compact_tap(bundles, sample.first_imaging_plan.tap_bundle);
-        let second = awproject_ready_compact_tap(bundles, sample.second_imaging_plan.tap_bundle);
-        sumwt
-            + f64::from(current_weight)
-                * (first.grid_normalization.norm() + second.grid_normalization.norm())
-    })
+fn awproject_datatogrid_production_sumwt(
+    terms: usize,
+    before: &[f64],
+    after: &[f64],
+) -> Result<Vec<f64>, ImagingError> {
+    if terms == 0 {
+        return Err(ImagingError::Normalization(
+            "AWProject DataToGrid bracket production sumwt requires at least one term".to_string(),
+        ));
+    }
+    if before.len() < terms || after.len() < terms {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject DataToGrid bracket production sumwt has before={} after={} terms, expected at least {terms}",
+            before.len(),
+            after.len(),
+        )));
+    }
+    if before[..terms].iter().any(|value| value.to_bits() != 0) {
+        return Err(ImagingError::Normalization(
+            "AWProject DataToGrid bracket expected zero production sumwt before the first source window"
+                .to_string(),
+        ));
+    }
+    if after[..terms].iter().any(|value| !value.is_finite())
+        || !(after[0].is_sign_positive() && after[0] > 0.0)
+    {
+        return Err(ImagingError::Normalization(
+            "AWProject DataToGrid bracket production sumwt is non-finite or has no positive TT0 weight"
+                .to_string(),
+        ));
+    }
+    Ok(after[..terms].to_vec())
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -20732,6 +20752,8 @@ fn maybe_run_awproject_datatogrid_bracket(
     replay_block_ordinal: usize,
     replay_window_ordinal: usize,
     last_window_in_block: bool,
+    production_sumwt_before: &[f64],
+    production_sumwt_after: &[f64],
 ) -> Result<(), ImagingError> {
     let Some((output, config)) = awproject_datatogrid_bracket_config()? else {
         return Ok(());
@@ -20767,9 +20789,13 @@ fn maybe_run_awproject_datatogrid_bracket(
                 .to_string(),
         ));
     }
-    if replay_block_ordinal != 0 || replay_window_ordinal != 0 || config.target_blocks != 1 {
+    if replay_block_ordinal != 0
+        || replay_window_ordinal != 0
+        || !last_window_in_block
+        || config.target_blocks != 1
+    {
         return Err(ImagingError::InvalidRequest(format!(
-            "AWProject DataToGrid bracket expected exactly replay block=0 window=0, got block={replay_block_ordinal} window={replay_window_ordinal}"
+            "AWProject DataToGrid bracket expected exactly one complete replay block at block=0 window=0, got block={replay_block_ordinal} window={replay_window_ordinal} last_window_in_block={last_window_in_block}"
         )));
     }
     if batch.is_empty()
@@ -20853,12 +20879,16 @@ fn maybe_run_awproject_datatogrid_bracket(
                 .to_string(),
         ));
     }
+    let production_sumwt = awproject_datatogrid_production_sumwt(
+        config.terms,
+        production_sumwt_before,
+        production_sumwt_after,
+    )?;
     let term_boundaries = bracket_grids
         .residual_grids
         .iter()
-        .enumerate()
-        .map(|(term, grid)| {
-            let sumwt = awproject_datatogrid_term_sumwt(request, planned_samples, bundles, term);
+        .zip(&production_sumwt)
+        .map(|(grid, &sumwt)| {
             (
                 hash_awproject_datatogrid_grid_casa_order(grid),
                 hash_awproject_datatogrid_sumwt_casa_order(sumwt),
@@ -20902,7 +20932,7 @@ fn maybe_run_awproject_datatogrid_bracket(
         "{{\n\
          \"schema\":\"casa-rs-aw-datagrid-bracket-v1\",\n\
          \"status\":\"completed-before-finalize\",\n\
-         \"reason\":\"configured-native-equivalent-window-boundary\",\n\
+         \"reason\":\"verified-selection-fields-grid-and-production-sumwt-boundary\",\n\
          \"role\":\"bounded-correctness-oracle-not-performance-evidence\",\n\
          \"producer\":\"casa-rs\",\n\
          \"original_invocation\":\"compact-replay-serial-host-f64\",\n\
@@ -20986,7 +21016,7 @@ fn maybe_run_awproject_datatogrid_bracket(
     );
     awproject_datatogrid_atomic_receipt(&output, payload.as_bytes())?;
     Err(ImagingError::InvalidRequest(format!(
-        "AWProject DataToGrid bracket completed the first native-equivalent TT0/TT1 source window before FFT, normalization, image formation, or products; receipt={} evidence_sha256={evidence_sha256}",
+        "AWProject DataToGrid bracket captured the first verified-selection TT0/TT1 complete source block before FFT, normalization, image formation, or products; receipt={} evidence_sha256={evidence_sha256}",
         output.display()
     )))
 }
@@ -22237,6 +22267,13 @@ fn replay_awproject_compact_window(
     }
     #[cfg(any(not(target_os = "macos"), coverage))]
     let gpu_residual_replay = false;
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    let awproject_datatogrid_sumwt_before =
+        if env::var_os(AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV).is_some() {
+            accumulation.reported_sumwt_terms.clone()
+        } else {
+            Vec::new()
+        };
     let normalization_sumwt_before = accumulation.normalization_sumwt;
     let gridded_samples_before = accumulation.gridded_samples;
     let skipped_samples_before = accumulation.skipped_samples;
@@ -22324,6 +22361,8 @@ fn replay_awproject_compact_window(
             replay_block_ordinal,
             replay_stats.windows,
             last_window_in_block,
+            &awproject_datatogrid_sumwt_before,
+            &accumulation.reported_sumwt_terms,
         )?;
         maybe_dump_awproject_residual_prefix(
             request,
@@ -64032,6 +64071,46 @@ mod tests {
 
     #[cfg(all(target_os = "macos", not(coverage)))]
     #[test]
+    fn awproject_datatogrid_bracket_uses_exact_production_sumwt_bits() {
+        let expected = [
+            f64::from_bits(0x41d2_3456_789a_bcde),
+            f64::from_bits(0xbfd2_3456_789a_bcde),
+        ];
+        let actual = super::awproject_datatogrid_production_sumwt(2, &[0.0, 0.0, 0.0], &expected)
+            .expect("capture exact first-window production sumwt");
+        assert_eq!(
+            actual
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>()
+        );
+
+        assert!(super::awproject_datatogrid_production_sumwt(2, &[0.0], &expected).is_err());
+        assert!(super::awproject_datatogrid_production_sumwt(0, &[], &[]).is_err());
+        assert!(
+            super::awproject_datatogrid_production_sumwt(2, &[0.0, f64::MIN_POSITIVE], &expected)
+                .is_err()
+        );
+        assert!(
+            super::awproject_datatogrid_production_sumwt(2, &[0.0, 0.0], &[f64::NAN, expected[1]],)
+                .is_err()
+        );
+        assert!(
+            super::awproject_datatogrid_production_sumwt(
+                2,
+                &[0.0, 0.0],
+                &[-expected[0], expected[1]],
+            )
+            .is_err()
+        );
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
     #[serial_test::serial]
     fn awproject_datatogrid_bracket_parses_exact_first_vb_selection_marker() {
         let marker = "field=1525;spws=2-17;first_spw=2;first_rows=325;\
@@ -64088,6 +64167,7 @@ mod tests {
         assert_eq!(evidence["expected_grid_nxy"], 4096);
         assert_eq!(evidence["completed_calls"], 2);
         assert_eq!(evidence["completed_blocks"], 1);
+        assert_eq!(evidence["last_window_in_replay_block"], true);
         assert_eq!(evidence["selection"]["field_id"], 1525);
         assert_eq!(evidence["selection"]["requested_spws"], "2-17");
         assert_eq!(evidence["selection"]["first_batch_rows"], 325);

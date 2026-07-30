@@ -3922,6 +3922,104 @@ out), as do `cargo fmt --all --check`, warning-denying `casars` Clippy, and
 test rerun for the CI repair; it was not a VLASS, CASA, correctness, or
 performance workload.
 
+### 2026-07-30 production-boundary checkpoint
+
+The stabilization freeze remained in force through this checkpoint. No
+casa-rs bracket, VLASS imaging row, CASA `tclean` call, CASA reference or
+timing call, 12,150-square development clean, or full-geometry memory
+experiment was launched. The proposed casa-rs bracket output directory is
+still absent, so no replacement receipt exists. The externally stored CASA
+v4 and v5 bracket receipts were rehashed read-only and remain, respectively,
+`dd6ca70a03a3fb27f2298c3ec5115fd67ca26dd2e4eea34e6b937f897015155d`
+and
+`fe3d5ba3bff1ba925f63f0f088df602692655131c86d6319210ffa90e067ea1f`.
+The frozen v59 and v61 comparison receipts were also rehashed without
+executing either workload and remain
+`fb4a83e321028f50ab5234e07f2dcd30b0bcfc608a6d2bbcba06b4fff2565993`
+and
+`6fe0bdf804825b3afd3bbc5b01b6923e1e2bd4e1afd60c8e7356ff40776b52a0`.
+
+The unexecuted casa-rs first-buffer diagnostic now captures `sumwt` directly
+from the production accumulator rather than recomputing it in a diagnostic
+helper. It requires that replay block zero consist of one complete window,
+preserves the exact production f64 bits for TT0 and TT1, and fails closed for
+a partial block, nonzero prestate, zero terms, a non-finite result, or a
+nonpositive TT0 weight. Its receipt wording is intentionally limited to the
+verified selection fields plus the CASA-order grid and production-`sumwt`
+boundary. The reusable launcher SHA-256 at this checkpoint is
+`7045795dc42075cefc0c0ea6f237fc8bf9ca49ff88273817ffb5efc7f4423937`;
+the launcher has not been executed.
+
+The completed Oracle review agreed that a complete replay block is required
+and that no tap-prefix trace is warranted before an actual common-boundary
+grid mismatch. It also identified a remaining provenance limit: independent
+observed channel-map and frequency hashes, rather than only frozen expected
+values, are required before a matching grid and `sumwt` may be described as
+proof of identical internal visibility visits. That larger diagnostic
+enhancement is recorded for post-checkpoint work; it was not opened during
+stabilization. A future exact common-boundary match may promote only the
+first-buffer DataToGrid boundary, never the integrated 4,096-square row.
+
+A checkpoint-only actual-GPU regression exposed one wave-caused arithmetic
+blocker: Metal contracted CASA-style complex multiplication and changed the
+real result from f32 bits corresponding to `-0.6685914993286133` to
+`-0.6685914397239685`, one f32 ULP. The Metal helper now forces each Float
+product to round before the following add or subtract by using explicit
+fused-multiply-add with a zero addend. The exact actual-Metal regression now
+passes. This is positive isolated arithmetic evidence only. No 4,096-square
+scientific row was rerun, so the remaining correctness blocker is unchanged:
+v59 and v61 each fail the exact `.alpha`/`.alpha.error` topology contract at
+two pixels, despite matching all 641 component updates and all five major
+cycles. The Metal correction has therefore not earned candidate promotion or
+a performance claim.
+
+The full-geometry memory-campaign implementation is unchanged and remains
+unmeasured policy infrastructure. Its 31-test Python suite passes, as do Ruff
+check and Ruff format check. The deterministic planner evidence still admits
+the modeled 32 GiB full-geometry shape, rejects 24 and 16 GiB, and distinguishes
+the `18,895,680,000`-byte initial grid, `4,723,920,000`-byte residual grid,
+and `2,361,960,000`-byte f64 transform transient. No dirty or clean
+12,150-square policy row was executed. Complete 12-stage telemetry,
+stage-aware product and replay demotion, hybrid next-use policy evidence, and
+the required 32 GiB laptop receipts remain promotion blockers rather than
+claimed capabilities.
+
+Checkpoint verification after the production-boundary and Metal changes is:
+
+- `cargo fmt --all` passed;
+- affected `cargo check` and warning-denying Clippy passed for
+  `casa-imaging` and `casars-imager`;
+- workspace SPDX, formatting, and warning-denying Clippy passed through
+  `just lint`, including the formerly failing draft-PR lint surface;
+- focused `casa-imaging` bracket tests passed (`3`), the exact compact replay
+  source-order test passed (`1`), and the actual-Metal CASA-f32 product test
+  passed (`1`);
+- focused `casars-imager` full-geometry (`2`), memory-pressure (`2`), and task
+  contract (`18`) tests passed;
+- the memory-campaign unit suite passed (`31`), with Ruff check and format
+  check passing;
+- the task CLI host conformance gate passed for all `18` binaries and the
+  macOS GUI acceptance suite passed (`7`);
+- the workspace Rust test and doctest gate passed with `casa-imaging`
+  reporting `376` passed and `9` ignored, and `casars-imager` reporting `345`
+  passed and `13` ignored; and
+- `docs-check`, the final `git diff --check`, and the launcher syntax check
+  passed immediately before commit.
+
+That workspace gate explicitly skipped the existing CASA-generated synthetic
+MeasurementSet smoke to respect the checkpoint freeze. One ordinary,
+pre-existing 3-by-3 CRTF-region interoperability unit did discover CASA and
+invoke `casatools.regionmanager`; it created only temporary unit-test data and
+did not call `tclean`, process VLASS data, form an image, or create a reference
+or timing receipt. No replacement CASA-backed run was launched.
+
+The intentional checkpoint set consists only of the Rust production-boundary
+and Metal-rounding changes, their tests, this plan receipt, and the reusable
+fail-closed launcher. Rebuildable `target/` content, CASA logs, TempLattice
+scratch, Python and Ruff caches, copied CASA products, MeasurementSets, CF
+caches, and all external runtime receipts remain generated or external
+evidence and are excluded from version control.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
