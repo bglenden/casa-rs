@@ -103,7 +103,7 @@ use casa_ms::{
     CubeSpectralSetup, MsSelection, MsSelectionIoBudget, ResolvedMsSelectionRow, SourcePartition,
     SubTable, VisibilityBuffer, VisibilityBufferFillReport, VisibilityBufferRequest,
     VisibilityChannelReadRange, VisibilityComplexSamples, VisibilityFloatSamples,
-    VisibilityReadBlockPlan, convert_frequency_to_frame, parse_numeric_id_selector,
+    VisibilityReadBlockPlan, convert_frequency_to_frame_with_frame, parse_numeric_id_selector,
     parse_rest_frequency_hz as parse_ms_rest_frequency_hz, parse_spw_selector,
     resolve_channel_selector_selection, resolve_contiguous_channel_selection,
 };
@@ -7410,12 +7410,14 @@ fn awproject_datatogrid_bracket_observed_first_buffer(
         };
         awproject_datatogrid_bracket_fnv_u64(&mut pol_map_hash, mapped as u64);
     }
-    let reference_frequency_hz = source_frequencies_hz.first().copied().ok_or_else(|| {
-        "the AWProject DataToGrid first source block selected no frequencies".to_string()
-    })?;
-    let frequency_scale = mfs_imaging_frequency_scale(
+    if source_frequencies_hz.is_empty() {
+        return Err(
+            "the AWProject DataToGrid first source block selected no frequencies".to_string(),
+        );
+    }
+    let imaging_frequencies = mfs_imaging_frequencies(
         table_values.freq_ref,
-        reference_frequency_hz,
+        source_frequencies_hz,
         &first_rows[0],
         derived_engine,
     )?;
@@ -7423,8 +7425,8 @@ fn awproject_datatogrid_bracket_observed_first_buffer(
     awproject_datatogrid_bracket_fnv_u64(&mut freq_hash, source_frequencies_hz.len() as u64);
     let mut freq_first_bits = None;
     let mut freq_last_bits = None;
-    for &source_frequency_hz in source_frequencies_hz {
-        let frequency_bits = (source_frequency_hz * frequency_scale).to_bits();
+    for &imaging_frequency_hz in imaging_frequencies.frequency_hz.iter() {
+        let frequency_bits = imaging_frequency_hz.to_bits();
         freq_first_bits.get_or_insert(frequency_bits);
         freq_last_bits = Some(frequency_bits);
         awproject_datatogrid_bracket_fnv_u64(&mut freq_hash, frequency_bits);
@@ -27443,42 +27445,33 @@ fn mfs_output_frequency_metadata_for_selected_rows(
         );
     }
 
-    let reference_frequency_hz = source_channel_frequencies_hz
-        .first()
-        .copied()
-        .ok_or_else(|| "MFS row metadata resolved to no source frequencies".to_string())?;
-    let mut frequency_range_hz = None::<[f64; 2]>;
-    let mut scale_cache = HashMap::<(u64, usize), f64>::new();
+    let mut converted_frequency_range_hz = None::<[f64; 2]>;
+    let mut frequency_cache = None::<((u64, usize), MfsImagingFrequencies)>;
     for selected_row in selected_rows {
         let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
             "internal error: missing row time for MFS frequency-frame conversion".to_string()
         })?;
         let cache_key = (row_time_mjd_sec.to_bits(), selected_row.field_id);
-        let scale = if let Some(scale) = scale_cache.get(&cache_key) {
-            *scale
+        let frequencies = if let Some((cached_key, frequencies)) = frequency_cache.as_ref()
+            && *cached_key == cache_key
+        {
+            frequencies.clone()
         } else {
-            let scale = mfs_imaging_frequency_scale(
+            let frequencies = mfs_imaging_frequencies(
                 source_freq_ref,
-                reference_frequency_hz,
+                source_channel_frequencies_hz,
                 selected_row,
                 derived_engine,
             )?;
-            scale_cache.insert(cache_key, scale);
-            scale
+            frequency_cache = Some((cache_key, frequencies.clone()));
+            frequencies
         };
-        let converted_range = [
-            source_selected_frequency_range_hz[0] * scale,
-            source_selected_frequency_range_hz[1] * scale,
-        ];
         extend_frequency_range_hz(
-            &mut frequency_range_hz,
-            [
-                converted_range[0].min(converted_range[1]),
-                converted_range[0].max(converted_range[1]),
-            ],
+            &mut converted_frequency_range_hz,
+            frequency_range_hz(&frequencies.frequency_hz)?,
         );
     }
-    let frequency_range_hz = frequency_range_hz
+    let frequency_range_hz = converted_frequency_range_hz
         .ok_or_else(|| "MFS row metadata resolved to no selected rows".to_string())?;
     let edge_range_hz = casa_mfs_frequency_edge_range_for_selected_rows(
         source_freq_ref,
@@ -32358,25 +32351,25 @@ fn accumulate_standard_mfs_density_rows_without_data_parallel(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn standard_mfs_frequency_scales_for_selected_rows(
+fn standard_mfs_imaging_frequencies_for_selected_rows(
     config: &CliConfig,
     table_values: &PreparedSelectionTableValues,
     phase_center: &PhaseCenter,
     selected_rows: &[SelectedMainRow],
     derived_engine: Option<&MsCalEngine>,
-) -> Result<Vec<f64>, String> {
+) -> Result<Vec<MfsImagingFrequencies>, String> {
     let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
         config,
         table_values,
         phase_center.clone(),
         false,
     )?;
-    let mut row_frequency_scales = Vec::with_capacity(selected_rows.len());
+    let mut row_frequencies = Vec::with_capacity(selected_rows.len());
     for selected_row in selected_rows {
-        row_frequency_scales
-            .push(prepared.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?);
+        row_frequencies
+            .push(prepared.mfs_imaging_frequencies_for_row(selected_row, derived_engine)?);
     }
-    Ok(row_frequency_scales)
+    Ok(row_frequencies)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -32386,7 +32379,7 @@ fn accumulate_standard_mfs_density_essentials_rows(
     phase_center: &PhaseCenter,
     selected_rows: &[SelectedMainRow],
     rows: &[MsImagingEssentials],
-    row_frequency_scales: &[f64],
+    row_frequencies: &[MfsImagingFrequencies],
     weighting_plan: &mut StandardMfsStreamingWeightingPlan,
     accumulate_timings: &mut AccumulateRowTimings,
 ) -> Result<usize, String> {
@@ -32397,10 +32390,10 @@ fn accumulate_standard_mfs_density_essentials_rows(
             rows.len()
         ));
     }
-    if row_frequency_scales.len() != rows.len() {
+    if row_frequencies.len() != rows.len() {
         return Err(format!(
-            "internal error: frequency-scale count {} differs from essentials row count {}",
-            row_frequency_scales.len(),
+            "internal error: imaging-frequency count {} differs from essentials row count {}",
+            row_frequencies.len(),
             rows.len()
         ));
     }
@@ -32413,10 +32406,10 @@ fn accumulate_standard_mfs_density_essentials_rows(
             false,
         )?;
         let mut accepted_samples = 0usize;
-        for ((selected_row, row), &mfs_frequency_scale) in selected_rows
+        for ((selected_row, row), mfs_imaging_frequencies) in selected_rows
             .iter()
             .zip(rows.iter())
-            .zip(row_frequency_scales.iter())
+            .zip(row_frequencies.iter())
         {
             if row.spw_id != selected_row.spw_id {
                 return Err(format!(
@@ -32425,9 +32418,9 @@ fn accumulate_standard_mfs_density_essentials_rows(
                 ));
             }
             accepted_samples += prepared
-                .accumulate_standard_mfs_density_essentials_row_with_frequency_scale(
+                .accumulate_standard_mfs_density_essentials_row_with_imaging_frequencies(
                     row,
-                    mfs_frequency_scale,
+                    mfs_imaging_frequencies,
                     weighting_plan,
                     accumulate_timings,
                 )?;
@@ -32441,10 +32434,10 @@ fn accumulate_standard_mfs_density_essentials_rows(
     let worker_results =
         thread::scope(|scope| {
             let mut handles = Vec::with_capacity(thread_count);
-            for ((selected_chunk, row_chunk), scale_chunk) in selected_rows
+            for ((selected_chunk, row_chunk), frequency_chunk) in selected_rows
                 .chunks(chunk_len)
                 .zip(rows.chunks(chunk_len))
-                .zip(row_frequency_scales.chunks(chunk_len))
+                .zip(row_frequencies.chunks(chunk_len))
             {
                 let table_values = table_values.clone();
                 let phase_center = phase_center.clone();
@@ -32460,10 +32453,10 @@ fn accumulate_standard_mfs_density_essentials_rows(
                         .map_err(|error| error.to_string())?;
                     let mut local_timings = AccumulateRowTimings::default();
                     let mut accepted_samples = 0usize;
-                    for ((selected_row, row), &mfs_frequency_scale) in selected_chunk
+                    for ((selected_row, row), mfs_imaging_frequencies) in selected_chunk
                         .iter()
                         .zip(row_chunk.iter())
-                        .zip(scale_chunk.iter())
+                        .zip(frequency_chunk.iter())
                     {
                         if row.spw_id != selected_row.spw_id {
                             return Err(format!(
@@ -32472,12 +32465,12 @@ fn accumulate_standard_mfs_density_essentials_rows(
                             ));
                         }
                         accepted_samples += prepared
-                            .accumulate_standard_mfs_density_essentials_row_with_frequency_scale(
-                                row,
-                                mfs_frequency_scale,
-                                &mut local_plan,
-                                &mut local_timings,
-                            )?;
+                        .accumulate_standard_mfs_density_essentials_row_with_imaging_frequencies(
+                            row,
+                            mfs_imaging_frequencies,
+                            &mut local_plan,
+                            &mut local_timings,
+                        )?;
                     }
                     Ok::<_, String>((accepted_samples, local_timings, local_plan))
                 }));
@@ -32579,7 +32572,7 @@ where
         let mut block_detail = StandardMfsPlannedRowSampleDetailTimings::default();
         let mut routed_block = StandardMfsRoutedVisibilityBlock::default();
         let rows = block.rows;
-        let row_frequency_scales = standard_mfs_frequency_scales_for_selected_rows(
+        let row_frequencies = standard_mfs_imaging_frequencies_for_selected_rows(
             config,
             table_values,
             &selection.phase_center,
@@ -32593,12 +32586,12 @@ where
             &selection.phase_center,
             row_chunk,
             &rows,
-            &row_frequency_scales,
+            &row_frequencies,
             weighting_plan,
             accumulate_timings,
         )?;
-        for ((selected_row, row), &mfs_frequency_scale) in
-            row_chunk.iter().zip(rows).zip(row_frequency_scales.iter())
+        for ((selected_row, row), mfs_imaging_frequencies) in
+            row_chunk.iter().zip(rows).zip(row_frequencies.iter())
         {
             if row.spw_id != selected_row.spw_id {
                 return Err(format!(
@@ -32610,7 +32603,7 @@ where
                 selected_row,
                 row,
                 derived_engine,
-                Some(mfs_frequency_scale),
+                Some(mfs_imaging_frequencies),
                 Arc::clone(&source_channel_indices),
                 planned_sample_builder,
                 &mut next_input_seq,
@@ -32713,7 +32706,7 @@ fn stream_standard_mfs_density_and_metal_grouped_input_cache_row_blocks(
         let mut block_planned_samples = 0usize;
         let mut block_detail = StandardMfsPlannedRowSampleDetailTimings::default();
         let rows = block.rows;
-        let row_frequency_scales = standard_mfs_frequency_scales_for_selected_rows(
+        let row_frequencies = standard_mfs_imaging_frequencies_for_selected_rows(
             config,
             table_values,
             &selection.phase_center,
@@ -32727,12 +32720,12 @@ fn stream_standard_mfs_density_and_metal_grouped_input_cache_row_blocks(
             &selection.phase_center,
             row_chunk,
             &rows,
-            &row_frequency_scales,
+            &row_frequencies,
             weighting_plan,
             accumulate_timings,
         )?;
-        for ((selected_row, row), &mfs_frequency_scale) in
-            row_chunk.iter().zip(rows).zip(row_frequency_scales.iter())
+        for ((selected_row, row), mfs_imaging_frequencies) in
+            row_chunk.iter().zip(rows).zip(row_frequencies.iter())
         {
             if row.spw_id != selected_row.spw_id {
                 return Err(format!(
@@ -32745,7 +32738,7 @@ fn stream_standard_mfs_density_and_metal_grouped_input_cache_row_blocks(
                     selected_row,
                     row,
                     derived_engine,
-                    Some(mfs_frequency_scale),
+                    Some(mfs_imaging_frequencies),
                     Arc::clone(&source_channel_indices),
                     planned_sample_builder,
                     &mut next_input_seq,
@@ -36662,6 +36655,29 @@ fn standard_mfs_memory_allocation_lifetimes(
                     }
                     residencies
                 }
+                "MFS imaging frequency cache" => {
+                    let mut residencies = vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        SourceIngest,
+                        InitialGrid,
+                        if has_clean_cycles {
+                            AtStage(ResidualGrid)
+                        } else {
+                            NoFurtherUse
+                        },
+                    )];
+                    if has_clean_cycles {
+                        residencies.push(standard_mfs_memory_residency(
+                            host,
+                            bytes,
+                            ResidualGrid,
+                            ResidualGrid,
+                            NoFurtherUse,
+                        ));
+                    }
+                    residencies
+                }
                 "source row blocks" => {
                     let mut residencies = vec![standard_mfs_memory_residency(
                         host,
@@ -37418,6 +37434,16 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     } else {
         0
     };
+    let mfs_imaging_frequency_bytes_per_row = checked_imaging_sum(
+        [
+            checked_imaging_product(
+                [selected_channel_count, 2, std::mem::size_of::<f64>()],
+                "MFS exact frequency and wavelength vectors per source row",
+            )?,
+            256,
+        ],
+        "MFS imaging-frequency source-row upper bound",
+    )?;
     let prepared_bytes_per_row = checked_imaging_sum(
         [
             visibility_shape.live_source_scratch_bytes_for_rows(
@@ -37427,8 +37453,26 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             ),
             aw_cf_locality_index_bytes_per_row,
             aw_parallel_plan_bytes_per_row,
+            std::mem::size_of::<MfsImagingFrequencies>(),
+            mfs_imaging_frequency_bytes_per_row,
         ],
         "prepared source-row scratch",
+    )?;
+    // The row block can retain one exact vector pair for every distinct
+    // (time, field) key, so prepared_bytes_per_row charges the worst case of
+    // one pair per row in addition to each Arc handle. PreparedSelection also
+    // retains the most recent pair between row blocks; this fixed allowance
+    // covers that persistent pair, both Arc fat pointers, the cache key, and
+    // allocator metadata.
+    let mfs_imaging_frequency_cache_bytes = checked_imaging_sum(
+        [
+            checked_imaging_product(
+                [selected_channel_count, 2, std::mem::size_of::<f64>()],
+                "MFS exact frequency and wavelength vectors per row key",
+            )?,
+            256,
+        ],
+        "MFS imaging-frequency cache upper bound",
     )?;
     let sample_count = checked_imaging_product(
         [active_row_count, selected_channel_count],
@@ -37691,6 +37735,11 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             },
             stage: "weighting",
             bytes: mosaic_density_bytes,
+        },
+        ImagingMemoryAllocation {
+            component: "MFS imaging frequency cache",
+            stage: "prepare",
+            bytes: mfs_imaging_frequency_cache_bytes,
         },
     ];
     if awproject_mtmfs {
@@ -41490,6 +41539,27 @@ struct PreparedSelectionTableValues {
     corr_types: Vec<i32>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct MfsImagingFrequencies {
+    frequency_hz: Arc<[f64]>,
+    lambda_scales: Arc<[f64]>,
+}
+
+impl MfsImagingFrequencies {
+    fn channels(&self) -> impl Iterator<Item = (f64, f64)> + '_ {
+        self.frequency_hz
+            .iter()
+            .copied()
+            .zip(self.lambda_scales.iter().copied())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum MfsImagingFrequencyCacheKey {
+    Native,
+    Framed { time_bits: u64, field_id: usize },
+}
+
 struct PreparedSelection {
     initialization_error: Option<String>,
     source_channel_indices: Vec<usize>,
@@ -41506,8 +41576,7 @@ struct PreparedSelection {
     cube_row_source_frequency_cache: HashMap<(u64, usize), Arc<Vec<f64>>>,
     cube_row_spectral_reusable_plan: Option<Arc<CubeRowSpectralReusablePlan>>,
     cube_mosaic_pb_frequency_cache: HashMap<(u64, usize, usize, u64), f64>,
-    mfs_frequency_scale_cache: HashMap<(u64, usize), f64>,
-    mfs_channel_lambda_scale_cache: HashMap<u64, Arc<[f64]>>,
+    mfs_imaging_frequency_cache: Option<(MfsImagingFrequencyCacheKey, MfsImagingFrequencies)>,
     mfs_output_frequency_edge_range_hz: Option<[f64; 2]>,
     casa_cube_grid_interpolation: bool,
     cube_visibility_grid_assignments: bool,
@@ -42841,31 +42910,50 @@ fn gridft_axis_rotation(angle: f64, axis: GridftAxis) -> [[f64; 3]; 3] {
     }
 }
 
-fn mfs_imaging_frequency_scale(
+fn mfs_imaging_frequencies(
     freq_ref: FrequencyRef,
-    reference_frequency_hz: f64,
+    source_frequencies_hz: &[f64],
     selected_row: &SelectedMainRow,
     derived_engine: Option<&MsCalEngine>,
-) -> Result<f64, String> {
-    if freq_ref == FrequencyRef::LSRK {
-        return Ok(1.0);
-    }
-    let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
-        "internal error: missing row time for MFS frequency-frame conversion".to_string()
-    })?;
-    let derived_engine = derived_engine.ok_or_else(|| {
-        "internal error: missing derived engine for MFS frequency-frame conversion".to_string()
-    })?;
-    convert_frequency_to_frame(
-        freq_ref,
-        FrequencyRef::LSRK,
-        reference_frequency_hz,
-        row_time_mjd_sec,
-        selected_row.field_id,
-        derived_engine,
-    )
-    .map(|converted_hz| converted_hz / reference_frequency_hz)
-    .map_err(|error| error.to_string())
+) -> Result<MfsImagingFrequencies, String> {
+    let frequency_hz = if freq_ref == FrequencyRef::LSRK {
+        source_frequencies_hz.to_vec()
+    } else {
+        let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
+            "internal error: missing row time for MFS frequency-frame conversion".to_string()
+        })?;
+        let derived_engine = derived_engine.ok_or_else(|| {
+            "internal error: missing derived engine for MFS frequency-frame conversion".to_string()
+        })?;
+        let frame = derived_engine
+            .spectral_frame_observatory(row_time_mjd_sec, selected_row.field_id)
+            .map_err(|error| {
+                format!(
+                    "build MFS spectral frame for field {}: {error}",
+                    selected_row.field_id
+                )
+            })?;
+        source_frequencies_hz
+            .iter()
+            .map(|&source_frequency_hz| {
+                convert_frequency_to_frame_with_frame(
+                    freq_ref,
+                    FrequencyRef::LSRK,
+                    source_frequency_hz,
+                    Some(&frame),
+                )
+                .map_err(|error| error.to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let lambda_scales = frequency_hz
+        .iter()
+        .map(|frequency_hz| frequency_hz / SPEED_OF_LIGHT_M_PER_S)
+        .collect::<Vec<_>>();
+    Ok(MfsImagingFrequencies {
+        frequency_hz: Arc::from(frequency_hz.into_boxed_slice()),
+        lambda_scales: Arc::from(lambda_scales.into_boxed_slice()),
+    })
 }
 
 impl PreparedSelection {
@@ -43016,8 +43104,7 @@ impl PreparedSelection {
             cube_row_source_frequency_cache: HashMap::new(),
             cube_row_spectral_reusable_plan: None,
             cube_mosaic_pb_frequency_cache: HashMap::new(),
-            mfs_frequency_scale_cache: HashMap::new(),
-            mfs_channel_lambda_scale_cache: HashMap::new(),
+            mfs_imaging_frequency_cache: None,
             mfs_output_frequency_edge_range_hz: None,
             casa_cube_grid_interpolation: false,
             cube_visibility_grid_assignments: false,
@@ -43667,8 +43754,7 @@ impl PreparedSelection {
                 cube_row_source_frequency_cache: HashMap::new(),
                 cube_row_spectral_reusable_plan: None,
                 cube_mosaic_pb_frequency_cache: HashMap::new(),
-                mfs_frequency_scale_cache: HashMap::new(),
-                mfs_channel_lambda_scale_cache: HashMap::new(),
+                mfs_imaging_frequency_cache: None,
                 mfs_output_frequency_edge_range_hz: None,
                 casa_cube_grid_interpolation: use_casa_cube_grid_interpolation,
                 cube_visibility_grid_assignments,
@@ -43701,8 +43787,7 @@ impl PreparedSelection {
                 cube_row_source_frequency_cache: HashMap::new(),
                 cube_row_spectral_reusable_plan: None,
                 cube_mosaic_pb_frequency_cache: HashMap::new(),
-                mfs_frequency_scale_cache: HashMap::new(),
-                mfs_channel_lambda_scale_cache: HashMap::new(),
+                mfs_imaging_frequency_cache: None,
                 mfs_output_frequency_edge_range_hz: None,
                 casa_cube_grid_interpolation: false,
                 cube_visibility_grid_assignments: false,
@@ -43742,15 +43827,13 @@ impl PreparedSelection {
         row_slot: usize,
         timings: &mut AccumulateRowTimings,
     ) -> Result<(), String> {
-        self.accumulate_row_with_mfs_frequency_scale(
+        self.accumulate_row_with_imaging_frequencies(
             geometry_row,
             source_block,
             flag_row,
             derived_engine,
             row_slot,
             timings,
-            None,
-            None,
         )
     }
 
@@ -43814,13 +43897,12 @@ impl PreparedSelection {
             geometry_row.antenna1_pointing.angles_rad,
             geometry_row.antenna2_pointing.angles_rad,
         );
-        let mfs_frequency_scale =
-            self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
+        let mfs_imaging_frequencies =
+            self.mfs_imaging_frequencies_for_row(selected_row, derived_engine)?;
         if self.mfs_output_frequency_edge_range_hz.is_none() {
             self.mfs_output_frequency_edge_range_hz =
                 Some(self.mfs_imaging_frequency_edge_range_for_row(selected_row, derived_engine)?);
         }
-        let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
         let zero_visibility = Complex32::new(0.0, 0.0);
         let cube_output_channel_frequencies_hz = self
             .cube_spectral_setup
@@ -43896,17 +43978,15 @@ impl PreparedSelection {
                 let mut mosaic_pointing_id = None;
                 if let Some(weight) = weights.channel_invariant_weight(*corr_index)? {
                     if weight.is_finite() && weight > 0.0 {
-                        for (channel_index, frequency_hz) in self
+                        for (channel_index, (imaging_frequency_hz, lambda_scale)) in self
                             .source_channel_indices
                             .iter()
                             .copied()
-                            .zip(self.source_channel_frequencies_hz.iter().copied())
+                            .zip(mfs_imaging_frequencies.channels())
                         {
                             if flags_2d.get(*corr_index, channel_index)? {
                                 continue;
                             }
-                            let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
-                            let lambda_scale = frequency_hz * mfs_lambda_scale;
                             batch.u_lambda.push(uvw_m[0] * lambda_scale);
                             batch.v_lambda.push(uvw_m[1] * lambda_scale);
                             batch.w_lambda.push(uvw_m[2] * lambda_scale);
@@ -43941,11 +44021,11 @@ impl PreparedSelection {
                         }
                     }
                 } else {
-                    for (channel_index, frequency_hz) in self
+                    for (channel_index, (imaging_frequency_hz, lambda_scale)) in self
                         .source_channel_indices
                         .iter()
                         .copied()
-                        .zip(self.source_channel_frequencies_hz.iter().copied())
+                        .zip(mfs_imaging_frequencies.channels())
                     {
                         if flags_2d.get(*corr_index, channel_index)? {
                             continue;
@@ -43954,8 +44034,6 @@ impl PreparedSelection {
                         if !(weight.is_finite() && weight > 0.0) {
                             continue;
                         }
-                        let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
-                        let lambda_scale = frequency_hz * mfs_lambda_scale;
                         batch.u_lambda.push(uvw_m[0] * lambda_scale);
                         batch.v_lambda.push(uvw_m[1] * lambda_scale);
                         batch.w_lambda.push(uvw_m[2] * lambda_scale);
@@ -44012,19 +44090,17 @@ impl PreparedSelection {
                     {
                         let combined_weight = 0.5 * (first_weight + second_weight);
                         if combined_weight.is_finite() && combined_weight > 0.0 {
-                            for (channel_index, frequency_hz) in self
+                            for (channel_index, (imaging_frequency_hz, lambda_scale)) in self
                                 .source_channel_indices
                                 .iter()
                                 .copied()
-                                .zip(self.source_channel_frequencies_hz.iter().copied())
+                                .zip(mfs_imaging_frequencies.channels())
                             {
                                 if flags_2d.get(pair.0, channel_index)?
                                     || flags_2d.get(pair.1, channel_index)?
                                 {
                                     continue;
                                 }
-                                let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
-                                let lambda_scale = frequency_hz * mfs_lambda_scale;
                                 batch.u_lambda.push(uvw_m[0] * lambda_scale);
                                 batch.v_lambda.push(uvw_m[1] * lambda_scale);
                                 batch.w_lambda.push(uvw_m[2] * lambda_scale);
@@ -44064,11 +44140,11 @@ impl PreparedSelection {
                         }
                     }
                 } else {
-                    for (channel_index, frequency_hz) in self
+                    for (channel_index, (imaging_frequency_hz, lambda_scale)) in self
                         .source_channel_indices
                         .iter()
                         .copied()
-                        .zip(self.source_channel_frequencies_hz.iter().copied())
+                        .zip(mfs_imaging_frequencies.channels())
                     {
                         if flags_2d.get(pair.0, channel_index)?
                             || flags_2d.get(pair.1, channel_index)?
@@ -44090,8 +44166,6 @@ impl PreparedSelection {
                         if !(combined_weight.is_finite() && combined_weight > 0.0) {
                             continue;
                         }
-                        let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
-                        let lambda_scale = frequency_hz * mfs_lambda_scale;
                         batch.u_lambda.push(uvw_m[0] * lambda_scale);
                         batch.v_lambda.push(uvw_m[1] * lambda_scale);
                         batch.w_lambda.push(uvw_m[2] * lambda_scale);
@@ -44369,7 +44443,7 @@ impl PreparedSelection {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn accumulate_row_with_mfs_frequency_scale(
+    fn accumulate_row_with_imaging_frequencies(
         &mut self,
         geometry_row: &PreparedGeometryRow,
         source_block: &ColumnarPreparedSource,
@@ -44377,8 +44451,6 @@ impl PreparedSelection {
         derived_engine: Option<&MsCalEngine>,
         row_slot: usize,
         timings: &mut AccumulateRowTimings,
-        precomputed_mfs_frequency_scale: Option<f64>,
-        precomputed_mfs_frequency_edge_range_hz: Option<[f64; 2]>,
     ) -> Result<(), String> {
         timings.rows_seen += 1;
         let selected_row = &geometry_row.selected_row;
@@ -44597,31 +44669,22 @@ impl PreparedSelection {
         let use_density_batches = self.use_density_batches;
         let build_cube_briggs_density_samples = self.build_cube_briggs_density_samples;
         let use_model_interpolation_batches = self.use_model_interpolation_batches;
-        let mfs_frequency_scale = if matches!(
+        let mfs_imaging_frequencies = if matches!(
             &self.state,
             PreparedState::ExplicitMfs { .. }
                 | PreparedState::PairedMfs { .. }
                 | PreparedState::CollapsedMfs { .. }
         ) {
-            let scale = match precomputed_mfs_frequency_scale {
-                Some(scale) => scale,
-                None => self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?,
-            };
+            let frequencies = self.mfs_imaging_frequencies_for_row(selected_row, derived_engine)?;
             if self.mfs_output_frequency_edge_range_hz.is_none() {
-                self.mfs_output_frequency_edge_range_hz =
-                    Some(match precomputed_mfs_frequency_edge_range_hz {
-                        Some(range) => range,
-                        None => self.mfs_imaging_frequency_edge_range_for_row(
-                            selected_row,
-                            derived_engine,
-                        )?,
-                    });
+                self.mfs_output_frequency_edge_range_hz = Some(
+                    self.mfs_imaging_frequency_edge_range_for_row(selected_row, derived_engine)?,
+                );
             }
-            scale
+            Some(frequencies)
         } else {
-            1.0
+            None
         };
-        let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
         let cube_output_channel_frequencies_hz = self
             .cube_spectral_setup
             .as_ref()
@@ -44677,15 +44740,23 @@ impl PreparedSelection {
                 },
                 PreparedTraceState::ExplicitMfs { samples },
             ) => {
+                let mfs_imaging_frequencies =
+                    mfs_imaging_frequencies.as_ref().ok_or_else(|| {
+                        "internal error: explicit MFS row has no imaging-frequency vector"
+                            .to_string()
+                    })?;
                 let mut mosaic_pointing_id = None;
-                for (channel_slot, (channel_index, frequency_hz)) in self
+                for (
+                    channel_slot,
+                    ((channel_index, frequency_hz), (imaging_frequency_hz, lambda_scale)),
+                ) in self
                     .source_channel_indices
                     .iter()
                     .copied()
                     .zip(self.source_channel_frequencies_hz.iter().copied())
+                    .zip(mfs_imaging_frequencies.channels())
                     .enumerate()
                 {
-                    let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
                     let local_channel = data_2d.local_channel(channel_index)?;
                     if flags_2d.get_local(*corr_index, local_channel, channel_index)? {
                         continue;
@@ -44699,7 +44770,6 @@ impl PreparedSelection {
                     if !(weight.is_finite() && weight > 0.0) {
                         continue;
                     }
-                    let lambda_scale = frequency_hz * mfs_lambda_scale;
                     batch.u_lambda.push(uvw_m[0] * lambda_scale);
                     batch.v_lambda.push(uvw_m[1] * lambda_scale);
                     batch.w_lambda.push(uvw_m[2] * lambda_scale);
@@ -45089,6 +45159,11 @@ impl PreparedSelection {
                 },
                 PreparedTraceState::PairedMfs { .. },
             ) => {
+                let mfs_imaging_frequencies =
+                    mfs_imaging_frequencies.as_ref().ok_or_else(|| {
+                        "internal error: collapsed MFS row has no imaging-frequency vector"
+                            .to_string()
+                    })?;
                 let sumwt_factor = plane_stokes.paired_sumwt_factor();
                 let mut mosaic_pointing_id = None;
                 if let Some((first_weight, second_weight)) =
@@ -45101,11 +45176,11 @@ impl PreparedSelection {
                     {
                         let combined_weight = 0.5 * (first_weight + second_weight);
                         if combined_weight.is_finite() && combined_weight > 0.0 {
-                            for (channel_index, frequency_hz) in self
+                            for (channel_index, (imaging_frequency_hz, lambda_scale)) in self
                                 .source_channel_indices
                                 .iter()
                                 .copied()
-                                .zip(self.source_channel_frequencies_hz.iter().copied())
+                                .zip(mfs_imaging_frequencies.channels())
                             {
                                 let local_channel = data_2d.local_channel(channel_index)?;
                                 let first_flagged =
@@ -45119,7 +45194,6 @@ impl PreparedSelection {
                                     data_2d.get_local(pair.0, local_channel, channel_index)?;
                                 let second_visibility =
                                     data_2d.get_local(pair.1, local_channel, channel_index)?;
-                                let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
                                 let first_visibility = phase_rotate_visibility(
                                     first_visibility,
                                     transform.phase_shift_m,
@@ -45135,7 +45209,6 @@ impl PreparedSelection {
                                 if !(visibility.re.is_finite() && visibility.im.is_finite()) {
                                     continue;
                                 }
-                                let lambda_scale = frequency_hz * mfs_lambda_scale;
                                 batch.u_lambda.push(uvw_m[0] * lambda_scale);
                                 batch.v_lambda.push(uvw_m[1] * lambda_scale);
                                 batch.w_lambda.push(uvw_m[2] * lambda_scale);
@@ -45175,13 +45248,12 @@ impl PreparedSelection {
                         }
                     }
                 } else {
-                    for (channel_index, frequency_hz) in self
+                    for (channel_index, (imaging_frequency_hz, lambda_scale)) in self
                         .source_channel_indices
                         .iter()
                         .copied()
-                        .zip(self.source_channel_frequencies_hz.iter().copied())
+                        .zip(mfs_imaging_frequencies.channels())
                     {
-                        let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
                         let local_channel = data_2d.local_channel(channel_index)?;
                         let first_flagged =
                             flags_2d.get_local(pair.0, local_channel, channel_index)?;
@@ -45222,7 +45294,6 @@ impl PreparedSelection {
                         if !(visibility.re.is_finite() && visibility.im.is_finite()) {
                             continue;
                         }
-                        let lambda_scale = frequency_hz * mfs_lambda_scale;
                         batch.u_lambda.push(uvw_m[0] * lambda_scale);
                         batch.v_lambda.push(uvw_m[1] * lambda_scale);
                         batch.w_lambda.push(uvw_m[2] * lambda_scale);
@@ -45265,15 +45336,21 @@ impl PreparedSelection {
                 PreparedState::PairedMfs { paired, pair, .. },
                 PreparedTraceState::PairedMfs { samples },
             ) => {
-                for (channel_slot, (channel_index, frequency_hz)) in self
+                let mfs_imaging_frequencies =
+                    mfs_imaging_frequencies.as_ref().ok_or_else(|| {
+                        "internal error: paired MFS row has no imaging-frequency vector".to_string()
+                    })?;
+                for (
+                    channel_slot,
+                    ((channel_index, frequency_hz), (imaging_frequency_hz, lambda_scale)),
+                ) in self
                     .source_channel_indices
                     .iter()
                     .copied()
                     .zip(self.source_channel_frequencies_hz.iter().copied())
+                    .zip(mfs_imaging_frequencies.channels())
                     .enumerate()
                 {
-                    let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
-                    let lambda_scale = frequency_hz * mfs_lambda_scale;
                     let local_channel = data_2d.local_channel(channel_index)?;
                     let first_visibility = phase_rotate_visibility(
                         data_2d.get_local(pair.0, local_channel, channel_index)?,
@@ -45990,10 +46067,10 @@ impl PreparedSelection {
         }
     }
 
-    fn accumulate_standard_mfs_density_essentials_row_with_frequency_scale(
+    fn accumulate_standard_mfs_density_essentials_row_with_imaging_frequencies(
         &mut self,
         row: &MsImagingEssentials,
-        mfs_frequency_scale: f64,
+        mfs_imaging_frequencies: &MfsImagingFrequencies,
         weighting_plan: &mut StandardMfsStreamingWeightingPlan,
         timings: &mut AccumulateRowTimings,
     ) -> Result<usize, String> {
@@ -46002,13 +46079,12 @@ impl PreparedSelection {
         let accepted_samples = accumulate_standard_mfs_density_row_from_arrays(
             weighting_plan,
             [row.u_m, row.v_m, row.w_m],
-            mfs_frequency_scale,
             row.channel_origin,
             &row.flag,
             &row.weight,
             row.weight_spectrum.as_ref(),
             &self.source_channel_indices,
-            &self.source_channel_frequencies_hz,
+            &mfs_imaging_frequencies.frequency_hz,
             self.standard_mfs_density_polarization()?,
         )
         .map_err(|error| error.to_string())?;
@@ -46059,16 +46135,15 @@ impl PreparedSelection {
         // phase-center UVW reprojection, so combined MFS density uses the raw
         // MeasurementSet UVW coordinates. Gridding still uses transform.uvw_m.
         let uvw_m = geometry_row.raw_uvw_m;
-        let mfs_frequency_scale =
-            self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
+        let mfs_imaging_frequencies =
+            self.mfs_imaging_frequencies_for_row(selected_row, derived_engine)?;
         let accepted_samples = accumulate_standard_mfs_density_row_from_visibility_block(
             weighting_plan,
             source_view,
             row_slot,
             uvw_m,
-            mfs_frequency_scale,
             &self.source_channel_indices,
-            &self.source_channel_frequencies_hz,
+            &mfs_imaging_frequencies.frequency_hz,
             self.standard_mfs_density_polarization()?,
         )
         .map_err(|error| error.to_string())?;
@@ -46121,22 +46196,21 @@ impl PreparedSelection {
         let uvw_m = geometry_row.transform.uvw_m;
         let is_cross = geometry_row.is_cross;
         let transform = geometry_row.transform;
-        let mfs_frequency_scale =
-            self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
+        let mfs_imaging_frequencies =
+            self.mfs_imaging_frequencies_for_row(selected_row, derived_engine)?;
         if self.mfs_output_frequency_edge_range_hz.is_none() {
             self.mfs_output_frequency_edge_range_hz =
                 Some(self.mfs_imaging_frequency_edge_range_for_row(selected_row, derived_engine)?);
         }
-        let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
         let mut counts = StandardMfsPlannedRowSampleCounts::default();
         match &self.state {
             PreparedState::ExplicitMfs { corr_index, .. } => {
                 let channel_invariant_weight = weights.channel_invariant_weight(*corr_index)?;
-                for (channel_index, frequency_hz) in self
+                for (channel_index, (imaging_frequency_hz, lambda_scale)) in self
                     .source_channel_indices
                     .iter()
                     .copied()
-                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                    .zip(mfs_imaging_frequencies.channels())
                 {
                     let local_channel = data_2d.local_channel(channel_index)?;
                     if flags_2d.get_local(*corr_index, local_channel, channel_index)? {
@@ -46145,7 +46219,7 @@ impl PreparedSelection {
                     let visibility = phase_rotate_visibility(
                         data_2d.get_local(*corr_index, local_channel, channel_index)?,
                         transform.phase_shift_m,
-                        frequency_hz * mfs_frequency_scale,
+                        imaging_frequency_hz,
                     );
                     let natural_weight = if let Some(weight) = channel_invariant_weight {
                         weight
@@ -46155,7 +46229,6 @@ impl PreparedSelection {
                     if !(natural_weight.is_finite() && natural_weight > 0.0) {
                         continue;
                     }
-                    let lambda_scale = frequency_hz * mfs_lambda_scale;
                     let u_lambda = uvw_m[0] * lambda_scale;
                     let v_lambda = uvw_m[1] * lambda_scale;
                     let weight = weighting_plan
@@ -46188,11 +46261,11 @@ impl PreparedSelection {
                 let sumwt_factor = plane_stokes.paired_sumwt_factor();
                 let channel_invariant_pair_weights =
                     weights.channel_invariant_pair_weights(pair.0, pair.1)?;
-                for (channel_index, frequency_hz) in self
+                for (channel_index, (imaging_frequency_hz, lambda_scale)) in self
                     .source_channel_indices
                     .iter()
                     .copied()
-                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                    .zip(mfs_imaging_frequencies.channels())
                 {
                     let local_channel = data_2d.local_channel(channel_index)?;
                     if flags_2d.get_local(pair.0, local_channel, channel_index)?
@@ -46228,12 +46301,11 @@ impl PreparedSelection {
                     let visibility = phase_rotate_visibility(
                         pair_transform.collapse(first_visibility, second_visibility),
                         transform.phase_shift_m,
-                        frequency_hz * mfs_frequency_scale,
+                        imaging_frequency_hz,
                     );
                     if !(visibility.re.is_finite() && visibility.im.is_finite()) {
                         continue;
                     }
-                    let lambda_scale = frequency_hz * mfs_lambda_scale;
                     let u_lambda = uvw_m[0] * lambda_scale;
                     let v_lambda = uvw_m[1] * lambda_scale;
                     let weight = weighting_plan
@@ -46277,13 +46349,12 @@ impl PreparedSelection {
         planned_sample_builder: &StandardMfsPlannedSampleBuilder,
         block: &mut StandardMfsPlannedSampleBlock,
     ) -> Result<StandardMfsPlannedRowSampleCounts, String> {
-        let mfs_frequency_scale =
-            self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
+        let mfs_imaging_frequencies =
+            self.mfs_imaging_frequencies_for_row(selected_row, derived_engine)?;
         if self.mfs_output_frequency_edge_range_hz.is_none() {
             self.mfs_output_frequency_edge_range_hz =
                 Some(self.mfs_imaging_frequency_edge_range_for_row(selected_row, derived_engine)?);
         }
-        let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
         let mut counts = StandardMfsPlannedRowSampleCounts::default();
         let collect_detail = standard_mfs_profile_line_detail_enabled();
         macro_rules! detail_time {
@@ -46308,11 +46379,11 @@ impl PreparedSelection {
                     } else {
                         None
                     };
-                for (channel_index, frequency_hz) in self
+                for (channel_index, (imaging_frequency_hz, lambda_scale)) in self
                     .source_channel_indices
                     .iter()
                     .copied()
-                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                    .zip(mfs_imaging_frequencies.channels())
                 {
                     let local_channel = detail_time!(
                         local_channel,
@@ -46333,7 +46404,7 @@ impl PreparedSelection {
                                 format!("DATA index [{corr_index}, {channel_index}] out of bounds")
                             })?,
                             0.0,
-                            frequency_hz * mfs_frequency_scale,
+                            imaging_frequency_hz,
                         )
                     );
                     let natural_weight = detail_time!(
@@ -46357,7 +46428,6 @@ impl PreparedSelection {
                     if !(natural_weight.is_finite() && natural_weight > 0.0) {
                         continue;
                     }
-                    let lambda_scale = frequency_hz * mfs_lambda_scale;
                     let weight = detail_time!(
                         final_weight,
                         weighting_plan.weight_sample(
@@ -46406,11 +46476,11 @@ impl PreparedSelection {
                 } else {
                     None
                 };
-                for (channel_index, frequency_hz) in self
+                for (channel_index, (imaging_frequency_hz, lambda_scale)) in self
                     .source_channel_indices
                     .iter()
                     .copied()
-                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                    .zip(mfs_imaging_frequencies.channels())
                 {
                     let local_channel = detail_time!(
                         local_channel,
@@ -46487,7 +46557,7 @@ impl PreparedSelection {
                         phase_rotate_visibility(
                             pair_transform.collapse(first_visibility, second_visibility),
                             0.0,
-                            frequency_hz * mfs_frequency_scale,
+                            imaging_frequency_hz,
                         )
                     );
                     if detail_time!(
@@ -46496,7 +46566,6 @@ impl PreparedSelection {
                     ) {
                         continue;
                     }
-                    let lambda_scale = frequency_hz * mfs_lambda_scale;
                     let weight = detail_time!(
                         final_weight,
                         weighting_plan.weight_sample(
@@ -46542,7 +46611,7 @@ impl PreparedSelection {
         selected_row: &SelectedMainRow,
         row: MsImagingEssentials,
         derived_engine: Option<&MsCalEngine>,
-        precomputed_mfs_frequency_scale: Option<f64>,
+        precomputed_mfs_imaging_frequencies: Option<&MfsImagingFrequencies>,
         source_channel_indices: Arc<[usize]>,
         planned_sample_builder: &StandardMfsPlannedSampleBuilder,
         next_input_seq: &mut u64,
@@ -46552,7 +46621,7 @@ impl PreparedSelection {
             selected_row,
             row,
             derived_engine,
-            precomputed_mfs_frequency_scale,
+            precomputed_mfs_imaging_frequencies,
             source_channel_indices,
         )?;
         let tap_center_loop_started = standard_mfs_profile_detail_enabled().then(Instant::now);
@@ -46572,21 +46641,25 @@ impl PreparedSelection {
         selected_row: &SelectedMainRow,
         row: MsImagingEssentials,
         derived_engine: Option<&MsCalEngine>,
-        precomputed_mfs_frequency_scale: Option<f64>,
+        precomputed_mfs_imaging_frequencies: Option<&MfsImagingFrequencies>,
         source_channel_indices: Arc<[usize]>,
     ) -> Result<(StandardMfsVisibilityRow, StandardMfsPlannedRowSampleCounts), String> {
         let mut counts = StandardMfsPlannedRowSampleCounts::default();
         let collect_detail = standard_mfs_profile_detail_enabled();
         let frequency_scale_started = collect_detail.then(Instant::now);
-        let mfs_frequency_scale = match precomputed_mfs_frequency_scale {
-            Some(scale) => scale,
-            None => self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?,
+        let computed_mfs_imaging_frequencies = if precomputed_mfs_imaging_frequencies.is_none() {
+            Some(self.mfs_imaging_frequencies_for_row(selected_row, derived_engine)?)
+        } else {
+            None
         };
+        let mfs_imaging_frequencies = precomputed_mfs_imaging_frequencies
+            .or(computed_mfs_imaging_frequencies.as_ref())
+            .expect("precomputed or locally computed MFS imaging frequencies");
         if self.mfs_output_frequency_edge_range_hz.is_none() {
             self.mfs_output_frequency_edge_range_hz =
                 Some(self.mfs_imaging_frequency_edge_range_for_row(selected_row, derived_engine)?);
         }
-        if precomputed_mfs_frequency_scale.is_none()
+        if precomputed_mfs_imaging_frequencies.is_none()
             && let Some(started) = frequency_scale_started
         {
             counts.detail.routed_frequency_scale += started.elapsed();
@@ -46617,7 +46690,7 @@ impl PreparedSelection {
                 );
             }
         };
-        let channel_lambda_scales = self.mfs_channel_lambda_scales_for_scale(mfs_frequency_scale);
+        let channel_lambda_scales = &mfs_imaging_frequencies.lambda_scales;
         if source_channel_indices.len() != channel_lambda_scales.len() {
             return Err(format!(
                 "internal error: source channel index count {} differs from frequency count {}",
@@ -46632,7 +46705,7 @@ impl PreparedSelection {
             spw_id: row.spw_id,
             channel_origin: row.channel_origin,
             source_channel_indices,
-            channel_lambda_scales: Arc::clone(&channel_lambda_scales),
+            channel_lambda_scales: Arc::clone(channel_lambda_scales),
             data: row.data,
             flag: row.flag,
             weight: Arc::from(row.weight.into_boxed_slice()),
@@ -46652,7 +46725,7 @@ impl PreparedSelection {
         selected_row: &SelectedMainRow,
         row: MsImagingEssentials,
         derived_engine: Option<&MsCalEngine>,
-        precomputed_mfs_frequency_scale: Option<f64>,
+        precomputed_mfs_imaging_frequencies: Option<&MfsImagingFrequencies>,
         source_channel_indices: Arc<[usize]>,
         planned_sample_builder: &StandardMfsPlannedSampleBuilder,
         next_input_seq: &mut u64,
@@ -46663,7 +46736,7 @@ impl PreparedSelection {
             selected_row,
             row,
             derived_engine,
-            precomputed_mfs_frequency_scale,
+            precomputed_mfs_imaging_frequencies,
             source_channel_indices,
             planned_sample_builder,
             next_input_seq,
@@ -46679,53 +46752,35 @@ impl PreparedSelection {
         Ok(counts)
     }
 
-    fn mfs_channel_lambda_scales_for_scale(&mut self, mfs_frequency_scale: f64) -> Arc<[f64]> {
-        let cache_key = mfs_frequency_scale.to_bits();
-        if let Some(scales) = self.mfs_channel_lambda_scale_cache.get(&cache_key) {
-            return Arc::clone(scales);
-        }
-        let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
-        let scales = self
-            .source_channel_frequencies_hz
-            .iter()
-            .map(|frequency_hz| frequency_hz * mfs_lambda_scale)
-            .collect::<Vec<_>>();
-        let scales = Arc::<[f64]>::from(scales.into_boxed_slice());
-        self.mfs_channel_lambda_scale_cache
-            .insert(cache_key, Arc::clone(&scales));
-        scales
-    }
-
-    fn mfs_imaging_frequency_scale_for_row(
+    fn mfs_imaging_frequencies_for_row(
         &mut self,
         selected_row: &SelectedMainRow,
         derived_engine: Option<&MsCalEngine>,
-    ) -> Result<f64, String> {
-        if self.freq_ref == FrequencyRef::LSRK {
-            return Ok(1.0);
-        }
-        let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
-            "internal error: missing row time for MFS frequency-frame conversion".to_string()
-        })?;
-        let cache_key = (row_time_mjd_sec.to_bits(), selected_row.field_id);
-        if let Some(scale) = self.mfs_frequency_scale_cache.get(&cache_key) {
-            return Ok(*scale);
-        }
-        let reference_frequency_hz = self
-            .source_channel_frequencies_hz
-            .first()
-            .copied()
-            .ok_or_else(|| {
-                "internal error: MFS preparation has no source frequencies".to_string()
+    ) -> Result<MfsImagingFrequencies, String> {
+        let cache_key = if self.freq_ref == FrequencyRef::LSRK {
+            MfsImagingFrequencyCacheKey::Native
+        } else {
+            let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
+                "internal error: missing row time for MFS frequency-frame conversion".to_string()
             })?;
-        let scale = mfs_imaging_frequency_scale(
+            MfsImagingFrequencyCacheKey::Framed {
+                time_bits: row_time_mjd_sec.to_bits(),
+                field_id: selected_row.field_id,
+            }
+        };
+        if let Some((cached_key, frequencies)) = self.mfs_imaging_frequency_cache.as_ref()
+            && *cached_key == cache_key
+        {
+            return Ok(frequencies.clone());
+        }
+        let frequencies = mfs_imaging_frequencies(
             self.freq_ref,
-            reference_frequency_hz,
+            &self.source_channel_frequencies_hz,
             selected_row,
             derived_engine,
         )?;
-        self.mfs_frequency_scale_cache.insert(cache_key, scale);
-        Ok(scale)
+        self.mfs_imaging_frequency_cache = Some((cache_key, frequencies.clone()));
+        Ok(frequencies)
     }
 
     fn mfs_imaging_frequency_edge_range_for_row(
@@ -46742,22 +46797,26 @@ impl PreparedSelection {
         let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
             "internal error: missing row time for MFS frequency-frame conversion".to_string()
         })?;
-        let low_hz = convert_frequency_to_frame(
+        let frame = derived_engine
+            .spectral_frame_observatory(row_time_mjd_sec, selected_row.field_id)
+            .map_err(|error| {
+                format!(
+                    "build MFS edge spectral frame for field {}: {error}",
+                    selected_row.field_id
+                )
+            })?;
+        let low_hz = convert_frequency_to_frame_with_frame(
             self.freq_ref,
             FrequencyRef::LSRK,
             self.selected_frequency_edge_range_hz[0],
-            row_time_mjd_sec,
-            selected_row.field_id,
-            derived_engine,
+            Some(&frame),
         )
         .map_err(|error| error.to_string())?;
-        let high_hz = convert_frequency_to_frame(
+        let high_hz = convert_frequency_to_frame_with_frame(
             self.freq_ref,
             FrequencyRef::LSRK,
             self.selected_frequency_edge_range_hz[1],
-            row_time_mjd_sec,
-            selected_row.field_id,
-            derived_engine,
+            Some(&frame),
         )
         .map_err(|error| error.to_string())?;
         Ok([low_hz.min(high_hz), low_hz.max(high_hz)])
@@ -46780,8 +46839,7 @@ impl PreparedSelection {
             cube_row_source_frequency_cache: _,
             cube_row_spectral_reusable_plan: _,
             cube_mosaic_pb_frequency_cache: _,
-            mfs_frequency_scale_cache: _,
-            mfs_channel_lambda_scale_cache: _,
+            mfs_imaging_frequency_cache: _,
             mfs_output_frequency_edge_range_hz,
             casa_cube_grid_interpolation: _,
             cube_visibility_grid_assignments: _,
@@ -46921,8 +46979,7 @@ impl PreparedSelection {
             cube_row_source_frequency_cache: _,
             cube_row_spectral_reusable_plan: _,
             cube_mosaic_pb_frequency_cache: _,
-            mfs_frequency_scale_cache: _,
-            mfs_channel_lambda_scale_cache: _,
+            mfs_imaging_frequency_cache: _,
             mfs_output_frequency_edge_range_hz,
             casa_cube_grid_interpolation: _,
             cube_visibility_grid_assignments: _,
@@ -47049,8 +47106,7 @@ impl PreparedSelection {
             cube_row_source_frequency_cache: _,
             cube_row_spectral_reusable_plan: _,
             cube_mosaic_pb_frequency_cache: _,
-            mfs_frequency_scale_cache: _,
-            mfs_channel_lambda_scale_cache: _,
+            mfs_imaging_frequency_cache: _,
             mfs_output_frequency_edge_range_hz: _,
             casa_cube_grid_interpolation: _,
             cube_visibility_grid_assignments: _,
@@ -47293,8 +47349,7 @@ impl PreparedSelection {
             cube_row_source_frequency_cache: _,
             cube_row_spectral_reusable_plan: _,
             cube_mosaic_pb_frequency_cache: _,
-            mfs_frequency_scale_cache: _,
-            mfs_channel_lambda_scale_cache: _,
+            mfs_imaging_frequency_cache: _,
             mfs_output_frequency_edge_range_hz,
             casa_cube_grid_interpolation: _,
             cube_visibility_grid_assignments: _,
@@ -52437,7 +52492,9 @@ mod tests {
         primary_beam_support_mask_product,
     };
     use casa_ms::spectral_selection::CubeGridChannelContributions;
-    use casa_ms::{MeasurementSetBuilder, OptionalMainColumn, SubtableId};
+    use casa_ms::{
+        MeasurementSetBuilder, OptionalMainColumn, SubtableId, convert_frequency_to_frame,
+    };
     use casa_tables::table_measures::{MeasureType, TableMeasDesc};
     use casa_test_support::gridder_interop::GridderOracle;
     use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -52554,6 +52611,280 @@ mod tests {
             observed.freq_last_bits,
             table_values.spw_freqs_hz[63].to_bits()
         );
+    }
+
+    #[test]
+    fn mfs_imaging_frequency_cache_preserves_native_bits_without_context() {
+        let mut config = vlass_field_1525_real_cache_config(
+            Path::new("/unused/input.ms"),
+            Path::new("/unused/cf-cache"),
+            Path::new("/unused/output"),
+            64,
+            "2",
+        );
+        config.channel_count = Some(3);
+        let mut table_values = aw_bracket_test_table_values(3);
+        table_values.spw_freqs_hz = vec![1.1e9, 1.0e9, 1.35e9];
+        let phase_center = PhaseCenter {
+            field_id: Some(0),
+            angles_rad: [1.0, 0.5],
+            reference: DirectionRef::J2000,
+        };
+        let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
+            &config,
+            &table_values,
+            phase_center,
+            false,
+        )
+        .unwrap();
+        let mut row = aw_bracket_test_row(0);
+        row.field_id = 0;
+        row.time_mjd_seconds = None;
+
+        let first = prepared
+            .mfs_imaging_frequencies_for_row(&row, None)
+            .unwrap();
+        row.row_index = 1;
+        let second = prepared
+            .mfs_imaging_frequencies_for_row(&row, None)
+            .unwrap();
+
+        assert_eq!(first.frequency_hz.as_ref(), table_values.spw_freqs_hz);
+        assert!(
+            first
+                .lambda_scales
+                .iter()
+                .zip(first.frequency_hz.iter())
+                .all(|(lambda_scale, frequency_hz)| lambda_scale.to_bits()
+                    == (frequency_hz / SPEED_OF_LIGHT_M_PER_S).to_bits())
+        );
+        assert!(Arc::ptr_eq(&first.frequency_hz, &second.frequency_hz));
+        assert!(Arc::ptr_eq(&first.lambda_scales, &second.lambda_scales));
+        assert!(matches!(
+            prepared.mfs_imaging_frequency_cache.as_ref(),
+            Some((MfsImagingFrequencyCacheKey::Native, _))
+        ));
+    }
+
+    #[test]
+    fn mfs_imaging_frequency_cache_converts_each_channel_and_reuses_row_key() {
+        let mut config = vlass_field_1525_real_cache_config(
+            Path::new("/unused/input.ms"),
+            Path::new("/unused/cf-cache"),
+            Path::new("/unused/output"),
+            64,
+            "2",
+        );
+        config.channel_count = Some(3);
+        let mut table_values = aw_bracket_test_table_values(3);
+        table_values.freq_ref = FrequencyRef::TOPO;
+        table_values.spw_freqs_hz = vec![1.1e9, 1.213_456_789e9, 1.35e9];
+        let observatory = MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z);
+        let engine = MsCalEngine::from_parts(
+            vec![observatory.clone()],
+            vec![MDirection::from_angles(1.0, 0.5, DirectionRef::J2000)],
+            observatory,
+            casa_test_support::deterministic_measures_provider(),
+        );
+        let phase_center = PhaseCenter {
+            field_id: Some(0),
+            angles_rad: [1.0, 0.5],
+            reference: DirectionRef::J2000,
+        };
+        let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
+            &config,
+            &table_values,
+            phase_center,
+            false,
+        )
+        .unwrap();
+        let mut row = aw_bracket_test_row(0);
+        row.field_id = 0;
+        row.time_mjd_seconds = Some(TEST_TIME_MJD_SEC);
+
+        let first = prepared
+            .mfs_imaging_frequencies_for_row(&row, Some(&engine))
+            .unwrap();
+        row.row_index = 1;
+        let second = prepared
+            .mfs_imaging_frequencies_for_row(&row, Some(&engine))
+            .unwrap();
+        let expected = table_values
+            .spw_freqs_hz
+            .iter()
+            .map(|&frequency_hz| {
+                convert_frequency_to_frame(
+                    FrequencyRef::TOPO,
+                    FrequencyRef::LSRK,
+                    frequency_hz,
+                    TEST_TIME_MJD_SEC,
+                    0,
+                    &engine,
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            first
+                .frequency_hz
+                .iter()
+                .map(|frequency_hz| frequency_hz.to_bits())
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|frequency_hz| frequency_hz.to_bits())
+                .collect::<Vec<_>>()
+        );
+        assert!(Arc::ptr_eq(&first.frequency_hz, &second.frequency_hz));
+        assert!(Arc::ptr_eq(&first.lambda_scales, &second.lambda_scales));
+        assert!(matches!(
+            prepared.mfs_imaging_frequency_cache.as_ref(),
+            Some((
+                MfsImagingFrequencyCacheKey::Framed {
+                    time_bits,
+                    field_id
+                },
+                _
+            )) if *time_bits == TEST_TIME_MJD_SEC.to_bits() && *field_id == 0
+        ));
+
+        row.time_mjd_seconds = Some(TEST_TIME_MJD_SEC + 1.0);
+        let changed_time = prepared
+            .mfs_imaging_frequencies_for_row(&row, Some(&engine))
+            .unwrap();
+        assert!(!Arc::ptr_eq(
+            &first.frequency_hz,
+            &changed_time.frequency_hz
+        ));
+        assert!(matches!(
+            prepared.mfs_imaging_frequency_cache.as_ref(),
+            Some((
+                MfsImagingFrequencyCacheKey::Framed {
+                    time_bits,
+                    field_id
+                },
+                _
+            )) if *time_bits == (TEST_TIME_MJD_SEC + 1.0).to_bits() && *field_id == 0
+        ));
+    }
+
+    #[test]
+    fn standard_mfs_visibility_row_routes_exact_channel_lambda_scales() {
+        let mut config = vlass_field_1525_real_cache_config(
+            Path::new("/unused/input.ms"),
+            Path::new("/unused/cf-cache"),
+            Path::new("/unused/output"),
+            64,
+            "2",
+        );
+        config.channel_count = Some(3);
+        let mut table_values = aw_bracket_test_table_values(3);
+        table_values.freq_ref = FrequencyRef::TOPO;
+        table_values.spw_freqs_hz = vec![1.1e9, 1.213_456_789e9, 1.35e9];
+        let observatory = MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z);
+        let engine = MsCalEngine::from_parts(
+            vec![observatory.clone()],
+            vec![MDirection::from_angles(1.0, 0.5, DirectionRef::J2000)],
+            observatory,
+            casa_test_support::deterministic_measures_provider(),
+        );
+        let phase_center = PhaseCenter {
+            field_id: Some(0),
+            angles_rad: [1.0, 0.5],
+            reference: DirectionRef::J2000,
+        };
+        let mut selected_row = aw_bracket_test_row(0);
+        selected_row.field_id = 0;
+        selected_row.time_mjd_seconds = Some(TEST_TIME_MJD_SEC);
+        let essentials = MsImagingEssentials {
+            u_m: 12.0,
+            v_m: -7.0,
+            w_m: 3.0,
+            field_phase_center_direction_rad: phase_center.angles_rad,
+            pointing_direction_rad: phase_center.angles_rad,
+            antenna1_id: 0,
+            antenna2_id: 1,
+            gridable: true,
+            spw_id: 2,
+            channel_origin: 0,
+            data: Array2::from_elem((4, 3), Complex32::new(0.0, 0.0)),
+            flag: Array2::from_elem((4, 3), false),
+            weight: vec![1.0; 4],
+            weight_spectrum: None,
+        };
+        let source_channel_indices = Arc::<[usize]>::from([0, 1, 2]);
+        let expected_lambda_scales = table_values
+            .spw_freqs_hz
+            .iter()
+            .map(|&frequency_hz| {
+                convert_frequency_to_frame(
+                    FrequencyRef::TOPO,
+                    FrequencyRef::LSRK,
+                    frequency_hz,
+                    TEST_TIME_MJD_SEC,
+                    0,
+                    &engine,
+                )
+                .unwrap()
+                    / SPEED_OF_LIGHT_M_PER_S
+            })
+            .collect::<Vec<_>>();
+
+        let mut locally_computed = PreparedSelection::new_standard_mfs_from_table_values(
+            &config,
+            &table_values,
+            phase_center.clone(),
+            false,
+        )
+        .unwrap();
+        let (local_row, _) = locally_computed
+            .standard_mfs_visibility_row_from_essentials(
+                &selected_row,
+                essentials.clone(),
+                Some(&engine),
+                None,
+                Arc::clone(&source_channel_indices),
+            )
+            .unwrap();
+        assert_eq!(
+            local_row
+                .channel_lambda_scales
+                .iter()
+                .map(|scale| scale.to_bits())
+                .collect::<Vec<_>>(),
+            expected_lambda_scales
+                .iter()
+                .map(|scale| scale.to_bits())
+                .collect::<Vec<_>>()
+        );
+
+        let precomputed_lambda_scales =
+            Arc::<[f64]>::from([0.25_f64, 0.375_000_000_000_000_06, 0.625]);
+        let precomputed = MfsImagingFrequencies {
+            frequency_hz: Arc::from([10.0, 15.0, 25.0]),
+            lambda_scales: Arc::clone(&precomputed_lambda_scales),
+        };
+        let mut precomputed_route = PreparedSelection::new_standard_mfs_from_table_values(
+            &config,
+            &table_values,
+            phase_center,
+            false,
+        )
+        .unwrap();
+        let (precomputed_row, _) = precomputed_route
+            .standard_mfs_visibility_row_from_essentials(
+                &selected_row,
+                essentials,
+                Some(&engine),
+                Some(&precomputed),
+                source_channel_indices,
+            )
+            .unwrap();
+        assert!(Arc::ptr_eq(
+            &precomputed_row.channel_lambda_scales,
+            &precomputed_lambda_scales
+        ));
     }
 
     #[test]
@@ -57958,6 +58289,102 @@ mod tests {
 
     #[test]
     #[ignore = "requires the staged frozen VLASS MeasurementSet"]
+    fn vlass_first_buffer_per_channel_frequency_conversion_matches_frozen_casa() {
+        let data_root = env::var_os("CASA_RS_VLASS_DATA_ROOT")
+            .map(PathBuf::from)
+            .expect("set CASA_RS_VLASS_DATA_ROOT to the staged frozen VLASS data root");
+        let ms_path = data_root.join(VLASS_FROZEN_MS_NAME);
+        let config = vlass_field_1525_real_cache_config(
+            &ms_path,
+            Path::new("/unused/cf-cache"),
+            Path::new("/unused/output"),
+            4096,
+            "2~17",
+        );
+        let ms = MeasurementSet::open(&ms_path).expect("open frozen VLASS MeasurementSet");
+        let data_description = ms.data_description().expect("open frozen DATA_DESCRIPTION");
+        let ddid_info = data_description_index(&data_description).expect("index frozen DDIDs");
+        let spectral_window = ms.spectral_window().expect("open frozen SPECTRAL_WINDOW");
+        let polarization = ms.polarization().expect("open frozen POLARIZATION");
+        let selection =
+            select_main_rows(&ms, &config, &ddid_info).expect("select frozen VLASS field 1525");
+        let engine = MsCalEngine::new(&ms).expect("build frozen measures engine");
+        let plans = prepare_mfs_ddid_plans(
+            &config,
+            &selection,
+            selection.selected_rows.clone(),
+            &ddid_info,
+            &spectral_window,
+            &polarization,
+            Some(&engine),
+        )
+        .expect("derive frozen per-DDID metadata");
+        let first_plan = plans.first().expect("first SPW plan");
+        let first_row = first_plan
+            .active_selected_rows
+            .first()
+            .expect("first selected SPW row");
+        let channel_range = first_plan
+            .channel_read_range
+            .expect("contiguous frozen SPW channel range");
+        let source_frequencies_hz = &first_plan.table_values.spw_freqs_hz
+            [channel_range.start..channel_range.end_exclusive()];
+        assert_eq!(first_plan.table_values.spw_id, 2);
+        assert_eq!(source_frequencies_hz.len(), 64);
+
+        let reference_frequency_hz = source_frequencies_hz[0];
+        let imaging_frequencies = mfs_imaging_frequencies(
+            first_plan.table_values.freq_ref,
+            source_frequencies_hz,
+            first_row,
+            Some(&engine),
+        )
+        .expect("derive production per-channel MFS frequencies");
+        let frequency_scale = imaging_frequencies.frequency_hz[0] / reference_frequency_hz;
+        let mut scaled_hash = 0xcbf2_9ce4_8422_2325_u64;
+        awproject_datatogrid_bracket_fnv_u64(&mut scaled_hash, source_frequencies_hz.len() as u64);
+        let mut per_channel_hash = 0xcbf2_9ce4_8422_2325_u64;
+        awproject_datatogrid_bracket_fnv_u64(
+            &mut per_channel_hash,
+            source_frequencies_hz.len() as u64,
+        );
+        let row_time_mjd_sec = first_row.time_mjd_seconds.expect("first selected row time");
+        for ((&source_frequency_hz, &production_frequency_hz), &lambda_scale) in
+            source_frequencies_hz
+                .iter()
+                .zip(imaging_frequencies.frequency_hz.iter())
+                .zip(imaging_frequencies.lambda_scales.iter())
+        {
+            awproject_datatogrid_bracket_fnv_u64(
+                &mut scaled_hash,
+                (source_frequency_hz * frequency_scale).to_bits(),
+            );
+            let converted_hz = convert_frequency_to_frame(
+                first_plan.table_values.freq_ref,
+                FrequencyRef::LSRK,
+                source_frequency_hz,
+                row_time_mjd_sec,
+                first_row.field_id,
+                &engine,
+            )
+            .expect("convert one source channel to the CASA reporting frame");
+            assert_eq!(production_frequency_hz.to_bits(), converted_hz.to_bits());
+            assert_eq!(
+                lambda_scale.to_bits(),
+                (converted_hz / SPEED_OF_LIGHT_M_PER_S).to_bits()
+            );
+            awproject_datatogrid_bracket_fnv_u64(
+                &mut per_channel_hash,
+                production_frequency_hz.to_bits(),
+            );
+        }
+
+        assert_eq!(scaled_hash, 16_545_700_615_609_486_995);
+        assert_eq!(per_channel_hash, 17_711_728_193_083_539_473);
+    }
+
+    #[test]
+    #[ignore = "requires the staged frozen VLASS MeasurementSet"]
     fn vlass_all_fields_mfs_coordinate_metadata_matches_frozen_casa() {
         let data_root = env::var_os("CASA_RS_VLASS_DATA_ROOT")
             .map(PathBuf::from)
@@ -58382,7 +58809,12 @@ mod tests {
                 }),
             "dirty-only execution must not retain clean-only allocation intervals"
         );
-        for component in ["grids", "source row blocks", "FFT chunks"] {
+        for component in [
+            "grids",
+            "source row blocks",
+            "MFS imaging frequency cache",
+            "FFT chunks",
+        ] {
             let allocation = dirty_plan
                 .memory_lifetime_ledger
                 .allocations
@@ -58447,6 +58879,11 @@ mod tests {
                 component: "source row blocks",
                 stage: "ingest",
                 bytes: 31,
+            },
+            ImagingMemoryAllocation {
+                component: "MFS imaging frequency cache",
+                stage: "prepare",
+                bytes: 17,
             },
             ImagingMemoryAllocation {
                 component: "FFT chunks",
@@ -58532,6 +58969,28 @@ mod tests {
             (
                 ImagingMemoryStage::ResidualGrid,
                 ImagingMemoryStage::ResidualTransform,
+            )
+        );
+
+        let imaging_frequency_cache = lifetimes
+            .iter()
+            .find(|allocation| allocation.component == "MFS imaging frequency cache")
+            .expect("MFS imaging-frequency cache lifetime");
+        assert_eq!(imaging_frequency_cache.residencies.len(), 2);
+        assert_eq!(
+            (
+                imaging_frequency_cache.residencies[0].live_from,
+                imaging_frequency_cache.residencies[0].live_through,
+                imaging_frequency_cache.residencies[0].next_use,
+                imaging_frequency_cache.residencies[1].live_from,
+                imaging_frequency_cache.residencies[1].live_through,
+            ),
+            (
+                ImagingMemoryStage::SourceIngest,
+                ImagingMemoryStage::InitialGrid,
+                ImagingMemoryNextUse::AtStage(ImagingMemoryStage::ResidualGrid),
+                ImagingMemoryStage::ResidualGrid,
+                ImagingMemoryStage::ResidualGrid,
             )
         );
 
@@ -59999,6 +60458,17 @@ mod tests {
         let plan = standard_mfs_memory_plan(&config, 512, 2_000_000);
 
         assert_eq!(plan.ingest.source_row_block_rows, 1024);
+        let frequency_bytes_per_row = 512 * 2 * std::mem::size_of::<f64>()
+            + 256
+            + std::mem::size_of::<MfsImagingFrequencies>();
+        assert!(
+            plan.workload.prepared_bytes_per_row >= frequency_bytes_per_row,
+            "each source row must cover a worst-case distinct exact frequency/wavelength pair"
+        );
+        assert_eq!(
+            plan.allocation_bytes("MFS imaging frequency cache"),
+            512 * 2 * std::mem::size_of::<f64>() + 256
+        );
         assert!(plan.maximum_planned_resident_bytes <= plan.usable_memory_bytes);
         assert!(plan.ingest.max_live_row_blocks >= 1);
         assert!(plan.ingest.max_live_row_blocks <= plan.workers);
@@ -63518,24 +63988,22 @@ mod tests {
         )
         .unwrap();
 
-        let source_range_hz = frequency_range_hz(&source_frequencies_hz).unwrap();
         let source_edge_range_hz =
             frequency_edge_range_hz(&source_frequencies_hz, &source_widths_hz).unwrap();
-        let reference_frequency_hz = source_frequencies_hz[0];
         let mut expected_range_hz = None::<[f64; 2]>;
         let mut expected_edge_range_hz = None::<[f64; 2]>;
         let mut converter = MFrequencyConverter::new(FrequencyRef::TOPO, FrequencyRef::LSRK);
         for row in &rows {
-            let scale = mfs_imaging_frequency_scale(
+            let frequencies = mfs_imaging_frequencies(
                 FrequencyRef::TOPO,
-                reference_frequency_hz,
+                &source_frequencies_hz,
                 row,
                 Some(&engine),
             )
             .unwrap();
             extend_frequency_range_hz(
                 &mut expected_range_hz,
-                [source_range_hz[0] * scale, source_range_hz[1] * scale],
+                frequency_range_hz(&frequencies.frequency_hz).unwrap(),
             );
             let frame = engine
                 .spectral_frame_observatory(row.time_mjd_seconds.unwrap(), row.field_id)

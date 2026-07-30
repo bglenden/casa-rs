@@ -3997,10 +3997,65 @@ It validates the CASA W-sign rule for both logical lanes, requires exactly one
 selected Mueller `0` and one `15`, and hashes each source canonically in
 actual-Mueller order `0,15` with the matching residual. Focused tests cover
 positive, zero, and negative W. The v3 launcher SHA-256 is
-`3f3175c57a4d309bf72f3531e05dc2e0d87302fd146ca7b0aba3f2f1816d8b3a`;
-it has not been executed. A future exact common-boundary match may promote
-only the first-buffer DataToGrid boundary, never the integrated
-4,096-square row.
+`3f3175c57a4d309bf72f3531e05dc2e0d87302fd146ca7b0aba3f2f1816d8b3a`.
+The single v3 attempt at revision
+`2874f5ece02949156fe87139bf3542ab92398db7` reached the intended
+content-addressed receipt and then failed closed at the first common-boundary
+mismatch. The preserved receipt, `casars-imager.log`, comparison receipt,
+`provenance.tsv`, and release binary have SHA-256, respectively,
+`4d9efe063d049a4cfd4dbfdee945a5c41f8e6a78f122a6670dca0203ee594883`,
+`14d1f0ddfed37dc0111a68830df32868eec5c8106aee066920056bd7c3dc2233`,
+`f5aa3b39abab8be21d0208dd8946c9b95872e776d5cdb31c4b36a2b6e089dd39`,
+`3b873439de4aca00e4f53e9db4d414cf3ef9cc08e028d11f8d9ac2f390bab483`,
+and
+`d05aaedcb144184fec842d80f042c0fe0a7d210459761afdf2f3cc34d46ad830`.
+The immutable output directory is
+`casa-rs-aw-datagrid-bracket-4096-full16-first-vb-v3`.
+
+All v3 row, flag, channel-map, polarization-map, source-count, and portable
+input boundaries match the frozen CASA v5 receipt. TT0 and TT1 each contain
+`12,359` accepted sources, and the direct/raw input audit and compact replay
+share FNV-64 `18073604811373549886`. The first mismatch is the 64-channel
+frequency vector: CASA hashes it as `17711728193083539473`, while the v3
+production path hashes it as `16545700615609486995`. Their first and last
+frequency bits are nevertheless identical,
+`4746028312096267298` and `4746556774954748567`, which localizes the
+difference to intermediate channels rather than selection or frame endpoints.
+The receipt also records unpromoted casa-rs TT0 grid, `sumwt`, and `sumwt`
+bits as `9898952817250783852`, `5891270812598592054`, and
+`4693530481614913214`; the corresponding TT1 values are
+`6319697587634581816`, `1755995775961608899`, and
+`13909365493349213550`. Because the comparator stopped at the frequency
+boundary, none of those Rust grid or `sumwt` hashes is claimed comparable to,
+or correct against, the frozen CASA values. No FFT, image, deconvolution, or
+product was formed, and no CASA call occurred.
+
+CASA source inspection identifies the cause. AWProject consumes
+`vb.getFrequencies(0)`, while VI2 constructs one frame converter and applies
+it independently to every raw channel. The casa-rs v3 production path instead
+converted the first channel and multiplied every source channel by that one
+ratio. A read-only, metadata-only test against the frozen VLASS MeasurementSet
+reproduces both exact hashes: the legacy ratio produces
+`16545700615609486995`, while the production per-channel conversion helper
+produces the frozen CASA hash `17711728193083539473`. That test did not grid,
+FFT, form an image, or create a product.
+
+The production repair now constructs one observatory frame per row key,
+converts every selected channel independently, derives wavelength scales from
+those exact converted values, and routes the shared frequency and wavelength
+vectors through standard-MFS metadata, Briggs density, phase rotation, UVW
+scaling, planned samples, CPU replay, and Metal preparation. Native LSRK
+remains bit-preserving. The preparation cache retains only the most recent
+row key rather than the full pass. Because one preparation block can still
+retain a distinct pair for every row, the planner charges worst-case
+frequency/wavelength vector bytes and allocator allowance per source row, plus
+the separately retained one-key cache. Both the initial and residual-grid
+lifetimes are recorded. This is implementation and unit-test evidence only:
+the repaired production path has not yet earned a new DataToGrid receipt, so
+neither the first-buffer grid/`sumwt` boundary nor the integrated
+4,096-square row is promoted. The next allowed discriminator is one immutable
+v4 325-row bracket after this repair is durably committed and pushed;
+unchanged v1, v2, and v3 attempts must not be rerun.
 
 A checkpoint-only actual-GPU regression exposed one wave-caused arithmetic
 blocker: Metal contracted CASA-style complex multiplication and changed the
@@ -4055,12 +4110,46 @@ invoke `casatools.regionmanager`; it created only temporary unit-test data and
 did not call `tclean`, process VLASS data, form an image, or create a reference
 or timing receipt. No replacement CASA-backed run was launched.
 
+The per-channel frequency repair was stabilized as a separate checkpoint
+before any v4 diagnostic execution. `casa-imaging` reports `378` passed and
+`9` data-backed diagnostics ignored; `casars-imager` reports `350` passed and
+`14` ignored. The metadata-only frozen-VLASS frequency test passed separately
+and established the two exact hashes above without reading visibility samples
+or forming a grid. A normal multi-channel regression also proves that both
+locally converted and precomputed exact wavelength vectors reach the routed
+visibility-row boundary bitwise. Affected-crate `cargo check` and
+warning-denying Clippy pass, including the draft-PR Linux lint surface; Clippy
+found and the checkpoint fixed one test-only import and one needless borrow
+rather than allowing either warning. Workspace SPDX, formatting, and
+warning-denying Clippy pass. The sandboxed workspace test gate reaches two
+unchanged `casa-notebook` local-HTTP tests and fails because socket creation is
+denied with `PermissionDenied`; those exact two tests pass outside the
+socket-denying sandbox (`2` passed, `15` filtered out). The workspace run also
+completed its pre-existing tiny CASA table-reader interoperability smoke in
+`36.58` seconds. That smoke opened a temporary generated synthetic
+MeasurementSet through `casatools.table`; it did not call `tclean`, process
+VLASS data, grid, FFT, form an image, or create a correctness or timing
+reference.
+
+The full-geometry campaign remains unexecuted. Its unchanged Python suite was
+rerun and passed all `31` tests, and Ruff check and Ruff format check pass for
+the campaign driver and test. The frequency repair adds the per-row handles,
+worst-case retained vector pairs, allocator allowance, and one persistent
+one-key frequency/wavelength cache to the existing lifetime ledger, including
+both initial- and residual-grid residency. Focused planner regressions assert
+the worst-case per-row byte charge, bounded cache allocation, and two clean
+cycle residencies. This does not constitute a
+12,150-square planner, dirty, clean, swap, compression, telemetry, or laptop
+receipt. `docs-check` and `git diff --check` pass. No 4,096-square imaging row,
+12,150-square development clean, full-geometry memory-policy row, or CASA
+imaging/reference run was launched for this repair.
+
 The intentional checkpoint set consists only of the Rust production-boundary
-and Metal-rounding changes, their tests, this plan receipt, and the reusable
-fail-closed launcher. Rebuildable `target/` content, CASA logs, TempLattice
-scratch, Python and Ruff caches, copied CASA products, MeasurementSets, CF
-caches, and all external runtime receipts remain generated or external
-evidence and are excluded from version control.
+and Metal-rounding changes, the per-channel MFS frequency repair, their tests,
+this plan receipt, and the reusable fail-closed launcher. Rebuildable `target/`
+content, CASA logs, TempLattice scratch, Python and Ruff caches, copied CASA
+products, MeasurementSets, CF caches, and all external runtime receipts remain
+generated or external evidence and are excluded from version control.
 
 ## Iteration Rules
 
