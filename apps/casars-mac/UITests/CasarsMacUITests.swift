@@ -1826,9 +1826,14 @@ final class CasarsMacUITests: XCTestCase {
         )
         let acquisitionStartedAt = Date()
         try clickIdentified("tutorial.approval.approve")
-        XCTAssertTrue(
-            waitForValue("tutorial.dataset.\(datasetID)", containing: "ready", timeout: 1_800),
-            app.debugDescription
+        let datasetStatus = try XCTUnwrap(
+            waitForTutorialDatasetOutcome(datasetID, timeout: 1_800),
+            "The tutorial dataset did not reach a terminal state.\n\(app.debugDescription)"
+        )
+        XCTAssertEqual(
+            datasetStatus,
+            "ready",
+            "The tutorial dataset ended with status \(datasetStatus).\n\(app.debugDescription)"
         )
         let acquisitionDurationSeconds = Date().timeIntervalSince(acquisitionStartedAt)
         let measurementSet = project
@@ -3245,6 +3250,43 @@ final class CasarsMacUITests: XCTestCase {
             return ["succeeded", "failed", "cancelled"].contains {
                 value.localizedCaseInsensitiveContains($0)
             } ? value : nil
+        }
+    }
+
+    private func waitForTutorialDatasetOutcome(
+        _ datasetID: String,
+        timeout: TimeInterval,
+        maxNetworkResumes: Int = 3
+    ) -> String? {
+        var networkResumeCount = 0
+        var resumedCurrentFailure = false
+        let terminalFailures = [
+            "cancelled",
+            "checksum_failed",
+            "unsafe_archive",
+            "destination_collision",
+        ]
+        return pollForValue(timeout: timeout) {
+            guard let status = try? accessibilityValue("tutorial.dataset.\(datasetID)") else {
+                return nil
+            }
+            if status == "ready" || terminalFailures.contains(status) {
+                return status
+            }
+            guard status == "network_failed" else {
+                resumedCurrentFailure = false
+                return nil
+            }
+            guard networkResumeCount < maxNetworkResumes else {
+                return status
+            }
+            let resume = element("tutorial.dataset.resume.\(datasetID)")
+            if !resumedCurrentFailure, resume.exists, resume.isHittable {
+                resume.click()
+                networkResumeCount += 1
+                resumedCurrentFailure = true
+            }
+            return nil
         }
     }
 
