@@ -4465,6 +4465,91 @@ TempLattice scratch, Python and Ruff caches, copied CASA products,
 MeasurementSets, CF caches, and all external runtime receipts remain generated
 or external evidence and are excluded from version control.
 
+### 2026-07-30 Native CASA call-stream discriminator
+
+The next discriminator moved upstream of convolution-function selection and
+replay. A private casars-imager hook reads only the first frozen
+`ColumnarPreparedSource` for field 1525, SPW 2, selection-relative rows
+`[0,325)`, 64 channels, and four correlations. It computes TT0 and TT1 FNV-64
+STREAM and GEOMETRY hashes for both values of CASA's private
+`use_conjugate_frequency_cf` flag, writes one content-addressed receipt, and
+stops before prepared-input collapse, production dispatch, CF selection,
+placement, tap materialization, gridding, `sumwt`, normalization, FFT, image
+formation, products, or deconvolution. It is correctness-localization evidence,
+not a performance measurement.
+
+The implementation, launcher, independent validator, and 17 validator
+regressions were committed and pushed at
+`f9079065689910f718884fb80a43b22b320b1bf6`. Local HEAD, the tracking branch,
+and the live remote branch matched before execution. Focused checkpoint
+verification passed: `cargo fmt --all`; three native-audit Rust tests; four
+existing diagnostic-mode tests; the literal-marker regression; a warning-free
+casars-imager binary `cargo check`; all 17 independent validator tests; Ruff
+lint and format checks; launcher syntax; and `git diff --check`. In accordance
+with the lean iteration policy, no workspace-wide or hosted-CI wait was added
+before this bounded diagnostic.
+
+The launcher executed exactly once after the clean remote-exact checkpoint.
+The immutable output directory is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/casa-rs-aw-datagrid-native-geometry-4096-full16-first-vb-v1`.
+Its receipt, comparison, provenance, imager log, and comparison log SHA-256
+digests are, respectively:
+
+- `9336cc0c0cf96a8efd9c5be5e3225b3beb333a52cb7c8bc19fc29df7bb0866e2`;
+- `86112da1456ea4ad3bb5b9b4da345f4e6dc5bcbac357c19ff720cd17da62f87d`;
+- `19fc0ee9d84caae9f630f6867d3bb9250cc24c8a12e492a9cc600c4d8780be00`;
+- `fd81def0b0d49646650091694e48669ba508d8dbf7a531e5b2a2b75887abdfec`;
+  and
+- `ba44a791029491e2223f280ec7f7aff93de2a3f2a053d84d3531b68eb2d382df`.
+
+The embedded receipt and comparison digests are
+`5585ced995d75446aee8df3a50a1ea1153d5c0247ad10ab28ba573f817bee148`
+and
+`4b1bf691ae33362f986d863a8c386f42473ae5ffb42ec89452bef90fb0a78944`.
+The release binary, launcher, validator, and `Cargo.lock` digests are
+`3b37e4cdb31297d72e5cb2c93d29e0bade0064806b9b4506f5395ac78ca821b0`,
+`2fcc81693bada4708e1c83213cf3271b60e7168c16cf18ddf7c81cd9b40fcf26`,
+`eb619df1f4254650667cf13cec640860b39c396526072b5c9fa2aaf828b2cf85`,
+and
+`0a30771fc5777290edf379b201ec828af0c8ab7ebb933cd5f3c7ed2c97a19b5c`.
+The receipt remains bound to frozen casa-rs v4
+`1c52961a3058f8f362e9d554c64b69a077f9414a7a44c738bed5351e6df59b40`,
+CASA v5
+`fe3d5ba3bff1ba925f63f0f088df602692655131c86d6319210ffa90e067ea1f`,
+the arithmetic-v1 receipt/comparison, and the literal-v1
+receipt/comparison. CASA was not rerun.
+
+The controlled result is `completed-native-stream-mismatch`, independently
+classified as `localized-native-call-stream-mismatch`. Both hypotheses
+reproduced CASA's `12,359` accepted-source count for TT0 and TT1. The false
+hypothesis produced STREAM hash `2961486006652101688`; the true hypothesis
+produced `13368950790129920013`; neither matched CASA's frozen
+`4740440223154359747`. The corresponding unpromoted GEOMETRY hashes were
+`5736691032245779710` / `9628057695591771198` for false TT0/TT1 and
+`3525956887569415523` / `652824568887256739` for true TT0/TT1. Because STREAM
+already differs, those GEOMETRY values do not promote or independently
+localize a later boundary.
+
+The frozen marker and receipt already bind the begin/end row, row count, SPW,
+MT-MFS reference-frequency bits, grid shape, channel map, polarization map,
+selection-relative row IDs, row flags, channel frequencies, and all four
+per-channel flags. The changed boundary is therefore upstream of CF work and
+within the native transformed-UVW/phase portion or its exact serialization.
+Source inspection identifies a concrete diagnostic-representation issue:
+CASA `AWProjectFT::put` constructs its native `VBStore.uvw_p` by negating raw
+MS U and V, retaining W, and then applying `girarUVW`; the v1 hook instead
+hashed casa-rs's internal `geometry_row.transform.uvw_m`. For this same-field
+row that internal transform is the raw-UVW identity. V1 therefore does not
+yet prove a production UVW semantic defect. The next changed discriminator
+must hash the CASA-native pre-grid UVW convention, retain the same immutable
+parents, and use a new v2 output directory. V1 must not be rerun.
+
+No CASA process, 4,096-square image row, 12,150-square development clean,
+full-geometry memory-policy row, CF lookup, grid allocation, FFT, image
+product, or performance timing ran. The 4,096-square full-16-SPW row remains
+unpromoted, and the required full-geometry memory campaign remains gated
+behind that promotion.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
