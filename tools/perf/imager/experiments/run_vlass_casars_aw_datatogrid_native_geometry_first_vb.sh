@@ -8,7 +8,7 @@ experiment_dir="${repo_root}/tools/perf/imager/experiments"
 external_root="${CASA_RS_VLASS_EXPERIMENT_ROOT:-/Volumes/GLENDENNING/casa-rs-vlass/issue-446}"
 expected_head="${1:-${CASA_RS_VLASS_EXPECTED_HEAD:-}}"
 branch="codex/vlass-w1-evidence-fiducials"
-case_dir="${external_root}/artifacts/experiments/casa-rs-aw-datagrid-native-geometry-4096-full16-first-vb-v1"
+case_dir="${external_root}/artifacts/experiments/casa-rs-aw-datagrid-native-geometry-4096-full16-first-vb-v2"
 receipt="${case_dir}/receipt.json"
 run_log="${case_dir}/casars-imager.log"
 comparison="${case_dir}/comparison.json"
@@ -25,6 +25,9 @@ arithmetic_v1_receipt="${external_root}/artifacts/experiments/casa-rs-aw-datagri
 arithmetic_v1_comparison="${external_root}/artifacts/experiments/casa-rs-aw-datagrid-tt0-arithmetic-compat-4096-full16-first-vb-v1/comparison.json"
 literal_v1_receipt="${external_root}/artifacts/experiments/casa-rs-aw-datagrid-literal-coefficient-4096-full16-first-vb-v1/receipt.json"
 literal_v1_comparison="${external_root}/artifacts/experiments/casa-rs-aw-datagrid-literal-coefficient-4096-full16-first-vb-v1/comparison.json"
+native_geometry_v1_receipt="${external_root}/artifacts/experiments/casa-rs-aw-datagrid-native-geometry-4096-full16-first-vb-v1/receipt.json"
+native_geometry_v1_comparison="${external_root}/artifacts/experiments/casa-rs-aw-datagrid-native-geometry-4096-full16-first-vb-v1/comparison.json"
+native_geometry_v1_provenance="${external_root}/artifacts/experiments/casa-rs-aw-datagrid-native-geometry-4096-full16-first-vb-v1/provenance.tsv"
 source_archive="${CASA_RS_VLASS_SOURCE_ARCHIVE:-/Volumes/GLENDENNING/vlass_test.tgz}"
 dataset_geometry="${repo_root}/tools/perf/imager/recipes/vlass-fragment-dataset-geometry.json"
 validator="${experiment_dir}/vlass_aw_datatogrid_native_geometry_compare.py"
@@ -47,6 +50,14 @@ literal_v1_evidence_sha="dfb6f809c9e96b6007321b293ee147b961a39bfc65968c21637f650
 literal_v1_comparison_sha="7d5567e9f9d570536dd3406b5a7d8a59a330b29321fd5142b319dbf70d65908d"
 literal_v1_comparison_evidence_sha="a8b10b7e5fd73185762a4e55e2883e1422c96a320718e00d26c08bf0a05bdd8c"
 literal_v1_revision="9604e540fb90482774eab20f858ec0930e556a53"
+native_geometry_v1_receipt_sha="9336cc0c0cf96a8efd9c5be5e3225b3beb333a52cb7c8bc19fc29df7bb0866e2"
+native_geometry_v1_evidence_sha="5585ced995d75446aee8df3a50a1ea1153d5c0247ad10ab28ba573f817bee148"
+native_geometry_v1_comparison_sha="86112da1456ea4ad3bb5b9b4da345f4e6dc5bcbac357c19ff720cd17da62f87d"
+native_geometry_v1_comparison_evidence_sha="4b1bf691ae33362f986d863a8c386f42473ae5ffb42ec89452bef90fb0a78944"
+native_geometry_v1_provenance_sha="19fc0ee9d84caae9f630f6867d3bb9250cc24c8a12e492a9cc600c4d8780be00"
+native_geometry_v1_revision="f9079065689910f718884fb80a43b22b320b1bf6"
+uvw_hypothesis="casa-awproject-negate-uv-before-girar-assumed-same-field-identity"
+phase_hypothesis="casa-rs-current-same-field-phase-shift-m-retained-not-casa-girar-refocus-bit-replay"
 casa_source_commit="418bb1a26df7c4aba663ff123b038b75a6fa0295"
 casacore_source_commit="25b653f6963a78a1dcfc8e16954081e091a50fbe"
 tclean_last_sha="a64e6213d66436fee6d602eb5bbda3ac8667b8df2491ea7310557748bbbf15b5"
@@ -103,6 +114,9 @@ for required_path in \
     "${arithmetic_v1_comparison}" \
     "${literal_v1_receipt}" \
     "${literal_v1_comparison}" \
+    "${native_geometry_v1_receipt}" \
+    "${native_geometry_v1_comparison}" \
+    "${native_geometry_v1_provenance}" \
     "${source_archive}" \
     "${dataset_geometry}" \
     "${validator}" \
@@ -124,6 +138,12 @@ done
     fail "frozen literal-v1 receipt SHA-256 changed"
 [[ "$(sha256 "${literal_v1_comparison}")" == "${literal_v1_comparison_sha}" ]] ||
     fail "frozen literal-v1 comparison SHA-256 changed"
+[[ "$(sha256 "${native_geometry_v1_receipt}")" == "${native_geometry_v1_receipt_sha}" ]] ||
+    fail "frozen native-geometry-v1 receipt SHA-256 changed"
+[[ "$(sha256 "${native_geometry_v1_comparison}")" == "${native_geometry_v1_comparison_sha}" ]] ||
+    fail "frozen native-geometry-v1 comparison SHA-256 changed"
+[[ "$(sha256 "${native_geometry_v1_provenance}")" == "${native_geometry_v1_provenance_sha}" ]] ||
+    fail "frozen native-geometry-v1 provenance SHA-256 changed"
 [[ "$(sha256 "${tclean_last}")" == "${tclean_last_sha}" ]] ||
     fail "frozen tclean.last SHA-256 changed"
 [[ "$(sha256 "${source_archive}")" == "${source_archive_sha}" ]] ||
@@ -137,6 +157,9 @@ python3 "${validator}" \
     --arithmetic-v1-comparison "${arithmetic_v1_comparison}" \
     --literal-v1 "${literal_v1_receipt}" \
     --literal-v1-comparison "${literal_v1_comparison}" \
+    --native-geometry-v1 "${native_geometry_v1_receipt}" \
+    --native-geometry-v1-comparison "${native_geometry_v1_comparison}" \
+    --native-geometry-v1-provenance "${native_geometry_v1_provenance}" \
     --validate-parents-only
 python3 -c \
     'import json,sys; r=json.load(open(sys.argv[1])); d=r["dataset"]; assert d["archive_sha256"] == sys.argv[2]; assert d["tree_sha256"] == sys.argv[3]; assert r["source_receipts"]["dataset_receipt_sha256"] == sys.argv[4]; assert r["selections"]["single_field"]["selected_rows"] == 10400' \
@@ -179,7 +202,7 @@ rustc_vv="$(rustc -Vv | tr '\n' '|' | sed 's/|$//')"
 
 mkdir "${case_dir}"
 {
-    printf 'schema\tcasa-rs-vlass-aw-datagrid-native-geometry-provenance-v1\n'
+    printf 'schema\tcasa-rs-vlass-aw-datagrid-native-geometry-provenance-v2\n'
     printf 'started_at_utc\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf 'branch\t%s\n' "${branch}"
     printf 'revision\t%s\n' "${expected_head}"
@@ -203,6 +226,14 @@ mkdir "${case_dir}"
     printf 'literal_v1_comparison_sha256\t%s\n' "${literal_v1_comparison_sha}"
     printf 'literal_v1_comparison_evidence_sha256\t%s\n' "${literal_v1_comparison_evidence_sha}"
     printf 'literal_v1_revision\t%s\n' "${literal_v1_revision}"
+    printf 'native_geometry_v1_receipt_sha256\t%s\n' "${native_geometry_v1_receipt_sha}"
+    printf 'native_geometry_v1_evidence_sha256\t%s\n' "${native_geometry_v1_evidence_sha}"
+    printf 'native_geometry_v1_comparison_sha256\t%s\n' "${native_geometry_v1_comparison_sha}"
+    printf 'native_geometry_v1_comparison_evidence_sha256\t%s\n' "${native_geometry_v1_comparison_evidence_sha}"
+    printf 'native_geometry_v1_provenance_sha256\t%s\n' "${native_geometry_v1_provenance_sha}"
+    printf 'native_geometry_v1_revision\t%s\n' "${native_geometry_v1_revision}"
+    printf 'uvw_hypothesis\t%s\n' "${uvw_hypothesis}"
+    printf 'phase_hypothesis\t%s\n' "${phase_hypothesis}"
     printf 'casa_source_commit\t%s\n' "${casa_source_commit}"
     printf 'casacore_source_commit\t%s\n' "${casacore_source_commit}"
     printf 'tclean_last_sha256\t%s\n' "${tclean_last_sha}"
@@ -225,10 +256,10 @@ set +e
     CASA_RS_FFTW_LIBRARY_DIR="${fftw_dir}" \
     DYLD_LIBRARY_PATH="${fftw_dir}" \
     CASA_RS_FFTW_THREADS=1 \
-    CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_OUTPUT_V1="${receipt}" \
-    CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_EXPECT_NXY=4096 \
-    CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_BLOCKS=1 \
-    CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_TERMS=2 \
+    CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_OUTPUT_V2="${receipt}" \
+    CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_EXPECT_NXY_V2=4096 \
+    CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_BLOCKS_V2=1 \
+    CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_TERMS_V2=2 \
     "${binary}" \
     --ms "${ms}" \
     --imagename "${image_prefix}" \
@@ -305,7 +336,7 @@ printf 'casars_imager_exit\t%s\n' "${run_status}" >>"${provenance}"
     fail "casars-imager exited ${run_status}, expected diagnostic exit 1; preserve ${case_dir}"
 [[ -s "${receipt}" ]] ||
     fail "diagnostic exit 1 did not create a non-empty receipt; preserve ${case_dir}"
-rg -F 'AWProject native-geometry audit stopped before production dispatch' \
+rg -F 'AWProject native-geometry-v2 audit stopped before production dispatch' \
     "${run_log}" >/dev/null ||
     fail "completion marker is absent from ${run_log}; preserve ${case_dir}"
 [[ -z "$(find "${case_dir}" -maxdepth 1 -name 'rust.*' -print -quit)" ]] ||
@@ -320,6 +351,9 @@ python3 "${validator}" \
     --arithmetic-v1-comparison "${arithmetic_v1_comparison}" \
     --literal-v1 "${literal_v1_receipt}" \
     --literal-v1-comparison "${literal_v1_comparison}" \
+    --native-geometry-v1 "${native_geometry_v1_receipt}" \
+    --native-geometry-v1-comparison "${native_geometry_v1_comparison}" \
+    --native-geometry-v1-provenance "${native_geometry_v1_provenance}" \
     --output "${comparison}" \
     >"${comparison_log}" 2>&1
 comparison_status=$?

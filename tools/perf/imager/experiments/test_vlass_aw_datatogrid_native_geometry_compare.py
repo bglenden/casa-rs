@@ -113,6 +113,7 @@ def candidate_evidence(
         "terms_evaluated": [0, 1],
         "hash_reference": subject.HASH_REFERENCE,
         "hash_contracts": copy.deepcopy(subject.HASH_CONTRACTS),
+        "uvw_hypothesis": subject.UVW_HYPOTHESIS,
         "expected_grid_shape": copy.deepcopy(subject.EXPECTED_GRID_SHAPE),
         "target_blocks": 1,
         "request_nterms": 2,
@@ -314,6 +315,7 @@ class CandidateTests(unittest.TestCase):
             "im_ref_freq_bits": subject.IM_REF_FREQ_BITS + 1,
             "placement": "entered",
             "expected_grid_shape": [8192, 8192, 1, 1],
+            "uvw_hypothesis": "casa-awproject-direct-internal-uvw",
         }
         for field, value in mutations.items():
             with self.subTest(field=field):
@@ -326,6 +328,22 @@ class CandidateTests(unittest.TestCase):
         assert isinstance(parents, dict)
         parents["casa_v5_sha256"] = "0" * 64
         self.assert_rejected(evidence, "frozen_parent_receipts changed")
+
+    def test_v2_contract_cannot_be_satisfied_by_v1_receipt(self) -> None:
+        evidence = candidate_evidence()
+        evidence["schema"] = subject.NATIVE_GEOMETRY_V1_EVIDENCE_SCHEMA
+        self.assert_rejected(evidence, "evidence.schema changed")
+
+    def test_uvw_hypothesis_is_bound_in_scope_and_hash_contract(self) -> None:
+        evidence = candidate_evidence()
+        contracts = evidence["hash_contracts"]
+        assert isinstance(contracts, dict)
+        contracts["uvw_hypothesis"] = "unspecified"
+        self.assert_rejected(evidence, "hash_contracts changed")
+
+        evidence = candidate_evidence()
+        del evidence["uvw_hypothesis"]
+        self.assert_rejected(evidence, "evidence key set changed")
 
     def test_unknown_fields_are_rejected_at_each_dynamic_level(self) -> None:
         evidence = candidate_evidence()
@@ -424,6 +442,13 @@ class ComparisonTests(unittest.TestCase):
                     literal_v1_comparison_path=Path(
                         "/frozen/literal-v1-comparison.json"
                     ),
+                    native_geometry_v1_path=Path("/frozen/native-geometry-v1.json"),
+                    native_geometry_v1_comparison_path=Path(
+                        "/frozen/native-geometry-v1-comparison.json"
+                    ),
+                    native_geometry_v1_provenance_path=Path(
+                        "/frozen/native-geometry-v1-provenance.tsv"
+                    ),
                 )
 
     def test_classifications_and_dispositions_are_distinct(self) -> None:
@@ -440,19 +465,52 @@ class ComparisonTests(unittest.TestCase):
                     subject.DISPOSITIONS[result],
                 )
 
+    def test_stream_mismatch_leaves_girar_refocus_unresolved_not_defective(
+        self,
+    ) -> None:
+        envelope = self.build("completed-native-stream-mismatch")
+        comparison = envelope["comparison"]
+        self.assertEqual(
+            comparison["disposition"],
+            (
+                "stop-resolve-actual-casa-girar-refocus-uvw-dphase-bits-or-"
+                "flags-no-production-defect-identified"
+            ),
+        )
+        self.assertFalse(
+            comparison["claims"][
+                "actual_casa_girar_refocus_uvw_dphase_and_flags_equivalence_proven"
+            ]
+        )
+        self.assertFalse(comparison["claims"]["production_defect_identified"])
+
     def test_exact_geometry_still_denies_downstream_claims(self) -> None:
         envelope = self.build("completed-native-stream-and-geometry-exact")
         comparison = envelope["comparison"]
+        self.assertEqual(
+            comparison["scope"]["uvw_hypothesis"],
+            subject.UVW_HYPOTHESIS,
+        )
+        self.assertEqual(
+            comparison["scope"]["phase_hypothesis"],
+            subject.PHASE_HYPOTHESIS,
+        )
+        self.assertEqual(
+            comparison["parents"]["native_geometry_v1"]["sha256"],
+            subject.NATIVE_GEOMETRY_V1_RECEIPT_SHA256,
+        )
         claims = comparison["claims"]
         self.assertTrue(claims["source_count_exact"])
-        self.assertTrue(claims["native_stream_exact"])
-        self.assertTrue(claims["native_geometry_exact"])
+        self.assertTrue(claims["hypothesis_stream_exact"])
+        self.assertTrue(claims["hypothesis_geometry_exact"])
         for claim in (
             "native_input_payload_exact",
             "cf_selection_equivalence_proven",
             "placement_equivalence_proven",
             "tap_stream_equivalence_proven",
             "whole_grid_equivalence_proven",
+            "actual_casa_girar_refocus_uvw_dphase_and_flags_equivalence_proven",
+            "production_defect_identified",
             "production_path_changed",
             "production_promotion_authorized",
             "integrated_4096_row_promoted",
