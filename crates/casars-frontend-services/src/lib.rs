@@ -57,7 +57,7 @@ use casars_imagebrowser_protocol::{
     ImagePlaneContentMode,
 };
 use casars_tablebrowser_protocol::{BrowserCommand, BrowserFocus, BrowserView, BrowserViewport};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 const MAX_PROJECT_SCAN_ENTRIES: usize = 512;
@@ -1404,7 +1404,7 @@ pub enum FrontendServiceError {
 
 type FrontendResult<T> = Result<T, FrontendServiceError>;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum NotebookValue {
     String { value: String },
     Number { value: f64 },
@@ -1412,6 +1412,66 @@ pub enum NotebookValue {
     Array { values: Vec<NotebookValue> },
     Object { entries: Vec<NotebookValueEntry> },
     Null,
+}
+
+// Swift synthesizes `Codable` for the UniFFI enum using these lower-case,
+// externally tagged variants, including an empty object for the unit case.
+// Keep serde on that same wire contract because Swift writes notebook receipts
+// into the assistant-context projection that the Rust project MCP reads.
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum NotebookValueRef<'a> {
+    String { value: &'a str },
+    Number { value: f64 },
+    Bool { value: bool },
+    Array { values: &'a [NotebookValue] },
+    Object { entries: &'a [NotebookValueEntry] },
+    Null {},
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum NotebookValueOwned {
+    String { value: String },
+    Number { value: f64 },
+    Bool { value: bool },
+    Array { values: Vec<NotebookValue> },
+    Object { entries: Vec<NotebookValueEntry> },
+    Null {},
+}
+
+impl Serialize for NotebookValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::String { value } => NotebookValueRef::String { value }.serialize(serializer),
+            Self::Number { value } => {
+                NotebookValueRef::Number { value: *value }.serialize(serializer)
+            }
+            Self::Bool { value } => NotebookValueRef::Bool { value: *value }.serialize(serializer),
+            Self::Array { values } => NotebookValueRef::Array { values }.serialize(serializer),
+            Self::Object { entries } => NotebookValueRef::Object { entries }.serialize(serializer),
+            Self::Null => NotebookValueRef::Null {}.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for NotebookValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(match NotebookValueOwned::deserialize(deserializer)? {
+            NotebookValueOwned::String { value } => Self::String { value },
+            NotebookValueOwned::Number { value } => Self::Number { value },
+            NotebookValueOwned::Bool { value } => Self::Bool { value },
+            NotebookValueOwned::Array { values } => Self::Array { values },
+            NotebookValueOwned::Object { entries } => Self::Object { entries },
+            NotebookValueOwned::Null {} => Self::Null,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
@@ -10604,6 +10664,112 @@ mod tests {
                 .as_ref()
                 .and_then(|intent| intent.parameters.get("niter")),
             Some(&NotebookValue::Number { value: 4.0 })
+        );
+    }
+
+    #[test]
+    fn notebook_value_serde_matches_swift_codable_wire_contract() {
+        let values = vec![
+            (
+                NotebookValue::String {
+                    value: "science".to_owned(),
+                },
+                serde_json::json!({"string": {"value": "science"}}),
+            ),
+            (
+                NotebookValue::Number { value: 4.0 },
+                serde_json::json!({"number": {"value": 4.0}}),
+            ),
+            (
+                NotebookValue::Bool { value: true },
+                serde_json::json!({"bool": {"value": true}}),
+            ),
+            (
+                NotebookValue::Array {
+                    values: vec![NotebookValue::Null],
+                },
+                serde_json::json!({"array": {"values": [{"null": {}}]}}),
+            ),
+            (
+                NotebookValue::Object {
+                    entries: vec![NotebookValueEntry {
+                        name: "enabled".to_owned(),
+                        value: NotebookValue::Bool { value: true },
+                    }],
+                },
+                serde_json::json!({
+                    "object": {
+                        "entries": [{
+                            "name": "enabled",
+                            "value": {"bool": {"value": true}}
+                        }]
+                    }
+                }),
+            ),
+            (NotebookValue::Null, serde_json::json!({"null": {}})),
+        ];
+
+        for (value, swift_json) in values {
+            assert_eq!(
+                serde_json::to_value(&value).expect("serialize notebook value"),
+                swift_json
+            );
+            assert_eq!(
+                serde_json::from_value::<NotebookValue>(swift_json)
+                    .expect("deserialize Swift notebook value"),
+                value
+            );
+        }
+
+        let projection: AssistantContextProjectionState =
+            serde_json::from_value(serde_json::json!({
+                "schema_version": 1,
+                "session_nonce": "nonce",
+                "open_tabs": [],
+                "data_semantics": [],
+                "receipts": [{
+                    "notebook_id": "notebook",
+                    "notebook": "Tutorial.md",
+                    "receipts": [{
+                        "schema_version": 1,
+                        "run_id": "run",
+                        "revision": 1,
+                        "notebook_id": "notebook",
+                        "cell_id": "cell",
+                        "initiating_surface": "gui",
+                        "operation_id": "imager",
+                        "started_at": 1,
+                        "finished_at": 2,
+                        "status": "succeeded",
+                        "sparse_intent": null,
+                        "execution_input": null,
+                        "ordered_outputs": null,
+                        "resolved_parameters": {
+                            "attempt_kind": {"string": {"value": "imaging"}}
+                        },
+                        "provider_contract_version": 1,
+                        "affected_paths": [],
+                        "products": [],
+                        "artifacts": [],
+                        "diagnostics": [],
+                        "replay_claim": "deterministic"
+                    }]
+                }],
+                "resource_plan": {
+                    "schema_version": 1,
+                    "corpus_text_units": 0,
+                    "diagnostics": []
+                },
+                "action_catalog": []
+            }))
+            .expect("deserialize Swift assistant-context projection");
+        assert_eq!(
+            projection.receipts[0].receipts[0]
+                .resolved_parameters
+                .get("attempt_kind"),
+            Some(&NotebookValue::String {
+                value: "imaging".to_owned()
+            })
         );
     }
 
