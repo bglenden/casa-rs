@@ -1934,6 +1934,13 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(markdownAfterTask.contains("id=\(taskCellID) kind=task"))
         XCTAssertTrue(markdownAfterTask.contains("id=\(taskRunCellID) kind=task"))
         XCTAssertEqual((taskReceipt["schema_version"] as? NSNumber)?.intValue, 2)
+        let executedTaskParameters = try XCTUnwrap(
+            (taskReceipt["sparse_intent"] as? [String: Any])?["parameters"] as? [String: Any]
+        )
+        XCTAssertEqual(executedTaskParameters["field"] as? String, "3")
+        XCTAssertEqual(executedTaskParameters["phasecenter"] as? String, "3")
+        XCTAssertEqual(executedTaskParameters["gridder"] as? String, "standard")
+        XCTAssertEqual(executedTaskParameters["write_pb"] as? Bool, true)
         XCTAssertFalse((taskReceipt["products"] as? [[String: Any]] ?? []).isEmpty)
 
         try clickIdentified("central.tab.tab-scientific-notebook")

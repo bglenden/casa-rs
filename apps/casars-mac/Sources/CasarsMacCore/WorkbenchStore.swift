@@ -8038,7 +8038,12 @@ public final class WorkbenchStore: ObservableObject {
         var editedParameters = Set<String>()
         for (name, text) in textValues {
             guard let concept = session.bundle.concept(for: name) else { continue }
-            if preserveOverrides, session.overridePatch.values[name] != nil { continue }
+            if preserveOverrides,
+               session.overridePatch.values[name] != nil
+                || session.snapshot.states[name]?.origin == "base_profile"
+            {
+                continue
+            }
             session.contextPatch.removeUnset(name)
             session.contextPatch.values[name] = concept.valueDomain.value(from: text)
             editedParameters.insert(name)
@@ -8049,7 +8054,12 @@ public final class WorkbenchStore: ObservableObject {
         }
         for (name, value) in boolValues {
             guard session.bundle.concept(for: name) != nil else { continue }
-            if preserveOverrides, session.overridePatch.values[name] != nil { continue }
+            if preserveOverrides,
+               session.overridePatch.values[name] != nil
+                || session.snapshot.states[name]?.origin == "base_profile"
+            {
+                continue
+            }
             session.contextPatch.removeUnset(name)
             session.contextPatch.values[name] = .bool(value)
             editedParameters.insert(name)

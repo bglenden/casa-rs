@@ -5151,6 +5151,42 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(values["cell"], "0.1arcsec,0.1arcsec")
         XCTAssertEqual(values["specmode"], "mfs")
         XCTAssertEqual(values["weighting"], "briggs")
+
+        let tutorialProfile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-twhya-tutorial-\(UUID().uuidString).toml")
+        defer { try? FileManager.default.removeItem(at: tutorialProfile) }
+        try """
+        [casars]
+        format = 1
+        surface = "imager"
+        kind = "task"
+        contract = 4
+
+        [parameters]
+        vis = ["twhya_calibrated.ms"]
+        imagename = "products/phase-cal-dirty"
+        field = "3"
+        phasecenter = "3"
+        gridder = "standard"
+        write_pb = true
+        """.write(to: tutorialProfile, atomically: true, encoding: .utf8)
+
+        let taskTabID = store.state.activeTabID
+        store.loadActiveParameterProfile(from: tutorialProfile.path, discardEdits: true)
+        XCTAssertFalse(store.state.lastErrors.contains { $0.contains("Load Named File parameters") })
+        XCTAssertEqual(store.parameterText(surfaceID: "imager", instanceID: taskTabID, name: "field"), "3")
+        XCTAssertEqual(
+            store.parameterOrigin(surfaceID: "imager", instanceID: taskTabID, name: "field"),
+            "base_profile"
+        )
+
+        store.selectTask("imager", tabID: taskTabID)
+
+        XCTAssertEqual(store.parameterText(surfaceID: "imager", instanceID: taskTabID, name: "field"), "3")
+        XCTAssertEqual(
+            store.parameterOrigin(surfaceID: "imager", instanceID: taskTabID, name: "field"),
+            "base_profile"
+        )
     }
 
     func testRealMeasurementSetPlotRunUsesPlotClientAndDebugState() {

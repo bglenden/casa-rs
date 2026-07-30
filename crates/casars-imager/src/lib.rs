@@ -6999,6 +6999,7 @@ fn can_run_standard_mfs_fixed_tile_streaming_clean(
     force_standard_gridder: bool,
     ms_count: usize,
 ) -> bool {
+    let standard_gridder_is_forced = force_standard_gridder || config.force_standard_gridder;
     let standard_cube_like_one_channel =
         standard_cube_like_one_channel_can_use_mfs_single_plane_path_with_force(
             config,
@@ -7011,7 +7012,7 @@ fn can_run_standard_mfs_fixed_tile_streaming_clean(
         && !config.use_pointing
         && config.deconvolver != Deconvolver::Mtmfs
         && config.field_ids.as_ref().is_none_or(|ids| ids.len() <= 1)
-        && (config.phasecenter.is_none() || force_standard_gridder)
+        && (config.phasecenter.is_none() || standard_gridder_is_forced)
         && phasecenter_field_matches_single_selected_field(config)
         && config.outlier_file.is_none()
         && config.use_mask == CleanMaskMode::User
@@ -7027,6 +7028,7 @@ fn can_run_standard_mfs_dirty_streaming(
     force_standard_gridder: bool,
     ms_count: usize,
 ) -> bool {
+    let standard_gridder_is_forced = force_standard_gridder || config.force_standard_gridder;
     ms_count == 1
         && standard_mfs_shared_acceleration_spectral_mode_is_eligible_with_force(
             config,
@@ -7034,7 +7036,7 @@ fn can_run_standard_mfs_dirty_streaming(
         )
         && !config.use_pointing
         && config.field_ids.as_ref().is_none_or(|ids| ids.len() <= 1)
-        && (config.phasecenter.is_none() || force_standard_gridder)
+        && (config.phasecenter.is_none() || standard_gridder_is_forced)
         && phasecenter_field_matches_single_selected_field(config)
         && config.start_model.is_none()
         && config.outlier_file.is_none()
@@ -22097,6 +22099,7 @@ fn can_plan_standard_mfs_acceleration(
     force_standard_gridder: bool,
     ms_count: usize,
 ) -> bool {
+    let standard_gridder_is_forced = force_standard_gridder || config.force_standard_gridder;
     ms_count == 1
         && standard_mfs_shared_acceleration_spectral_mode_is_eligible_with_force(
             config,
@@ -22104,7 +22107,7 @@ fn can_plan_standard_mfs_acceleration(
         )
         && !config.use_pointing
         && config.field_ids.as_ref().is_none_or(|ids| ids.len() <= 1)
-        && (config.phasecenter.is_none() || force_standard_gridder)
+        && (config.phasecenter.is_none() || standard_gridder_is_forced)
         && config.outlier_file.is_none()
         && config.use_mask == CleanMaskMode::User
         && config.uv_taper.is_none()
@@ -51293,7 +51296,7 @@ mod tests {
 
     #[test]
     fn explicit_standard_mfs_streaming_accepts_primary_beam_products() {
-        let dirty = CliConfig::parse([
+        let mut dirty = CliConfig::parse([
             OsString::from("--ms"),
             OsString::from("example.ms"),
             OsString::from("--imagename"),
@@ -51310,6 +51313,7 @@ mod tests {
             OsString::from("--write-pb"),
         ])
         .expect("parse explicit standard-gridder PB config");
+        dirty.phasecenter = Some("3".to_string());
 
         assert!(can_plan_standard_mfs_acceleration(&dirty, false, 1));
         assert!(can_run_standard_mfs_dirty_streaming(&dirty, false, 1));
