@@ -2173,6 +2173,22 @@ pub(crate) struct AwProjectorPackedTaps {
     pub(crate) y_support: usize,
 }
 
+#[cfg(any(all(target_os = "macos", not(coverage)), test))]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct AwProjectorLiteralCasaTap {
+    pub(crate) raw_cf: Complex32,
+    pub(crate) post_w_sign: Complex32,
+    pub(crate) pointing_phase: Complex32,
+    pub(crate) coefficient: Complex32,
+}
+
+#[cfg(any(all(target_os = "macos", not(coverage)), test))]
+pub(crate) struct AwProjectorLiteralCasaTaps {
+    pub(crate) values: Vec<AwProjectorLiteralCasaTap>,
+    pub(crate) x_support: usize,
+    pub(crate) y_support: usize,
+}
+
 impl<'a, K: AwProjectKernelPixels + ?Sized> AwProjector<'a, K> {
     pub(crate) fn new(
         gridder: &StandardGridder,
@@ -2441,6 +2457,100 @@ impl<'a, K: AwProjectKernelPixels + ?Sized> AwProjector<'a, K> {
         ))
     }
 
+    /// Replays CASA 6.7.5.18 `accumulateToGrid.inc` coefficient formation
+    /// while retaining every operand for a bounded correctness audit.
+    ///
+    /// The frozen DataToGrid path reads an already cache-normalized
+    /// `Complex` CF pixel, conjugates it only for positive data W, accumulates
+    /// the unphased value into `norm`, and then applies the POINTING phasor as
+    /// a `Complex` multiply. There is no per-tap `cfArea` division in that
+    /// runtime path.
+    #[cfg(any(all(target_os = "macos", not(coverage)), test))]
+    pub(crate) fn plan_and_trace_literal_casa_geometry(
+        &self,
+        geometry: AwProjectSampleGeometry,
+    ) -> Result<(AwProjectSamplePlan, AwProjectorLiteralCasaTaps), AwProjectSamplePlanRejection>
+    {
+        let x_support = self.x_support as isize;
+        let y_support = self.y_support as isize;
+        let mut normalization = Complex32::new(0.0, 0.0);
+        let mut grid_normalization = Complex64::new(0.0, 0.0);
+        let mut values =
+            Vec::with_capacity((2 * self.x_support + 1).saturating_mul(2 * self.y_support + 1));
+        let x_phases = (-x_support..=x_support)
+            .map(|ix| {
+                let phase_x = (ix * self.sampling as isize + geometry.off_x) as f64
+                    * self.phase_gradient_rad_per_sample[0];
+                casa_aw_axis_phase(phase_x)
+            })
+            .collect::<Vec<_>>();
+        let y_phases = (-y_support..=y_support)
+            .map(|iy| {
+                let phase_y = (iy * self.sampling as isize + geometry.off_y) as f64
+                    * self.phase_gradient_rad_per_sample[1];
+                casa_aw_axis_phase(phase_y)
+            })
+            .collect::<Vec<_>>();
+        for (iy_index, iy) in (-y_support..=y_support).enumerate() {
+            let kernel_y = usize::try_from(
+                self.kernel_center[1] as isize + iy * self.sampling as isize + geometry.off_y,
+            )
+            .map_err(|_| AwProjectSamplePlanRejection::KernelIndexOutsideCell)?;
+            for (ix_index, ix) in (-x_support..=x_support).enumerate() {
+                let kernel_x = usize::try_from(
+                    self.kernel_center[0] as isize + ix * self.sampling as isize + geometry.off_x,
+                )
+                .map_err(|_| AwProjectSamplePlanRejection::KernelIndexOutsideCell)?;
+                let raw_cf = self
+                    .kernel
+                    .get_pixel((kernel_x, kernel_y))
+                    .ok_or(AwProjectSamplePlanRejection::KernelIndexOutsideCell)?;
+                let post_w_sign = if geometry.conjugate_for_grid {
+                    raw_cf.conj()
+                } else {
+                    raw_cf
+                };
+                normalization += post_w_sign;
+                grid_normalization +=
+                    Complex64::new(f64::from(post_w_sign.re), f64::from(post_w_sign.im));
+                let pointing_phase =
+                    casa_aw_phase_gradient_from_axes(x_phases[ix_index], y_phases[iy_index]);
+                let coefficient = casa_aw_literal_complex_multiply(post_w_sign, pointing_phase);
+                values.push(AwProjectorLiteralCasaTap {
+                    raw_cf,
+                    post_w_sign,
+                    pointing_phase,
+                    coefficient,
+                });
+            }
+        }
+        if !(normalization.re.is_finite()
+            && normalization.im.is_finite()
+            && normalization.norm() > 0.0
+            && grid_normalization.re.is_finite()
+            && grid_normalization.im.is_finite()
+            && grid_normalization.norm() > 0.0)
+        {
+            return Err(AwProjectSamplePlanRejection::InvalidNormalization);
+        }
+        Ok((
+            AwProjectSamplePlan {
+                loc_x: geometry.loc_x,
+                loc_y: geometry.loc_y,
+                off_x: geometry.off_x,
+                off_y: geometry.off_y,
+                conjugate_for_grid: geometry.conjugate_for_grid,
+                normalization,
+                grid_normalization,
+            },
+            AwProjectorLiteralCasaTaps {
+                values,
+                x_support: self.x_support,
+                y_support: self.y_support,
+            },
+        ))
+    }
+
     pub(crate) fn plan_and_pack_geometry_with_phase_lookup(
         &self,
         geometry: AwProjectSampleGeometry,
@@ -2659,20 +2769,24 @@ fn casa_aw_rounded_sub(left: f32, right: f32) -> f32 {
     std::hint::black_box(left - right)
 }
 
+pub(crate) fn casa_aw_literal_complex_multiply(left: Complex32, right: Complex32) -> Complex32 {
+    Complex32::new(
+        casa_aw_rounded_sub(
+            casa_aw_rounded_mul(left.re, right.re),
+            casa_aw_rounded_mul(left.im, right.im),
+        ),
+        casa_aw_rounded_add(
+            casa_aw_rounded_mul(left.re, right.im),
+            casa_aw_rounded_mul(left.im, right.re),
+        ),
+    )
+}
+
 fn casa_aw_tap_phase_multiply(tap: Complex32, phase: Complex32) -> Complex32 {
     if !casa_aw_cpp_complex_experiment_enabled() {
         return tap * phase;
     }
-    Complex32::new(
-        casa_aw_rounded_sub(
-            casa_aw_rounded_mul(tap.re, phase.re),
-            casa_aw_rounded_mul(tap.im, phase.im),
-        ),
-        casa_aw_rounded_add(
-            casa_aw_rounded_mul(tap.re, phase.im),
-            casa_aw_rounded_mul(tap.im, phase.re),
-        ),
-    )
+    casa_aw_literal_complex_multiply(tap, phase)
 }
 
 fn aw_kernel_origin(length: usize) -> usize {
@@ -4239,6 +4353,9 @@ mod tests {
                 |coordinate| super::casa_aw_axis_phase(coordinate as f64 * phase_gradient[1]),
             )
             .unwrap();
+        let (literal_plan, literal_taps) = projector
+            .plan_and_trace_literal_casa_geometry(indexed_geometry)
+            .unwrap();
         let separately_packed = projector.packed_taps(&plan);
         assert_eq!(
             lookup_plan.normalization.re.to_bits(),
@@ -4284,6 +4401,32 @@ mod tests {
         assert_eq!(fused_packed.values, separately_packed.values);
         assert_eq!(fused_packed.x_support, separately_packed.x_support);
         assert_eq!(fused_packed.y_support, separately_packed.y_support);
+        assert_eq!(
+            (
+                literal_plan.loc_x,
+                literal_plan.loc_y,
+                literal_plan.off_x,
+                literal_plan.off_y,
+                literal_plan.conjugate_for_grid,
+                literal_plan.normalization.re.to_bits(),
+                literal_plan.normalization.im.to_bits(),
+                literal_plan.grid_normalization.re.to_bits(),
+                literal_plan.grid_normalization.im.to_bits(),
+            ),
+            (
+                plan.loc_x,
+                plan.loc_y,
+                plan.off_x,
+                plan.off_y,
+                plan.conjugate_for_grid,
+                plan.normalization.re.to_bits(),
+                plan.normalization.im.to_bits(),
+                plan.grid_normalization.re.to_bits(),
+                plan.grid_normalization.im.to_bits(),
+            )
+        );
+        assert_eq!(literal_taps.x_support, fused_packed.x_support);
+        assert_eq!(literal_taps.y_support, fused_packed.y_support);
 
         let mut expected_norm = Complex32::new(0.0, 0.0);
         let mut expected_grid_norm = Complex64::new(0.0, 0.0);
@@ -4311,6 +4454,18 @@ mod tests {
             (6isize + 2 * iy - 1) as usize,
         )]
             .conj();
+        let literal_tap = literal_taps.values[((iy + 2) * 5 + (ix + 2)) as usize];
+        let raw_cf = raw.conj();
+        let phase_x = super::casa_aw_axis_phase((2 * ix - 1) as f64 * phase_gradient[0]);
+        let phase_y = super::casa_aw_axis_phase((2 * iy - 1) as f64 * phase_gradient[1]);
+        let pointing_phase = super::casa_aw_phase_gradient_from_axes(phase_x, phase_y);
+        assert_eq!(literal_tap.raw_cf, raw_cf);
+        assert_eq!(literal_tap.post_w_sign, raw);
+        assert_eq!(literal_tap.pointing_phase, pointing_phase);
+        assert_eq!(
+            literal_tap.coefficient,
+            super::casa_aw_literal_complex_multiply(raw, pointing_phase)
+        );
         let phase =
             (2 * ix - 1) as f64 * phase_gradient[0] + (2 * iy - 1) as f64 * phase_gradient[1];
         let expected_tap = raw * Complex32::new(phase.cos() as f32, phase.sin() as f32);
@@ -4323,6 +4478,27 @@ mod tests {
         let negative = projector.plan_sample(0.3 * du, -0.3 * dv, -12.0).unwrap();
         assert!(!negative.conjugate_for_grid);
         assert!((negative.normalization - expected_norm.conj()).norm() < 1.0e-5);
+        for non_positive_w in [-12.0, 0.0] {
+            let geometry = super::plan_awproject_sample_geometry(
+                &gridder,
+                &metadata,
+                0.3 * du,
+                -0.3 * dv,
+                non_positive_w,
+            )
+            .unwrap();
+            assert!(!geometry.conjugate_for_grid);
+            let (_, literal) = projector
+                .plan_and_trace_literal_casa_geometry(geometry)
+                .unwrap();
+            assert!(
+                literal
+                    .values
+                    .iter()
+                    .all(|tap| tap.raw_cf == tap.post_w_sign),
+                "CASA conjugates only strictly positive data W; W={non_positive_w}"
+            );
+        }
     }
 
     #[test]
