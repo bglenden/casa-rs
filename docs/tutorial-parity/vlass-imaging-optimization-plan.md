@@ -7011,6 +7011,78 @@ integrity hash to equal the residual member of the existing complete
 visibility-hash contract. At this checkpoint the authorized clean had not yet
 run; its component trajectory and 19 products therefore remained unearned.
 
+The one authorized clean,
+`vlass-4096-4spw-n2000-hybrid-clean-v1`, then completed from pushed commit
+`951505b675ae77a88c58e1ccd0cf4bf7e90ab6f0`. The release executable and
+runner SHA-256 digests were
+`0eb5bcbe883865434a184dadb501cbd5e7df441395263292d0102212572d011d`
+and
+`1a9ba23a044908dd29120fe1137b86d09e5e25491b6f31be938a968bfadfe448`.
+It used the existing V6 acceleration stack plus the private hybrid clean
+path: four SPWs, `2,000` iterations, Metal global tile replay, `4 GiB` replay
+retention, FFTW f64 wisdom, the frozen-base image-response acceleration,
+exact-radix statistics, and the unchanged AWProject, POINTING, Briggs,
+MT-MFS, mask, and product settings.
+
+The row completed normally in `29.43` seconds end to end and `25.362` seconds
+in the imaging core, with `171` major cycles, `2,000` reported minor
+iterations, and no warning or divergence. All `11` exact production refreshes
+used the fixed two-lane builder and reproduced their dynamically changing
+routed residual hash exactly at persistent tile ingress. Per-refresh CPU
+candidate construction was `4.629`--`5.672 ms`; the two serial integrity
+hashes added approximately `8.2 ms`. The fully verified
+prediction-to-tile-ready observations were `59.798`--`70.378 ms`. Those
+include integrity work that the earlier bounded timing field did not charge,
+so they are recorded as clean-stage evidence rather than compared directly
+with the old unverified-field ceiling.
+
+Against the frozen exact casa-rs control, all `171` component choices, cycle
+boundaries, update counts, refresh boundaries, and the final `2,000`-iteration
+refresh remain identical. The largest numerical differences were `4.851 ppm`
+for candidate strength, `4.115 ppm` for approximate end peak, `4.010 ppm` for
+start/refreshed peak, and `0.878 ppm` for model flux.
+
+The direct frozen-CASA 19-product contract still fails and therefore does not
+promote. Inventory, coordinates, metadata, ordinary numerical ceilings,
+finite topology, mask, PB, PSF, sumwt, and weight gates pass. The blocking
+evidence is:
+
+- alpha and alpha-error each have `16` mask-topology mismatches;
+- image TT0 and TT1 relative RMS differences are `5.726` and `5.767 ppm`;
+- residual TT0 and TT1 relative RMS differences are `4.820` and `5.241 ppm`;
+- model TT0 and TT1 relative RMS differences are `0.967` and `6.205 ppm`; and
+- the four image/residual structured-difference results remain
+  `investigate`.
+
+This result falsifies the hypothesis that carrying the corrected
+wide-division/source-phase/Taylor operation graph through the clean's exact
+refreshes is sufficient to close the reduced row. It leaves the hybrid branch
+scientifically useful at the frozen-CASA-model boundary, where the read-only
+closure was approximately `0.074`--`0.110 ppm`, but does not earn production
+incorporation. The evidence now points to evolving model/component state
+rather than final-model residual formation as the remaining owner; that is an
+inference to test, not a correctness claim. The four-SPW row, full-16-SPW
+row, and full-geometry memory campaign remain unpromoted.
+
+The immutable SHA-256 receipts are:
+
+- run log:
+  `99fefee3f1fdd251fa651c70c165511517fc81a7849aa40f611fc2f2f7a4a0f3`;
+- exact-control trajectory comparison:
+  `979242b44469a8101da1f5dd9932614ca1a946fc2de1d4354c0956bc676b66ef`;
+- frozen-CASA comparison input:
+  `eca7d159dc44b7bbc7a055e58cacb6bc1d90ff13dd5134ee4655177faa037602`;
+- frozen-CASA comparison result:
+  `03f8a4d8027479559749202abdfd99fe2f1bbdae905dc3a0b56d2bce272b93ab`;
+  and
+- frozen-CASA comparison log:
+  `45683db62bbf326e11646cab3f50143c19965b54304a5dc8cd8bf7157906f226`.
+
+No CASA imaging task or reference generation, full-16-SPW row,
+`12,150`-square development run, or memory-policy experiment ran. The
+post-run comparison used only the existing frozen CASA product tree through
+the CASA Python reader.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
