@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 root="${CASA_RS_VLASS_EXPERIMENT_ROOT:-/Volumes/GLENDENNING/casa-rs-vlass/issue-446}"
+receipt_date="${CASA_RS_VLASS_RECEIPT_DATE:-$(date -u +%Y%m%d)}"
 binary="${CASA_RS_VLASS_EXPERIMENT_BINARY:-$repo_root/target/release/casars-imager}"
 fftw_dir="${CASA_RS_VLASS_FFTW_LIBRARY_DIR:-/opt/homebrew/opt/fftw/lib}"
 fftw_threads="${CASA_RS_VLASS_FFTW_THREADS:-1}"
@@ -50,6 +51,10 @@ image_response_dyadic_tiles="${CASA_RS_VLASS_IMAGE_RESPONSE_DYADIC_TILES:-0}"
 incremental_model_max_delta_positions="${CASA_RS_VLASS_INCREMENTAL_MODEL_MAX_DELTA_POSITIONS:-1}"
 metal_tile_side="${CASA_RS_VLASS_METAL_TILE_SIDE:-16}"
 replay_retention_bytes="${CASA_RS_VLASS_REPLAY_RETENTION_BYTES:-}"
+frozen_model_prefix="${CASA_RS_VLASS_FROZEN_MODEL_PREFIX:-}"
+frozen_weight_image="${CASA_RS_VLASS_FROZEN_WEIGHT_IMAGE:-}"
+frozen_restoring_beam="${CASA_RS_VLASS_FROZEN_RESTORING_BEAM:-}"
+frozen_final_state_checkpoints="${CASA_RS_VLASS_FROZEN_FINAL_STATE_CHECKPOINTS:-0}"
 measures_dir="${CASA_RS_VLASS_MEASURES_DIR:-$HOME/.casa/data}"
 ms="$root/data/frozen-clean-b80d5e87487a/VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms"
 residual_only_label=""
@@ -94,6 +99,63 @@ acceleration_label=""
 parallel_label=""
 parallel_argument=(--no-parallel)
 experimental_environment=(CASA_RS_VLASS_EXPERIMENT_RUNNER=1)
+if [[ -n "$frozen_model_prefix" ]]; then
+    for term in 0 1; do
+        if [[ ! -d "${frozen_model_prefix}.model.tt${term}" ]]; then
+            echo "frozen MT-MFS model term does not exist: ${frozen_model_prefix}.model.tt${term}" >&2
+            exit 2
+        fi
+    done
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_FROZEN_MODEL_PREFIX="$frozen_model_prefix"
+    )
+fi
+if [[ -n "$frozen_weight_image" ]]; then
+    if [[ -z "$frozen_model_prefix" ]]; then
+        echo "CASA_RS_VLASS_FROZEN_WEIGHT_IMAGE requires CASA_RS_VLASS_FROZEN_MODEL_PREFIX" >&2
+        exit 2
+    fi
+    if [[ ! -d "$frozen_weight_image" ]]; then
+        echo "frozen AWProject prediction weight image does not exist: $frozen_weight_image" >&2
+        exit 2
+    fi
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_FROZEN_WEIGHT_IMAGE="$frozen_weight_image"
+    )
+fi
+if [[ -n "$frozen_restoring_beam" ]]; then
+    if [[ -z "$frozen_model_prefix" ]]; then
+        echo "CASA_RS_VLASS_FROZEN_RESTORING_BEAM requires CASA_RS_VLASS_FROZEN_MODEL_PREFIX" >&2
+        exit 2
+    fi
+    if [[ ! "$frozen_restoring_beam" =~ ^[0-9]+([.][0-9]+)?(e[-+]?[0-9]+)?,[0-9]+([.][0-9]+)?(e[-+]?[0-9]+)?,-?[0-9]+([.][0-9]+)?(e[-+]?[0-9]+)?$ ]]; then
+        echo "CASA_RS_VLASS_FROZEN_RESTORING_BEAM must be major_arcsec,minor_arcsec,position_angle_deg" >&2
+        exit 2
+    fi
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_FROZEN_RESTORING_BEAM="$frozen_restoring_beam"
+    )
+fi
+if [[ "$frozen_final_state_checkpoints" == "1" ]]; then
+    if [[ -z "$frozen_model_prefix" || -z "$frozen_restoring_beam" ]]; then
+        echo "CASA_RS_VLASS_FROZEN_FINAL_STATE_CHECKPOINTS requires a frozen model and restoring beam" >&2
+        exit 2
+    fi
+    if [[ "$residual_only_refresh" != "1" \
+        || "$residual_live_cfs_only" != "1" \
+        || "$prime_replay_initial_dirty" != "1" \
+        || "$metal_global_tile_replay" != "1" \
+        || "$image_response_cache" != "0" ]]; then
+        echo "frozen-final-state checkpoints require residual-only live-CF refresh, initial-dirty replay priming, global Metal replay, and no image-response cache" >&2
+        exit 2
+    fi
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_FROZEN_FINAL_STATE_CHECKPOINTS=1
+    )
+elif [[ "$frozen_final_state_checkpoints" != "0" ]]; then
+    echo "CASA_RS_VLASS_FROZEN_FINAL_STATE_CHECKPOINTS must be 0 or 1" >&2
+    exit 2
+fi
 if [[ "$tapless_phase" == "1" ]]; then
     tapless_phase_label="-tapless-phase-atlas"
     experimental_environment+=(CASA_RS_AWPROJECT_TAPLESS_PHASE_EXPERIMENT=1)
@@ -115,8 +177,8 @@ elif [[ "$replay_compact_programs" != "0" ]]; then
     exit 2
 fi
 if [[ "$prime_replay_initial_dirty" == "1" ]]; then
-    if [[ "$replay_compact_programs" != "1" ]]; then
-        echo "CASA_RS_VLASS_PRIME_REPLAY_INITIAL_DIRTY requires CASA_RS_VLASS_REPLAY_COMPACT_PROGRAMS=1" >&2
+    if [[ "$replay_compact_programs" != "1" && "$frozen_final_state_checkpoints" != "1" ]]; then
+        echo "CASA_RS_VLASS_PRIME_REPLAY_INITIAL_DIRTY requires compact replay programs or the frozen-final-state checkpoint diagnostic" >&2
         exit 2
     fi
     prime_replay_initial_dirty_label="-prime-replay-initial-dirty"
@@ -546,7 +608,7 @@ if [[ -n "${CASA_RS_VLASS_LABEL_OVERRIDE:-}" ]]; then
     label="$CASA_RS_VLASS_LABEL_OVERRIDE"
 fi
 output="$root/artifacts/products/$label/rust"
-log="$root/receipts/runs/20260729-$label.log"
+log="$root/receipts/runs/${receipt_date}-$label.log"
 cf_cache="$root/cf-cache/6.7.5.18/single-field-4096-four-spw"
 mask="$root/masks/vlass-single-field-peak-box-4096.mask"
 
