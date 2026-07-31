@@ -7895,6 +7895,82 @@ retirement of superseded production paths. This update changes the search
 method, not the VLASS scientific contract, iteration ladder, final workloads,
 or independent 10x acceptance requirement.
 
+### 2026-07-31 frozen-evidence architecture-tournament audit
+
+The first tournament audit is now reusable and content-bound:
+
+- tool:
+  `tools/perf/imager/experiments/vlass_architecture_tournament_audit.py`;
+- focused tests:
+  `tools/perf/imager/experiments/test_vlass_architecture_tournament_audit.py`;
+- receipt:
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/diagnostics/20260731-vlass-4096-full16-architecture-tournament-v1.json`;
+- receipt SHA-256:
+  `5441b3d024ee9e84dafcd1649f562b06a720ea07c541b70e042de6d1d177f29d`;
+- promoted scientific-floor receipt SHA-256:
+  `131120ea9ea8318e457a91a9b3ea19ded85f4c96ecc226187cebe1691c5ad938`;
+- promoted casa-rs log SHA-256:
+  `4e8038810a3f5aa951cd7cb735c5c75af50dfcee8406ea8294b40203f45ce7aa`;
+  and
+- workload SHA-256:
+  `b2c5c95764531f4b542178e83f1cf6a5b82d0dd17a8565ab6b974235939e94fc`.
+
+The tool first runs the canonical promoted-4096 scientific receipt validator.
+It then rejects evidence whose full-16-SPW selection, 4,096-square AWProject
+contract, deterministic 64-by-64 mask, minor-cycle topology, replay-block
+counts, sample counts, residual-refresh counts, kernel totals, or content
+hashes do not reconcile. It runs neither CASA nor casa-rs imaging and labels
+its output as a work projection rather than correctness, speedup, or promotion
+evidence.
+
+The promoted trajectory contains 385,862 accepted samples, five residual
+refreshes, five minor cycles with `[8, 392, 210, 28, 3]` updates, 641 total
+updates, 20 replay calls per operator, and 11 logical expensive AW operations:
+one initial adjoint plus five prediction/adjoint pairs. Those operations
+account for 3,622,744,664 sampled-kernel interactions. The retained compact
+replay programs occupy 6,985,045,904 bytes, their initial materialization takes
+5,096.050 ms, and the point-scale candidate count is exactly the 4,096 mask
+pixels in every cycle. The measured 42.91-second run assigns 18,778.799 ms to
+the initial PSF grid and 9,460.969 ms to major-cycle refresh. Eliminating those
+stages entirely has only a 2.925x wall-clock Amdahl ceiling, which is further
+evidence that the architecture must remove work across the full operator
+trajectory rather than tune one kernel.
+
+The visibility-resident component candidate is the first executable
+discriminator. On the actual 641-component trajectory, direct component
+prediction costs 247,337,542 visibility/component pairs. Retaining the initial
+adjoint, replacing repeated model prediction with that component operation,
+and allowing exactly one final adjoint projects to 1,241,951,156 interaction
+units, or `0.342821x` the incumbent count. It removes eight of 11 expensive
+operator calls and clears the tournament's `0.35x` work gate. This is not a
+speedup claim: the AW/WB/conjugate-beam/POINTING component response, frozen
+science floor, end-to-end timing, and full-size liveness are not measured yet.
+A second final or intermediate adjoint raises the projection to `0.435797x`
+and fails the `0.35x` gate, so it is outside the first discriminator. Its
+persistent-state target is at most 151,257,904 bytes, the stricter of 10% of
+the replay artifact and twice the retained packed-visibility bytes.
+
+Two apparently attractive alternatives are now quantitatively narrowed.
+Direct DFT over all 4,096 mask pixels for every refresh would require
+7,902,453,760 pairs and is rejected. Standalone image-domain subgrids at sides
+`32`, `48`, `64`, and `96` project to `1.1997x`, `2.6994x`, `4.7990x`, and
+`10.7977x` the current interaction count across all 11 calls, so standalone
+IDG fails its `0.80x` gate before phase and bookkeeping costs. An `L=32`
+subgrid remains live only as a combined route after operator-call elimination:
+actual component pairs plus one initial and one final subgrid adjoint project
+to `0.286408x`. Low-rank A/POINTING/W, residual-W stacking, and separable-CF
+candidates remain at their required rank or cost audits; none has been
+promoted.
+
+The next bounded implementation experiment is therefore an exact or tunably
+bounded AW/WB/conjugate-beam/POINTING-aware component predictor with resident
+visibility residuals. Its first version must preserve the current initial
+adjoint and perform only one mandatory final adjoint. It aborts if the
+component response cannot be represented within the 151,257,904-byte state
+target, expands the deterministic active region, projects above `0.70x`
+incumbent work, or fails the frozen scientific floor. No production-default
+change follows from this audit.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
