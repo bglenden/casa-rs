@@ -58868,6 +58868,236 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires the frozen four-SPW VLASS products and CASA CF caches"]
+    fn vlass_four_spw_tt0_first_source_replay_inputs() {
+        use sha2::{Digest, Sha256};
+
+        fn read_plane(path: &std::path::Path) -> Array2<f32> {
+            let image = casa_images::PagedImage::<f32>::open(path)
+                .unwrap_or_else(|error| panic!("open {}: {error}", path.display()));
+            let shape = image.shape();
+            assert!(
+                shape.len() == 2 || shape == [shape[0], shape[1], 1, 1],
+                "unexpected VLASS image shape {shape:?} at {}",
+                path.display()
+            );
+            let pixels = image
+                .get()
+                .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+            Array2::from_shape_fn((shape[0], shape[1]), |(x, y)| {
+                if shape.len() == 2 {
+                    pixels[ndarray::IxDyn(&[x, y])]
+                } else {
+                    pixels[ndarray::IxDyn(&[x, y, 0, 0])]
+                }
+            })
+        }
+
+        fn complex_bits(value: Complex32) -> serde_json::Value {
+            serde_json::json!([value.re.to_bits(), value.im.to_bits()])
+        }
+
+        let model_prefix = std::path::PathBuf::from(
+            std::env::var_os("CASA_RS_VLASS_FOUR_SPW_MODEL_PREFIX")
+                .expect("set CASA_RS_VLASS_FOUR_SPW_MODEL_PREFIX"),
+        );
+        let model_terms = (0..2)
+            .map(|term| {
+                read_plane(std::path::Path::new(&format!(
+                    "{}.model.tt{term}",
+                    model_prefix.to_string_lossy()
+                )))
+            })
+            .collect::<Vec<_>>();
+        let weight_path = std::path::PathBuf::from(
+            std::env::var_os("CASA_RS_VLASS_FOUR_SPW_WEIGHT")
+                .expect("set CASA_RS_VLASS_FOUR_SPW_WEIGHT"),
+        );
+        let weight = read_plane(&weight_path);
+        assert_eq!(model_terms[0].dim(), (4096, 4096));
+        assert_eq!(model_terms[1].dim(), model_terms[0].dim());
+        assert_eq!(weight.dim(), model_terms[0].dim());
+
+        let support = super::nonzero_model_support_positions(&model_terms);
+        assert_eq!(support.len(), 2_166);
+        let gridder = StandardGridder::new_unpadded(ImageGeometry {
+            image_shape: [4096, 4096],
+            cell_size_rad: [2.908_882_086_657_216e-6, 2.908_882_086_657_216e-6],
+        })
+        .expect("create unpadded VLASS gridder");
+        let prepared = super::sparse_flat_sky_awproject_model_casacore_storage(
+            &gridder,
+            &model_terms[0],
+            &weight,
+            0.0001,
+            &support,
+        )
+        .expect("prepare frozen four-SPW TT0 model");
+        let grid = super::execute_awproject_model_fft_casacore_storage(
+            prepared,
+            super::AwProjectModelFftPlan {
+                backend: FftBackendChoice::Fftw,
+                casacore_layout: true,
+                threads: 8,
+                threads_source: "frozen-diagnostic",
+                source: "frozen-diagnostic",
+            },
+        )
+        .expect("transform frozen four-SPW TT0 model");
+        let mut grid_hash = Sha256::new();
+        grid_hash.update(0_u64.to_le_bytes());
+        grid_hash.update((grid.nrows() as u64).to_le_bytes());
+        grid_hash.update((grid.ncols() as u64).to_le_bytes());
+        for value in &grid {
+            grid_hash.update(value.re.to_bits().to_le_bytes());
+            grid_hash.update(value.im.to_bits().to_le_bytes());
+        }
+        let grid_hash = format!("{:x}", grid_hash.finalize());
+        assert_eq!(
+            grid_hash,
+            "2cc338fcd624042ece5727245d51182f990f78fef85200b8fd7ca4011c745289"
+        );
+
+        let source_frequency_hz = 1_986_926_888.288_546_6_f64;
+        let source_w_m = 1_892.803_548_834_091_1_f64;
+        let source_w_lambda = source_w_m * source_frequency_hz / super::SPEED_OF_LIGHT_M_PER_S;
+        let source_pa_deg = 57.262_386_718_230_13_f64;
+        let four_spw_cache_path = std::path::PathBuf::from(
+            std::env::var_os("CASA_RS_VLASS_FOUR_SPW_CF_CACHE")
+                .expect("set CASA_RS_VLASS_FOUR_SPW_CF_CACHE"),
+        );
+        let full16_cache_path = std::path::PathBuf::from(
+            std::env::var_os("CASA_RS_VLASS_FULL16_CF_CACHE")
+                .expect("set CASA_RS_VLASS_FULL16_CF_CACHE"),
+        );
+        let four_spw_cache = super::AwConvolutionFunctionCache::open(&four_spw_cache_path)
+            .expect("open four-SPW CF cache");
+        let full16_cache = super::AwConvolutionFunctionCache::open(&full16_cache_path)
+            .expect("open full-16-SPW CF cache");
+        let four_spw_key = four_spw_cache
+            .select_key_for_prediction_sample(
+                source_frequency_hz,
+                source_w_lambda,
+                0,
+                source_pa_deg,
+            )
+            .expect("select four-SPW prediction CF");
+        let full16_key = full16_cache
+            .select_key_for_prediction_sample(
+                source_frequency_hz,
+                source_w_lambda,
+                0,
+                source_pa_deg,
+            )
+            .expect("select full-16-SPW prediction CF");
+        assert_eq!(four_spw_key, full16_key);
+        let four_spw_cell = four_spw_cache
+            .load(four_spw_key)
+            .expect("load four-SPW prediction CF");
+        let full16_cell = full16_cache
+            .load(full16_key)
+            .expect("load full-16-SPW prediction CF");
+        assert_eq!(four_spw_cell.imaging.dim(), full16_cell.imaging.dim());
+        let mut cf_mismatch_count = 0_usize;
+        let mut first_cf_mismatch = None;
+        for (index, (&four_spw, &full16)) in four_spw_cell
+            .imaging
+            .iter()
+            .zip(full16_cell.imaging.iter())
+            .enumerate()
+        {
+            if four_spw.re.to_bits() != full16.re.to_bits()
+                || four_spw.im.to_bits() != full16.im.to_bits()
+            {
+                cf_mismatch_count += 1;
+                first_cf_mismatch.get_or_insert_with(|| {
+                    serde_json::json!({
+                        "linear_index": index,
+                        "four_spw_bits": complex_bits(four_spw),
+                        "full16_bits": complex_bits(full16),
+                    })
+                });
+            }
+        }
+
+        let loc = [1950_usize, 2209_usize];
+        let support_radius = 9_isize;
+        let mut taps = Vec::with_capacity(361);
+        for iy in -support_radius..=support_radius {
+            for ix in -support_radius..=support_radius {
+                let x = loc[0].checked_add_signed(ix).expect("tap X");
+                let y = loc[1].checked_add_signed(iy).expect("tap Y");
+                taps.push(serde_json::json!({
+                    "index": taps.len(),
+                    "ix": ix,
+                    "iy": iy,
+                    "grid_x": x,
+                    "grid_y": y,
+                    "grid_bits": complex_bits(grid[(x, y)]),
+                }));
+            }
+        }
+        let receipt = serde_json::json!({
+            "schema": "casa-rs-vlass-tt0-first-mismatch-replay-inputs-v1",
+            "role": "offline_single_source_diagnostic_not_promotion_evidence",
+            "source": {
+                "ordinal": 0,
+                "row": 0,
+                "channel": 11,
+                "polarization": "RR",
+                "term": 0,
+                "frequency_hz_bits": source_frequency_hz.to_bits(),
+                "data_w_m_bits": source_w_m.to_bits(),
+                "w_lambda_bits": source_w_lambda.to_bits(),
+                "parallactic_angle_deg_bits": source_pa_deg.to_bits(),
+            },
+            "model": {
+                "prefix": model_prefix,
+                "weight": weight_path,
+                "support_positions": support.len(),
+                "pb_limit_bits": 0.0001_f32.to_bits(),
+                "grid_shape": [grid.nrows(), grid.ncols()],
+                "grid_sha256": grid_hash,
+                "grid_hash_contract": "sha256-le-term-shape-ndarray-iteration-complex32-bits",
+                "fftw_threads": 8,
+            },
+            "coefficient_cache_binding": {
+                "four_spw_cache": four_spw_cache_path,
+                "full16_cache": full16_cache_path,
+                "selected_key": {
+                    "frequency_hz_bits": four_spw_key.frequency_hz.to_bits(),
+                    "w_value_lambda_bits": four_spw_key.w_value_lambda.to_bits(),
+                    "mueller_element": four_spw_key.mueller_element,
+                    "parallactic_angle_deg_bits": four_spw_key.parallactic_angle_deg.to_bits(),
+                },
+                "imaging_shape": four_spw_cell.imaging.dim(),
+                "pixel_count": four_spw_cell.imaging.len(),
+                "pixel_mismatch_count": cf_mismatch_count,
+                "first_pixel_mismatch": first_cf_mismatch,
+            },
+            "tap_geometry": {
+                "loc": loc,
+                "support": [support_radius, support_radius],
+                "tap_count": taps.len(),
+            },
+            "taps": taps,
+        });
+        let output_path = std::path::PathBuf::from(
+            std::env::var_os("CASA_RS_VLASS_TT0_REPLAY_INPUT_RECEIPT")
+                .expect("set CASA_RS_VLASS_TT0_REPLAY_INPUT_RECEIPT"),
+        );
+        let bytes = serde_json::to_vec_pretty(&receipt).expect("serialize replay inputs");
+        std::fs::write(&output_path, bytes)
+            .unwrap_or_else(|error| panic!("write {}: {error}", output_path.display()));
+        eprintln!(
+            "vlass_four_spw_tt0_replay_inputs receipt={} model_grid_sha256={} cf_pixel_mismatches={}",
+            output_path.display(),
+            receipt["model"]["grid_sha256"].as_str().unwrap(),
+            cf_mismatch_count,
+        );
+    }
+
+    #[test]
     fn awproject_model_preparation_preserves_casa_lel_float_denominator_boundary() {
         let model_value = f32::from_bits(0x3fcb_5f9b);
         let weight_value = f32::from_bits(0x3f45_8f9d);

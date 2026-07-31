@@ -5658,6 +5658,90 @@ development clean, memory-policy experiment, repeated CASA timing, or
 unchanged CASA reference was run. The next step must discriminate CASA's TT0
 degrid/phase arithmetic before another production candidate is measured.
 
+### 2026-07-31 first-source TT0 tap replay
+
+The same Oracle conversation selected one offline, single-source certificate
+before any further prediction or clean run. The diagnostic targets source
+ordinal zero, RR, TT0, and the exact 361-tap AW footprint. It does not execute
+CASA, read the MeasurementSet, run a prediction, grid a residual, form an
+image product, or enter CLEAN.
+
+The existing full-16-SPW CASA prefix trace could not be reused merely by
+assuming that its inputs matched the four-SPW row. A private ignored
+`casa-imaging` diagnostic therefore reconstructed the current four-SPW TT0
+model grid through the exact production sparse flat-sky preparation and
+pinned CASA FFTW `3.3.10-neon` path. The complete
+`4096 x 4096` grid reproduced the frozen production SHA-256
+`2cc338fcd624042ece5727245d51182f990f78fef85200b8fd7ca4011c745289`
+and the imported TT0/TT1 support union contained the expected `2,166`
+positions. The first test-process launch stopped before the transform because
+the threaded FFTW library's `@rpath` dependency was not visible. It wrote no
+receipt and supports no scientific conclusion. Repeating the unchanged
+extractor with the same pinned directory in `DYLD_LIBRARY_PATH` completed in
+`12.90` seconds.
+
+The extractor independently opened the four-SPW and full-16-SPW CF caches and
+selected the prediction cell for the exact source frequency, W coordinate,
+Mueller role, and parallactic-angle bin. Both selected the same scientific key
+and all `193,600` complex imaging-CF pixels were bit-identical. The existing
+CASA trace also has the same source frequency, local row/channel, grid
+location, support, sampling, final source phasor, and normalization. Reusing
+its 361 post-W/post-POINTING coefficients is therefore bound by measured
+inputs rather than by cache-name similarity.
+
+The offline replay validates the coefficient chain and records exact ordered
+stream and prefix identities:
+
+- coefficient-plus-current-grid stream SHA-256
+  `41a48b7e4961dbe705ec1ba17c0ef1632666729c7268df729ba3d7b878396dce`;
+- product-plus-accumulator-prefix SHA-256
+  `8ce7a77dbe7e2a6f4fe871601b30d5d86e57884db7f765ff2bb6d619bf3f613a`;
+- final ordered accumulator bits
+  `[1033899791, 1036192990]`; and
+- normalization bits `[1064179348, 3172914251]`.
+
+The source phasor leaves the accumulator bits unchanged. Evaluating the final
+complex normalization three ways then gives three adjacent imaginary results:
+
+- separately rounded Float32 products and additions:
+  `[1034097304, 1037600251]`, matching neither implementation;
+- wide intermediate arithmetic with one final Float32 narrowing:
+  `[1034097304, 1037600252]`, exactly matching CASA; and
+- the contractible Float32 numerator expressed by the production Metal
+  kernel: `[1034097304, 1037600253]`, exactly matching casa-rs.
+
+The classification is
+`final-complex-division-arithmetic-boundary`. CF selection, cached CF pixels,
+POINTING phase geometry, model preparation, FFT output, tap ordering,
+normalization input, and the ordered 361-tap accumulator are no longer the
+output-owning ambiguity for the first TT0 mismatch. This does not yet prove
+that changing this one expression closes all `111,784` TT0 source-role
+mismatches or the 19-product clean contract.
+
+The reused CASA prefix trace, four-SPW replay-input receipt, term-comparison
+receipt, and final replay receipt SHA-256 values are, respectively:
+
+- `2132fef78984ba633571d1a36aa82bcb6ea52036a02b01d8c407501d607aafdc`;
+- `aeb1b3a74076ee57dbd23c80efeeef5bb86ccd246a082e9a82ae6460bba04390`;
+- `c947cbf74e3383004ad3ce84dc5fc1dd32216ddf9dece0c332ae258187d92db1`;
+  and
+- `bd174e38433246e47014ec17a90ebb1a4f39e3a1639fca92eb74b6f15e061608`.
+
+The replay analyzer and its focused test hash to
+`6fe99011dae5f045be1aa98b5d8470e1befc12f219525cbe4995ce84366ad62d`
+and
+`ac7a7fc73acbdb16ac9f97457953506d9cd95ed79ff8edb80b9cafbd7e486e4b`.
+The two external receipts are preserved under
+`receipts/diagnostics/20260731-vlass-4spw-tt0-first-mismatch-*`.
+
+No production arithmetic changed in this checkpoint and the four-SPW row
+remains unpromoted. The next bounded candidate is a diagnostic-only
+CASA-complex division implementation at the Metal degrid normalization
+boundary, followed by the already-existing prediction-only sidecar. It must
+reduce the full TT0 mismatch census before any clean is considered. No clean,
+full-16-SPW row, `12,150`-square development clean, memory-policy experiment,
+repeated CASA timing, or unchanged CASA reference was run.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
