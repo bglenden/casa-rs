@@ -39,6 +39,7 @@ FINAL_SCHEMA = "casa-rs-vlass-final-model-term-causality-certificate-v1"
 PRIMARY_LABELS = ("control-a", "complete-rust-model")
 HYBRID_LABELS = ("tt0-rust-only", "tt1-rust-only")
 IMAGE_SUFFIXES = (".image.tt0", ".image.tt1")
+DERIVED_SUFFIXES = IMAGE_SUFFIXES + (".alpha", ".alpha.error")
 
 
 def sha256_file(path: Path) -> str:
@@ -186,14 +187,40 @@ def phase_a_control_exact(batch: dict[str, Any]) -> tuple[bool, dict[str, bool]]
     control = case_map(batch)["control-a"]
     expected = batch["frozen_identity"]["phase_a_contract"]["products"]
     checks: dict[str, bool] = {}
-    for suffix in IMAGE_SUFFIXES:
-        checks[f"{suffix}.numeric"] = (
-            control["products"][suffix]["numeric"] == expected[suffix]
+    exact_numeric_fields = (
+        "count",
+        "bitwise_equal_count",
+        "bitwise_mismatch_count",
+        "candidate_sha256",
+        "reference_sha256",
+        "maximum_ulp_distance",
+    )
+    exact_first_mismatch_fields = (
+        "location",
+        "candidate_bits",
+        "reference_bits",
+        "ulp_distance",
+    )
+    for suffix in DERIVED_SUFFIXES:
+        actual_numeric = control["products"][suffix]["numeric"]
+        expected_numeric = expected[suffix].get("numeric", expected[suffix])
+        checks[f"{suffix}.array-ledger"] = all(
+            actual_numeric.get(key) == expected_numeric.get(key)
+            for key in exact_numeric_fields
+        )
+        actual_first = actual_numeric.get("first_mismatch")
+        expected_first = expected_numeric.get("first_mismatch")
+        checks[f"{suffix}.first-mismatch-ledger"] = (
+            actual_first is None
+            and expected_first is None
+            or isinstance(actual_first, dict)
+            and isinstance(expected_first, dict)
+            and all(
+                actual_first.get(key) == expected_first.get(key)
+                for key in exact_first_mismatch_fields
+            )
         )
     for suffix in (".alpha", ".alpha.error"):
-        checks[f"{suffix}.numeric"] = (
-            control["products"][suffix]["numeric"] == expected[suffix]["numeric"]
-        )
         actual_topology = control["products"][suffix]["topology"]
         checks[f"{suffix}.topology"] = all(
             actual_topology.get(key) == value
