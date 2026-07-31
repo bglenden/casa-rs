@@ -5370,6 +5370,104 @@ full-16-SPW row, `12,150`-square development clean, or memory-policy
 experiment ran. The four-SPW promotion and every later ladder gate remain
 closed.
 
+### 2026-07-30 frozen same-model prediction boundary
+
+The alpha-cliff certificate exhausted the already-frozen evidence without
+identifying the earliest residual-operator owner. The same Oracle conversation
+concluded that the only honest next discriminator was one new reduced CASA
+intermediate using the exact frozen four-SPW CASA model. This is a new
+correctness oracle, not a repeated unchanged CASA reference or timing sample.
+The existing `vlass_casa_prediction_trace.py` cloned the frozen 19-product
+bundle and scratch MS, ran one `niter=0`, `calcres=True`, `calcpsf=False`,
+`restoration=False`, `restart=True`, `savemodel='modelcolumn'` final residual
+refresh, and protected the frozen model, PSF, and sumwt content hashes across
+the call.
+
+Two fail-closed operational receipts are retained. CASA first created its
+startup logfile before the script's no-overwrite check, so the first attempt
+stopped before copying the MS or invoking `tclean`; that bootstrap log hashes
+to `ece798d5b528f58dbcbfdbd2f0679655a1428a0b9b1c74208179345521df4bd9`.
+The next attempt copied the scratch inputs but stopped in
+`SynthesisImagerVi2::defineImage` before gridding because the historical
+recipe embedded the former volume name in `cfcache`; its run log hashes to
+`098991046c8b1a39df4f74732d680c637a21be68eef1970f0534439458810a28`.
+The reusable trace tool now supports a fail-closed `--resume-existing` mode
+that first proves the copied protected products still match their frozen
+sources, and a `--cfcache` path rebind for the same cache after a volume move.
+The same scratch run then resumed in place. It selected `2,233` rows and
+completed one CASA `6.7.5.18` major-cycle refresh with zero clean iterations.
+The `10.855`-second elapsed value is diagnostic only and is not CASA
+performance evidence. The successful CASA log SHA-256 is
+`e15601e8458a646b328da4c0990502e582e48b2194beb5a7de3b754e2bb6f2af`.
+
+The initial MODEL_DATA-only trace and receipt hash to
+`0e268774908e3acb4d4bd953e0d9fbd0abaaf36a2ea5f4e2758d047e863f7153`
+and `5a5bdf9c358ebeb215cc9b7c77f08d4f78644dd03a3c36e3e176853727b5bcdf`.
+An extraction-only pass over the completed scratch MS added DATA, FLAG,
+WEIGHT, antenna, UVW, DDID, SPW, row, time, and channel-frequency arrays
+without another CASA call. Its v2 NPZ and receipt hash to
+`a801635e7d9529cc4dbd3f462abd10bdcd66b8283bb5894a85da419a95899b7d`
+and `984f0f71f13d26e9e58ff5e404970a19dc7f9b7f01d6e41c9daa0d9f7f22ed4d`.
+The trace-tool source SHA-256 is
+`80f4919f7b9a030193e835d138188ed7f00a6e1cf0cdb442e8670181bc2cda86`.
+
+The first two comparison receipts correctly failed closed. Both reproduced
+the exact `98,239` admitted-sample count but hashed raw MS-frame visibilities,
+omitting the mosaic UVW reprojection and phase rotation selected whenever
+`usepointing=true`. Their SHA-256 digests are
+`f7391c01329fe8439454bedce18757fe299c9056be01cb9bdf4e68828eb4a0e8`
+and `e31197bd132006b4d2d607e25cd525692a4a45b023ac2a84fec31df86550715d`.
+No prediction conclusion uses either receipt.
+
+The frontend-only `vlass_prediction_boundary_source_trace` then opened each
+selected SPW independently in production DDID order and recorded the exact
+accepted row/channel identity, LSRK frequency, mosaic phase shift, f32 phasor,
+and collapsed Stokes-I bits. It cannot enter weighting, CF loading,
+prediction, gridding, FFT, deconvolution, restoration, or product formation.
+The trace contains `98,239` samples and hashes to
+`0f5c3a7ee8e546aa5291ed6d97ff3057e80dd87b7d0ffca8bc9ecf998d599725`;
+its source and executable hash to
+`e083d009089caf85ef36080c1d0c34154943af7e1d99d5b96b4e3cb31d10e09c`
+and `22db1fe20dad4c0d627d5e3c894d9ab64cdc267aa33df83ca717be8be2be1a0f`.
+
+The final v3 comparison is valid:
+
+- all `98,239` sample identities and the admitted count match;
+- the independently phase-rotated RR/LL DATA stream reproduces the frozen
+  Phase-B observed SHA-256 exactly,
+  `3601b5c6ebf749d58c80bc16b329db68a94557e5d7cbb477034b061ef89f2172`;
+- all `98,239` collapsed Stokes-I values reproduce the casa-rs frontend trace
+  bit-for-bit, with zero mismatches;
+- the phase-rotated CASA MODEL_DATA stream hashes to
+  `2c6a3072a7f5556c81cc5b691a8d0ac2d7b055010bb8f171ed207d5d1a5d1e5d`;
+- applying the same two f32 subtractions as the frozen Phase-B checkpoint
+  gives CASA-derived residual and recovered-prediction hashes
+  `4db5487bff286e841718aec4a600f3b5c1ebf3aa602c5120a0796832355ad6d9`
+  and `bcbcacabf599b1d9a6fe4cfd6eb9a59166e7a946e07238bf7a776dfade72cc42`;
+  and
+- those differ from Phase B's residual and recovered-prediction hashes
+  `3ab0ed020a6b75ed54aadd91606c7d6e0fc8424575f77f931654e1addb3b6f98`
+  and `68d6dc8c6b4ec45b8cad8d17ee44cdc1a1220e0ae261c251a35b75899ecb0bf9`.
+
+The v3 receipt SHA-256 is
+`3d73effbb686c0f57d2572b7f2f007b10c7a8f506ccddc6212c050530fa3f4b7`;
+the comparison-tool source hashes to
+`7a3dd0b81c1aa9ae07ce7b29339e17b703d47a6333b9e512d0dbf5994c563817`.
+Because admission, source order, mosaic phase rotation, and observed values
+are now exact, the classification is `prediction-boundary-difference`. The
+remaining alpha-cliff deficit already exists at prediction; downstream
+residual gridding, compensated readback, FFT, normalization, and product
+formation are not the earliest owner. This receipt does not yet distinguish
+model-grid sampling, prediction CF selection, tap arithmetic, phase
+application, Taylor synthesis, or Metal readback within prediction.
+
+The diagnostic stops at that earliest differing boundary and does not promote
+the row or justify a production change by itself. No clean, full-16-SPW row,
+`12,150`-square development clean, memory-policy experiment, repeated CASA
+timing, or unchanged CASA reference rerun occurred. The same Oracle
+conversation will select one prediction-side discriminator only after this
+evidence is committed, pushed, and recorded on the draft PR.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.

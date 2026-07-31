@@ -141,30 +141,47 @@ def selected_prediction_rows(
             )
         first_model = np.asarray(main.getcell("MODEL_DATA", int(row_ids[0])))
         correlations, channels = first_model.shape
+        first_weight = np.asarray(main.getcell("WEIGHT", int(row_ids[0])))
         model_data = np.empty(
             (row_ids.size, correlations, channels),
             dtype=np.complex64,
         )
+        observed_data = np.empty_like(model_data)
         flags = np.empty((row_ids.size, correlations, channels), dtype=np.bool_)
+        weights = np.empty((row_ids.size, *first_weight.shape), dtype=np.float32)
         frequencies = np.empty((row_ids.size, channels), dtype=np.float64)
         for output_index, row_id in enumerate(row_ids):
             model_data[output_index] = np.asarray(
                 main.getcell("MODEL_DATA", int(row_id)),
                 dtype=np.complex64,
             )
+            observed_data[output_index] = np.asarray(
+                main.getcell("DATA", int(row_id)),
+                dtype=np.complex64,
+            )
             flags[output_index] = np.asarray(
                 main.getcell("FLAG", int(row_id)),
                 dtype=np.bool_,
             )
+            weights[output_index] = np.asarray(
+                main.getcell("WEIGHT", int(row_id)),
+                dtype=np.float32,
+            )
             frequencies[output_index] = channel_frequencies[int(spw_ids[row_id])]
+        antenna1 = np.asarray(main.getcol("ANTENNA1"), dtype=np.int32)[row_ids]
+        antenna2 = np.asarray(main.getcol("ANTENNA2"), dtype=np.int32)[row_ids]
         return {
             "row_id": row_ids,
             "uvw_m": uvw[row_ids],
+            "antenna1": antenna1,
+            "antenna2": antenna2,
             "data_description_id": data_description_ids[row_ids],
             "spectral_window_id": spw_ids[row_ids],
             "time_s": np.asarray(main.getcol("TIME"), dtype=np.float64)[row_ids],
+            "observed_data": observed_data,
             "model_data": model_data,
             "flag": flags,
+            "weight": weights,
             "channel_frequency_hz": frequencies,
             "uv_range_selected": (
                 np.hypot(uvw[row_ids, 0], uvw[row_ids, 1]) < MAX_UV_METERS
@@ -188,6 +205,11 @@ def main() -> None:
     parser.add_argument("--output-npz", required=True, type=Path)
     parser.add_argument("--casa-log", type=Path)
     parser.add_argument(
+        "--cfcache",
+        type=Path,
+        help="rebind the frozen recipe to the same CF cache at a moved volume path",
+    )
+    parser.add_argument(
         "--profile",
         choices=tuple(PROFILE_PARAMETERS),
         default="four-spw",
@@ -197,6 +219,11 @@ def main() -> None:
         "--extract-only",
         action="store_true",
         help="extract MODEL_DATA from an already completed scratch run",
+    )
+    parser.add_argument(
+        "--resume-existing",
+        action="store_true",
+        help="resume a setup-only failure using the existing scratch MS and image clone",
     )
     parser.add_argument(
         "--disable-pointing",
@@ -212,6 +239,8 @@ def main() -> None:
     args = parser.parse_args()
     profile = PROFILE_PARAMETERS[args.profile]
 
+    if args.extract_only and args.resume_existing:
+        raise RuntimeError("--extract-only and --resume-existing are mutually exclusive")
     if args.output_npz.exists():
         raise RuntimeError(f"refusing to overwrite trace: {args.output_npz}")
     if args.casa_log is not None:
@@ -240,21 +269,63 @@ def main() -> None:
             "stopDescription": "recovered from completed MODEL_DATA trace run",
         }
     else:
-        if args.scratch_ms.exists():
-            raise RuntimeError(f"refusing to overwrite scratch MS: {args.scratch_ms}")
-        args.scratch_ms.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(args.source_ms, args.scratch_ms)
-        clone_image_bundle(
-            args.zero_prefix,
-            args.model_prefix,
-            args.output_prefix,
-            args.zero_model_term,
-        )
+        if args.resume_existing:
+            if not args.scratch_ms.is_dir():
+                raise RuntimeError(
+                    f"resume scratch MS is missing: {args.scratch_ms}"
+                )
+            if not prefixed_directories(args.output_prefix):
+                raise RuntimeError(
+                    f"resume CASA output bundle is missing: {args.output_prefix}.*"
+                )
+            expected_content = {
+                suffix: image_content_sha256(
+                    Path(
+                        f"{args.model_prefix if suffix in MODEL_SUFFIXES else args.zero_prefix}"
+                        f"{suffix}"
+                    )
+                )
+                for suffix in protected_suffixes
+            }
+            resumed_content = {
+                suffix: image_content_sha256(Path(f"{args.output_prefix}{suffix}"))
+                for suffix in protected_suffixes
+            }
+            changed_content = sorted(
+                suffix
+                for suffix in protected_suffixes
+                if expected_content[suffix] != resumed_content[suffix]
+            )
+            if changed_content:
+                raise RuntimeError(
+                    "refusing to resume after setup changed protected "
+                    "common-model/PSF/sumwt image content: "
+                    + ", ".join(changed_content)
+                )
+        else:
+            if args.scratch_ms.exists():
+                raise RuntimeError(
+                    f"refusing to overwrite scratch MS: {args.scratch_ms}"
+                )
+            args.scratch_ms.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(args.source_ms, args.scratch_ms)
+            clone_image_bundle(
+                args.zero_prefix,
+                args.model_prefix,
+                args.output_prefix,
+                args.zero_model_term,
+            )
         protected_before = {
             suffix: image_content_sha256(Path(f"{args.output_prefix}{suffix}"))
             for suffix in protected_suffixes
         }
         parameters = dict(profile["tclean"])
+        if args.cfcache is not None:
+            if not args.cfcache.is_dir() or not any(args.cfcache.iterdir()):
+                raise RuntimeError(
+                    f"rebound CASA CF cache is missing or empty: {args.cfcache}"
+                )
+            parameters["cfcache"] = str(args.cfcache)
         if args.disable_pointing:
             parameters["usepointing"] = False
         parameters.update(
@@ -320,13 +391,17 @@ def main() -> None:
         "output_prefix": str(args.output_prefix),
         "output_npz": str(args.output_npz),
         "casa_log": str(args.casa_log) if args.casa_log is not None else None,
+        "cfcache": str(args.cfcache) if args.cfcache is not None else None,
         "extract_only": args.extract_only,
+        "resume_existing": args.resume_existing,
         "usepointing": not args.disable_pointing,
         "zero_model_term": args.zero_model_term,
         "profile": args.profile,
         "selected_spws": list(profile["selected_spws"]),
         "selected_rows": int(arrays["row_id"].size),
+        "observed_shape": list(arrays["observed_data"].shape),
         "model_shape": list(arrays["model_data"].shape),
+        "weight_shape": list(arrays["weight"].shape),
         "protected_content_hashes": protected_after,
         "summary": summary_subset,
     }
