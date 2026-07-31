@@ -6861,6 +6861,26 @@ minor cycle, or additional major cycle ran. The failed-run log SHA-256 is
 No CASA call, full-16-SPW row, `12,150`-square development run, or
 memory-policy experiment ran. The four-SPW row remains unpromoted.
 
+The checkpointed replacement also failed closed before tile update. The
+direct combined-prediction guard passed, but its residual guard initially
+compared two different correct orderings. The frozen CASA-derived residual
+hash
+`4db5487bff286e841718aec4a600f3b5c1ebf3aa602c5120a0796832355ad6d9`
+is canonical RR/LL order. The already-validated production result vector
+routes those values into each sample's first/second imaging-Mueller order and
+hashes to
+`6f48df4cfed851012bbc84b3ceb125a7113cff221f819b770fc49f546781e21f`.
+The tile grid consumes the routed vector, not the canonical audit order. The
+guard now certifies both streams independently and requires tile ingress to
+preserve the routed hash.
+
+This second stop is likewise an instrumentation-contract defect, not a
+downstream scientific result. No prediction receipt, tile update, residual
+grid, residual FFT, normalization, restoration, product, controller,
+subsequent minor cycle, or additional major cycle ran. Its log SHA-256 is
+`41a465705068e5820f4fff672f92655426bc670ccf4a9d7ffaa480d3186773cb`.
+The same no-CASA/no-full-size boundaries remain in force.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.

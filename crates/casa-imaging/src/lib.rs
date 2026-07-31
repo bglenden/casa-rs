@@ -21127,6 +21127,29 @@ fn hash_awproject_direct_combined_predictions(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+fn hash_awproject_direct_canonical_residuals(
+    audit: &[AwProjectMetalPredictionAuditSample],
+) -> String {
+    let mut hash = Sha256::new();
+    for (sample_ordinal, sample) in audit.iter().enumerate() {
+        hash.update(
+            u64::try_from(sample_ordinal)
+                .unwrap_or(u64::MAX)
+                .to_le_bytes(),
+        );
+        for value in [
+            sample.first.local_residual.re,
+            sample.first.local_residual.im,
+            sample.second.local_residual.re,
+            sample.second.local_residual.im,
+        ] {
+            hash.update(value.to_bits().to_le_bytes());
+        }
+    }
+    format!("{:x}", hash.finalize())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn write_awproject_metal_prediction_prefix_trace(
     path: &Path,
     source_ordinal: usize,
@@ -26949,8 +26972,11 @@ fn replay_awproject_metal_global_program(
                 let expected_candidate_prediction = expected(
                     "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_PREDICTION_SHA256",
                 )?;
-                let expected_candidate_residual = expected(
-                    "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_RESIDUAL_SHA256",
+                let expected_candidate_canonical_residual = expected(
+                    "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_CANONICAL_RESIDUAL_SHA256",
+                )?;
+                let expected_candidate_tile_residual = expected(
+                    "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_TILE_RESIDUAL_SHA256",
                 )?;
                 let control_hashes =
                     hash_awproject_prediction_visibilities(&program.prediction_batch, &dispatch.results)?;
@@ -26982,25 +27008,36 @@ fn replay_awproject_metal_global_program(
                     &program.prediction_batch,
                     &candidate.results,
                 )?;
-                let candidate_combined_hash = hash_awproject_direct_combined_predictions(
-                    candidate.audit.as_deref().ok_or_else(|| {
-                        ImagingError::Normalization(
-                            "hybrid AW residual candidate omitted its direct prediction audit"
-                                .to_string(),
-                        )
-                    })?,
-                );
+                let candidate_audit = candidate.audit.as_deref().ok_or_else(|| {
+                    ImagingError::Normalization(
+                        "hybrid AW residual candidate omitted its direct prediction audit"
+                            .to_string(),
+                    )
+                })?;
+                let candidate_combined_hash =
+                    hash_awproject_direct_combined_predictions(candidate_audit);
+                let candidate_canonical_residual_hash =
+                    hash_awproject_direct_canonical_residuals(candidate_audit);
                 for (label, actual, expected) in [
-                    ("candidate observed", &candidate_hashes.observed, &expected_observed),
+                    (
+                        "candidate observed",
+                        &candidate_hashes.observed,
+                        &expected_observed,
+                    ),
                     (
                         "candidate prediction",
                         &candidate_combined_hash,
                         &expected_candidate_prediction,
                     ),
                     (
-                        "candidate residual",
+                        "candidate canonical residual",
+                        &candidate_canonical_residual_hash,
+                        &expected_candidate_canonical_residual,
+                    ),
+                    (
+                        "candidate tile residual",
                         &candidate_hashes.residual,
-                        &expected_candidate_residual,
+                        &expected_candidate_tile_residual,
                     ),
                 ] {
                     if actual != expected {
@@ -27033,7 +27070,7 @@ fn replay_awproject_metal_global_program(
         let tile_ingress_hash = hash_awproject_tile_ingress_residuals(&program.tile_batch);
         if hybrid_prefix.is_some() {
             let expected = env::var(
-                "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_RESIDUAL_SHA256",
+                "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_TILE_RESIDUAL_SHA256",
             )
             .map_err(|_| {
                 ImagingError::InvalidRequest(
@@ -27079,7 +27116,8 @@ fn replay_awproject_metal_global_program(
                     "control_prediction": env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CONTROL_PREDICTION_SHA256").unwrap_or_default(),
                     "control_residual": env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CONTROL_RESIDUAL_SHA256").unwrap_or_default(),
                     "candidate_prediction": env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_PREDICTION_SHA256").unwrap_or_default(),
-                    "candidate_residual": env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_RESIDUAL_SHA256").unwrap_or_default(),
+                    "candidate_canonical_residual": env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_CANONICAL_RESIDUAL_SHA256").unwrap_or_default(),
+                    "candidate_tile_residual": env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_TILE_RESIDUAL_SHA256").unwrap_or_default(),
                     "tile_ingress_residual": tile_ingress_hash,
                 },
                 "timings_ms": {
@@ -27146,7 +27184,7 @@ fn replay_awproject_metal_global_program(
                  tile_update_ms={:.6} prediction_to_tile_ready_ms={:.6} tile_grid_ms={:.6} \
                  receipt={}",
                 residuals.len(),
-                env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_RESIDUAL_SHA256").unwrap_or_default(),
+                env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_TILE_RESIDUAL_SHA256").unwrap_or_default(),
                 tile_ingress_hash,
                 prediction_elapsed.as_secs_f64() * 1_000.0,
                 prediction_host_readback.as_secs_f64() * 1_000.0,
