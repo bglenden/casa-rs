@@ -57,11 +57,19 @@ def _load_state() -> dict[str, Any]:
     return _state
 
 
+def _filespec_path(filespec: lldb.SBFileSpec) -> str:
+    directory = filespec.GetDirectory()
+    filename = filespec.GetFilename()
+    if not filename:
+        raise RuntimeError("LLDB file specification has no filename")
+    return str(Path(directory, filename)) if directory else filename
+
+
 def _module_identity(address: lldb.SBAddress) -> tuple[str, str, int]:
     module = address.GetModule()
     if not module.IsValid():
         raise RuntimeError("stopped address has no module")
-    path = module.GetFileSpec().GetPath()
+    path = _filespec_path(module.GetFileSpec())
     uuid = module.GetUUIDString()
     return path, uuid, address.GetFileAddress()
 
@@ -205,7 +213,7 @@ def return_callback(
             "schema": "casa-rs-vlass-casa-aw-divsc3-callsite-raw-trace-v1",
             "status": "completed-at-source1446-return",
             "manifest": state["manifest_path"],
-            "library_path": module.GetFileSpec().GetPath(),
+            "library_path": _filespec_path(module.GetFileSpec()),
             "library_uuid": module.GetUUIDString(),
             "image_slide": f"0x{slide:016x}",
             "helper_vmaddr": f"0x{EXPECTED_HELPER_VMADDR:016x}",
@@ -258,7 +266,7 @@ def install_helper_breakpoint(
         matching_modules = [
             module
             for module in target.modules
-            if Path(module.GetFileSpec().GetPath()).name == MODULE_BASENAME
+            if Path(_filespec_path(module.GetFileSpec())).name == MODULE_BASENAME
             and module.GetUUIDString().upper() == MODULE_UUID
         ]
         if len(matching_modules) != 1:
