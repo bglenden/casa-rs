@@ -55,6 +55,7 @@ frozen_model_prefix="${CASA_RS_VLASS_FROZEN_MODEL_PREFIX:-}"
 frozen_weight_image="${CASA_RS_VLASS_FROZEN_WEIGHT_IMAGE:-}"
 frozen_restoring_beam="${CASA_RS_VLASS_FROZEN_RESTORING_BEAM:-}"
 frozen_final_state_checkpoints="${CASA_RS_VLASS_FROZEN_FINAL_STATE_CHECKPOINTS:-0}"
+prediction_sidecar_prefix="${CASA_RS_VLASS_PREDICTION_SIDECAR_PREFIX:-}"
 measures_dir="${CASA_RS_VLASS_MEASURES_DIR:-$HOME/.casa/data}"
 ms="$root/data/frozen-clean-b80d5e87487a/VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms"
 residual_only_label=""
@@ -94,6 +95,7 @@ selected_model_dft_label=""
 image_response_cache_label=""
 image_response_dyadic_census_label=""
 image_response_dyadic_tiles_label=""
+prediction_sidecar_label=""
 grid_threads_label=""
 acceleration_label=""
 parallel_label=""
@@ -155,6 +157,22 @@ if [[ "$frozen_final_state_checkpoints" == "1" ]]; then
 elif [[ "$frozen_final_state_checkpoints" != "0" ]]; then
     echo "CASA_RS_VLASS_FROZEN_FINAL_STATE_CHECKPOINTS must be 0 or 1" >&2
     exit 2
+fi
+if [[ -n "$prediction_sidecar_prefix" ]]; then
+    if [[ "$frozen_final_state_checkpoints" != "1" ]]; then
+        echo "CASA_RS_VLASS_PREDICTION_SIDECAR_PREFIX requires frozen-final-state checkpoints" >&2
+        exit 2
+    fi
+    for suffix in audit.bin results.bin host.json; do
+        if [[ -e "${prediction_sidecar_prefix}.${suffix}" ]]; then
+            echo "refusing to overwrite prediction-sidecar artifact: ${prediction_sidecar_prefix}.${suffix}" >&2
+            exit 2
+        fi
+    done
+    prediction_sidecar_label="-prediction-sidecar"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_PREDICTION_SIDECAR_PREFIX="$prediction_sidecar_prefix"
+    )
 fi
 if [[ "$tapless_phase" == "1" ]]; then
     tapless_phase_label="-tapless-phase-atlas"
@@ -597,7 +615,7 @@ if [[ "$grid_threads" != "1" ]]; then
     parallel_label="-parallel"
     parallel_argument=(--parallel)
 fi
-label="vlass-production-clean-4096-four-spw-sparse-fftw-t${fftw_threads}-niter${niter}${tapless_phase_label}${replay_compact_programs_label}${prime_replay_initial_dirty_label}${residual_only_label}${residual_live_cfs_only_label}${metal_f32_residual_fft_label}${metal_prediction_probe_label}${metal_tile_grid_probe_label}${metal_resident_chain_probe_label}${metal_resident_tile_chain_label}${metal_gpu_residual_replay_label}${metal_global_tile_replay_label}${prediction_grid_census_label}${model_delta_census_label}${incremental_model_probe_label}${incremental_model_runtime_label}${selected_model_dft_label}${image_response_cache_label}${image_response_dyadic_census_label}${image_response_dyadic_tiles_label}${model_fft_label}${sparse_model_dft_label}${linear_madfm_label}${keyed_madfm_label}${radix_madfm_label}${cache_refreshed_nsigma_label}${sparse_mask_peak_search_label}${parallel_model_term_fft_label}${model_fft_timing_label}${fftw_f64_timing_label}${fftw_f64_wisdom_label}${fftw_f32_wisdom_label}${sparse_model_prep_label}${parallel_residual_term_fft_label}${persistent_metal_pack_label}${plan_threads_label}${pack_threads_label}${grid_threads_label}${parallel_label}${acceleration_label}-v1"
+label="vlass-production-clean-4096-four-spw-sparse-fftw-t${fftw_threads}-niter${niter}${tapless_phase_label}${replay_compact_programs_label}${prime_replay_initial_dirty_label}${residual_only_label}${residual_live_cfs_only_label}${metal_f32_residual_fft_label}${metal_prediction_probe_label}${metal_tile_grid_probe_label}${metal_resident_chain_probe_label}${metal_resident_tile_chain_label}${metal_gpu_residual_replay_label}${metal_global_tile_replay_label}${prediction_grid_census_label}${model_delta_census_label}${incremental_model_probe_label}${incremental_model_runtime_label}${selected_model_dft_label}${image_response_cache_label}${image_response_dyadic_census_label}${image_response_dyadic_tiles_label}${prediction_sidecar_label}${model_fft_label}${sparse_model_dft_label}${linear_madfm_label}${keyed_madfm_label}${radix_madfm_label}${cache_refreshed_nsigma_label}${sparse_mask_peak_search_label}${parallel_model_term_fft_label}${model_fft_timing_label}${fftw_f64_timing_label}${fftw_f64_wisdom_label}${fftw_f32_wisdom_label}${sparse_model_prep_label}${parallel_residual_term_fft_label}${persistent_metal_pack_label}${plan_threads_label}${pack_threads_label}${grid_threads_label}${parallel_label}${acceleration_label}-v1"
 if [[ -n "${CASA_RS_VLASS_LABEL_OVERRIDE:-}" ]]; then
     case "$CASA_RS_VLASS_LABEL_OVERRIDE" in
         *[!A-Za-z0-9._-]*)
@@ -636,6 +654,7 @@ if [[ -e "$output.image.tt0" || -e "$log" ]]; then
 fi
 
 mkdir -p "$(dirname "$output")" "$(dirname "$log")"
+set +e
 /usr/bin/time -p env -i \
     PATH=/usr/bin:/bin \
     HOME="$HOME" \
@@ -712,5 +731,30 @@ mkdir -p "$(dirname "$output")" "$(dirname "$log")"
     --mask-image "$mask" \
     --no-preview-pngs \
     >"$log" 2>&1
+run_status=$?
+set -e
 
+if [[ -n "$prediction_sidecar_prefix" ]]; then
+    if [[ "$run_status" -eq 0 ]]; then
+        echo "prediction-sidecar run unexpectedly continued beyond its fail-closed stop" >&2
+        exit 2
+    fi
+    for suffix in audit.bin results.bin host.json; do
+        if [[ ! -f "${prediction_sidecar_prefix}.${suffix}" ]]; then
+            echo "prediction-sidecar run stopped without ${prediction_sidecar_prefix}.${suffix}" >&2
+            exit 2
+        fi
+    done
+    if ! /usr/bin/grep -Fq \
+        "AWProject frozen-model prediction sidecar completed before residual gridding" \
+        "$log"; then
+        echo "prediction-sidecar run failed before its intended terminal boundary" >&2
+        exit 2
+    fi
+    echo "$log"
+    exit 0
+fi
+if [[ "$run_status" -ne 0 ]]; then
+    exit "$run_status"
+fi
 echo "$log"

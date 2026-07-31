@@ -9892,7 +9892,9 @@ struct AwProjectMetalPredictionParams {
     grid_height: u32,
     model_stride_x: u32,
     model_stride_y: u32,
+    audit_generation: u32,
     _pad0: u32,
+    _pad1: u32,
 }
 
 #[repr(C)]
@@ -9903,6 +9905,46 @@ struct AwProjectMetalPredictionResult {
     first_residual_im: f32,
     second_residual_re: f32,
     second_residual_im: f32,
+}
+
+#[repr(C, align(8))]
+#[derive(Clone, Copy, Default)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+struct AwProjectMetalPredictionAuditComplex {
+    re: f32,
+    im: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+struct AwProjectMetalPredictionAuditRole {
+    model_term0: AwProjectMetalPredictionAuditComplex,
+    model_term1: AwProjectMetalPredictionAuditComplex,
+    combined_prediction: AwProjectMetalPredictionAuditComplex,
+    observed: AwProjectMetalPredictionAuditComplex,
+    local_residual: AwProjectMetalPredictionAuditComplex,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+struct AwProjectMetalPredictionAuditSample {
+    sample_ordinal: u32,
+    written_generation: u32,
+    taylor_power0: f32,
+    taylor_power1: f32,
+    first_imaging_mueller: u32,
+    second_imaging_mueller: u32,
+    first: AwProjectMetalPredictionAuditRole,
+    second: AwProjectMetalPredictionAuditRole,
+}
+
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+struct AwProjectMetalPredictionDispatch {
+    results: Vec<AwProjectMetalPredictionResult>,
+    audit: Option<Vec<AwProjectMetalPredictionAuditSample>>,
+    elapsed: Duration,
 }
 
 #[repr(C)]
@@ -14616,7 +14658,8 @@ impl AwProjectMetalExecutor {
         &self,
         batch: &AwProjectMetalPredictionBatch,
         model_grids: &[Array2<Complex32>],
-    ) -> Result<(Vec<AwProjectMetalPredictionResult>, Duration), ImagingError> {
+        audit_generation: Option<u32>,
+    ) -> Result<AwProjectMetalPredictionDispatch, ImagingError> {
         use std::{ffi::c_void, mem, ptr::NonNull, slice};
 
         use objc2_metal::{
@@ -14626,7 +14669,16 @@ impl AwProjectMetalExecutor {
         };
 
         if batch.samples.is_empty() {
-            return Ok((Vec::new(), Duration::ZERO));
+            return Ok(AwProjectMetalPredictionDispatch {
+                results: Vec::new(),
+                audit: audit_generation.map(|_| Vec::new()),
+                elapsed: Duration::ZERO,
+            });
+        }
+        if audit_generation == Some(0) {
+            return Err(ImagingError::InvalidRequest(
+                "AWProject Metal prediction audit generation must be non-zero".to_string(),
+            ));
         }
         let [model_tt0, model_tt1] = model_grids else {
             return Err(ImagingError::InvalidRequest(format!(
@@ -14686,7 +14738,9 @@ impl AwProjectMetalExecutor {
                     "AWProject Metal prediction y stride exceeds u32".to_string(),
                 )
             })?,
+            audit_generation: audit_generation.unwrap_or(0),
             _pad0: 0,
+            _pad1: 0,
         };
         let sample_bytes = mem::size_of_val(batch.samples.as_slice());
         let kernel_bytes = mem::size_of_val(batch.kernels.as_slice());
@@ -14763,6 +14817,36 @@ impl AwProjectMetalExecutor {
                     "AWProject Metal prediction could not allocate result buffer".to_string(),
                 )
             })?;
+        let audit_bytes = audit_generation
+            .map(|_| {
+                batch
+                    .samples
+                    .len()
+                    .checked_mul(mem::size_of::<AwProjectMetalPredictionAuditSample>())
+                    .ok_or_else(|| {
+                        ImagingError::InvalidRequest(
+                            "AWProject Metal prediction audit size overflowed".to_string(),
+                        )
+                    })
+            })
+            .transpose()?;
+        let audit_buffer = audit_bytes
+            .map(|bytes| {
+                self.device
+                    .newBufferWithLength_options(bytes, storage_options)
+                    .ok_or_else(|| {
+                        ImagingError::Unsupported(
+                            "AWProject Metal prediction could not allocate audit buffer"
+                                .to_string(),
+                        )
+                    })
+            })
+            .transpose()?;
+        if let Some(buffer) = audit_buffer.as_ref() {
+            unsafe {
+                std::ptr::write_bytes(buffer.contents().as_ptr().cast::<u8>(), 0, buffer.length());
+            }
+        }
         let params_buffer = unsafe {
             let params_slice = slice::from_ref(&params);
             self.device
@@ -14797,6 +14881,9 @@ impl AwProjectMetalExecutor {
             encoder.setBuffer_offset_atIndex(Some(&result_buffer), 0, 4);
             encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 5);
             encoder.setBuffer_offset_atIndex(Some(&phase_buffer), 0, 6);
+            if let Some(buffer) = audit_buffer.as_ref() {
+                encoder.setBuffer_offset_atIndex(Some(buffer), 0, 7);
+            }
         }
         let thread_count = batch.samples.len();
         let thread_width = self.prediction_pipeline.threadExecutionWidth().max(1);
@@ -14839,7 +14926,21 @@ impl AwProjectMetalExecutor {
             )
             .to_vec()
         };
-        Ok((results, elapsed))
+        let audit = audit_buffer.map(|buffer| unsafe {
+            slice::from_raw_parts(
+                buffer
+                    .contents()
+                    .as_ptr()
+                    .cast::<AwProjectMetalPredictionAuditSample>(),
+                batch.samples.len(),
+            )
+            .to_vec()
+        });
+        Ok(AwProjectMetalPredictionDispatch {
+            results,
+            audit,
+            elapsed,
+        })
     }
 
     fn dispatch_incremental_dense_model(
@@ -15794,7 +15895,9 @@ impl AwProjectMetalExecutor {
                     "AWProject Metal resident-chain y stride exceeds u32".to_string(),
                 )
             })?,
+            audit_generation: 0,
             _pad0: 0,
+            _pad1: 0,
         };
         let scale_params = AwProjectMetalParams {
             sample_count: prediction_params.sample_count,
@@ -16229,7 +16332,9 @@ struct AwPredictionParams {
     uint grid_height;
     uint model_stride_x;
     uint model_stride_y;
+    uint audit_generation;
     uint _pad0;
+    uint _pad1;
 };
 
 struct AwPredictionResult {
@@ -16237,6 +16342,25 @@ struct AwPredictionResult {
     float first_residual_im;
     float second_residual_re;
     float second_residual_im;
+};
+
+struct AwPredictionAuditRole {
+    float2 model_term0;
+    float2 model_term1;
+    float2 combined_prediction;
+    float2 observed;
+    float2 local_residual;
+};
+
+struct AwPredictionAuditSample {
+    uint sample_ordinal;
+    uint written_generation;
+    float taylor_power0;
+    float taylor_power1;
+    uint first_imaging_mueller;
+    uint second_imaging_mueller;
+    AwPredictionAuditRole first;
+    AwPredictionAuditRole second;
 };
 
 struct AwIncrementalModelParams {
@@ -16298,10 +16422,16 @@ static_assert(sizeof(AwPredictionPlan) == 36, "AwPredictionPlan ABI drift");
 static_assert(alignof(AwPredictionPlan) == 4, "AwPredictionPlan alignment drift");
 static_assert(sizeof(AwPredictionSample) == 104, "AwPredictionSample ABI drift");
 static_assert(alignof(AwPredictionSample) == 4, "AwPredictionSample alignment drift");
-static_assert(sizeof(AwPredictionParams) == 24, "AwPredictionParams ABI drift");
+static_assert(sizeof(AwPredictionParams) == 32, "AwPredictionParams ABI drift");
 static_assert(alignof(AwPredictionParams) == 4, "AwPredictionParams alignment drift");
 static_assert(sizeof(AwPredictionResult) == 16, "AwPredictionResult ABI drift");
 static_assert(alignof(AwPredictionResult) == 4, "AwPredictionResult alignment drift");
+static_assert(sizeof(AwPredictionAuditRole) == 40, "AwPredictionAuditRole ABI drift");
+static_assert(alignof(AwPredictionAuditRole) == 8, "AwPredictionAuditRole alignment drift");
+static_assert(sizeof(AwPredictionAuditSample) == 104, "AwPredictionAuditSample ABI drift");
+static_assert(alignof(AwPredictionAuditSample) == 8, "AwPredictionAuditSample alignment drift");
+static_assert(__builtin_offsetof(AwPredictionAuditSample, first) == 24, "AwPredictionAuditSample first offset drift");
+static_assert(__builtin_offsetof(AwPredictionAuditSample, second) == 64, "AwPredictionAuditSample second offset drift");
 static_assert(sizeof(AwIncrementalModelParams) == 32, "AwIncrementalModelParams ABI drift");
 static_assert(alignof(AwIncrementalModelParams) == 4, "AwIncrementalModelParams alignment drift");
 static_assert(sizeof(AwSelectedModelPair) == 16, "AwSelectedModelPair ABI drift");
@@ -16427,20 +16557,25 @@ kernel void awproject_predict_residual_samples(
     device AwPredictionResult *results [[buffer(4)]],
     constant AwPredictionParams &params [[buffer(5)]],
     device const float2 *phases [[buffer(6)]],
+    device AwPredictionAuditSample *audit [[buffer(7)]],
     uint sample_index [[thread_position_in_grid]]
 ) {
     if (sample_index >= params.sample_count) {
         return;
     }
     const AwPredictionSample sample = samples[sample_index];
+    const float2 first_model_term0 =
+        aw_degrid_prediction(sample.first_prediction, kernels, phases, model_tt0, params);
+    const float2 first_model_term1 =
+        aw_degrid_prediction(sample.first_prediction, kernels, phases, model_tt1, params);
     const float2 first_prediction =
-        aw_degrid_prediction(sample.first_prediction, kernels, phases, model_tt0, params)
-        + aw_degrid_prediction(sample.first_prediction, kernels, phases, model_tt1, params)
-            * sample.taylor_x;
+        first_model_term0 + first_model_term1 * sample.taylor_x;
+    const float2 second_model_term0 =
+        aw_degrid_prediction(sample.second_prediction, kernels, phases, model_tt0, params);
+    const float2 second_model_term1 =
+        aw_degrid_prediction(sample.second_prediction, kernels, phases, model_tt1, params);
     const float2 second_prediction =
-        aw_degrid_prediction(sample.second_prediction, kernels, phases, model_tt0, params)
-        + aw_degrid_prediction(sample.second_prediction, kernels, phases, model_tt1, params)
-            * sample.taylor_x;
+        second_model_term0 + second_model_term1 * sample.taylor_x;
     const float2 first_observed =
         float2(sample.first_observed_re, sample.first_observed_im);
     const float2 second_observed =
@@ -16455,6 +16590,24 @@ kernel void awproject_predict_residual_samples(
     results[sample_index].first_residual_im = first_residual.y;
     results[sample_index].second_residual_re = second_residual.x;
     results[sample_index].second_residual_im = second_residual.y;
+    if (params.audit_generation != 0u) {
+        audit[sample_index].sample_ordinal = sample_index;
+        audit[sample_index].taylor_power0 = 1.0f;
+        audit[sample_index].taylor_power1 = sample.taylor_x;
+        audit[sample_index].first_imaging_mueller = sample.first_imaging_mueller;
+        audit[sample_index].second_imaging_mueller = sample.second_imaging_mueller;
+        audit[sample_index].first.model_term0 = first_model_term0;
+        audit[sample_index].first.model_term1 = first_model_term1;
+        audit[sample_index].first.combined_prediction = first_prediction;
+        audit[sample_index].first.observed = first_observed;
+        audit[sample_index].first.local_residual = rr_residual;
+        audit[sample_index].second.model_term0 = second_model_term0;
+        audit[sample_index].second.model_term1 = second_model_term1;
+        audit[sample_index].second.combined_prediction = second_prediction;
+        audit[sample_index].second.observed = second_observed;
+        audit[sample_index].second.local_residual = ll_residual;
+        audit[sample_index].written_generation = params.audit_generation;
+    }
 }
 
 kernel void awproject_increment_dense_model(
@@ -20144,7 +20297,7 @@ fn run_awproject_metal_prediction_probe(
     )?;
     let pack_elapsed = pack_started.elapsed();
     let mut executor_setup = Duration::ZERO;
-    let (actual, execute_elapsed) = AWPROJECT_METAL_EXECUTOR.with(|slot| {
+    let dispatch = AWPROJECT_METAL_EXECUTOR.with(|slot| {
         let mut slot = slot.borrow_mut();
         if slot.is_none() {
             let setup_started = Instant::now();
@@ -20153,8 +20306,10 @@ fn run_awproject_metal_prediction_probe(
         }
         slot.as_ref()
             .expect("AWProject Metal executor")
-            .dispatch_prediction_probe(&packed, model_grids)
+            .dispatch_prediction_probe(&packed, model_grids, None)
     })?;
+    let actual = dispatch.results;
+    let execute_elapsed = dispatch.elapsed;
     if actual.len() != planned_samples.len() {
         return Err(ImagingError::Normalization(format!(
             "AWProject Metal prediction probe returned {} samples for {} CPU references",
@@ -20485,6 +20640,398 @@ fn emit_awproject_frozen_final_state_prediction_hashes(
         residual_hash.finalize(),
     );
     Ok(())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn write_awproject_prediction_sidecar(
+    prefix: &Path,
+    generation: u32,
+    batch: &AwProjectMetalPredictionBatch,
+    dispatch: &AwProjectMetalPredictionDispatch,
+) -> Result<PathBuf, ImagingError> {
+    let audit = dispatch.audit.as_ref().ok_or_else(|| {
+        ImagingError::Normalization(
+            "prediction-sidecar dispatch did not return its diagnostic buffer".to_string(),
+        )
+    })?;
+    if generation == 0
+        || audit.len() != batch.samples.len()
+        || dispatch.results.len() != batch.samples.len()
+    {
+        return Err(ImagingError::Normalization(format!(
+            "prediction-sidecar topology differs: generation={generation}, audit={}, results={}, samples={}",
+            audit.len(),
+            dispatch.results.len(),
+            batch.samples.len(),
+        )));
+    }
+
+    let prefix_text = prefix.to_string_lossy();
+    let audit_path = PathBuf::from(format!("{prefix_text}.audit.bin"));
+    let result_path = PathBuf::from(format!("{prefix_text}.results.bin"));
+    let receipt_path = PathBuf::from(format!("{prefix_text}.host.json"));
+    for path in [&audit_path, &result_path, &receipt_path] {
+        if path.exists() {
+            return Err(ImagingError::InvalidRequest(format!(
+                "refusing to overwrite prediction-sidecar artifact {}",
+                path.display(),
+            )));
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "create prediction-sidecar directory {}: {error}",
+                    parent.display(),
+                ))
+            })?;
+        }
+    }
+
+    let mut audit_bytes = Vec::with_capacity(
+        audit
+            .len()
+            .saturating_mul(std::mem::size_of::<AwProjectMetalPredictionAuditSample>()),
+    );
+    let mut result_bytes = Vec::with_capacity(
+        dispatch
+            .results
+            .len()
+            .saturating_mul(std::mem::size_of::<AwProjectMetalPredictionResult>()),
+    );
+    let mut combined_hash = Sha256::new();
+    let mut literal_combined_hash = Sha256::new();
+    let mut returned_residual_hash = Sha256::new();
+    let mut unexpected_generation_count = 0usize;
+    let mut unexpected_ordinal_count = 0usize;
+    let mut nonfinite_count = 0usize;
+    let mut literal_combination_mismatch_count = 0usize;
+    let mut local_result_mismatch_count = 0usize;
+    let mut first_literal_combination_mismatch = None::<(usize, usize)>;
+    let mut first_local_result_mismatch = None::<(usize, usize)>;
+
+    let append_complex = |output: &mut Vec<u8>, value: AwProjectMetalPredictionAuditComplex| {
+        output.extend_from_slice(&value.re.to_bits().to_le_bytes());
+        output.extend_from_slice(&value.im.to_bits().to_le_bytes());
+    };
+    let append_role = |output: &mut Vec<u8>, role: AwProjectMetalPredictionAuditRole| {
+        append_complex(output, role.model_term0);
+        append_complex(output, role.model_term1);
+        append_complex(output, role.combined_prediction);
+        append_complex(output, role.observed);
+        append_complex(output, role.local_residual);
+    };
+    for (ordinal, ((sample, record), result)) in batch
+        .samples
+        .iter()
+        .zip(audit)
+        .zip(&dispatch.results)
+        .enumerate()
+    {
+        let ordinal_u32 = u32::try_from(ordinal).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "prediction-sidecar source ordinal exceeds u32".to_string(),
+            )
+        })?;
+        if record.written_generation != generation {
+            unexpected_generation_count += 1;
+        }
+        if record.sample_ordinal != ordinal_u32 {
+            unexpected_ordinal_count += 1;
+        }
+        for value in [
+            record.taylor_power0,
+            record.taylor_power1,
+            record.first.model_term0.re,
+            record.first.model_term0.im,
+            record.first.model_term1.re,
+            record.first.model_term1.im,
+            record.first.combined_prediction.re,
+            record.first.combined_prediction.im,
+            record.first.observed.re,
+            record.first.observed.im,
+            record.first.local_residual.re,
+            record.first.local_residual.im,
+            record.second.model_term0.re,
+            record.second.model_term0.im,
+            record.second.model_term1.re,
+            record.second.model_term1.im,
+            record.second.combined_prediction.re,
+            record.second.combined_prediction.im,
+            record.second.observed.re,
+            record.second.observed.im,
+            record.second.local_residual.re,
+            record.second.local_residual.im,
+        ] {
+            nonfinite_count += usize::from(!value.is_finite());
+        }
+
+        audit_bytes.extend_from_slice(&record.sample_ordinal.to_le_bytes());
+        audit_bytes.extend_from_slice(&record.written_generation.to_le_bytes());
+        audit_bytes.extend_from_slice(&record.taylor_power0.to_bits().to_le_bytes());
+        audit_bytes.extend_from_slice(&record.taylor_power1.to_bits().to_le_bytes());
+        audit_bytes.extend_from_slice(&record.first_imaging_mueller.to_le_bytes());
+        audit_bytes.extend_from_slice(&record.second_imaging_mueller.to_le_bytes());
+        append_role(&mut audit_bytes, record.first);
+        append_role(&mut audit_bytes, record.second);
+        for value in [
+            result.first_residual_re,
+            result.first_residual_im,
+            result.second_residual_re,
+            result.second_residual_im,
+        ] {
+            result_bytes.extend_from_slice(&value.to_bits().to_le_bytes());
+        }
+
+        let ordinal_u64 = u64::try_from(ordinal).unwrap_or(u64::MAX);
+        for hash in [
+            &mut combined_hash,
+            &mut literal_combined_hash,
+            &mut returned_residual_hash,
+        ] {
+            hash.update(ordinal_u64.to_le_bytes());
+        }
+        for (role_index, role) in [record.first, record.second].into_iter().enumerate() {
+            combined_hash.update(role.combined_prediction.re.to_bits().to_le_bytes());
+            combined_hash.update(role.combined_prediction.im.to_bits().to_le_bytes());
+            let scaled_re = role.model_term1.re * record.taylor_power1;
+            let scaled_im = role.model_term1.im * record.taylor_power1;
+            let literal_re = role.model_term0.re * record.taylor_power0 + scaled_re;
+            let literal_im = role.model_term0.im * record.taylor_power0 + scaled_im;
+            literal_combined_hash.update(literal_re.to_bits().to_le_bytes());
+            literal_combined_hash.update(literal_im.to_bits().to_le_bytes());
+            if literal_re.to_bits() != role.combined_prediction.re.to_bits()
+                || literal_im.to_bits() != role.combined_prediction.im.to_bits()
+            {
+                literal_combination_mismatch_count += 1;
+                first_literal_combination_mismatch.get_or_insert((ordinal, role_index));
+            }
+        }
+        for value in [
+            result.first_residual_re,
+            result.first_residual_im,
+            result.second_residual_re,
+            result.second_residual_im,
+        ] {
+            returned_residual_hash.update(value.to_bits().to_le_bytes());
+        }
+
+        if record.taylor_power0.to_bits() != 1.0f32.to_bits()
+            || record.taylor_power1.to_bits() != sample.taylor_x.to_bits()
+            || record.first_imaging_mueller != sample.first_imaging_mueller
+            || record.second_imaging_mueller != sample.second_imaging_mueller
+            || record.first.observed.re.to_bits() != sample.first_observed_re.to_bits()
+            || record.first.observed.im.to_bits() != sample.first_observed_im.to_bits()
+            || record.second.observed.re.to_bits() != sample.second_observed_re.to_bits()
+            || record.second.observed.im.to_bits() != sample.second_observed_im.to_bits()
+        {
+            return Err(ImagingError::Normalization(format!(
+                "prediction-sidecar copied input locals incorrectly at source {ordinal}",
+            )));
+        }
+        let first_local = if record.first_imaging_mueller == 0 {
+            record.first.local_residual
+        } else {
+            record.second.local_residual
+        };
+        let second_local = if record.second_imaging_mueller == 0 {
+            record.first.local_residual
+        } else {
+            record.second.local_residual
+        };
+        for (role_index, (local, returned)) in [
+            (
+                first_local,
+                AwProjectMetalPredictionAuditComplex {
+                    re: result.first_residual_re,
+                    im: result.first_residual_im,
+                },
+            ),
+            (
+                second_local,
+                AwProjectMetalPredictionAuditComplex {
+                    re: result.second_residual_re,
+                    im: result.second_residual_im,
+                },
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if local.re.to_bits() != returned.re.to_bits()
+                || local.im.to_bits() != returned.im.to_bits()
+            {
+                local_result_mismatch_count += 1;
+                first_local_result_mismatch.get_or_insert((ordinal, role_index));
+            }
+        }
+    }
+    if audit_bytes.len()
+        != audit
+            .len()
+            .saturating_mul(std::mem::size_of::<AwProjectMetalPredictionAuditSample>())
+        || result_bytes.len()
+            != dispatch
+                .results
+                .len()
+                .saturating_mul(std::mem::size_of::<AwProjectMetalPredictionResult>())
+    {
+        return Err(ImagingError::Normalization(
+            "prediction-sidecar encoded byte length differs from its ABI stride".to_string(),
+        ));
+    }
+    if unexpected_generation_count != 0
+        || unexpected_ordinal_count != 0
+        || nonfinite_count != 0
+        || local_result_mismatch_count != 0
+    {
+        return Err(ImagingError::Normalization(format!(
+            "prediction-sidecar failed integrity gates: generation={unexpected_generation_count}, ordinal={unexpected_ordinal_count}, nonfinite={nonfinite_count}, local_result={local_result_mismatch_count}",
+        )));
+    }
+
+    let audit_sha256 = format!("{:x}", Sha256::digest(&audit_bytes));
+    let result_sha256 = format!("{:x}", Sha256::digest(&result_bytes));
+    let combined_sha256 = format!("{:x}", combined_hash.finalize());
+    let literal_combined_sha256 = format!("{:x}", literal_combined_hash.finalize());
+    let returned_residual_sha256 = format!("{:x}", returned_residual_hash.finalize());
+    let mut audit_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&audit_path)
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "create prediction-sidecar audit {}: {error}",
+                audit_path.display(),
+            ))
+        })?;
+    audit_file.write_all(&audit_bytes).map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "write prediction-sidecar audit {}: {error}",
+            audit_path.display(),
+        ))
+    })?;
+    audit_file.sync_all().map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "sync prediction-sidecar audit {}: {error}",
+            audit_path.display(),
+        ))
+    })?;
+    let mut result_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&result_path)
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "create prediction-sidecar results {}: {error}",
+                result_path.display(),
+            ))
+        })?;
+    result_file.write_all(&result_bytes).map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "write prediction-sidecar results {}: {error}",
+            result_path.display(),
+        ))
+    })?;
+    result_file.sync_all().map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "sync prediction-sidecar results {}: {error}",
+            result_path.display(),
+        ))
+    })?;
+
+    let receipt = serde_json::json!({
+        "schema": "casa-rs-vlass-frozen-model-prediction-sidecar-host-v1",
+        "role": "bounded_prediction_only_correctness_diagnostic_not_performance_evidence",
+        "generation": generation,
+        "sample_count": audit.len(),
+        "audit": {
+            "path": audit_path,
+            "sha256": audit_sha256,
+            "record_size": std::mem::size_of::<AwProjectMetalPredictionAuditSample>(),
+            "record_alignment": std::mem::align_of::<AwProjectMetalPredictionAuditSample>(),
+            "allocated_bytes": audit_bytes.len(),
+            "unexpected_generation_count": unexpected_generation_count,
+            "unexpected_ordinal_count": unexpected_ordinal_count,
+            "nonfinite_count": nonfinite_count,
+        },
+        "result": {
+            "path": result_path,
+            "sha256": result_sha256,
+            "record_size": std::mem::size_of::<AwProjectMetalPredictionResult>(),
+            "record_alignment": std::mem::align_of::<AwProjectMetalPredictionResult>(),
+            "allocated_bytes": result_bytes.len(),
+        },
+        "ordered_hashes": {
+            "production_combined_prediction_sha256": combined_sha256,
+            "literal_combined_prediction_sha256": literal_combined_sha256,
+            "returned_residual_sha256": returned_residual_sha256,
+        },
+        "integrity": {
+            "literal_combination_mismatch_count": literal_combination_mismatch_count,
+            "first_literal_combination_mismatch": first_literal_combination_mismatch,
+            "local_result_mismatch_count": local_result_mismatch_count,
+            "first_local_result_mismatch": first_local_result_mismatch,
+        },
+        "phase_application_location": "folded-into-production-aw-degrid-geometry-and-cf-phase-plan",
+        "prohibited_post_prediction_stages": {
+            "residual_grid_dispatch": false,
+            "fft": false,
+            "normalization": false,
+            "image_formation": false,
+            "product_formation": false,
+            "controller": false,
+            "minor_cycle": false,
+            "clean_iterations": 0,
+            "beam_fit": false,
+        },
+    });
+    let receipt_bytes = serde_json::to_vec_pretty(&receipt).map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "serialize prediction-sidecar host receipt: {error}",
+        ))
+    })?;
+    let mut receipt_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&receipt_path)
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "create prediction-sidecar receipt {}: {error}",
+                receipt_path.display(),
+            ))
+        })?;
+    receipt_file.write_all(&receipt_bytes).map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "write prediction-sidecar receipt {}: {error}",
+            receipt_path.display(),
+        ))
+    })?;
+    receipt_file.sync_all().map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "sync prediction-sidecar receipt {}: {error}",
+            receipt_path.display(),
+        ))
+    })?;
+    eprintln!(
+        "awproject_prediction_sidecar status=complete samples={} generation={} \
+         audit_path={} audit_sha256={} result_path={} result_sha256={} \
+         combined_sha256={} literal_combined_sha256={} returned_residual_sha256={} \
+         literal_combination_mismatches={} local_result_mismatches={} \
+         prohibited_post_prediction_stages_entered=false receipt={}",
+        audit.len(),
+        generation,
+        audit_path.display(),
+        audit_sha256,
+        result_path.display(),
+        result_sha256,
+        combined_sha256,
+        literal_combined_sha256,
+        returned_residual_sha256,
+        literal_combination_mismatch_count,
+        local_result_mismatch_count,
+        receipt_path.display(),
+    );
+    Ok(receipt_path)
 }
 
 fn awproject_sample_stats_delta(
@@ -24932,9 +25479,33 @@ fn replay_awproject_metal_global_program(
         let executor = executor_slot
             .as_ref()
             .expect("global AWProject Metal executor");
-        let (residuals, prediction_elapsed) =
-            executor.dispatch_prediction_probe(&program.prediction_batch, model_grids)?;
-        emit_awproject_frozen_final_state_prediction_hashes(&program.prediction_batch, &residuals)?;
+        let sidecar_prefix =
+            env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDICTION_SIDECAR_PREFIX")
+                .map(PathBuf::from);
+        let sidecar_generation = sidecar_prefix.as_ref().map(|_| 1);
+        let dispatch = executor.dispatch_prediction_probe(
+            &program.prediction_batch,
+            model_grids,
+            sidecar_generation,
+        )?;
+        emit_awproject_frozen_final_state_prediction_hashes(
+            &program.prediction_batch,
+            &dispatch.results,
+        )?;
+        if let Some(prefix) = sidecar_prefix.as_deref() {
+            let receipt = write_awproject_prediction_sidecar(
+                prefix,
+                sidecar_generation.expect("prediction sidecar generation"),
+                &program.prediction_batch,
+                &dispatch,
+            )?;
+            return Err(ImagingError::InvalidRequest(format!(
+                "AWProject frozen-model prediction sidecar completed before residual gridding; receipt={}",
+                receipt.display(),
+            )));
+        }
+        let prediction_elapsed = dispatch.elapsed;
+        let residuals = dispatch.results;
         update_awproject_persistent_metal_prediction_results(&mut program.tile_batch, &residuals)?;
         let tile_stats = executor.dispatch_tile_grid_probe(
             grid,
@@ -25422,52 +25993,56 @@ fn replay_awproject_compact_window(
                         executor_setup = setup_started.elapsed();
                     }
                     let executor = executor_slot.as_ref().expect("resident Metal executor");
-                    let stats = if gpu_residual_replay {
-                        let (residuals, prediction_elapsed) = executor
-                            .dispatch_prediction_probe(&program.prediction_batch, model_grids)?;
-                        update_awproject_persistent_metal_prediction_results(
-                            &mut program.tile_batch,
-                            &residuals,
-                        )?;
-                        let tile_stats = executor.dispatch_tile_grid_probe(
-                            grid,
-                            aw_compensation,
-                            &program.tile_batch,
-                            &program.tile_plan,
-                            request.nterms,
-                            Some(program.residual_scale_plan),
-                        )?;
-                        AwProjectMetalResidentChainStats {
-                            samples: program.prediction_batch.samples.len(),
-                            prediction_kernel_values: program.prediction_batch.kernels.len(),
-                            imaging_kernel_values: program.tile_batch.kernels.len(),
-                            active_tiles: tile_stats.active_tiles,
-                            fragments: tile_stats.fragments,
-                            buffer_alloc: tile_stats.buffer_alloc,
-                            dispatch_wait: prediction_elapsed + tile_stats.dispatch_wait,
-                            output_bytes: tile_stats.output_bytes,
-                            residual_bytes: residuals
-                                .len()
-                                .saturating_mul(
+                    let stats =
+                        if gpu_residual_replay {
+                            let dispatch = executor.dispatch_prediction_probe(
+                                &program.prediction_batch,
+                                model_grids,
+                                None,
+                            )?;
+                            let prediction_elapsed = dispatch.elapsed;
+                            let residuals = dispatch.results;
+                            update_awproject_persistent_metal_prediction_results(
+                                &mut program.tile_batch,
+                                &residuals,
+                            )?;
+                            let tile_stats = executor.dispatch_tile_grid_probe(
+                                grid,
+                                aw_compensation,
+                                &program.tile_batch,
+                                &program.tile_plan,
+                                request.nterms,
+                                Some(program.residual_scale_plan),
+                            )?;
+                            AwProjectMetalResidentChainStats {
+                                samples: program.prediction_batch.samples.len(),
+                                prediction_kernel_values: program.prediction_batch.kernels.len(),
+                                imaging_kernel_values: program.tile_batch.kernels.len(),
+                                active_tiles: tile_stats.active_tiles,
+                                fragments: tile_stats.fragments,
+                                buffer_alloc: tile_stats.buffer_alloc,
+                                dispatch_wait: prediction_elapsed + tile_stats.dispatch_wait,
+                                output_bytes: tile_stats.output_bytes,
+                                residual_bytes: residuals.len().saturating_mul(
                                     std::mem::size_of::<AwProjectMetalPredictionResult>(),
                                 ),
-                            total: prediction_elapsed + tile_stats.total,
-                        }
-                    } else {
-                        update_awproject_persistent_metal_residuals(
-                            &mut program.tile_batch,
-                            &planned_samples,
-                        )?;
-                        executor.dispatch_prediction_tile_chain_probe(
-                            grid,
-                            aw_compensation,
-                            &program.prediction_batch,
-                            &program.tile_batch,
-                            &program.tile_plan,
-                            model_grids,
-                            request.nterms,
-                        )?
-                    };
+                                total: prediction_elapsed + tile_stats.total,
+                            }
+                        } else {
+                            update_awproject_persistent_metal_residuals(
+                                &mut program.tile_batch,
+                                &planned_samples,
+                            )?;
+                            executor.dispatch_prediction_tile_chain_probe(
+                                grid,
+                                aw_compensation,
+                                &program.prediction_batch,
+                                &program.tile_batch,
+                                &program.tile_plan,
+                                model_grids,
+                                request.nterms,
+                            )?
+                        };
                     Ok::<_, ImagingError>((stats, executor_setup))
                 })?;
                 if profile::standard_mfs_profile_detail_enabled() {
@@ -60326,7 +60901,7 @@ mod tests {
         );
         assert_eq!(
             std::mem::size_of::<super::AwProjectMetalPredictionParams>(),
-            24
+            32
         );
         assert_eq!(
             std::mem::align_of::<super::AwProjectMetalPredictionParams>(),
@@ -60339,6 +60914,38 @@ mod tests {
         assert_eq!(
             std::mem::align_of::<super::AwProjectMetalPredictionResult>(),
             4
+        );
+        assert_eq!(
+            std::mem::size_of::<super::AwProjectMetalPredictionAuditComplex>(),
+            8
+        );
+        assert_eq!(
+            std::mem::align_of::<super::AwProjectMetalPredictionAuditComplex>(),
+            8
+        );
+        assert_eq!(
+            std::mem::size_of::<super::AwProjectMetalPredictionAuditRole>(),
+            40
+        );
+        assert_eq!(
+            std::mem::align_of::<super::AwProjectMetalPredictionAuditRole>(),
+            8
+        );
+        assert_eq!(
+            std::mem::size_of::<super::AwProjectMetalPredictionAuditSample>(),
+            104
+        );
+        assert_eq!(
+            std::mem::align_of::<super::AwProjectMetalPredictionAuditSample>(),
+            8
+        );
+        assert_eq!(
+            std::mem::offset_of!(super::AwProjectMetalPredictionAuditSample, first),
+            24
+        );
+        assert_eq!(
+            std::mem::offset_of!(super::AwProjectMetalPredictionAuditSample, second),
+            64
         );
         assert_eq!(std::mem::size_of::<super::AwProjectMetalTileParams>(), 24);
         assert_eq!(std::mem::align_of::<super::AwProjectMetalTileParams>(), 4);
