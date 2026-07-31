@@ -6198,6 +6198,26 @@ and `git diff --check` passed. The bounded replacement may set
 artifact names. No other diagnostic or production change is authorized by
 this failed launch.
 
+The v2 replacement also failed before CASA started. Setting
+`target.process.stop-on-exec=false` did not make batch LLDB continue through
+Homebrew's `bin/python3.12` framework launcher; the process remained suspended
+at the Python application transition until the `300`-second watchdog ended
+it. Again, no CASA log or raw trace was created, so no CASA task, MS read,
+model preparation, prediction, grid, FFT, product, or CLEAN work ran. The v2
+log and runner hash to
+`e5da898163757cfd78ab04839b648b7f7e7f0eea94ea1874c8aceb4054962945`
+and
+`9fded1b120f5d40f853ff1bf76942a07dbe11d3719722bebb4b3627a94eb827d`.
+
+A no-CASA control reproduced the hang with a trivial `python -c` through the
+framework launcher. Targeting the framework's final
+`Resources/Python.app/Contents/MacOS/Python` executable directly completed the
+same LLDB control normally. The pinned CASA `6.7.5.18` packages also import
+under that executable when the venv's site-packages directory is supplied in
+`PYTHONPATH`. The next bounded replacement may therefore change only the LLDB
+target to that final executable, add the pinned venv `PYTHONPATH`, and use new
+v3 artifact names.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.

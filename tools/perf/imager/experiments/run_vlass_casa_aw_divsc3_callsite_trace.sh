@@ -7,10 +7,10 @@ external_root="${CASA_RS_VLASS_EXPERIMENT_ROOT:-/Volumes/GLENDENNING/casa-rs-vla
 diagnostics="${external_root}/receipts/diagnostics"
 runs="${external_root}/receipts/runs"
 manifest="${diagnostics}/20260731-vlass-casa-aw-divsc3-callsite-manifest-v1.json"
-raw_trace="${diagnostics}/20260731-vlass-casa-aw-divsc3-callsite-raw-trace-v1.json"
-comparison="${diagnostics}/20260731-vlass-casa-aw-divsc3-callsite-comparison-v1.json"
-lldb_log="${runs}/20260731-vlass-casa-aw-divsc3-callsite-trace-v1.log"
-casa_log="${runs}/20260731-vlass-casa-aw-divsc3-callsite-trace-v1.casa.log"
+raw_trace="${diagnostics}/20260731-vlass-casa-aw-divsc3-callsite-raw-trace-v2.json"
+comparison="${diagnostics}/20260731-vlass-casa-aw-divsc3-callsite-comparison-v2.json"
+lldb_log="${runs}/20260731-vlass-casa-aw-divsc3-callsite-trace-v2.log"
+casa_log="${runs}/20260731-vlass-casa-aw-divsc3-callsite-trace-v2.casa.log"
 npz="${runs}/20260730-vlass-4spw-frozen-casa-model-prediction-boundary-v2.npz"
 source_trace="${diagnostics}/20260730-vlass-4096-4spw-casars-prediction-source-trace-v1.json"
 term_oracle="${diagnostics}/20260731-vlass-4spw-casa-mtmfs-term-degrid-oracle-v2.bin"
@@ -22,15 +22,16 @@ model_prefix="${external_root}/casa-reduced-clean/4096-four-spw/casa"
 prior_output_dir="${external_root}/artifacts/experiments/vlass-4spw-casa-aw-degrid-prefix-source1446-v1"
 scratch_ms="${prior_output_dir}/scratch.ms"
 output_prefix="${prior_output_dir}/casa"
-unreachable_npz="${prior_output_dir}/callsite-trace-unreachable-v1.npz"
+unreachable_npz="${prior_output_dir}/callsite-trace-unreachable-v2.npz"
 timeout_command="/opt/homebrew/bin/timeout"
+expected_manifest_sha256="929e77423638bbd0d0f29102182b055fb3516fdfd504d00ee759b0eeb6ff75f6"
 
 fail() {
   echo "CASA AW division call-site trace: $*" >&2
   exit 1
 }
 
-for required in "${npz}" "${source_trace}" "${term_oracle}" "${library}" \
+for required in "${manifest}" "${npz}" "${source_trace}" "${term_oracle}" "${library}" \
   "${casa_python}" "${casa_source}" "${timeout_command}"; do
   [[ -e "${required}" ]] || fail "missing required input ${required}"
 done
@@ -38,18 +39,15 @@ done
   fail "missing frozen source or prior bounded scratch MS"
 [[ -d "${output_prefix}.model.tt0" && -d "${output_prefix}.model.tt1" ]] ||
   fail "missing prior bounded copied model terms"
-for artifact in "${manifest}" "${raw_trace}" "${comparison}" "${lldb_log}" \
+for artifact in "${raw_trace}" "${comparison}" "${lldb_log}" \
   "${casa_log}" "${unreachable_npz}"; do
   [[ ! -e "${artifact}" ]] || fail "refusing to overwrite ${artifact}"
 done
 mkdir -p "${diagnostics}" "${runs}"
 
-python3 "${experiment_dir}/vlass_casa_aw_divsc3_callsite_trace.py" manifest \
-  --npz "${npz}" \
-  --source-trace "${source_trace}" \
-  --term-oracle "${term_oracle}" \
-  --casa-source "${casa_source}" \
-  --output "${manifest}"
+actual_manifest_sha256="$(shasum -a 256 "${manifest}" | awk '{print $1}')"
+[[ "${actual_manifest_sha256}" == "${expected_manifest_sha256}" ]] ||
+  fail "frozen call-site manifest checksum changed"
 
 set +e
 env \
@@ -59,6 +57,7 @@ env \
   "${timeout_command}" --signal=TERM --kill-after=15s 300s \
   lldb -b \
   -o "settings set auto-confirm true" \
+  -o "settings set target.process.stop-on-exec false" \
   -o "command script import ${experiment_dir}/vlass_casa_aw_divsc3_callsite_trace_lldb.py" \
   -o "breakpoint set -H -n __divsc3 -s libcasacpp_synthesis.6.dylib" \
   -o "breakpoint command add -F vlass_casa_aw_divsc3_callsite_trace_lldb.helper_entry_callback 1" \
