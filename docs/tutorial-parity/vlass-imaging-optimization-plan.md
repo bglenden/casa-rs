@@ -6091,6 +6091,68 @@ four-SPW row remains unpromoted. No clean correctness row, full-16-SPW row,
 `12,150`-square development clean, memory-policy experiment, repeated CASA
 timing, or unchanged CASA reference ran.
 
+### 2026-07-31 installed image-local division-helper probe
+
+After the source-`1,446` prefix checkpoint, the same Oracle conversation
+selected one arithmetic-only discriminator at the first remaining boundary.
+The probe loads the checksum-pinned installed
+`libcasacpp_synthesis.6.dylib`, decodes the `bl` instruction at the official
+`refim::AWVisResampler::GridToData` call site, and invokes that exact
+image-local private `___divsc3` code address through the four-binary32
+component ABI. It does not compile another CASA quotient expression or resolve
+a global helper with the same name.
+
+The validity identity is complete:
+
+- installed library SHA-256
+  `0e86c46963025b4deac2bd2b795788dac46f333b4c72a966846b96a8afb2f697`
+  and UUID `DAFE5981-5FBA-39BB-B616-E28B1B2BAEEB`;
+- official call-site VM address `0x0000000000b7c600`, instruction
+  `0x9404da40`, and decoded helper VM address `0x0000000000cb2f00`;
+- runtime decoded target exactly equal to the invoked helper address after the
+  loaded-image slide;
+- helper entry-through-first-return extent `132` bytes, SHA-256
+  `c4193d0d1703d46a1b5c17e2119eb71b4dc517808cb03423bc14ede81a644b71`;
+- exact ABI mapping `s0=a`, `s1=b`, `s2=c`, `s3=d`, returning the two
+  binary32 components in `s0` and `s1`; and
+- unchanged FPCR `0` and `FE_TONEAREST` before and after the calls.
+
+The already-proved source-zero control returns the frozen official bits
+`[1034097304, 1037600252]`. For source `1,446`, however, the exact installed
+helper returns `[3145554493, 3197138881]`, bit-identical to both the current
+casa-rs CPU-wide helper and the separately compiled equivalent wide graph. It
+does **not** return the frozen official CASA raw TT0
+`[3145554492, 3197138881]`.
+
+The classification is therefore
+`installed-helper-matches-rust-helper`. This supersedes the earlier inference
+that invoking the installed helper with the asserted source-`1,446`
+numerator/normalizer would itself reproduce the frozen official value. The
+installed helper's ordinary-finite arithmetic graph is not a demonstrated
+correction target, and this result authorizes no production arithmetic change.
+Combined with the exact `441`-tap prefix, the remaining distinction is now at
+the official call-site operand or post-return boundary. The installed call
+site moves the numerator into `s0`/`s1`, calls the private helper, and later
+stores returned `s0`/`s1`; the next bounded discriminator must observe the
+actual official call-site register bits rather than infer them from a rebuilt
+translation unit.
+
+The immutable receipt hashes to
+`6734a8f95eea2db713690fcff78be78bef58e15dacb034696924fa8586972d1d`.
+The C probe, analyzer, focused test, and runner hash to, respectively:
+
+- `ed675364abc1ae8f1a69782cb39817e7b281d0b96456becf1807d9d0ce17a487`;
+- `a815b066edf9bde6a3567f13e65861ccb7ddd0026e6963c01d1a0444be44a246`;
+- `4ddbc93623a66c492ac3d5b612e6585aad5a222eb2da5828552039c4dc45d6da`;
+  and
+- `c6b81b46782ec88fb23f6fb308a35ed120fd5c1349c7514f489957ee6ed96794`.
+
+Focused Python tests (`5 passed`), Ruff, Bash syntax, and `git diff --check`
+passed. No CASA task, MS read, prediction, grid, FFT, product, CLEAN,
+full-16-SPW row, `12,150`-square development run, memory-policy experiment,
+repeated CASA timing, or unchanged CASA reference ran. The four-SPW row
+remains unpromoted.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
