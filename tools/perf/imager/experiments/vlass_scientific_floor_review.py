@@ -765,6 +765,7 @@ def render_panel(
     source: dict[str, Any],
     stable_alpha: np.ndarray,
     status: str,
+    workload_id: str,
 ) -> None:
     import matplotlib
 
@@ -784,7 +785,7 @@ def render_panel(
     )
     fig, axes = plt.subplots(3, 3, figsize=(15, 14), constrained_layout=True)
     fig.suptitle(
-        f"VLASS 4096² four-SPW scientific-floor review: {status}",
+        f"VLASS scientific-floor review ({workload_id}): {status}",
         fontsize=15,
     )
     for row, (suffix, title, unit) in enumerate(rows):
@@ -846,6 +847,7 @@ def render_panel(
 
 def build_review(
     *,
+    workload_id: str,
     comparison_path: Path,
     comparison_input_path: Path,
     run_log_path: Path,
@@ -853,6 +855,8 @@ def build_review(
     alpha_threshold: float,
     panel_path: Path | None,
 ) -> dict[str, Any]:
+    if not workload_id.strip():
+        raise ReviewError("workload id must not be empty")
     if alpha_threshold <= 0.0 or not math.isfinite(alpha_threshold):
         raise ReviewError("alpha threshold must be finite and positive")
     comparison = load_json(comparison_path)
@@ -887,7 +891,14 @@ def build_review(
     if panel_path is not None:
         if panel_path.exists():
             raise ReviewError(f"refusing to overwrite panel: {panel_path}")
-        render_panel(panel_path, planes, source, stable_alpha, status)
+        render_panel(
+            panel_path,
+            planes,
+            source,
+            stable_alpha,
+            status,
+            workload_id,
+        )
         panel_binding = {
             "path": str(panel_path.resolve()),
             "bytes": panel_path.stat().st_size,
@@ -901,7 +912,7 @@ def build_review(
         "decision": "promote" if status == "passed" else "hold",
         "failures": failures,
         "scope": {
-            "workload": "4096-square-four-spw-real-vlass-clean",
+            "workload": workload_id,
             "evidence_only": True,
             "runs_casa": False,
             "runs_imaging": False,
@@ -953,6 +964,7 @@ def build_review(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--workload-id", required=True)
     parser.add_argument("--comparison", required=True, type=Path)
     parser.add_argument("--comparison-input", required=True, type=Path)
     parser.add_argument("--run-log", required=True, type=Path)
@@ -964,6 +976,7 @@ def main() -> None:
     if args.output.exists():
         parser.error(f"refusing to overwrite receipt: {args.output}")
     receipt = build_review(
+        workload_id=args.workload_id,
         comparison_path=args.comparison,
         comparison_input_path=args.comparison_input,
         run_log_path=args.run_log,

@@ -34,6 +34,7 @@ class VlassScientificFloorReviewTest(unittest.TestCase):
         self.run_log_path = self.root / "run.log"
         self.run_log_path.write_text("bounded synthetic run\n", encoding="utf-8")
         self.alpha_threshold = 1.0e-3
+        self.workload_id = "synthetic-vlass-clean"
         self.source_region = {
             "id": "synthetic-source",
             "products": [".image.tt0", ".model.tt0", ".residual.tt0"],
@@ -173,6 +174,7 @@ class VlassScientificFloorReviewTest(unittest.TestCase):
 
     def test_complete_frozen_candidate_passes(self) -> None:
         receipt = reviewer.build_review(
+            workload_id=self.workload_id,
             comparison_path=self.comparison_path,
             comparison_input_path=self.comparison_input_path,
             run_log_path=self.run_log_path,
@@ -185,6 +187,7 @@ class VlassScientificFloorReviewTest(unittest.TestCase):
         self.assertTrue(all(receipt["gates"].values()))
         self.assertFalse(receipt["scope"]["runs_casa"])
         self.assertFalse(receipt["scope"]["runs_imaging"])
+        self.assertEqual(receipt["scope"]["workload"], self.workload_id)
 
     def test_non_boundary_alpha_topology_difference_fails(self) -> None:
         for suffix in (".alpha", ".alpha.error"):
@@ -205,6 +208,7 @@ class VlassScientificFloorReviewTest(unittest.TestCase):
             encoding="utf-8",
         )
         receipt = reviewer.build_review(
+            workload_id=self.workload_id,
             comparison_path=self.comparison_path,
             comparison_input_path=self.comparison_input_path,
             run_log_path=self.run_log_path,
@@ -226,6 +230,7 @@ class VlassScientificFloorReviewTest(unittest.TestCase):
             encoding="utf-8",
         )
         receipt = reviewer.build_review(
+            workload_id=self.workload_id,
             comparison_path=self.comparison_path,
             comparison_input_path=self.comparison_input_path,
             run_log_path=self.run_log_path,
@@ -246,6 +251,7 @@ class VlassScientificFloorReviewTest(unittest.TestCase):
             encoding="utf-8",
         )
         receipt = reviewer.build_review(
+            workload_id=self.workload_id,
             comparison_path=self.comparison_path,
             comparison_input_path=self.comparison_input_path,
             run_log_path=self.run_log_path,
