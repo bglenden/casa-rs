@@ -152,6 +152,9 @@ class VlassScientificFloorReviewTest(unittest.TestCase):
             },
         }
         products[".image.tt0"]["source_regions"] = [source_result]
+        # A localized difference at about two percent of TT1 noise is well
+        # below the artifact guard and must not override the beam-scale gates.
+        products[".image.tt1"]["full_array"]["diff_abs_max"] = 1.0e-6
         return {
             "status": "completed",
             "comparison_mode": "full",
@@ -213,6 +216,26 @@ class VlassScientificFloorReviewTest(unittest.TestCase):
         self.assertEqual(receipt["decision"], "hold")
         self.assertIn(
             "alpha topology mismatch is not confined to cutoff boundary",
+            receipt["failures"],
+        )
+
+    def test_conspicuous_localized_difference_fails(self) -> None:
+        self.comparison["products"][".image.tt1"]["full_array"]["diff_abs_max"] = 1.0e-4
+        self.comparison_path.write_text(
+            json.dumps(self.comparison),
+            encoding="utf-8",
+        )
+        receipt = reviewer.build_review(
+            comparison_path=self.comparison_path,
+            comparison_input_path=self.comparison_input_path,
+            run_log_path=self.run_log_path,
+            workspace_root=self.workspace,
+            alpha_threshold=self.alpha_threshold,
+            panel_path=None,
+        )
+        self.assertEqual(receipt["status"], "failed")
+        self.assertIn(
+            ".image.tt1 maximum difference over noise",
             receipt["failures"],
         )
 
