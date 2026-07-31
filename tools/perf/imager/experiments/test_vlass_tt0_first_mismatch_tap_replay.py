@@ -50,6 +50,29 @@ class TapReplayArithmeticTests(unittest.TestCase):
             [1034097304, 1037600251],
         )
 
+    def test_codegen_audit_requires_pinned_wide_precision_contract(self) -> None:
+        audit = {
+            "schema": subject.EXPECTED_CODEGEN_SCHEMA,
+            "classification": (
+                "official-casa-wide-intermediate-complex-division-codegen"
+            ),
+            "library": {"sha256": subject.EXPECTED_CASA_SYNTHESIS_SHA256},
+            "grid_to_data": {"divsc3_call_count": 1},
+            "divsc3": {
+                "input_boundary": ("four_binary32_components_widened_to_binary64"),
+                "arithmetic": ("binary64_products_fused_sums_and_binary64_divisions"),
+                "output_boundary": "each_component_narrowed_once_to_binary32",
+            },
+        }
+
+        validation = subject.validate_codegen_audit(audit)
+
+        self.assertTrue(validation["ordinary_finite_fast_path_verified"])
+        self.assertEqual(
+            validation["installed_casa_synthesis_sha256"],
+            subject.EXPECTED_CASA_SYNTHESIS_SHA256,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
