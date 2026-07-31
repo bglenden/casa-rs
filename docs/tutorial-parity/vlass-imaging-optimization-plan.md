@@ -6218,6 +6218,28 @@ under that executable when the venv's site-packages directory is supplied in
 target to that final executable, add the pinned venv `PYTHONPATH`, and use new
 v3 artifact names.
 
+The v3 replacement reached the final Python application executable but also
+timed out before the CASA script created its log. Supplying the venv
+site-packages directory as `PYTHONPATH` made Python initialization scan that
+large external directory under LLDB before its filesystem codec was ready.
+The process remained in startup, so the synthesis library never reached the
+target trace and no raw register receipt was written. The v3 log and runner
+hash to
+`ff6b1249634cc2039cb131a748e94997cb442333f7260d6eb936b7936763d195`
+and
+`db0a12cc3cccac8e3611fa43cc00b917367bf2318c908c5a6ad23e9342f1a685`.
+No CASA task, MS read, model preparation, prediction, grid, FFT, product, or
+CLEAN work ran.
+
+No-task controls show that the final Python executable itself runs normally
+under LLDB and that the pinned CASA venv imports normally outside LLDB. The
+next bounded replacement must therefore avoid debugging Python/CASA startup:
+launch the pinned venv Python normally, stop it once after imports and setup
+but immediately before `tclean`, attach LLDB to that exact stopped PID, install
+the hardware breakpoint by the already-audited loaded image address, and then
+continue only through the source-`1,446` return. This changes the debugger
+attachment mechanism, not the frozen manifest or scientific workload.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
