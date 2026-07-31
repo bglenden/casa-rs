@@ -77,6 +77,7 @@ use std::{
     fs::OpenOptions,
     hash::{BuildHasherDefault, Hasher},
     io::Write,
+    mem,
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -4446,8 +4447,18 @@ const AWPROJECT_EXACT_COMPONENT_PROBE_ENV: &str =
     "CASA_RS_EXPERIMENTAL_AWPROJECT_EXACT_COMPONENT_PROBE";
 const AWPROJECT_HYBRID_SUPPORT_AUDIT_ENV: &str =
     "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_SUPPORT_AUDIT";
+const AWPROJECT_SUBGRID_SUPPORT_AUDIT_ENV: &str =
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_SUBGRID_SUPPORT_AUDIT";
+const AWPROJECT_SUBGRID_SPEED_OF_LIGHT_ENV: &str =
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_SUBGRID_SPEED_OF_LIGHT";
+const AWPROJECT_CF_KEY_FFT_OCCUPANCY_ENV: &str =
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_CF_KEY_FFT_OCCUPANCY";
 const AWPROJECT_PHYSICAL_COMPONENT_STATE_LIMIT_BYTES: usize = 151_257_904;
 const AWPROJECT_HYBRID_STACK_COUNT_MAX: usize = 32;
+const AWPROJECT_SUBGRID_SUPPORT_SIDES: [usize; 5] = [32, 48, 64, 96, 128];
+const AWPROJECT_SUBGRID_TRACE_MAJOR_CYCLES: usize = 5;
+const AWPROJECT_SUBGRID_TRACE_THREADGROUP_CELLS: usize = 2_048;
+const AWPROJECT_CF_KEY_FFT_TILE_SIDES: [usize; 4] = [32, 64, 128, 256];
 
 fn awproject_component_probe_enabled() -> bool {
     env::var_os(AWPROJECT_PHYSICAL_COMPONENT_PROBE_ENV).is_some()
@@ -5430,6 +5441,197 @@ fn maybe_audit_awproject_hybrid_support(
         AWPROJECT_HYBRID_STACK_COUNT_MAX,
         stack_weighted_taps,
         stack_max_abs_residual_w,
+    );
+    Ok(())
+}
+
+fn awproject_subgrid_side_for_support(
+    x_support: usize,
+    y_support: usize,
+) -> Result<(usize, usize), ImagingError> {
+    let patch_width = x_support
+        .max(y_support)
+        .checked_mul(2)
+        .and_then(|value| value.checked_add(1))
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest("AWProject subgrid patch width overflowed".to_string())
+        })?;
+    let side_index = AWPROJECT_SUBGRID_SUPPORT_SIDES
+        .iter()
+        .position(|&side| side >= patch_width)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(format!(
+                "AWProject subgrid support audit needs a side >= {patch_width}, but its largest audited side is {}",
+                AWPROJECT_SUBGRID_SUPPORT_SIDES
+                    .last()
+                    .copied()
+                    .unwrap_or_default()
+            ))
+        })?;
+    Ok((side_index, patch_width))
+}
+
+#[derive(Default)]
+struct AwProjectSubgridSupportCost {
+    plan_references: u64,
+    tap_interactions: u64,
+    subgrid_interactions: u64,
+    plan_references_by_side: [u64; AWPROJECT_SUBGRID_SUPPORT_SIDES.len()],
+    max_patch_width: usize,
+}
+
+impl AwProjectSubgridSupportCost {
+    fn add_plan(
+        &mut self,
+        plan: AwProjectCompactSamplePlan,
+        multiplicity: usize,
+        bundles: &[AwProjectCompactMaterializedTap],
+    ) -> Result<(), ImagingError> {
+        let bundle = awproject_ready_compact_tap(bundles, plan.tap_bundle);
+        let (side_index, patch_width) =
+            awproject_subgrid_side_for_support(bundle.x_support, bundle.y_support)?;
+        let multiplicity = u64::try_from(multiplicity).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject subgrid plan multiplicity does not fit u64".to_string(),
+            )
+        })?;
+        let tap_count = u64::try_from(bundle.values.len()).map_err(|_| {
+            ImagingError::InvalidRequest("AWProject subgrid tap count does not fit u64".to_string())
+        })?;
+        let side = u64::try_from(AWPROJECT_SUBGRID_SUPPORT_SIDES[side_index]).map_err(|_| {
+            ImagingError::InvalidRequest("AWProject subgrid side does not fit u64".to_string())
+        })?;
+        self.plan_references = self
+            .plan_references
+            .checked_add(multiplicity)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject subgrid plan reference count overflowed".to_string(),
+                )
+            })?;
+        self.tap_interactions = self
+            .tap_interactions
+            .checked_add(tap_count.checked_mul(multiplicity).ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject subgrid tap interaction product overflowed".to_string(),
+                )
+            })?)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject subgrid tap interaction count overflowed".to_string(),
+                )
+            })?;
+        self.subgrid_interactions = self
+            .subgrid_interactions
+            .checked_add(
+                side.checked_mul(side)
+                    .and_then(|value| value.checked_mul(multiplicity))
+                    .ok_or_else(|| {
+                        ImagingError::InvalidRequest(
+                            "AWProject subgrid interaction product overflowed".to_string(),
+                        )
+                    })?,
+            )
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject subgrid interaction count overflowed".to_string(),
+                )
+            })?;
+        self.plan_references_by_side[side_index] = self.plan_references_by_side[side_index]
+            .checked_add(multiplicity)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject subgrid side histogram overflowed".to_string(),
+                )
+            })?;
+        self.max_patch_width = self.max_patch_width.max(patch_width);
+        Ok(())
+    }
+
+    fn side_histogram_csv(&self) -> String {
+        self.plan_references_by_side
+            .iter()
+            .map(u64::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+
+fn maybe_audit_awproject_subgrid_support(
+    request: &MtmfsRequest,
+    source_samples: &[AwProjectCompactSourceSample],
+    bundles: &[AwProjectCompactMaterializedTap],
+    replay_block_ordinal: usize,
+    window_ordinal: usize,
+) -> Result<(), ImagingError> {
+    if env::var_os(AWPROJECT_SUBGRID_SUPPORT_AUDIT_ENV).is_none() {
+        return Ok(());
+    }
+    let psf_term_count = request
+        .nterms
+        .checked_mul(2)
+        .and_then(|value| value.checked_sub(1))
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject subgrid support audit PSF term count overflowed".to_string(),
+            )
+        })?;
+    let mut initial = AwProjectSubgridSupportCost::default();
+    let mut prediction = AwProjectSubgridSupportCost::default();
+    let mut adjoint = AwProjectSubgridSupportCost::default();
+    for source in source_samples {
+        for (plan, multiplicity) in [
+            (source.first_imaging_plan, request.nterms),
+            (source.second_imaging_plan, request.nterms),
+            (source.first_psf_plan, psf_term_count),
+            (source.second_psf_plan, psf_term_count),
+            (source.first_weight_plan, psf_term_count),
+            (source.second_weight_plan, psf_term_count),
+        ] {
+            initial.add_plan(plan, multiplicity, bundles)?;
+        }
+        for plan in [source.first_prediction_plan, source.second_prediction_plan] {
+            prediction.add_plan(plan, request.nterms, bundles)?;
+        }
+        for plan in [source.first_imaging_plan, source.second_imaging_plan] {
+            adjoint.add_plan(plan, request.nterms, bundles)?;
+        }
+    }
+    let sides = AWPROJECT_SUBGRID_SUPPORT_SIDES
+        .iter()
+        .map(usize::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    eprintln!(
+        "awproject_subgrid_support_audit block={} window={} samples={} sides={} \
+         initial_plan_references={} initial_plan_references_by_side={} \
+         initial_tap_interactions={} initial_subgrid_interactions={} \
+         prediction_plan_references={} prediction_plan_references_by_side={} \
+         prediction_tap_interactions={} prediction_subgrid_interactions={} \
+         adjoint_plan_references={} adjoint_plan_references_by_side={} \
+         adjoint_tap_interactions={} adjoint_subgrid_interactions={} \
+         max_patch_width={} \
+         role=bounded-real-signature-support-and-work-audit-not-performance-or-science-evidence",
+        replay_block_ordinal,
+        window_ordinal,
+        source_samples.len(),
+        sides,
+        initial.plan_references,
+        initial.side_histogram_csv(),
+        initial.tap_interactions,
+        initial.subgrid_interactions,
+        prediction.plan_references,
+        prediction.side_histogram_csv(),
+        prediction.tap_interactions,
+        prediction.subgrid_interactions,
+        adjoint.plan_references,
+        adjoint.side_histogram_csv(),
+        adjoint.tap_interactions,
+        adjoint.subgrid_interactions,
+        initial
+            .max_patch_width
+            .max(prediction.max_patch_width)
+            .max(adjoint.max_patch_width),
     );
     Ok(())
 }
@@ -10355,6 +10557,8 @@ where
         }
         Ok(())
     })?;
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    maybe_emit_awproject_cf_key_fft_occupancy()?;
     if let Some(cache) = aw_cache {
         accumulation.aw_sample_census.log(pass, cache)?;
         if accumulation.aw_metal_stats.calls > 0 {
@@ -10398,7 +10602,7 @@ struct AwProjectCompactTapKey {
     conjugate_for_grid: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct AwProjectPhaseInvariantTapKey {
     cell: AwProjectStableCellKey,
     kernel_kind: AwProjectCompactKernelKind,
@@ -10406,6 +10610,45 @@ struct AwProjectPhaseInvariantTapKey {
     off_y: isize,
     conjugate_for_grid: bool,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum AwProjectCfKeyFftCallKind {
+    Initial,
+    Prediction,
+    Adjoint,
+}
+
+impl AwProjectCfKeyFftCallKind {
+    fn multiplicity(self) -> u64 {
+        match self {
+            Self::Initial => 1,
+            Self::Prediction | Self::Adjoint => AWPROJECT_SUBGRID_TRACE_MAJOR_CYCLES as u64,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct AwProjectCfKeyFftBucketKey {
+    call_kind: AwProjectCfKeyFftCallKind,
+    rhs: usize,
+    tap: AwProjectPhaseInvariantTapKey,
+}
+
+#[derive(Default)]
+struct AwProjectCfKeyFftBucket {
+    plan_references: u64,
+    radius: usize,
+    tiles32: BTreeSet<(isize, isize)>,
+}
+
+#[derive(Default)]
+struct AwProjectCfKeyFftCensus {
+    buckets: BTreeMap<AwProjectCfKeyFftBucketKey, AwProjectCfKeyFftBucket>,
+    samples: u64,
+    windows: usize,
+}
+
+static AWPROJECT_CF_KEY_FFT_CENSUS: OnceLock<Mutex<AwProjectCfKeyFftCensus>> = OnceLock::new();
 
 impl From<AwProjectCompactTapKey> for AwProjectPhaseInvariantTapKey {
     fn from(key: AwProjectCompactTapKey) -> Self {
@@ -10417,6 +10660,270 @@ impl From<AwProjectCompactTapKey> for AwProjectPhaseInvariantTapKey {
             conjugate_for_grid: key.conjugate_for_grid,
         }
     }
+}
+
+impl AwProjectCfKeyFftCensus {
+    fn add_plan(
+        &mut self,
+        call_kind: AwProjectCfKeyFftCallKind,
+        rhs: usize,
+        plan: AwProjectCompactSamplePlan,
+        tap_requests: &[AwProjectCompactTapRequest],
+        bundles: &[AwProjectCompactMaterializedTap],
+    ) -> Result<(), ImagingError> {
+        let request = tap_requests.get(plan.tap_bundle).ok_or_else(|| {
+            ImagingError::Normalization(
+                "AWProject CF-key FFT audit plan references a missing request".to_string(),
+            )
+        })?;
+        let bundle = awproject_ready_compact_tap(bundles, plan.tap_bundle);
+        let bucket = self
+            .buckets
+            .entry(AwProjectCfKeyFftBucketKey {
+                call_kind,
+                rhs,
+                tap: request.key.into(),
+            })
+            .or_default();
+        bucket.plan_references = bucket.plan_references.checked_add(1).ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject CF-key FFT audit reference count overflowed".to_string(),
+            )
+        })?;
+        bucket.radius = bucket.radius.max(bundle.x_support).max(bundle.y_support);
+        let base_tile_side = isize::try_from(AWPROJECT_CF_KEY_FFT_TILE_SIDES[0]).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject CF-key FFT base tile side exceeds isize".to_string(),
+            )
+        })?;
+        bucket.tiles32.insert((
+            plan.loc_x.div_euclid(base_tile_side),
+            plan.loc_y.div_euclid(base_tile_side),
+        ));
+        Ok(())
+    }
+}
+
+fn maybe_audit_awproject_cf_key_fft_occupancy(
+    request: &MtmfsRequest,
+    source_samples: &[AwProjectCompactSourceSample],
+    tap_requests: &[AwProjectCompactTapRequest],
+    bundles: &[AwProjectCompactMaterializedTap],
+) -> Result<(), ImagingError> {
+    if env::var_os(AWPROJECT_CF_KEY_FFT_OCCUPANCY_ENV).is_none() {
+        return Ok(());
+    }
+    let psf_term_count = request
+        .nterms
+        .checked_mul(2)
+        .and_then(|value| value.checked_sub(1))
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject CF-key FFT audit PSF term count overflowed".to_string(),
+            )
+        })?;
+    let mut census = AWPROJECT_CF_KEY_FFT_CENSUS
+        .get_or_init(|| Mutex::new(AwProjectCfKeyFftCensus::default()))
+        .lock()
+        .map_err(|_| {
+            ImagingError::InvalidRequest("AWProject CF-key FFT audit lock was poisoned".to_string())
+        })?;
+    for source in source_samples {
+        for order in 0..request.nterms {
+            let residual_rhs = psf_term_count + order;
+            for plan in [source.first_imaging_plan, source.second_imaging_plan] {
+                census.add_plan(
+                    AwProjectCfKeyFftCallKind::Initial,
+                    residual_rhs,
+                    plan,
+                    tap_requests,
+                    bundles,
+                )?;
+                census.add_plan(
+                    AwProjectCfKeyFftCallKind::Adjoint,
+                    order,
+                    plan,
+                    tap_requests,
+                    bundles,
+                )?;
+            }
+            for plan in [source.first_prediction_plan, source.second_prediction_plan] {
+                census.add_plan(
+                    AwProjectCfKeyFftCallKind::Prediction,
+                    order,
+                    plan,
+                    tap_requests,
+                    bundles,
+                )?;
+            }
+        }
+        for order in 0..psf_term_count {
+            for plan in [source.first_psf_plan, source.second_psf_plan] {
+                census.add_plan(
+                    AwProjectCfKeyFftCallKind::Initial,
+                    order,
+                    plan,
+                    tap_requests,
+                    bundles,
+                )?;
+            }
+            let weight_rhs = psf_term_count + request.nterms + order;
+            for plan in [source.first_weight_plan, source.second_weight_plan] {
+                census.add_plan(
+                    AwProjectCfKeyFftCallKind::Initial,
+                    weight_rhs,
+                    plan,
+                    tap_requests,
+                    bundles,
+                )?;
+            }
+        }
+    }
+    census.samples = census
+        .samples
+        .checked_add(source_samples.len() as u64)
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject CF-key FFT audit sample count overflowed".to_string(),
+            )
+        })?;
+    census.windows = census.windows.saturating_add(1);
+    Ok(())
+}
+
+#[cfg(any(all(target_os = "macos", not(coverage)), test))]
+fn awproject_cf_key_fft_padded_side(
+    tile_side: usize,
+    radius: usize,
+) -> Result<usize, ImagingError> {
+    let minimum = tile_side
+        .checked_add(radius.checked_mul(2).ok_or_else(|| {
+            ImagingError::InvalidRequest("AWProject CF-key FFT halo size overflowed".to_string())
+        })?)
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest("AWProject CF-key FFT padded side overflowed".to_string())
+        })?;
+    minimum.checked_next_power_of_two().ok_or_else(|| {
+        ImagingError::InvalidRequest(
+            "AWProject CF-key FFT power-of-two side overflowed".to_string(),
+        )
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn maybe_emit_awproject_cf_key_fft_occupancy() -> Result<(), ImagingError> {
+    if env::var_os(AWPROJECT_CF_KEY_FFT_OCCUPANCY_ENV).is_none() {
+        return Ok(());
+    }
+    let mut state = AWPROJECT_CF_KEY_FFT_CENSUS
+        .get_or_init(|| Mutex::new(AwProjectCfKeyFftCensus::default()))
+        .lock()
+        .map_err(|_| {
+            ImagingError::InvalidRequest("AWProject CF-key FFT audit lock was poisoned".to_string())
+        })?;
+    if state.buckets.is_empty() {
+        return Ok(());
+    }
+    let census = std::mem::take(&mut *state);
+    drop(state);
+    for tile_side in AWPROJECT_CF_KEY_FFT_TILE_SIDES {
+        let tile_ratio = tile_side / AWPROJECT_CF_KEY_FFT_TILE_SIDES[0];
+        let tile_ratio = isize::try_from(tile_ratio).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject CF-key FFT tile ratio exceeds isize".to_string(),
+            )
+        })?;
+        let mut logical_plan_references = 0u128;
+        let mut logical_rhs_buckets = 0u128;
+        let mut logical_active_tiles = 0u128;
+        let mut padded_fft_cells = 0u128;
+        let mut transform_complex_units = 0u128;
+        let mut kernel_radii = BTreeMap::<AwProjectPhaseInvariantTapKey, usize>::new();
+        let mut peak_tile_scratch_bytes = 0usize;
+        for (key, bucket) in &census.buckets {
+            let logical_multiplicity = u128::from(key.call_kind.multiplicity());
+            let active_tiles = bucket
+                .tiles32
+                .iter()
+                .map(|&(tile_x, tile_y)| {
+                    (tile_x.div_euclid(tile_ratio), tile_y.div_euclid(tile_ratio))
+                })
+                .collect::<BTreeSet<_>>()
+                .len();
+            let padded_side = awproject_cf_key_fft_padded_side(tile_side, bucket.radius)?;
+            let cells = padded_side.checked_mul(padded_side).ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject CF-key FFT padded cell count overflowed".to_string(),
+                )
+            })?;
+            let log_cells = u128::from(cells.ilog2());
+            let cells_u128 = cells as u128;
+            let active_u128 = active_tiles as u128;
+            logical_plan_references = logical_plan_references
+                .saturating_add(u128::from(bucket.plan_references) * logical_multiplicity);
+            logical_rhs_buckets = logical_rhs_buckets.saturating_add(logical_multiplicity);
+            logical_active_tiles =
+                logical_active_tiles.saturating_add(active_u128 * logical_multiplicity);
+            padded_fft_cells =
+                padded_fft_cells.saturating_add(cells_u128 * active_u128 * logical_multiplicity);
+            transform_complex_units = transform_complex_units.saturating_add(
+                (2 * cells_u128 * log_cells + cells_u128) * active_u128 * logical_multiplicity,
+            );
+            kernel_radii
+                .entry(key.tap)
+                .and_modify(|radius| *radius = (*radius).max(bucket.radius))
+                .or_insert(bucket.radius);
+            peak_tile_scratch_bytes = peak_tile_scratch_bytes.max(
+                cells
+                    .saturating_mul(mem::size_of::<Complex32>())
+                    .saturating_mul(3),
+            );
+        }
+        let mut kernel_fft_units = 0u128;
+        let mut persistent_kernel_spectrum_bytes = 0usize;
+        for radius in kernel_radii.values().copied() {
+            let padded_side = awproject_cf_key_fft_padded_side(tile_side, radius)?;
+            let cells = padded_side.saturating_mul(padded_side);
+            kernel_fft_units =
+                kernel_fft_units.saturating_add((cells as u128) * u128::from(cells.ilog2()));
+            persistent_kernel_spectrum_bytes = persistent_kernel_spectrum_bytes
+                .saturating_add(cells.saturating_mul(mem::size_of::<Complex32>()));
+        }
+        let total_complex_units = transform_complex_units.saturating_add(kernel_fft_units);
+        let references_per_active_tile = if logical_active_tiles == 0 {
+            0.0
+        } else {
+            logical_plan_references as f64 / logical_active_tiles as f64
+        };
+        eprintln!(
+            "awproject_cf_key_fft_occupancy tile_side={} samples={} windows={} \
+             logical_calls={} logical_plan_references={} exact_kernel_keys={} \
+             logical_rhs_buckets={} logical_active_tiles={} \
+             references_per_active_tile={:.6} padded_fft_cells={} \
+             transform_complex_units={} kernel_fft_units={} total_complex_units={} \
+             persistent_kernel_spectrum_bytes={} peak_tile_scratch_bytes={} \
+             pointing_contract=exact-group-phase-factored-into-sparse-impulse-values \
+             kernel_contract=exact-cell-kind-offset-conjugation-key \
+             cost_contract=overlap-save-two-ffts-one-pointwise-multiply-plus-one-persistent-kernel-fft \
+             role=occupancy-and-formula-audit-not-performance-or-science-evidence",
+            tile_side,
+            census.samples,
+            census.windows,
+            1 + 2 * AWPROJECT_SUBGRID_TRACE_MAJOR_CYCLES,
+            logical_plan_references,
+            kernel_radii.len(),
+            logical_rhs_buckets,
+            logical_active_tiles,
+            references_per_active_tile,
+            padded_fft_cells,
+            transform_complex_units,
+            kernel_fft_units,
+            total_complex_units,
+            persistent_kernel_spectrum_bytes,
+            peak_tile_scratch_bytes,
+        );
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -11578,6 +12085,587 @@ struct AwProjectMetalGridStats {
     total: Duration,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectSubgridTracePlan {
+    screen_base: u32,
+    row_phase_base: u32,
+    side: u32,
+    _pad0: u32,
+    phase_dx_re: f32,
+    phase_dx_im: f32,
+    _pad1: u32,
+    _pad2: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectSubgridTraceReference {
+    plan_index: u32,
+    _pad0: u32,
+    amplitude_re: f32,
+    amplitude_im: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectSubgridTraceStripe {
+    reference_start: u32,
+    reference_end: u32,
+    output_base: u32,
+    side: u32,
+    row_start: u32,
+    row_count: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectSubgridTraceParams {
+    stripe_start: u32,
+    stripe_count: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectSubgridTraceGroupKey {
+    side: usize,
+    rhs: usize,
+    tile_x: isize,
+    tile_y: isize,
+}
+
+#[derive(Default)]
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectSubgridTraceStreamBuilder {
+    groups: BTreeMap<AwProjectSubgridTraceGroupKey, Vec<AwProjectSubgridTraceReference>>,
+}
+
+#[derive(Clone, Copy, Default)]
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectSubgridTraceStream {
+    stripe_start: usize,
+    stripe_count: usize,
+    plan_references: u64,
+    cell_updates: u64,
+    groups: usize,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl AwProjectSubgridTraceStreamBuilder {
+    fn add(
+        &mut self,
+        plan_index: u32,
+        plan: AwProjectSubgridTracePlan,
+        source_plan: AwProjectCompactSamplePlan,
+        rhs: usize,
+        amplitude: Complex32,
+    ) -> Result<(), ImagingError> {
+        let side = usize::try_from(plan.side).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject subgrid trace side does not fit usize".to_string(),
+            )
+        })?;
+        let side_isize = isize::try_from(side).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject subgrid trace side does not fit isize".to_string(),
+            )
+        })?;
+        let key = AwProjectSubgridTraceGroupKey {
+            side,
+            rhs,
+            tile_x: source_plan.loc_x.div_euclid(side_isize),
+            tile_y: source_plan.loc_y.div_euclid(side_isize),
+        };
+        self.groups
+            .entry(key)
+            .or_default()
+            .push(AwProjectSubgridTraceReference {
+                plan_index,
+                _pad0: 0,
+                amplitude_re: amplitude.re,
+                amplitude_im: amplitude.im,
+            });
+        Ok(())
+    }
+
+    fn finish(
+        self,
+        references: &mut Vec<AwProjectSubgridTraceReference>,
+        stripes: &mut Vec<AwProjectSubgridTraceStripe>,
+        output_cells: &mut usize,
+    ) -> Result<AwProjectSubgridTraceStream, ImagingError> {
+        let stripe_start = stripes.len();
+        let mut stream = AwProjectSubgridTraceStream {
+            stripe_start,
+            groups: self.groups.len(),
+            ..AwProjectSubgridTraceStream::default()
+        };
+        for (key, group_references) in self.groups {
+            let reference_start = references.len();
+            references.extend_from_slice(&group_references);
+            let reference_end = references.len();
+            let group_output_base = *output_cells;
+            let group_cells = key.side.checked_mul(key.side).ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject subgrid trace group cell count overflowed".to_string(),
+                )
+            })?;
+            *output_cells = output_cells.checked_add(group_cells).ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject subgrid trace output cell count overflowed".to_string(),
+                )
+            })?;
+            let rows_per_stripe = awproject_subgrid_trace_rows_per_stripe(key.side)?;
+            for row_start in (0..key.side).step_by(rows_per_stripe) {
+                let row_count = rows_per_stripe.min(key.side - row_start);
+                stripes.push(AwProjectSubgridTraceStripe {
+                    reference_start: u32::try_from(reference_start).map_err(|_| {
+                        ImagingError::InvalidRequest(
+                            "AWProject subgrid trace reference start exceeds u32".to_string(),
+                        )
+                    })?,
+                    reference_end: u32::try_from(reference_end).map_err(|_| {
+                        ImagingError::InvalidRequest(
+                            "AWProject subgrid trace reference end exceeds u32".to_string(),
+                        )
+                    })?,
+                    output_base: u32::try_from(group_output_base).map_err(|_| {
+                        ImagingError::InvalidRequest(
+                            "AWProject subgrid trace output base exceeds u32".to_string(),
+                        )
+                    })?,
+                    side: u32::try_from(key.side).map_err(|_| {
+                        ImagingError::InvalidRequest(
+                            "AWProject subgrid trace side exceeds u32".to_string(),
+                        )
+                    })?,
+                    row_start: u32::try_from(row_start).map_err(|_| {
+                        ImagingError::InvalidRequest(
+                            "AWProject subgrid trace row start exceeds u32".to_string(),
+                        )
+                    })?,
+                    row_count: u32::try_from(row_count).map_err(|_| {
+                        ImagingError::InvalidRequest(
+                            "AWProject subgrid trace row count exceeds u32".to_string(),
+                        )
+                    })?,
+                });
+            }
+            let group_reference_count = u64::try_from(group_references.len()).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "AWProject subgrid trace group reference count exceeds u64".to_string(),
+                )
+            })?;
+            let group_cells = u64::try_from(group_cells).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "AWProject subgrid trace group cell count exceeds u64".to_string(),
+                )
+            })?;
+            stream.plan_references = stream
+                .plan_references
+                .checked_add(group_reference_count)
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "AWProject subgrid trace plan reference count overflowed".to_string(),
+                    )
+                })?;
+            stream.cell_updates =
+                stream
+                    .cell_updates
+                    .checked_add(group_reference_count.checked_mul(group_cells).ok_or_else(
+                        || {
+                            ImagingError::InvalidRequest(
+                                "AWProject subgrid trace cell update product overflowed"
+                                    .to_string(),
+                            )
+                        },
+                    )?)
+                    .ok_or_else(|| {
+                        ImagingError::InvalidRequest(
+                            "AWProject subgrid trace cell update count overflowed".to_string(),
+                        )
+                    })?;
+        }
+        stream.stripe_count = stripes.len() - stripe_start;
+        Ok(stream)
+    }
+}
+
+#[cfg(any(all(target_os = "macos", not(coverage)), test))]
+fn awproject_subgrid_trace_rows_per_stripe(side: usize) -> Result<usize, ImagingError> {
+    if side == 0 || side > AWPROJECT_SUBGRID_TRACE_THREADGROUP_CELLS {
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject subgrid trace side {side} is outside the bounded threadgroup schedule"
+        )));
+    }
+    Ok((AWPROJECT_SUBGRID_TRACE_THREADGROUP_CELLS / side)
+        .max(1)
+        .min(side))
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectSubgridTraceProgram {
+    screens: Vec<WProjectMetalComplex>,
+    row_phases: Vec<WProjectMetalComplex>,
+    plans: Vec<AwProjectSubgridTracePlan>,
+    references: Vec<AwProjectSubgridTraceReference>,
+    stripes: Vec<AwProjectSubgridTraceStripe>,
+    streams: [AwProjectSubgridTraceStream; 3],
+    output_cells: usize,
+    samples: usize,
+    build_elapsed: Duration,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl AwProjectSubgridTraceProgram {
+    fn resident_bytes(&self) -> usize {
+        mem::size_of_val(self.screens.as_slice())
+            .saturating_add(mem::size_of_val(self.row_phases.as_slice()))
+            .saturating_add(mem::size_of_val(self.plans.as_slice()))
+            .saturating_add(mem::size_of_val(self.references.as_slice()))
+            .saturating_add(mem::size_of_val(self.stripes.as_slice()))
+            .saturating_add(
+                self.output_cells
+                    .saturating_mul(mem::size_of::<WProjectMetalComplex>()),
+            )
+    }
+
+    fn stored_trace_bytes(&self) -> usize {
+        mem::size_of_val(self.plans.as_slice())
+            .saturating_add(mem::size_of_val(self.references.as_slice()))
+            .saturating_add(mem::size_of_val(self.stripes.as_slice()))
+    }
+
+    fn logical_plan_references(&self) -> u64 {
+        self.streams[0].plan_references.saturating_add(
+            self.streams[1]
+                .plan_references
+                .saturating_add(self.streams[2].plan_references)
+                .saturating_mul(AWPROJECT_SUBGRID_TRACE_MAJOR_CYCLES as u64),
+        )
+    }
+
+    fn logical_cell_updates(&self) -> u64 {
+        self.streams[0].cell_updates.saturating_add(
+            self.streams[1]
+                .cell_updates
+                .saturating_add(self.streams[2].cell_updates)
+                .saturating_mul(AWPROJECT_SUBGRID_TRACE_MAJOR_CYCLES as u64),
+        )
+    }
+
+    fn logical_groups(&self) -> usize {
+        self.streams[0].groups.saturating_add(
+            self.streams[1]
+                .groups
+                .saturating_add(self.streams[2].groups)
+                .saturating_mul(AWPROJECT_SUBGRID_TRACE_MAJOR_CYCLES),
+        )
+    }
+
+    fn logical_stripes(&self) -> usize {
+        self.streams[0].stripe_count.saturating_add(
+            self.streams[1]
+                .stripe_count
+                .saturating_add(self.streams[2].stripe_count)
+                .saturating_mul(AWPROJECT_SUBGRID_TRACE_MAJOR_CYCLES),
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectSubgridTraceDispatchStats {
+    buffer_alloc: Duration,
+    warm_wall: Duration,
+    warm_device: Duration,
+    core_wall: Duration,
+    core_device: Duration,
+    readback: Duration,
+    output_sha256: [u8; 32],
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_subgrid_trace_unit_phase(seed: u64) -> Complex32 {
+    const PHASE_BUCKETS: u64 = 65_521;
+    let bucket = seed % PHASE_BUCKETS;
+    let angle = (bucket as f32) * (std::f32::consts::TAU / PHASE_BUCKETS as f32);
+    Complex32::new(angle.cos(), angle.sin())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_subgrid_trace_metal_complex(value: Complex32) -> WProjectMetalComplex {
+    WProjectMetalComplex {
+        re: value.re,
+        im: value.im,
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_subgrid_trace_push_plan(
+    source: AwProjectCompactSourceSample,
+    source_plan: AwProjectCompactSamplePlan,
+    bundle_layouts: &[(u32, usize)],
+    plans: &mut Vec<AwProjectSubgridTracePlan>,
+    row_phases: &mut Vec<WProjectMetalComplex>,
+) -> Result<u32, ImagingError> {
+    let &(screen_base, side) = bundle_layouts.get(source_plan.tap_bundle).ok_or_else(|| {
+        ImagingError::Normalization(
+            "AWProject subgrid trace plan references a missing screen layout".to_string(),
+        )
+    })?;
+    if side == 0 {
+        return Err(ImagingError::Normalization(
+            "AWProject subgrid trace plan references a rejected tap bundle".to_string(),
+        ));
+    }
+    let seed = (source.sample_index as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)
+        ^ (source.group_index as u64).rotate_left(11)
+        ^ (source_plan.loc_x as i64 as u64).rotate_left(23)
+        ^ (source_plan.loc_y as i64 as u64).rotate_left(37)
+        ^ (source_plan.tap_bundle as u64).rotate_left(47);
+    let phase_dx = awproject_subgrid_trace_unit_phase(seed ^ 0xa076_1d64_78bd_642f);
+    let phase_dy = awproject_subgrid_trace_unit_phase(seed ^ 0xe703_7ed1_a0b4_28db);
+    let mut row_phase = awproject_subgrid_trace_unit_phase(seed ^ 0x8ebc_6af0_9c88_c6e3);
+    let row_phase_base = row_phases.len();
+    row_phases.reserve(side);
+    for _ in 0..side {
+        row_phases.push(awproject_subgrid_trace_metal_complex(row_phase));
+        row_phase *= phase_dy;
+    }
+    let plan_index = plans.len();
+    plans.push(AwProjectSubgridTracePlan {
+        screen_base,
+        row_phase_base: u32::try_from(row_phase_base).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject subgrid trace row-phase base exceeds u32".to_string(),
+            )
+        })?,
+        side: u32::try_from(side).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject subgrid trace plan side exceeds u32".to_string(),
+            )
+        })?,
+        _pad0: 0,
+        phase_dx_re: phase_dx.re,
+        phase_dx_im: phase_dx.im,
+        _pad1: 0,
+        _pad2: 0,
+    });
+    u32::try_from(plan_index).map_err(|_| {
+        ImagingError::InvalidRequest("AWProject subgrid trace plan count exceeds u32".to_string())
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn build_awproject_subgrid_trace_program(
+    request: &MtmfsRequest,
+    batch: &VisibilityBatch,
+    parallel_hands: &AwParallelHandVisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    source_samples: &[AwProjectCompactSourceSample],
+    bundles: &[AwProjectCompactMaterializedTap],
+) -> Result<AwProjectSubgridTraceProgram, ImagingError> {
+    if request.nterms != 2 {
+        return Err(ImagingError::Unsupported(format!(
+            "AWProject subgrid speed-of-light race is intentionally frozen to the VLASS nterms=2 contract, not nterms={}",
+            request.nterms
+        )));
+    }
+    let started = Instant::now();
+    let psf_term_count = request
+        .nterms
+        .checked_mul(2)
+        .and_then(|value| value.checked_sub(1))
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject subgrid trace PSF term count overflowed".to_string(),
+            )
+        })?;
+    let mut screens = Vec::<WProjectMetalComplex>::new();
+    let mut bundle_layouts = Vec::<(u32, usize)>::with_capacity(bundles.len());
+    for (bundle_index, materialized) in bundles.iter().enumerate() {
+        let AwProjectCompactMaterializedTap::Ready(bundle) = materialized else {
+            bundle_layouts.push((0, 0));
+            continue;
+        };
+        let (side_index, _) =
+            awproject_subgrid_side_for_support(bundle.x_support, bundle.y_support)?;
+        let side = AWPROJECT_SUBGRID_SUPPORT_SIDES[side_index];
+        if bundle.values.is_empty() {
+            return Err(ImagingError::Normalization(
+                "AWProject subgrid trace found an empty ready tap bundle".to_string(),
+            ));
+        }
+        let screen_base = screens.len();
+        let screen_cells = side.checked_mul(side).ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject subgrid trace screen cell count overflowed".to_string(),
+            )
+        })?;
+        let stride = bundle_index.saturating_mul(2).saturating_add(1);
+        let mut phase =
+            awproject_subgrid_trace_unit_phase((bundle_index as u64) ^ 0xd6e8_feb8_6659_fd93);
+        let phase_step = awproject_subgrid_trace_unit_phase(
+            (bundle_index as u64).rotate_left(29) ^ 0xa5a3_56a9_4e62_3f17,
+        );
+        screens.reserve(screen_cells);
+        for cell in 0..screen_cells {
+            let source_index =
+                cell.wrapping_mul(stride).wrapping_add(bundle_index) % bundle.values.len();
+            screens.push(awproject_subgrid_trace_metal_complex(
+                bundle.values[source_index] * phase,
+            ));
+            phase *= phase_step;
+        }
+        bundle_layouts.push((
+            u32::try_from(screen_base).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "AWProject subgrid trace screen base exceeds u32".to_string(),
+                )
+            })?,
+            side,
+        ));
+    }
+
+    let mut plans =
+        Vec::<AwProjectSubgridTracePlan>::with_capacity(source_samples.len().saturating_mul(8));
+    let mut row_phases = Vec::<WProjectMetalComplex>::new();
+    let mut initial = AwProjectSubgridTraceStreamBuilder::default();
+    let mut prediction = AwProjectSubgridTraceStreamBuilder::default();
+    let mut adjoint = AwProjectSubgridTraceStreamBuilder::default();
+    for &source in source_samples {
+        let source_plans = [
+            source.first_imaging_plan,
+            source.second_imaging_plan,
+            source.first_prediction_plan,
+            source.second_prediction_plan,
+            source.first_psf_plan,
+            source.second_psf_plan,
+            source.first_weight_plan,
+            source.second_weight_plan,
+        ];
+        let mut plan_indices = [0u32; 8];
+        for (role, source_plan) in source_plans.into_iter().enumerate() {
+            plan_indices[role] = awproject_subgrid_trace_push_plan(
+                source,
+                source_plan,
+                &bundle_layouts,
+                &mut plans,
+                &mut row_phases,
+            )?;
+        }
+        let sample_index = source.sample_index;
+        let frequency_hz = sample_frequencies_hz[sample_index];
+        let weight = batch.weight[sample_index];
+        let first_visibility = parallel_hands.first_visibility[sample_index];
+        let second_visibility = parallel_hands.second_visibility[sample_index];
+        for order in 0..request.nterms {
+            let term_weight =
+                mtmfs_casa_weighted_taylor_term(weight, frequency_hz, request.reffreq_hz, order);
+            let residual_rhs = psf_term_count + order;
+            initial.add(
+                plan_indices[0],
+                plans[plan_indices[0] as usize],
+                source.first_imaging_plan,
+                residual_rhs,
+                first_visibility * term_weight,
+            )?;
+            initial.add(
+                plan_indices[1],
+                plans[plan_indices[1] as usize],
+                source.second_imaging_plan,
+                residual_rhs,
+                second_visibility * term_weight,
+            )?;
+            prediction.add(
+                plan_indices[2],
+                plans[plan_indices[2] as usize],
+                source.first_prediction_plan,
+                order,
+                first_visibility * term_weight,
+            )?;
+            prediction.add(
+                plan_indices[3],
+                plans[plan_indices[3] as usize],
+                source.second_prediction_plan,
+                order,
+                second_visibility * term_weight,
+            )?;
+            adjoint.add(
+                plan_indices[0],
+                plans[plan_indices[0] as usize],
+                source.first_imaging_plan,
+                order,
+                first_visibility * term_weight,
+            )?;
+            adjoint.add(
+                plan_indices[1],
+                plans[plan_indices[1] as usize],
+                source.second_imaging_plan,
+                order,
+                second_visibility * term_weight,
+            )?;
+        }
+        for order in 0..psf_term_count {
+            let term_weight =
+                mtmfs_casa_weighted_taylor_term(weight, frequency_hz, request.reffreq_hz, order);
+            let amplitude = Complex32::new(term_weight, 0.0);
+            initial.add(
+                plan_indices[4],
+                plans[plan_indices[4] as usize],
+                source.first_psf_plan,
+                order,
+                amplitude,
+            )?;
+            initial.add(
+                plan_indices[5],
+                plans[plan_indices[5] as usize],
+                source.second_psf_plan,
+                order,
+                amplitude,
+            )?;
+            let weight_rhs = psf_term_count + request.nterms + order;
+            initial.add(
+                plan_indices[6],
+                plans[plan_indices[6] as usize],
+                source.first_weight_plan,
+                weight_rhs,
+                amplitude,
+            )?;
+            initial.add(
+                plan_indices[7],
+                plans[plan_indices[7] as usize],
+                source.second_weight_plan,
+                weight_rhs,
+                amplitude,
+            )?;
+        }
+    }
+
+    let mut references = Vec::<AwProjectSubgridTraceReference>::new();
+    let mut stripes = Vec::<AwProjectSubgridTraceStripe>::new();
+    let mut output_cells = 0usize;
+    let initial = initial.finish(&mut references, &mut stripes, &mut output_cells)?;
+    let prediction = prediction.finish(&mut references, &mut stripes, &mut output_cells)?;
+    let adjoint = adjoint.finish(&mut references, &mut stripes, &mut output_cells)?;
+    Ok(AwProjectSubgridTraceProgram {
+        screens,
+        row_phases,
+        plans,
+        references,
+        stripes,
+        streams: [initial, prediction, adjoint],
+        output_cells,
+        samples: source_samples.len(),
+        build_elapsed: started.elapsed(),
+    })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg(any(all(target_os = "macos", not(coverage)), test))]
 struct AwProjectMetalPlaneSegmentPlan {
@@ -11893,6 +12981,7 @@ struct AwProjectMetalExecutor {
     selected_model_finish_pipeline: AwProjectMetalPipeline,
     tile_pipeline: AwProjectMetalPipeline,
     predicted_tile_pipeline: AwProjectMetalPipeline,
+    subgrid_speed_of_light_pipeline: AwProjectMetalPipeline,
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -15530,6 +16619,23 @@ impl AwProjectMetalExecutor {
                     "AWProject backend 'metal' failed to create predicted tile-grid pipeline: {error:?}"
                 ))
             })?;
+        let subgrid_speed_of_light_function_name =
+            objc2_foundation::NSString::from_str("awproject_subgrid_speed_of_light");
+        let subgrid_speed_of_light_function = library
+            .newFunctionWithName(&subgrid_speed_of_light_function_name)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "AWProject backend 'metal' subgrid speed-of-light entry point was not found"
+                        .to_string(),
+                )
+            })?;
+        let subgrid_speed_of_light_pipeline = device
+            .newComputePipelineStateWithFunction_error(&subgrid_speed_of_light_function)
+            .map_err(|error| {
+                ImagingError::Unsupported(format!(
+                    "AWProject backend 'metal' failed to create subgrid speed-of-light pipeline: {error:?}"
+                ))
+            })?;
         Ok(Self {
             device,
             queue,
@@ -15541,6 +16647,7 @@ impl AwProjectMetalExecutor {
             selected_model_finish_pipeline,
             tile_pipeline,
             predicted_tile_pipeline,
+            subgrid_speed_of_light_pipeline,
         })
     }
 
@@ -17668,6 +18775,243 @@ impl AwProjectMetalExecutor {
             total: total_started.elapsed(),
         })
     }
+
+    fn dispatch_subgrid_speed_of_light(
+        &self,
+        program: &AwProjectSubgridTraceProgram,
+    ) -> Result<AwProjectSubgridTraceDispatchStats, ImagingError> {
+        use std::{ffi::c_void, mem, ptr, ptr::NonNull, slice};
+
+        use objc2_metal::{
+            MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder,
+            MTLCommandQueue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLDevice,
+            MTLResourceOptions, MTLSize,
+        };
+
+        if program.screens.is_empty()
+            || program.row_phases.is_empty()
+            || program.plans.is_empty()
+            || program.references.is_empty()
+            || program.stripes.is_empty()
+            || program.output_cells == 0
+            || program
+                .streams
+                .iter()
+                .any(|stream| stream.stripe_count == 0)
+        {
+            return Err(ImagingError::InvalidRequest(
+                "AWProject subgrid speed-of-light program must contain every real trace stream"
+                    .to_string(),
+            ));
+        }
+        let storage_options = MTLResourceOptions::StorageModeShared;
+        let buffer_started = Instant::now();
+        let copy_buffer = |pointer: *const c_void,
+                           bytes: usize,
+                           label: &str|
+         -> Result<
+            objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn MTLBuffer>>,
+            ImagingError,
+        > {
+            let pointer = NonNull::new(pointer as *mut c_void).ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "AWProject subgrid speed-of-light {label} pointer was null"
+                ))
+            })?;
+            unsafe {
+                self.device
+                    .newBufferWithBytes_length_options(pointer, bytes, storage_options)
+                    .ok_or_else(|| {
+                        ImagingError::Unsupported(format!(
+                            "AWProject subgrid speed-of-light could not allocate {label} buffer"
+                        ))
+                    })
+            }
+        };
+        let screen_buffer = copy_buffer(
+            program.screens.as_ptr().cast::<c_void>(),
+            mem::size_of_val(program.screens.as_slice()),
+            "screen",
+        )?;
+        let row_phase_buffer = copy_buffer(
+            program.row_phases.as_ptr().cast::<c_void>(),
+            mem::size_of_val(program.row_phases.as_slice()),
+            "row-phase",
+        )?;
+        let plan_buffer = copy_buffer(
+            program.plans.as_ptr().cast::<c_void>(),
+            mem::size_of_val(program.plans.as_slice()),
+            "plan",
+        )?;
+        let reference_buffer = copy_buffer(
+            program.references.as_ptr().cast::<c_void>(),
+            mem::size_of_val(program.references.as_slice()),
+            "reference",
+        )?;
+        let stripe_buffer = copy_buffer(
+            program.stripes.as_ptr().cast::<c_void>(),
+            mem::size_of_val(program.stripes.as_slice()),
+            "stripe",
+        )?;
+        let output_bytes = program
+            .output_cells
+            .checked_mul(mem::size_of::<WProjectMetalComplex>())
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject subgrid speed-of-light output size overflowed".to_string(),
+                )
+            })?;
+        let output_buffer = self
+            .device
+            .newBufferWithLength_options(output_bytes, storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "AWProject subgrid speed-of-light could not allocate output buffer".to_string(),
+                )
+            })?;
+        let sequence = [0usize, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2];
+        debug_assert_eq!(sequence.len(), 1 + 2 * AWPROJECT_SUBGRID_TRACE_MAJOR_CYCLES);
+        let mut params_buffers = Vec::with_capacity(sequence.len());
+        for &stream_index in &sequence {
+            let stream = program.streams[stream_index];
+            let params = AwProjectSubgridTraceParams {
+                stripe_start: u32::try_from(stream.stripe_start).map_err(|_| {
+                    ImagingError::InvalidRequest(
+                        "AWProject subgrid speed-of-light stripe start exceeds u32".to_string(),
+                    )
+                })?,
+                stripe_count: u32::try_from(stream.stripe_count).map_err(|_| {
+                    ImagingError::InvalidRequest(
+                        "AWProject subgrid speed-of-light stripe count exceeds u32".to_string(),
+                    )
+                })?,
+            };
+            params_buffers.push(copy_buffer(
+                (&raw const params).cast::<c_void>(),
+                mem::size_of::<AwProjectSubgridTraceParams>(),
+                "params",
+            )?);
+        }
+        let buffer_alloc = buffer_started.elapsed();
+        let thread_width = self
+            .subgrid_speed_of_light_pipeline
+            .threadExecutionWidth()
+            .max(1);
+        let max_threads = self
+            .subgrid_speed_of_light_pipeline
+            .maxTotalThreadsPerThreadgroup()
+            .max(1);
+        let max_rows = program
+            .stripes
+            .iter()
+            .map(|stripe| stripe.row_count as usize)
+            .max()
+            .unwrap_or(1);
+        let threads_per_group = max_rows
+            .div_ceil(thread_width)
+            .saturating_mul(thread_width)
+            .min(max_threads)
+            .max(1);
+        if threads_per_group < max_rows {
+            return Err(ImagingError::Unsupported(format!(
+                "AWProject subgrid speed-of-light needs {max_rows} row-owner threads, but the Metal pipeline admits {max_threads}"
+            )));
+        }
+        let threadgroup_bytes = AWPROJECT_SUBGRID_TRACE_THREADGROUP_CELLS
+            .checked_mul(mem::size_of::<WProjectMetalComplex>())
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject subgrid speed-of-light threadgroup size overflowed".to_string(),
+                )
+            })?;
+        let run_once = || -> Result<(Duration, Duration), ImagingError> {
+            unsafe {
+                ptr::write_bytes(
+                    output_buffer.contents().as_ptr().cast::<u8>(),
+                    0,
+                    output_bytes,
+                );
+            }
+            let wall_started = Instant::now();
+            let command_buffer = self.queue.commandBuffer().ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "AWProject subgrid speed-of-light could not create a command buffer"
+                        .to_string(),
+                )
+            })?;
+            for (call_index, &stream_index) in sequence.iter().enumerate() {
+                let stream = program.streams[stream_index];
+                let encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "AWProject subgrid speed-of-light could not create a compute encoder"
+                            .to_string(),
+                    )
+                })?;
+                encoder.setComputePipelineState(&self.subgrid_speed_of_light_pipeline);
+                unsafe {
+                    encoder.setBuffer_offset_atIndex(Some(&screen_buffer), 0, 0);
+                    encoder.setBuffer_offset_atIndex(Some(&row_phase_buffer), 0, 1);
+                    encoder.setBuffer_offset_atIndex(Some(&plan_buffer), 0, 2);
+                    encoder.setBuffer_offset_atIndex(Some(&reference_buffer), 0, 3);
+                    encoder.setBuffer_offset_atIndex(Some(&stripe_buffer), 0, 4);
+                    encoder.setBuffer_offset_atIndex(Some(&params_buffers[call_index]), 0, 5);
+                    encoder.setBuffer_offset_atIndex(Some(&output_buffer), 0, 6);
+                    encoder.setThreadgroupMemoryLength_atIndex(threadgroup_bytes, 0);
+                }
+                encoder.dispatchThreadgroups_threadsPerThreadgroup(
+                    MTLSize {
+                        width: stream.stripe_count,
+                        height: 1,
+                        depth: 1,
+                    },
+                    MTLSize {
+                        width: threads_per_group,
+                        height: 1,
+                        depth: 1,
+                    },
+                );
+                encoder.endEncoding();
+            }
+            command_buffer.commit();
+            command_buffer.waitUntilCompleted();
+            let wall = wall_started.elapsed();
+            if command_buffer.status() == MTLCommandBufferStatus::Error {
+                let message = command_buffer
+                    .error()
+                    .map(|error| format!("{error:?}"))
+                    .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
+                return Err(ImagingError::Unsupported(format!(
+                    "AWProject subgrid speed-of-light command failed: {message}"
+                )));
+            }
+            let gpu_start = command_buffer.GPUStartTime();
+            let gpu_end = command_buffer.GPUEndTime();
+            let device = if gpu_start.is_finite() && gpu_end.is_finite() && gpu_end > gpu_start {
+                Duration::from_secs_f64(gpu_end - gpu_start)
+            } else {
+                Duration::ZERO
+            };
+            Ok((wall, device))
+        };
+
+        let (warm_wall, warm_device) = run_once()?;
+        let (core_wall, core_device) = run_once()?;
+        let readback_started = Instant::now();
+        let output = unsafe {
+            slice::from_raw_parts(output_buffer.contents().as_ptr().cast::<u8>(), output_bytes)
+        };
+        let output_sha256: [u8; 32] = Sha256::digest(output).into();
+        let readback = readback_started.elapsed();
+        Ok(AwProjectSubgridTraceDispatchStats {
+            buffer_alloc,
+            warm_wall,
+            warm_device,
+            core_wall,
+            core_device,
+            readback,
+            output_sha256,
+        })
+    }
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -17840,6 +19184,38 @@ struct AwTileParams {
     uint nterms;
 };
 
+struct AwSubgridTracePlan {
+    uint screen_base;
+    uint row_phase_base;
+    uint side;
+    uint _pad0;
+    float phase_dx_re;
+    float phase_dx_im;
+    uint _pad1;
+    uint _pad2;
+};
+
+struct AwSubgridTraceReference {
+    uint plan_index;
+    uint _pad0;
+    float amplitude_re;
+    float amplitude_im;
+};
+
+struct AwSubgridTraceStripe {
+    uint reference_start;
+    uint reference_end;
+    uint output_base;
+    uint side;
+    uint row_start;
+    uint row_count;
+};
+
+struct AwSubgridTraceParams {
+    uint stripe_start;
+    uint stripe_count;
+};
+
 static_assert(sizeof(AwPhasePlan) == 4, "AwPhasePlan ABI drift");
 static_assert(alignof(AwPhasePlan) == 4, "AwPhasePlan alignment drift");
 static_assert(sizeof(AwPlan) == 28, "AwPlan ABI drift");
@@ -17876,6 +19252,14 @@ static_assert(sizeof(AwSelectedModelParams) == 32, "AwSelectedModelParams ABI dr
 static_assert(alignof(AwSelectedModelParams) == 4, "AwSelectedModelParams alignment drift");
 static_assert(sizeof(AwTileParams) == 24, "AwTileParams ABI drift");
 static_assert(alignof(AwTileParams) == 4, "AwTileParams alignment drift");
+static_assert(sizeof(AwSubgridTracePlan) == 32, "AwSubgridTracePlan ABI drift");
+static_assert(alignof(AwSubgridTracePlan) == 4, "AwSubgridTracePlan alignment drift");
+static_assert(sizeof(AwSubgridTraceReference) == 16, "AwSubgridTraceReference ABI drift");
+static_assert(alignof(AwSubgridTraceReference) == 4, "AwSubgridTraceReference alignment drift");
+static_assert(sizeof(AwSubgridTraceStripe) == 24, "AwSubgridTraceStripe ABI drift");
+static_assert(alignof(AwSubgridTraceStripe) == 4, "AwSubgridTraceStripe alignment drift");
+static_assert(sizeof(AwSubgridTraceParams) == 8, "AwSubgridTraceParams ABI drift");
+static_assert(alignof(AwSubgridTraceParams) == 4, "AwSubgridTraceParams alignment drift");
 
 static inline void aw_atomic_add(device atomic_float *address, float value) {
     atomic_fetch_add_explicit(address, value, memory_order_relaxed);
@@ -17930,6 +19314,62 @@ static inline float2 aw_complex_multiply(float2 left, float2 right) {
         ac - bd,
         ad + bc
     );
+}
+
+kernel void awproject_subgrid_speed_of_light(
+    device const float2 *screens [[buffer(0)]],
+    device const float2 *row_phases [[buffer(1)]],
+    device const AwSubgridTracePlan *plans [[buffer(2)]],
+    device const AwSubgridTraceReference *references [[buffer(3)]],
+    device const AwSubgridTraceStripe *stripes [[buffer(4)]],
+    constant AwSubgridTraceParams &params [[buffer(5)]],
+    device float2 *output [[buffer(6)]],
+    threadgroup float2 *local_output [[threadgroup(0)]],
+    uint local_row [[thread_index_in_threadgroup]],
+    uint local_stripe [[threadgroup_position_in_grid]]
+) {
+    if (local_stripe >= params.stripe_count) {
+        return;
+    }
+    const AwSubgridTraceStripe stripe =
+        stripes[params.stripe_start + local_stripe];
+    const bool active = local_row < stripe.row_count;
+    const uint row = stripe.row_start + local_row;
+    const uint local_base = local_row * stripe.side;
+    if (active) {
+        for (uint x = 0u; x < stripe.side; ++x) {
+            local_output[local_base + x] = float2(0.0f);
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (active) {
+        for (uint reference_index = stripe.reference_start;
+             reference_index < stripe.reference_end;
+             ++reference_index) {
+            const AwSubgridTraceReference reference = references[reference_index];
+            const AwSubgridTracePlan plan = plans[reference.plan_index];
+            float2 phase = row_phases[plan.row_phase_base + row];
+            const float2 phase_dx = float2(plan.phase_dx_re, plan.phase_dx_im);
+            const float2 amplitude =
+                float2(reference.amplitude_re, reference.amplitude_im);
+            for (uint x = 0u; x < stripe.side; ++x) {
+                const float2 screen =
+                    screens[plan.screen_base + row * stripe.side + x];
+                const float2 phased_amplitude =
+                    aw_complex_multiply(amplitude, phase);
+                local_output[local_base + x] +=
+                    aw_complex_multiply(phased_amplitude, screen);
+                phase = aw_complex_multiply(phase, phase_dx);
+            }
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (active) {
+        const uint output_base = stripe.output_base + row * stripe.side;
+        for (uint x = 0u; x < stripe.side; ++x) {
+            output[output_base + x] += local_output[local_base + x];
+        }
+    }
 }
 
 static inline float2 aw_phased_tap(
@@ -28747,6 +30187,117 @@ fn awproject_gpu_residual_replay_is_admitted(
     model_grids_present && requested && resident_program_present && metal_grid_storage
 }
 
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn maybe_run_awproject_subgrid_speed_of_light(
+    request: &MtmfsRequest,
+    batch: &VisibilityBatch,
+    parallel_hands: &AwParallelHandVisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    source_samples: &[AwProjectCompactSourceSample],
+    bundles: &[AwProjectCompactMaterializedTap],
+    replay_block_ordinal: usize,
+    window_ordinal: usize,
+) -> Result<(), ImagingError> {
+    if env::var_os(AWPROJECT_SUBGRID_SPEED_OF_LIGHT_ENV).is_none() {
+        return Ok(());
+    }
+    let program = build_awproject_subgrid_trace_program(
+        request,
+        batch,
+        parallel_hands,
+        sample_frequencies_hz,
+        source_samples,
+        bundles,
+    )?;
+    let mut executor_setup = Duration::ZERO;
+    let dispatch = AWPROJECT_METAL_EXECUTOR.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            let setup_started = Instant::now();
+            *slot = Some(AwProjectMetalExecutor::new()?);
+            executor_setup = setup_started.elapsed();
+        }
+        slot.as_ref()
+            .expect("AWProject Metal executor")
+            .dispatch_subgrid_speed_of_light(&program)
+    })?;
+    let logical_cell_updates = program.logical_cell_updates();
+    let core_seconds = if dispatch.core_device.is_zero() {
+        dispatch.core_wall.as_secs_f64()
+    } else {
+        dispatch.core_device.as_secs_f64()
+    };
+    let cell_gs = if core_seconds > 0.0 {
+        logical_cell_updates as f64 / core_seconds / 1.0e9
+    } else {
+        0.0
+    };
+    let screen_bytes = mem::size_of_val(program.screens.as_slice());
+    let row_phase_bytes = mem::size_of_val(program.row_phases.as_slice());
+    let trace_bytes = program.stored_trace_bytes();
+    let output_bytes = program
+        .output_cells
+        .saturating_mul(mem::size_of::<WProjectMetalComplex>());
+    let resident_bytes = program.resident_bytes();
+    let full_geometry_area_bound = 12_150usize
+        .saturating_mul(12_150)
+        .div_ceil(4_096usize.saturating_mul(4_096));
+    let projected_full_geometry_peak_bytes =
+        resident_bytes.saturating_mul(full_geometry_area_bound);
+    let output_sha256 = dispatch
+        .output_sha256
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    eprintln!(
+        "awproject_subgrid_speed_of_light block={} window={} samples={} plans={} \
+         stored_plan_references={} logical_plan_references={} \
+         stored_stripes={} logical_groups={} logical_stripes={} logical_dispatches={} \
+         logical_cell_updates={} screen_values={} output_cells={} \
+         screen_bytes={} row_phase_bytes={} trace_bytes={} output_bytes={} \
+         resident_bytes={} projected_full_geometry_peak_bytes={} \
+         build_ms={:.3} executor_setup_ms={:.3} buffer_alloc_ms={:.3} \
+         warm_wall_ms={:.3} warm_device_ms={:.3} core_wall_ms={:.3} \
+         core_device_ms={:.3} readback_ms={:.3} cell_gs={:.6} \
+         output_sha256={} \
+         projection_contract=9x-current-window-conservative-12150-over-4096-area-bound \
+         operator_contract=exact-real-plan-stream-11-call-boundaries-mixed-support-content-derived-screens-x-phase-recurrence-deterministic-threadgroup-owner-writes \
+         omitted=screen-construction-and-ifft,subgrid-fft-and-scatter,clean-controller-products-and-casa-numerical-equivalence \
+         role=physical-lower-bound-race-not-production-performance-or-science-evidence",
+        replay_block_ordinal,
+        window_ordinal,
+        program.samples,
+        program.plans.len(),
+        program.references.len(),
+        program.logical_plan_references(),
+        program.stripes.len(),
+        program.logical_groups(),
+        program.logical_stripes(),
+        1 + 2 * AWPROJECT_SUBGRID_TRACE_MAJOR_CYCLES,
+        logical_cell_updates,
+        program.screens.len(),
+        program.output_cells,
+        screen_bytes,
+        row_phase_bytes,
+        trace_bytes,
+        output_bytes,
+        resident_bytes,
+        projected_full_geometry_peak_bytes,
+        profile::millis(program.build_elapsed),
+        profile::millis(executor_setup),
+        profile::millis(dispatch.buffer_alloc),
+        profile::millis(dispatch.warm_wall),
+        profile::millis(dispatch.warm_device),
+        profile::millis(dispatch.core_wall),
+        profile::millis(dispatch.core_device),
+        profile::millis(dispatch.readback),
+        cell_gs,
+        output_sha256,
+    );
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 #[cfg_attr(any(not(target_os = "macos"), coverage), allow(unused_variables))]
 fn replay_awproject_compact_window(
@@ -28865,6 +30416,25 @@ fn replay_awproject_compact_window(
             tap_requests,
             bundles,
             cache,
+            replay_block_ordinal,
+            replay_stats.windows,
+        )?;
+        maybe_audit_awproject_subgrid_support(
+            request,
+            source_samples,
+            bundles,
+            replay_block_ordinal,
+            replay_stats.windows,
+        )?;
+        maybe_audit_awproject_cf_key_fft_occupancy(request, source_samples, tap_requests, bundles)?;
+        #[cfg(all(target_os = "macos", not(coverage)))]
+        maybe_run_awproject_subgrid_speed_of_light(
+            request,
+            batch,
+            parallel_hands,
+            sample_frequencies_hz,
+            source_samples,
+            bundles,
             replay_block_ordinal,
             replay_stats.windows,
         )?;
@@ -61658,8 +63228,9 @@ mod tests {
         WProjectMetalSample, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
         add_shifted_kernel, add_shifted_kernel_with_support, apply_chauvenet_clipping,
         apply_weighting, aw_stokes_i_residual_for_mueller, aw_stokes_i_visibility_for_mueller,
-        awproject_hybrid_stack_center, awproject_model_fft_plan, build_direct_components,
-        build_direct_pixel_coordinates, build_image_coordinate_system,
+        awproject_cf_key_fft_padded_side, awproject_hybrid_stack_center, awproject_model_fft_plan,
+        awproject_subgrid_side_for_support, awproject_subgrid_trace_rows_per_stripe,
+        build_direct_components, build_direct_pixel_coordinates, build_image_coordinate_system,
         build_image_spectral_coordinate, build_multiscale_scale_masks,
         casa_mtmfs_scaled_kernel_value, casa_multiscale_divergence_stop_reason,
         clean_cycle_threshold, clean_mask_image_product, clean_mask_pixel_count,
@@ -61700,6 +63271,37 @@ mod tests {
         assert_eq!(awproject_hybrid_stack_center(-10.0, 10.0, 4), -7.5);
         assert_eq!(awproject_hybrid_stack_center(10.0, 10.0, 4), 7.5);
         assert_eq!(awproject_hybrid_stack_center(1.0, 0.0, 8), 0.0);
+    }
+
+    #[test]
+    fn awproject_subgrid_support_schedule_contains_the_full_patch() {
+        assert_eq!(awproject_subgrid_side_for_support(3, 3).unwrap(), (0, 7));
+        assert_eq!(awproject_subgrid_side_for_support(15, 15).unwrap(), (0, 31));
+        assert_eq!(awproject_subgrid_side_for_support(16, 16).unwrap(), (1, 33));
+        assert_eq!(awproject_subgrid_side_for_support(23, 23).unwrap(), (1, 47));
+        assert_eq!(awproject_subgrid_side_for_support(24, 24).unwrap(), (2, 49));
+        assert_eq!(awproject_subgrid_side_for_support(32, 32).unwrap(), (3, 65));
+        assert_eq!(awproject_subgrid_side_for_support(48, 48).unwrap(), (4, 97));
+        assert!(awproject_subgrid_side_for_support(64, 64).is_err());
+    }
+
+    #[test]
+    fn awproject_subgrid_trace_stripes_fit_threadgroup_memory() {
+        assert_eq!(awproject_subgrid_trace_rows_per_stripe(32).unwrap(), 32);
+        assert_eq!(awproject_subgrid_trace_rows_per_stripe(48).unwrap(), 42);
+        assert_eq!(awproject_subgrid_trace_rows_per_stripe(64).unwrap(), 32);
+        assert_eq!(awproject_subgrid_trace_rows_per_stripe(96).unwrap(), 21);
+        assert_eq!(awproject_subgrid_trace_rows_per_stripe(128).unwrap(), 16);
+        assert!(awproject_subgrid_trace_rows_per_stripe(0).is_err());
+    }
+
+    #[test]
+    fn awproject_cf_key_fft_tiles_include_the_support_halo() {
+        assert_eq!(awproject_cf_key_fft_padded_side(32, 0).unwrap(), 32);
+        assert_eq!(awproject_cf_key_fft_padded_side(32, 15).unwrap(), 64);
+        assert_eq!(awproject_cf_key_fft_padded_side(32, 16).unwrap(), 64);
+        assert_eq!(awproject_cf_key_fft_padded_side(64, 32).unwrap(), 128);
+        assert_eq!(awproject_cf_key_fft_padded_side(256, 50).unwrap(), 512);
     }
 
     #[test]

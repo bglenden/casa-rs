@@ -21,6 +21,9 @@ prime_replay_initial_dirty="${CASA_RS_VLASS_PRIME_REPLAY_INITIAL_DIRTY:-0}"
 tapless_phase="${CASA_RS_VLASS_TAPLESS_PHASE:-0}"
 tapless_phase_census="${CASA_RS_VLASS_TAPLESS_PHASE_CENSUS:-0}"
 hybrid_support_audit="${CASA_RS_VLASS_HYBRID_SUPPORT_AUDIT:-0}"
+subgrid_support_audit="${CASA_RS_VLASS_SUBGRID_SUPPORT_AUDIT:-0}"
+subgrid_speed_of_light="${CASA_RS_VLASS_SUBGRID_SPEED_OF_LIGHT:-0}"
+cf_key_fft_occupancy="${CASA_RS_VLASS_CF_KEY_FFT_OCCUPANCY:-0}"
 packed_cf_experiment="${CASA_RS_VLASS_PACKED_CF_EXPERIMENT:-}"
 trust_packed_cf_experiment="${CASA_RS_VLASS_TRUST_PACKED_CF_EXPERIMENT:-0}"
 niter="${CASA_RS_VLASS_NITER:-2000}"
@@ -118,6 +121,33 @@ if [[ "$hybrid_support_audit" == "1" ]]; then
     )
 elif [[ "$hybrid_support_audit" != "0" ]]; then
     echo "CASA_RS_VLASS_HYBRID_SUPPORT_AUDIT must be 0 or 1" >&2
+    exit 2
+fi
+if [[ "$subgrid_support_audit" == "1" ]]; then
+    label="${label}-subgrid-support-audit"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_SUBGRID_SUPPORT_AUDIT=1
+    )
+elif [[ "$subgrid_support_audit" != "0" ]]; then
+    echo "CASA_RS_VLASS_SUBGRID_SUPPORT_AUDIT must be 0 or 1" >&2
+    exit 2
+fi
+if [[ "$subgrid_speed_of_light" == "1" ]]; then
+    label="${label}-subgrid-speed-of-light"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_SUBGRID_SPEED_OF_LIGHT=1
+    )
+elif [[ "$subgrid_speed_of_light" != "0" ]]; then
+    echo "CASA_RS_VLASS_SUBGRID_SPEED_OF_LIGHT must be 0 or 1" >&2
+    exit 2
+fi
+if [[ "$cf_key_fft_occupancy" == "1" ]]; then
+    label="${label}-cf-key-fft-occupancy"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_CF_KEY_FFT_OCCUPANCY=1
+    )
+elif [[ "$cf_key_fft_occupancy" != "0" ]]; then
+    echo "CASA_RS_VLASS_CF_KEY_FFT_OCCUPANCY must be 0 or 1" >&2
     exit 2
 fi
 if [[ -n "$packed_cf_experiment" ]]; then

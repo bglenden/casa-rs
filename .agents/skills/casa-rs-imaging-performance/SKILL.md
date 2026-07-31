@@ -50,14 +50,29 @@ tuning for end-to-end progress.
    State the architectural hypothesis, isolated implementation boundary,
    required metrics, correctness checks, abort gate, promotion gate, and the
    result that would falsify the broader architecture. Preserve both positive
-   and negative evidence.
+   and negative evidence. Label material claims as `[proven]` for an algebraic
+   identity or checked invariant, `[measured]` for a receipt-bound workload,
+   commit, hardware, and counter set, `[projected]` for an explicit formula
+   with measured inputs and sensitivity, or `[hypothesis]` for an untested
+   causal or performance claim. Never let a projection silently graduate into
+   a measurement. Close every experiment by promoting it, retaining it as an
+   explicitly named production-inert reference/oracle, or deleting its
+   executable path after preserving the receipt, counters, kill rationale,
+   workload identity, and condition that would justify reconsideration.
 7. Avoid blind long runs.
    If a large run has no pass/stage progress or product output after a few minutes, stop and add progress instrumentation before waiting longer.
 8. Reuse shared imaging infrastructure when it fits the winning representation.
    Extend shared streaming prepare, row/run preservation, bounded residency,
    worker planning, grouped GPU input contracts, and benchmark bundle code when
    they do not constrain the operator architecture. Do not create a mode-specific
-   duplicate when a shared routine can be generalized.
+   duplicate when a shared routine can be generalized. A bounded disposable
+   architecture discriminator may bypass shared abstraction, production API,
+   generalized mode-coverage, and long-term reuse requirements when doing so
+   isolates the physical question faster. It may not bypass workload receipt
+   binding, semantic scope, memory and stage counters, fail-closed isolation,
+   numerical comparison, or production feature gating. Keep it behind an
+   experimental control and either delete it or integrate it through the
+   shared boundary after the architecture decision.
 9. Preserve CASA semantics while sharing mechanics.
    Cube, cubedata, mosaic, MT-MFS, W-projection, AW-style, MFS, and multiscale modes must keep their mode-specific CASA behavior.
 10. Require an explicit liveness schedule.
@@ -65,7 +80,13 @@ tuning for end-to-end progress.
     states, cube planes, or output products unless a lifetime analysis proves
     they must coexist. Keep authoritative iterative state minimal and derive
     final products lazily or tilewise while still charging their full
-    computation and write cost to end-to-end time.
+    computation and write cost to end-to-end time. Derived materialization is
+    allowed when a formula bounds its production-geometry size, the phase
+    liveness ledger includes persistent, derived, transform, writer, allocator,
+    and system-reserve bytes, and that total fits the safe target envelope.
+    The experiment must charge construction, subsequent reads, traffic, and
+    eviction, and show that materialization beats recomputation rather than
+    merely fitting in capacity.
 11. Compare serial, multi-worker, Metal, and replacement algorithms honestly.
    Keep serial CPU as a baseline. Do not assume fixed-tile, central quadrants, more workers, or Metal wins without total runtime and stage evidence.
 12. Make `auto` cost based.
@@ -256,8 +277,23 @@ required_throughput_multiplier =
 
 Use the target-hardware p90 for decisions and reserve explicit promotion
 margin; merely landing on the mathematical pass/fail boundary is not a
-production result. State both the promotion budget and a looser abort budget
-that closes the family only when even an optimistic lower bound misses it.
+production result. Require:
+
+```text
+measured_candidate_time
+  + omitted_work_high_bound
+  + uncertainty_reserve
+  <= promotion_gate
+```
+
+The combined omitted-work and uncertainty reserve must be at least 30% of the
+candidate budget, and at least 40% when the discriminator omits transforms,
+representation construction, scatter, or product work. A fixed percentage is
+a floor rather than a substitute for measured omitted-phase bounds. Use a
+tighter reserve only when target-hardware measurements provide explicit upper
+bounds for every omitted phase. State both the promotion budget and a looser
+abort budget that closes the family only when even an optimistic lower bound
+misses it.
 
 ### Do not price different representations with one counter
 

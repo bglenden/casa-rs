@@ -8131,75 +8131,165 @@ This checkpoint launched one permitted 4,096-square full-16-SPW `niter=0`
 diagnostic. It launched no CASA task, no 12,150-square imaging workload, no
 clean development run, and no unchanged reference.
 
-### 2026-07-31 Oracle portfolio reset and inverse-CF subgrid race
+### 2026-07-31 Oracle portfolio reset and architecture races
 
 The interaction-count rejection of standalone image-domain subgridding above
-is now narrowed. It remains valid as a count: the `L=32` route performs
-`1.199739416x` as many nominal interactions as the current sampled-CF path.
-It is not a runtime rejection across unlike representations. A dense,
-compute-bound direct-subgrid kernel can price one interaction very differently
-from the incumbent irregular sampled-CF replay. The performance skill now
-requires a matched target-hardware race whenever a candidate changes the
-physical character of the work.
+was too broad. A dense compute-bound representation can price one nominal
+interaction very differently from irregular sampled-CF replay. The performance
+skill therefore requires a matched target-hardware race whenever a candidate
+changes the physical character of the work.
 
-The whole-run target gives that race an unusually demanding but explicit
-budget. The promoted row takes `42.910` seconds; `28.239768` seconds are
-assigned to the AW operator stages and `14.670232` seconds are fixed outside
-the candidate. A mathematical `2x` total boundary therefore permits at most
-`6.784768` seconds of replacement-operator work. Promotion reserves margin by
-requiring no more than `5.6479536` seconds, which projects to `20.3181856`
-seconds or `2.1119x` total. With the `1.199739416x` interaction ratio, the
-replacement needs at least `4.9936x` incumbent effective per-interaction
-throughput even to reach the abort boundary and `5.9987x` to promote.
+The whole-run target gives replacement AW work an unusually demanding but
+explicit budget. The promoted row takes `42.910` seconds; `28.239768` seconds
+are assigned to AW operator stages and `14.670232` seconds are fixed outside
+the candidate. A mathematical `2x` boundary permits at most `6.784768` seconds
+of replacement-operator work. The promotion budget is `5.6479536` seconds and
+the deliberately severe direct-subgrid lower-bound gate reserves half of that
+budget for the transforms, construction, scatter, controller, products, and
+numerical validation that the core race omits.
 
-Source inspection corrected an assumption in the first Oracle response.
-casa-rs has analytic image-domain screen generation for its separate mosaic
-projector, but the VLASS AWProject path loads CASA's sampled UV CF cache. The
-Oracle follow-up therefore selected exactly one next experiment:
+The real mixed-support census covers all 20 production-primed compact windows,
+`385,862` samples, the exact 11-call trajectory, and `21,608,272` logical plan
+references. It found `26,866,182,144` mixed-support subgrid cell interactions
+versus `10,182,432,432` incumbent sampled-tap interactions. The support
+histogram is `88.17695%` at side 32, `9.6205%` at side 48, `1.6471%` at side
+64, `0.5542%` at side 96, and 264 references at side 128; the maximum required
+patch width is 101. A constant side-32 experiment therefore would not represent
+the workload. The immutable evidence is:
 
-- replay the exact 11-call full-16-SPW operator multiset with no CLEAN
-  controller, restoration, product FFTs, writes, or CASA;
-- use `L=32` direct subgrids and inverse-transform each exact discrete sampled
-  patch after its CF key, oversampling phase, conjugation, origin, and
-  normalization are fixed;
-- report a best-case core timing with those screens preloaded and a throwaway
-  timing that also includes bounded streaming inverse-CF construction; and
-- compare frozen TT0/TT1, residual, PSF/all-weight, deterministic point-source,
-  and complex Rademacher forward/adjoint probes with the current sampled-CF
-  operator.
-
-This inverse-CF path is a disposable hardware discriminator, not a production
-screen representation. It promotes only to the next investment decision:
-build a native physical A/WB/conjugate/POINTING screen generator. It does not
-authorize a production default or architecture change. The core promotion
-gates are normalized RMS at most `3e-6`, peak-relative error at most `2e-5`,
-adjointness error at most `2e-6`, projected full-size peak at most `12 GiB`,
-and operator time at most `5.6479536` seconds. A best-case core time above
-`6.784768` seconds or projected peak above `15.2 GB` aborts the full-rank
-per-sample `L=32` direct-subgrid family on this target. A time between those
-bounds, or passing time with failed numerics, is inconclusive and does not
-justify further investment in this route.
-
-The family-level claim is deliberately narrow. A failed race does not reject
-native screens with smaller effective support, low-rank or tensor action,
-visibility coalescing, 3D W-gridding/NUFFT, or reconstruction algorithms that
-eliminate operator calls.
-
-The content-bound executable contract is:
-
-- tool:
-  `tools/perf/imager/experiments/vlass_exact_screen_subgrid_race_contract.py`;
-- focused tests:
-  `tools/perf/imager/experiments/test_vlass_exact_screen_subgrid_race_contract.py`;
-- receipt:
-  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/diagnostics/20260731-vlass-4096-full16-inverse-cf-subgrid-race-contract-v1.json`;
+- log
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260731-vlass-4096-full16-niter0-subgrid-support-audit-v1.log`,
+  SHA-256
+  `3054e6149995d97df0fc8ab28939d6b35447e3e39dbc582e0ed6caff60986bab`;
   and
-- receipt SHA-256:
-  `e4697051dd224516518c91a918e8a36cbb82340aad973442d358c3ebb947ad82`.
+- receipt
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/diagnostics/20260731-vlass-4096-full16-subgrid-support-audit-v1.json`,
+  SHA-256
+  `16596ed2d9d6c3aec308b73878360882249a1f9872e4e44832b768be7a631854`.
 
-The contract generator runs neither imaging nor a benchmark. The race remains
-unexecuted. No CASA task, clean run, 12,150-square workload, or changed
-scientific reference was launched for this reset.
+The first speed-of-light run was invalid and is retained as negative process
+evidence, not architecture evidence. Without production prediction-only CF
+priming it replayed `28,100,383,744` rather than `26,866,182,144` cell updates.
+The reducer rejected the log and wrote no receipt. The rejected log is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260731-vlass-4096-full16-niter0-subgrid-speed-of-light-v1.log`,
+SHA-256
+`ccef435d89d90f5affc1eaec3b9e0f4a570a585d259a3eb6115e1ff92db43d5e`.
+
+The corrected production-primed Metal race executed the exact sample,
+reference, mixed-support, and 11-call counts. It used content-derived dense
+screens, precomputed Y phase, X phase recurrence, deterministic owner-only
+threadgroup accumulation, and real output writes. Its best-case device core
+took `5.889348` seconds at `4.561826 Gcell/s`. The predeclared family-retirement
+gate was `3.38877216` seconds and the promotion gate was `2.8239768` seconds.
+The race omits screen construction and inverse FFT, subgrid FFT and scatter,
+CLEAN and product work, and numerical equivalence. The measured lower bound
+therefore retires the full-rank direct mixed-subgrid/inverse-CF family on this
+target. Memory was not the failure: the maximum resident window was
+`1,131,691,320` bytes and the conservative nine-times full-geometry projection
+was `10,185,221,880` bytes, below the `12 GiB` gate. The immutable evidence is:
+
+- log
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260731-vlass-4096-full16-niter0-subgrid-speed-of-light-primed-v2.log`,
+  SHA-256
+  `ece37898eb0d57a3ef765fe923c210c810ee78ee124ba36886bf49e7e0f8a6a1`;
+  and
+- receipt
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/diagnostics/20260731-vlass-4096-full16-subgrid-speed-of-light-primed-v2.json`,
+  SHA-256
+  `7660201327d1286d0c361721a0ea2a3a7be9d57052de53937c62ba454bf4fc04`.
+
+An exact-CF-key overlap-save audit then tested whether grouped FFTs could
+replace the direct action. After POINTING group phase was factored into sparse
+impulse values, exact identity still required `741,810` kernels. The best
+formula used side-32 tiles, but had only `1.885` references per active tile,
+`11,463,274` logical active tiles, `32,304,463,872` bytes of persistent kernel
+spectra, and `1,771,287,076,864` formula complex units. It would require
+`313.616 Gcomplex-unit/s` to fit the AW budget. Larger tile sizes increased
+both work and spectra. This retires literal persistent exact-key spectra and
+exact-key overlap-save; it does not reject base-CF plus phase shift, native
+screens, low-rank or tensor A/W action, NUFFT, visibility reduction, sparse
+reconstruction, or hierarchical factorizations. The immutable evidence is:
+
+- log
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260731-vlass-4096-full16-niter0-cf-key-fft-occupancy-v1.log`,
+  SHA-256
+  `9cc04b6e66fa9a5e65dc77f7aacc94dc7003314d5bb94b2e079b7f14993a2c89`;
+  and
+- receipt
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/diagnostics/20260731-vlass-4096-full16-cf-key-fft-occupancy-v1.json`,
+  SHA-256
+  `e3a39351744aedb609d6ec8a77794a2e5ba19e5de992cc7abbf936a6382299f2`.
+
+These are reduced diagnostic rows and architecture evidence only. They make no
+CASA correctness or end-to-end performance claim. The runs launched no CASA
+task, no clean, and no 12,150-square workload.
+
+The follow-up Oracle review treated both retired families as closed and
+re-ranked the remaining portfolio around removing eight of the 11 expensive
+operator applications. For the single-field workload its order is:
+
+1. mask-centered visibility moments and compressed sufficient statistics;
+2. visibility-resident mask-local CLEAN, contingent on the first candidate;
+3. weighted low-rank A/WB after exact W and POINTING factoring;
+4. base-CF continuous offset phase shifts, limited to a census and one complete
+   kernel because lower key cardinality alone does not reduce action work;
+5. butterfly or hierarchical factorization, only after visibility reduction;
+6. 3-D NUFFT plus low-rank DDE, currently disfavored by space-bandwidth and
+   three-dimensional state; and
+7. pointing-domain decomposition, which is irrelevant to this single-field
+   discriminator but is the first candidate for the all-63-field workload.
+
+The next experiment is therefore a receipt-bound
+`mask_sufficient_statistics_census`, not another full-field operator variant.
+It keeps the exact initial and final AW applications, exactly rephases to the
+center of the scale-dilated deterministic mask, factors the central W and
+POINTING phases, and tests polynomial UVW moment orders 2 and 3 with effective
+Mueller ranks 1 through 4. It must use the actual Briggs weights, all 641
+components, scales `[0,5,12]`, both Taylor terms, and held-out
+time/frequency/DDE states. Its executable discriminator then consists of one
+Metal component-batch update kernel and one mask-gradient kernel, first on the
+fixed component trajectory rather than live CLEAN.
+
+The candidate must report both feature and cross-moment sizes:
+
+```text
+F_eff = sum_c R_c * choose(p + 3, 3)
+G_eff = sum_c R_c^2 * choose(2p + 3, 3)
+```
+
+Promotion to a live mask-local solver requires `F_eff <= 77,000`, state no
+greater than `151,257,904` bytes, held-out normalized response RMS no greater
+than `3e-5`, maximum error no greater than `3e-4`, and construction plus all
+641 updates plus proposed mask-gradient evaluations no greater than `0.25x`
+the measured time of the eight removable calls. The complete retained-three
+plus compressed operator work must be no greater than `0.50x` the current
+11-call work. The family is killed if both tested orders require more than
+77,000 features, compressed work reaches `0.50x` the eight-call budget, or
+held-out response error exceeds `1e-3`. A failure promotes the weighted
+low-rank A/WB census rather than reopening full-rank subgrids or exact-key
+spectra.
+
+The low-rank fallback must quotient exact scalar W, factorizable POINTING
+phase, conjugation/reflection, antenna-frame translation/rotation, and supported
+frequency scaling before measuring weighted rank. It promotes to a one-call
+prototype only at effective Mueller rank at most four, weighted RMS error at
+most `2e-5`, maximum error at most `2e-4`, and projected time at most `0.35x`
+one current call. Rank above eight or time above `0.60x` kills it.
+
+For the all-fields branch, the first independent discriminator is
+pointing-domain decomposition with a partition of unity and joint MT-MFS
+normal-equation assembly, not 63 independent CLEANs. It promotes only if its
+projected work is at most `0.35x` the current path, visibility duplication is
+below `2.5x`, and full-size liveness is below approximately `17.6 GiB`. A
+lower bound above approximately 381 seconds, median local domains above half
+the global image area, or duplication above `3x` kills the route.
+
+The performance skill now records the corresponding process change:
+receipt-bound evidence labels, explicit omitted-work and uncertainty bounds,
+narrow permission for production-inert disposable discriminators, complete
+phase-liveness and traffic accounting for derived materialization, and an
+experiment lifecycle that ends in promotion, a named oracle, or deletion of
+the executable path while preserving negative evidence.
 
 ## Iteration Rules
 
