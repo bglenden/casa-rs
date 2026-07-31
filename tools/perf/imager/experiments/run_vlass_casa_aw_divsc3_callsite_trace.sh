@@ -7,22 +7,23 @@ external_root="${CASA_RS_VLASS_EXPERIMENT_ROOT:-/Volumes/GLENDENNING/casa-rs-vla
 diagnostics="${external_root}/receipts/diagnostics"
 runs="${external_root}/receipts/runs"
 manifest="${diagnostics}/20260731-vlass-casa-aw-divsc3-callsite-manifest-v1.json"
-raw_trace="${diagnostics}/20260731-vlass-casa-aw-divsc3-callsite-raw-trace-v2.json"
-comparison="${diagnostics}/20260731-vlass-casa-aw-divsc3-callsite-comparison-v2.json"
-lldb_log="${runs}/20260731-vlass-casa-aw-divsc3-callsite-trace-v2.log"
-casa_log="${runs}/20260731-vlass-casa-aw-divsc3-callsite-trace-v2.casa.log"
+raw_trace="${diagnostics}/20260731-vlass-casa-aw-divsc3-callsite-raw-trace-v3.json"
+comparison="${diagnostics}/20260731-vlass-casa-aw-divsc3-callsite-comparison-v3.json"
+lldb_log="${runs}/20260731-vlass-casa-aw-divsc3-callsite-trace-v3.log"
+casa_log="${runs}/20260731-vlass-casa-aw-divsc3-callsite-trace-v3.casa.log"
 npz="${runs}/20260730-vlass-4spw-frozen-casa-model-prediction-boundary-v2.npz"
 source_trace="${diagnostics}/20260730-vlass-4096-4spw-casars-prediction-source-trace-v1.json"
 term_oracle="${diagnostics}/20260731-vlass-4spw-casa-mtmfs-term-degrid-oracle-v2.bin"
 library="/Volumes/GLENDENNING/DeveloperTools/CASA/6.7.5.18-laptop/venv-py312/lib/python3.12/site-packages/casatools/__casac__/lib/libcasacpp_synthesis.6.dylib"
-casa_python="/Volumes/GLENDENNING/DeveloperTools/CASA/6.7.5.18-laptop/venv-py312/bin/python"
+casa_site_packages="/Volumes/GLENDENNING/DeveloperTools/CASA/6.7.5.18-laptop/venv-py312/lib/python3.12/site-packages"
+casa_python="/opt/homebrew/Cellar/python@3.12/3.12.13_4/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python"
 casa_source="/tmp/casa-6.7.5.18-oracle-source/casatools/src/code/synthesis/TransformMachines2/AWVisResampler.cc"
 source_ms="${external_root}/data/frozen-clean-b80d5e87487a/VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms"
 model_prefix="${external_root}/casa-reduced-clean/4096-four-spw/casa"
 prior_output_dir="${external_root}/artifacts/experiments/vlass-4spw-casa-aw-degrid-prefix-source1446-v1"
 scratch_ms="${prior_output_dir}/scratch.ms"
 output_prefix="${prior_output_dir}/casa"
-unreachable_npz="${prior_output_dir}/callsite-trace-unreachable-v2.npz"
+unreachable_npz="${prior_output_dir}/callsite-trace-unreachable-v3.npz"
 timeout_command="/opt/homebrew/bin/timeout"
 expected_manifest_sha256="929e77423638bbd0d0f29102182b055fb3516fdfd504d00ee759b0eeb6ff75f6"
 
@@ -32,7 +33,7 @@ fail() {
 }
 
 for required in "${manifest}" "${npz}" "${source_trace}" "${term_oracle}" "${library}" \
-  "${casa_python}" "${casa_source}" "${timeout_command}"; do
+  "${casa_site_packages}" "${casa_python}" "${casa_source}" "${timeout_command}"; do
   [[ -e "${required}" ]] || fail "missing required input ${required}"
 done
 [[ -d "${source_ms}" && -d "${scratch_ms}" ]] ||
@@ -53,6 +54,7 @@ set +e
 env \
   CASA_VLASS_CALLSITE_MANIFEST="${manifest}" \
   CASA_VLASS_CALLSITE_RAW_TRACE="${raw_trace}" \
+  PYTHONPATH="${casa_site_packages}${PYTHONPATH:+:${PYTHONPATH}}" \
   OMP_NUM_THREADS=1 \
   "${timeout_command}" --signal=TERM --kill-after=15s 300s \
   lldb -b \
