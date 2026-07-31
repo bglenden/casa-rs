@@ -7678,6 +7678,272 @@ struct MosaicMtmfsResidualFinish<'a> {
     bounded_sequential_host_fft: bool,
 }
 
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn hash_awproject_hybrid_residual_plane(term: usize, plane: &Array2<f32>) -> String {
+    let mut hash = Sha256::new();
+    for word in [term as u64, plane.nrows() as u64, plane.ncols() as u64] {
+        hash.update(word.to_le_bytes());
+    }
+    for value in plane {
+        hash.update(value.to_bits().to_le_bytes());
+    }
+    format!("{:x}", hash.finalize())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn write_awproject_hybrid_f32_plane(
+    path: &Path,
+    term: usize,
+    plane: &Array2<f32>,
+) -> Result<(String, String), ImagingError> {
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "create hybrid AW residual plane {}: {error}",
+                path.display(),
+            ))
+        })?;
+    let mut file_hash = Sha256::new();
+    let mut value_hash = Sha256::new();
+    for word in [term as u64, plane.nrows() as u64, plane.ncols() as u64] {
+        value_hash.update(word.to_le_bytes());
+    }
+    let mut chunk = Vec::with_capacity(1024 * 1024);
+    for value in plane {
+        let bytes = value.to_bits().to_le_bytes();
+        file_hash.update(bytes);
+        value_hash.update(bytes);
+        chunk.extend_from_slice(&bytes);
+        if chunk.len() == chunk.capacity() {
+            output.write_all(&chunk).map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "write hybrid AW residual plane {}: {error}",
+                    path.display(),
+                ))
+            })?;
+            chunk.clear();
+        }
+    }
+    if !chunk.is_empty() {
+        output.write_all(&chunk).map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "write hybrid AW residual plane {}: {error}",
+                path.display(),
+            ))
+        })?;
+    }
+    output.sync_all().map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "sync hybrid AW residual plane {}: {error}",
+            path.display(),
+        ))
+    })?;
+    Ok((
+        format!("{:x}", file_hash.finalize()),
+        format!("{:x}", value_hash.finalize()),
+    ))
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn write_awproject_hybrid_residual_diagnostic(
+    prefix: &Path,
+    post_fft_pre_normalization_hashes: &[String],
+    residual_terms: &[Array2<f32>],
+    weight_image: &Array2<f32>,
+    pb_limit: f32,
+) -> Result<PathBuf, ImagingError> {
+    if residual_terms.len() != 2
+        || post_fft_pre_normalization_hashes.len() != residual_terms.len()
+        || residual_terms
+            .iter()
+            .any(|plane| plane.dim() != weight_image.dim())
+    {
+        return Err(ImagingError::Normalization(
+            "hybrid AW residual diagnostic requires two residual terms matching the weight image"
+                .to_string(),
+        ));
+    }
+    let prefix_text = prefix.to_string_lossy();
+    let plane_paths = [
+        PathBuf::from(format!("{prefix_text}.normalized.tt0.f32le")),
+        PathBuf::from(format!("{prefix_text}.normalized.tt1.f32le")),
+    ];
+    let mask_path = PathBuf::from(format!("{prefix_text}.normalized.mask.u8"));
+    let receipt_path = PathBuf::from(format!("{prefix_text}.normalized.json"));
+    for path in [&plane_paths[0], &plane_paths[1], &mask_path, &receipt_path] {
+        if path.exists() {
+            return Err(ImagingError::InvalidRequest(format!(
+                "refusing to overwrite hybrid AW residual artifact {}",
+                path.display(),
+            )));
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "create hybrid AW residual directory {}: {error}",
+                    parent.display(),
+                ))
+            })?;
+        }
+    }
+
+    let mut plane_receipts = Vec::with_capacity(residual_terms.len());
+    for (term, (path, plane)) in plane_paths.iter().zip(residual_terms).enumerate() {
+        let (file_sha256, value_sha256) = write_awproject_hybrid_f32_plane(path, term, plane)?;
+        plane_receipts.push(serde_json::json!({
+            "term": term,
+            "path": path,
+            "file_sha256": file_sha256,
+            "value_sha256": value_sha256,
+            "post_fft_pre_normalization_value_sha256":
+                post_fft_pre_normalization_hashes[term],
+            "rows": plane.nrows(),
+            "columns": plane.ncols(),
+            "element_count": plane.len(),
+            "byte_count": plane.len().saturating_mul(std::mem::size_of::<f32>()),
+        }));
+    }
+
+    let weight_peak = weight_image
+        .iter()
+        .copied()
+        .fold(0.0f32, |peak, value| peak.max(value));
+    if !(weight_peak.is_finite() && weight_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "hybrid AW residual diagnostic weight peak is non-finite or zero".to_string(),
+        ));
+    }
+    let mask_threshold = pb_limit.abs() * pb_limit.abs() * weight_peak;
+    let mut mask_output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&mask_path)
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "create hybrid AW residual mask {}: {error}",
+                mask_path.display(),
+            ))
+        })?;
+    let mut mask_hash = Sha256::new();
+    let mut mask_chunk = Vec::with_capacity(1024 * 1024);
+    let mut valid_pixels = 0usize;
+    for weight in weight_image {
+        let valid = u8::from(weight.max(0.0) > mask_threshold);
+        valid_pixels += usize::from(valid);
+        mask_hash.update([valid]);
+        mask_chunk.push(valid);
+        if mask_chunk.len() == mask_chunk.capacity() {
+            mask_output.write_all(&mask_chunk).map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "write hybrid AW residual mask {}: {error}",
+                    mask_path.display(),
+                ))
+            })?;
+            mask_chunk.clear();
+        }
+    }
+    if !mask_chunk.is_empty() {
+        mask_output.write_all(&mask_chunk).map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "write hybrid AW residual mask {}: {error}",
+                mask_path.display(),
+            ))
+        })?;
+    }
+    mask_output.sync_all().map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "sync hybrid AW residual mask {}: {error}",
+            mask_path.display(),
+        ))
+    })?;
+    let mask_sha256 = format!("{:x}", mask_hash.finalize());
+    let normalized_value_hashes = plane_receipts
+        .iter()
+        .map(|plane| {
+            plane["value_sha256"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+
+    let receipt = serde_json::json!({
+        "schema": "casa-rs-vlass-aw-hybrid-normalized-residual-v1",
+        "role": "bounded_private_normalized_residual_diagnostic_not_product_or_promotion_evidence",
+        "residual_fft": {
+            "precision": "f64",
+            "backend": "configured production dirty-product backend",
+            "compensation": "f64 high-plus-low reconstruction before transform",
+        },
+        "value_contract": "sha256-le-term-shape-ndarray-iteration-f32-bits",
+        "plane_file_contract": "contiguous ndarray-iteration f32 little-endian bits without header",
+        "planes": plane_receipts,
+        "mask": {
+            "path": mask_path,
+            "file_sha256": mask_sha256,
+            "contract": "ndarray-iteration u8 where weight.max(0) > abs(pblimit)^2 * weight_peak",
+            "valid_pixels": valid_pixels,
+            "masked_pixels": weight_image.len().saturating_sub(valid_pixels),
+            "weight_peak": weight_peak,
+            "pb_limit": pb_limit,
+            "threshold": mask_threshold,
+        },
+        "stop_boundary": {
+            "normalized_residual_tt0_tt1_complete": true,
+            "restoration_entered": false,
+            "product_tree_entered": false,
+            "controller_entered": false,
+            "minor_cycle_after_refresh": false,
+            "additional_major_cycle": false,
+            "beam_fit_entered": false,
+        },
+    });
+    let receipt_bytes = serde_json::to_vec_pretty(&receipt).map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "serialize hybrid AW normalized residual receipt: {error}",
+        ))
+    })?;
+    let mut receipt_output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&receipt_path)
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "create hybrid AW normalized residual receipt {}: {error}",
+                receipt_path.display(),
+            ))
+        })?;
+    receipt_output.write_all(&receipt_bytes).map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "write hybrid AW normalized residual receipt {}: {error}",
+            receipt_path.display(),
+        ))
+    })?;
+    receipt_output.sync_all().map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "sync hybrid AW normalized residual receipt {}: {error}",
+            receipt_path.display(),
+        ))
+    })?;
+    eprintln!(
+        "awproject_hybrid_normalized_residual status=complete terms={} rows={} columns={} \
+         tt0_sha256={} tt1_sha256={} mask_sha256={} valid_pixels={} \
+         prohibited_post_residual_stages_entered=false receipt={}",
+        residual_terms.len(),
+        residual_terms[0].nrows(),
+        residual_terms[0].ncols(),
+        normalized_value_hashes[0],
+        normalized_value_hashes[1],
+        mask_sha256,
+        valid_pixels,
+        receipt_path.display(),
+    );
+    Ok(receipt_path)
+}
+
 fn finish_mosaic_mtmfs_residual_images(
     gridder: &StandardGridder,
     storage: MosaicMtmfsStreamGridStorage,
@@ -7903,14 +8169,38 @@ fn finish_mosaic_mtmfs_residual_images(
             }
         }
     };
-    corrected
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    let post_fft_pre_normalization_hashes = corrected
+        .iter()
+        .enumerate()
+        .map(|(term, plane)| hash_awproject_hybrid_residual_plane(term, plane))
+        .collect::<Vec<_>>();
+    let residual_terms = corrected
         .into_iter()
         .map(|mut image| {
             image.mapv_inplace(|value| value * fft_sumwt_scale);
             normalize_mosaic_residual_by_weight(&mut image, weight_image, pb_limit)?;
             Ok(image)
         })
-        .collect()
+        .collect::<Result<Vec<_>, ImagingError>>()?;
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    if let Some(prefix) =
+        env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_RESIDUAL_PREFIX").map(PathBuf::from)
+    {
+        let receipt = write_awproject_hybrid_residual_diagnostic(
+            &prefix,
+            &post_fft_pre_normalization_hashes,
+            &residual_terms,
+            weight_image,
+            pb_limit,
+        )?;
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject hybrid residual diagnostic completed after normalized residuals and \
+             before products; receipt={}",
+            receipt.display(),
+        )));
+    }
+    Ok(residual_terms)
 }
 
 fn mosaic_mtmfs_weighting_request(request: &MtmfsRequest) -> ImagingRequest {
@@ -9985,6 +10275,7 @@ struct AwProjectMetalPredictionDispatch {
     audit: Option<Vec<AwProjectMetalPredictionAuditSample>>,
     wide_division: Option<Vec<AwProjectMetalWideDivisionSample>>,
     elapsed: Duration,
+    host_readback: Duration,
 }
 
 #[repr(C)]
@@ -14715,6 +15006,7 @@ impl AwProjectMetalExecutor {
                 audit: audit_generation.map(|_| Vec::new()),
                 wide_division: wide_division_generation.map(|_| Vec::new()),
                 elapsed: Duration::ZERO,
+                host_readback: Duration::ZERO,
             });
         }
         if audit_generation == Some(0) {
@@ -14996,6 +15288,7 @@ impl AwProjectMetalExecutor {
             )));
         }
         let elapsed = started.elapsed();
+        let readback_started = Instant::now();
         let results = unsafe {
             slice::from_raw_parts(
                 result_buffer
@@ -15026,11 +15319,13 @@ impl AwProjectMetalExecutor {
             )
             .to_vec()
         });
+        let host_readback = readback_started.elapsed();
         Ok(AwProjectMetalPredictionDispatch {
             results,
             audit,
             wide_division,
             elapsed,
+            host_readback,
         })
     }
 
@@ -20740,6 +21035,104 @@ fn update_awproject_persistent_metal_prediction_results(
 static AWPROJECT_FROZEN_FINAL_STATE_REPLAY_ORDINAL: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectPredictionVisibilityHashes {
+    observed: String,
+    predicted: String,
+    residual: String,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn hash_awproject_prediction_visibilities(
+    batch: &AwProjectMetalPredictionBatch,
+    residuals: &[AwProjectMetalPredictionResult],
+) -> Result<AwProjectPredictionVisibilityHashes, ImagingError> {
+    if batch.samples.len() != residuals.len() {
+        return Err(ImagingError::Normalization(format!(
+            "prediction visibility hash has {} packed samples but {} residuals",
+            batch.samples.len(),
+            residuals.len(),
+        )));
+    }
+    let mut observed_hash = Sha256::new();
+    let mut predicted_hash = Sha256::new();
+    let mut residual_hash = Sha256::new();
+    for (sample_ordinal, (sample, residual)) in batch.samples.iter().zip(residuals).enumerate() {
+        let ordinal = u64::try_from(sample_ordinal).unwrap_or(u64::MAX);
+        observed_hash.update(ordinal.to_le_bytes());
+        predicted_hash.update(ordinal.to_le_bytes());
+        residual_hash.update(ordinal.to_le_bytes());
+        let observed = [
+            sample.first_observed_re,
+            sample.first_observed_im,
+            sample.second_observed_re,
+            sample.second_observed_im,
+        ];
+        let residual_values = [
+            residual.first_residual_re,
+            residual.first_residual_im,
+            residual.second_residual_re,
+            residual.second_residual_im,
+        ];
+        for value in observed {
+            observed_hash.update(value.to_bits().to_le_bytes());
+        }
+        for (observed, residual) in observed.into_iter().zip(residual_values) {
+            predicted_hash.update((observed - residual).to_bits().to_le_bytes());
+            residual_hash.update(residual.to_bits().to_le_bytes());
+        }
+    }
+    Ok(AwProjectPredictionVisibilityHashes {
+        observed: format!("{:x}", observed_hash.finalize()),
+        predicted: format!("{:x}", predicted_hash.finalize()),
+        residual: format!("{:x}", residual_hash.finalize()),
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn hash_awproject_tile_ingress_residuals(batch: &AwProjectMetalBatch) -> String {
+    let mut residual_hash = Sha256::new();
+    for (sample_ordinal, sample) in batch.samples.iter().enumerate() {
+        residual_hash.update(
+            u64::try_from(sample_ordinal)
+                .unwrap_or(u64::MAX)
+                .to_le_bytes(),
+        );
+        for value in [
+            sample.first_residual_re,
+            sample.first_residual_im,
+            sample.second_residual_re,
+            sample.second_residual_im,
+        ] {
+            residual_hash.update(value.to_bits().to_le_bytes());
+        }
+    }
+    format!("{:x}", residual_hash.finalize())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn hash_awproject_direct_combined_predictions(
+    audit: &[AwProjectMetalPredictionAuditSample],
+) -> String {
+    let mut hash = Sha256::new();
+    for (sample_ordinal, sample) in audit.iter().enumerate() {
+        hash.update(
+            u64::try_from(sample_ordinal)
+                .unwrap_or(u64::MAX)
+                .to_le_bytes(),
+        );
+        for value in [
+            sample.first.combined_prediction.re,
+            sample.first.combined_prediction.im,
+            sample.second.combined_prediction.re,
+            sample.second.combined_prediction.im,
+        ] {
+            hash.update(value.to_bits().to_le_bytes());
+        }
+    }
+    format!("{:x}", hash.finalize())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn write_awproject_metal_prediction_prefix_trace(
     path: &Path,
     source_ordinal: usize,
@@ -20997,53 +21390,19 @@ fn emit_awproject_frozen_final_state_prediction_hashes(
     if env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_FROZEN_FINAL_STATE_CHECKPOINTS").is_none() {
         return Ok(());
     }
-    if batch.samples.len() != residuals.len() {
-        return Err(ImagingError::Normalization(format!(
-            "frozen-final-state prediction checkpoint has {} packed samples but {} residuals",
-            batch.samples.len(),
-            residuals.len(),
-        )));
-    }
+    let hashes = hash_awproject_prediction_visibilities(batch, residuals)?;
     let replay_ordinal =
         AWPROJECT_FROZEN_FINAL_STATE_REPLAY_ORDINAL.fetch_add(1, Ordering::Relaxed);
-    let mut observed_hash = Sha256::new();
-    let mut predicted_hash = Sha256::new();
-    let mut residual_hash = Sha256::new();
-    for (sample_ordinal, (sample, residual)) in batch.samples.iter().zip(residuals).enumerate() {
-        let ordinal = u64::try_from(sample_ordinal).unwrap_or(u64::MAX);
-        observed_hash.update(ordinal.to_le_bytes());
-        predicted_hash.update(ordinal.to_le_bytes());
-        residual_hash.update(ordinal.to_le_bytes());
-        let observed = [
-            sample.first_observed_re,
-            sample.first_observed_im,
-            sample.second_observed_re,
-            sample.second_observed_im,
-        ];
-        let residual_values = [
-            residual.first_residual_re,
-            residual.first_residual_im,
-            residual.second_residual_re,
-            residual.second_residual_im,
-        ];
-        for value in observed {
-            observed_hash.update(value.to_bits().to_le_bytes());
-        }
-        for (observed, residual) in observed.into_iter().zip(residual_values) {
-            predicted_hash.update((observed - residual).to_bits().to_le_bytes());
-            residual_hash.update(residual.to_bits().to_le_bytes());
-        }
-    }
     eprintln!(
         "awproject_frozen_final_state_visibilities replay_ordinal={} samples={} \
-         observed_sha256={:x} predicted_sha256={:x} residual_sha256={:x} \
+         observed_sha256={} predicted_sha256={} residual_sha256={} \
          contract=sha256-le-sample-ordinal-rr-re-im-ll-re-im-f32-bits \
          prediction_source=derived-observed-minus-returned-residual",
         replay_ordinal,
         residuals.len(),
-        observed_hash.finalize(),
-        predicted_hash.finalize(),
-        residual_hash.finalize(),
+        hashes.observed,
+        hashes.predicted,
+        hashes.residual,
     );
     Ok(())
 }
@@ -21212,20 +21571,18 @@ fn build_awproject_wide_division_candidate(
             "wide-division dispatch did not return its raw diagnostic buffer".to_string(),
         )
     })?;
-    let current_audit = current.audit.as_ref().ok_or_else(|| {
-        ImagingError::Normalization(
-            "wide-division dispatch did not return its control audit buffer".to_string(),
-        )
-    })?;
     if generation == 0
         || raw.len() != batch.samples.len()
-        || current_audit.len() != batch.samples.len()
         || current.results.len() != batch.samples.len()
+        || current
+            .audit
+            .as_ref()
+            .is_some_and(|audit| audit.len() != batch.samples.len())
     {
         return Err(ImagingError::Normalization(format!(
             "wide-division topology differs: generation={generation}, raw={}, audit={}, results={}, samples={}",
             raw.len(),
-            current_audit.len(),
+            current.audit.as_ref().map_or(0, Vec::len),
             current.results.len(),
             batch.samples.len(),
         )));
@@ -21243,9 +21600,7 @@ fn build_awproject_wide_division_candidate(
     }
     let mut audit = Vec::with_capacity(batch.samples.len());
     let mut results = Vec::with_capacity(batch.samples.len());
-    for (ordinal, ((sample, raw), control)) in
-        batch.samples.iter().zip(raw).zip(current_audit).enumerate()
-    {
+    for (ordinal, (sample, raw)) in batch.samples.iter().zip(raw).enumerate() {
         if raw.sample_ordinal != u32::try_from(ordinal).unwrap_or(u32::MAX)
             || raw.written_generation != generation
             || raw.first_imaging_mueller != sample.first_imaging_mueller
@@ -21255,34 +21610,36 @@ fn build_awproject_wide_division_candidate(
                 "wide-division raw topology differs at source {ordinal}",
             )));
         }
-        for (label, reconstructed, captured) in [
-            (
-                "first TT0",
-                raw.first.model_term0.current_f32,
-                control.first.model_term0,
-            ),
-            (
-                "first TT1",
-                raw.first.model_term1.current_f32,
-                control.first.model_term1,
-            ),
-            (
-                "second TT0",
-                raw.second.model_term0.current_f32,
-                control.second.model_term0,
-            ),
-            (
-                "second TT1",
-                raw.second.model_term1.current_f32,
-                control.second.model_term1,
-            ),
-        ] {
-            if reconstructed.re.to_bits() != captured.re.to_bits()
-                || reconstructed.im.to_bits() != captured.im.to_bits()
-            {
-                return Err(ImagingError::Normalization(format!(
-                    "wide-division device identity differs from the current Metal {label} value at source {ordinal}",
-                )));
+        if let Some(control) = current.audit.as_ref().map(|audit| audit[ordinal]) {
+            for (label, reconstructed, captured) in [
+                (
+                    "first TT0",
+                    raw.first.model_term0.current_f32,
+                    control.first.model_term0,
+                ),
+                (
+                    "first TT1",
+                    raw.first.model_term1.current_f32,
+                    control.first.model_term1,
+                ),
+                (
+                    "second TT0",
+                    raw.second.model_term0.current_f32,
+                    control.second.model_term0,
+                ),
+                (
+                    "second TT1",
+                    raw.second.model_term1.current_f32,
+                    control.second.model_term1,
+                ),
+            ] {
+                if reconstructed.re.to_bits() != captured.re.to_bits()
+                    || reconstructed.im.to_bits() != captured.im.to_bits()
+                {
+                    return Err(ImagingError::Normalization(format!(
+                        "wide-division device identity differs from the current Metal {label} value at source {ordinal}",
+                    )));
+                }
             }
         }
 
@@ -21395,6 +21752,7 @@ fn build_awproject_wide_division_candidate(
         audit: Some(audit),
         wide_division: None,
         elapsed: started.elapsed(),
+        host_readback: Duration::ZERO,
     })
 }
 
@@ -26506,18 +26864,47 @@ fn replay_awproject_metal_global_program(
         let wide_division_prefix =
             env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_WIDE_DIVISION_SIDECAR_PREFIX")
                 .map(PathBuf::from);
-        if sidecar_prefix.is_some() && wide_division_prefix.is_some() {
+        let hybrid_prefix =
+            env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_RESIDUAL_PREFIX")
+                .map(PathBuf::from);
+        if [sidecar_prefix.is_some(), wide_division_prefix.is_some(), hybrid_prefix.is_some()]
+            .into_iter()
+            .filter(|enabled| *enabled)
+            .count()
+            > 1
+        {
             return Err(ImagingError::InvalidRequest(
-                "the prediction and wide-division sidecars are mutually exclusive".to_string(),
+                "the prediction sidecar, wide-division sidecar, and hybrid residual path are \
+                 mutually exclusive"
+                    .to_string(),
+            ));
+        }
+        if hybrid_prefix.is_some()
+            && (env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_FROZEN_FINAL_STATE_CHECKPOINTS")
+                .is_none()
+                || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDIVISION_SOURCE_PHASE")
+                    .is_none()
+                || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_RAW_FRAME_TAYLOR").is_none())
+        {
+            return Err(ImagingError::InvalidRequest(
+                "the hybrid AW residual path requires frozen-final-state checkpoints, \
+                 pre-division source phase, and raw-frame Taylor ordering"
+                    .to_string(),
             ));
         }
         let sidecar_generation = sidecar_prefix.as_ref().map(|_| 1);
         let wide_division_generation = wide_division_prefix.as_ref().map(|_| 1);
+        let hybrid_generation = hybrid_prefix.as_ref().map(|_| 1);
+        #[cfg(all(target_os = "macos", not(coverage)))]
+        use objc2_metal::MTLDevice;
+        let metal_allocated_before = hybrid_prefix
+            .as_ref()
+            .map(|_| executor.device.currentAllocatedSize());
         let dispatch = executor.dispatch_prediction_probe(
             &program.prediction_batch,
             model_grids,
             sidecar_generation.or(wide_division_generation),
-            wide_division_generation,
+            wide_division_generation.or(hybrid_generation),
         )?;
         emit_awproject_frozen_final_state_prediction_hashes(
             &program.prediction_batch,
@@ -26547,9 +26934,125 @@ fn replay_awproject_metal_global_program(
                 receipt.display(),
             )));
         }
-        let prediction_elapsed = dispatch.elapsed;
-        let residuals = dispatch.results;
+        let (prediction_elapsed, prediction_host_readback, candidate_elapsed, residuals) =
+            if hybrid_prefix.is_some() {
+                let expected = |name: &str| {
+                    env::var(name).map_err(|_| {
+                        ImagingError::InvalidRequest(format!(
+                            "the hybrid AW residual path requires {name}",
+                        ))
+                    })
+                };
+                let expected_observed = expected(
+                    "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_OBSERVED_SHA256",
+                )?;
+                let expected_control_prediction = expected(
+                    "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CONTROL_PREDICTION_SHA256",
+                )?;
+                let expected_control_residual = expected(
+                    "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CONTROL_RESIDUAL_SHA256",
+                )?;
+                let expected_candidate_prediction = expected(
+                    "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_PREDICTION_SHA256",
+                )?;
+                let expected_candidate_residual = expected(
+                    "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_RESIDUAL_SHA256",
+                )?;
+                let control_hashes =
+                    hash_awproject_prediction_visibilities(&program.prediction_batch, &dispatch.results)?;
+                for (label, actual, expected) in [
+                    ("observed", &control_hashes.observed, &expected_observed),
+                    (
+                        "control prediction",
+                        &control_hashes.predicted,
+                        &expected_control_prediction,
+                    ),
+                    (
+                        "control residual",
+                        &control_hashes.residual,
+                        &expected_control_residual,
+                    ),
+                ] {
+                    if actual != expected {
+                        return Err(ImagingError::Normalization(format!(
+                            "hybrid AW residual {label} hash differs: {actual} != {expected}",
+                        )));
+                    }
+                }
+                let candidate = build_awproject_wide_division_candidate(
+                    hybrid_generation.expect("hybrid generation"),
+                    &program.prediction_batch,
+                    &dispatch,
+                )?;
+                let candidate_hashes = hash_awproject_prediction_visibilities(
+                    &program.prediction_batch,
+                    &candidate.results,
+                )?;
+                let candidate_combined_hash = hash_awproject_direct_combined_predictions(
+                    candidate.audit.as_deref().ok_or_else(|| {
+                        ImagingError::Normalization(
+                            "hybrid AW residual candidate omitted its direct prediction audit"
+                                .to_string(),
+                        )
+                    })?,
+                );
+                for (label, actual, expected) in [
+                    ("candidate observed", &candidate_hashes.observed, &expected_observed),
+                    (
+                        "candidate prediction",
+                        &candidate_combined_hash,
+                        &expected_candidate_prediction,
+                    ),
+                    (
+                        "candidate residual",
+                        &candidate_hashes.residual,
+                        &expected_candidate_residual,
+                    ),
+                ] {
+                    if actual != expected {
+                        return Err(ImagingError::Normalization(format!(
+                            "hybrid AW residual {label} hash differs: {actual} != {expected}",
+                        )));
+                    }
+                }
+                let dispatch_elapsed = dispatch.elapsed;
+                let dispatch_readback = dispatch.host_readback;
+                let candidate_elapsed = candidate.elapsed;
+                let residuals = candidate.results;
+                (
+                    dispatch_elapsed,
+                    dispatch_readback,
+                    candidate_elapsed,
+                    residuals,
+                )
+            } else {
+                (
+                    dispatch.elapsed,
+                    dispatch.host_readback,
+                    Duration::ZERO,
+                    dispatch.results,
+                )
+            };
+        let tile_update_started = Instant::now();
         update_awproject_persistent_metal_prediction_results(&mut program.tile_batch, &residuals)?;
+        let tile_update_elapsed = tile_update_started.elapsed();
+        let tile_ingress_hash = hash_awproject_tile_ingress_residuals(&program.tile_batch);
+        if hybrid_prefix.is_some() {
+            let expected = env::var(
+                "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_RESIDUAL_SHA256",
+            )
+            .map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "the hybrid AW residual path requires its candidate residual hash".to_string(),
+                )
+            })?;
+            if tile_ingress_hash != expected {
+                return Err(ImagingError::Normalization(format!(
+                    "hybrid AW residual tile ingress changed candidate bits: \
+                     {tile_ingress_hash} != {expected}",
+                )));
+            }
+        }
         let tile_stats = executor.dispatch_tile_grid_probe(
             grid,
             aw_compensation,
@@ -26558,6 +27061,108 @@ fn replay_awproject_metal_global_program(
             request.nterms,
             Some(program.residual_scale_plan),
         )?;
+        if let Some(prefix) = hybrid_prefix.as_deref() {
+            let receipt_path =
+                PathBuf::from(format!("{}.prediction.json", prefix.to_string_lossy()));
+            if let Some(parent) = receipt_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| {
+                    ImagingError::InvalidRequest(format!(
+                        "create hybrid AW residual receipt directory {}: {error}",
+                        parent.display(),
+                    ))
+                })?;
+            }
+            let metal_allocated_after_tile = executor.device.currentAllocatedSize();
+            let receipt = serde_json::json!({
+                "schema": "casa-rs-vlass-aw-hybrid-residual-prediction-v1",
+                "role": "bounded_private_production_path_diagnostic_not_promotion_evidence",
+                "sample_count": program.prediction_batch.samples.len(),
+                "source_role_count": program.prediction_batch.samples.len().saturating_mul(2),
+                "complex_division_count": program.prediction_batch.samples.len().saturating_mul(4),
+                "hash_contract": "sha256-le-sample-ordinal-rr-re-im-ll-re-im-f32-bits",
+                "hashes": {
+                    "observed": env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_OBSERVED_SHA256").unwrap_or_default(),
+                    "control_prediction": env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CONTROL_PREDICTION_SHA256").unwrap_or_default(),
+                    "control_residual": env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CONTROL_RESIDUAL_SHA256").unwrap_or_default(),
+                    "candidate_prediction": env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_PREDICTION_SHA256").unwrap_or_default(),
+                    "candidate_residual": env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_RESIDUAL_SHA256").unwrap_or_default(),
+                    "tile_ingress_residual": tile_ingress_hash,
+                },
+                "timings_ms": {
+                    "metal_dispatch_and_wait": prediction_elapsed.as_secs_f64() * 1_000.0,
+                    "host_readback_all_requested_buffers": prediction_host_readback.as_secs_f64() * 1_000.0,
+                    "cpu_wide_division_raw_taylor_phase_subtract_write": candidate_elapsed.as_secs_f64() * 1_000.0,
+                    "tile_update": tile_update_elapsed.as_secs_f64() * 1_000.0,
+                    "prediction_to_tile_ready": (prediction_elapsed + prediction_host_readback + candidate_elapsed + tile_update_elapsed).as_secs_f64() * 1_000.0,
+                    "tile_grid": tile_stats.total.as_secs_f64() * 1_000.0,
+                },
+                "memory_bytes": {
+                    "raw_wide_division_logical": program.prediction_batch.samples.len().saturating_mul(std::mem::size_of::<AwProjectMetalWideDivisionSample>()),
+                    "ordinary_result_logical": program.prediction_batch.samples.len().saturating_mul(std::mem::size_of::<AwProjectMetalPredictionResult>()),
+                    "candidate_result_logical": residuals.len().saturating_mul(std::mem::size_of::<AwProjectMetalPredictionResult>()),
+                    "metal_current_allocated_before": metal_allocated_before.unwrap_or(0),
+                    "metal_current_allocated_after_tile": metal_allocated_after_tile,
+                    "metal_current_allocated_delta": metal_allocated_after_tile.saturating_sub(metal_allocated_before.unwrap_or(0)),
+                },
+                "execution": {
+                    "source": "ordinary global compact replay production dispatch",
+                    "prediction_dispatch_count": 1,
+                    "residual_refresh_count": 1,
+                    "tile_grid_dispatch_count": 1,
+                    "raw_frame_taylor": true,
+                    "source_phase_once_after_taylor": true,
+                    "residual_fft_precision": "f64",
+                    "product_formation_entered": false,
+                    "controller_entered": false,
+                    "minor_cycle_after_refresh": false,
+                    "additional_major_cycle": false,
+                },
+            });
+            let receipt_bytes = serde_json::to_vec_pretty(&receipt).map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "serialize hybrid AW residual prediction receipt: {error}",
+                ))
+            })?;
+            let mut output = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&receipt_path)
+                .map_err(|error| {
+                    ImagingError::InvalidRequest(format!(
+                        "create hybrid AW residual prediction receipt {}: {error}",
+                        receipt_path.display(),
+                    ))
+                })?;
+            output.write_all(&receipt_bytes).map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "write hybrid AW residual prediction receipt {}: {error}",
+                    receipt_path.display(),
+                ))
+            })?;
+            output.sync_all().map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "sync hybrid AW residual prediction receipt {}: {error}",
+                    receipt_path.display(),
+                ))
+            })?;
+            eprintln!(
+                "awproject_hybrid_residual_prediction status=exact-candidate-tile-ready \
+                 samples={} candidate_residual_sha256={} tile_ingress_sha256={} \
+                 metal_dispatch_ms={:.6} host_readback_ms={:.6} cpu_candidate_ms={:.6} \
+                 tile_update_ms={:.6} prediction_to_tile_ready_ms={:.6} tile_grid_ms={:.6} \
+                 receipt={}",
+                residuals.len(),
+                env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_RESIDUAL_SHA256").unwrap_or_default(),
+                tile_ingress_hash,
+                prediction_elapsed.as_secs_f64() * 1_000.0,
+                prediction_host_readback.as_secs_f64() * 1_000.0,
+                candidate_elapsed.as_secs_f64() * 1_000.0,
+                tile_update_elapsed.as_secs_f64() * 1_000.0,
+                (prediction_elapsed + prediction_host_readback + candidate_elapsed + tile_update_elapsed).as_secs_f64() * 1_000.0,
+                tile_stats.total.as_secs_f64() * 1_000.0,
+                receipt_path.display(),
+            );
+        }
         let stats = AwProjectMetalResidentChainStats {
             samples: program.prediction_batch.samples.len(),
             prediction_kernel_values: program.prediction_batch.kernels.len(),
@@ -26570,7 +27175,11 @@ fn replay_awproject_metal_global_program(
             residual_bytes: residuals
                 .len()
                 .saturating_mul(std::mem::size_of::<AwProjectMetalPredictionResult>()),
-            total: prediction_elapsed + tile_stats.total,
+            total: prediction_elapsed
+                + prediction_host_readback
+                + candidate_elapsed
+                + tile_update_elapsed
+                + tile_stats.total,
         };
         Ok::<_, ImagingError>((stats, executor_setup))
     })?;

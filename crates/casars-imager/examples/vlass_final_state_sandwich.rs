@@ -28,6 +28,19 @@ const CASA_ORACLE_MANIFEST_SHA256: &str =
     "59f03bad4d43b79ee7c2d8ead4cb10a53d9b3fc76cf1a300e5251551c3db2c02";
 const V6_NATIVE_COMPONENT_RECEIPT_SHA256: &str =
     "35c3281f882fbe61cc512b4e489f25253904575be1deb027226e4017020c37b7";
+const HYBRID_OBSERVED_SHA256: &str =
+    "3601b5c6ebf749d58c80bc16b329db68a94557e5d7cbb477034b061ef89f2172";
+const HYBRID_CONTROL_PREDICTION_SHA256: &str =
+    "68d6dc8c6b4ec45b8cad8d17ee44cdc1a1220e0ae261c251a35b75899ecb0bf9";
+const HYBRID_CONTROL_RESIDUAL_SHA256: &str =
+    "3ab0ed020a6b75ed54aadd91606c7d6e0fc8424575f77f931654e1addb3b6f98";
+const HYBRID_CANDIDATE_PREDICTION_SHA256: &str =
+    "2c6a3072a7f5556c81cc5b691a8d0ac2d7b055010bb8f171ed207d5d1a5d1e5d";
+const HYBRID_CANDIDATE_RESIDUAL_SHA256: &str =
+    "4db5487bff286e841718aec4a600f3b5c1ebf3aa602c5120a0796832355ad6d9";
+const HYBRID_PREDICTION_TO_TILE_READY_LIMIT_MS: f64 = 62.690_729;
+const HYBRID_RAW_BUFFER_LIMIT_BYTES: u64 = 16 * 1024 * 1024;
+const HYBRID_RELATIVE_RMS_LIMIT: f64 = 2.0e-7;
 const PRODUCT_SUFFIXES: [&str; 19] = [
     ".alpha",
     ".alpha.error",
@@ -205,6 +218,146 @@ fn sha256_f32(values: &Array2<f32>) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let bytes = fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn sha256_hybrid_plane(term: usize, values: &Array2<f32>) -> String {
+    let mut hasher = Sha256::new();
+    for word in [term as u64, values.nrows() as u64, values.ncols() as u64] {
+        hasher.update(word.to_le_bytes());
+    }
+    for value in values {
+        hasher.update(value.to_bits().to_le_bytes());
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+fn hybrid_residual_terms(receipt: &Value) -> Result<[Array2<f32>; 2], String> {
+    if receipt["schema"] != "casa-rs-vlass-aw-hybrid-normalized-residual-v1"
+        || receipt["residual_fft"]["precision"] != "f64"
+        || receipt["stop_boundary"]["normalized_residual_tt0_tt1_complete"] != true
+        || receipt["stop_boundary"]["product_tree_entered"] != false
+        || receipt["stop_boundary"]["controller_entered"] != false
+        || receipt["stop_boundary"]["minor_cycle_after_refresh"] != false
+        || receipt["stop_boundary"]["additional_major_cycle"] != false
+    {
+        return Err(
+            "hybrid normalized-residual receipt failed its execution-boundary contract".to_string(),
+        );
+    }
+    let planes = receipt["planes"]
+        .as_array()
+        .ok_or_else(|| "hybrid normalized-residual receipt has no planes".to_string())?;
+    if planes.len() != 2 {
+        return Err(format!(
+            "hybrid normalized-residual receipt has {} planes, expected 2",
+            planes.len(),
+        ));
+    }
+    let mut output = Vec::with_capacity(2);
+    for (term, record) in planes.iter().enumerate() {
+        if record["term"].as_u64() != Some(term as u64)
+            || record["rows"].as_u64() != Some(IMAGE_SIDE as u64)
+            || record["columns"].as_u64() != Some(IMAGE_SIDE as u64)
+            || record["element_count"].as_u64() != Some((IMAGE_SIDE * IMAGE_SIDE) as u64)
+        {
+            return Err(format!(
+                "hybrid normalized-residual term {term} topology differs",
+            ));
+        }
+        let path = PathBuf::from(
+            record["path"]
+                .as_str()
+                .ok_or_else(|| format!("hybrid term {term} path is missing"))?,
+        );
+        let bytes = fs::read(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
+        if bytes.len() != IMAGE_SIDE * IMAGE_SIDE * std::mem::size_of::<f32>() {
+            return Err(format!(
+                "hybrid term {term} byte count differs: {}",
+                bytes.len(),
+            ));
+        }
+        let file_hash = format!("{:x}", Sha256::digest(&bytes));
+        if record["file_sha256"].as_str() != Some(file_hash.as_str()) {
+            return Err(format!("hybrid term {term} file hash differs: {file_hash}",));
+        }
+        let values = bytes
+            .chunks_exact(std::mem::size_of::<f32>())
+            .map(|word| f32::from_bits(u32::from_le_bytes(word.try_into().expect("f32 word"))))
+            .collect::<Vec<_>>();
+        let plane = Array2::from_shape_vec((IMAGE_SIDE, IMAGE_SIDE), values)
+            .map_err(|error| format!("reshape hybrid term {term}: {error}"))?;
+        let value_hash = sha256_hybrid_plane(term, &plane);
+        if record["value_sha256"].as_str() != Some(value_hash.as_str()) {
+            return Err(format!(
+                "hybrid term {term} value hash differs: {value_hash}",
+            ));
+        }
+        output.push(plane);
+    }
+    output
+        .try_into()
+        .map_err(|_| "hybrid residual term count changed".to_string())
+}
+
+fn validate_hybrid_prediction_receipt(receipt: &Value) -> Result<Value, String> {
+    let hashes = &receipt["hashes"];
+    let expected_hashes = [
+        ("observed", HYBRID_OBSERVED_SHA256),
+        ("control_prediction", HYBRID_CONTROL_PREDICTION_SHA256),
+        ("control_residual", HYBRID_CONTROL_RESIDUAL_SHA256),
+        ("candidate_prediction", HYBRID_CANDIDATE_PREDICTION_SHA256),
+        ("candidate_residual", HYBRID_CANDIDATE_RESIDUAL_SHA256),
+        ("tile_ingress_residual", HYBRID_CANDIDATE_RESIDUAL_SHA256),
+    ];
+    if receipt["schema"] != "casa-rs-vlass-aw-hybrid-residual-prediction-v1"
+        || receipt["sample_count"].as_u64() != Some(98_239)
+        || receipt["source_role_count"].as_u64() != Some(196_478)
+        || receipt["complex_division_count"].as_u64() != Some(392_956)
+        || receipt["execution"]["prediction_dispatch_count"].as_u64() != Some(1)
+        || receipt["execution"]["residual_refresh_count"].as_u64() != Some(1)
+        || receipt["execution"]["tile_grid_dispatch_count"].as_u64() != Some(1)
+        || receipt["execution"]["raw_frame_taylor"] != true
+        || receipt["execution"]["source_phase_once_after_taylor"] != true
+        || receipt["execution"]["residual_fft_precision"] != "f64"
+        || receipt["execution"]["product_formation_entered"] != false
+        || receipt["execution"]["controller_entered"] != false
+        || receipt["execution"]["minor_cycle_after_refresh"] != false
+        || receipt["execution"]["additional_major_cycle"] != false
+    {
+        return Err(
+            "hybrid prediction receipt failed its topology or execution contract".to_string(),
+        );
+    }
+    for (name, expected) in expected_hashes {
+        if hashes[name].as_str() != Some(expected) {
+            return Err(format!(
+                "hybrid prediction receipt {name} differs: {:?} != {expected}",
+                hashes[name],
+            ));
+        }
+    }
+    let prediction_to_tile_ready_ms = receipt["timings_ms"]["prediction_to_tile_ready"]
+        .as_f64()
+        .ok_or_else(|| "hybrid prediction-to-tile-ready timing is missing".to_string())?;
+    let raw_bytes = receipt["memory_bytes"]["raw_wide_division_logical"]
+        .as_u64()
+        .ok_or_else(|| "hybrid raw-buffer byte count is missing".to_string())?;
+    Ok(json!({
+        "prediction_to_tile_ready_ms": prediction_to_tile_ready_ms,
+        "prediction_to_tile_ready_limit_ms": HYBRID_PREDICTION_TO_TILE_READY_LIMIT_MS,
+        "prediction_to_tile_ready_pass": prediction_to_tile_ready_ms
+            <= HYBRID_PREDICTION_TO_TILE_READY_LIMIT_MS,
+        "raw_wide_division_bytes": raw_bytes,
+        "raw_wide_division_limit_bytes": HYBRID_RAW_BUFFER_LIMIT_BYTES,
+        "raw_wide_division_pass": raw_bytes <= HYBRID_RAW_BUFFER_LIMIT_BYTES,
+        "eligible": prediction_to_tile_ready_ms <= HYBRID_PREDICTION_TO_TILE_READY_LIMIT_MS
+            && raw_bytes <= HYBRID_RAW_BUFFER_LIMIT_BYTES,
+    }))
+}
+
 fn sha256_bool(values: &Array2<bool>) -> String {
     let mut hasher = Sha256::new();
     for value in values {
@@ -341,17 +494,54 @@ fn topology_metrics(candidate: &Array2<bool>, reference: &Array2<bool>) -> Value
 
 fn main() -> Result<(), String> {
     let mut args = env::args_os().skip(1);
-    let casa_prefix = args.next().map(PathBuf::from).ok_or_else(|| {
-        "usage: vlass_final_state_sandwich CASA_PREFIX OUTPUT_PREFIX RECEIPT_JSON".to_string()
+    let first = args.next().ok_or_else(|| {
+        "usage: vlass_final_state_sandwich CASA_PREFIX OUTPUT_PREFIX RECEIPT_JSON\n\
+         or: vlass_final_state_sandwich --hybrid-residual CASA_PREFIX \
+         PREDICTION_RECEIPT NORMALIZED_RECEIPT RECEIPT_JSON"
+            .to_string()
     })?;
-    let output_prefix = args
-        .next()
-        .map(PathBuf::from)
-        .ok_or_else(|| "missing OUTPUT_PREFIX".to_string())?;
-    let receipt_path = args
-        .next()
-        .map(PathBuf::from)
-        .ok_or_else(|| "missing RECEIPT_JSON".to_string())?;
+    let hybrid_mode = first.to_string_lossy() == "--hybrid-residual";
+    let (
+        casa_prefix,
+        output_prefix,
+        prediction_receipt_path,
+        normalized_receipt_path,
+        receipt_path,
+    ) = if hybrid_mode {
+        (
+            args.next()
+                .map(PathBuf::from)
+                .ok_or_else(|| "missing CASA_PREFIX".to_string())?,
+            None,
+            Some(
+                args.next()
+                    .map(PathBuf::from)
+                    .ok_or_else(|| "missing PREDICTION_RECEIPT".to_string())?,
+            ),
+            Some(
+                args.next()
+                    .map(PathBuf::from)
+                    .ok_or_else(|| "missing NORMALIZED_RECEIPT".to_string())?,
+            ),
+            args.next()
+                .map(PathBuf::from)
+                .ok_or_else(|| "missing RECEIPT_JSON".to_string())?,
+        )
+    } else {
+        (
+            PathBuf::from(first),
+            Some(
+                args.next()
+                    .map(PathBuf::from)
+                    .ok_or_else(|| "missing OUTPUT_PREFIX".to_string())?,
+            ),
+            None,
+            None,
+            args.next()
+                .map(PathBuf::from)
+                .ok_or_else(|| "missing RECEIPT_JSON".to_string())?,
+        )
+    };
     if args.next().is_some() {
         return Err("unexpected trailing argument".to_string());
     }
@@ -366,10 +556,39 @@ fn main() -> Result<(), String> {
         plane(&casa_prefix, ".model.tt0")?,
         plane(&casa_prefix, ".model.tt1")?,
     ];
-    let residual = [
+    let reference_residual = [
         plane(&casa_prefix, ".residual.tt0")?,
         plane(&casa_prefix, ".residual.tt1")?,
     ];
+    let (residual, prediction_receipt, normalized_receipt, performance_gate) =
+        if let (Some(prediction_path), Some(normalized_path)) = (
+            prediction_receipt_path.as_deref(),
+            normalized_receipt_path.as_deref(),
+        ) {
+            let prediction: Value = serde_json::from_slice(
+                &fs::read(prediction_path)
+                    .map_err(|error| format!("read {}: {error}", prediction_path.display()))?,
+            )
+            .map_err(|error| format!("parse {}: {error}", prediction_path.display()))?;
+            let normalized: Value = serde_json::from_slice(
+                &fs::read(normalized_path)
+                    .map_err(|error| format!("read {}: {error}", normalized_path.display()))?,
+            )
+            .map_err(|error| format!("parse {}: {error}", normalized_path.display()))?;
+            let performance = validate_hybrid_prediction_receipt(&prediction)?;
+            let residual = hybrid_residual_terms(&normalized)?;
+            if residual.iter().flatten().any(|value| !value.is_finite()) {
+                return Err("hybrid normalized residual contains non-finite values".to_string());
+            }
+            (residual, Some(prediction), Some(normalized), performance)
+        } else {
+            (
+                reference_residual.clone(),
+                None,
+                None,
+                json!({"eligible": true}),
+            )
+        };
     let reference_image = [
         plane(&casa_prefix, ".image.tt0")?,
         plane(&casa_prefix, ".image.tt1")?,
@@ -395,22 +614,82 @@ fn main() -> Result<(), String> {
     let (alpha, alpha_error, alpha_mask, spectral_threshold) =
         alpha_products(&image, &principal_residual);
 
-    clone_product_tree(&casa_prefix, &output_prefix)?;
-    write_plane(&output_prefix, ".image.tt0", &image[0])?;
-    write_plane(&output_prefix, ".image.tt1", &image[1])?;
-    write_plane(&output_prefix, ".alpha", &alpha)?;
-    write_plane(&output_prefix, ".alpha.error", &alpha_error)?;
-    write_default_mask(&output_prefix, ".alpha", &alpha_mask)?;
-    write_default_mask(&output_prefix, ".alpha.error", &alpha_mask)?;
+    if let Some(output_prefix) = output_prefix.as_deref() {
+        clone_product_tree(&casa_prefix, output_prefix)?;
+        write_plane(output_prefix, ".image.tt0", &image[0])?;
+        write_plane(output_prefix, ".image.tt1", &image[1])?;
+        write_plane(output_prefix, ".alpha", &alpha)?;
+        write_plane(output_prefix, ".alpha.error", &alpha_error)?;
+        write_default_mask(output_prefix, ".alpha", &alpha_mask)?;
+        write_default_mask(output_prefix, ".alpha.error", &alpha_mask)?;
+    }
 
     let alpha_topology = topology_metrics(&alpha_mask, &reference_alpha_mask);
     let alpha_error_topology = topology_metrics(&alpha_mask, &reference_alpha_error_mask);
+    let residual_metrics = [
+        numeric_metrics(&residual[0], &reference_residual[0], None),
+        numeric_metrics(&residual[1], &reference_residual[1], None),
+    ];
+    let image_metrics = [
+        numeric_metrics(&image[0], &reference_image[0], None),
+        numeric_metrics(&image[1], &reference_image[1], None),
+    ];
+    let residual_numeric_pass = residual_metrics.iter().all(|metrics| {
+        metrics["difference_rms_over_reference_rms"]
+            .as_f64()
+            .is_some_and(|value| value <= HYBRID_RELATIVE_RMS_LIMIT)
+    });
+    let image_numeric_pass = image_metrics.iter().all(|metrics| {
+        metrics["difference_rms_over_reference_rms"]
+            .as_f64()
+            .is_some_and(|value| value <= HYBRID_RELATIVE_RMS_LIMIT)
+    });
+    let product_topology_pass = alpha_topology["mismatch_count"].as_u64() == Some(0)
+        && alpha_error_topology["mismatch_count"].as_u64() == Some(0);
+    let performance_eligible = performance_gate["eligible"].as_bool().unwrap_or(false);
+    let classification = if !hybrid_mode {
+        "phase-a-computed-awaiting-unchanged-contract-comparison"
+    } else if !residual_numeric_pass {
+        "prediction-exact-downstream-residual-fails"
+    } else if !image_numeric_pass || !product_topology_pass {
+        "residual-passes-product-topology-fails"
+    } else if !performance_eligible {
+        "bounded-correctness-pass-performance-ineligible"
+    } else {
+        "bounded-hybrid-closure"
+    };
+    let alpha_cliff_p = (673, 2447);
+    let alpha_cliff_q = (1341, 3274);
     let receipt = json!({
-        "schema": "casa-rs-vlass-frozen-final-state-sandwich-v1",
-        "phase": "phase-a-product-only-closure",
-        "classification": "phase-a-computed-awaiting-unchanged-contract-comparison",
+        "schema": if hybrid_mode {
+            "casa-rs-vlass-aw-hybrid-residual-closure-v1"
+        } else {
+            "casa-rs-vlass-frozen-final-state-sandwich-v1"
+        },
+        "phase": if hybrid_mode {
+            "hybrid-residual-read-only-product-closure"
+        } else {
+            "phase-a-product-only-closure"
+        },
+        "classification": classification,
         "casa_prefix": casa_prefix,
         "output_prefix": output_prefix,
+        "hybrid_inputs": if hybrid_mode {
+            json!({
+                "prediction_receipt": prediction_receipt_path.as_deref(),
+                "prediction_receipt_sha256": sha256_file(
+                    prediction_receipt_path.as_deref().expect("hybrid prediction receipt")
+                )?,
+                "normalized_receipt": normalized_receipt_path.as_deref(),
+                "normalized_receipt_sha256": sha256_file(
+                    normalized_receipt_path.as_deref().expect("hybrid normalized receipt")
+                )?,
+                "prediction_contract": prediction_receipt,
+                "normalized_contract": normalized_receipt,
+            })
+        } else {
+            Value::Null
+        },
         "frozen_identity": {
             "casa_oracle_manifest_sha256": CASA_ORACLE_MANIFEST_SHA256,
             "v6_native_component_receipt_sha256": V6_NATIVE_COMPONENT_RECEIPT_SHA256,
@@ -423,15 +702,16 @@ fn main() -> Result<(), String> {
         },
         "execution_boundary": {
             "phase_a_entered": true,
-            "visibility_operator_entered": false,
-            "residual_refresh_entered": false,
+            "visibility_operator_entered": hybrid_mode,
+            "residual_refresh_entered": hybrid_mode,
             "response_surrogate_entered": false,
             "controller_entered": false,
             "beam_fit_entered": false,
-            "major_cycles_entered": 0,
+            "major_cycles_entered": usize::from(hybrid_mode),
             "minor_iterations_entered": 0,
-            "measurement_set_opened": false,
-            "convolution_function_cache_opened": false,
+            "measurement_set_opened_by_closure": false,
+            "convolution_function_cache_opened_by_closure": false,
+            "diagnostic_product_tree_written": !hybrid_mode,
         },
         "restoration": {
             "beam": {
@@ -452,8 +732,10 @@ fn main() -> Result<(), String> {
             "model_tt1_nonzero_support": nonzero_support(&model[1]),
         },
         "products": {
-            ".image.tt0": numeric_metrics(&image[0], &reference_image[0], None),
-            ".image.tt1": numeric_metrics(&image[1], &reference_image[1], None),
+            ".residual.tt0": residual_metrics[0].clone(),
+            ".residual.tt1": residual_metrics[1].clone(),
+            ".image.tt0": image_metrics[0].clone(),
+            ".image.tt1": image_metrics[1].clone(),
             ".alpha": {
                 "numeric": numeric_metrics(
                     &alpha,
@@ -471,7 +753,36 @@ fn main() -> Result<(), String> {
                 "topology": alpha_error_topology,
             },
         },
-        "next_gate": "unchanged-19-product-comparison-contract",
+        "alpha_cliff": {
+            "p": {
+                "location": [alpha_cliff_p.0, alpha_cliff_p.1],
+                "candidate_image_tt0": image[0][alpha_cliff_p],
+                "candidate_image_tt0_bits": image[0][alpha_cliff_p].to_bits(),
+                "casa_image_tt0": reference_image[0][alpha_cliff_p],
+                "casa_image_tt0_bits": reference_image[0][alpha_cliff_p].to_bits(),
+                "candidate_alpha_valid": alpha_mask[alpha_cliff_p],
+                "casa_alpha_valid": reference_alpha_mask[alpha_cliff_p],
+            },
+            "q": {
+                "location": [alpha_cliff_q.0, alpha_cliff_q.1],
+                "candidate_principal_residual_tt0": principal_residual[0][alpha_cliff_q],
+                "candidate_principal_residual_tt0_bits": principal_residual[0][alpha_cliff_q].to_bits(),
+            },
+        },
+        "gates": {
+            "relative_rms_limit": HYBRID_RELATIVE_RMS_LIMIT,
+            "residual_numeric_pass": residual_numeric_pass,
+            "image_numeric_pass": image_numeric_pass,
+            "product_topology_pass": product_topology_pass,
+            "performance": performance_gate,
+        },
+        "next_gate": if classification == "bounded-hybrid-closure" {
+            "exactly-one-private-4096-four-spw-clean-candidate-authorized"
+        } else if hybrid_mode {
+            "no-clean-candidate-authorized"
+        } else {
+            "unchanged-19-product-comparison-contract"
+        },
     });
     if let Some(parent) = receipt_path.parent() {
         fs::create_dir_all(parent)

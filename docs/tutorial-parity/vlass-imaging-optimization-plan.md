@@ -6826,6 +6826,41 @@ four-SPW clean row remains unpromoted until the operation order is carried
 through the production residual path and the component, major-cycle, topology,
 metadata, inventory, mask, and 19-product gates all pass.
 
+### 2026-07-31 hybrid residual-path pre-grid negative checkpoint
+
+The same Oracle conversation selected one private production-path
+discriminator named `casa-rs-vlass-aw-hybrid-residual-path-v1`. It changes
+only the residual values supplied to the ordinary global Metal tile grid:
+the existing production prediction dispatch emits its compact raw
+wide-division records, the certified CPU operation graph reconstructs the
+CASA-order prediction and residual, and the ordinary tile grid, compensated
+readback, f64 FFTW residual transform, and normalization continue unchanged.
+The diagnostic must then stop before restoration, product formation, the
+controller, another minor cycle, or another major cycle. A separate read-only
+closure reuses the frozen product arithmetic in
+`vlass_final_state_sandwich`; it creates no diagnostic product tree.
+
+The first bounded `4,096`-square, four-SPW attempt failed closed at its
+pre-grid candidate-prediction certificate after `12.44` seconds. It
+reproduced the exact model-grid and current-control visibility hashes, but the
+new guard incorrectly compared the direct candidate prediction hash
+`2c6a3072...` with a prediction re-derived as `observed - residual`. Float
+subtraction is not invertible at this boundary, so the re-derived stream
+instead hashed to
+`4f0cc23b7ec1ba2dd48c32a12525378cbe34af4c7a27f01556b91f23348446e3`.
+The existing prediction-only evidence already defines the CASA contract as
+the candidate audit's direct combined-prediction stream. The guard is being
+corrected to hash that direct stream while continuing to hash the returned
+residual independently.
+
+This is an instrumentation-contract defect, not a downstream scientific
+result. No prediction receipt was written, and no tile update, residual grid,
+residual FFT, normalization, restoration, product, controller, subsequent
+minor cycle, or additional major cycle ran. The failed-run log SHA-256 is
+`72a4f67bb6519d00167f2d6771a174d711c3f8d1a3d5974bcd238b13c66f427f`.
+No CASA call, full-16-SPW row, `12,150`-square development run, or
+memory-policy experiment ran. The four-SPW row remains unpromoted.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
