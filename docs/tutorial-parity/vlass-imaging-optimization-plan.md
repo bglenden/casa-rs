@@ -7476,6 +7476,80 @@ receipt is now the active promotion decision. No CASA call, new imaging run,
 full-size clean, or `12,150`-square development workload was started for this
 review. The next permitted workload is the `4,096`-square full-16-SPW row.
 
+### 2026-07-31 frozen full-16-SPW scientific promotion
+
+The existing v59 full-16-SPW candidate has now passed the same scientific-floor
+review and is promoted. No new CASA call, MeasurementSet read, or imaging run
+was needed: the reviewer reused the retained full-array comparison and its
+disk-backed planes. The workload is the required `4,096`-square single-field
+development row with all 16 SPWs, AWProject and POINTING behavior, 32 W planes,
+Briggs weighting, MT-MFS `nterms=2`, scales `[0,5,12]`, deterministic mask,
+`2,000` iterations, and the exact 19-product contract.
+
+The immutable promotion receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260731-vlass-4096-full16-scientific-floor-v1.json`,
+SHA-256
+`f06859c9215a26b15dd32731345b9fdb1aaf1ab0fc267938638dd016b99518a1`.
+Its matched-scale source panel is the adjacent
+`20260731-vlass-4096-full16-scientific-floor-v1.png`, SHA-256
+`0b89ee7004d68b9cd8ef564e8e213613c30b089c78f374bea23f259ca08c5c9a`.
+The analyzer source, frozen comparison, comparison input, and casa-rs run log
+bound by that receipt have SHA-256 digests, respectively:
+
+- `3fc9fe10c5ae34777b2b88296477b089bc697e003789268c176683d5707105ef`;
+- `fb4a83e321028f50ab5234e07f2dcd30b0bcfc608a6d2bbcba06b4fff2565993`;
+- `baddddb1eaa2de1120e182c6642b2b7be7bee0ab6e641752a0beafb531e0b2ff`;
+  and
+- `1133ccc666de490b74a905e1dd9d99ab99c1e6a8056cb7f2e892464e08d2c893`.
+
+All six scientific gates pass:
+
+- exact 19-product inventory, metadata, full coverage, and frozen numerical
+  ceilings;
+- source peak and integrated-flux relative differences
+  `6.239736067483994e-7` and `5.951641448557797e-7`, centroid separation
+  `5.352936766536457e-7` pixels, and morphology-covariance difference
+  `1.599689268469773e-7`;
+- TT0 and TT1 robust-noise relative differences
+  `6.966050058495824e-8` and `2.0132939493667816e-6`, with maximum quantile
+  shifts only `1.8646669961723427e-6` and `3.934541274130244e-6` of their
+  reference noise;
+- TT0 and TT1 dynamic-range relative differences
+  `5.543131447067324e-7` and `1.6952910500541369e-6`;
+- worst beam-scale RMS `2.299039147025976e-5` of the corresponding reference
+  noise and worst RMS at eight beams or larger
+  `6.4352737714184045e-6` of that noise, with all four image/residual Taylor
+  products below the science-signal ceiling; and
+- `40,499` common pixels in the positive five-sigma alpha science domain.
+  Alpha and alpha-error correlations are `0.9999999999999702` and
+  `0.9999999999994166`; their RMS differences are
+  `1.6050374986762327e-6` and `2.2996017932506582e-6`. Both topology
+  mismatches are enumerated and lie within
+  `5.467624002819833e-7` relative distance of the frozen cutoff.
+
+Direct inspection of the matched-scale panel finds the casa-rs and CASA
+restored source, residual texture, and stable-domain alpha visually
+coincident. The difference panels require independent scales near
+`1e-8 Jy/beam`, `1e-9 Jy/beam`, and `1e-6` alpha, respectively. There is no
+conspicuous source, morphology, noise, beam-scale, or alpha artifact.
+
+The retained v59 execution completed in `101.646` seconds end to end and
+`95.011` seconds in the imaging core, with five major cycles, `641`
+components, no warning, and no divergence. The dominant recorded core stage
+was the initial PSF grid at `60.494` seconds; minor cycles took `4.529`
+seconds, major-cycle residual refreshes `5.401` seconds, and all product writes
+`3.137` seconds. Sampled lifetime peak RSS was `12,123,078,656` bytes and the
+largest sampled Metal allocation was `537,346,048` bytes. These are
+development timings, not final 32 GiB laptop acceptance evidence.
+
+The v59 comparison's historical `comparison_failed` label remains correct
+under the superseded exact-alpha-topology contract. Its two pixels no longer
+block promotion because the active receipt proves they are cutoff-boundary
+crossings without a scientific defect. The required full-geometry memory
+campaign is therefore unblocked. The next permitted executions are bounded
+planner dry-runs and the required `12,150`-square dirty memory-policy row, not
+routine full-size clean development runs.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
