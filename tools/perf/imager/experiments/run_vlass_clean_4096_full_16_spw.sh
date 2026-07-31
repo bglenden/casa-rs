@@ -27,6 +27,7 @@ cf_key_fft_occupancy="${CASA_RS_VLASS_CF_KEY_FFT_OCCUPANCY:-0}"
 mask_sufficient_statistics_census="${CASA_RS_VLASS_MASK_SUFFICIENT_STATISTICS_CENSUS:-0}"
 mask_component_updates="${CASA_RS_VLASS_MASK_COMPONENT_UPDATES:-641}"
 mask_trajectory_receipt_sha256="${CASA_RS_VLASS_MASK_TRAJECTORY_RECEIPT_SHA256:-f06859c9215a26b15dd32731345b9fdb1aaf1ab0fc267938638dd016b99518a1}"
+quotient_response_census_output="${CASA_RS_VLASS_QUOTIENT_RESPONSE_CENSUS_OUTPUT:-}"
 packed_cf_experiment="${CASA_RS_VLASS_PACKED_CF_EXPERIMENT:-}"
 trust_packed_cf_experiment="${CASA_RS_VLASS_TRUST_PACKED_CF_EXPERIMENT:-0}"
 niter="${CASA_RS_VLASS_NITER:-2000}"
@@ -177,6 +178,24 @@ if [[ "$mask_sufficient_statistics_census" == "1" ]]; then
 elif [[ "$mask_sufficient_statistics_census" != "0" ]]; then
     echo "CASA_RS_VLASS_MASK_SUFFICIENT_STATISTICS_CENSUS must be 0 or 1" >&2
     exit 2
+fi
+if [[ -n "$quotient_response_census_output" ]]; then
+    if [[ "$niter" != "0" ]]; then
+        echo "CASA_RS_VLASS_QUOTIENT_RESPONSE_CENSUS_OUTPUT requires CASA_RS_VLASS_NITER=0" >&2
+        exit 2
+    fi
+    if [[ "$quotient_response_census_output" != /* ]]; then
+        echo "CASA_RS_VLASS_QUOTIENT_RESPONSE_CENSUS_OUTPUT must be an absolute path" >&2
+        exit 2
+    fi
+    if [[ -e "$quotient_response_census_output" ]]; then
+        echo "refusing to overwrite quotient-response census: $quotient_response_census_output" >&2
+        exit 2
+    fi
+    label="${label}-quotient-response-census"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_QUOTIENT_RESPONSE_CENSUS_OUTPUT="$quotient_response_census_output"
+    )
 fi
 if [[ -n "$packed_cf_experiment" ]]; then
     if [[ ! -f "$packed_cf_experiment" ]]; then

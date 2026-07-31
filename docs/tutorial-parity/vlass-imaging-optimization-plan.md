@@ -8367,6 +8367,254 @@ product writes. Those wall times are turnaround receipts, not candidate
 performance. Neither run invoked CASA, CLEAN, a `12,150`-square workload, or an
 unchanged CASA reference.
 
+### 2026-07-31 exact-response low-rank discriminator
+
+Oracle's next proposal was a weighted CUR/SVD factorization of the
+mask-restricted A/WB degridding response after quotienting scalar W,
+POINTING phase, conjugation/reflection, antenna-frame motion, and supported
+frequency scaling. The proposed execution contract was genuinely architectural:
+construct compact factors once and use them directly during the minor cycle,
+with no convolution-tap reads, dense grids, scatter, or FFTs after
+construction. Oracle's initial geometry treated the `7,304` scale-dilated mask
+pixels as component centers. The legal component domain is instead the
+deterministic `4,096`-pixel mask, with three scale atoms per center and
+`12,288` legal atoms.
+
+More importantly, the persisted packed CF contains the already cropped,
+oversampled, normalized convolution response. The nominal physical factors
+are not generally invertible from that representation: support truncation and
+image-boundary clipping do not commute with division by a pre-crop scalar W
+phase. The bounded experiment therefore measures the executable cropped
+operator itself and makes a deliberately one-way claim. High measured rank
+can reject this quotient-response factorization. Low measured rank would only
+have earned a second exact prepared-atom discriminator including
+position-dependent flat-sky weighting and grid apodization; it would not by
+itself have promoted a production path.
+
+A production-inert `niter=0` Rust census collected exact InitialDirty response
+rows from the promoted `4,096`-square full-16-SPW workload. A row key includes
+the stable CF cell, grid location and support plus a dual hash of the actual
+cropped tap stream. The retained taps therefore include packed AW CF values,
+oversampling, conjugation, POINTING phase, residual W, support, clipping, and
+normalization weights. The deterministic reservoir covers every active CF
+cell and samples distinct executable response rows. It selected `4,096`
+training and `2,048` holdout rows, and `256` training plus `128` holdout mask
+centers at all three scales, yielding a `6,144 x 1,152` complex-binary64
+matrix.
+
+Two failed setup attempts are preserved because each changed the next run:
+
+- v1 failed closed after `18.37` seconds because a v1 packed-CF receipt was
+  incompatible with the current x-contiguous v2 format. No census or matrix
+  was produced. Its log is
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260731-vlass-full16-quotient-response-core-v1.log`,
+  SHA-256
+  `7e601bdff9acb0c6483e52c015460a5697f1e1d0c7dfba5f9155d1f896d429df`.
+- v2 reached the complete initial stream, then failed closed because an
+  `8,192`-plan reservoir contained only `5,448` distinct response keys, fewer
+  than the required `6,144`. The diagnostic was narrowed to maintain a
+  distinct-key reservoir rather than reducing the sample. Its log is
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260731-vlass-full16-quotient-response-core-v2.log`,
+  SHA-256
+  `7d3d4e54b16e3a3e3dc5681ff428bb737ae09f9b3e5e71f6a043eb8b078c29e2`.
+
+The successful v3 census processed all `385,862` routed samples and `20`
+compact windows. It observed `778` active CF cells, `771,724` plan references,
+`470,070,348` tap interactions, and `487,236` distinct executable response
+rows under the tested quotient and exact key. The sample contains `4,361,408`
+nonzero taps and occupies `113,246,208` bytes. Census/initial-stream time was
+`89.811` seconds, matrix construction was `26.108` seconds, and the complete
+diagnostic including normal `niter=0` products was `146.64` seconds. These
+times measure the disposable discriminator, not a candidate runtime.
+
+The successful artifacts are:
+
+- log
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260731-vlass-full16-quotient-response-core-v3.log`,
+  SHA-256
+  `5befb54c04d3e681d6d4ff53ea60e3f8677548ebae955d0069acdc0f3e350c2a`;
+- manifest
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/20260731-vlass-full16-quotient-response-core-v3/manifest.json`,
+  SHA-256
+  `921f88d22b84e127e120571d5d5ab87a8b5e1f3d7f9e3600f66cc19976a67366`;
+- response matrix, SHA-256
+  `0eb3f1dc9bdbaec97bb4271efa0bd1e1f510e879b2b886d03c152398247a0892`;
+  and
+- weighted held-out reducer receipt
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/diagnostics/20260731-vlass-full16-quotient-response-cur-v1.json`,
+  SHA-256
+  `b5ec397e0cf9ac4c934358f747ca7942071f77b6d5bbc55574444e5fd203700f`.
+
+The held-out rank curve is:
+
+| Rank | Weighted RMS | Normalized max | Worst-stratum RMS |
+| ---: | ---: | ---: | ---: |
+| 1 | `3.009970e-1` | `5.148235e-1` | `3.300540e-1` |
+| 2 | `1.104831e-1` | `1.563807e-1` | `1.370329e-1` |
+| 3 | `1.416317e-2` | `7.328711e-2` | `8.197118e-2` |
+| 4 | `7.856760e-3` | `2.734745e-2` | `4.639022e-2` |
+| 5 | `4.106010e-3` | `1.774689e-2` | `3.221678e-2` |
+| 6 | `2.485550e-3` | `7.517250e-3` | `2.001613e-2` |
+| 7 | `1.708340e-3` | `7.050820e-3` | `1.282864e-2` |
+| 8 | `1.142530e-3` | `6.858300e-3` | `8.849750e-3` |
+
+The gates were `2e-5` weighted RMS, `2e-4` normalized maximum, and `6e-5`
+worst-stratum RMS. Rank eight misses them by approximately `57x`, `34x`, and
+`148x`, respectively. Its projected compact state is only approximately
+`52.1 MB`, so memory is not the limiting factor; the tested executable
+operator core remains too high-rank. The decision is
+`retire-current-quotient-response-cur-for-high-operator-core-rank`.
+
+This result retires only the current quotient-response factorization. It does
+not reject an exact factorization obtained before CF truncation, a different
+hierarchical/local basis, or a reconstruction that changes the number or
+meaning of operator calls. Because even the necessary-condition core failed
+by large factors, no exact prepared-atom matrix and no live minor-cycle
+prototype were run. The run invoked neither CASA nor CLEAN and did not use
+`12,150`-square geometry. It is reduced-row architecture evidence only.
+
+#### Oracle disposition and screen-separated RIME pivot
+
+The same Oracle conversation was challenged with the successful census,
+rank curve, exact omissions, sample-selection differences, construction
+counts, incumbent timing, and prior negative architectures. Its follow-up
+confirms that the tested B-prime factorization is retired. Multiplying columns
+by the omitted nonzero flat-sky or apodization terms cannot reduce matrix rank.
+Rank eight would need exact production weighting to suppress residual energy
+by approximately `3,263x` to reach the RMS gate while simultaneously repairing
+the maximum and worst-stratum failures. That is not a credible consequence of
+the sampling differences.
+
+Construction provides a second independent rejection. At rank eight, a
+minimal `R + 2` skeleton construction would require approximately
+`4.701 billion` tap interactions, already `1.30x` the `3.623 billion`
+interactions in all 11 current operator applications, before applying the
+factors to 641 components. Extrapolating the recent decay to rank 16 is not a
+rank proof, but its approximately `8.461 billion` construction interactions
+show why another higher-rank run cannot become an end-to-end win. The
+production-inert census is retained as a named negative oracle and remains
+disabled unless its explicit experimental control is set. No current-quotient
+CUR runtime implementation may be promoted.
+
+Oracle also confirms that a mask-local correction
+`delta_H = H_exact - H_minor` is mathematically independent of the forward
+rank failure. The five frozen major-cycle deltas could provide five exact
+secant pairs for a cheap sequential holdout diagnostic. It is not the next
+breakthrough candidate, however: even a zero-cost perfect correction that
+removes all `9.461` seconds of residual refresh reduces `42.910` seconds only
+to `33.449` seconds, a `1.283x` speedup, and cannot replace the
+`18.779`-second initial dirty/PSF/product operator. The secant diagnostic is
+deferred until a later operator makes refreshes a larger fraction of the
+remaining runtime; no randomized exact actions will be bought for it now.
+
+The next single-field candidate must instead cross the sampled-CF runtime
+boundary. It is a screen-separated RIME operator with:
+
+1. the pre-W image-domain A/WB/conjugate/Mueller/POINTING screen family exposed
+   or reevaluated by the CF generator before W multiplication, taper, padding,
+   FFT, and crop;
+2. a small basis of those non-W DDE screens for visibility-resident,
+   exact-discrete-support sparse-component prediction;
+3. separately factored normal-screen families for mandatory PSF, weight, and
+   normal products, avoiding an assumed square of the forward rank; and
+4. 32 W-stacked simple-kernel grids, processed in bounded rank/W batches, for
+   full adjoints and products.
+
+The sampled AW tap patches, model grid, model FFT, and degrid scatter do not
+exist in the proposed runtime operator. Common geometric phase, current W
+screen, flat-sky/apodization factors, exact conjugation/reflection, and
+tap-independent normalization remain explicit operations rather than inferred
+inverse quotients.
+
+The first gate is source availability, before another performance experiment.
+The CF generator must expose or reevaluate the required pre-W screen and map
+every production sample to its screen state. Inverse-transforming a cropped
+compact CF is not acceptable because the crop and taper have already changed
+the image-domain object. If the pre-W state is unavailable, this candidate is
+killed immediately and the portfolio advances to mask-centered rephased facet
+reconstruction with one global reconciliation.
+
+If available, the staged discriminator is:
+
+- Stage 1 streams the actual screen states and measures forward-screen ranks
+  `R_D=1..8` and normal/product-screen ranks `R_P=1..10`, with separate
+  weighting over the complete scale-dilated reconstruction domain and the
+  scientifically valid PB/weight product domain. The preferred gate is
+  `R_D<=4`, `R_P<=6`, RMS at most `2e-5`, and maximum error at most `2e-4`.
+  Ranks up to eight and ten are conditional only when a measured full operator
+  projection still passes; either family above those ranks kills the route.
+- Before a full adjoint, require `R_D * K_aa <= 152` simple-kernel cells, one
+  quarter of the measured approximately `609` sampled-CF cells per plan
+  reference.
+- Stage 2 compares raw complex parallel-hand values for 12 real VLASS atoms:
+  center, bright source, mask boundary, and mask corner at scales
+  `[0,5,12]`, in both independent TT directions. There is no fitted gain,
+  phase, or ramp. Gates are weighted RMS at most `1e-4`, normalized maximum at
+  most `1e-3`, and worst SPW/W/Mueller RMS at most `3e-4`.
+- Stage 3 measures the complete production-primed operator boundary: screen
+  construction/factors, all 32 W planes and rank lanes, simple gridding, all
+  FFTs and screen accumulation, initial dirty/PSF/weight/normal products, the
+  641-component predictor, one final residual adjoint, allocation, and
+  synchronization.
+
+The complete new operator has `6.785` seconds to deliver a `2x` whole-row
+result after the measured `14.670`-second fixed remainder. A lower-bound
+experiment omitting any construction, transform, product, or integration work
+must finish within `4.071` seconds. A measured lower bound above `6.785`
+seconds kills it as a `2x` architecture; a complete projected result between
+`21.455` and `28.607` seconds may remain only as a possible `1.5x` backend;
+above `28.607` seconds it is deleted as a breakthrough candidate.
+Visibility-resident coefficient, phase, and model state remains limited to
+`151,257,904` bytes. Streamed full-geometry peak liveness must be at most
+`24 GiB` on the 32 GiB laptop.
+
+The revised independent portfolio is:
+
+1. screen-separated RIME with W-stacked simple adjoints, image-domain DDE
+   bases, and visibility-resident sparse prediction;
+2. mask-centered rephased facet reconstruction with one global
+   reconciliation, killed if mandatory full-size products still require the
+   incumbent operator; and
+3. joint pointing-domain decomposition and one MT-MFS normal problem for the
+   all-63-field workload.
+
+Tile-local uncompensated f32 remains a fourth, additive tactic for the operator
+that survives. It no longer precedes the screen availability and rank gates
+because it does not change operator-call count or remove the `7.31 GiB`
+sampled coefficient representation.
+
+Read-only source inspection resolves the first availability gate without an
+imaging run. casa-rs currently has no AW CF generator:
+`crates/casa-imaging/src/awprojection.rs` is explicitly a read-only
+interoperability layer for already persisted CASA `CFS_*` and `WTCFS_*`
+images, and `AwProjectControls` describes the implementation as a
+precomputed-cache slice. It therefore cannot expose a pre-W screen today.
+
+The exact CASA 6.7.5.18 source revision does expose the required semantic
+boundary. In
+`synthesis/TransformMachines2/AWConvFunc.cc::fillConvFuncBuffer2`,
+`EVLAAperture::applySky` creates the frequency/PA/Mueller A-term and conjugate
+frequency screen before `WTerm::applySky`; only afterward are the W and A
+screens multiplied, transformed, normalized, support-selected, and cropped.
+`EVLAAperture::applySky` delegates the VLA/EVLA illumination calculation to
+`VLACalcIlluminationConvFunc` and `BeamCalc`. This is a reevaluable source
+representation, so the architecture is not killed merely because casa-rs has
+not yet ported it.
+
+POINTING does not need to be absorbed into the screen rank. CASA and casa-rs
+apply its antenna-group phase gradient to the final resampler action, and the
+current exact-response probes already validate that separate action. The
+screen census may therefore keep POINTING as an exact coordinate-group phase
+provided the semantic probe includes the real POINTING groups.
+
+The next implementation boundary is a shared EVLA A-term screen evaluator plus
+a temporary CASA/C++ screen oracle for its first parity fixtures, followed by
+the Stage-1 streaming Gram/rank census. This adds the missing screen-generation
+capability rather than approximating it from cropped kernels. It is still an
+experiment: adopting the screen-separated RIME as a production algorithm or
+default requires the already requested measured tradeoff and Brian's final
+incorporation approval.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.

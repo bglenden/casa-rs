@@ -4459,6 +4459,8 @@ const AWPROJECT_MASK_COMPONENT_UPDATES_ENV: &str =
     "CASA_RS_EXPERIMENTAL_AWPROJECT_MASK_COMPONENT_UPDATES";
 const AWPROJECT_MASK_TRAJECTORY_RECEIPT_SHA256_ENV: &str =
     "CASA_RS_EXPERIMENTAL_AWPROJECT_MASK_TRAJECTORY_RECEIPT_SHA256";
+const AWPROJECT_QUOTIENT_RESPONSE_CENSUS_OUTPUT_ENV: &str =
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_QUOTIENT_RESPONSE_CENSUS_OUTPUT";
 const AWPROJECT_PHYSICAL_COMPONENT_STATE_LIMIT_BYTES: usize = 151_257_904;
 const AWPROJECT_HYBRID_STACK_COUNT_MAX: usize = 32;
 const AWPROJECT_SUBGRID_SUPPORT_SIDES: [usize; 5] = [32, 48, 64, 96, 128];
@@ -4469,6 +4471,11 @@ const AWPROJECT_MASK_MOMENT_ORDERS: [usize; 2] = [2, 3];
 const AWPROJECT_MASK_MOMENT_RANKS: [usize; 4] = [1, 2, 3, 4];
 const AWPROJECT_MASK_MOMENT_PHASE_ERROR_BUDGET: f64 = 1.0e-5;
 const AWPROJECT_MASK_MOMENT_FEATURE_LIMIT: usize = 77_000;
+const AWPROJECT_QUOTIENT_RESPONSE_TRAIN_ROWS: usize = 4_096;
+const AWPROJECT_QUOTIENT_RESPONSE_HOLDOUT_ROWS: usize = 2_048;
+const AWPROJECT_QUOTIENT_RESPONSE_TRAIN_POSITIONS: usize = 256;
+const AWPROJECT_QUOTIENT_RESPONSE_HOLDOUT_POSITIONS: usize = 128;
+const AWPROJECT_QUOTIENT_RESPONSE_RESERVOIR_ROWS: usize = 8_192;
 
 fn awproject_component_probe_enabled() -> bool {
     env::var_os(AWPROJECT_PHYSICAL_COMPONENT_PROBE_ENV).is_some()
@@ -10570,6 +10577,7 @@ where
     #[cfg(all(target_os = "macos", not(coverage)))]
     maybe_emit_awproject_cf_key_fft_occupancy()?;
     maybe_emit_awproject_mask_sufficient_statistics()?;
+    maybe_emit_awproject_quotient_response_census(request)?;
     if let Some(cache) = aw_cache {
         accumulation.aw_sample_census.log(pass, cache)?;
         if accumulation.aw_metal_stats.calls > 0 {
@@ -10979,6 +10987,385 @@ struct AwProjectMaskMomentClusterCurve {
 }
 
 static AWPROJECT_MASK_MOMENT_CENSUS: OnceLock<Mutex<AwProjectMaskMomentCensus>> = OnceLock::new();
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct AwProjectQuotientResponseRowKey {
+    cell: AwProjectStableCellKey,
+    loc_x: isize,
+    loc_y: isize,
+    x_support: usize,
+    y_support: usize,
+    response_hash: u64,
+    response_hash_secondary: u64,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Debug, Clone, Copy)]
+struct AwProjectQuotientResponseTap {
+    offset_x: isize,
+    offset_y: isize,
+    grid_x: usize,
+    grid_y: usize,
+    coefficient: Complex32,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Debug, Clone)]
+struct AwProjectQuotientResponseRow {
+    key: AwProjectQuotientResponseRowKey,
+    selection_hash: u64,
+    source_state: (usize, usize),
+    sample_index: usize,
+    role: usize,
+    frequency_hz: f64,
+    represented_w_lambda: f64,
+    mueller_element: i32,
+    parallactic_angle_deg: f64,
+    statistical_weight: f64,
+    normalization: Complex32,
+    taps: Vec<AwProjectQuotientResponseTap>,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Default)]
+struct AwProjectQuotientResponseCensus {
+    domain: Option<AwProjectMaskMomentDomain>,
+    reservoir: BTreeMap<(u64, AwProjectQuotientResponseRowKey), AwProjectQuotientResponseRow>,
+    reservoir_selection_by_key: HashMap<AwProjectQuotientResponseRowKey, u64>,
+    coverage: BTreeMap<AwProjectStableCellKey, (u64, AwProjectQuotientResponseRow)>,
+    unique_response_rows: HashSet<AwProjectQuotientResponseRowKey>,
+    active_cell_keys: BTreeSet<AwProjectStableCellKey>,
+    plan_references: usize,
+    tap_interactions: usize,
+    windows: usize,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+static AWPROJECT_QUOTIENT_RESPONSE_CENSUS: OnceLock<Mutex<AwProjectQuotientResponseCensus>> =
+    OnceLock::new();
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[inline]
+fn awproject_quotient_response_hash_mix(state: u64, value: u64) -> u64 {
+    state.wrapping_mul(0x0000_0100_0000_01b3) ^ value
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_quotient_response_tap_hash(
+    bundle: &AwProjectCompactTapBundle,
+    group_index: usize,
+    phase_tables: Option<&AwProjectPhaseTables>,
+) -> (u64, u64) {
+    let phase_table = awproject_compact_phase_table(bundle, group_index, phase_tables);
+    let mut primary = 0xcbf2_9ce4_8422_2325u64;
+    let mut secondary = 0x9e37_79b9_7f4a_7c15u64;
+    let x_support = bundle.x_support as isize;
+    let y_support = bundle.y_support as isize;
+    let mut tap_index = 0usize;
+    for iy in -y_support..=y_support {
+        for ix in -x_support..=x_support {
+            let tap = awproject_compact_replay_tap(bundle, phase_table, ix, iy, tap_index).conj();
+            for value in [
+                ix as i64 as u64,
+                iy as i64 as u64,
+                u64::from(tap.re.to_bits()),
+                u64::from(tap.im.to_bits()),
+            ] {
+                primary = awproject_quotient_response_hash_mix(primary, value);
+                secondary = awproject_quotient_response_hash_mix(secondary.rotate_left(17), !value);
+            }
+            tap_index += 1;
+        }
+    }
+    debug_assert_eq!(tap_index, bundle.values.len());
+    (primary, secondary)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_quotient_response_selection_hash(
+    key: AwProjectQuotientResponseRowKey,
+    source_state: (usize, usize),
+    sample_index: usize,
+    role: usize,
+) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for value in [
+        key.cell.0,
+        key.cell.1,
+        key.cell.2 as i64 as u64,
+        key.cell.3,
+        key.loc_x as i64 as u64,
+        key.loc_y as i64 as u64,
+        key.x_support as u64,
+        key.y_support as u64,
+        key.response_hash,
+        key.response_hash_secondary,
+        source_state.0 as u64,
+        source_state.1 as u64,
+        sample_index as u64,
+        role as u64,
+    ] {
+        hash = awproject_quotient_response_hash_mix(hash, value);
+    }
+    hash
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn awproject_quotient_response_row(
+    batch: &VisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    source: AwProjectCompactSourceSample,
+    plan: AwProjectCompactSamplePlan,
+    tap_requests: &[AwProjectCompactTapRequest],
+    bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    replay_block_ordinal: usize,
+    role: usize,
+    response_hashes: (u64, u64),
+) -> Result<AwProjectQuotientResponseRow, ImagingError> {
+    let bundle = awproject_ready_compact_tap(bundles, plan.tap_bundle);
+    let tap_request = tap_requests.get(plan.tap_bundle).ok_or_else(|| {
+        ImagingError::Normalization(
+            "quotient-response census prediction plan escaped its tap requests".to_string(),
+        )
+    })?;
+    if tap_request.key.kernel_kind != AwProjectCompactKernelKind::Imaging {
+        return Err(ImagingError::Normalization(
+            "quotient-response census selected a non-imaging prediction kernel".to_string(),
+        ));
+    }
+    let sample_index = source.sample_index;
+    let frequency_hz = *sample_frequencies_hz.get(sample_index).ok_or_else(|| {
+        ImagingError::Normalization(
+            "quotient-response census sample frequency is missing".to_string(),
+        )
+    })?;
+    let briggs_weight = f64::from(*batch.weight.get(sample_index).ok_or_else(|| {
+        ImagingError::Normalization("quotient-response census sample weight is missing".to_string())
+    })?);
+    let normalization_norm_sq = f64::from(bundle.normalization.norm_sqr());
+    if !(frequency_hz.is_finite()
+        && frequency_hz > 0.0
+        && briggs_weight.is_finite()
+        && briggs_weight > 0.0
+        && normalization_norm_sq.is_finite()
+        && normalization_norm_sq > 0.0)
+    {
+        return Err(ImagingError::Normalization(
+            "quotient-response census encountered a non-finite row scalar".to_string(),
+        ));
+    }
+    let (response_hash, response_hash_secondary) = response_hashes;
+    let key = AwProjectQuotientResponseRowKey {
+        cell: awproject_stable_cell_key(tap_request.cell_key),
+        loc_x: plan.loc_x,
+        loc_y: plan.loc_y,
+        x_support: bundle.x_support,
+        y_support: bundle.y_support,
+        response_hash,
+        response_hash_secondary,
+    };
+    let source_state = (replay_block_ordinal, source.group_index);
+    let selection_hash =
+        awproject_quotient_response_selection_hash(key, source_state, sample_index, role);
+    let phase_table = awproject_compact_phase_table(bundle, source.group_index, phase_tables);
+    let x_support = bundle.x_support as isize;
+    let y_support = bundle.y_support as isize;
+    let mut taps = Vec::with_capacity(bundle.values.len());
+    let mut tap_index = 0usize;
+    for offset_y in -y_support..=y_support {
+        for offset_x in -x_support..=x_support {
+            let grid_x = usize::try_from(plan.loc_x + offset_x).map_err(|_| {
+                ImagingError::Normalization(
+                    "quotient-response census prediction tap is outside the grid".to_string(),
+                )
+            })?;
+            let grid_y = usize::try_from(plan.loc_y + offset_y).map_err(|_| {
+                ImagingError::Normalization(
+                    "quotient-response census prediction tap is outside the grid".to_string(),
+                )
+            })?;
+            taps.push(AwProjectQuotientResponseTap {
+                offset_x,
+                offset_y,
+                grid_x,
+                grid_y,
+                coefficient: awproject_compact_replay_tap(
+                    bundle,
+                    phase_table,
+                    offset_x,
+                    offset_y,
+                    tap_index,
+                )
+                .conj(),
+            });
+            tap_index += 1;
+        }
+    }
+    debug_assert_eq!(tap_index, bundle.values.len());
+    Ok(AwProjectQuotientResponseRow {
+        key,
+        selection_hash,
+        source_state,
+        sample_index,
+        role,
+        frequency_hz,
+        represented_w_lambda: tap_request.cell_key.w_value_lambda,
+        mueller_element: tap_request.cell_key.mueller_element,
+        parallactic_angle_deg: tap_request.cell_key.parallactic_angle_deg,
+        statistical_weight: briggs_weight / normalization_norm_sq,
+        normalization: bundle.normalization,
+        taps,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn maybe_audit_awproject_quotient_response(
+    request: &MtmfsRequest,
+    batch: &VisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    source_samples: &[AwProjectCompactSourceSample],
+    tap_requests: &[AwProjectCompactTapRequest],
+    bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    replay_block_ordinal: usize,
+) -> Result<(), ImagingError> {
+    if env::var_os(AWPROJECT_QUOTIENT_RESPONSE_CENSUS_OUTPUT_ENV).is_none() {
+        return Ok(());
+    }
+    if request.clean.niter != 0 {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject quotient-response census requires niter=0".to_string(),
+        ));
+    }
+    let domain = awproject_mask_moment_domain(request)?;
+    let mut census = AWPROJECT_QUOTIENT_RESPONSE_CENSUS
+        .get_or_init(|| Mutex::new(AwProjectQuotientResponseCensus::default()))
+        .lock()
+        .map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject quotient-response census lock was poisoned".to_string(),
+            )
+        })?;
+    if let Some(existing) = census.domain.as_ref() {
+        if existing != &domain {
+            return Err(ImagingError::InvalidRequest(
+                "AWProject quotient-response census observed a changing mask/geometry contract"
+                    .to_string(),
+            ));
+        }
+    } else {
+        census.domain = Some(domain);
+    }
+    let mut response_hash_cache = HashMap::<(usize, usize), (u64, u64)>::new();
+    for source in source_samples {
+        for (role, plan) in [
+            (0usize, source.first_prediction_plan),
+            (1usize, source.second_prediction_plan),
+        ] {
+            let bundle = awproject_ready_compact_tap(bundles, plan.tap_bundle);
+            let tap_request = tap_requests.get(plan.tap_bundle).ok_or_else(|| {
+                ImagingError::Normalization(
+                    "quotient-response census prediction plan escaped its tap requests".to_string(),
+                )
+            })?;
+            let response_hashes = *response_hash_cache
+                .entry((plan.tap_bundle, source.group_index))
+                .or_insert_with(|| {
+                    awproject_quotient_response_tap_hash(bundle, source.group_index, phase_tables)
+                });
+            let (response_hash, response_hash_secondary) = response_hashes;
+            let key = AwProjectQuotientResponseRowKey {
+                cell: awproject_stable_cell_key(tap_request.cell_key),
+                loc_x: plan.loc_x,
+                loc_y: plan.loc_y,
+                x_support: bundle.x_support,
+                y_support: bundle.y_support,
+                response_hash,
+                response_hash_secondary,
+            };
+            let source_state = (replay_block_ordinal, source.group_index);
+            let selection_hash = awproject_quotient_response_selection_hash(
+                key,
+                source_state,
+                source.sample_index,
+                role,
+            );
+            census.unique_response_rows.insert(key);
+            census.active_cell_keys.insert(key.cell);
+            census.plan_references = census.plan_references.saturating_add(1);
+            census.tap_interactions = census.tap_interactions.saturating_add(bundle.values.len());
+
+            let coverage_replace = census
+                .coverage
+                .get(&key.cell)
+                .is_none_or(|(current_hash, _)| selection_hash < *current_hash);
+            let existing_reservoir_selection = census.reservoir_selection_by_key.get(&key).copied();
+            let reservoir_accept = existing_reservoir_selection
+                .is_some_and(|current_hash| selection_hash < current_hash)
+                || (existing_reservoir_selection.is_none()
+                    && (census.reservoir.len() < AWPROJECT_QUOTIENT_RESPONSE_RESERVOIR_ROWS
+                        || census
+                            .reservoir
+                            .last_key_value()
+                            .is_some_and(|((current_hash, _), _)| selection_hash < *current_hash)));
+            if !(coverage_replace || reservoir_accept) {
+                continue;
+            }
+            let row = awproject_quotient_response_row(
+                batch,
+                sample_frequencies_hz,
+                *source,
+                plan,
+                tap_requests,
+                bundles,
+                phase_tables,
+                replay_block_ordinal,
+                role,
+                response_hashes,
+            )?;
+            if coverage_replace {
+                census
+                    .coverage
+                    .insert(key.cell, (selection_hash, row.clone()));
+            }
+            if reservoir_accept {
+                if let Some(current_hash) = existing_reservoir_selection {
+                    census.reservoir.remove(&(current_hash, key));
+                }
+                census.reservoir.insert((selection_hash, key), row);
+                census
+                    .reservoir_selection_by_key
+                    .insert(key, selection_hash);
+                if census.reservoir.len() > AWPROJECT_QUOTIENT_RESPONSE_RESERVOIR_ROWS {
+                    if let Some(((_, evicted_key), _)) = census.reservoir.pop_last() {
+                        census.reservoir_selection_by_key.remove(&evicted_key);
+                    }
+                }
+            }
+        }
+    }
+    census.windows = census.windows.saturating_add(1);
+    Ok(())
+}
+
+#[cfg(any(not(target_os = "macos"), coverage))]
+#[allow(clippy::too_many_arguments)]
+fn maybe_audit_awproject_quotient_response(
+    _request: &MtmfsRequest,
+    _batch: &VisibilityBatch,
+    _sample_frequencies_hz: &[f64],
+    _source_samples: &[AwProjectCompactSourceSample],
+    _tap_requests: &[AwProjectCompactTapRequest],
+    _bundles: &[AwProjectCompactMaterializedTap],
+    _phase_tables: Option<&AwProjectPhaseTables>,
+    _replay_block_ordinal: usize,
+) -> Result<(), ImagingError> {
+    Ok(())
+}
 
 fn awproject_mask_moment_domain(
     request: &MtmfsRequest,
@@ -11616,6 +12003,524 @@ fn maybe_emit_awproject_mask_sufficient_statistics() -> Result<(), ImagingError>
             );
         }
     }
+    Ok(())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_quotient_response_rows_equal(
+    left: &AwProjectQuotientResponseRow,
+    right: &AwProjectQuotientResponseRow,
+) -> bool {
+    left.key == right.key
+        && left.taps.len() == right.taps.len()
+        && left.taps.iter().zip(&right.taps).all(|(left, right)| {
+            left.offset_x == right.offset_x
+                && left.offset_y == right.offset_y
+                && left.grid_x == right.grid_x
+                && left.grid_y == right.grid_y
+                && left.coefficient.re.to_bits() == right.coefficient.re.to_bits()
+                && left.coefficient.im.to_bits() == right.coefficient.im.to_bits()
+        })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_quotient_response_selected_positions(
+    request: &MtmfsRequest,
+) -> Result<Vec<(usize, usize)>, ImagingError> {
+    let clean_mask = request.clean_mask.as_ref().ok_or_else(|| {
+        ImagingError::InvalidRequest(
+            "quotient-response census requires an explicit clean mask".to_string(),
+        )
+    })?;
+    let positions = clean_mask
+        .indexed_iter()
+        .filter_map(|((x, y), enabled)| enabled.then_some((x, y)))
+        .collect::<Vec<_>>();
+    let required =
+        AWPROJECT_QUOTIENT_RESPONSE_TRAIN_POSITIONS + AWPROJECT_QUOTIENT_RESPONSE_HOLDOUT_POSITIONS;
+    if positions.len() < required {
+        return Err(ImagingError::InvalidRequest(format!(
+            "quotient-response census needs at least {required} clean-mask positions, got {}",
+            positions.len()
+        )));
+    }
+    let min_x = positions.iter().map(|(x, _)| *x).min().unwrap_or(0);
+    let max_x = positions.iter().map(|(x, _)| *x).max().unwrap_or(0);
+    let min_y = positions.iter().map(|(_, y)| *y).min().unwrap_or(0);
+    let max_y = positions.iter().map(|(_, y)| *y).max().unwrap_or(0);
+    let mut selected = Vec::<(usize, usize)>::with_capacity(required);
+    for corner in [
+        (min_x, min_y),
+        (min_x, max_y),
+        (max_x, min_y),
+        (max_x, max_y),
+    ] {
+        if clean_mask[corner] && !selected.contains(&corner) {
+            selected.push(corner);
+        }
+    }
+    let mut hashed = positions
+        .into_iter()
+        .map(|position| {
+            let mut hash = 0xcbf2_9ce4_8422_2325u64;
+            hash = awproject_quotient_response_hash_mix(hash, position.0 as u64);
+            hash = awproject_quotient_response_hash_mix(hash, position.1 as u64);
+            ((hash, position.0, position.1), position)
+        })
+        .collect::<Vec<_>>();
+    hashed.sort_unstable_by_key(|(key, _)| *key);
+    for (_, position) in hashed {
+        if !selected.contains(&position) {
+            selected.push(position);
+        }
+        if selected.len() == required {
+            break;
+        }
+    }
+    if selected.len() != required {
+        return Err(ImagingError::InvalidRequest(format!(
+            "quotient-response census selected {} mask positions, expected {required}",
+            selected.len()
+        )));
+    }
+    Ok(selected)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_quotient_response_scale_spectra(
+    request: &MtmfsRequest,
+) -> Result<Vec<Array2<Complex32>>, ImagingError> {
+    let scales = effective_mtmfs_multiscale_scales(request);
+    if scales != [0.0, 5.0, 12.0] {
+        return Err(ImagingError::InvalidRequest(format!(
+            "quotient-response census requires scales [0, 5, 12], got {scales:?}"
+        )));
+    }
+    let [grid_width, grid_height] = request.geometry.image_shape;
+    let center = (grid_width / 2, grid_height / 2);
+    Ok(scales
+        .into_iter()
+        .map(|scale| {
+            let kernel = make_compact_multiscale_kernel(scale);
+            let mut model = Array2::<f32>::zeros((grid_height, grid_width));
+            add_shifted_kernel_casa_mtmfs_model(&mut model, &kernel, center, 1.0, 1.0);
+            let model = model.mapv(|value| Complex32::new(value, 0.0));
+            centered_fft2(&model).reversed_axes().to_owned()
+        })
+        .collect())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectQuotientResponsePositionPhases {
+    x: Vec<Complex64>,
+    y: Vec<Complex64>,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_quotient_response_position_phases(
+    positions: &[(usize, usize)],
+    max_x_support: usize,
+    max_y_support: usize,
+    grid_width: usize,
+    grid_height: usize,
+) -> Vec<AwProjectQuotientResponsePositionPhases> {
+    positions
+        .iter()
+        .map(|&(position_x, position_y)| {
+            let shifted_x = (position_x + grid_width / 2) % grid_width;
+            let shifted_y = (position_y + grid_height / 2) % grid_height;
+            let x = (-(max_x_support as isize)..=max_x_support as isize)
+                .map(|offset| {
+                    let angle = -std::f64::consts::TAU * offset as f64 * shifted_x as f64
+                        / grid_width as f64;
+                    Complex64::new(angle.cos(), angle.sin())
+                })
+                .collect();
+            let y = (-(max_y_support as isize)..=max_y_support as isize)
+                .map(|offset| {
+                    let angle = -std::f64::consts::TAU * offset as f64 * shifted_y as f64
+                        / grid_height as f64;
+                    Complex64::new(angle.cos(), angle.sin())
+                })
+                .collect();
+            AwProjectQuotientResponsePositionPhases { x, y }
+        })
+        .collect()
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_quotient_response_matrix_row(
+    row: &AwProjectQuotientResponseRow,
+    phases: &[AwProjectQuotientResponsePositionPhases],
+    scale_spectra: &[Array2<Complex32>],
+    max_x_support: usize,
+    max_y_support: usize,
+) -> Vec<Complex64> {
+    let train_positions = AWPROJECT_QUOTIENT_RESPONSE_TRAIN_POSITIONS;
+    let holdout_positions = AWPROJECT_QUOTIENT_RESPONSE_HOLDOUT_POSITIONS;
+    let train_columns = train_positions * scale_spectra.len();
+    let mut values = vec![Complex64::new(0.0, 0.0); (train_positions + holdout_positions) * 3];
+    for (position_index, phase) in phases.iter().enumerate() {
+        let mut response = [Complex64::new(0.0, 0.0); 3];
+        for tap in &row.taps {
+            let phase_x = phase.x[(tap.offset_x + max_x_support as isize) as usize];
+            let phase_y = phase.y[(tap.offset_y + max_y_support as isize) as usize];
+            let coefficient =
+                Complex64::new(f64::from(tap.coefficient.re), f64::from(tap.coefficient.im))
+                    * phase_x
+                    * phase_y;
+            for (scale_index, spectrum) in scale_spectra.iter().enumerate() {
+                let scale = spectrum[(tap.grid_x, tap.grid_y)];
+                response[scale_index] +=
+                    coefficient * Complex64::new(f64::from(scale.re), f64::from(scale.im));
+            }
+        }
+        for (scale_index, response) in response.into_iter().enumerate() {
+            let column_index = if position_index < train_positions {
+                scale_index * train_positions + position_index
+            } else {
+                train_columns + scale_index * holdout_positions + position_index - train_positions
+            };
+            values[column_index] = response;
+        }
+    }
+    values
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn maybe_emit_awproject_quotient_response_census(
+    request: &MtmfsRequest,
+) -> Result<(), ImagingError> {
+    let Some(output) = env::var_os(AWPROJECT_QUOTIENT_RESPONSE_CENSUS_OUTPUT_ENV) else {
+        return Ok(());
+    };
+    let output = PathBuf::from(output);
+    if !output.is_absolute() {
+        return Err(ImagingError::InvalidRequest(format!(
+            "{AWPROJECT_QUOTIENT_RESPONSE_CENSUS_OUTPUT_ENV} must be an absolute path"
+        )));
+    }
+    if output.exists() {
+        return Err(ImagingError::InvalidRequest(format!(
+            "refusing to overwrite quotient-response census {}",
+            output.display()
+        )));
+    }
+    let mut state = AWPROJECT_QUOTIENT_RESPONSE_CENSUS
+        .get_or_init(|| Mutex::new(AwProjectQuotientResponseCensus::default()))
+        .lock()
+        .map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject quotient-response census lock was poisoned".to_string(),
+            )
+        })?;
+    let census = std::mem::take(&mut *state);
+    drop(state);
+    let domain = census.domain.ok_or_else(|| {
+        ImagingError::InvalidRequest(
+            "quotient-response census did not observe a mask contract".to_string(),
+        )
+    })?;
+    let expected_domain = awproject_mask_moment_domain(request)?;
+    if domain != expected_domain {
+        return Err(ImagingError::InvalidRequest(
+            "quotient-response census mask contract changed before emission".to_string(),
+        ));
+    }
+    if census.active_cell_keys.len() != census.coverage.len() {
+        return Err(ImagingError::InvalidRequest(format!(
+            "quotient-response census covers {} of {} active CF cells",
+            census.coverage.len(),
+            census.active_cell_keys.len()
+        )));
+    }
+    let required_rows =
+        AWPROJECT_QUOTIENT_RESPONSE_TRAIN_ROWS + AWPROJECT_QUOTIENT_RESPONSE_HOLDOUT_ROWS;
+    let mut selected_by_key =
+        BTreeMap::<AwProjectQuotientResponseRowKey, AwProjectQuotientResponseRow>::new();
+    for (_, row) in census.coverage.values() {
+        selected_by_key.insert(row.key, row.clone());
+    }
+    for row in census.reservoir.into_values() {
+        match selected_by_key.get(&row.key) {
+            Some(existing) if !awproject_quotient_response_rows_equal(existing, &row) => {
+                return Err(ImagingError::InvalidRequest(
+                    "quotient-response row fingerprints collided for unequal tap streams"
+                        .to_string(),
+                ));
+            }
+            Some(_) => {}
+            None => {
+                selected_by_key.insert(row.key, row);
+            }
+        }
+    }
+    if selected_by_key.len() < required_rows {
+        return Err(ImagingError::InvalidRequest(format!(
+            "quotient-response census has {} sampled unique response rows, needs {required_rows}",
+            selected_by_key.len()
+        )));
+    }
+    let coverage_keys = census
+        .coverage
+        .values()
+        .map(|(_, row)| row.key)
+        .collect::<BTreeSet<_>>();
+    let mut rows = Vec::<AwProjectQuotientResponseRow>::with_capacity(required_rows);
+    for key in &coverage_keys {
+        if let Some(row) = selected_by_key.remove(key) {
+            rows.push(row);
+        }
+    }
+    let mut remaining = selected_by_key.into_values().collect::<Vec<_>>();
+    remaining.sort_unstable_by_key(|row| row.selection_hash);
+    rows.extend(remaining.into_iter().take(required_rows - rows.len()));
+    if rows.len() != required_rows {
+        return Err(ImagingError::InvalidRequest(format!(
+            "quotient-response census selected {} rows, expected {required_rows}",
+            rows.len()
+        )));
+    }
+
+    let positions = awproject_quotient_response_selected_positions(request)?;
+    let scale_spectra = awproject_quotient_response_scale_spectra(request)?;
+    let max_x_support = rows.iter().map(|row| row.key.x_support).max().unwrap_or(0);
+    let max_y_support = rows.iter().map(|row| row.key.y_support).max().unwrap_or(0);
+    let [grid_width, grid_height] = request.geometry.image_shape;
+    let phases = awproject_quotient_response_position_phases(
+        &positions,
+        max_x_support,
+        max_y_support,
+        grid_width,
+        grid_height,
+    );
+
+    std::fs::create_dir(&output).map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "cannot create quotient-response census {}: {error}",
+            output.display()
+        ))
+    })?;
+    let matrix_path = output.join("matrix-complex-f64-le.bin");
+    let mut matrix_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&matrix_path)
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "cannot create quotient-response matrix {}: {error}",
+                matrix_path.display()
+            ))
+        })?;
+    let matrix_started = Instant::now();
+    let mut matrix_digest = Sha256::new();
+    let column_count = positions.len() * scale_spectra.len();
+    let row_batch_count = rows.len().div_ceil(32);
+    for (batch_index, row_batch) in rows.chunks(32).enumerate() {
+        let batch_values = row_batch
+            .par_iter()
+            .map(|row| {
+                awproject_quotient_response_matrix_row(
+                    row,
+                    &phases,
+                    &scale_spectra,
+                    max_x_support,
+                    max_y_support,
+                )
+            })
+            .collect::<Vec<_>>();
+        for values in batch_values {
+            debug_assert_eq!(values.len(), column_count);
+            for value in values {
+                for bytes in [value.re.to_le_bytes(), value.im.to_le_bytes()] {
+                    matrix_digest.update(bytes);
+                    matrix_file.write_all(&bytes).map_err(|error| {
+                        ImagingError::InvalidRequest(format!(
+                            "cannot write quotient-response matrix {}: {error}",
+                            matrix_path.display()
+                        ))
+                    })?;
+                }
+            }
+        }
+        if batch_index == 0 || (batch_index + 1) % 8 == 0 || batch_index + 1 == row_batch_count {
+            eprintln!(
+                "awproject_quotient_response_matrix_progress row_batches={}/{} rows={}/{} \
+                 elapsed_ms={:.3}",
+                batch_index + 1,
+                row_batch_count,
+                ((batch_index + 1) * 32).min(rows.len()),
+                rows.len(),
+                profile::millis(matrix_started.elapsed()),
+            );
+        }
+    }
+    matrix_file.flush().map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "cannot flush quotient-response matrix {}: {error}",
+            matrix_path.display()
+        ))
+    })?;
+    let matrix_sha256 = format!("{:x}", matrix_digest.finalize());
+    let matrix_elapsed = matrix_started.elapsed();
+    let matrix_bytes = required_rows
+        .saturating_mul(column_count)
+        .saturating_mul(2)
+        .saturating_mul(std::mem::size_of::<f64>());
+    let train_columns = AWPROJECT_QUOTIENT_RESPONSE_TRAIN_POSITIONS * scale_spectra.len();
+    let holdout_columns = AWPROJECT_QUOTIENT_RESPONSE_HOLDOUT_POSITIONS * scale_spectra.len();
+    let row_metadata = rows
+        .iter()
+        .enumerate()
+        .map(|(row_index, row)| {
+            serde_json::json!({
+                "row_index": row_index,
+                "split": if row_index < AWPROJECT_QUOTIENT_RESPONSE_TRAIN_ROWS {
+                    "train"
+                } else {
+                    "holdout"
+                },
+                "selection_hash": format!("{:016x}", row.selection_hash),
+                "source_block": row.source_state.0,
+                "pointing_group": row.source_state.1,
+                "sample_index": row.sample_index,
+                "role": row.role,
+                "frequency_hz": row.frequency_hz,
+                "represented_w_lambda": row.represented_w_lambda,
+                "mueller_element": row.mueller_element,
+                "parallactic_angle_deg": row.parallactic_angle_deg,
+                "statistical_weight": row.statistical_weight,
+                "normalization_re": row.normalization.re,
+                "normalization_im": row.normalization.im,
+                "loc_x": row.key.loc_x,
+                "loc_y": row.key.loc_y,
+                "x_support": row.key.x_support,
+                "y_support": row.key.y_support,
+                "tap_count": row.taps.len(),
+                "cell_frequency_bits": format!("{:016x}", row.key.cell.0),
+                "cell_w_bits": format!("{:016x}", row.key.cell.1),
+                "cell_mueller": row.key.cell.2,
+                "cell_pa_bits": format!("{:016x}", row.key.cell.3),
+                "response_hash": format!("{:016x}", row.key.response_hash),
+                "response_hash_secondary": format!(
+                    "{:016x}",
+                    row.key.response_hash_secondary
+                ),
+            })
+        })
+        .collect::<Vec<_>>();
+    let column_metadata = (0..column_count)
+        .map(|column_index| {
+            let (split, scale_index, position_index) = if column_index < train_columns {
+                (
+                    "train",
+                    column_index / AWPROJECT_QUOTIENT_RESPONSE_TRAIN_POSITIONS,
+                    column_index % AWPROJECT_QUOTIENT_RESPONSE_TRAIN_POSITIONS,
+                )
+            } else {
+                let holdout_index = column_index - train_columns;
+                (
+                    "holdout",
+                    holdout_index / AWPROJECT_QUOTIENT_RESPONSE_HOLDOUT_POSITIONS,
+                    AWPROJECT_QUOTIENT_RESPONSE_TRAIN_POSITIONS
+                        + holdout_index % AWPROJECT_QUOTIENT_RESPONSE_HOLDOUT_POSITIONS,
+                )
+            };
+            serde_json::json!({
+                "column_index": column_index,
+                "split": split,
+                "scale_index": scale_index,
+                "scale_pixels": ([0, 5, 12][scale_index]),
+                "x": positions[position_index].0,
+                "y": positions[position_index].1,
+            })
+        })
+        .collect::<Vec<_>>();
+    let manifest = serde_json::json!({
+        "schema": "casa-rs-vlass-quotient-response-census-v1",
+        "role": "production-inert-operator-core-rank-lower-bound-not-performance-or-science-evidence",
+        "contract": {
+            "imsize": grid_width,
+            "nterms": request.nterms,
+            "scales": [0, 5, 12],
+            "clean_mask_pixels": domain.clean_mask_pixels,
+            "dilated_support_pixels": domain.domain_pixels,
+            "component_center_pixels": domain.clean_mask_pixels,
+            "mask_fingerprint": format!("{:016x}", domain.mask_fingerprint),
+            "active_cf_cells": census.active_cell_keys.len(),
+            "full_plan_references": census.plan_references,
+            "full_tap_interactions": census.tap_interactions,
+            "full_unique_response_rows": census.unique_response_rows.len(),
+            "windows": census.windows,
+            "train_rows": AWPROJECT_QUOTIENT_RESPONSE_TRAIN_ROWS,
+            "holdout_rows": AWPROJECT_QUOTIENT_RESPONSE_HOLDOUT_ROWS,
+            "train_columns": train_columns,
+            "holdout_columns": holdout_columns,
+            "quotient": "central-component-phasor-and-tap-independent-normalization-only",
+            "retained_inside_response": "cropped-aw-cf,oversampling,conjugation,pointing-tap-phase,residual-w,support,scale-spectrum",
+            "omitted_from_response": "position-dependent-flat-sky-weight-and-grid-apodization",
+            "decision_scope": "necessary-condition-only-high-rank-retires-low-rank-requires-exact-prepared-atom-test",
+        },
+        "matrix": {
+            "path": "matrix-complex-f64-le.bin",
+            "dtype": "complex128-little-endian-interleaved",
+            "shape": [required_rows, column_count],
+            "bytes": matrix_bytes,
+            "sha256": matrix_sha256,
+            "build_ms": profile::millis(matrix_elapsed),
+        },
+        "rows": row_metadata,
+        "columns": column_metadata,
+    });
+    let manifest_path = output.join("manifest.json");
+    let manifest_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&manifest_path)
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "cannot create quotient-response manifest {}: {error}",
+                manifest_path.display()
+            ))
+        })?;
+    serde_json::to_writer_pretty(manifest_file, &manifest).map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "cannot write quotient-response manifest {}: {error}",
+            manifest_path.display()
+        ))
+    })?;
+    eprintln!(
+        "awproject_quotient_response_census rows={} train_rows={} holdout_rows={} \
+         columns={} train_columns={} holdout_columns={} active_cf_cells={} \
+         full_unique_response_rows={} full_plan_references={} full_tap_interactions={} \
+         sampled_taps={} matrix_bytes={} matrix_sha256={} matrix_build_ms={:.3} \
+         component_center_pixels={} dilated_support_pixels={} \
+         quotient=central-component-phasor-and-tap-independent-normalization-only \
+         role=production-inert-operator-core-rank-lower-bound-not-performance-or-science-evidence",
+        rows.len(),
+        AWPROJECT_QUOTIENT_RESPONSE_TRAIN_ROWS,
+        AWPROJECT_QUOTIENT_RESPONSE_HOLDOUT_ROWS,
+        column_count,
+        train_columns,
+        holdout_columns,
+        census.active_cell_keys.len(),
+        census.unique_response_rows.len(),
+        census.plan_references,
+        census.tap_interactions,
+        rows.iter().map(|row| row.taps.len()).sum::<usize>(),
+        matrix_bytes,
+        matrix_sha256,
+        profile::millis(matrix_elapsed),
+        domain.clean_mask_pixels,
+        domain.domain_pixels,
+    );
+    Ok(())
+}
+
+#[cfg(any(not(target_os = "macos"), coverage))]
+fn maybe_emit_awproject_quotient_response_census(
+    _request: &MtmfsRequest,
+) -> Result<(), ImagingError> {
     Ok(())
 }
 
@@ -31125,6 +32030,16 @@ fn replay_awproject_compact_window(
             batch,
             sample_frequencies_hz,
             source_samples,
+            replay_block_ordinal,
+        )?;
+        maybe_audit_awproject_quotient_response(
+            request,
+            batch,
+            sample_frequencies_hz,
+            source_samples,
+            tap_requests,
+            bundles,
+            phase_tables,
             replay_block_ordinal,
         )?;
         #[cfg(all(target_os = "macos", not(coverage)))]

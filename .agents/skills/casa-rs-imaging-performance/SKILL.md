@@ -176,6 +176,32 @@ basis coefficients, or bounded scratch, not summed materialized convolution
 area. Mandatory dense products justify final dense computation and writes, not
 dense authoritative iterative state or simultaneous product residency.
 
+Before quotienting a physical term from a persisted operator, prove that the
+term remains exactly recoverable after support truncation, cropping,
+oversampling, discretization, and normalization. An inverse quotient that
+requires unavailable pre-truncation state is not an implementation plan or
+factorization result. In that case, factor the executable response itself or
+obtain the missing pre-truncation representation. A rank result is actionable
+only when the same compact factors drive the proposed runtime action and the
+discriminator charges their construction.
+
+When the winning hypothesis crosses a persisted-operator boundary, put an
+availability gate before the rank or speed experiment. Inspect the operator
+generator and prove that it can expose or reevaluate the required
+pre-transform physical state. Inverse-transforming a cropped or tapered kernel
+does not recover a pre-crop image-domain screen; it produces a different
+window-convolved object. Kill or reroute the candidate at that gate instead of
+building an approximation whose semantic source is already wrong.
+
+Factor reconstruction and mandatory product formation separately when their
+operators differ. A low-rank forward DDE screen does not imply that blindly
+forming every pair of basis cross-products is the best normal, PSF, or weight
+operator. Measure the rank of the required normal-screen family directly.
+Likewise, report reconstruction-domain weighting over the complete active
+model support separately from product-domain weighting over the scientifically
+valid PB or weight domain. Do not average one passing domain with one failing
+domain.
+
 ## Operator-invocation elimination
 
 Before optimizing an expensive forward or adjoint application, count every
@@ -208,6 +234,28 @@ transformation; the latter changes the reconstruction schedule and must pass
 the frozen scientific floor. A scale-zero delta discriminator does not promote
 a multiscale path unless the nonzero-scale response is also exact or its
 approximation is explicitly accepted.
+
+Before factorizing an incumbent operator, test whether the scientific floor
+requires the incumbent number of exact operator invocations. When intermediate
+major-cycle refreshes are material, run one bounded schedule discriminator
+with the required exact initial products, the proposed cheap or local
+reconstruction state, and exactly one required final exact residual. Stop on
+divergence, conspicuous artifacts, or a science-floor miss; do not require the
+same component trajectory merely because the incumbent used it.
+
+If that schedule fails, measure the correction actually needed by the cheap
+solver:
+
+```text
+delta_h = h_exact_active_domain - h_minor_or_surrogate
+```
+
+High rank in the forward operator does not prove high rank in this correction.
+Use randomized operator actions or workload-bound model deltas to measure its
+norm, rank, locality, and update cost. Prefer an adaptive refresh trigger
+driven by a bounded correction-error estimate over a copied fixed major-cycle
+schedule. Charge the exact final residual and every mandatory dense product to
+the candidate even when the reconstruction keeps only sparse or local state.
 
 ## Bounded architecture tournament
 
