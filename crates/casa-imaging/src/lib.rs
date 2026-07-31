@@ -160,12 +160,70 @@ type MosaicProjectorKey = ((u8, u64, u64), u64, u8);
 type MosaicProjectorCache = BTreeMap<MosaicProjectorKey, ScreenProjector>;
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
+const ARCSEC_PER_DEGREE: f64 = 3_600.0;
 #[cfg(any(test, all(target_os = "macos", not(coverage))))]
 const DEFAULT_STANDARD_MFS_METAL_MINOR_CYCLE_TARGET_MS: f64 = 2_000.0;
 #[cfg(any(test, all(target_os = "macos", not(coverage))))]
 const STANDARD_MFS_METAL_MINOR_CYCLE_MIN_AUTO_CHUNK: usize = 32;
 #[cfg(any(test, all(target_os = "macos", not(coverage))))]
 const STANDARD_MFS_METAL_MINOR_CYCLE_MAX_AUTO_CHUNK: usize = 16_384;
+
+fn parse_experimental_frozen_restoring_beam(value: &str) -> Result<BeamFit, ImagingError> {
+    let parts = value.split(',').map(str::trim).collect::<Vec<_>>();
+    if parts.len() != 3 {
+        return Err(ImagingError::InvalidRequest(format!(
+            "CASA_RS_EXPERIMENTAL_AWPROJECT_FROZEN_RESTORING_BEAM must contain \
+             major_arcsec,minor_arcsec,position_angle_deg; got {value:?}"
+        )));
+    }
+    let parse = |label: &str, text: &str| {
+        text.parse::<f64>().map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "parse frozen restoring-beam {label} value {text:?}: {error}"
+            ))
+        })
+    };
+    let major_arcsec = parse("major_arcsec", parts[0])?;
+    let minor_arcsec = parse("minor_arcsec", parts[1])?;
+    let position_angle_deg = parse("position_angle_deg", parts[2])?;
+    if !(major_arcsec.is_finite()
+        && minor_arcsec.is_finite()
+        && position_angle_deg.is_finite()
+        && major_arcsec > 0.0
+        && minor_arcsec > 0.0
+        && major_arcsec >= minor_arcsec)
+    {
+        return Err(ImagingError::InvalidRequest(format!(
+            "frozen restoring beam must have finite major >= minor > 0 arcsec and a \
+             finite position angle; got major={major_arcsec}, minor={minor_arcsec}, \
+             position_angle={position_angle_deg}"
+        )));
+    }
+    Ok(BeamFit {
+        major_fwhm_rad: (major_arcsec / ARCSEC_PER_DEGREE).to_radians(),
+        minor_fwhm_rad: (minor_arcsec / ARCSEC_PER_DEGREE).to_radians(),
+        position_angle_rad: position_angle_deg.to_radians(),
+    })
+}
+
+fn experimental_awproject_frozen_restoring_beam(
+    frozen_model_present: bool,
+) -> Result<Option<BeamFit>, ImagingError> {
+    let Some(value) = env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_FROZEN_RESTORING_BEAM") else {
+        return Ok(None);
+    };
+    if !frozen_model_present {
+        return Err(ImagingError::InvalidRequest(
+            "an experimental frozen AWProject restoring beam requires a frozen model".to_string(),
+        ));
+    }
+    let value = value.to_str().ok_or_else(|| {
+        ImagingError::InvalidRequest(
+            "CASA_RS_EXPERIMENTAL_AWPROJECT_FROZEN_RESTORING_BEAM must be valid UTF-8".to_string(),
+        )
+    })?;
+    parse_experimental_frozen_restoring_beam(value).map(Some)
+}
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct HogbomMinorCycleOutcome {
@@ -5694,6 +5752,8 @@ where
             ny,
         );
     }
+    let frozen_restoring_beam =
+        experimental_awproject_frozen_restoring_beam(frozen_model_prefix.is_some())?;
     let frozen_prediction_weight_image =
         env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_FROZEN_WEIGHT_IMAGE")
             .map(|path| {
@@ -5761,6 +5821,13 @@ where
         ));
     }
     let track_sparse_model_deltas = model_delta_census || image_response_experiment;
+    if frozen_model_prefix.is_some() && (sparse_model_casacore_prep || track_sparse_model_deltas) {
+        model_support_positions = nonzero_model_support_positions(&model_terms);
+        eprintln!(
+            "awproject_frozen_model_support positions={} source=imported-nonzero-union",
+            model_support_positions.len(),
+        );
+    }
     let mut previous_sparse_model_terms =
         vec![BTreeMap::<(usize, usize), f32>::new(); clean_request.nterms];
     let mut pending_sparse_model_deltas = Vec::<AwProjectSparseModelDelta>::new();
@@ -6224,18 +6291,38 @@ where
     stage_timings.controller_overhead += controller_started.elapsed().saturating_sub(accounted);
 
     let beam_fit_started = Instant::now();
+    let beam_fit_outcome = if let Some(beam) = frozen_restoring_beam {
+        eprintln!(
+            "awproject_frozen_restoring_beam source=frozen-casa major_arcsec={:.17e} \
+             minor_arcsec={:.17e} position_angle_deg={:.17e} beam_fit_entered=false",
+            beam.major_fwhm_rad.to_degrees() * ARCSEC_PER_DEGREE,
+            beam.minor_fwhm_rad.to_degrees() * ARCSEC_PER_DEGREE,
+            beam.position_angle_rad.to_degrees(),
+        );
+        BeamFitOutcome {
+            beam: Some(beam),
+            warnings: Vec::new(),
+            attempts: 0,
+            cutoff_used: None,
+            debug: None,
+        }
+    } else {
+        fit_beam_from_psf(
+            &psf_state.psf_terms[0],
+            clean_request.geometry.cell_size_rad,
+            clean_request.clean.psf_cutoff,
+        )
+    };
     let BeamFitOutcome {
         beam,
         warnings: beam_warnings,
         attempts: beam_fit_attempts,
         cutoff_used: beam_fit_cutoff_used,
         debug: beam_fit_debug,
-    } = fit_beam_from_psf(
-        &psf_state.psf_terms[0],
-        clean_request.geometry.cell_size_rad,
-        clean_request.clean.psf_cutoff,
-    );
-    stage_timings.beam_fit += beam_fit_started.elapsed();
+    } = beam_fit_outcome;
+    if frozen_restoring_beam.is_none() {
+        stage_timings.beam_fit += beam_fit_started.elapsed();
+    }
     warnings.extend(beam_warnings);
     let restore_started = Instant::now();
     let principal_residual_terms =
@@ -7698,6 +7785,12 @@ fn finish_mosaic_mtmfs_residual_images(
                     "direct Metal mosaic MT-MFS residual term count changed before FFT".to_string(),
                 ));
             }
+            emit_awproject_frozen_final_state_pre_fft_grid_hashes(
+                &grid,
+                aw_compensation.as_ref(),
+                psf_term_count,
+                residual_term_count,
+            )?;
             let plane_count = psf_term_count + residual_term_count + psf_term_count;
             let experimental_metal_f32_residual_fft = psf_term_count == 0
                 && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_F32_RESIDUAL_FFT").is_some();
@@ -10221,6 +10314,98 @@ type AwProjectMetalPipeline =
 #[cfg(all(target_os = "macos", not(coverage)))]
 struct AwProjectMetalCompensation {
     buffer: objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>>,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn emit_awproject_frozen_final_state_pre_fft_grid_hashes(
+    grid: &crate::apple_fft::MetalSharedF32DirtyGridBatch,
+    compensation: Option<&AwProjectMetalCompensation>,
+    first_plane: usize,
+    plane_count: usize,
+) -> Result<(), ImagingError> {
+    if env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_FROZEN_FINAL_STATE_CHECKPOINTS").is_none() {
+        return Ok(());
+    }
+    use std::slice;
+
+    use objc2_metal::MTLBuffer;
+
+    let [rows, columns] = grid.shape();
+    let plane_elements = rows.checked_mul(columns).ok_or_else(|| {
+        ImagingError::InvalidRequest(
+            "frozen-final-state grid checkpoint shape overflowed".to_string(),
+        )
+    })?;
+    let element_count = plane_elements
+        .checked_mul(grid.plane_count())
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "frozen-final-state grid checkpoint plane count overflowed".to_string(),
+            )
+        })?;
+    if first_plane.saturating_add(plane_count) > grid.plane_count() {
+        return Err(ImagingError::Normalization(format!(
+            "frozen-final-state grid checkpoint requested planes {first_plane}..{}, \
+             but the grid has {} planes",
+            first_plane.saturating_add(plane_count),
+            grid.plane_count(),
+        )));
+    }
+    let high = unsafe {
+        slice::from_raw_parts(
+            grid.metal_buffer().contents().as_ptr().cast::<Complex32>(),
+            element_count,
+        )
+    };
+    let low = compensation.map(|compensation| unsafe {
+        slice::from_raw_parts(
+            compensation.buffer.contents().as_ptr().cast::<Complex32>(),
+            element_count,
+        )
+    });
+    for term in 0..plane_count {
+        let plane = first_plane + term;
+        let start = plane * plane_elements;
+        let end = start + plane_elements;
+        let mut representation_hash = Sha256::new();
+        let mut value_hash = Sha256::new();
+        for word in [term as u64, rows as u64, columns as u64] {
+            representation_hash.update(word.to_le_bytes());
+            value_hash.update(word.to_le_bytes());
+        }
+        for index in start..end {
+            let high_value = high[index];
+            let low_value = low.map_or(Complex32::new(0.0, 0.0), |values| values[index]);
+            representation_hash.update(high_value.re.to_bits().to_le_bytes());
+            representation_hash.update(high_value.im.to_bits().to_le_bytes());
+            representation_hash.update(low_value.re.to_bits().to_le_bytes());
+            representation_hash.update(low_value.im.to_bits().to_le_bytes());
+            value_hash.update(
+                (f64::from(high_value.re) + f64::from(low_value.re))
+                    .to_bits()
+                    .to_le_bytes(),
+            );
+            value_hash.update(
+                (f64::from(high_value.im) + f64::from(low_value.im))
+                    .to_bits()
+                    .to_le_bytes(),
+            );
+        }
+        eprintln!(
+            "awproject_frozen_final_state_pre_fft_grid term={} plane={} rows={} columns={} \
+             compensated={} representation_sha256={:x} value_sha256={:x} \
+             representation_contract=sha256-le-term-shape-row-major-high-re-im-low-re-im-f32-bits \
+             value_contract=sha256-le-term-shape-row-major-f64-high-plus-low-re-im-bits",
+            term,
+            plane,
+            rows,
+            columns,
+            low.is_some(),
+            representation_hash.finalize(),
+            value_hash.finalize(),
+        );
+    }
+    Ok(())
 }
 
 #[cfg(all(target_os = "macos", not(coverage), test))]
@@ -20240,6 +20425,68 @@ fn update_awproject_persistent_metal_prediction_results(
     Ok(())
 }
 
+#[cfg(all(target_os = "macos", not(coverage)))]
+static AWPROJECT_FROZEN_FINAL_STATE_REPLAY_ORDINAL: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn emit_awproject_frozen_final_state_prediction_hashes(
+    batch: &AwProjectMetalPredictionBatch,
+    residuals: &[AwProjectMetalPredictionResult],
+) -> Result<(), ImagingError> {
+    if env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_FROZEN_FINAL_STATE_CHECKPOINTS").is_none() {
+        return Ok(());
+    }
+    if batch.samples.len() != residuals.len() {
+        return Err(ImagingError::Normalization(format!(
+            "frozen-final-state prediction checkpoint has {} packed samples but {} residuals",
+            batch.samples.len(),
+            residuals.len(),
+        )));
+    }
+    let replay_ordinal =
+        AWPROJECT_FROZEN_FINAL_STATE_REPLAY_ORDINAL.fetch_add(1, Ordering::Relaxed);
+    let mut observed_hash = Sha256::new();
+    let mut predicted_hash = Sha256::new();
+    let mut residual_hash = Sha256::new();
+    for (sample_ordinal, (sample, residual)) in batch.samples.iter().zip(residuals).enumerate() {
+        let ordinal = u64::try_from(sample_ordinal).unwrap_or(u64::MAX);
+        observed_hash.update(ordinal.to_le_bytes());
+        predicted_hash.update(ordinal.to_le_bytes());
+        residual_hash.update(ordinal.to_le_bytes());
+        let observed = [
+            sample.first_observed_re,
+            sample.first_observed_im,
+            sample.second_observed_re,
+            sample.second_observed_im,
+        ];
+        let residual_values = [
+            residual.first_residual_re,
+            residual.first_residual_im,
+            residual.second_residual_re,
+            residual.second_residual_im,
+        ];
+        for value in observed {
+            observed_hash.update(value.to_bits().to_le_bytes());
+        }
+        for (observed, residual) in observed.into_iter().zip(residual_values) {
+            predicted_hash.update((observed - residual).to_bits().to_le_bytes());
+            residual_hash.update(residual.to_bits().to_le_bytes());
+        }
+    }
+    eprintln!(
+        "awproject_frozen_final_state_visibilities replay_ordinal={} samples={} \
+         observed_sha256={:x} predicted_sha256={:x} residual_sha256={:x} \
+         contract=sha256-le-sample-ordinal-rr-re-im-ll-re-im-f32-bits \
+         prediction_source=derived-observed-minus-returned-residual",
+        replay_ordinal,
+        residuals.len(),
+        observed_hash.finalize(),
+        predicted_hash.finalize(),
+        residual_hash.finalize(),
+    );
+    Ok(())
+}
+
 fn awproject_sample_stats_delta(
     after: &AwProjectSampleStats,
     before: &AwProjectSampleStats,
@@ -24687,6 +24934,7 @@ fn replay_awproject_metal_global_program(
             .expect("global AWProject Metal executor");
         let (residuals, prediction_elapsed) =
             executor.dispatch_prediction_probe(&program.prediction_batch, model_grids)?;
+        emit_awproject_frozen_final_state_prediction_hashes(&program.prediction_batch, &residuals)?;
         update_awproject_persistent_metal_prediction_results(&mut program.tile_batch, &residuals)?;
         let tile_stats = executor.dispatch_tile_grid_probe(
             grid,
@@ -26526,6 +26774,8 @@ where
                 .collect::<Result<Vec<_>, ImagingError>>()?
         };
         #[cfg(all(target_os = "macos", not(coverage)))]
+        emit_awproject_frozen_final_state_model_grid_hashes(&grids);
+        #[cfg(all(target_os = "macos", not(coverage)))]
         if let Some(state) = incremental_full_refresh
             && let Some(model_support_positions) = model_support_positions
             && let Some(replay_cache) = aw_replay_cache.as_deref_mut()
@@ -26665,6 +26915,31 @@ where
     stage_timings.residual_fft += timings.fft;
     stage_timings.residual_normalize += timings.normalize;
     Ok(residual_terms)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn emit_awproject_frozen_final_state_model_grid_hashes(grids: &[Array2<Complex32>]) {
+    if env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_FROZEN_FINAL_STATE_CHECKPOINTS").is_none() {
+        return;
+    }
+    for (term, grid) in grids.iter().enumerate() {
+        let mut hash = Sha256::new();
+        hash.update((term as u64).to_le_bytes());
+        hash.update((grid.nrows() as u64).to_le_bytes());
+        hash.update((grid.ncols() as u64).to_le_bytes());
+        for value in grid {
+            hash.update(value.re.to_bits().to_le_bytes());
+            hash.update(value.im.to_bits().to_le_bytes());
+        }
+        eprintln!(
+            "awproject_frozen_final_state_model_grid term={} rows={} columns={} sha256={:x} \
+             contract=sha256-le-term-shape-ndarray-iteration-complex32-bits",
+            term,
+            grid.nrows(),
+            grid.ncols(),
+            hash.finalize(),
+        );
+    }
 }
 
 fn validate_mosaic_streaming_config(config: &MosaicGridderConfig) -> Result<(), ImagingError> {
@@ -57469,6 +57744,23 @@ fn sparse_model_flux(model: &Array2<f32>, support_positions: &BTreeSet<(usize, u
         .sum()
 }
 
+fn nonzero_model_support_positions(model_terms: &[Array2<f32>]) -> BTreeSet<(usize, usize)> {
+    let Some(first) = model_terms.first() else {
+        return BTreeSet::new();
+    };
+    let shape = first.dim();
+    debug_assert!(model_terms.iter().all(|term| term.dim() == shape));
+    let mut positions = BTreeSet::new();
+    for x in 0..shape.0 {
+        for y in 0..shape.1 {
+            if model_terms.iter().any(|term| term[(x, y)] != 0.0) {
+                positions.insert((x, y));
+            }
+        }
+    }
+    positions
+}
+
 #[cfg(test)]
 fn dirty_clean_config(psf_cutoff: f32) -> CleanConfig {
     CleanConfig {
@@ -57563,7 +57855,8 @@ mod tests {
         mfs_image_product_peak_abs_masked, minor_cycle_stop_is_major_cycle_handoff,
         minor_cycle_stop_reason, mosaic_pointing_contributes_by_simple_pb_center,
         mosaic_pointing_pixel_inside_image, mosaic_primary_beam_product_from_weight_product,
-        mosaic_projector_sampling, normalized_weighted_primary_beam_product,
+        mosaic_projector_sampling, nonzero_model_support_positions,
+        normalized_weighted_primary_beam_product, parse_experimental_frozen_restoring_beam,
         parse_standard_mfs_backend_selection, parse_standard_mfs_thread_count, peak_abs_value,
         peak_location_masked, peak_location_masked_in_window, phase_rotate_visibility,
         prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config,
@@ -57582,6 +57875,40 @@ mod tests {
         trace_cube_channel_residual_refresh_model_channel_lambda, trace_residual_refresh,
         trace_w_project_plan, trace_weighting,
     };
+
+    #[test]
+    fn frozen_restoring_beam_parser_preserves_casa_units() {
+        let beam = parse_experimental_frozen_restoring_beam(
+            "3.2029497623443604,2.157604455947876,70.55349731445312",
+        )
+        .unwrap();
+        assert!(
+            (beam.major_fwhm_rad.to_degrees() * 3_600.0 - 3.202_949_762_344_360_4).abs() < 1.0e-14
+        );
+        assert!(
+            (beam.minor_fwhm_rad.to_degrees() * 3_600.0 - 2.157_604_455_947_876).abs() < 1.0e-14
+        );
+        assert!((beam.position_angle_rad.to_degrees() - 70.553_497_314_453_12).abs() < 1.0e-13);
+    }
+
+    #[test]
+    fn frozen_restoring_beam_parser_rejects_invalid_geometry() {
+        assert!(parse_experimental_frozen_restoring_beam("2,3,0").is_err());
+        assert!(parse_experimental_frozen_restoring_beam("3,0,0").is_err());
+        assert!(parse_experimental_frozen_restoring_beam("3,2").is_err());
+    }
+
+    #[test]
+    fn frozen_model_support_uses_the_nonzero_union_of_all_terms() {
+        let mut tt0 = Array2::<f32>::zeros((4, 3));
+        let mut tt1 = Array2::<f32>::zeros((4, 3));
+        tt0[(1, 2)] = 3.0;
+        tt1[(3, 0)] = -2.0;
+        assert_eq!(
+            nonzero_model_support_positions(&[tt0, tt1]),
+            [(1, 2), (3, 0)].into_iter().collect()
+        );
+    }
 
     fn compact_replay_test_block(
         samples: usize,

@@ -5179,6 +5179,123 @@ after the now-exact first-buffer geometry and weighting boundary. The
 four-SPW row remains unpromoted, so neither the full-16-SPW row nor the
 full-geometry memory campaign may advance yet.
 
+### 2026-07-30 frozen-final-state sandwich
+
+A same-conversation Oracle review selected one conditional discriminator
+before any further clean: first pass the frozen CASA model and residual through
+restoration and product formation only, then, and only then, pass the frozen
+CASA model through exactly one full-stream casa-rs final residual refresh. The
+second phase had to use the official CASA FFTW libraries, the exact production
+AWProject provider, and the frozen CASA weight and restoring beam. It forbade
+the image-response cache, controller updates, minor cycles, deconvolution, and
+beam fitting.
+
+Phase A recomputed only image TT0/TT1, alpha, and alpha-error from the frozen
+CASA model, residual, principal inverse, and restoring beam. It cloned the
+remaining frozen products without changing them, then used the unchanged
+19-product comparator. All 19 inventory, numerical, topology, structured
+difference, coordinate, unit, beam, and metadata checks passed. Alpha and
+alpha-error had zero mask mismatches and relative RMS differences
+`2.109881757152625e-8` and `1.9923781432652422e-8`; image TT0 and TT1 were
+`3.000255509434225e-8` and `2.5698253798808514e-8`. The Phase-A receipt,
+comparison input, comparison result, and comparison log SHA-256 digests are,
+respectively:
+
+- `ddd6b4e42c8d40987eae14854a3fddb5877a4907743b48ae72d9e48dff924c6c`;
+- `30e2bcf6089b8667c93abd354d53029bcdc2d7c7158634778316bfa02352f841`;
+- `ba3ce70cbbf7c4fd6f387eb0d8f89d537d4bef761bf2abff8f2b8be877547191`;
+  and
+- `5131bdc5b3463cae2e78fc435dc7fb022808664ddba650455398950669dc3da4`.
+
+This excludes restoration, residual addition, alpha arithmetic, alpha-error
+arithmetic, and ordinary product materialization as the acceptance-limiting
+owner for these frozen inputs.
+
+The first attempted Phase-B receipt is deliberately retained as negative
+evidence. The frozen model was read successfully, but the sparse model support
+index remained empty because it had previously been populated only by
+casa-rs minor-cycle updates. The log consequently recorded
+`model_fft_ms=0` and refreshed a zero model. No comparison was run and no
+scientific conclusion was drawn. Its log SHA-256 is
+`4d87116803449eed6f11ca2e5aa72f7cd6a40eb60ba0da123514aad88336e681`.
+The private frozen-model path now reconstructs the exact union of nonzero
+TT0/TT1 positions after import; a focused test binds the behavior.
+
+The corrected Phase B imported `2,166` nonzero support positions and used
+CASA's FFTW `3.3.10` f64 and `3.3.10-neon` f32 libraries without wisdom. It
+primed exact source-order replay programs during the initial pass, merged five
+programs, and executed one `98,239`-sample global Metal prediction and
+compensated residual-grid dispatch. The response cache, minor cycle,
+deconvolution, controller update, and beam fitter were not entered. The
+frozen beam was `3.2029497623443604 x 2.157604455947876` arcsec at
+`70.55349731445312` degrees. The run completed in `19.18` seconds, but this
+conditional diagnostic time is not a promoted clean benchmark.
+
+The reproducibility checkpoints are:
+
+- model-grid TT0/TT1 SHA-256:
+  `2cc338fcd624042ece5727245d51182f990f78fef85200b8fd7ca4011c745289`
+  and
+  `2db70c3da68a8c17b04801302aee72e2cd00388a1efc47959b82bab4735e825d`;
+- ordered observed, derived-predicted, and returned-residual visibility
+  SHA-256:
+  `3601b5c6ebf749d58c80bc16b329db68a94557e5d7cbb477034b061ef89f2172`,
+  `68d6dc8c6b4ec45b8cad8d17ee44cdc1a1220e0ae261c251a35b75899ecb0bf9`,
+  and
+  `3ab0ed020a6b75ed54aadd91606c7d6e0fc8424575f77f931654e1addb3b6f98`;
+- compensated pre-FFT grid representation TT0/TT1 SHA-256:
+  `e2207715b644881fb519bd434a766ce1adc960acff82eaf8d5fdde0323282f01`
+  and
+  `e07195cbbc657bbcea0379995e2fdd004e9fb3d1c8b8adc7266abdc2fff719de`;
+  and
+- corresponding exact f64 high-plus-low value SHA-256:
+  `7dad10d7fdf07fe59d83ff22f34d9db5e2d5231e27d84ce74adae0f70f36256e`
+  and
+  `6cd13f9bfa9cbe8886184570243e4bf7f653ee53a2a5c18f840714042b617f3b`.
+
+The unchanged comparator passes the residual and restored-image numerical,
+structured-difference, finite-topology, coordinate, unit, beam, inventory, and
+metadata gates:
+
+- residual TT0/TT1 relative RMS differences are
+  `8.962377091841279e-8` and `8.932359268928084e-8`;
+- image TT0/TT1 relative RMS differences are
+  `1.0401410573219687e-7` and `1.0346051510579312e-7`; and
+- both residuals and both images have `good` structured-difference
+  classifications.
+
+The full contract nevertheless fails. Alpha and alpha-error each have exactly
+one mask mismatch at `(673, 2447)`: casa-rs masks the pixel while CASA retains
+alpha `11.77514362335205` and alpha-error `16.65256690979004`. Their numerical
+relative RMS differences over the common valid domain are
+`1.2865851157152337e-7` and `1.3248348208897018e-7`, but topology is
+discrete and remains acceptance-limiting. The corrected executable, source,
+launcher, run log, comparison input, comparison result, and comparison log
+SHA-256 digests are, respectively:
+
+- `f4fe8b8c63219d77a67735020f3129e1f9af2362b7c9c85ad7b8d935ed0a7f43`;
+- `3d49102f87e16ed62627fff7100ea2ef91b1e05b652512c5fad03d512dc1975d`;
+- `033bda93df7aea38b73759e577943cb4b57d3b5773b61590943ddaa05a874a5b`;
+- `8eb30ce404a4226cd530f1cb22544d20cc140b44ad20cc9d37dff69af31d4a77`;
+- `8e71936b04281ba3ed3f69da3ab69bff687c72798a90490b42f575d66d59b6b6`;
+- `dfd8ce2834beecb9ea0329890b25b699b148c10fd1d0943a8f78540ce9c51953`;
+  and
+- `eb760bb416b11994d8870eebc97119e7dcdb3d4130b5aded81e5c584b1648a23`.
+
+Phase A excludes the product layer. Phase B improves the ordinary V6 clean
+from roughly `4.8`--`5.8` ppm and `13+13` topology mismatches to roughly
+`0.09`--`0.10` ppm and `1+1`, but does not close the contract. Per the
+Oracle decision rule, the CASA model removes most of the integrated error, so
+the casa-rs model trajectory contributes; the remaining one-pixel Phase-B
+failure proves that the exact full-stream residual operator or assembly also
+contributes. Neither should be assigned as the sole owner.
+
+The same Oracle conversation is selecting the next single common-input,
+source-level bracket from these checkpoints. No CASA `tclean`, unchanged CASA
+reference, full clean, full-16-SPW row, `12,150`-square development clean, or
+full-geometry memory-policy experiment ran. The four-SPW row remains
+unpromoted, so the full-16-SPW and memory-campaign gates remain closed.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
