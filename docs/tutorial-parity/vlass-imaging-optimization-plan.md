@@ -5924,6 +5924,89 @@ the same Oracle conversation must select the smallest discriminator for
 CASA's post-degrid phase order while preserving the now-proved wide-division
 boundary.
 
+### 2026-07-31 offline source-phase-placement certificate
+
+The same Oracle conversation initially selected a full-stream compact-tap
+replay, but direct source inspection corrected an assumption in that proposal.
+`AwPredictionPlan` carries the per-tap POINTING phase only.
+`phase_shift_m` is applied to the observed parallel-hand visibilities during
+preparation, while the Metal prediction kernel returns its normalized TT0 and
+TT1 terms without that separate source phasor. Only the source-zero
+`361`-tap operands were frozen, so claiming a full-stream tap replay would have
+failed the proposed operand-completeness gate. The Oracle accepted the source
+correction and selected a smaller full-stream offline certificate: apply the
+recorded source phasor once to the already-frozen post-wide-division TT0/TT1
+terms, then compare them with the frozen CASA term oracle.
+
+This inspection also supersedes the
+`phase_application_location=folded-into-production-aw-degrid-geometry-and-cf-phase-plan`
+description in the immutable wide-candidate host receipt. That field was an
+interpretation, not an executed identity. The source, Metal ABI, raw
+numerator/normalizer sidecar, and source-phasor trace are the authoritative
+boundaries.
+
+The first analyzer execution stopped on an invalid identity adapter. It
+treated the varying first/second Mueller output routing as if it swapped the
+audit's canonical RR/LL term slots. The kernel instead keeps audit terms and
+observed values in RR/LL order and uses the Mueller fields only to route the
+two returned residual slots. The analyzer emitted an
+`invalid-instrumentation` receipt before making a scientific claim. That
+negative receipt hashes to
+`06bfccae29fad2eba9b2daf687d2bde16a0611c88ff9341effe40aee714a802d`.
+
+The repaired v2 certificate is valid. It binds all `98,239` sources,
+`196,478` roles, and `392,956` term values to one source-key hash containing
+ordinal, original row, DDID, SPW, channel, frequency bits, role, and the
+actual Mueller routing. It reuses the frozen wide-normalization terms and
+executes no tap replay. The source-key SHA-256 is
+`8e1146ee0c0c917c6b3eaf42204e8872eae8d39aa78b9fd691549f03d0c5c75a`.
+
+The result is positive but not exact:
+
+- comparing the unphased wide terms with CASA's raw terms leaves `151` TT0
+  and `190` TT1 source-role mismatches;
+- applying the exact separately rounded `Complex<Float>` source phasor to
+  both streams leaves the same `151` TT0 and `190` TT1 mismatches against
+  CASA's phase-aligned terms;
+- relative to the earlier unphased-versus-aligned counts of `387` and `416`,
+  the missing post-degrid source phase explains `236` TT0 and `226` TT1
+  records;
+- the first remaining raw mismatch is source ordinal `1,446`, RR, channel
+  `19` of SPW `2`; the real component is one ULP apart,
+  `[3145554493, 3197138881]` versus
+  `[3145554492, 3197138881]`; and
+- the exact classification remains
+  `unphased-raw-terms-still-differ`: source-phase omission is a proven
+  contributor, but it is not the sole remaining raw-degrid owner and
+  authorizes no default production change.
+
+The two downstream power counterfactuals are diagnostic only because the term
+gate is still nonzero. Using the current Rust powers after the aligned terms
+leaves `448` combined-prediction and `17` residual records different. Using
+the frozen CASA powers in that post-alignment order leaves `128,564` combined
+and `65,290` residual records different. This rejects the claim that merely
+substituting the CASA power values at that location closes prediction; it
+does not yet distinguish Taylor-power generation from CASA's scale/phase/add
+operation order.
+
+The offline Python certificate applied `392,956` source-phase complex
+multiplications in `2,412.059` ms, used a measured peak resident footprint of
+`258,883,584` bytes, and completed in `4,172.458` ms. Those numbers describe
+the evidence analyzer, not a Rust or Metal production cost.
+
+The valid receipt, analyzer, and focused test hash to, respectively:
+
+- `7203078f269405c0ca58fd37abe4566e6b2edb188181de6c02e9c1a839de1fde`;
+- `8c0aa1663b7acacaa8c3784238d8e6eff24a6a159b5ac1d8ec854b1812fdf0b2`;
+  and
+- `a751fa660f4950f1a7481c2bc204ca8751367210505142aea440f77f28e367f3`.
+
+No MS was opened, and no CASA, Metal, prediction dispatch, residual grid,
+FFT, image product, controller, or CLEAN ran. The four-SPW row remains
+unpromoted. The next discriminator must localize the source-`1,446` raw
+one-ULP boundary before any production phase change or Taylor correction is
+considered.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
