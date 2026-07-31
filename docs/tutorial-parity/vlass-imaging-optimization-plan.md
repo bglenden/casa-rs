@@ -6495,6 +6495,90 @@ of CASA's source phase before complex normalization, followed by the existing
 four-SPW prediction-only parity gate. It does not authorize a production
 default, CLEAN, full-16-SPW promotion, or a final-candidate run.
 
+### 2026-07-31 source-phase-sandwich prediction candidate
+
+The authorized prediction-only implementation now retains the exact geometric
+source phasor beside each pair of already-rotated RR/LL visibilities. The
+private CPU-wide candidate reproduces CASA's finite-precision phase sandwich:
+
+1. multiply the completed Complex32 degrid numerator by the conjugate of the
+   recorded source phasor;
+2. execute the already-audited installed-CASA `___divsc3` wide operation
+   graph; and
+3. multiply the normalized Complex32 term by the recorded source phasor to
+   restore the observed-visibility frame.
+
+Each complex multiply preserves four separately rounded binary32 products and
+a separately rounded add/subtract. The unchanged Metal control still records
+the pre-source-phase numerator and performs its existing f32 division. The
+experiment is fail-closed behind
+`CASA_RS_EXPERIMENTAL_AWPROJECT_PREDIVISION_SOURCE_PHASE`, and the launcher
+accepts it only together with the prediction-only wide-division sidecar. It is
+not a production default or UI/task parameter.
+
+One bounded `4,096`-square, four-SPW run completed at the intended
+pre-residual-grid stop in `12.26` seconds. The raw `98,239`-source stream is
+bit-identical to the prior valid sidecar:
+
+- the `11,002,768`-byte raw numerator/normalizer stream retains SHA-256
+  `bc6d3d01e949e33b623a4febc6020f33d2fd1d57beece80e5a043a8d2b3c992a`;
+- the unchanged control audit and result retain SHA-256 values
+  `7a8b6038aa8a78bfc0bc70ed9e02ad2588c80f7b1db3b026ab409fb9872bde4f`
+  and
+  `dcdf3389e7b20165973e8f237091a9db7a24cd6526ed8682a6376a522bf2b3b4`;
+  and
+- topology, generation, Mueller routing, finite-domain, zero-normalizer, and
+  direct Metal-device-identity gates all pass.
+
+The frozen term oracle reports the intended correctness breakthrough.
+Across `98,239` sources and both RR/LL roles, candidate TT0 and raw TT1 each
+have zero mismatches in `196,478` complex values. Their hashes exactly equal
+the corresponding source-phase-aligned CASA hashes:
+
+- TT0:
+  `0dee472a2f19ea3f03af86442f086d383980853390ecd5188066f5e8f4b1cedb`;
+  and
+- TT1:
+  `950dc856071fb616be4d130b925d61b5d107b7580edf92b55771312ce3381545`.
+
+The comparison therefore advances the classification to
+`taylor-power-difference`. CASA and casa-rs Taylor-power bits differ at
+`71,588` source ordinals. Those differences survive into `230` scaled-TT1
+source-role values and `434` separately ordered and production-combined
+source-role values. The first surviving scaled mismatch is source ordinal
+`775`, RR, SPW `2`, channel `17`: the CASA and casa-rs Taylor-power bit
+patterns are `3198777243` and `3198777242`. No residual parity or CLEAN claim
+is earned while those values remain nonzero.
+
+The instrumented Metal prediction dispatch/wait took `58.740792` ms. The CPU
+phase sandwich, `392,956` wide divisions, TT1 scaling, combination, residual
+subtraction, and output write took `6.411583` ms, for a `65.152375` ms hybrid
+boundary. These are instrumented arithmetic-boundary costs, not end-to-end
+performance evidence. Retaining two f32 source-phase components increases the
+merged global replay program by exactly `785,912` bytes, or eight bytes per
+source.
+
+The run log, aggregate host receipt, candidate audit, candidate result,
+candidate host receipt, and valid term comparison hash to, respectively:
+
+- `9f3c47a2fcbfc7634440da6a4f0b772aecff4cbaa7b3e53e8cea84cf76488e05`;
+- `3c1038344a9e72342fb3fa5d18d8459fbc3284b1e7b186e374fb0a8bc12baff2`;
+- `e912764f49e63ebde6cd63ecea140ff957935c235d40804d558e2f78cbaada57`;
+- `73e0a858a65236f5f62ad516a8e2b6c4f4f38dc75029443e24bf25c0b31ea19a`;
+- `846cdc3d10846ced4abfdad9aa91d23c0ecbb0c91f5fa54d4affcf2d73efb10c`;
+  and
+- `6ae61b3b5717896a0364434abea674befc1def1a9f43d10b8c901398d58cfe9c`.
+
+The release executable and launcher hash to
+`5289d22ca95019c5caa8a9192f29325f1721d03e8e7401c4b789c272dd869301`
+and
+`bc07d4473137ceb46b452185a6299c20dee61f3a507e3422f611acb9a0d572d9`.
+No CASA call, unchanged reference, residual grid, residual FFT, image product,
+controller step, CLEAN, full-16-SPW row, `12,150`-square development run, or
+memory-policy experiment ran. The candidate remains experimental and the
+four-SPW row remains unpromoted. This result must be checkpointed before the
+same Oracle conversation selects a bounded Taylor-power discriminator.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.

@@ -2707,6 +2707,7 @@ mod tests {
                 Complex32::new(0.9, -0.01),
                 Complex32::new(1.2, 0.05),
             ],
+            source_phase: vec![Complex32::new(1.0, 0.0); 6],
         };
         let primary_beam_model = PrimaryBeamModel::EvlaLBandCommon;
         let grouped_metadata = GroupedVisibilityMetadataBatch {
