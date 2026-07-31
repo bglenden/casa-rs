@@ -351,6 +351,33 @@ fn validate_hybrid_prediction_receipt(receipt: &Value) -> Result<Value, String> 
             ));
         }
     }
+    let builder = &receipt["candidate_builder"];
+    let lane_fpcr = builder["lane_fpcr"]
+        .as_array()
+        .ok_or_else(|| "hybrid candidate-builder FPCR receipt is missing".to_string())?;
+    if builder["mode"] != "fixed-index-two-lane"
+        || builder["worker_count"].as_u64() != Some(2)
+        || builder["range_count"].as_u64() != Some(2)
+        || builder["source_count"].as_u64() != Some(98_239)
+        || builder["split_ordinal"].as_u64() != Some(49_120)
+        || builder["ranges"] != json!([[0, 49_120], [49_120, 98_239]])
+        || builder["lane_record_counts"] != json!([49_120, 49_119])
+        || builder["lane_division_counts"] != json!([196_480, 196_476])
+        || builder["lane_rounding_modes"] != json!([0, 0])
+        || lane_fpcr.len() != 2
+        || lane_fpcr[0] != lane_fpcr[1]
+        || builder["ranges_contiguous_nonoverlapping"] != true
+        || builder["records_written"].as_u64() != Some(98_239)
+        || builder["duplicate_writes"].as_u64() != Some(0)
+        || builder["unwritten_records"].as_u64() != Some(0)
+        || receipt["memory_bytes"]["candidate_result_allocation"].as_u64() != Some(1_571_824)
+        || receipt["memory_bytes"]["candidate_audit_allocation"].as_u64() != Some(10_216_856)
+        || receipt["memory_bytes"]["candidate_additional_per_worker_heap"].as_u64() != Some(0)
+    {
+        return Err(
+            "hybrid candidate-builder receipt failed its fixed two-lane contract".to_string(),
+        );
+    }
     let prediction_to_tile_ready_ms = receipt["timings_ms"]["prediction_to_tile_ready"]
         .as_f64()
         .ok_or_else(|| "hybrid prediction-to-tile-ready timing is missing".to_string())?;

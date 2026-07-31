@@ -6919,6 +6919,41 @@ controller entry, subsequent minor cycle, or additional major cycle. No CASA
 call, full-16-SPW row, `12,150`-square development run, or memory-policy
 experiment ran.
 
+The same Oracle conversation selected exactly one bounded response to the
+`2.66%` timing miss: deterministic two-lane indexed construction inside
+`build_awproject_wide_division_candidate`. The certified arithmetic, audit
+allocation, ordered hashes, and separate tile update remain unchanged. The
+`98,239` sources are split at ordinal `49,120`; the calling thread owns
+`[0, 49,120)` and one scoped worker owns `[49,120, 98,239)`. Both lanes write
+directly into disjoint slices of the once-allocated final result and audit
+vectors. There are no per-lane vectors, concatenation, atomics, work stealing,
+parallel iterators, or parallel hash reductions.
+
+The private builder fails closed unless at least two host execution threads
+are available. It performs topology and control validation serially, requires
+`FE_TONEAREST`, requires both lanes to inherit the same ARM FPCR value as the
+validated calling thread, preserves absolute source ordinals, and resolves
+simultaneous errors to the lowest failing source ordinal. Its receipt adds the
+fixed ranges, record and division counts, per-lane wall times, spawn-to-join
+wall, FP environment, final allocation bytes, and zero application-managed
+per-worker heap bytes. The production planner, public API, task/UI surface,
+and defaults are unchanged.
+
+Serial-versus-two-lane tests cover empty, one-record, odd, and even fixtures,
+opposite lane-completion orders, byte-for-byte result and audit equality,
+ordered result and audit hashes, RR/LL/source-ordinal preservation, and
+lowest-ordinal error selection. The unchanged source-775 arithmetic test also
+remains exact.
+
+Oracle authorizes one rerun of the same bounded four-SPW hybrid diagnostic
+after this implementation checkpoint. It is `bounded-hybrid-closure` only if
+readback plus candidate construction plus tile update remains at or below
+`15.000000 ms`, prediction-to-tile-ready is at or below `62.690729 ms`, and
+every existing correctness, topology, memory, and prohibited-stage gate
+passes unchanged. Otherwise it remains
+`bounded-correctness-pass-performance-ineligible`; no tuning sweep or clean is
+authorized by that outcome.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
