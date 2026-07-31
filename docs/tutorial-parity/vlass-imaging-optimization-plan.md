@@ -7296,8 +7296,37 @@ product tree. No outcome authorizes a clean, production change, tolerance
 change, or runtime change. If the certificate confirms that the first
 surviving scalar boundary already differs, a new and distinct CASA
 initial-residual array oracle is required before causal array-level
-localization can continue. At this pre-run checkpoint the certificate had not
-run.
+localization can continue.
+
+The single offline execution completed as
+`diverges-at-cycle-0-input-scalar`. All ten discrete cycle, iteration, and
+update comparisons were exact. None of the ten semantically comparable
+binary32 numerical scalars were bit-identical:
+
+- cycle-0 start peak differed by one ULP, `0.105222 ppm`;
+- cycle-0 threshold, unmasked end peak, and model flux differed by one, two,
+  and two ULP;
+- cycle-1 start peak and threshold differed by one ULP;
+- cycle-1 unmasked end peak differed by `48` ULP, `5.520142 ppm`, the largest
+  exact-window difference;
+- cycle-1 model flux differed by `16` ULP, `1.088343 ppm`; and
+- the cycle-2 start peak and threshold differed by five and six ULP.
+
+The result proves that the first surviving cross-producer scalar boundary
+already contains a numerical difference while the discrete controller
+trajectory remains exact. It does not assign the difference to an array,
+reduction, normalization, or solver operation. The existing rounded
+`171`-cycle context and exact casa-rs control trajectory remained valid, and
+all prohibited execution counters were zero. The immutable certificate
+SHA-256 is
+`54ab6755caf9dcc7ab034c4ad6f59b14c52c1a003254e3c41b2ff2ebc7b4e265`.
+
+No CASA call, MeasurementSet access, prediction, grid, FFT, minor cycle,
+clean, product-tree write, production change, or tolerance change occurred.
+The frozen evidence is now exhausted for array-level causal localization. The
+next useful correctness artifact must be a new and distinct reduced CASA
+initial-residual array oracle; repeating an existing CASA reference or timing
+run would not help.
 
 ## Iteration Rules
 
