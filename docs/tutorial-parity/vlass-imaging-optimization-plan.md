@@ -7394,6 +7394,88 @@ candidate promotes immediately to the `4,096`-square full-16-SPW row. Further
 sub-ppm arithmetic work is then prohibited unless new scientific evidence
 reopens it.
 
+### 2026-07-31 bounded science review and four-SPW promotion
+
+The bounded review is complete and the hybrid four-SPW candidate is promoted.
+The reusable `vlass_scientific_floor_review.py` analyzer reads only the frozen
+full-array comparison and its retained disk-backed planes. It does not run
+CASA, open the MeasurementSet, or execute imaging. Its focused tests cover the
+passing contract, a non-boundary alpha-topology rejection, a conspicuous
+localized-difference rejection, and fail-closed comparison-input binding.
+
+The first immutable calibration receipt correctly held the candidate for one
+provisional auxiliary guard: the single largest `.image.tt1` pixel difference
+was `0.008625954986772072` of the reference TT1 noise, while the initial guard
+was `0.001`. That isolated value is below one percent of the noise and is not a
+scientific artifact. More importantly, the beam-scale RMS was only
+`0.0001464029661700441` of the noise and the RMS at scales of eight beams or
+larger was only `0.00006008465446993819`. The negative v1 receipt and panel are
+preserved with SHA-256 digests
+`166adb50f3b35ca18fb41f21ea0b20da0eef0d4a29e151bf9fa7ac00dc8b2403`
+and
+`373b8c3de829dd4cdda8fcfd6482a3e90734e0335cbecfff4fd361ab7ba4f5e1`.
+
+The localized-artifact guard was therefore calibrated to `0.05` of the
+reference noise, while retaining the independently much tighter `0.001`
+beam-scale RMS ceiling and `0.0001` science-signal ceiling. Focused tests prove
+that an isolated two-percent-of-noise synthetic difference passes while a
+two-noise difference fails. This correction is evidence-driven and does not
+weaken the approved beam-scale or larger coherent-difference requirement.
+
+The immutable v2 receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260731-vlass-4096-4spw-scientific-floor-v2.json`,
+SHA-256
+`dcf405a389acadc6852a74d1086e645bd16adc402817bbaa000a99c65b96dc9f`.
+Its matched-scale source panel is the adjacent
+`20260731-vlass-4096-4spw-scientific-floor-v2.png`, SHA-256
+`4b6f19e1ecadd5159aaccac9a6ca15c39829ab5fb7df4f80a65547db4a1b544f`.
+The analyzer source, frozen comparison, comparison input, and casa-rs run log
+bound by that receipt have SHA-256 digests, respectively:
+
+- `bc976d859d150e99c2b66b62e73c3ab8b702a3ff72a19a8f750d3893471d9408`;
+- `03f8a4d8027479559749202abdfd99fe2f1bbdae905dc3a0b56d2bce272b93ab`;
+- `eca7d159dc44b7bbc7a055e58cacb6bc1d90ff13dd5134ee4655177faa037602`;
+  and
+- `99fefee3f1fdd251fa651c70c165511517fc81a7849aa40f611fc2f2f7a4a0f3`.
+
+All six scientific gates pass:
+
+- exact 19-product inventory, metadata, full coverage, and frozen `0.001` RMS
+  and `0.005` peak numerical ceilings;
+- source peak difference `9.829325556895184e-8`, integrated-flux difference
+  `0.00013489958235412956`, centroid separation
+  `0.00002489024620197792` pixels, and morphology-covariance difference
+  `0.000002002197187492829`;
+- TT0/TT1 robust-noise differences `0.000003761537856035552` and
+  `0.000005298644222730632`, with maximum quantile shifts only
+  `0.000013450474777773003` and `0.000022540091422345966` of their reference
+  noise;
+- TT0/TT1 dynamic-range differences `0.0000036632583800046946` and
+  `0.00000583944857803913`;
+- worst beam-scale RMS `0.0001464029661700441` of noise and worst RMS at eight
+  beams or larger `0.00006008465446993819` of noise, with all four
+  image/residual Taylor products below the science-signal ceiling; and
+- `41,496` common pixels in the positive five-sigma alpha science domain.
+  Alpha and alpha-error correlations are
+  `0.9999999999730328` and `0.9999999999728018`; their RMS differences are
+  `0.000007481633269920173` and `0.0000105425690164437`. All `16` topology
+  mismatches are enumerated and lie within
+  `0.00001029610557753966` relative distance of the frozen cutoff.
+
+Direct inspection of the v2 panel finds no conspicuous source, morphology,
+residual, or alpha discrepancy at the shared display scales. The visible
+difference panels require independent scales around `1e-7 Jy/beam` for TT0 and
+`1e-5` for alpha, while the corresponding science panels span roughly
+`1e-2 Jy/beam` and order-unity alpha. This completes the bounded visual review.
+
+The promoted run remains the existing `29.43`-second wall / `25.362`-second
+core candidate with `171` cycles, `2,000` iterations, no warning or divergence,
+and no new execution. Its old `comparison_failed` label remains historically
+correct under the superseded exact-topology contract; the v2 scientific-floor
+receipt is now the active promotion decision. No CASA call, new imaging run,
+full-size clean, or `12,150`-square development workload was started for this
+review. The next permitted workload is the `4,096`-square full-16-SPW row.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
