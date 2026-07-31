@@ -6332,6 +6332,48 @@ The next replacement may change only FP-state capture compatibility, use
 fresh v7 artifacts, and leave the successfully resolved breakpoint, frozen
 manifest, target calls, CASA parameters, and stop boundary unchanged.
 
+The v7 replacement successfully captured the complete source-zero RR/TT0
+control call:
+
+- pre-call `s0..s3` bits:
+  `[1033899791, 1036192990, 1064179348, 3172914251]`;
+- post-call `s0..s1` bits: `[1034097304, 1037600252]`;
+- `fpcr` was zero before and after the helper;
+- `fpsr` was `134217882` before and after the helper.
+
+The operands and result exactly match the frozen source-zero identity. This
+validates the manifest's first-call binding, loaded helper address, arm64
+argument/result ABI, and register readers. It does not yet classify the
+source-`1,446` mismatch.
+
+After the source-zero return, this LLDB left the scripted one-shot return
+breakpoint active. The stale return callback fired on filtered helper call
+index one, where no target capture was pending, and safely invalidated the
+overall trace with `LLDB return breakpoint has no pending target`. The raw
+receipt therefore contains the valid control tuple but has status `invalid`
+and `next_call_index: 2`. LLDB then detached and the bounded four-SPW
+`niter=0` diagnostic completed in `12.3735530419508` seconds. It ran no CLEAN
+iterations and is not promoted correctness or performance evidence.
+
+The v7 debugger-ready receipt, partial raw trace, LLDB log, launch log, CASA
+log, unreachable NPZ, and unreachable JSON hash to
+`b39f18f7c58eee3c7a7ad142bc28ac923e95bbba9e98de31c625fe689489be72`,
+`7b2381df4353e4d76aac0849e0a6cd05328078287bb01114cd05a7d5a0d9489f`,
+`cd62edf025c460d3fab016e9a1a537e3f1abfc547521d8e4d552732ddbeb2aae`,
+`3712c5edbe8eae0d3220845b209e122b683b00666f564f1d1984e3d73a405b79`,
+`20daf5e8c4459804d929bb9859218b00c3dbfeade75828dd9c6d0d2776c01c0c`,
+`a801635e7d9529cc4dbd3f462abd10bdcd66b8283bb5894a85da419a95899b7d`,
+and
+`d4f7b941685635edeba8cabc2708d7cd7123fa18da94cbdd993fddcca105a9eb`.
+The v7 runner and callback hash to
+`e866c12fd3dbe946ed6fb6c39db853058363b96e4083fa43d28bc2ece8322de0`
+and
+`6d7dd9aaf20bfd1a1a46414a7bbe828c7f723e19274fda20a0696561c89f78d8`.
+The next replacement may explicitly disable the return breakpoint in its own
+callback, use fresh v8 artifacts, and leave the now-validated operand readers,
+helper breakpoint, frozen manifest, target calls, CASA parameters, and final
+stop boundary unchanged.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.

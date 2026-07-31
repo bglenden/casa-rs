@@ -90,7 +90,7 @@ def _register_u64(frame: lldb.SBFrame, name: str) -> int:
     if not register.IsValid():
         raise RuntimeError(f"LLDB register {name} is unavailable")
     error = lldb.SBError()
-    value = register.GetData().GetUnsignedInt64(error, 0)
+    value = register.GetValueAsUnsigned(error, 0)
     if error.Fail():
         raise RuntimeError(f"read LLDB register {name}: {error}")
     return int(value)
