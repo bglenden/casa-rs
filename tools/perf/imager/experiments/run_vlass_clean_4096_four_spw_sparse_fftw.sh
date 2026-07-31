@@ -57,6 +57,8 @@ frozen_restoring_beam="${CASA_RS_VLASS_FROZEN_RESTORING_BEAM:-}"
 frozen_final_state_checkpoints="${CASA_RS_VLASS_FROZEN_FINAL_STATE_CHECKPOINTS:-0}"
 prediction_sidecar_prefix="${CASA_RS_VLASS_PREDICTION_SIDECAR_PREFIX:-}"
 wide_division_sidecar_prefix="${CASA_RS_VLASS_WIDE_DIVISION_SIDECAR_PREFIX:-}"
+prediction_prefix_trace="${CASA_RS_VLASS_PREDICTION_PREFIX_TRACE:-}"
+prediction_prefix_source_ordinal="${CASA_RS_VLASS_PREDICTION_PREFIX_SOURCE_ORDINAL:-}"
 measures_dir="${CASA_RS_VLASS_MEASURES_DIR:-$HOME/.casa/data}"
 ms="$root/data/frozen-clean-b80d5e87487a/VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms"
 residual_only_label=""
@@ -98,6 +100,7 @@ image_response_dyadic_census_label=""
 image_response_dyadic_tiles_label=""
 prediction_sidecar_label=""
 wide_division_sidecar_label=""
+prediction_prefix_trace_label=""
 grid_threads_label=""
 acceleration_label=""
 parallel_label=""
@@ -197,6 +200,31 @@ if [[ -n "$wide_division_sidecar_prefix" ]]; then
     wide_division_sidecar_label="-wide-division-sidecar"
     experimental_environment+=(
         CASA_RS_EXPERIMENTAL_AWPROJECT_WIDE_DIVISION_SIDECAR_PREFIX="$wide_division_sidecar_prefix"
+    )
+fi
+if [[ -n "$prediction_prefix_trace" ]]; then
+    if [[ -n "$prediction_sidecar_prefix" || -n "$wide_division_sidecar_prefix" ]]; then
+        echo "prediction-prefix trace and prediction sidecars are mutually exclusive" >&2
+        exit 2
+    fi
+    if [[ "$frozen_final_state_checkpoints" != "1" ]]; then
+        echo "CASA_RS_VLASS_PREDICTION_PREFIX_TRACE requires frozen-final-state checkpoints" >&2
+        exit 2
+    fi
+    case "$prediction_prefix_source_ordinal" in
+        ''|*[!0-9]*)
+            echo "CASA_RS_VLASS_PREDICTION_PREFIX_SOURCE_ORDINAL must be a non-negative integer" >&2
+            exit 2
+            ;;
+    esac
+    if [[ -e "$prediction_prefix_trace" ]]; then
+        echo "refusing to overwrite prediction-prefix trace: $prediction_prefix_trace" >&2
+        exit 2
+    fi
+    prediction_prefix_trace_label="-prediction-prefix-source${prediction_prefix_source_ordinal}"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_PREDICTION_PREFIX_TRACE="$prediction_prefix_trace"
+        CASA_RS_EXPERIMENTAL_AWPROJECT_PREDICTION_PREFIX_SOURCE_ORDINAL="$prediction_prefix_source_ordinal"
     )
 fi
 if [[ "$tapless_phase" == "1" ]]; then
@@ -640,7 +668,7 @@ if [[ "$grid_threads" != "1" ]]; then
     parallel_label="-parallel"
     parallel_argument=(--parallel)
 fi
-label="vlass-production-clean-4096-four-spw-sparse-fftw-t${fftw_threads}-niter${niter}${tapless_phase_label}${replay_compact_programs_label}${prime_replay_initial_dirty_label}${residual_only_label}${residual_live_cfs_only_label}${metal_f32_residual_fft_label}${metal_prediction_probe_label}${metal_tile_grid_probe_label}${metal_resident_chain_probe_label}${metal_resident_tile_chain_label}${metal_gpu_residual_replay_label}${metal_global_tile_replay_label}${prediction_grid_census_label}${model_delta_census_label}${incremental_model_probe_label}${incremental_model_runtime_label}${selected_model_dft_label}${image_response_cache_label}${image_response_dyadic_census_label}${image_response_dyadic_tiles_label}${prediction_sidecar_label}${wide_division_sidecar_label}${model_fft_label}${sparse_model_dft_label}${linear_madfm_label}${keyed_madfm_label}${radix_madfm_label}${cache_refreshed_nsigma_label}${sparse_mask_peak_search_label}${parallel_model_term_fft_label}${model_fft_timing_label}${fftw_f64_timing_label}${fftw_f64_wisdom_label}${fftw_f32_wisdom_label}${sparse_model_prep_label}${parallel_residual_term_fft_label}${persistent_metal_pack_label}${plan_threads_label}${pack_threads_label}${grid_threads_label}${parallel_label}${acceleration_label}-v1"
+label="vlass-production-clean-4096-four-spw-sparse-fftw-t${fftw_threads}-niter${niter}${tapless_phase_label}${replay_compact_programs_label}${prime_replay_initial_dirty_label}${residual_only_label}${residual_live_cfs_only_label}${metal_f32_residual_fft_label}${metal_prediction_probe_label}${metal_tile_grid_probe_label}${metal_resident_chain_probe_label}${metal_resident_tile_chain_label}${metal_gpu_residual_replay_label}${metal_global_tile_replay_label}${prediction_grid_census_label}${model_delta_census_label}${incremental_model_probe_label}${incremental_model_runtime_label}${selected_model_dft_label}${image_response_cache_label}${image_response_dyadic_census_label}${image_response_dyadic_tiles_label}${prediction_sidecar_label}${wide_division_sidecar_label}${prediction_prefix_trace_label}${model_fft_label}${sparse_model_dft_label}${linear_madfm_label}${keyed_madfm_label}${radix_madfm_label}${cache_refreshed_nsigma_label}${sparse_mask_peak_search_label}${parallel_model_term_fft_label}${model_fft_timing_label}${fftw_f64_timing_label}${fftw_f64_wisdom_label}${fftw_f32_wisdom_label}${sparse_model_prep_label}${parallel_residual_term_fft_label}${persistent_metal_pack_label}${plan_threads_label}${pack_threads_label}${grid_threads_label}${parallel_label}${acceleration_label}-v1"
 if [[ -n "${CASA_RS_VLASS_LABEL_OVERRIDE:-}" ]]; then
     case "$CASA_RS_VLASS_LABEL_OVERRIDE" in
         *[!A-Za-z0-9._-]*)
@@ -797,6 +825,24 @@ if [[ -n "$wide_division_sidecar_prefix" ]]; then
         "AWProject wide-division sidecar completed before residual gridding" \
         "$log"; then
         echo "wide-division sidecar run failed before its intended terminal boundary" >&2
+        exit 2
+    fi
+    echo "$log"
+    exit 0
+fi
+if [[ -n "$prediction_prefix_trace" ]]; then
+    if [[ "$run_status" -eq 0 ]]; then
+        echo "prediction-prefix trace unexpectedly continued beyond its fail-closed stop" >&2
+        exit 2
+    fi
+    if [[ ! -f "$prediction_prefix_trace" ]]; then
+        echo "prediction-prefix run stopped without $prediction_prefix_trace" >&2
+        exit 2
+    fi
+    if ! /usr/bin/grep -Fq \
+        "AWProject prediction-prefix trace completed before Metal prediction or residual gridding" \
+        "$log"; then
+        echo "prediction-prefix run failed before its intended terminal boundary" >&2
         exit 2
     fi
     echo "$log"
