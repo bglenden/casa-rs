@@ -6419,6 +6419,82 @@ No production arithmetic change is authorized by this trace alone. The next
 bounded discriminator must inspect only the numerator construction feeding
 the already-audited call site while preserving exact source order.
 
+### 2026-07-31 pre-division source-phase full-stream certificate
+
+The same Oracle conversation selected one offline full-stream certificate
+after the v8 live trace. The frozen wide sidecar contains all `98,239`
+pre-source-phase numerators and normalizers for both RR/LL roles and TT0/TT1.
+The analyzer therefore opened no MS and ran no CASA, Metal, prediction
+dispatch, grid, FFT, product, or CLEAN path.
+
+For each of the `392,956` source-role-term records, the certificate replayed
+the installed source order:
+
+1. multiply the complete Complex32 numerator by the conjugate of the recorded
+   source phasor, using four separately rounded binary32 products and a
+   separately rounded add/subtract;
+2. leave the normalizer unchanged; and
+3. run the audited installed-CASA finite `___divsc3` graph using exact
+   binary32-to-binary64 widening, the official binary64 multiply/FMA order,
+   binary64 division, and one final narrowing per component.
+
+All fail-closed controls passed:
+
+- topology is exactly `98,239` sources, `196,478` source-role pairs, and
+  `392,956` terms;
+- source identity hashes to
+  `8e1146ee0c0c917c6b3eaf42204e8872eae8d39aa78b9fd691549f03d0c5c75a`;
+- replaying the raw operands without the pre-division phase exactly
+  reproduces the frozen CPU-wide streams and their `151` TT0 and `190` TT1
+  mismatch counts, both before and after the existing alignment phase;
+- source zero remains exact; and
+- source `1,446` changes the pre-phase numerator
+  `[969396468, 3196932265]` to the live call-site operand
+  `[969396469, 3196932265]`, retains the live denominator
+  `[1064983698, 1014081710]`, and returns the frozen official quotient
+  `[3145554492, 3197138881]`.
+
+The result is `predivision-phase-closes-all-terms`. TT0 and TT1 each have
+`196,478` bit-exact source-role values, zero mismatches, and maximum component
+ULP distance zero. The candidate ordered hashes equal the frozen CASA raw
+term hashes:
+
+- TT0:
+  `b2abd7f145c576708ee2619269241fb988d9257c5b66781156eb52e2293c6a8b`;
+- TT1:
+  `c2ef9b592db490ecbda3a1d4e6b86509518547b9f0f64f74a13078f1d5dabf60`.
+
+The phased-numerator TT0 and TT1 hashes are
+`9bd00b3b792f9e17e3823e29a6736450a577b510b4e8b7325442967e5a828862`
+and
+`6b753117d9e64ec94a618ebd999e4013b6065c9831c0089ea7317ff5b4342674`.
+The analyzer completed in `5,132.295083021745` ms, spent
+`3,130.796124925837` ms on pre-division phase and wide division, and recorded
+a peak resident footprint of `277,725,184` bytes. These are analyzer costs,
+not casa-rs imaging performance.
+
+The first runner invocation emitted a shell associative-subscript syntax
+warning before the analyzer ran. The analyzer's independent input,
+topology, hash, current-order, source-zero, and live source-`1,446` gates all
+passed, so the receipt remains valid. The runner now uses portable indexed
+arrays; its read-only verification passed every pinned input hash and stopped
+at the expected refusal to overwrite the existing receipt. The analyzer was
+not rerun.
+
+The receipt, analyzer, focused test, and corrected runner hash to,
+respectively:
+
+- `14f4452f91fb39a38d3d2191a1be4628ba7ec7c16cea94bd75faba5e7e47587f`;
+- `4969508b061f7845f92d66a1423d45227bd4a8389d0709e24eff2127b94b9cb0`;
+- `9f627ac5a281a01e1d4a727e82851a051ff35bb9c702f445f0b8aa2bce937cac`;
+  and
+- `93f279934fe2a567f3dc21cad55cc13a4837291531161dbb7af886b6b2ea1be5`.
+
+This certificate authorizes an experimental prediction-only implementation
+of CASA's source phase before complex normalization, followed by the existing
+four-SPW prediction-only parity gate. It does not authorize a production
+default, CLEAN, full-16-SPW promotion, or a final-candidate run.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
