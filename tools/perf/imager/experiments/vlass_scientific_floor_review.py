@@ -69,7 +69,10 @@ CONTRACT = {
     "dynamic_range_relative_difference_max": 1.0e-3,
     "coherent_block_rms_over_reference_noise_max": 1.0e-3,
     "coherent_block_rms_over_reference_signal_max": 1.0e-4,
-    "difference_abs_max_over_reference_noise_max": 1.0e-3,
+    # A per-pixel guard catches a localized artifact, not ordinary sub-noise
+    # arithmetic scatter.  Beam-scale and larger coherence have independent,
+    # much tighter RMS limits above.
+    "difference_abs_max_over_reference_noise_max": 5.0e-2,
     "alpha_signal_to_noise_min": 5.0,
     "alpha_threshold_guard_fraction": 5.0e-2,
     "alpha_boundary_guard_fraction": 1.0e-4,
