@@ -6579,6 +6579,83 @@ memory-policy experiment ran. The candidate remains experimental and the
 four-SPW row remains unpromoted. This result must be checkpointed before the
 same Oracle conversation selects a bounded Taylor-power discriminator.
 
+### 2026-07-31 Taylor-power operation-graph census
+
+The same Oracle conversation selected one offline scalar-operation census
+after raw TT0 and TT1 became exact. The diagnostic compiled a tiny C++ helper
+against the CASA casacore `Math.h`, processed the already-aligned
+`98,239` frozen source frequencies, and stopped after separately rounded
+scaled-TT1 and combined-prediction arithmetic. It opened no MS and entered no
+CASA, Metal, grid, FFT, image, product, residual, controller, or CLEAN path.
+
+The source inspection and compiled type census produced an important
+correction. In the installed source context, unqualified
+`pow(Float, Int)` has an eight-byte `Double` expression type. Nevertheless,
+all source-context, forced-casacore, forced-standard, and identity graphs are
+bit-identical for this runtime order-one call. Each retains the existing
+`71,588` power, `230` scaled-TT1, and `434` combined mismatches. Their power,
+scaled, and combined hashes are:
+
+- `281cc956f1571fb94ccc5bc8f652170bc248a08fa642e4ba60b662924a49ca77`;
+- `3358d026bf59612cbe35bfedf6f33ad1d14ddac309fd43428d87314d959404ea`;
+  and
+- `5ee1aeded69e61cd9e5e8d5bece01397c8a5a743ca8bb856653ea12dab7832cb`.
+
+The negative late-frequency-cast graph is bit-identical to all `98,239`
+values in the frozen field labeled `taylor_power1`; its hash is
+`60ed5053805639b1ded833b54af73069c8f497ac025e60d3ca273f3c0e5e16d5`.
+That apparent power closure does not close the official downstream
+boundaries: separately scaling the exact phase-aligned TT1 produces
+`142,510` source-role mismatches, and combining with exact TT0 produces
+`128,561`. Source `775` makes the distinction explicit:
+
+- source-context/casacore/standard/identity power bits: `3198777242`;
+- frozen recorded power bits and late-cast bits: `3198777243`; and
+- the official frozen TT1-scaled and combined values still do not follow the
+  late-cast replay after phase alignment.
+
+The census classification is therefore
+`power-exact-downstream-different`, not a production candidate. Inspection of
+the frozen CASA interposer explains why. Its TT0, raw TT1, scaled TT1, and
+combined cubes come from the official CASA sub-FTMs and
+`modifyModelVis`, but its auxiliary `taylor_power1` field was reconstructed
+after capture with the channel frequency retained as `Double`. CASA source
+first assigns that frequency to a `Float` local. The field is thus a
+late-cast counterfactual, not a live CASA multiplier. The previous
+`taylor-power-difference` label overstates what that auxiliary field proved;
+the earned remaining classification is
+`taylor-scaling-or-operation-order-difference`.
+
+The reusable interposer now reconstructs the auxiliary field with CASA's
+source-typed `Float freq`, `Float mulfactor`, unqualified runtime-`Int` pow
+graph and writes the explicit contract
+`source-float-frequency-unqualified-pow-runtime-int-v1`. The comparator
+refuses to assign a power-specific classification when that contract is
+absent. The already-frozen CASA oracle was not rerun or modified.
+
+All offline controls passed, including the exact aligned TT0 and TT1 hashes,
+the frozen current-control mismatch counts, source/frequency ordering, frozen
+reference-frequency bits `41e642f2b1117f64`, and the source `775` record.
+The formatting-stable v2 receipt supersedes the pre-format v1 receipt. The
+helper executable and both data streams are identical, so the diagnostic
+arithmetic was not repeated with a different graph. The v2 receipt, helper
+source, compiled helper executable, frequency input, and helper output hash
+to, respectively:
+
+- `24cbbc511c56add7d69aa4fc8ae525ce47c8cd06a405864df4094dde59329615`;
+- `9b90153366f38ed097d9b85c7cf3103527e7ac0c824bbd8b78f4d8329715bac9`;
+- `38b0782a9d204107f640a8576775765d6c2df7c0c11cb927341c899bf479da2b`;
+- `50c470666da0bfdcfa71b6e768419755b84a0f51391da07be4cdbc2f8ebdd477`;
+  and
+- `577439abf33cf84a684072987a5882e2e6c5501b948c12683a00fe2bbbaef907`.
+
+No production arithmetic change, tolerance change, clean, full-16-SPW
+promotion, or final-candidate run is authorized. The next discriminator must
+bind the official order among Taylor scaling, source phase, and Complex32
+addition without using the defective auxiliary field. This checkpoint is
+required before asking the same Oracle conversation to select that
+discriminator.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.

@@ -224,6 +224,7 @@ def classify(
     casa_tt1_scaled_rotated: np.ndarray,
     casa_combined_rotated: np.ndarray,
     power_bits_match: bool,
+    power_contract_valid: bool,
 ) -> tuple[str, tuple[int, int] | None]:
     tt0 = sidecar.first_pair_mismatch(casars_tt0, casa_tt0_rotated)
     if tt0 is not None:
@@ -235,6 +236,12 @@ def classify(
         if sidecar.first_pair_mismatch(casars_tt1, casa_tt1_raw) is None:
             return "tt1-phase-application-difference", tt1
         return "tt1-degrid-or-folded-phase-difference", tt1
+    if not power_contract_valid:
+        mismatch = sidecar.first_pair_mismatch(
+            casars_scaled,
+            casa_tt1_scaled_rotated,
+        )
+        return "taylor-scaling-or-operation-order-difference", mismatch
     if not power_bits_match:
         mismatch = sidecar.first_pair_mismatch(
             casars_scaled,
@@ -326,6 +333,10 @@ def analyze(
     power_bits_match = bool(
         np.array_equal(casars_powers.view(np.uint32), casa_powers.view(np.uint32))
     )
+    power_contract = host.get("taylor_power_contract")
+    power_contract_valid = (
+        power_contract == "source-float-frequency-unqualified-pow-runtime-int-v1"
+    )
     power_mismatches = np.flatnonzero(
         casars_powers.view(np.uint32) != casa_powers.view(np.uint32)
     )
@@ -385,6 +396,7 @@ def analyze(
             casa_tt1_scaled_rotated=casa_tt1_scaled_rotated,
             casa_combined_rotated=casa_combined_rotated,
             power_bits_match=power_bits_match,
+            power_contract_valid=power_contract_valid,
         )
     else:
         classification, first = "invalid-instrumentation", None
@@ -455,6 +467,8 @@ def analyze(
         "casa_full_record_count": int(records.size),
         "row_identity": row_identity,
         "power_bits_match": power_bits_match,
+        "taylor_power_contract": power_contract,
+        "taylor_power_contract_valid": power_contract_valid,
         "power_mismatch_count": int(power_mismatches.size),
         "first_power_mismatch": (
             int(power_mismatches[0]) if power_mismatches.size else None
