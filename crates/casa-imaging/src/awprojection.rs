@@ -30,7 +30,7 @@ use crate::{ImagingError, gridder::AwProjectKernelPixels};
 const IMAGING_PREFIX: &str = "CFS_";
 const WEIGHT_PREFIX: &str = "WTCFS_";
 #[cfg(unix)]
-const EXPERIMENTAL_PACKED_CF_MAGIC: [u8; 16] = *b"CASARS_AWCF_V1\0\0";
+const EXPERIMENTAL_PACKED_CF_MAGIC: [u8; 16] = *b"CASARS_AWCF_V2\0\0";
 #[cfg(unix)]
 const EXPERIMENTAL_PACKED_CF_HEADER_BYTES: u64 = 32;
 
@@ -460,7 +460,10 @@ impl AwProjectKernelPixels for ExperimentalMappedCfPlane {
         if x >= self.shape[0] || y >= self.shape[1] {
             return None;
         }
-        let index = x.checked_mul(self.shape[1])?.checked_add(y)?;
+        // CASA image storage makes the first (X) axis contiguous.  The V2
+        // experiment format preserves that order so a packed CF can be mapped
+        // without transposing or copying its pixels.
+        let index = y.checked_mul(self.shape[0])?.checked_add(x)?;
         let byte_offset = self
             .offset
             .checked_add(index.checked_mul(std::mem::size_of::<Complex32>())?)?;
@@ -671,7 +674,7 @@ impl ExperimentalPackedCfStore {
             experimental_packed_complex_slice(self.map.as_ref(), offset, value_count, source_path)?
                 .to_vec();
         Ok(Array2::from_shape_fn((shape[0], shape[1]), |(x, y)| {
-            values[x * shape[1] + y]
+            values[y * shape[0] + x]
         }))
     }
 
@@ -2262,17 +2265,17 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn experimental_mapped_plane_uses_ndarray_storage_order() {
+    fn experimental_mapped_plane_uses_casa_x_contiguous_storage_order() {
         use std::io::Write as _;
 
         let mut file = tempfile::NamedTempFile::new().unwrap();
         let values = [
             Complex32::new(0.0, 0.0),
-            Complex32::new(1.0, -1.0),
             Complex32::new(10.0, -10.0),
+            Complex32::new(1.0, -1.0),
             Complex32::new(11.0, -11.0),
-            Complex32::new(20.0, -20.0),
-            Complex32::new(21.0, -21.0),
+            Complex32::new(2.0, -2.0),
+            Complex32::new(12.0, -12.0),
         ];
         let byte_count = std::mem::size_of_val(&values);
         // SAFETY: `Complex32` is represented by two `f32` values and the
@@ -2288,8 +2291,8 @@ mod tests {
             shape: [2, 3],
         };
         assert_eq!(plane.get_pixel((0, 0)), Some(values[0]));
-        assert_eq!(plane.get_pixel((0, 1)), Some(values[1]));
-        assert_eq!(plane.get_pixel((1, 0)), Some(values[3]));
+        assert_eq!(plane.get_pixel((0, 1)), Some(values[2]));
+        assert_eq!(plane.get_pixel((1, 0)), Some(values[1]));
         assert_eq!(plane.get_pixel((1, 2)), Some(values[5]));
     }
 
@@ -2315,8 +2318,8 @@ mod tests {
             let cell = cache.load(key).unwrap();
             for plane in [&cell.imaging, &cell.weight] {
                 let mut values = Vec::with_capacity(plane.len());
-                for x in 0..plane.shape()[0] {
-                    for y in 0..plane.shape()[1] {
+                for y in 0..plane.shape()[1] {
+                    for x in 0..plane.shape()[0] {
                         values.push(plane[(x, y)]);
                     }
                 }

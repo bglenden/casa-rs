@@ -20,6 +20,8 @@ replay_compact_programs="${CASA_RS_VLASS_REPLAY_COMPACT_PROGRAMS:-0}"
 prime_replay_initial_dirty="${CASA_RS_VLASS_PRIME_REPLAY_INITIAL_DIRTY:-0}"
 tapless_phase="${CASA_RS_VLASS_TAPLESS_PHASE:-0}"
 tapless_phase_census="${CASA_RS_VLASS_TAPLESS_PHASE_CENSUS:-0}"
+packed_cf_experiment="${CASA_RS_VLASS_PACKED_CF_EXPERIMENT:-}"
+trust_packed_cf_experiment="${CASA_RS_VLASS_TRUST_PACKED_CF_EXPERIMENT:-0}"
 niter="${CASA_RS_VLASS_NITER:-2000}"
 image_response_cache="${CASA_RS_VLASS_IMAGE_RESPONSE_CACHE:-0}"
 image_response_dyadic_tiles="${CASA_RS_VLASS_IMAGE_RESPONSE_DYADIC_TILES:-0}"
@@ -106,6 +108,29 @@ if [[ "$tapless_phase_census" == "1" ]]; then
     )
 elif [[ "$tapless_phase_census" != "0" ]]; then
     echo "CASA_RS_VLASS_TAPLESS_PHASE_CENSUS must be 0 or 1" >&2
+    exit 2
+fi
+if [[ -n "$packed_cf_experiment" ]]; then
+    if [[ ! -f "$packed_cf_experiment" ]]; then
+        echo "packed CF experiment does not exist: $packed_cf_experiment" >&2
+        exit 2
+    fi
+    label="${label}-packed-cf"
+    experimental_environment+=(
+        CASA_RS_AWPROJECT_PACKED_CF_EXPERIMENT="$packed_cf_experiment"
+    )
+fi
+if [[ "$trust_packed_cf_experiment" == "1" ]]; then
+    if [[ -z "$packed_cf_experiment" ]]; then
+        echo "CASA_RS_VLASS_TRUST_PACKED_CF_EXPERIMENT requires CASA_RS_VLASS_PACKED_CF_EXPERIMENT" >&2
+        exit 2
+    fi
+    label="${label}-trusted"
+    experimental_environment+=(
+        CASA_RS_AWPROJECT_TRUST_PACKED_CF_EXPERIMENT=1
+    )
+elif [[ "$trust_packed_cf_experiment" != "0" ]]; then
+    echo "CASA_RS_VLASS_TRUST_PACKED_CF_EXPERIMENT must be 0 or 1" >&2
     exit 2
 fi
 if [[ "$image_response_dyadic_tiles" == "1" ]]; then

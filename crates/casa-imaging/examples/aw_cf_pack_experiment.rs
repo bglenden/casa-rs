@@ -14,7 +14,7 @@ use casa_imaging::AwConvolutionFunctionCache;
 use ndarray::Array2;
 use num_complex::Complex32;
 
-const MAGIC: [u8; 16] = *b"CASARS_AWCF_V1\0\0";
+const MAGIC: [u8; 16] = *b"CASARS_AWCF_V2\0\0";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !cfg!(target_endian = "little") {
@@ -79,17 +79,19 @@ fn write_plane(
     writer: &mut BufWriter<File>,
     plane: &Array2<Complex32>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let values = plane
-        .as_slice_memory_order()
-        .ok_or("packed CF source plane is not contiguous")?;
-    let byte_count = values
-        .len()
-        .checked_mul(std::mem::size_of::<Complex32>())
-        .ok_or("packed CF byte count overflowed")?;
-    // SAFETY: `Complex32` is `#[repr(C)]` over two `f32` values and the
-    // experiment format is explicitly native little-endian Complex32.
-    let bytes = unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), byte_count) };
-    writer.write_all(bytes)?;
+    let mut row = Vec::with_capacity(plane.shape()[0]);
+    for y in 0..plane.shape()[1] {
+        row.clear();
+        row.extend((0..plane.shape()[0]).map(|x| plane[(x, y)]));
+        let byte_count = row
+            .len()
+            .checked_mul(std::mem::size_of::<Complex32>())
+            .ok_or("packed CF byte count overflowed")?;
+        // SAFETY: `Complex32` is `#[repr(C)]` over two `f32` values and the
+        // experiment format is explicitly native little-endian Complex32.
+        let bytes = unsafe { std::slice::from_raw_parts(row.as_ptr().cast::<u8>(), byte_count) };
+        writer.write_all(bytes)?;
+    }
     Ok(())
 }
 

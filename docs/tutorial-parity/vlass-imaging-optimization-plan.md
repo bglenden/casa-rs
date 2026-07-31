@@ -7550,6 +7550,212 @@ campaign is therefore unblocked. The next permitted executions are bounded
 planner dry-runs and the required `12,150`-square dirty memory-policy row, not
 routine full-size clean development runs.
 
+### 2026-07-31 breakthrough-performance architecture reset
+
+Brian explicitly redirected the active optimization search toward high-upside
+algorithm and architecture changes. Non-destructive experiments may replace
+the operator representation, dataflow, precision, CPU/GPU partition, or
+concurrency topology. Existing infrastructure and prior implementation cost
+are not reasons to retain a slower design. Final incorporation of a materially
+different default still requires the existing scientific-floor review,
+end-to-end evidence, suitable task/UI controls, and Brian's approval. This
+does not change the full-size acceptance rows, the 19-product contract, the
+required 32 GiB memory campaign, or the independent 10x requirement.
+
+A fresh signed-in Oracle architecture review was challenged against the
+promoted v59 evidence and then against the actual source representation. Its
+useful conclusion is not an authority claim; it is a portfolio reset that the
+local measurements must falsify or support.
+
+The v59 timing proves that CLEAN is not the current dominant owner. Eliminating
+all `4.529` seconds of minor cycles and all `5.401` seconds of residual
+refreshes would reduce `101.646` seconds only to `91.716` seconds, a `1.108x`
+gain. Making the `60.494`-second initial PSF stage five times faster would
+reduce end-to-end time only to about `53.251` seconds (`1.909x`), and deleting
+that stage entirely would leave about `41.152` seconds (`2.470x`). A credible
+multi-x architecture must therefore reduce several owners together:
+operator construction, CF traffic, destination state, repeated image passes,
+and product lifetimes.
+
+The initial Oracle model described the current replay too loosely as one
+record per tap. Source inspection corrected that model. Each accepted sample
+stores eight compact plans whose bundle indices reference deduplicated
+`AwProjectCompactTapBundle` values keyed by visibility group, stable CF cell,
+imaging/weight role, oversampling offsets, and conjugation. POINTING phase may
+be factored through `AwProjectPhaseTable`; spatial-tile tasks already have
+exclusive destination ownership; and retained windows may compact into a
+Metal-resident program. Nevertheless each bundle still owns the complete
+sampled `Complex32` CF patch, so the retained representation remains large.
+
+After that source correction, Oracle withdrew the generic "matrix-free AW"
+label rather than renaming the same sampled operator. Its revised ranking was:
+first a bounded uncompensated tile-local f32 experiment; second hybrid W
+stacking with residual-W plus the required A/WB/POINTING terms; third exact
+canonical CF views and role fusion only if a discriminator proved worthwhile;
+and image-domain gridding or low-rank approximations later. It also proposed
+separating constant-CF arithmetic, CF reads, destination stores, uncompensated
+accumulation, and canonical-atlas gathers. Local source and timing evidence,
+not that ranking, remains decisive.
+
+More importantly, the frozen v59 log already provides most of the proposed
+operator-anatomy discriminator. Across the 16 initial-dirty blocks it records:
+
+- `385,862` accepted and routed samples;
+- `3,747.971` ms of planning;
+- `47,531.391` ms of materialization, including `43,754.679` ms attributed to
+  CF loading and `3,743.463` ms to tap packing;
+- `7,802.171` ms of gridding including tile-plan work;
+- `4,656,227,648` bytes summed across the per-block peak tap payloads; and
+- a final retained replay residency of `6,981,959,008` bytes.
+
+The initial Metal summary independently records `657,782,764` kernel values
+and `7,186.947` ms total, including `2,041.040` ms dispatch wait and
+`1,796.120` ms finalize wait. The CF cache loaded `3,822` distinct paired
+cells, had zero hits, and evicted `3,759` under its 256 MiB budget. The data do
+not justify another arithmetic or replay-scheduler optimization: operator
+construction and CF access consume most of the dominant stage.
+
+The active architecture portfolio is now:
+
+1. A compact CF-state/tile operator that keeps visibility, CF-cell,
+   oversampling, POINTING, and destination descriptors but does not persist a
+   sampled CF patch per bundle. It may sample directly from mapped CF cells or
+   use a smaller reusable basis. Fused MT-MFS RHS/Hessian moments follow only
+   after this representation wins.
+2. Hybrid W stacking plus A/WB/conjugate-beam projection, selected by a
+   measured minimum of residual support work plus added FFT/screen work.
+3. A bounded Metal image-domain-gridding adjoint, retained only if real
+   subgrid/DDE occupancy makes its fixed costs credible on Apple silicon.
+4. Tile-local f32 pairwise accumulation with selective higher-precision
+   refinement, which may remove the global compensation planes and halve the
+   eight-plane grid state. This is an explicit numerical approximation and
+   must pass the frozen scientific floor.
+5. Explicit iterative-state and final-product liveness: sparse authoritative
+   components, only required residual and PSF-patch state during CLEAN, then
+   tilewise derivation and writing of all 19 required products.
+
+Generic NUFFT, generic full-field faceting, further tile-size tuning, another
+tap cache, and deconvolution replacement are not active first choices. NUFFT
+alone does not solve A/W/POINTING; full faceting retains dense-output costs;
+the current tile substrate has already supplied its local benefit; prior tap
+caches lost end to end; and deleting all current CLEAN work cannot deliver a
+material speedup. Pointing-local processing remains a high-upside later
+experiment for the all-63-field row once the single-field operator boundary is
+selected.
+
+Before a large implementation, the remaining operator discriminator must add
+only information absent from v59:
+
+- mapped/direct CF access versus current CASA-table cell loading;
+- direct on-kernel sampling versus persisted sampled bundles;
+- A-only, W-only, and combined-AW support/touched-pixel inventories;
+- one logical plane with uncompensated tile-local f32 accumulation versus the
+  current compensated destination; and
+- physical storage/DRAM traffic and GPU occupancy where the host exposes
+  credible counters.
+
+Each candidate must state an isolated boundary, abort gate, promotion gate,
+and broader falsification. Initial promotion targets are intentionally
+material: a representation experiment must reduce its equivalent
+construction-plus-operator boundary to at most `0.65x` current, and a complete
+candidate should reduce the four-SPW row below `22.1` seconds and the
+full-16-SPW row below `71.2` seconds while passing the frozen scientific floor.
+Higher-cost hybrid or image-domain replacements require correspondingly
+stronger evidence. Kernel-only wins are not end-to-end claims.
+
+#### Exact packed-CF discriminator
+
+The first local discriminator tested an exact persisted source representation,
+not an approximation. It packs the 1,024 imaging/weight CF pairs into one
+memory-mapped file and lets the existing compact replay sample the mapped
+planes. The experiment remains opt-in through
+`CASA_RS_VLASS_PACKED_CF_EXPERIMENT` and
+`CASA_RS_VLASS_TRUST_PACKED_CF_EXPERIMENT`; it is not a production format or
+default.
+
+The first V1 execution was a scientifically invalid negative experiment. The
+packer copied CASA's physical x-contiguous plane order, but the mapped reader
+interpreted the payload as y-contiguous. Its `33.52`-second niter-zero row and
+`38.22`-second clean row therefore are not performance candidates. The full
+comparison found roughly `0.21` to `0.30` normalized RMS differences in
+restored, residual, and model products. The clean log, comparison, and trace
+receipts have SHA-256 digests:
+
+- `cfa61172f1871f1a58b6e1cd3c79234811ccd0fa55b7d32cb35935860ba6235c`;
+- `e30ccc3cc2294d96fd68f4230d6ab4a6cd023b87b41452fc9d4103a59f56021c`;
+  and
+- `ae96c0507aaaf9178ff49be0d244f50dc41bb0549713b0bbc0b114f80918a419`.
+
+V2 makes x the contiguous coordinate explicitly in both writer and reader.
+The non-square mapped-plane unit test and the exact packed-cache unit test now
+cover that contract. The corrected artifact contains `5,705,470,496` bytes,
+was built from the frozen CASA CF cache in `6.671` seconds, and has SHA-256
+`963ea47f20be54cccad59b46c4657166cb4f586723aa1c459b1a0ef1a4a8549a`.
+
+The corrected cold niter-zero row completed in `52.55` seconds. Across its 16
+blocks, planning took `3,687.361` ms, materialization `24,655.183` ms, mapped
+CF loading only `6.291` ms, tap packing `24,611.984` ms, and gridding
+`8,075.601` ms. Several large-CF late blocks spent `2.0` to `10.0` seconds
+faulting and gathering mapped pages. This removes CASA-table decode and cache
+thrash but exposes source-order locality and page residency as a separate
+physical owner. The cold log has SHA-256
+`f0f35b60bb4c42420d63af703507d968595fd1487bf37fdebaeb30a3ac56b2bd`.
+
+Before running CLEAN, a frozen-CASA diagnostic compared the ten
+operator-owned products. All pass: PSF normalized RMS differences are
+`3.66e-13` to `1.02e-12`, weight differences are `9.45e-13` to `1.93e-11`,
+all three sumwt values are exact, and PB normalized RMS difference is
+`7.28e-8`. The diagnostic comparison receipt has SHA-256
+`71068b3a04e39ed205654412067671a72fba9cda3a63f21fd687f88d54f41b6b`.
+
+The one promoted V2 clean row then completed in `42.91` seconds wall and
+`39.034` seconds core. This is `2.37x` faster end to end than v59's
+`101.646` seconds and clears the `<71.2`-second architecture-promotion target.
+It completed `641` minor iterations, reported no warning or divergence, and
+reported six major cycles before stopping at the nsigma threshold. The active
+scientific contract does not require CASA-identical component or major-cycle
+history. The core attributed `18.779` seconds to the
+initial PSF grid, `9.461` seconds to residual refresh, `0.299` seconds to the
+minor cycle, and `1.277` seconds to restoration. Initial-dirty compact
+materialization was `5.096` seconds, including `5.049` seconds of tap packing
+and only `6.167` ms of mapped CF loading; gridding took `8.326` seconds. The
+cold/warm difference is real evidence that a monolithic mmap is
+page-residency-sensitive, not a reason to report only the warm number.
+
+The full 19-product numerical comparison passes every non-alpha ceiling.
+Restored-image RMS differences are `1.10` and `1.13` ppm, residual differences
+`1.12` and `1.15` ppm, and model differences `0.45` and `0.36` ppm. Three
+alpha and alpha-error pixels cross the frozen cutoff. The active
+scientific-floor reviewer promotes the candidate: all six science gates pass,
+source peak and integrated flux differ by `0.83` and `1.69` ppm, source
+centroid by `1.50e-6` pixel, and the three alpha crossings are within
+`1.96e-6` relative distance of the cutoff. The run, full comparison,
+scientific-floor receipt, and matched-scale panel have SHA-256 digests:
+
+- `4e8038810a3f5aa951cd7cb735c5c75af50dfcee8406ea8294b40203f45ce7aa`;
+- `a60b404647d19b1da9f053fcdafed27de3e08ef54f0cf515357908feed1a9d6e`;
+- `131120ea9ea8318e457a91a9b3ea19ded85f4c96ecc226187cebe1691c5ad938`;
+  and
+- `44a18724dc495625b2257e06de994e737741d44af51691f0ee7078c3ebdec859`.
+
+This experiment changes the active ranking. Exact packed source access is now
+a measured immediate candidate, but the current monolithic source-order mmap
+is not ready to persist or default. The next bounded representation experiment
+should group exact CF views with access-local work inside destination-owned
+tiles, or prefetch the known next-use sequence, and must report cold as well
+as resident-cache timing. It should avoid restoring a 256 MiB LRU over a
+cyclic 5.3 GiB working set. The uncompensated tile-local f32 and hybrid
+W-stacking/residual-W experiments remain the next independent high-upside
+families. Image-domain gridding and low-rank CF approximation remain later
+only if these exact and controlled-precision paths fail.
+
+The 4,096-square full-16-SPW promotion gate is therefore complete. The
+required full-geometry memory campaign is next and will measure the promoted
+architecture, including the packed source's mapped residency and page-fault
+behavior. It must not become a reason to tune the 7 GiB replay representation
+indefinitely. No CASA task or full-size clean run was launched for this
+architecture reset.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
