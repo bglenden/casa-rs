@@ -3309,10 +3309,13 @@ time was `24.808` seconds:
 - restoration: `1.307` seconds.
 
 All 171 component selections, cycle boundaries, refresh boundaries, and the
-final 2,000-iteration boundary match the exact control. All 19 product
-inventory, coordinate, metadata, finite-topology, and mask gates pass. The
-worst product relative RMS is `5.642879625864284e-7`, about `0.564 ppm`.
-There are zero mask, finite-topology, and metadata mismatches.
+final 2,000-iteration boundary match the exact casa-rs control. All 19
+product inventory, coordinate, metadata, finite-topology, and mask gates pass
+against that control. The worst product relative RMS in that comparison is
+`5.642879625864284e-7`, about `0.564 ppm`. There are zero mask,
+finite-topology, and metadata mismatches against the control. This paragraph
+does not establish direct CASA product parity; the correction below
+supersedes the original promotion interpretation.
 
 The immutable evidence is:
 
@@ -3325,20 +3328,16 @@ The immutable evidence is:
   SHA-256
   `01a403119013875db93c7f8b1679a9a5b8ffb671ee91e98b643cb391303db780`;
   and
-- frozen CASA product comparison:
+- exact-control product comparison:
   `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-clean4096-4spw-n2000-image-response-radix-madfm-v4.comparison.json`,
   SHA-256
   `0df5ec1401e2aaa18998feb96b654b922e0a793050f28e86c27e53227fc4fb01`.
 
-This passes the 4,096-square four-SPW development promotion gate but remains
-an experimental candidate rather than an approved production default. The
-next ladder step is the 4,096-square full-16-SPW row. The old full-band runner
-and CASA generator were tied to the now-unmounted Mac-mini volume, so they now
-resolve a configurable experiment root and binary on
-`/Volumes/GLENDENNING`. That volume does not yet contain the one-time
-full-16-SPW CASA oracle or its CF cache. Generate them once with CASA
-6.7.5.18, freeze them, and do not repeat their timing before promoting the
-casa-rs candidate.
+This established a fast candidate against the exact casa-rs control, but the
+original text incorrectly called the control comparison a frozen-CASA
+comparison and therefore incorrectly promoted the four-SPW gate. The
+2026-07-30 direct-CASA correction below retracts that promotion. The candidate
+remains experimental rather than an approved production default.
 
 Oracle's evidence-delta review judged the exact 171-cycle trajectory, exact
 final refresh, complete topology contract, and `0.564 ppm` product result a
@@ -5087,6 +5086,98 @@ major-cycle residual behavior, and the exact 19-product contract. Only after
 that row is correct and fast may the 4,096-square full-16-SPW row be promoted;
 the required full-geometry memory campaign remains gated behind that
 promotion.
+
+### 2026-07-30 direct-CASA four-SPW V6 correction
+
+The V6 production binary already built from the pushed source has SHA-256
+`70827148822a083e4d47e9f55ba291731a29e8a02f2bf1a6e0938b654d1df9ab`.
+The exact V4 acceleration stack was recovered from the original invocation,
+including its FFTW wisdom, sparse MT-MFS state, 4 GiB replay retention,
+global Metal tile replay, image-response cache, and exact-radix statistics.
+No CASA task was run. The one-time frozen four-SPW CASA product tree and its
+existing logs were copied from the Mac mini to GLENDENNING instead. All `206`
+files match the source byte for byte; the sorted per-file manifest SHA-256 is
+`59f03bad4d43b79ee7c2d8ead4cb10a53d9b3fc76cf1a300e5251551c3db2c02`.
+The full CASA driver log and bounded component-trace driver log SHA-256
+digests are
+`c201c54d1bce9a86c8c63149a2fd66f2ebcabe09b45794a24564d5b8bca2ba45`
+and
+`101f0aed2f1d1b7ae7e4fb592bbe877de4d5061bb58bb21ab6b4805f43f21d53`.
+
+The V6 four-SPW row completed all `171` major cycles and `2,000` iterations
+without warning or divergence in `29.82` seconds. Its core time was
+`25.634` seconds, including `12.035` seconds of major-cycle refresh,
+`6.392` seconds of residual degrid/grid, `4.349` seconds of initial PSF grid,
+`4.012` seconds of controller overhead, `2.584` seconds of residual FFT,
+`2.102` seconds of sparse minor-cycle work, and `2.032` seconds of model FFT.
+The immutable run log is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-clean4096-4spw-n2000-v6-briggs-revalidation-v1.log`,
+SHA-256
+`a7a0acf9b447866105e085591364f237c9aace67d6b2afb6f41b808b6eae2858`.
+
+Against the historical exact casa-rs control, every component choice, cycle
+boundary, update count, refresh boundary, and final-refresh iteration matches.
+The largest numerical differences in that trace are `3.79 ppm` for candidate
+strength, `3.61 ppm` for a cycle-start/refreshed peak, and `1.29 ppm` for
+model flux. The immutable trace receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-clean4096-4spw-n2000-v6-briggs-revalidation-v1.control-trace-comparison.json`,
+SHA-256
+`0b1937ba0d640b3448f8c61454337286981c1f73b6f138955ff9057692d528a4`.
+
+The direct frozen-CASA 19-product comparison does not promote. Product
+inventory, coordinates, metadata, ordinary numerical ceilings, and finite
+topology pass. Mask, PB, all three PSFs, all three sumwts, and all three
+weights pass their structured-difference and topology checks. V6 makes the
+weight products effectively exact: TT0, TT1, and TT2 relative RMS differences
+are `1.37e-12`, `2.48e-12`, and `6.94e-13`; the PSF differences are also
+approximately `5e-13` to `1.3e-12`.
+
+The row still fails the unchanged promotion contract:
+
+- `.alpha` and `.alpha.error` each have `13` mask-topology mismatches;
+- image TT0 and TT1 relative RMS differences are `5.72 ppm` and `5.76 ppm`;
+- residual TT0 and TT1 relative RMS differences are `4.81 ppm` and
+  `5.23 ppm`; and
+- those four image/residual structured-difference classifications are
+  `investigate`, not the required `good`.
+
+The direct comparison input, result, and log SHA-256 digests are,
+respectively:
+
+- `47c5280ae19cd0cfdd8907f6a4b1a3367cc0e14ba79b5bd71ffc4fb7542c0e47`;
+- `1e9a95aa02a25c0e5a92b6a1c71ded54aa5ca30d8c85203099a6694588f1bd7b`;
+  and
+- `db9e0904c3ae27a7abdb58a66460025a2810d075058479d2cec8feb5c2c00996`.
+
+The comparison paths share the run-log stem and use the suffixes
+`.comparison-input.json`, `.comparison.json`, and `.comparison.log`.
+
+Three bounded native-reader comparisons isolate the evidence error and the
+effect of V6 without running imaging:
+
+- V4 versus the actual CASA products has `16` alpha and `16` alpha-error mask
+  mismatches. Its image/residual differences are `5.13` through `6.15 ppm`,
+  and its model-TT1 difference is `6.66 ppm`. Receipt SHA-256:
+  `846b36bc0ee7feed725f5077c6c9789fa9b38fc63d05da9e3ce5fc9834debfef`.
+- The historical exact casa-rs control versus actual CASA also has `16+16`
+  alpha mismatches. Its image/residual differences are `5.43` through
+  `6.52 ppm`, and its model-TT1 difference is `7.06 ppm`. Receipt SHA-256:
+  `b64065135c4af32561ca7c4a2bac6edc6d7d99c55bde72d3dfac8e4f69778bb5`.
+- V6 versus V4 and V6 versus the exact control retain identical finite
+  topology and metadata but differ by approximately `1.08` to `1.33 ppm` in
+  image/residual terms and by three alpha-mask pixels per product. Their
+  receipt SHA-256 digests are
+  `6a9f7104ba1d5f4d896d5a94b323185601f7e847852ef0c533a4e434cb04eb31`
+  and
+  `05e022c1296650e4c056999ac6d839ebb0ab7eb1065c5b0d31d8fe6d9e2f822b`.
+
+V6 therefore improves the real CASA comparison and proves that the
+image-response acceleration is not the residual owner; it does not validate
+the old promotion. The remaining correctness work must instrument the shared
+full-stream residual prediction/subtraction and product path against CASA
+after the now-exact first-buffer geometry and weighting boundary. The
+four-SPW row remains unpromoted, so neither the full-16-SPW row nor the
+full-geometry memory campaign may advance yet.
 
 ## Iteration Rules
 
