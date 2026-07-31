@@ -1,7 +1,7 @@
 # VLASS Fragment Imaging Correctness And Performance Plan
 
 Truth class: approved execution contract
-Last reality check: 2026-07-30
+Last reality check: 2026-07-31
 Verification: `just docs-check`
 
 WDAD scope:
@@ -5529,8 +5529,8 @@ reproducibility identity, but it must not be interpreted as canonical RR/LL
 for every source. Residual subtraction, result layout, and Metal readback are
 therefore excluded as the earliest owner inside this dispatch.
 
-Targeted source inspection supports the mixed classification. In
-`NewMultiTermFT.cc`, CASA degrids TT0 and copies it, degrids TT1 separately,
+Initial targeted source inspection of legacy `NewMultiTermFT.cc` supported the
+mixed classification: it degrids TT0 and copies it, degrids TT1 separately,
 multiplies each complex TT1 visibility in place by its Taylor scalar, and only
 then accumulates the TT1 cube with a separate `+=`. The local source files
 `NewMultiTermFT.cc` and `ArrayMath.tcc` hash to
@@ -5569,6 +5569,94 @@ row promotion by itself. It used no CASA call, clean, full-16-SPW row,
 `12,150`-square development clean, memory-policy experiment, repeated CASA
 timing, or unchanged CASA reference. The four-SPW promotion and all later
 ladder gates remain closed.
+
+### 2026-07-31 CASA VI2 term-degrid oracle
+
+The same Oracle conversation selected one term-separated CASA prediction
+capture as the only remaining information-increasing discriminator. The first
+attempt failed closed as an oracle: its interposer targeted legacy
+`casa::NewMultiTermFT`, while the completed CASA call actually used
+`casa::refim::MultiTermFTNew` and therefore continued normally to the existing
+prediction-trace extraction. It produced no term-degrid binary or host receipt
+and supports no scientific conclusion. Its run log, CASA log, and duplicated
+frozen NPZ hash to, respectively,
+`c540a8826bac1746c0e22af1896f2e49890048ced20fac597a473fcf18a83dfe`,
+`054d30f7e99c71f52d229e529dcc7a43b5be54c457336ea4498974f6715457d9`,
+and
+`a801635e7d9529cc4dbd3f462abd10bdcd66b8283bb5894a85da419a95899b7d`.
+The failure was an instrumentation-path error, not a CASA or casa-rs result.
+
+Source and exported-symbol inspection then proved that CASA `6.7.5.18`
+`tclean` uses the VI2 implementation in
+`synthesis/TransformMachines2/MultiTermFTNew.cc`. Its `get` method:
+
+1. degrids TT0 and copies the model cube;
+2. zeros the model cube and degrids TT1;
+3. calls `modifyModelVis`, which obtains `getFrequencies(0)`, calculates the
+   Taylor scalar in `Float`, and multiplies the complex model in place; and
+4. accumulates the scaled TT1 cube with a separate `+=`.
+
+The exact source and header hash to
+`9cb902cbd7669964669b7e698c7cd410aec8de65000ef7e3f5fc6e86ba92ffe3`
+and
+`5015c2889a44f51574511ad00e9ee825380a04cb8180cf1e3bf1e473441c4e63`.
+The corrected interposer preflight requires the three exact VI2 symbols to be
+exported by and two-level-bound to `libcasacpp_synthesis.6.dylib`, plus exactly
+two arm64 dyld interpose entries.
+
+The one bounded replacement completed successfully. It captured `166,400`
+104-byte records from eight prediction calls and stopped by construction
+before the original `finalizeToVis`. The host receipt records zero clean
+iterations and confirms that residual formation and residual-grid dispatch
+were false and FFT, image formation, and product formation were not entered.
+The binary, host receipt, run log, and CASA log SHA-256 values are,
+respectively:
+
+- `6b314935bd0a0ef072c1abcbb00fb3513b327010c047db1a1c61cb8f4b79fc13`;
+- `fb48afec3ca9769afc5911d9f9fa1ed4745c8dcb06c4676438a51fff697494d8`;
+- `66b5f0435274ec6e5cfa1f3ec1ad53d4af9802886c04e374e47ffea3472d0ec4`;
+  and
+- `ffa976a8bd536d3b2db7c87bdb511d7302aa2ff981bcd2c9593570143d62d9f6`.
+
+VI2 reports row identities in its selected table rather than original-MS row
+numbers. The comparator reconstructed and recorded the exact common mapping:
+four contiguous 650-row SPW blocks, selected rows `0..2599`, map to original
+row blocks `353600..354249`, `356850..357499`, `360100..360749`, and
+`363350..363999` for SPWs 2, 7, 12, and 17. All `98,239` frozen source
+samples then aligned, and the independent combined CASA prediction reproduced
+both the raw frozen MODEL_DATA and the phase-rotated
+`2c6a3072a7f5556c81cc5b691a8d0ac2d7b055010bb8f171ed207d5d1a5d1e5d`
+hash exactly. The instrumentation is therefore valid.
+
+The comparison classifies
+`tt0-degrid-or-folded-phase-difference`. At source ordinal zero, RR, CASA's
+phase-aligned TT0 real/imaginary f32 bits are
+`[1034097304, 1037600252]`; casa-rs records
+`[1034097304, 1037600253]`. TT0 differs for `111,784` of the `196,478`
+source-role results. TT1 raw differs for `111,564`, scaled TT1 for `101,100`,
+the separately rounded combined value for `117,763`, and the production
+combined value for `149,427`. CASA and casa-rs Taylor-power bits also differ.
+The first source has CASA/casa-rs power bits `3198911999` and `3198912000`.
+These later differences are real but do not displace TT0 degrid or its folded
+mosaic phase as the earliest demonstrated owner.
+
+The comparison receipt SHA-256 is
+`c947cbf74e3383004ad3ce84dc5fc1dd32216ddf9dece0c332ae258187d92db1`.
+The interposer source, build script, runner, comparator, and comparator test
+hash to, respectively:
+
+- `3c3a97b45e332890095ac9f789f79a4f69cdaa0adf9a656acb419384d187443b`;
+- `42a0c10f0427447acf94a4734378e0bbba0ec2313101a976ec9af98e9ce1ce9f`;
+- `9af9985bc7e4fbb94506ee77126078e315f38fe8318d860730604967add1370d`;
+- `20f5ebcaf29bb4ba9cdf88a989fe0942b5077605e519318f4829f2d462f0e8c5`;
+  and
+- `3e63007fdeba47524f262930e7da15a5b99360538f5968f4fba298e6a888a3d3`.
+
+This completed correctness oracle earns no production change and does not
+promote the four-SPW row. No clean, full-16-SPW row, `12,150`-square
+development clean, memory-policy experiment, repeated CASA timing, or
+unchanged CASA reference was run. The next step must discriminate CASA's TT0
+degrid/phase arithmetic before another production candidate is measured.
 
 ## Iteration Rules
 
