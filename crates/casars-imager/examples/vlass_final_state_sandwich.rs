@@ -18,12 +18,13 @@ use ndarray::{Array2, Axis};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-const IMAGE_SIDE: usize = 4096;
-const CELL_ARCSEC: f64 = 0.6;
-const BEAM_MAJOR_ARCSEC: f64 = 3.202_949_762_344_360_4;
-const BEAM_MINOR_ARCSEC: f64 = 2.157_604_455_947_876;
-const BEAM_POSITION_ANGLE_DEG: f64 = 70.553_497_314_453_12;
-const PRINCIPAL_INVERSE: [[f32; 2]; 2] = [[1.008_975_6, -0.420_447_83], [-0.420_447_83, 19.695_16]];
+pub(crate) const IMAGE_SIDE: usize = 4096;
+pub(crate) const CELL_ARCSEC: f64 = 0.6;
+pub(crate) const BEAM_MAJOR_ARCSEC: f64 = 3.202_949_762_344_360_4;
+pub(crate) const BEAM_MINOR_ARCSEC: f64 = 2.157_604_455_947_876;
+pub(crate) const BEAM_POSITION_ANGLE_DEG: f64 = 70.553_497_314_453_12;
+pub(crate) const PRINCIPAL_INVERSE: [[f32; 2]; 2] =
+    [[1.008_975_6, -0.420_447_83], [-0.420_447_83, 19.695_16]];
 const CASA_ORACLE_MANIFEST_SHA256: &str =
     "59f03bad4d43b79ee7c2d8ead4cb10a53d9b3fc76cf1a300e5251551c3db2c02";
 const V6_NATIVE_COMPONENT_RECEIPT_SHA256: &str =
@@ -69,7 +70,7 @@ fn product_path(prefix: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(format!("{}{suffix}", prefix.display()))
 }
 
-fn plane(prefix: &Path, suffix: &str) -> Result<Array2<f32>, String> {
+pub(crate) fn plane(prefix: &Path, suffix: &str) -> Result<Array2<f32>, String> {
     let path = product_path(prefix, suffix);
     let image = PagedImage::<f32>::open(&path)
         .map_err(|error| format!("open {}: {error}", path.display()))?;
@@ -87,7 +88,7 @@ fn plane(prefix: &Path, suffix: &str) -> Result<Array2<f32>, String> {
         .map_err(|error| format!("reshape {}: {error}", path.display()))
 }
 
-fn default_mask(prefix: &Path, suffix: &str) -> Result<Array2<bool>, String> {
+pub(crate) fn default_mask(prefix: &Path, suffix: &str) -> Result<Array2<bool>, String> {
     let path = product_path(prefix, suffix);
     let image = PagedImage::<f32>::open(&path)
         .map_err(|error| format!("open {}: {error}", path.display()))?;
@@ -165,7 +166,7 @@ fn write_default_mask(prefix: &Path, suffix: &str, values: &Array2<bool>) -> Res
         .map_err(|error| format!("write mask output {}: {error}", path.display()))
 }
 
-fn principal_terms(raw: &[Array2<f32>; 2]) -> [Array2<f32>; 2] {
+pub(crate) fn principal_terms(raw: &[Array2<f32>; 2]) -> [Array2<f32>; 2] {
     let mut first = Array2::<f32>::zeros((IMAGE_SIDE, IMAGE_SIDE));
     let mut second = Array2::<f32>::zeros((IMAGE_SIDE, IMAGE_SIDE));
     for x in 0..IMAGE_SIDE {
@@ -179,7 +180,7 @@ fn principal_terms(raw: &[Array2<f32>; 2]) -> [Array2<f32>; 2] {
     [first, second]
 }
 
-fn alpha_products(
+pub(crate) fn alpha_products(
     image_terms: &[Array2<f32>; 2],
     principal_residual_terms: &[Array2<f32>; 2],
 ) -> (Array2<f32>, Array2<f32>, Array2<bool>, f32) {
@@ -212,7 +213,7 @@ fn alpha_products(
     (alpha, alpha_error, alpha_mask, threshold)
 }
 
-fn sha256_f32(values: &Array2<f32>) -> String {
+pub(crate) fn sha256_f32(values: &Array2<f32>) -> String {
     let mut hasher = Sha256::new();
     for value in values {
         hasher.update(value.to_bits().to_le_bytes());
@@ -220,7 +221,7 @@ fn sha256_f32(values: &Array2<f32>) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-fn sha256_file(path: &Path) -> Result<String, String> {
+pub(crate) fn sha256_file(path: &Path) -> Result<String, String> {
     let bytes = fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
@@ -397,7 +398,7 @@ fn validate_hybrid_prediction_receipt(receipt: &Value) -> Result<Value, String> 
     }))
 }
 
-fn sha256_bool(values: &Array2<bool>) -> String {
+pub(crate) fn sha256_bool(values: &Array2<bool>) -> String {
     let mut hasher = Sha256::new();
     for value in values {
         hasher.update([u8::from(*value)]);
@@ -434,11 +435,11 @@ fn ordered_f32_bits(value: f32) -> i32 {
     if bits < 0 { i32::MIN - bits } else { bits }
 }
 
-fn ulp_distance(left: f32, right: f32) -> u32 {
+pub(crate) fn ulp_distance(left: f32, right: f32) -> u32 {
     ordered_f32_bits(left).abs_diff(ordered_f32_bits(right))
 }
 
-fn numeric_metrics(
+pub(crate) fn numeric_metrics(
     candidate: &Array2<f32>,
     reference: &Array2<f32>,
     valid: Option<&Array2<bool>>,
@@ -498,7 +499,7 @@ fn numeric_metrics(
     })
 }
 
-fn topology_metrics(candidate: &Array2<bool>, reference: &Array2<bool>) -> Value {
+pub(crate) fn topology_metrics(candidate: &Array2<bool>, reference: &Array2<bool>) -> Value {
     let mut mismatch_count = 0_usize;
     let mut first_mismatches = Vec::new();
     let mut candidate_valid = 0_usize;
