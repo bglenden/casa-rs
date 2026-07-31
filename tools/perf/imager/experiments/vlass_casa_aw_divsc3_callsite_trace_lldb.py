@@ -179,10 +179,14 @@ def helper_entry_callback(
 
 def return_callback(
     frame: lldb.SBFrame,
-    _breakpoint_location: lldb.SBBreakpointLocation,
+    breakpoint_location: lldb.SBBreakpointLocation,
     _internal_dict: dict[str, Any],
 ) -> bool:
     try:
+        breakpoint = breakpoint_location.GetBreakpoint()
+        if not breakpoint.IsValid():
+            raise RuntimeError("LLDB return callback has no valid breakpoint")
+        breakpoint.SetEnabled(False)
         state = _load_state()
         capture = state["pending"]
         if capture is None:

@@ -6374,6 +6374,51 @@ callback, use fresh v8 artifacts, and leave the now-validated operand readers,
 helper breakpoint, frozen manifest, target calls, CASA parameters, and final
 stop boundary unchanged.
 
+The v8 replacement completed the exact two-point live call-site trace and
+stopped CASA at the approved boundary. The source-zero control reproduced the
+v7 operands and result exactly. At source `1,446`, helper call index `2,892`,
+the live installed CASA process supplied:
+
+- pre-call `s0..s3` bits:
+  `[969396469, 3196932265, 1064983698, 1014081710]`;
+- post-call `s0..s1` bits: `[3145554492, 3197138881]`;
+- `fpcr` was zero before and after the helper;
+- `fpsr` was `134217882` before and after the helper.
+
+The frozen asserted replay operand was
+`[969396468, 3196932265, 1064983698, 1014081710]`. Thus the only operand
+difference is a one-ULP increase in the numerator real component before
+`___divsc3`. Given the live CASA operand, the installed helper returns the
+frozen official result exactly. This classifies the prior mismatch as
+`operands-differ-at-callsite`: the installed helper, helper ABI, division
+codegen, denominator, and numerator imaginary component are no longer
+candidate owners. The remaining correction is bounded to construction of
+the source-`1,446` numerator real component before the helper call.
+
+LLDB stopped immediately after the source-`1,446` RR/TT0 helper return and
+killed the process. The comparison receipt certifies that TT1 degrid did not
+complete, prediction was not finalized, no residual grid or products were
+formed, and CLEAN was not entered. No unreachable prediction artifact exists.
+This is correctness-localization evidence, not a timing measurement.
+
+The v8 manifest, debugger-ready receipt, raw trace, comparison, LLDB log, CASA
+log, and launch log hash to
+`929e77423638bbd0d0f29102182b055fb3516fdfd504d00ee759b0eeb6ff75f6`,
+`accc04d4a2f472996273499cb4916f8a70c91d84683118360d6cc1ba5684c489`,
+`3c3dc776d32cc67a8a655d8470fd7a7f69477cd3e2201b32d19e48cc37e55931`,
+`de844de18173771a7ce3b1e7919fe5438e017d716632377e1832c1523a0054ac`,
+`3c677434eb329567bb013e9e8e35ec91ff9e663884f2415adc82a82d00096a63`,
+`75203f9fcffae59731efd54641a63c4ad4afc19b21234f4edc0a74f4e6f10bee`,
+and
+`85a0178c954ba0cfaef1436a99ed36a5dfc725c2cc91a37fd9412f44b89ebc9a`.
+The v8 runner and callback hash to
+`6b2259a1a51b19942f29834dd0753c15f028dbf071b524918bb6353af257e28c`
+and
+`217d7cb0dc6e3f56dea55e06b41af82642e4ccb235919c8a6fa1c5cac3a686d9`.
+No production arithmetic change is authorized by this trace alone. The next
+bounded discriminator must inspect only the numerator construction feeding
+the already-audited call site while preserving exact source order.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
