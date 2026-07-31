@@ -5468,6 +5468,108 @@ timing, or unchanged CASA reference rerun occurred. The same Oracle
 conversation will select one prediction-side discriminator only after this
 evidence is committed, pushed, and recorded on the draft PR.
 
+### 2026-07-30 exact-source-order prediction sidecar
+
+After the frozen same-model boundary was durably checkpointed, the same Oracle
+conversation selected exactly one full-stream, prediction-internal
+discriminator. The diagnostic reuses the production global-AW Metal dispatch
+and the exact frozen model over all `98,239` accepted source records. An
+optional, generation-tagged sidecar captures the already-computed TT0 and TT1
+degrid values, Taylor powers, selected Mueller roles, combined prediction,
+observed values, and local residual. The ordinary 16-byte returned-residual
+ABI is unchanged. Normal execution does not allocate or bind the sidecar.
+Diagnostic execution writes fail-closed, no-overwrite binary and JSON
+artifacts and then intentionally stops before residual-grid dispatch. The
+initial exact replay-program construction still includes its normal dirty/PSF
+preparation; the receipt's negative stage ledger applies after the audited
+prediction dispatch and does not claim that the entire process omitted an
+FFT.
+
+The single bounded 4,096-square four-SPW diagnostic completed in approximately
+`11.7` seconds and then reached that intentional stop. This is correctness
+turnaround evidence only, not a clean or performance measurement. The host
+receipt validated:
+
+- `98,239` audit and returned-result records in exact source order;
+- zero missing-generation, unexpected-ordinal, nonfinite, or
+  local-result/readback mismatches;
+- exact reproduction of the frozen Phase-B observed, stored-residual, and
+  recovered-prediction hashes
+  `3601b5c6ebf749d58c80bc16b329db68a94557e5d7cbb477034b061ef89f2172`,
+  `3ab0ed020a6b75ed54aadd91606c7d6e0fc8424575f77f931654e1addb3b6f98`,
+  and
+  `68d6dc8c6b4ec45b8cad8d17ee44cdc1a1220e0ae261c251a35b75899ecb0bf9`;
+  and
+- no post-prediction residual-grid dispatch, FFT, controller/minor cycle,
+  image formation, normalization, beam fit, or product formation.
+
+The comparison is valid and classifies
+`taylor-combination-and-upstream-difference`. The production Metal expression
+and a forced, separately rounded multiply-then-add reconstruction differ for
+`95,027` source-role results. Their combined-prediction SHA-256 values are
+`ae0b7589afab04606b2895d97c9075f21016c6a1433e57aa94c3ce618a6881ed`
+and
+`8c11ca065daa6a623233bea74db0f2c63cea08f420a6687c4455d62914682edd`.
+The separately rounded reconstruction also differs from the frozen CASA
+MODEL_DATA, so Taylor combination is not the sole owner. At the first RR
+mismatch, source ordinal zero, the production real/imaginary f32 bit patterns
+are `[3160120158, 1047710941]`, the separate reconstruction is
+`[3160120160, 1047710942]`, and CASA is
+`[3160120160, 1047710941]`: neither candidate arithmetic graph reproduces the
+whole CASA complex value.
+
+The sidecar also corrects an ordering assumption in the earlier Phase-B hash
+receipt. W-dependent Mueller selection used natural `[0, 15]` order for
+`53,188` sources and swapped `[15, 0]` order for `45,051`. Canonicalizing the
+returned roles gives residual SHA-256
+`f5ae194d93ba06c1195d6fa7e7dd5c96840109b6bd8bb698ac32fa18db8b47a8`,
+which exactly matches the captured local subtraction and the comparator's
+literal subtraction. The stored-order Phase-B residual hash remains a valid
+reproducibility identity, but it must not be interpreted as canonical RR/LL
+for every source. Residual subtraction, result layout, and Metal readback are
+therefore excluded as the earliest owner inside this dispatch.
+
+Targeted source inspection supports the mixed classification. In
+`NewMultiTermFT.cc`, CASA degrids TT0 and copies it, degrids TT1 separately,
+multiplies each complex TT1 visibility in place by its Taylor scalar, and only
+then accumulates the TT1 cube with a separate `+=`. The local source files
+`NewMultiTermFT.cc` and `ArrayMath.tcc` hash to
+`161840375d68bed1aaa7bab101f25cb9985d4135b53926e2e8bb3eca940e69c6`
+and
+`520608d341d95b834b74702951c5eefd01677cf21b94ac5f8d07507d43d108f9`.
+That structure explains why the current contracted Metal expression is not
+CASA's literal operation order, but the remaining CASA mismatch after
+separating multiply and add proves an upstream term-degrid or folded-phase
+difference also remains. A blanket no-FMA production change is therefore not
+earned by this diagnostic.
+
+The executable, Rust source, Cargo manifest, launcher, comparator, and
+comparator-test SHA-256 values are, respectively:
+
+- `95bf6e1e15bf8e42b9e8e4cb6c108382ced8cb2342db9fc7c5bc7e39260184b0`;
+- `01c02b3d52ddf8e5e36decf166d9cb1a2f44306c470278c262b230f7ee33f1a9`;
+- `d7aba34217174342b5f8716938428b45e550832aff2f51642b159de1ba1838e3`;
+- `4d26177068e2496478d9fb453252dd445001495cbcd52b98effe45a14b5d8919`;
+- `b7717eca5e070796cba97d8eb9617fab3762ca5effc0c58ab617b67ec29a30e3`;
+  and
+- `2d73b9333697b6c762529a8de1024f0d8f900c37f5421c9d24b505a23ea535ce`.
+
+The run log, audit binary, result binary, host receipt, and comparison receipt
+SHA-256 values are, respectively:
+
+- `ea994ffd0c2610059ddd75cfcba0f5f7d2cb33a9a3ec4408ec3daf9cbf0cfeeb`;
+- `7a8b6038aa8a78bfc0bc70ed9e02ad2588c80f7b1db3b026ab409fb9872bde4f`;
+- `dcdf3389e7b20165973e8f237091a9db7a24cd6526ed8682a6376a522bf2b3b4`;
+- `40dd69e7378f4b38dec5c5a49372ac1d1a03af0272c08b9a363cf218bdde060d`;
+  and
+- `df9dcd7a999a8baa5f5196b1a497b66b74b08ae53097dd7752a60126684a62a2`.
+
+This completed diagnostic justifies no production arithmetic correction or
+row promotion by itself. It used no CASA call, clean, full-16-SPW row,
+`12,150`-square development clean, memory-policy experiment, repeated CASA
+timing, or unchanged CASA reference. The four-SPW promotion and all later
+ladder gates remain closed.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
