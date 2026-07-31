@@ -36,8 +36,10 @@ const HYBRID_CONTROL_RESIDUAL_SHA256: &str =
     "3ab0ed020a6b75ed54aadd91606c7d6e0fc8424575f77f931654e1addb3b6f98";
 const HYBRID_CANDIDATE_PREDICTION_SHA256: &str =
     "2c6a3072a7f5556c81cc5b691a8d0ac2d7b055010bb8f171ed207d5d1a5d1e5d";
-const HYBRID_CANDIDATE_RESIDUAL_SHA256: &str =
+const HYBRID_CANDIDATE_CANONICAL_RESIDUAL_SHA256: &str =
     "4db5487bff286e841718aec4a600f3b5c1ebf3aa602c5120a0796832355ad6d9";
+const HYBRID_CANDIDATE_TILE_RESIDUAL_SHA256: &str =
+    "6f48df4cfed851012bbc84b3ceb125a7113cff221f819b770fc49f546781e21f";
 const HYBRID_PREDICTION_TO_TILE_READY_LIMIT_MS: f64 = 62.690_729;
 const HYBRID_RAW_BUFFER_LIMIT_BYTES: u64 = 16 * 1024 * 1024;
 const HYBRID_RELATIVE_RMS_LIMIT: f64 = 2.0e-7;
@@ -309,8 +311,18 @@ fn validate_hybrid_prediction_receipt(receipt: &Value) -> Result<Value, String> 
         ("control_prediction", HYBRID_CONTROL_PREDICTION_SHA256),
         ("control_residual", HYBRID_CONTROL_RESIDUAL_SHA256),
         ("candidate_prediction", HYBRID_CANDIDATE_PREDICTION_SHA256),
-        ("candidate_residual", HYBRID_CANDIDATE_RESIDUAL_SHA256),
-        ("tile_ingress_residual", HYBRID_CANDIDATE_RESIDUAL_SHA256),
+        (
+            "candidate_canonical_residual",
+            HYBRID_CANDIDATE_CANONICAL_RESIDUAL_SHA256,
+        ),
+        (
+            "candidate_tile_residual",
+            HYBRID_CANDIDATE_TILE_RESIDUAL_SHA256,
+        ),
+        (
+            "tile_ingress_residual",
+            HYBRID_CANDIDATE_TILE_RESIDUAL_SHA256,
+        ),
     ];
     if receipt["schema"] != "casa-rs-vlass-aw-hybrid-residual-prediction-v1"
         || receipt["sample_count"].as_u64() != Some(98_239)
