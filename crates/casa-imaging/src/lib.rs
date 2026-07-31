@@ -9877,6 +9877,8 @@ struct AwProjectMetalPredictionSample {
     first_observed_im: f32,
     second_observed_re: f32,
     second_observed_im: f32,
+    source_phase_re: f32,
+    source_phase_im: f32,
     taylor_x: f32,
     first_imaging_mueller: u32,
     second_imaging_mueller: u32,
@@ -16403,6 +16405,8 @@ struct AwPredictionSample {
     float first_observed_im;
     float second_observed_re;
     float second_observed_im;
+    float source_phase_re;
+    float source_phase_im;
     float taylor_x;
     uint first_imaging_mueller;
     uint second_imaging_mueller;
@@ -16523,7 +16527,7 @@ static_assert(sizeof(AwParams) == 32, "AwParams ABI drift");
 static_assert(alignof(AwParams) == 4, "AwParams alignment drift");
 static_assert(sizeof(AwPredictionPlan) == 36, "AwPredictionPlan ABI drift");
 static_assert(alignof(AwPredictionPlan) == 4, "AwPredictionPlan alignment drift");
-static_assert(sizeof(AwPredictionSample) == 104, "AwPredictionSample ABI drift");
+static_assert(sizeof(AwPredictionSample) == 112, "AwPredictionSample ABI drift");
 static_assert(alignof(AwPredictionSample) == 4, "AwPredictionSample alignment drift");
 static_assert(sizeof(AwPredictionParams) == 32, "AwPredictionParams ABI drift");
 static_assert(alignof(AwPredictionParams) == 4, "AwPredictionParams alignment drift");
@@ -19124,6 +19128,7 @@ fn pack_awproject_metal_prediction_probe_batch(
         }
         let first_observed = parallel_hands.first_visibility[sample_index];
         let second_observed = parallel_hands.second_visibility[sample_index];
+        let source_phase = parallel_hands.source_phase[sample_index];
         packed.samples.push(AwProjectMetalPredictionSample {
             first_prediction: awproject_compact_metal_prediction_plan(
                 source.first_prediction_plan,
@@ -19145,6 +19150,8 @@ fn pack_awproject_metal_prediction_probe_batch(
             first_observed_im: first_observed.im,
             second_observed_re: second_observed.re,
             second_observed_im: second_observed.im,
+            source_phase_re: source_phase.re,
+            source_phase_im: source_phase.im,
             taylor_x: mtmfs_casa_taylor_x(sample_frequencies_hz[sample_index], request.reffreq_hz),
             first_imaging_mueller: first_imaging_mueller as u32,
             second_imaging_mueller: second_imaging_mueller as u32,
@@ -21080,6 +21087,50 @@ fn casa_67518_wide_complex_division(
     Ok(output)
 }
 
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_predivision_source_phase(
+    numerator: AwProjectMetalWideDivisionComplex,
+    source_phase: Complex32,
+) -> Result<AwProjectMetalWideDivisionComplex, ImagingError> {
+    if ![numerator.re, numerator.im, source_phase.re, source_phase.im]
+        .into_iter()
+        .all(f32::is_finite)
+    {
+        return Err(ImagingError::Normalization(
+            "AWProject pre-division source phase requires finite inputs".to_string(),
+        ));
+    }
+    let phased = gridder::casa_aw_literal_complex_multiply(
+        Complex32::new(numerator.re, numerator.im),
+        Complex32::new(source_phase.re, -source_phase.im),
+    );
+    Ok(AwProjectMetalWideDivisionComplex {
+        re: phased.re,
+        im: phased.im,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_restore_source_phase(
+    value: AwProjectMetalPredictionAuditComplex,
+    source_phase: Complex32,
+) -> Result<AwProjectMetalPredictionAuditComplex, ImagingError> {
+    if ![value.re, value.im, source_phase.re, source_phase.im]
+        .into_iter()
+        .all(f32::is_finite)
+    {
+        return Err(ImagingError::Normalization(
+            "AWProject source-phase restoration requires finite inputs".to_string(),
+        ));
+    }
+    let restored =
+        gridder::casa_aw_literal_complex_multiply(Complex32::new(value.re, value.im), source_phase);
+    Ok(AwProjectMetalPredictionAuditComplex {
+        re: restored.re,
+        im: restored.im,
+    })
+}
+
 #[cfg(all(test, target_os = "macos", not(coverage)))]
 fn current_f32_complex_division(
     raw: AwProjectMetalWideDivisionTerm,
@@ -21143,6 +21194,8 @@ fn build_awproject_wide_division_candidate(
     }
 
     let started = Instant::now();
+    let source_phase_enabled =
+        env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDIVISION_SOURCE_PHASE").is_some();
     let mut audit = Vec::with_capacity(batch.samples.len());
     let mut results = Vec::with_capacity(batch.samples.len());
     for (ordinal, ((sample, raw), control)) in
@@ -21188,22 +21241,24 @@ fn build_awproject_wide_division_candidate(
             }
         }
 
-        let first_term0 = casa_67518_wide_complex_division(
-            raw.first.model_term0.numerator,
-            raw.first.model_term0.normalizer,
-        )?;
-        let first_term1 = casa_67518_wide_complex_division(
-            raw.first.model_term1.numerator,
-            raw.first.model_term1.normalizer,
-        )?;
-        let second_term0 = casa_67518_wide_complex_division(
-            raw.second.model_term0.numerator,
-            raw.second.model_term0.normalizer,
-        )?;
-        let second_term1 = casa_67518_wide_complex_division(
-            raw.second.model_term1.numerator,
-            raw.second.model_term1.normalizer,
-        )?;
+        let source_phase = Complex32::new(sample.source_phase_re, sample.source_phase_im);
+        let divide_term = |term: AwProjectMetalWideDivisionTerm| {
+            let numerator = if source_phase_enabled {
+                awproject_predivision_source_phase(term.numerator, source_phase)?
+            } else {
+                term.numerator
+            };
+            let divided = casa_67518_wide_complex_division(numerator, term.normalizer)?;
+            if source_phase_enabled {
+                awproject_restore_source_phase(divided, source_phase)
+            } else {
+                Ok(divided)
+            }
+        };
+        let first_term0 = divide_term(raw.first.model_term0)?;
+        let first_term1 = divide_term(raw.first.model_term1)?;
+        let second_term0 = divide_term(raw.second.model_term0)?;
+        let second_term1 = divide_term(raw.second.model_term1)?;
         let first_scaled_re = first_term1.re * sample.taylor_x;
         let first_scaled_im = first_term1.im * sample.taylor_x;
         let second_scaled_re = second_term1.re * sample.taylor_x;
@@ -21787,6 +21842,8 @@ fn write_awproject_wide_division_sidecar(
     let current_receipt_sha256 = receipt_hash(&current_receipt)?;
     let wide_receipt_sha256 = receipt_hash(&wide_receipt)?;
     let complex_divisions = raw.len().saturating_mul(4);
+    let source_phase_enabled =
+        env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDIVISION_SOURCE_PHASE").is_some();
     let receipt = serde_json::json!({
         "schema": "casa-rs-vlass-aw-wide-division-sidecar-host-v1",
         "role": "bounded_prediction_only_correctness_and_cost_diagnostic_not_performance_evidence",
@@ -21826,6 +21883,13 @@ fn write_awproject_wide_division_sidecar(
             "operation_graph": "d*d; fma(c,c); b*d; fma(a,c); a*d; fma(b,c,-a*d); binary64 divisions",
             "output": "each component narrowed once to binary32",
             "scope": "ordinary finite operands accepted by the fail-closed helper",
+        },
+        "source_phase_sandwich": {
+            "enabled": source_phase_enabled,
+            "predivision": "completed Complex32 numerator times conjugate of the recorded source phasor",
+            "postdivision": "normalized Complex32 term times the recorded source phasor to restore the observed visibility frame",
+            "arithmetic": "four separately rounded binary32 products followed by separately rounded add/subtract",
+            "raw_sidecar_numerator": "pre-source-phase Metal numerator",
         },
         "prohibited_post_prediction_stages": {
             "residual_grid_dispatch": false,
@@ -62024,7 +62088,7 @@ mod tests {
         );
         assert_eq!(
             std::mem::size_of::<super::AwProjectMetalPredictionSample>(),
-            104
+            112
         );
         assert_eq!(
             std::mem::align_of::<super::AwProjectMetalPredictionSample>(),
@@ -62165,6 +62229,41 @@ mod tests {
         assert_eq!(
             [official.re.to_bits(), official.im.to_bits()],
             [1_034_097_304, 1_037_600_252]
+        );
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn awproject_source1446_phase_sandwich_matches_installed_casa_bits() {
+        let numerator = super::AwProjectMetalWideDivisionComplex {
+            re: f32::from_bits(969_396_468),
+            im: f32::from_bits(3_196_932_265),
+        };
+        let source_phase =
+            Complex32::new(f32::from_bits(1_065_353_216), f32::from_bits(2_932_007_418));
+        let phased = super::awproject_predivision_source_phase(numerator, source_phase)
+            .expect("pre-division source phase");
+        assert_eq!(
+            [phased.re.to_bits(), phased.im.to_bits()],
+            [969_396_469, 3_196_932_265]
+        );
+
+        let normalizer = super::AwProjectMetalWideDivisionComplex {
+            re: f32::from_bits(1_064_983_698),
+            im: f32::from_bits(3_161_565_358),
+        };
+        let divided = super::casa_67518_wide_complex_division(phased, normalizer)
+            .expect("official CASA wide division");
+        assert_eq!(
+            [divided.re.to_bits(), divided.im.to_bits()],
+            [3_145_554_492, 3_197_138_881]
+        );
+
+        let restored = super::awproject_restore_source_phase(divided, source_phase)
+            .expect("post-division source-phase restoration");
+        assert_eq!(
+            [restored.re.to_bits(), restored.im.to_bits()],
+            [3_145_554_492, 3_197_138_881]
         );
     }
 
@@ -62574,6 +62673,8 @@ mod tests {
                 first_observed_im: 0.0,
                 second_observed_re: 0.0,
                 second_observed_im: 0.0,
+                source_phase_re: 1.0,
+                source_phase_im: 0.0,
                 taylor_x: 0.0,
                 first_imaging_mueller: 0,
                 second_imaging_mueller: 15,
@@ -63045,6 +63146,8 @@ mod tests {
                 first_observed_im: -0.5,
                 second_observed_re: 0.75,
                 second_observed_im: 0.25,
+                source_phase_re: 1.0,
+                source_phase_im: 0.0,
                 taylor_x: 0.0,
                 first_imaging_mueller: 0,
                 second_imaging_mueller: 15,

@@ -28982,11 +28982,13 @@ fn align_optional_aw_parallel_hand_batches(
     {
         if parallel_hands.len() != visibility.len()
             || parallel_hands.second_visibility.len() != visibility.len()
+            || parallel_hands.source_phase.len() != visibility.len()
         {
             return Err(ImagingError::InvalidRequest(format!(
-                "prepared AW parallel-hand batch {index} has first/second lengths {}/{} for {} visibility samples",
+                "prepared AW parallel-hand batch {index} has first/second/source-phase lengths {}/{}/{} for {} visibility samples",
                 parallel_hands.len(),
                 parallel_hands.second_visibility.len(),
+                parallel_hands.source_phase.len(),
                 visibility.len()
             )));
         }
@@ -44852,6 +44854,7 @@ impl PreparedSelection {
                 if let Some(parallel_hands) = aw_parallel_hands {
                     parallel_hands.first_visibility.reserve(sample_capacity);
                     parallel_hands.second_visibility.reserve(sample_capacity);
+                    parallel_hands.source_phase.reserve(sample_capacity);
                 }
                 if let Some(density_batch) = density_batch {
                     reserve_visibility_batch(density_batch, sample_capacity);
@@ -45276,6 +45279,7 @@ impl PreparedSelection {
                                 AwParallelHandVisibilityBatch {
                                     first_visibility: Vec::with_capacity(max_samples),
                                     second_visibility: Vec::with_capacity(max_samples),
+                                    source_phase: Vec::with_capacity(max_samples),
                                 }
                             }),
                             density_batch: (trace_free_mfs_mosaic && use_density_batches)
@@ -45344,6 +45348,7 @@ impl PreparedSelection {
                             AwParallelHandVisibilityBatch {
                                 first_visibility: Vec::with_capacity(max_samples),
                                 second_visibility: Vec::with_capacity(max_samples),
+                                source_phase: Vec::with_capacity(max_samples),
                             }
                         }),
                         density_batch: (trace_free_mfs_mosaic && use_density_batches)
@@ -45790,6 +45795,11 @@ impl PreparedSelection {
                                 if let Some(parallel_hands) = aw_parallel_hands.as_mut() {
                                     parallel_hands.first_visibility.push(zero_visibility);
                                     parallel_hands.second_visibility.push(zero_visibility);
+                                    parallel_hands.source_phase.push(phase_rotate_visibility(
+                                        Complex32::new(1.0, 0.0),
+                                        transform.phase_shift_m,
+                                        imaging_frequency_hz,
+                                    ));
                                 }
                                 sample_frequency_hz.push(imaging_frequency_hz);
                                 if let Some(density_batch) = density_batch.as_mut() {
@@ -45855,6 +45865,11 @@ impl PreparedSelection {
                         if let Some(parallel_hands) = aw_parallel_hands.as_mut() {
                             parallel_hands.first_visibility.push(zero_visibility);
                             parallel_hands.second_visibility.push(zero_visibility);
+                            parallel_hands.source_phase.push(phase_rotate_visibility(
+                                Complex32::new(1.0, 0.0),
+                                transform.phase_shift_m,
+                                imaging_frequency_hz,
+                            ));
                         }
                         sample_frequency_hz.push(imaging_frequency_hz);
                         if let Some(density_batch) = density_batch.as_mut() {
@@ -46898,6 +46913,11 @@ impl PreparedSelection {
                                 if let Some(parallel_hands) = aw_parallel_hands.as_mut() {
                                     parallel_hands.first_visibility.push(first_visibility);
                                     parallel_hands.second_visibility.push(second_visibility);
+                                    parallel_hands.source_phase.push(phase_rotate_visibility(
+                                        Complex32::new(1.0, 0.0),
+                                        transform.phase_shift_m,
+                                        imaging_frequency_hz,
+                                    ));
                                 }
                                 sample_frequency_hz.push(imaging_frequency_hz);
                                 if let Some(density_batch) = density_batch.as_mut() {
@@ -46983,6 +47003,11 @@ impl PreparedSelection {
                         if let Some(parallel_hands) = aw_parallel_hands.as_mut() {
                             parallel_hands.first_visibility.push(first_visibility);
                             parallel_hands.second_visibility.push(second_visibility);
+                            parallel_hands.source_phase.push(phase_rotate_visibility(
+                                Complex32::new(1.0, 0.0),
+                                transform.phase_shift_m,
+                                imaging_frequency_hz,
+                            ));
                         }
                         sample_frequency_hz.push(imaging_frequency_hz);
                         if let Some(density_batch) = density_batch.as_mut() {
