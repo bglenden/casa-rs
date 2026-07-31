@@ -7225,6 +7225,80 @@ single-term coefficient/update ledger, new clean, production incorporation,
 full-16-SPW row, full-size row, or memory campaign is authorized by this
 result.
 
+### 2026-07-30 frozen scalar-boundary checkpoint contract
+
+The same Oracle conversation initially selected a two-arm first-cycle replay
+using frozen CASA and casa-rs initial residual arrays. Inspection of the
+external artifact tree invalidated that prerequisite:
+
+- the frozen `4096`-square four-SPW CASA tree retains only the final clean
+  residual and model products;
+- the `niter=270` CASA product directory was not retained; only its driver log
+  and `fullsummary` receipt survive;
+- no exact CASA initial-residual, per-component coefficient, or per-cycle
+  model array exists for this geometry and SPW selection; and
+- the retained `12,150`-square dirty products use all `16` SPWs and cannot be
+  substituted or cropped into the reduced four-SPW contract.
+
+The Oracle therefore explicitly concluded that array-level causal
+localization is impossible from the surviving frozen artifacts. Its corrected
+choice was an offline first-divergent scalar-cycle certificate. The
+implementation narrows that advice to the actual precision and semantic
+coverage rather than comparing incidental decimal formatting:
+
+- the CASA `trace-270` receipt supplies two complete cycles and the start
+  boundary of cycle 2 at full precision;
+- CASA values are rounded once to binary32, matching the image-domain scalar
+  precision, while each casa-rs shortest-roundtrip decimal is parsed and
+  rounded once to binary32;
+- start iteration, update count, actual update count, and cycle identity are
+  exact discrete gates;
+- CASA `startPeakRes`, `cycleThresh`, `peakResNM`, and `modelFlux` map to the
+  casa-rs masked start peak, cycle threshold, full-plane approximate end peak,
+  and model flux, respectively;
+- CASA `peakRes` is excluded because it is masked and is not semantically the
+  same value as the casa-rs full-plane approximate end peak; and
+- cycle-2 post-minor values are excluded because the `niter=270` trace
+  intentionally truncated that cycle after one update.
+
+The existing rounded `171`-cycle receipt remains context only. It must prove
+complete discrete trajectory parity, but its rounded CASA numerical values
+cannot establish the first bit-level numerical divergence. The current exact
+casa-rs control receipt must also retain `171` minor cycles, `170` refreshes,
+discrete parity, and final-iteration parity.
+
+The certificate is bound to these immutable inputs:
+
+- CASA `trace-270` driver log:
+  `101f0aed2f1d1b7ae7e4fb592bbe877de4d5061bb58bb21ab6b4805f43f21d53`;
+- frozen CASA full clean log:
+  `c201c54d1bce9a86c8c63149a2fd66f2ebcabe09b45794a24564d5b8bca2ba45`;
+- hybrid clean casa-rs log:
+  `99fefee3f1fdd251fa651c70c165511517fc81a7849aa40f611fc2f2f7a4a0f3`;
+- rounded `171`-cycle CASA/casa-rs trace:
+  `f64ee31f49fb3ef93af6004e40774bf383620364f47593629dc9512057167e36`;
+  and
+- exact hybrid/control trajectory comparison:
+  `979242b44469a8101da1f5dd9932614ca1a946fc2de1d4354c0956bc676b66ef`.
+
+The mutually exclusive outcomes are
+`invalid-discrete-trajectory`,
+`diverges-at-cycle-0-input-scalar`,
+`diverges-within-cycle-0-scalars`,
+`diverges-after-cycle-0-scalars`, and
+`no-divergence-in-exact-scalar-window`. A numerical result locates only the
+first surviving cross-producer scalar difference. It does not assign an array
+or algorithm owner, because the required CASA arrays do not exist.
+
+This diagnostic reads logs and JSON only. It cannot launch CASA, open the
+MeasurementSet, predict, grid, FFT, enter a minor cycle, run clean, or write a
+product tree. No outcome authorizes a clean, production change, tolerance
+change, or runtime change. If the certificate confirms that the first
+surviving scalar boundary already differs, a new and distinct CASA
+initial-residual array oracle is required before causal array-level
+localization can continue. At this pre-run checkpoint the certificate had not
+run.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
