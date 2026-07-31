@@ -5296,6 +5296,80 @@ reference, full clean, full-16-SPW row, `12,150`-square development clean, or
 full-geometry memory-policy experiment ran. The four-SPW row remains
 unpromoted, so the full-16-SPW and memory-campaign gates remain closed.
 
+### 2026-07-30 frozen alpha-cliff causal certificate
+
+The same Oracle conversation first proposed a complete common-model
+visibility-boundary comparison. Its own hard preflight required an immutable
+CASA per-sample prediction artifact for every accepted four-SPW source-role
+record. The artifact inventory proved that no such oracle exists for the
+frozen CASA model used by Phase B: the available CASA prediction traces use a
+different full-16-SPW casa-rs model. That proposal was therefore rejected
+before implementation. The older traces remain context only and no numerical
+value from them participates in the following classification. No new CASA
+execution was used to fill the gap.
+
+Oracle's resulting single feasible discriminator was a read-only
+counterfactual certificate at the sole alpha cliff. The reusable
+`vlass_alpha_cliff_causality` analyzer opens only the already-written CASA and
+Phase-B image products. It cannot open a MeasurementSet or enter prediction,
+gridding, FFT, restoration, product formation, or clean. The analyzer binds
+the Phase-A and Phase-B receipts, all relevant input-plane and mask hashes,
+`weight.tt0`, the frozen model and beam, and the Phase-B model-grid,
+visibility, and pre-FFT-grid hashes. It also requires the unchanged comparison
+receipt to prove semantic metadata parity.
+
+Source inspection and the successful Phase-A implementation correct one
+important shorthand in the initial Oracle proposal: CASA's alpha threshold is
+the positive maximum of the temporary Hessian-principal residual term zero
+divided by ten, not the maximum of persisted raw `residual.tt0` alone. The
+certificate therefore reads both persisted residual Taylor terms, applies the
+exact frozen f32 principal inverse with bits
+`[[1065428509,3201778928],[3201778928,1100844976]]`, and first reproduces the
+entire stored alpha and alpha-error masks bit-for-bit for both producers.
+
+The result is valid and classified `local-value-only`:
+
+- the CASA and Phase-B positive principal-residual maxima occur at the same
+  unique pixel, `(1341, 3274)`;
+- their maximum values differ by one f32 ULP, with bits `1011964715` and
+  `1011964714`;
+- division by ten rounds both thresholds to the identical f32 value
+  `0.0012778083328157663`, bits `984054818`;
+- at `(673, 2447)`, CASA image TT0 is
+  `0.00127780856564641`, bits `984054820`, exactly two ULP above the threshold;
+- Phase-B image TT0 is exactly equal to the threshold, bits `984054818`, so
+  CASA's strict `image.tt0 > threshold` predicate masks it;
+- the CASA-image/Phase-B-threshold counterfactual remains valid, while the
+  Phase-B-image/CASA-threshold counterfactual remains masked; and
+- the local Hessian-principal residual has the same two-ULP deficit as the
+  image, while the threshold shift is exactly zero.
+
+The threshold path is therefore not causal for the remaining topology
+failure. A production correction confined to the positive residual maximum,
+threshold arithmetic, predicate, tolerance, or guard band cannot close this
+pixel. The next correction must move the residual delivered at `(673, 2447)`
+in the correct direction. This certificate intentionally does not distinguish
+prediction, residual gridding, compensated readback, FFT, or normalization;
+without an exact same-model CASA intermediate, assigning one of those as the
+owner would be unearned.
+
+The preliminary receipt is retained as positive evidence but lacked the final
+frozen-input and executable-hash checks. The final v2 receipt adds them without
+changing the classification. The analyzer source, preliminary receipt, final
+receipt, and final executable SHA-256 digests are, respectively:
+
+- `ab2678081e690b89842b11558380318078a6fcba0845f3fd4e905fe8b6155ed9`;
+- `761fb30702652c0ddd59cfec4be590267b01e14dd5e770b9f8244952f112ed32`;
+- `8b55f59dfd49a26ed8a906dddb3d414f9167d7f6d466740efa7865867317383f`;
+  and
+- `eeb203491d0f7b7d57075f2d26d3e3ccb3f6e0801967fa7e9fc69a3f3f20ce88`.
+
+This diagnostic justifies no production code change by itself and does not
+promote the row. No CASA call, visibility processing, new image, clean,
+full-16-SPW row, `12,150`-square development clean, or memory-policy
+experiment ran. The four-SPW promotion and every later ladder gate remain
+closed.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
