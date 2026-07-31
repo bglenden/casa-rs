@@ -446,6 +446,41 @@ bounds for every omitted phase. State both the promotion budget and a looser
 abort budget that closes the family only when even an optimistic lower bound
 misses it.
 
+### Separate stored-state cardinality from action cardinality
+
+Deduplicating kernels, coefficients, screens, plans, or sufficient statistics
+proves a storage reduction only. It does not prove that their distinct
+input-to-output uses can be merged. Ledger these independently:
+
+- unique resident objects and bytes;
+- construction interactions needed to create them;
+- logical consumer actions per operator application;
+- physical reads, multiply-accumulates, reductions, and writes after legal
+  fusion; and
+- trajectory totals, including repeated moment or cross-term uses of the same
+  stored object.
+
+For coupled bases such as MT-MFS, count every input-lane to output-lane path
+even when several paths reuse one stored moment. Require an explicit fusion or
+linearity argument before reducing action count. A memory contraction may
+promote independently, but do not use it to set a timing gate until the
+consumer-action ledger is complete.
+
+### Make hardware gates residency-faithful
+
+A hardware kill or promotion gate is admissible only when the benchmark
+preserves the proposed batch shape, storage mode, buffer lifetime, and
+synchronization boundary. In particular, a host-array adapter with packing and
+export cannot kill a private resident GPU design, and a device-only timer that
+omits mandatory feedback synchronization cannot promote one.
+
+Classify a mismatched-boundary measurement as diagnostic. Use it to identify
+likely copies, allocation, specialization, or synchronization costs, then
+construct the smallest fixture that preserves the candidate's intended
+residency and the waits required by its real dependency graph. Record
+compilation or first-use, prepared device time, and commit-to-completion wall
+time separately.
+
 ### Do not price different representations with one counter
 
 Interaction, tap, pair, pixel, FFT, and byte counts are useful rejection

@@ -8966,6 +8966,352 @@ re-census/re-rank the portfolio after two negative candidates or immediately
 after a premise-changing result. These rules are now in
 `.agents/skills/casa-rs-imaging-performance/SKILL.md`.
 
+#### Ordered-response contraction proof and construction census
+
+Brian's scientific-Pareto redirection applies to this architecture reset. The
+replacement is not required to reproduce CASA's sampled-CF arithmetic,
+component trajectory, or sub-ppm incidental agreement. It must still preserve
+the requested VLASS selection and products, clear the frozen scientific floor,
+remain stable, and close the measured end-to-end budget. No result in this
+section promotes the `4,096`-square full-16-SPW row.
+
+A second Oracle review audited the exact sufficient-statistic proposal without
+protecting its terminology or timing model. The conversation is
+<https://chatgpt.com/c/6a6d1a16-bd08-83e8-8873-c7fbcc37aae8>.
+The object is now called the **ordered local response** `G*WA`, not a normal
+matrix. Conjugate-frequency imaging screens and normal-frequency prediction
+screens differ, so Hermitian symmetry and positive semidefiniteness are not
+assumed. Pair reversal, half-spectrum FFTs, CG/Cholesky, early real projection,
+and Hermitian kernel completion are forbidden until separately proved.
+
+The central storage contraction survives. Expanding
+`(eta(x) - eta(x'))^n` for total W order `n=0..2` allows every binomial split
+to share one translation-invariant kernel for each ordered AW pair, W order,
+and stored MT-MFS moment:
+
+```text
+54 ordered pairs * 3 W orders * 3 stored moments = 486 kernels
+486 * 192 * 192 * complex-f32 = 143,327,232 bytes
+```
+
+The consumer ledger required one correction. Two-term MT-MFS has four
+`(output term, model term)` uses of the three stored moments. Each `Hm`
+therefore performs `54 * 6 * 4 = 1,296` logical kernel actions, not `972`;
+that is `47,775,744` complex multiply-accumulates per `Hm` and
+`525,533,184` over eleven. The transform contraction remains
+`192` forward plus `168` inverse `192`-square complex FFTs per `Hm`, or
+`3,960` transforms over eleven applications. The performance skill now
+requires separate resident-object, construction-interaction, consumer-action,
+physical-traffic, and trajectory ledgers so a storage contraction cannot
+silently become an unearned compute contraction.
+
+The frozen row payload also establishes that the selected-field case has one
+POINTING direction and pixel position, `1,790` visibility frequencies,
+`104` PB-grouping frequencies, `28` observed imaging screen states, `32`
+prediction states, and `54` ordered state pairs. PB grouping frequency remains
+outside the AW state axis. The next real-row gate must still prove that no
+unrepresented parallactic-angle, antenna, time, or illumination state changes
+the physical screens.
+
+A tiny full-matrix proof now separates algebra from discretization and Metal.
+It materializes the complete `84 x 84` complex two-term MT-MFS response for a
+`7 x 6` image, covers every ordered pair with two hand rows, uses unequal
+complex imaging and prediction screens, both UVW signs, positive, negative,
+and near-zero Taylor coordinates, unequal weights, POINTING coordinate and
+scalar phases, every TT0/TT1 basis vector, and the polynomial RHS. Results are:
+
+- explicit contraction versus direct f64 rows: relative L2
+  `5.838624333e-16`, normalized Linf `1.173473686e-15`;
+- alias-safe FFT embedding versus explicit Toeplitz action: relative L2
+  `1.465262781e-16`;
+- contracted RHS versus direct polynomial rows: relative L2
+  `1.173650160e-15`; and
+- total-order-two W polynomial versus the exact W exponential in this fixture:
+  relative L2 `2.822525022e-9`.
+
+Wrong same-frequency prediction screen, W sign, Taylor coordinate, mixed
+binomial coefficient, right-binomial sign, POINTING scalar, left-screen
+conjugation, inverse-FFT normalization, one-pixel-too-small embedding, and
+forced Hermitian symmetry all exceed the candidate error by much more than
+the required tenfold sensitivity. This proves the algebra and tiny FFT
+embedding only. It does not prove screen-state completeness, the real-row W
+approximation, irregular-UV construction, complex-f32 Metal evaluation,
+scale-12 support bounds, or scientific promotion.
+
+The real construction census closes the earlier "6.95 million deposits"
+understatement. For `385,862` physical rows and `771,724` hand routes using
+the current `192`-square, `100`-subpixel, `7 x 7` controlled gridding rule:
+
+| Work | Response | RHS | Combined |
+| --- | ---: | ---: | ---: |
+| coefficient deposits | `6,945,516` | `4,630,344` | `11,575,860` |
+| literal tap updates | `340,330,284` | `226,886,856` | `567,217,140` |
+
+There are `372,870` distinct `(pair, cell, subpixel)` routes. Exact
+coalescing within this discretization reduces the combined tap work to
+`274,059,450`, a `2.069686486x` reduction. More importantly for the proposed
+spatial-owner Metal implementation, only `22,842` `(pair, cell)` scheduling
+buckets cover all routes: median `28`, p90 `70`, p99 `138`, and maximum `294`
+routes per bucket. Those subpixel routes cannot be merged numerically, but
+they provide strong gather/tile locality without global atomics. Route centers
+occupy `x=44..154`, `y=26..155`; every `7 x 7` support remains inside the
+embedding.
+
+The exact accounted resident payload is `201,850,880` bytes: response bank,
+`168` RHS grids, literal screens, and reduced RHS. That is not a runtime peak.
+FFT inputs/outputs, irregular-UV workspaces, hidden Metal allocations,
+commands, row staging, and mixing scratch make `0.6`--`1.3 GiB` the current
+unmeasured projection. The memory advantage over the `6.985 GB` replay
+program remains material, but only telemetry may promote it.
+
+Oracle recommends a persistent GPU graph: materialize the `192` right
+screen/eta/model planes, run one batched forward MPSGraph FFT, fuse all
+`1,296` ordered sparse mixing actions into output-owner threads with six
+register accumulators, run one batched `168`-plane inverse FFT, then fuse left
+screen/eta reduction and gather the `7,304` consumed pixels. One command
+buffer and one wait are required per feedback-dependent `Hm`; batching eleven
+preselected models would be invalid evidence. The projected optimized range is
+`35`--`70 ms` per `Hm`. Before response construction, the exact resident
+`192`-forward plus `168`-inverse batch is killed for MPSGraph if prepared FFT
+time exceeds `65 ms` per `Hm`; a custom mixed-radix `192=3*64` FFT is eligible
+only after that measurement.
+
+The first exact-shape batch diagnostic is encouraging on the final 32 GiB
+laptop. After one warmup pair populated both MPSGraph plan-cache entries, one
+measured complex-f32 host-array adapter pair reported:
+
+| Batch | MPSGraph execution | Existing adapter total | Host packing |
+| --- | ---: | ---: | ---: |
+| `192 x 192²` forward | `9.219709 ms` | `56.088250 ms` | `18.219459 ms` |
+| `168 x 192²` inverse | `7.984084 ms` | `48.301792 ms` | `15.951500 ms` |
+| pair | `17.203793 ms` | `104.390042 ms` | `34.170959 ms` |
+
+The `17.204 ms` host-observed blocking MPSGraph interval is numerically
+`2.62x` below Oracle's `45 ms` breakthrough-credible threshold. It is a useful
+warning signal that the FFT backend is unlikely to be the first blocker, but
+it is **not** the required hard gate: the adapter does not preserve private
+resident inputs/outputs, and its named interval cannot establish the complete
+commit-to-feedback synchronization boundary. It also omits the mixer, inverse
+output reuse, left reduction, and feedback-dependent application. Conversely,
+the `104.390 ms` adapter total includes avoidable host packing and export and
+cannot kill the resident design. Together these measurements are direct
+evidence to replace that adapter boundary with persistent Metal buffers and
+one command graph rather than optimize it. A sandboxed attempt saw no Metal
+device and was rejected as environmental, not recorded as a performance
+result.
+
+The hard FFT fixture must allocate two private `56,623,104`-byte buffers,
+compile and retain the exact `192`-forward and `168`-inverse executables, encode
+forward and inverse without CPU mapping, packing, export, graph reconstruction,
+output allocation, or intermediate synchronization, and then commit and wait.
+It must run eleven sequential feedback-shaped iterations and report
+compilation/first-use, prepared GPU interval, and p50/p90
+commit-to-completion wall time. The hard gates remain `<=45 ms` p90 green,
+`45`--`65 ms` viable, `>65 ms` unable to reach the green `Hm` budget, and
+`>90 ms` the trigger for the custom mixed-radix Stockham race.
+
+Oracle selected the direct `192/J7` output-tile-owner construction as the only
+first timed construction race. The measured exact coalescing reduces it to
+`274,059,450` tap-lane updates. An oversampled `384/J6` reference would reduce
+those updates by only `26.5%` while requiring about `3.02x` the FFT arithmetic,
+four times the normal-grid footprint and clear/write traffic, and an extra
+crop. It is retained only as a slower accuracy reference if direct-row
+comparison cannot distinguish discretization error from implementation error.
+
+The first construction must therefore stable-sort exact
+`(pair, cell, subpixel)` route descriptors, perform deterministic f64
+segmented accumulation into the `372,870` groups, convert each group's nine
+normal plus six RHS coefficients once to f32, and free sort scratch before
+Metal construction. With the expected SIMD width of 32, one `8 x 4` threadgroup
+owns one ordered-pair/output tile for the normal pass; each thread owns one
+output cell and nine register accumulators. A separate imaging-state/output
+tile pass owns six RHS accumulators. There are no global atomics,
+threadgroup reductions, lane-specific dispatches, or support clipping. Tile
+shape must be regenerated from `threadExecutionWidth` rather than assuming 32
+on every Apple GPU.
+
+The partial-boundary timing gates are corrected to preserve finalizer and
+integration reserve:
+
+| Result | Construction | Eleven `Hm` | Combined |
+| --- | ---: | ---: | ---: |
+| breakthrough | `<=1.50 s` | `<=0.85 s` | `<=2.35 s` |
+| full-row worthy | measured | `<=1.25 s` | `<=3.20 s` |
+| kill without exceptional finalizer evidence | measured | `>1.75 s` | `>3.70 s` |
+
+The eventual hard condition is
+`construction + eleven-Hm <= 6.785 s - finalizer_p90 - integration_p90`.
+The old `4.75 s` partial kill boundary is superseded because it left only
+`2.035 s` for the final physical-screen prediction, residual/products,
+transfers, and cold integration.
+
+The next bounded order is:
+
+1. use the now-green prepared FFT result to implement a private persistent
+   Metal graph with resident inputs/outputs, the output-owner sparse mixer,
+   and the f32 response gate from identical prebuilt kernels;
+2. measure that complete one-application boundary, including one
+   feedback-dependent wait, so the prepared FFT result cannot promote by
+   itself;
+3. race a deterministic controlled construction against direct f64 kernel
+   sums, starting with one accuracy-certifying recipe and separately pricing
+   the measured `192/J7` spatial-tile route;
+4. run the complete frozen real-row construction plus eleven-`Hm`
+   discriminator; and
+5. only then integrate a final physical-screen prediction and the reduced
+   scientific row.
+
+The independent portfolio remains live. A resident-row matrix-free matched
+type-1/type-2 NUFFT deletes the `486`-kernel bank; a different reconstruction
+algorithm targets at most five global response evaluations; exact on-demand
+component columns are retained as a low-probability candidate; and approximate
+visibility coalescing must first prove at least `8x` reduction from a
+metadata-only error certificate. The reconstruction discriminator is
+potentially multiplicative and may use the frozen local RHS/response and
+incumbent scientific trajectory without another visibility or CASA pass.
+
+The immutable receipts are:
+
+- ordered-response graph and real construction census:
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/20260731-vlass-localized-ordered-response-graph-contract-v1/vlass-localized-ordered-response-graph-contract-v1.json`,
+  SHA-256
+  `117585c8282ff14e2d358462627d9b62d784ff13b9a86b1fc8d08993aa8f95bb`;
+- tiny full-matrix proof:
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/20260731-vlass-ordered-response-full-matrix-proof-v1/vlass-ordered-response-full-matrix-proof-v1.json`,
+  SHA-256
+  `5944b2076ec606adcd3c0711e5a4efe24c5b157938418ff69671ae70434018c6`;
+- exact MPSGraph batch microgate:
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/20260731-vlass-ordered-response-mpsgraph-exact-batch-probe-v1/vlass-ordered-response-mpsgraph-exact-batch-probe-v1.json`,
+  SHA-256
+  `b6d641ccff224378b2968801820b27da21e511eb33befee83b9059c916fe5f08`.
+
+#### Complete resident action and real-route construction result
+
+The residency-faithful FFT gate is now green on the final 32 GiB M4 laptop.
+It retains compiled `192`-forward and `168`-inverse MPSGraph executables, uses
+two private `56,623,104`-byte buffers, performs eleven sequential
+commit-and-wait pairs, and never maps, packs, exports, allocates an output, or
+reconstructs a graph inside the measured boundary. Prepared pair wall time was
+`10.294 ms` p50 and `10.851 ms` p90; device time was `9.729 ms` p50 and
+`10.420 ms` p90. The `45 ms` green gate therefore passes with `4.15x` p90
+margin. Compilation took `3.671 ms` forward and `0.754 ms` inverse, while the
+first-use pair took `26.091 ms`.
+
+The complete synthetic `Hm` boundary also passes. Each application now
+materializes all `192` right planes, runs the forward transform, executes all
+`1,296` ordered MT-MFS mixing actions against the `486`-kernel bank, runs the
+`168`-plane inverse transform, reduces every left-screen/power contribution at
+the `7,304` consumed pixels, and completes the feedback wait in one
+command-buffer dependency chain. It uses `306,286,148` accounted resident
+bytes. Across eleven sequential applications, wall time was `15.358 ms` p50,
+`15.756 ms` p90, and `168.816 ms` total; p90 device time was `15.032 ms`.
+The synthetic f32 result differs from its explicit contraction by
+`2.643109e-7` relative, and no intermediate command-buffer continuation or
+host transfer occurred. This is `5.03x` inside the `0.85 s` eleven-action
+budget.
+
+The real frozen route construction then passed the selected `192/J7`
+output-owner race. The CPU stage uses all `385,862` physical rows and
+`771,724` parallel-hand routes. It derives the exact state and subpixel route,
+stable-sorts with source ordinal as the final tie-breaker, performs
+complex-f64 segmented accumulation, converts each group once to complex-f32,
+and releases response scratch before building the RHS groups. It produced the
+expected `372,870` response groups and `370,650` RHS groups in `0.547069 s`
+with `669,483,008` bytes peak RSS. The f64-to-f32 relative L2 differences were
+`2.563305e-8` for the response and `2.520834e-8` for the RHS.
+
+The Metal stage forms all `486` response and `168` RHS `192`-square grids with
+one output owner per ordered-state/cell, nine or six register accumulators,
+and no atomics, reductions, clipping, or lane-specific launches. Its cold
+command took `0.177590 s` wall and `0.167605 s` device time. Combined
+segmentation, output allocation, and Metal formation took `0.724698 s`, a
+`2.07x` margin inside the `1.50 s` construction gate. The Metal stage accounts
+for `252,578,596` resident bytes. Across four deterministic cells in every
+state, its worst coefficient-wise differences from direct complex-f64
+construction were `3.969275e-7` relative L2 and `5.230825e-7` normalized Linf
+for the response, and `2.526991e-7` and `5.298215e-7` for the RHS.
+
+The measured controlled construction plus all eleven complete applications is
+therefore `0.893514 s`, `2.63x` inside the `2.35 s` combined breakthrough
+gate. This is a `[measured]` architecture discriminator, not an end-to-end
+speedup: it omits the real physical-screen coefficient binding, the
+three-atom direct-row semantic gate, final model prediction, full-resolution
+finalizer, dense products, and imager integration. It does prove that FFT,
+ordered mixing, compact construction, and feedback synchronization are no
+longer physical blockers for the replacement graph.
+
+Two invalid construction attempts are not negative architecture evidence.
+Both were stopped before a valid phase result because a prototype expression
+broadcast an `N x 1` W-sign array against a `2N` hand vector, accidentally
+requesting an `N x 2N` temporary. The first received `SIGKILL`; phase
+instrumentation exposed the same error in the second, which was stopped at
+`3.96 GB` RSS. Replacing it with the intended one-dimensional `2N` route map
+made the complete construction finish in under one second. The earlier
+tentative attribution to simultaneous response/RHS materialization is
+superseded by this concrete cause.
+
+The next semantic gate remains bounded and mandatory. It binds the exact CASA
+forward/reverse screen artifacts and production coefficient recipe, retains
+all `54` ordered pair strata, and compares pure-TT0 and pure-TT1 three-atom
+scale-12/scale-5/point actions against a direct f64 row operator. Wrong
+same-frequency screens and PB-frequency Taylor coordinates must remain
+tenfold-sensitive controls. Only after that passes may the controlled
+construction become the real response/RHS state and proceed to final
+prediction, the native-screen full-resolution finalizer, and a reduced
+scientific row.
+
+The new immutable receipts are:
+
+- complete private-resident `Hm` boundary:
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/20260731-vlass-complete-private-resident-ordered-response-probe-v1/20260731-vlass-complete-private-resident-ordered-response-probe-v1.json`,
+  SHA-256
+  `1567f9a638d30222007ed318c7c807e7adf3e45a0d2cc0c3ccab9a173e185195`;
+- real-route segmentation with sampled f64 oracles:
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/20260731-vlass-ordered-response-segmented-construction-v2/manifest.json`,
+  SHA-256
+  `11fff8030d2c5269c1ee13093e2c64c43f619c57c21e6718970a9dc78ce35eb0`;
+  and
+- real-route output-owner construction:
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/20260731-vlass-real-route-output-owner-construction-probe-v1/20260731-vlass-real-route-output-owner-construction-probe-v1.json`,
+  SHA-256
+  `c55e7d2c5a9b6768e38ffcadef0cf087247f0c3fa689bd222d7310fd0179d237`.
+
+No CASA call, CLEAN run, imaging workload, full finalizer, or
+`12,150`-square development run produced this evidence.
+
+#### Checkpoint verification and speedup classification
+
+The speedup evidence must not be ranked across unlike workload sizes. The
+current full-geometry single-field dirty result is `1,276.157 / 104.542929 =
+12.207x`. The current reduced `4,096`-square four-SPW clean result is
+`3,631.809729 / 29.43 = 123.405x`. The latter is the largest demonstrated
+end-to-end speedup and is consistent with CLEAN exposing much more repeated
+work for casa-rs to remove or amortize. It is development evidence only. There
+is not yet a matched `12,150`-square clean timing, so the wave makes no claim
+that full-geometry dirty is faster or more accelerated than full-geometry
+clean.
+
+The checkpoint stabilization gates were:
+
+- `CARGO_INCREMENTAL=0 cargo test -p casa-imaging`: `412` passed, `14`
+  ignored, no failures;
+- the three ordered-response Python test modules: `8` passed;
+- Ruff over the six ordered-response Python source/test files: clean;
+- `CARGO_INCREMENTAL=0 cargo clippy -p casa-imaging --all-targets -- -D
+  warnings`: clean;
+- `cargo fmt --all -- --check`, `git diff --check`, and `just docs-check`:
+  clean; and
+- `just quick`: workspace clippy, compilation, and the completed test crates
+  were clean, including `casa-imaging` (`341` passed, `2` ignored), but the
+  gate stopped in `casa-notebook` because two unrelated HTTP tutorial tests
+  could not bind `127.0.0.1:0` in the restricted Codex sandbox
+  (`Operation not permitted`). The other `15` tests in that binary passed.
+
+The two `casa-notebook` failures are an environmental exclusion, not a wave
+source failure. The checkpoint did not alter those tests or their HTTP
+implementation, and no duplicate unrestricted workspace gate was launched
+solely for assurance.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.

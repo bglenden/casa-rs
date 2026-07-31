@@ -26,10 +26,17 @@ use objc2_metal::{
     MTLComputeCommandEncoder, MTLComputePipelineState, MTLCreateSystemDefaultDevice, MTLDevice,
     MTLLibrary, MTLResourceOptions, MTLSize,
 };
+#[cfg(test)]
+use objc2_metal_performance_shaders::MPSCommandBuffer;
 use objc2_metal_performance_shaders::MPSDataType;
 use objc2_metal_performance_shaders_graph::{
     MPSGraph, MPSGraphFFTDescriptor, MPSGraphFFTScalingMode, MPSGraphTensor, MPSGraphTensorData,
     MPSGraphTensorDataDictionary,
+};
+#[cfg(test)]
+use objc2_metal_performance_shaders_graph::{
+    MPSGraphDevice, MPSGraphExecutable, MPSGraphExecutableExecutionDescriptor, MPSGraphShapedType,
+    MPSGraphTensorShapedTypeDictionary,
 };
 
 use crate::fft::{fftshift2, ifftshift2};
@@ -3354,6 +3361,8 @@ mod tests {
 
     use super::*;
 
+    mod ordered_response_probe;
+
     #[test]
     #[serial]
     fn metal_shared_grid_writers_match_ifftshift_layout_for_even_and_odd_shapes() {
@@ -3539,6 +3548,414 @@ mod tests {
         assert_eq!(
             writer.add_planes(&[Complex32::new(1.0, 0.0); 17]),
             Err("metal_shared_dirty_grid_tile_value_count_mismatch")
+        );
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    #[serial]
+    #[ignore = "production-inert VLASS exact-batch MPSGraph speed-of-light probe"]
+    fn vlass_ordered_response_exact_mpsgraph_batch_probe() {
+        assert!(
+            mpsgraph_f32_available(),
+            "VLASS MPSGraph microgate requires a visible Metal device"
+        );
+
+        fn execute(batch: usize, direction: FftDirection) -> FftTiming {
+            let inputs = vec![Array2::<Complex32>::zeros((192, 192)); batch];
+            let spec = Fft2Spec::centered_c2c_batch(
+                192,
+                192,
+                batch,
+                FftPrecision::F32,
+                direction,
+                FftUseCase::Benchmark,
+                FftBackendChoice::MetalMpsGraph,
+            );
+            let selection = select_fft_backend(spec);
+            let (_, timing) = centered_transform_f32_batch(&inputs, spec, selection).unwrap();
+            timing
+        }
+
+        // Populate the two shape/direction plan-cache entries. The measured
+        // pair below still includes host packing and export, so only its
+        // MPSGraph exec field may reject the resident design. It cannot
+        // promote one.
+        let _ = execute(192, FftDirection::Forward);
+        let _ = execute(168, FftDirection::Inverse);
+        let forward = execute(192, FftDirection::Forward);
+        let inverse = execute(168, FftDirection::Inverse);
+        eprintln!(
+            "vlass_mpsgraph_exact_batch_probe \
+             forward_exec_s={:.9} inverse_exec_s={:.9} pair_exec_s={:.9} \
+             forward_total_s={:.9} inverse_total_s={:.9} pair_total_s={:.9} \
+             forward_pack_s={:.9} inverse_pack_s={:.9}",
+            forward.exec.as_secs_f64(),
+            inverse.exec.as_secs_f64(),
+            (forward.exec + inverse.exec).as_secs_f64(),
+            forward.total.as_secs_f64(),
+            inverse.total.as_secs_f64(),
+            (forward.total + inverse.total).as_secs_f64(),
+            forward.pack.as_secs_f64(),
+            inverse.pack.as_secs_f64(),
+        );
+        assert!(forward.plan_cache_hit);
+        assert!(inverse.plan_cache_hit);
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    struct ResidentFftExecutable {
+        _graph: Retained<MPSGraph>,
+        executable: Retained<MPSGraphExecutable>,
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn compile_resident_fft_executable(
+        device: &MetalDevice,
+        graph_device: &MPSGraphDevice,
+        batch: usize,
+        direction: FftDirection,
+    ) -> (ResidentFftExecutable, Duration) {
+        let graph = unsafe { MPSGraph::new() };
+        let shape = shape_array_batch(batch, 192, 192);
+        let placeholder = unsafe {
+            graph.placeholderWithShape_dataType_name(
+                Some(&shape),
+                MPSDataType::ComplexFloat32,
+                None,
+            )
+        };
+        let descriptor =
+            unsafe { MPSGraphFFTDescriptor::descriptor() }.expect("MPSGraph FFT descriptor");
+        unsafe {
+            descriptor.setInverse(direction == FftDirection::Inverse);
+            descriptor.setScalingMode(if direction == FftDirection::Inverse {
+                MPSGraphFFTScalingMode::Size
+            } else {
+                MPSGraphFFTScalingMode::None
+            });
+        }
+        let axes = axes_array_batch();
+        let output = unsafe {
+            graph.fastFourierTransformWithTensor_axes_descriptor_name(
+                &placeholder,
+                &axes,
+                &descriptor,
+                None,
+            )
+        };
+        let target_tensors = NSArray::from_slice(&[&*output]);
+        let shaped_type = unsafe {
+            MPSGraphShapedType::initWithShape_dataType(
+                MPSGraphShapedType::alloc(),
+                Some(&shape),
+                MPSDataType::ComplexFloat32,
+            )
+        };
+        let feeds: Retained<MPSGraphTensorShapedTypeDictionary> =
+            NSDictionary::from_slices(&[&*placeholder], &[&*shaped_type]);
+        let compile_start = Instant::now();
+        let executable = unsafe {
+            graph.compileWithDevice_feeds_targetTensors_targetOperations_compilationDescriptor(
+                Some(graph_device),
+                &feeds,
+                &target_tensors,
+                None,
+                None,
+            )
+        };
+        let compile = compile_start.elapsed();
+        assert_eq!(
+            unsafe { executable.feedTensors() }
+                .expect("compiled FFT feed tensors")
+                .len(),
+            1
+        );
+        assert_eq!(
+            unsafe { executable.targetTensors() }
+                .expect("compiled FFT target tensors")
+                .len(),
+            1
+        );
+        let _ = device;
+        (
+            ResidentFftExecutable {
+                _graph: graph,
+                executable,
+            },
+            compile,
+        )
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[derive(Clone, Copy)]
+    struct ResidentFftPairSample {
+        encode: Duration,
+        commit_to_completion: Duration,
+        total: Duration,
+        device: Option<Duration>,
+        command_buffer_continued: bool,
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[allow(clippy::too_many_arguments)]
+    fn execute_resident_fft_pair(
+        queue: &MetalQueue,
+        forward: &ResidentFftExecutable,
+        inverse: &ResidentFftExecutable,
+        forward_inputs: &NSArray<MPSGraphTensorData>,
+        forward_results: &NSArray<MPSGraphTensorData>,
+        inverse_inputs: &NSArray<MPSGraphTensorData>,
+        inverse_results: &NSArray<MPSGraphTensorData>,
+        execution: &MPSGraphExecutableExecutionDescriptor,
+    ) -> ResidentFftPairSample {
+        let total_start = Instant::now();
+        let command_buffer = unsafe { MPSCommandBuffer::commandBufferFromCommandQueue(queue) };
+        let initial_root = unsafe { command_buffer.rootCommandBuffer() };
+        let encode_start = Instant::now();
+        let _forward_result = unsafe {
+            forward
+                .executable
+                .encodeToCommandBuffer_inputsArray_resultsArray_executionDescriptor(
+                    &command_buffer,
+                    forward_inputs,
+                    Some(forward_results),
+                    Some(execution),
+                )
+        };
+        let _inverse_result = unsafe {
+            inverse
+                .executable
+                .encodeToCommandBuffer_inputsArray_resultsArray_executionDescriptor(
+                    &command_buffer,
+                    inverse_inputs,
+                    Some(inverse_results),
+                    Some(execution),
+                )
+        };
+        let final_root = unsafe { command_buffer.rootCommandBuffer() };
+        let encode = encode_start.elapsed();
+        let command_buffer_continued = !std::ptr::eq(&*initial_root, &*final_root);
+        let completion_start = Instant::now();
+        final_root.commit();
+        final_root.waitUntilCompleted();
+        let commit_to_completion = completion_start.elapsed();
+        assert_ne!(
+            final_root.status(),
+            MTLCommandBufferStatus::Error,
+            "private-resident MPSGraph command failed"
+        );
+        let gpu_start = final_root.GPUStartTime();
+        let gpu_end = final_root.GPUEndTime();
+        let device = (gpu_start.is_finite()
+            && gpu_end.is_finite()
+            && gpu_end > gpu_start
+            && !command_buffer_continued)
+            .then(|| Duration::from_secs_f64(gpu_end - gpu_start));
+        ResidentFftPairSample {
+            encode,
+            commit_to_completion,
+            total: total_start.elapsed(),
+            device,
+            command_buffer_continued,
+        }
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn duration_nearest_rank(
+        samples: &[Duration],
+        numerator: usize,
+        denominator: usize,
+    ) -> Duration {
+        assert!(!samples.is_empty());
+        assert!(numerator > 0 && numerator <= denominator);
+        let mut ordered = samples.to_vec();
+        ordered.sort_unstable();
+        let rank = (numerator * ordered.len()).div_ceil(denominator);
+        ordered[rank - 1]
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    #[serial]
+    #[ignore = "production-inert VLASS private-resident exact-batch MPSGraph gate"]
+    fn vlass_ordered_response_private_resident_mpsgraph_batch_probe() {
+        assert!(
+            mpsgraph_f32_available(),
+            "VLASS private-resident MPSGraph gate requires a visible Metal device"
+        );
+        const SIDE: usize = 192;
+        const FORWARD_BATCH: usize = 192;
+        const INVERSE_BATCH: usize = 168;
+        const MEASURED_PAIRS: usize = 11;
+        const COMPLEX_BYTES: usize = mem::size_of::<Complex32>();
+        const BUFFER_BYTES: usize = FORWARD_BATCH * SIDE * SIDE * COMPLEX_BYTES;
+        const INVERSE_BYTES: usize = INVERSE_BATCH * SIDE * SIDE * COMPLEX_BYTES;
+
+        assert_eq!(BUFFER_BYTES, 56_623_104);
+        assert_eq!(INVERSE_BYTES, 49_545_216);
+
+        let device = MTLCreateSystemDefaultDevice().expect("default Metal device");
+        let queue = device.newCommandQueue().expect("Metal command queue");
+        let graph_device = unsafe { MPSGraphDevice::deviceWithMTLDevice(&device) };
+        let (forward, forward_compile) = compile_resident_fft_executable(
+            &device,
+            &graph_device,
+            FORWARD_BATCH,
+            FftDirection::Forward,
+        );
+        let (inverse, inverse_compile) = compile_resident_fft_executable(
+            &device,
+            &graph_device,
+            INVERSE_BATCH,
+            FftDirection::Inverse,
+        );
+
+        let buffer_a = device
+            .newBufferWithLength_options(BUFFER_BYTES, MTLResourceOptions::StorageModePrivate)
+            .expect("private FFT buffer A");
+        let buffer_b = device
+            .newBufferWithLength_options(BUFFER_BYTES, MTLResourceOptions::StorageModePrivate)
+            .expect("private FFT buffer B");
+        assert_eq!(buffer_a.length(), BUFFER_BYTES);
+        assert_eq!(buffer_b.length(), BUFFER_BYTES);
+
+        let forward_shape = shape_array_batch(FORWARD_BATCH, SIDE, SIDE);
+        let inverse_shape = shape_array_batch(INVERSE_BATCH, SIDE, SIDE);
+        let forward_input = unsafe {
+            MPSGraphTensorData::initWithMTLBuffer_shape_dataType(
+                MPSGraphTensorData::alloc(),
+                &buffer_a,
+                &forward_shape,
+                MPSDataType::ComplexFloat32,
+            )
+        };
+        let forward_output = unsafe {
+            MPSGraphTensorData::initWithMTLBuffer_shape_dataType(
+                MPSGraphTensorData::alloc(),
+                &buffer_b,
+                &forward_shape,
+                MPSDataType::ComplexFloat32,
+            )
+        };
+        let inverse_input = unsafe {
+            MPSGraphTensorData::initWithMTLBuffer_shape_dataType(
+                MPSGraphTensorData::alloc(),
+                &buffer_b,
+                &inverse_shape,
+                MPSDataType::ComplexFloat32,
+            )
+        };
+        let inverse_output = unsafe {
+            MPSGraphTensorData::initWithMTLBuffer_shape_dataType(
+                MPSGraphTensorData::alloc(),
+                &buffer_a,
+                &inverse_shape,
+                MPSDataType::ComplexFloat32,
+            )
+        };
+        let forward_inputs = NSArray::from_slice(&[&*forward_input]);
+        let forward_results = NSArray::from_slice(&[&*forward_output]);
+        let inverse_inputs = NSArray::from_slice(&[&*inverse_input]);
+        let inverse_results = NSArray::from_slice(&[&*inverse_output]);
+        let execution = unsafe { MPSGraphExecutableExecutionDescriptor::new() };
+        unsafe {
+            execution.setWaitUntilCompleted(false);
+        }
+
+        let first_use_start = Instant::now();
+        let warmup = execute_resident_fft_pair(
+            &queue,
+            &forward,
+            &inverse,
+            &forward_inputs,
+            &forward_results,
+            &inverse_inputs,
+            &inverse_results,
+            &execution,
+        );
+        let first_use = first_use_start.elapsed();
+
+        let samples: Vec<_> = (0..MEASURED_PAIRS)
+            .map(|_| {
+                execute_resident_fft_pair(
+                    &queue,
+                    &forward,
+                    &inverse,
+                    &forward_inputs,
+                    &forward_results,
+                    &inverse_inputs,
+                    &inverse_results,
+                    &execution,
+                )
+            })
+            .collect();
+        assert!(
+            samples
+                .iter()
+                .all(|sample| !sample.command_buffer_continued),
+            "MPSGraph committed and continued internally; the single-buffer device interval is incomplete"
+        );
+        let encode: Vec<_> = samples.iter().map(|sample| sample.encode).collect();
+        let completion: Vec<_> = samples
+            .iter()
+            .map(|sample| sample.commit_to_completion)
+            .collect();
+        let total: Vec<_> = samples.iter().map(|sample| sample.total).collect();
+        let device_times: Vec<_> = samples
+            .iter()
+            .map(|sample| sample.device.expect("complete command-buffer GPU interval"))
+            .collect();
+        let total_p50 = duration_nearest_rank(&total, 5, 10);
+        let total_p90 = duration_nearest_rank(&total, 9, 10);
+        let completion_p50 = duration_nearest_rank(&completion, 5, 10);
+        let completion_p90 = duration_nearest_rank(&completion, 9, 10);
+        let device_p50 = duration_nearest_rank(&device_times, 5, 10);
+        let device_p90 = duration_nearest_rank(&device_times, 9, 10);
+        let encode_p50 = duration_nearest_rank(&encode, 5, 10);
+        let encode_p90 = duration_nearest_rank(&encode, 9, 10);
+
+        eprintln!(
+            "vlass_mpsgraph_private_resident_exact_batch_probe \
+             forward_compile_s={:.9} inverse_compile_s={:.9} first_use_s={:.9} \
+             warmup_total_s={:.9} warmup_device_s={:.9} \
+             measured_pairs={} buffer_bytes={} \
+             total_p50_s={:.9} total_p90_s={:.9} \
+             commit_to_completion_p50_s={:.9} commit_to_completion_p90_s={:.9} \
+             device_p50_s={:.9} device_p90_s={:.9} \
+             encode_p50_s={:.9} encode_p90_s={:.9}",
+            forward_compile.as_secs_f64(),
+            inverse_compile.as_secs_f64(),
+            first_use.as_secs_f64(),
+            warmup.total.as_secs_f64(),
+            warmup
+                .device
+                .expect("complete warmup command-buffer GPU interval")
+                .as_secs_f64(),
+            MEASURED_PAIRS,
+            BUFFER_BYTES,
+            total_p50.as_secs_f64(),
+            total_p90.as_secs_f64(),
+            completion_p50.as_secs_f64(),
+            completion_p90.as_secs_f64(),
+            device_p50.as_secs_f64(),
+            device_p90.as_secs_f64(),
+            encode_p50.as_secs_f64(),
+            encode_p90.as_secs_f64(),
+        );
+        eprintln!(
+            "vlass_mpsgraph_private_resident_exact_batch_samples total_s={:?} \
+             commit_to_completion_s={:?} device_s={:?} encode_s={:?}",
+            total.iter().map(Duration::as_secs_f64).collect::<Vec<_>>(),
+            completion
+                .iter()
+                .map(Duration::as_secs_f64)
+                .collect::<Vec<_>>(),
+            device_times
+                .iter()
+                .map(Duration::as_secs_f64)
+                .collect::<Vec<_>>(),
+            encode.iter().map(Duration::as_secs_f64).collect::<Vec<_>>(),
         );
     }
 }

@@ -52,11 +52,14 @@ objc2-metal = { version = "0.3.2", default-features = false, features = [
 ] }
 objc2-metal-performance-shaders = { version = "0.3.2", default-features = false, features = [
     "MPSCoreTypes",
+    "MPSCommandBuffer",
     "MPSNDArray",
 ] }
 objc2-metal-performance-shaders-graph = { version = "0.3.2", default-features = false, features = [
     "MPSGraph",
     "MPSGraphCore",
+    "MPSGraphDevice",
+    "MPSGraphExecutable",
     "MPSGraphFourierTransformOps",
     "MPSGraphMemoryOps",
     "MPSGraphOperation",

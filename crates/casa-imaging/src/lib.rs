@@ -4449,6 +4449,7 @@ const AWPROJECT_HYBRID_SUPPORT_AUDIT_ENV: &str =
     "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_SUPPORT_AUDIT";
 const AWPROJECT_SUBGRID_SUPPORT_AUDIT_ENV: &str =
     "CASA_RS_EXPERIMENTAL_AWPROJECT_SUBGRID_SUPPORT_AUDIT";
+#[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_SUBGRID_SPEED_OF_LIGHT_ENV: &str =
     "CASA_RS_EXPERIMENTAL_AWPROJECT_SUBGRID_SPEED_OF_LIGHT";
 const AWPROJECT_CF_KEY_FFT_OCCUPANCY_ENV: &str =
@@ -4459,24 +4460,33 @@ const AWPROJECT_MASK_COMPONENT_UPDATES_ENV: &str =
     "CASA_RS_EXPERIMENTAL_AWPROJECT_MASK_COMPONENT_UPDATES";
 const AWPROJECT_MASK_TRAJECTORY_RECEIPT_SHA256_ENV: &str =
     "CASA_RS_EXPERIMENTAL_AWPROJECT_MASK_TRAJECTORY_RECEIPT_SHA256";
+#[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_QUOTIENT_RESPONSE_CENSUS_OUTPUT_ENV: &str =
     "CASA_RS_EXPERIMENTAL_AWPROJECT_QUOTIENT_RESPONSE_CENSUS_OUTPUT";
+#[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_LOCALIZED_ROW_CENSUS_OUTPUT_ENV: &str =
     "CASA_RS_EXPERIMENTAL_AWPROJECT_LOCALIZED_ROW_CENSUS_OUTPUT";
 const AWPROJECT_PHYSICAL_COMPONENT_STATE_LIMIT_BYTES: usize = 151_257_904;
 const AWPROJECT_HYBRID_STACK_COUNT_MAX: usize = 32;
 const AWPROJECT_SUBGRID_SUPPORT_SIDES: [usize; 5] = [32, 48, 64, 96, 128];
+#[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_SUBGRID_TRACE_MAJOR_CYCLES: usize = 5;
+#[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_SUBGRID_TRACE_THREADGROUP_CELLS: usize = 2_048;
 const AWPROJECT_CF_KEY_FFT_TILE_SIDES: [usize; 4] = [32, 64, 128, 256];
 const AWPROJECT_MASK_MOMENT_ORDERS: [usize; 2] = [2, 3];
 const AWPROJECT_MASK_MOMENT_RANKS: [usize; 4] = [1, 2, 3, 4];
 const AWPROJECT_MASK_MOMENT_PHASE_ERROR_BUDGET: f64 = 1.0e-5;
 const AWPROJECT_MASK_MOMENT_FEATURE_LIMIT: usize = 77_000;
+#[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_QUOTIENT_RESPONSE_TRAIN_ROWS: usize = 4_096;
+#[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_QUOTIENT_RESPONSE_HOLDOUT_ROWS: usize = 2_048;
+#[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_QUOTIENT_RESPONSE_TRAIN_POSITIONS: usize = 256;
+#[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_QUOTIENT_RESPONSE_HOLDOUT_POSITIONS: usize = 128;
+#[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_QUOTIENT_RESPONSE_RESERVOIR_ROWS: usize = 8_192;
 
 fn awproject_component_probe_enabled() -> bool {
@@ -10641,6 +10651,7 @@ enum AwProjectCfKeyFftCallKind {
 }
 
 impl AwProjectCfKeyFftCallKind {
+    #[cfg(all(target_os = "macos", not(coverage)))]
     fn multiplicity(self) -> u64 {
         match self {
             Self::Initial => 1,
@@ -11374,6 +11385,22 @@ fn maybe_audit_awproject_localized_rows(
         });
     }
     state.windows = state.windows.saturating_add(1);
+    Ok(())
+}
+
+#[cfg(any(not(target_os = "macos"), coverage))]
+#[allow(clippy::too_many_arguments)]
+fn maybe_audit_awproject_localized_rows(
+    _request: &MtmfsRequest,
+    _batch: &VisibilityBatch,
+    _parallel_hands: &AwParallelHandVisibilityBatch,
+    _sample_frequencies_hz: &[f64],
+    _groups: &[GroupedVisibilityMetadata],
+    _source_samples: &[AwProjectCompactSourceSample],
+    _tap_requests: &[AwProjectCompactTapRequest],
+    _replay_block_ordinal: usize,
+    _window_ordinal: usize,
+) -> Result<(), ImagingError> {
     Ok(())
 }
 
