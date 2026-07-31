@@ -6153,6 +6153,51 @@ full-16-SPW row, `12,150`-square development run, memory-policy experiment,
 repeated CASA timing, or unchanged CASA reference ran. The four-SPW row
 remains unpromoted.
 
+### 2026-07-31 official call-site register trace, invalid first launch
+
+The same Oracle conversation selected one live two-point register trace at the
+installed `GridToData` `bl ___divsc3`: source zero RR/TT0 as a positive
+control and source `1,446` RR/TT0 as the target. A frozen manifest joined the
+existing prediction NPZ, casa-rs source order, CASA VI2 term oracle, and exact
+CASA source loop. It proves:
+
+- `98,239` accepted sources and `196,478` symmetric RR/LL division calls in
+  the first TT0 degrid stream;
+- source zero RR/TT0 is filtered helper call index `0`;
+- source `1,446` RR/TT0 is filtered helper call index `2,892`;
+- the target binds independently to original row `353635`, selected first-VB
+  row `35`, SPW `2`, channel `19`, and the frozen official TT0 bits; and
+- the loop contract is CASA row/channel/polarization order with RR before LL.
+
+The first LLDB launch is invalid instrumentation and contains no scientific
+result. The CASA Python executable transitions through a framework `exec`.
+LLDB's default stop-on-exec behavior stopped at dyld before Python imported the
+diagnostic script or CASA. The pending hardware helper breakpoint therefore
+had no resolved location, neither fixed target was reached, and no raw trace
+or CASA log was written. No CASA task, MS read, model preparation, prediction,
+grid, FFT, product, or CLEAN work ran.
+
+The valid frozen manifest and failed LLDB log hash to, respectively:
+
+- `929e77423638bbd0d0f29102182b055fb3516fdfd504d00ee759b0eeb6ff75f6`;
+  and
+- `9d3b9bcea107dcab5ba746d4474ff9d042fffb7527b838ca289d5a825f9b6c65`.
+
+The analyzer/manifest builder, LLDB callback, focused test, and failed-launch
+runner hash to, respectively:
+
+- `025b34e7d12fa7c83bd993c90f29a26db76225a7865dc724ba8c7e3ac8a9cbd5`;
+- `ca0bb3287c8038c189dbf1b56a54af40520a1d7a81f45d26ebfb870709363781`;
+- `f9482dd97bc56f7c777bec3e7de5aa25d5de10d4fc9673dfc125c5e487c951a4`;
+  and
+- `9ee242c621edd70da43054e386309407270f9e653a179cf10176393b77805905`.
+
+Focused Python tests (`3 passed`), Ruff, LLDB callback import, Bash syntax,
+and `git diff --check` passed. The bounded replacement may set
+`target.process.stop-on-exec=false`, reuse the valid manifest, and use new v2
+artifact names. No other diagnostic or production change is authorized by
+this failed launch.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
