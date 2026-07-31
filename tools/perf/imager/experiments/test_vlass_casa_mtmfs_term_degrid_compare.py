@@ -100,6 +100,7 @@ class CasaMtmfsTermDegridCompareTests(unittest.TestCase):
             casa_tt1_scaled_rotated=zero,
             casa_combined_rotated=zero,
             power_bits_match=True,
+            power_contract_valid=True,
         )
 
         self.assertEqual(classification, "tt0-degrid-or-folded-phase-difference")
@@ -122,9 +123,36 @@ class CasaMtmfsTermDegridCompareTests(unittest.TestCase):
             casa_tt1_scaled_rotated=zero,
             casa_combined_rotated=zero,
             power_bits_match=True,
+            power_contract_valid=True,
         )
 
         self.assertEqual(classification, "term-separated-prediction-exact")
+        self.assertIsNone(first)
+
+    def test_unbound_power_stops_at_scaling_contract(self) -> None:
+        zero = np.zeros((1, 2), dtype=np.complex64)
+
+        classification, first = subject.classify(
+            casars_tt0=zero,
+            casars_tt1=zero,
+            casars_scaled=zero,
+            casars_literal_combined=zero,
+            casa_tt0_raw=zero,
+            casa_tt1_raw=zero,
+            casa_tt1_scaled_raw=zero,
+            casa_combined_raw=zero,
+            casa_tt0_rotated=zero,
+            casa_tt1_rotated=zero,
+            casa_tt1_scaled_rotated=zero,
+            casa_combined_rotated=zero,
+            power_bits_match=True,
+            power_contract_valid=False,
+        )
+
+        self.assertEqual(
+            classification,
+            "taylor-scaling-or-operation-order-difference",
+        )
         self.assertIsNone(first)
 
 

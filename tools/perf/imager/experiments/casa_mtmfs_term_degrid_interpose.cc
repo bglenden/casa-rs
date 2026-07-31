@@ -240,6 +240,16 @@ std::uint64_t fnv1a64(const std::vector<unsigned char> &values) {
   return hash;
 }
 
+Float source_taylor_power(Double frequency, Double reference_frequency) {
+  // Preserve MultiTermFTNew::modifyModelVis exactly: its channel frequency and
+  // multiplier are Float locals, while the reference frequency is Double and
+  // the pow call is unqualified with a runtime Int exponent.
+  using namespace casacore;
+  Float freq = frequency;
+  Float mulfactor = (freq - reference_frequency) / reference_frequency;
+  return pow(mulfactor, Int{1});
+}
+
 template <typename Function> bool symbol_has_exact_owner(Function function) {
   void *address = nullptr;
   static_assert(sizeof(function) == sizeof(address));
@@ -291,10 +301,8 @@ public:
       const auto spw = static_cast<std::uint32_t>(spws[row]);
       for (Int channel = 0; channel != vb.nChannels(); ++channel) {
         const Double frequency = frequencies[channel];
-        const Float mulfactor = static_cast<Float>(
-            (frequency - reference_frequency) / reference_frequency);
         const Float taylor_power =
-            static_cast<Float>(std::pow(mulfactor, static_cast<Int>(1)));
+            source_taylor_power(frequency, reference_frequency);
         append_integer_le(bytes_, call);
         append_integer_le(bytes_, static_cast<std::uint32_t>(row));
         append_integer_le(bytes_, static_cast<std::uint64_t>(rows[row]));
@@ -339,6 +347,9 @@ public:
               << "  \"casa_version\": \"6.7.5.18\",\n"
               << "  \"casa_version_string\": \"6.7.5-18\",\n"
               << "  \"casa_source_commit\": \"" << kCasaCommit << "\",\n"
+              << "  \"taylor_power_contract\": "
+                 "\"source-float-frequency-unqualified-pow-runtime-int-v1\","
+                 "\n"
               << "  \"binary\": \"" << json_escape(config_.binary) << "\",\n"
               << "  \"binary_record_size\": " << kRecordBytes << ",\n"
               << "  \"binary_record_count\": " << record_count_ << ",\n"
