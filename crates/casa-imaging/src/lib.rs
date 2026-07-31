@@ -9893,7 +9893,7 @@ struct AwProjectMetalPredictionParams {
     model_stride_x: u32,
     model_stride_y: u32,
     audit_generation: u32,
-    _pad0: u32,
+    wide_division_generation: u32,
     _pad1: u32,
 }
 
@@ -9940,10 +9940,47 @@ struct AwProjectMetalPredictionAuditSample {
     second: AwProjectMetalPredictionAuditRole,
 }
 
+#[repr(C, align(8))]
+#[derive(Clone, Copy, Default)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+struct AwProjectMetalWideDivisionComplex {
+    re: f32,
+    im: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+struct AwProjectMetalWideDivisionTerm {
+    numerator: AwProjectMetalWideDivisionComplex,
+    normalizer: AwProjectMetalWideDivisionComplex,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+struct AwProjectMetalWideDivisionRole {
+    model_term0: AwProjectMetalWideDivisionTerm,
+    model_term1: AwProjectMetalWideDivisionTerm,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+struct AwProjectMetalWideDivisionSample {
+    sample_ordinal: u32,
+    written_generation: u32,
+    first_imaging_mueller: u32,
+    second_imaging_mueller: u32,
+    first: AwProjectMetalWideDivisionRole,
+    second: AwProjectMetalWideDivisionRole,
+}
+
 #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 struct AwProjectMetalPredictionDispatch {
     results: Vec<AwProjectMetalPredictionResult>,
     audit: Option<Vec<AwProjectMetalPredictionAuditSample>>,
+    wide_division: Option<Vec<AwProjectMetalWideDivisionSample>>,
     elapsed: Duration,
 }
 
@@ -14659,6 +14696,7 @@ impl AwProjectMetalExecutor {
         batch: &AwProjectMetalPredictionBatch,
         model_grids: &[Array2<Complex32>],
         audit_generation: Option<u32>,
+        wide_division_generation: Option<u32>,
     ) -> Result<AwProjectMetalPredictionDispatch, ImagingError> {
         use std::{ffi::c_void, mem, ptr::NonNull, slice};
 
@@ -14672,12 +14710,18 @@ impl AwProjectMetalExecutor {
             return Ok(AwProjectMetalPredictionDispatch {
                 results: Vec::new(),
                 audit: audit_generation.map(|_| Vec::new()),
+                wide_division: wide_division_generation.map(|_| Vec::new()),
                 elapsed: Duration::ZERO,
             });
         }
         if audit_generation == Some(0) {
             return Err(ImagingError::InvalidRequest(
                 "AWProject Metal prediction audit generation must be non-zero".to_string(),
+            ));
+        }
+        if wide_division_generation == Some(0) {
+            return Err(ImagingError::InvalidRequest(
+                "AWProject Metal wide-division generation must be non-zero".to_string(),
             ));
         }
         let [model_tt0, model_tt1] = model_grids else {
@@ -14739,7 +14783,7 @@ impl AwProjectMetalExecutor {
                 )
             })?,
             audit_generation: audit_generation.unwrap_or(0),
-            _pad0: 0,
+            wide_division_generation: wide_division_generation.unwrap_or(0),
             _pad1: 0,
         };
         let sample_bytes = mem::size_of_val(batch.samples.as_slice());
@@ -14847,6 +14891,36 @@ impl AwProjectMetalExecutor {
                 std::ptr::write_bytes(buffer.contents().as_ptr().cast::<u8>(), 0, buffer.length());
             }
         }
+        let wide_division_bytes = wide_division_generation
+            .map(|_| {
+                batch
+                    .samples
+                    .len()
+                    .checked_mul(mem::size_of::<AwProjectMetalWideDivisionSample>())
+                    .ok_or_else(|| {
+                        ImagingError::InvalidRequest(
+                            "AWProject Metal wide-division size overflowed".to_string(),
+                        )
+                    })
+            })
+            .transpose()?;
+        let wide_division_buffer = wide_division_bytes
+            .map(|bytes| {
+                self.device
+                    .newBufferWithLength_options(bytes, storage_options)
+                    .ok_or_else(|| {
+                        ImagingError::Unsupported(
+                            "AWProject Metal prediction could not allocate wide-division buffer"
+                                .to_string(),
+                        )
+                    })
+            })
+            .transpose()?;
+        if let Some(buffer) = wide_division_buffer.as_ref() {
+            unsafe {
+                std::ptr::write_bytes(buffer.contents().as_ptr().cast::<u8>(), 0, buffer.length());
+            }
+        }
         let params_buffer = unsafe {
             let params_slice = slice::from_ref(&params);
             self.device
@@ -14883,6 +14957,9 @@ impl AwProjectMetalExecutor {
             encoder.setBuffer_offset_atIndex(Some(&phase_buffer), 0, 6);
             if let Some(buffer) = audit_buffer.as_ref() {
                 encoder.setBuffer_offset_atIndex(Some(buffer), 0, 7);
+            }
+            if let Some(buffer) = wide_division_buffer.as_ref() {
+                encoder.setBuffer_offset_atIndex(Some(buffer), 0, 8);
             }
         }
         let thread_count = batch.samples.len();
@@ -14936,9 +15013,20 @@ impl AwProjectMetalExecutor {
             )
             .to_vec()
         });
+        let wide_division = wide_division_buffer.map(|buffer| unsafe {
+            slice::from_raw_parts(
+                buffer
+                    .contents()
+                    .as_ptr()
+                    .cast::<AwProjectMetalWideDivisionSample>(),
+                batch.samples.len(),
+            )
+            .to_vec()
+        });
         Ok(AwProjectMetalPredictionDispatch {
             results,
             audit,
+            wide_division,
             elapsed,
         })
     }
@@ -15896,7 +15984,7 @@ impl AwProjectMetalExecutor {
                 )
             })?,
             audit_generation: 0,
-            _pad0: 0,
+            wide_division_generation: 0,
             _pad1: 0,
         };
         let scale_params = AwProjectMetalParams {
@@ -16333,7 +16421,7 @@ struct AwPredictionParams {
     uint model_stride_x;
     uint model_stride_y;
     uint audit_generation;
-    uint _pad0;
+    uint wide_division_generation;
     uint _pad1;
 };
 
@@ -16361,6 +16449,25 @@ struct AwPredictionAuditSample {
     uint second_imaging_mueller;
     AwPredictionAuditRole first;
     AwPredictionAuditRole second;
+};
+
+struct AwWideDivisionTerm {
+    float2 numerator;
+    float2 normalizer;
+};
+
+struct AwWideDivisionRole {
+    AwWideDivisionTerm model_term0;
+    AwWideDivisionTerm model_term1;
+};
+
+struct AwWideDivisionSample {
+    uint sample_ordinal;
+    uint written_generation;
+    uint first_imaging_mueller;
+    uint second_imaging_mueller;
+    AwWideDivisionRole first;
+    AwWideDivisionRole second;
 };
 
 struct AwIncrementalModelParams {
@@ -16512,7 +16619,7 @@ static inline float2 aw_phased_tap(
     return aw_complex_multiply(value, phases[phase.base + phase_offset]);
 }
 
-static inline float2 aw_degrid_prediction(
+static inline AwWideDivisionTerm aw_degrid_prediction_raw(
     AwPredictionPlan plan,
     device const float2 *kernels,
     device const float2 *phases,
@@ -16540,12 +16647,21 @@ static inline float2 aw_degrid_prediction(
             value += aw_complex_multiply(conjugate_kernel, model[grid_index]);
         }
     }
+    AwWideDivisionTerm raw;
+    raw.numerator = value;
+    raw.normalizer = float2(plan.normalization_re, plan.normalization_im);
+    return raw;
+}
+
+static inline float2 aw_degrid_prediction_current_f32(AwWideDivisionTerm raw) {
     const float denominator =
-        plan.normalization_re * plan.normalization_re
-        + plan.normalization_im * plan.normalization_im;
+        raw.normalizer.x * raw.normalizer.x
+        + raw.normalizer.y * raw.normalizer.y;
     return float2(
-        (value.x * plan.normalization_re - value.y * plan.normalization_im) / denominator,
-        (value.y * plan.normalization_re + value.x * plan.normalization_im) / denominator
+        (raw.numerator.x * raw.normalizer.x
+            - raw.numerator.y * raw.normalizer.y) / denominator,
+        (raw.numerator.y * raw.normalizer.x
+            + raw.numerator.x * raw.normalizer.y) / denominator
     );
 }
 
@@ -16558,22 +16674,35 @@ kernel void awproject_predict_residual_samples(
     constant AwPredictionParams &params [[buffer(5)]],
     device const float2 *phases [[buffer(6)]],
     device AwPredictionAuditSample *audit [[buffer(7)]],
+    device AwWideDivisionSample *wide_division [[buffer(8)]],
     uint sample_index [[thread_position_in_grid]]
 ) {
     if (sample_index >= params.sample_count) {
         return;
     }
     const AwPredictionSample sample = samples[sample_index];
+    const AwWideDivisionTerm first_model_term0_raw =
+        aw_degrid_prediction_raw(
+            sample.first_prediction, kernels, phases, model_tt0, params);
+    const AwWideDivisionTerm first_model_term1_raw =
+        aw_degrid_prediction_raw(
+            sample.first_prediction, kernels, phases, model_tt1, params);
     const float2 first_model_term0 =
-        aw_degrid_prediction(sample.first_prediction, kernels, phases, model_tt0, params);
+        aw_degrid_prediction_current_f32(first_model_term0_raw);
     const float2 first_model_term1 =
-        aw_degrid_prediction(sample.first_prediction, kernels, phases, model_tt1, params);
+        aw_degrid_prediction_current_f32(first_model_term1_raw);
     const float2 first_prediction =
         first_model_term0 + first_model_term1 * sample.taylor_x;
+    const AwWideDivisionTerm second_model_term0_raw =
+        aw_degrid_prediction_raw(
+            sample.second_prediction, kernels, phases, model_tt0, params);
+    const AwWideDivisionTerm second_model_term1_raw =
+        aw_degrid_prediction_raw(
+            sample.second_prediction, kernels, phases, model_tt1, params);
     const float2 second_model_term0 =
-        aw_degrid_prediction(sample.second_prediction, kernels, phases, model_tt0, params);
+        aw_degrid_prediction_current_f32(second_model_term0_raw);
     const float2 second_model_term1 =
-        aw_degrid_prediction(sample.second_prediction, kernels, phases, model_tt1, params);
+        aw_degrid_prediction_current_f32(second_model_term1_raw);
     const float2 second_prediction =
         second_model_term0 + second_model_term1 * sample.taylor_x;
     const float2 first_observed =
@@ -16607,6 +16736,19 @@ kernel void awproject_predict_residual_samples(
         audit[sample_index].second.observed = second_observed;
         audit[sample_index].second.local_residual = ll_residual;
         audit[sample_index].written_generation = params.audit_generation;
+    }
+    if (params.wide_division_generation != 0u) {
+        wide_division[sample_index].sample_ordinal = sample_index;
+        wide_division[sample_index].first_imaging_mueller =
+            sample.first_imaging_mueller;
+        wide_division[sample_index].second_imaging_mueller =
+            sample.second_imaging_mueller;
+        wide_division[sample_index].first.model_term0 = first_model_term0_raw;
+        wide_division[sample_index].first.model_term1 = first_model_term1_raw;
+        wide_division[sample_index].second.model_term0 = second_model_term0_raw;
+        wide_division[sample_index].second.model_term1 = second_model_term1_raw;
+        wide_division[sample_index].written_generation =
+            params.wide_division_generation;
     }
 }
 
@@ -20306,7 +20448,7 @@ fn run_awproject_metal_prediction_probe(
         }
         slot.as_ref()
             .expect("AWProject Metal executor")
-            .dispatch_prediction_probe(&packed, model_grids, None)
+            .dispatch_prediction_probe(&packed, model_grids, None, None)
     })?;
     let actual = dispatch.results;
     let execute_elapsed = dispatch.elapsed;
@@ -20640,6 +20782,246 @@ fn emit_awproject_frozen_final_state_prediction_hashes(
         residual_hash.finalize(),
     );
     Ok(())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[inline(never)]
+fn casa_67518_wide_complex_division(
+    numerator: AwProjectMetalWideDivisionComplex,
+    normalizer: AwProjectMetalWideDivisionComplex,
+) -> Result<AwProjectMetalPredictionAuditComplex, ImagingError> {
+    if ![numerator.re, numerator.im, normalizer.re, normalizer.im]
+        .into_iter()
+        .all(f32::is_finite)
+        || (normalizer.re == 0.0 && normalizer.im == 0.0)
+    {
+        return Err(ImagingError::Normalization(
+            "CASA 6.7.5.18 wide complex division requires finite inputs and a non-zero normalizer"
+                .to_string(),
+        ));
+    }
+
+    // The installed CASA 6.7.5.18 AWVisResampler calls its private __divsc3.
+    // Preserve the audited ordinary-finite instruction graph: widen the four
+    // binary32 inputs, seed with d*d / b*d / a*d, fuse the second products,
+    // divide in binary64, and narrow each result exactly once.
+    let a = f64::from(numerator.re);
+    let b = f64::from(numerator.im);
+    let c = f64::from(normalizer.re);
+    // The compact replay stores CASA's convolution-function normalization;
+    // GridToData divides by its conjugate.
+    let d = -f64::from(normalizer.im);
+    let denominator_seed = d * d;
+    let denominator = c.mul_add(c, denominator_seed);
+    let real_seed = b * d;
+    let real_numerator = a.mul_add(c, real_seed);
+    let imaginary_seed = a * d;
+    let imaginary_numerator = b.mul_add(c, -imaginary_seed);
+    let output = AwProjectMetalPredictionAuditComplex {
+        re: (real_numerator / denominator) as f32,
+        im: (imaginary_numerator / denominator) as f32,
+    };
+    if !output.re.is_finite() || !output.im.is_finite() {
+        return Err(ImagingError::Normalization(
+            "CASA 6.7.5.18 wide complex division produced a non-finite result".to_string(),
+        ));
+    }
+    Ok(output)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn current_f32_complex_division(
+    raw: AwProjectMetalWideDivisionTerm,
+) -> Result<AwProjectMetalPredictionAuditComplex, ImagingError> {
+    if ![
+        raw.numerator.re,
+        raw.numerator.im,
+        raw.normalizer.re,
+        raw.normalizer.im,
+    ]
+    .into_iter()
+    .all(f32::is_finite)
+        || (raw.normalizer.re == 0.0 && raw.normalizer.im == 0.0)
+    {
+        return Err(ImagingError::Normalization(
+            "current f32 complex division requires finite inputs and a non-zero normalizer"
+                .to_string(),
+        ));
+    }
+    let denominator = raw.normalizer.re * raw.normalizer.re + raw.normalizer.im * raw.normalizer.im;
+    let real_addend = -(raw.numerator.im * raw.normalizer.im);
+    let imaginary_addend = raw.numerator.re * raw.normalizer.im;
+    Ok(AwProjectMetalPredictionAuditComplex {
+        re: raw.numerator.re.mul_add(raw.normalizer.re, real_addend) / denominator,
+        im: raw
+            .numerator
+            .im
+            .mul_add(raw.normalizer.re, imaginary_addend)
+            / denominator,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn build_awproject_wide_division_candidate(
+    generation: u32,
+    batch: &AwProjectMetalPredictionBatch,
+    current: &AwProjectMetalPredictionDispatch,
+) -> Result<AwProjectMetalPredictionDispatch, ImagingError> {
+    let raw = current.wide_division.as_ref().ok_or_else(|| {
+        ImagingError::Normalization(
+            "wide-division dispatch did not return its raw diagnostic buffer".to_string(),
+        )
+    })?;
+    let current_audit = current.audit.as_ref().ok_or_else(|| {
+        ImagingError::Normalization(
+            "wide-division dispatch did not return its control audit buffer".to_string(),
+        )
+    })?;
+    if generation == 0
+        || raw.len() != batch.samples.len()
+        || current_audit.len() != batch.samples.len()
+        || current.results.len() != batch.samples.len()
+    {
+        return Err(ImagingError::Normalization(format!(
+            "wide-division topology differs: generation={generation}, raw={}, audit={}, results={}, samples={}",
+            raw.len(),
+            current_audit.len(),
+            current.results.len(),
+            batch.samples.len(),
+        )));
+    }
+
+    let started = Instant::now();
+    let mut audit = Vec::with_capacity(batch.samples.len());
+    let mut results = Vec::with_capacity(batch.samples.len());
+    for (ordinal, ((sample, raw), control)) in
+        batch.samples.iter().zip(raw).zip(current_audit).enumerate()
+    {
+        if raw.sample_ordinal != u32::try_from(ordinal).unwrap_or(u32::MAX)
+            || raw.written_generation != generation
+            || raw.first_imaging_mueller != sample.first_imaging_mueller
+            || raw.second_imaging_mueller != sample.second_imaging_mueller
+        {
+            return Err(ImagingError::Normalization(format!(
+                "wide-division raw topology differs at source {ordinal}",
+            )));
+        }
+        let first_term0_current = current_f32_complex_division(raw.first.model_term0)?;
+        let first_term1_current = current_f32_complex_division(raw.first.model_term1)?;
+        let second_term0_current = current_f32_complex_division(raw.second.model_term0)?;
+        let second_term1_current = current_f32_complex_division(raw.second.model_term1)?;
+        for (label, reconstructed, captured) in [
+            ("first TT0", first_term0_current, control.first.model_term0),
+            ("first TT1", first_term1_current, control.first.model_term1),
+            (
+                "second TT0",
+                second_term0_current,
+                control.second.model_term0,
+            ),
+            (
+                "second TT1",
+                second_term1_current,
+                control.second.model_term1,
+            ),
+        ] {
+            if reconstructed.re.to_bits() != captured.re.to_bits()
+                || reconstructed.im.to_bits() != captured.im.to_bits()
+            {
+                return Err(ImagingError::Normalization(format!(
+                    "wide-division raw capture does not reconstruct the current Metal {label} value at source {ordinal}",
+                )));
+            }
+        }
+
+        let first_term0 = casa_67518_wide_complex_division(
+            raw.first.model_term0.numerator,
+            raw.first.model_term0.normalizer,
+        )?;
+        let first_term1 = casa_67518_wide_complex_division(
+            raw.first.model_term1.numerator,
+            raw.first.model_term1.normalizer,
+        )?;
+        let second_term0 = casa_67518_wide_complex_division(
+            raw.second.model_term0.numerator,
+            raw.second.model_term0.normalizer,
+        )?;
+        let second_term1 = casa_67518_wide_complex_division(
+            raw.second.model_term1.numerator,
+            raw.second.model_term1.normalizer,
+        )?;
+        let first_scaled_re = first_term1.re * sample.taylor_x;
+        let first_scaled_im = first_term1.im * sample.taylor_x;
+        let second_scaled_re = second_term1.re * sample.taylor_x;
+        let second_scaled_im = second_term1.im * sample.taylor_x;
+        let first_prediction = AwProjectMetalPredictionAuditComplex {
+            re: first_term0.re + first_scaled_re,
+            im: first_term0.im + first_scaled_im,
+        };
+        let second_prediction = AwProjectMetalPredictionAuditComplex {
+            re: second_term0.re + second_scaled_re,
+            im: second_term0.im + second_scaled_im,
+        };
+        let first_observed = AwProjectMetalPredictionAuditComplex {
+            re: sample.first_observed_re,
+            im: sample.first_observed_im,
+        };
+        let second_observed = AwProjectMetalPredictionAuditComplex {
+            re: sample.second_observed_re,
+            im: sample.second_observed_im,
+        };
+        let rr_residual = AwProjectMetalPredictionAuditComplex {
+            re: first_observed.re - first_prediction.re,
+            im: first_observed.im - first_prediction.im,
+        };
+        let ll_residual = AwProjectMetalPredictionAuditComplex {
+            re: second_observed.re - second_prediction.re,
+            im: second_observed.im - second_prediction.im,
+        };
+        let first_residual = if sample.first_imaging_mueller == 0 {
+            rr_residual
+        } else {
+            ll_residual
+        };
+        let second_residual = if sample.second_imaging_mueller == 0 {
+            rr_residual
+        } else {
+            ll_residual
+        };
+        audit.push(AwProjectMetalPredictionAuditSample {
+            sample_ordinal: u32::try_from(ordinal).unwrap_or(u32::MAX),
+            written_generation: generation,
+            taylor_power0: 1.0,
+            taylor_power1: sample.taylor_x,
+            first_imaging_mueller: sample.first_imaging_mueller,
+            second_imaging_mueller: sample.second_imaging_mueller,
+            first: AwProjectMetalPredictionAuditRole {
+                model_term0: first_term0,
+                model_term1: first_term1,
+                combined_prediction: first_prediction,
+                observed: first_observed,
+                local_residual: rr_residual,
+            },
+            second: AwProjectMetalPredictionAuditRole {
+                model_term0: second_term0,
+                model_term1: second_term1,
+                combined_prediction: second_prediction,
+                observed: second_observed,
+                local_residual: ll_residual,
+            },
+        });
+        results.push(AwProjectMetalPredictionResult {
+            first_residual_re: first_residual.re,
+            first_residual_im: first_residual.im,
+            second_residual_re: second_residual.re,
+            second_residual_im: second_residual.im,
+        });
+    }
+    Ok(AwProjectMetalPredictionDispatch {
+        results,
+        audit: Some(audit),
+        wide_division: None,
+        elapsed: started.elapsed(),
+    })
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -21029,6 +21411,217 @@ fn write_awproject_prediction_sidecar(
         returned_residual_sha256,
         literal_combination_mismatch_count,
         local_result_mismatch_count,
+        receipt_path.display(),
+    );
+    Ok(receipt_path)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn write_awproject_wide_division_sidecar(
+    prefix: &Path,
+    generation: u32,
+    batch: &AwProjectMetalPredictionBatch,
+    current: &AwProjectMetalPredictionDispatch,
+) -> Result<PathBuf, ImagingError> {
+    let raw = current.wide_division.as_ref().ok_or_else(|| {
+        ImagingError::Normalization(
+            "wide-division sidecar dispatch did not return its raw buffer".to_string(),
+        )
+    })?;
+    let candidate = build_awproject_wide_division_candidate(generation, batch, current)?;
+    let prefix_text = prefix.to_string_lossy();
+    let current_prefix = PathBuf::from(format!("{prefix_text}.current"));
+    let wide_prefix = PathBuf::from(format!("{prefix_text}.wide"));
+    let raw_path = PathBuf::from(format!("{prefix_text}.raw.bin"));
+    let receipt_path = PathBuf::from(format!("{prefix_text}.host.json"));
+    let mut all_paths = vec![raw_path.clone(), receipt_path.clone()];
+    for candidate_prefix in [&current_prefix, &wide_prefix] {
+        let candidate_text = candidate_prefix.to_string_lossy();
+        for suffix in ["audit.bin", "results.bin", "host.json"] {
+            all_paths.push(PathBuf::from(format!("{candidate_text}.{suffix}")));
+        }
+    }
+    for path in &all_paths {
+        if path.exists() {
+            return Err(ImagingError::InvalidRequest(format!(
+                "refusing to overwrite wide-division sidecar artifact {}",
+                path.display(),
+            )));
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "create wide-division sidecar directory {}: {error}",
+                    parent.display(),
+                ))
+            })?;
+        }
+    }
+
+    let mut raw_bytes = Vec::with_capacity(
+        raw.len()
+            .saturating_mul(std::mem::size_of::<AwProjectMetalWideDivisionSample>()),
+    );
+    let append_complex = |output: &mut Vec<u8>, value: AwProjectMetalWideDivisionComplex| {
+        output.extend_from_slice(&value.re.to_bits().to_le_bytes());
+        output.extend_from_slice(&value.im.to_bits().to_le_bytes());
+    };
+    let append_term = |output: &mut Vec<u8>, term: AwProjectMetalWideDivisionTerm| {
+        append_complex(output, term.numerator);
+        append_complex(output, term.normalizer);
+    };
+    let append_role = |output: &mut Vec<u8>, role: AwProjectMetalWideDivisionRole| {
+        append_term(output, role.model_term0);
+        append_term(output, role.model_term1);
+    };
+    for record in raw {
+        raw_bytes.extend_from_slice(&record.sample_ordinal.to_le_bytes());
+        raw_bytes.extend_from_slice(&record.written_generation.to_le_bytes());
+        raw_bytes.extend_from_slice(&record.first_imaging_mueller.to_le_bytes());
+        raw_bytes.extend_from_slice(&record.second_imaging_mueller.to_le_bytes());
+        append_role(&mut raw_bytes, record.first);
+        append_role(&mut raw_bytes, record.second);
+    }
+    let expected_raw_bytes = raw
+        .len()
+        .saturating_mul(std::mem::size_of::<AwProjectMetalWideDivisionSample>());
+    if raw_bytes.len() != expected_raw_bytes {
+        return Err(ImagingError::Normalization(format!(
+            "wide-division raw encoding differs from its ABI stride: {} != {expected_raw_bytes}",
+            raw_bytes.len(),
+        )));
+    }
+    let raw_sha256 = format!("{:x}", Sha256::digest(&raw_bytes));
+    let mut raw_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&raw_path)
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "create wide-division raw sidecar {}: {error}",
+                raw_path.display(),
+            ))
+        })?;
+    raw_file.write_all(&raw_bytes).map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "write wide-division raw sidecar {}: {error}",
+            raw_path.display(),
+        ))
+    })?;
+    raw_file.sync_all().map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "sync wide-division raw sidecar {}: {error}",
+            raw_path.display(),
+        ))
+    })?;
+
+    let current_receipt =
+        write_awproject_prediction_sidecar(&current_prefix, generation, batch, current)?;
+    let wide_receipt =
+        write_awproject_prediction_sidecar(&wide_prefix, generation, batch, &candidate)?;
+    let receipt_hash = |path: &Path| -> Result<String, ImagingError> {
+        let bytes = std::fs::read(path).map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "read wide-division nested receipt {}: {error}",
+                path.display(),
+            ))
+        })?;
+        Ok(format!("{:x}", Sha256::digest(bytes)))
+    };
+    let current_receipt_sha256 = receipt_hash(&current_receipt)?;
+    let wide_receipt_sha256 = receipt_hash(&wide_receipt)?;
+    let complex_divisions = raw.len().saturating_mul(4);
+    let receipt = serde_json::json!({
+        "schema": "casa-rs-vlass-aw-wide-division-sidecar-host-v1",
+        "role": "bounded_prediction_only_correctness_and_cost_diagnostic_not_performance_evidence",
+        "classification": "casa-6.7.5.18-official-divsc3-ordinary-finite-cpu-hybrid-candidate",
+        "generation": generation,
+        "sample_count": raw.len(),
+        "complex_division_count": complex_divisions,
+        "raw": {
+            "path": raw_path,
+            "sha256": raw_sha256,
+            "record_size": std::mem::size_of::<AwProjectMetalWideDivisionSample>(),
+            "record_alignment": std::mem::align_of::<AwProjectMetalWideDivisionSample>(),
+            "allocated_bytes": raw_bytes.len(),
+        },
+        "current_control": {
+            "receipt": current_receipt,
+            "receipt_sha256": current_receipt_sha256,
+        },
+        "wide_candidate": {
+            "receipt": wide_receipt,
+            "receipt_sha256": wide_receipt_sha256,
+        },
+        "timings_ms": {
+            "instrumented_gpu_dispatch_and_wait": current.elapsed.as_secs_f64() * 1_000.0,
+            "cpu_wide_division_scale_add_subtract_and_write": candidate.elapsed.as_secs_f64() * 1_000.0,
+            "hybrid_total": (current.elapsed + candidate.elapsed).as_secs_f64() * 1_000.0,
+        },
+        "integrity": {
+            "raw_reconstructs_current_metal_terms_bit_exact": true,
+            "unexpected_generation_count": 0,
+            "unexpected_ordinal_count": 0,
+            "unexpected_mueller_count": 0,
+            "nonfinite_or_zero_normalizer_count": 0,
+        },
+        "precision_contract": {
+            "input": "four binary32 components widened exactly to binary64",
+            "operation_graph": "d*d; fma(c,c); b*d; fma(a,c); a*d; fma(b,c,-a*d); binary64 divisions",
+            "output": "each component narrowed once to binary32",
+            "scope": "ordinary finite operands accepted by the fail-closed helper",
+        },
+        "prohibited_post_prediction_stages": {
+            "residual_grid_dispatch": false,
+            "fft": false,
+            "normalization": false,
+            "image_formation": false,
+            "product_formation": false,
+            "controller": false,
+            "minor_cycle": false,
+            "clean_iterations": 0,
+            "beam_fit": false,
+        },
+    });
+    let receipt_bytes = serde_json::to_vec_pretty(&receipt).map_err(|error| {
+        ImagingError::InvalidRequest(format!("serialize wide-division sidecar receipt: {error}",))
+    })?;
+    let mut receipt_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&receipt_path)
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "create wide-division sidecar receipt {}: {error}",
+                receipt_path.display(),
+            ))
+        })?;
+    receipt_file.write_all(&receipt_bytes).map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "write wide-division sidecar receipt {}: {error}",
+            receipt_path.display(),
+        ))
+    })?;
+    receipt_file.sync_all().map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "sync wide-division sidecar receipt {}: {error}",
+            receipt_path.display(),
+        ))
+    })?;
+    eprintln!(
+        "awproject_wide_division_sidecar status=complete samples={} complex_divisions={} \
+         raw_path={} raw_sha256={} current_receipt={} wide_receipt={} \
+         instrumented_gpu_ms={:.6} cpu_hybrid_ms={:.6} hybrid_total_ms={:.6} \
+         prohibited_post_prediction_stages_entered=false receipt={}",
+        raw.len(),
+        complex_divisions,
+        raw_path.display(),
+        raw_sha256,
+        current_receipt.display(),
+        wide_receipt.display(),
+        current.elapsed.as_secs_f64() * 1_000.0,
+        candidate.elapsed.as_secs_f64() * 1_000.0,
+        (current.elapsed + candidate.elapsed).as_secs_f64() * 1_000.0,
         receipt_path.display(),
     );
     Ok(receipt_path)
@@ -25482,11 +26075,21 @@ fn replay_awproject_metal_global_program(
         let sidecar_prefix =
             env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDICTION_SIDECAR_PREFIX")
                 .map(PathBuf::from);
+        let wide_division_prefix =
+            env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_WIDE_DIVISION_SIDECAR_PREFIX")
+                .map(PathBuf::from);
+        if sidecar_prefix.is_some() && wide_division_prefix.is_some() {
+            return Err(ImagingError::InvalidRequest(
+                "the prediction and wide-division sidecars are mutually exclusive".to_string(),
+            ));
+        }
         let sidecar_generation = sidecar_prefix.as_ref().map(|_| 1);
+        let wide_division_generation = wide_division_prefix.as_ref().map(|_| 1);
         let dispatch = executor.dispatch_prediction_probe(
             &program.prediction_batch,
             model_grids,
-            sidecar_generation,
+            sidecar_generation.or(wide_division_generation),
+            wide_division_generation,
         )?;
         emit_awproject_frozen_final_state_prediction_hashes(
             &program.prediction_batch,
@@ -25501,6 +26104,18 @@ fn replay_awproject_metal_global_program(
             )?;
             return Err(ImagingError::InvalidRequest(format!(
                 "AWProject frozen-model prediction sidecar completed before residual gridding; receipt={}",
+                receipt.display(),
+            )));
+        }
+        if let Some(prefix) = wide_division_prefix.as_deref() {
+            let receipt = write_awproject_wide_division_sidecar(
+                prefix,
+                wide_division_generation.expect("wide-division sidecar generation"),
+                &program.prediction_batch,
+                &dispatch,
+            )?;
+            return Err(ImagingError::InvalidRequest(format!(
+                "AWProject wide-division sidecar completed before residual gridding; receipt={}",
                 receipt.display(),
             )));
         }
@@ -25998,6 +26613,7 @@ fn replay_awproject_compact_window(
                             let dispatch = executor.dispatch_prediction_probe(
                                 &program.prediction_batch,
                                 model_grids,
+                                None,
                                 None,
                             )?;
                             let prediction_elapsed = dispatch.elapsed;
@@ -61177,6 +61793,46 @@ mod tests {
             std::mem::offset_of!(super::AwProjectMetalPredictionAuditSample, second),
             64
         );
+        assert_eq!(
+            std::mem::size_of::<super::AwProjectMetalWideDivisionComplex>(),
+            8
+        );
+        assert_eq!(
+            std::mem::align_of::<super::AwProjectMetalWideDivisionComplex>(),
+            8
+        );
+        assert_eq!(
+            std::mem::size_of::<super::AwProjectMetalWideDivisionTerm>(),
+            16
+        );
+        assert_eq!(
+            std::mem::align_of::<super::AwProjectMetalWideDivisionTerm>(),
+            8
+        );
+        assert_eq!(
+            std::mem::size_of::<super::AwProjectMetalWideDivisionRole>(),
+            32
+        );
+        assert_eq!(
+            std::mem::align_of::<super::AwProjectMetalWideDivisionRole>(),
+            8
+        );
+        assert_eq!(
+            std::mem::size_of::<super::AwProjectMetalWideDivisionSample>(),
+            80
+        );
+        assert_eq!(
+            std::mem::align_of::<super::AwProjectMetalWideDivisionSample>(),
+            8
+        );
+        assert_eq!(
+            std::mem::offset_of!(super::AwProjectMetalWideDivisionSample, first),
+            16
+        );
+        assert_eq!(
+            std::mem::offset_of!(super::AwProjectMetalWideDivisionSample, second),
+            48
+        );
         assert_eq!(std::mem::size_of::<super::AwProjectMetalTileParams>(), 24);
         assert_eq!(std::mem::align_of::<super::AwProjectMetalTileParams>(), 4);
         assert_eq!(
@@ -61195,6 +61851,55 @@ mod tests {
             std::mem::offset_of!(super::AwProjectMetalSample, second_residual_im),
             180
         );
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn casa_67518_wide_complex_division_matches_official_source_zero_bits() {
+        let numerator = super::AwProjectMetalWideDivisionComplex {
+            re: f32::from_bits(1_033_899_791),
+            im: f32::from_bits(1_036_192_990),
+        };
+        let normalizer = super::AwProjectMetalWideDivisionComplex {
+            re: f32::from_bits(1_064_179_348),
+            im: f32::from_bits(1_025_430_603),
+        };
+        let raw = super::AwProjectMetalWideDivisionTerm {
+            numerator,
+            normalizer,
+        };
+        let current =
+            super::current_f32_complex_division(raw).expect("current f32 division result");
+        assert_eq!(
+            [current.re.to_bits(), current.im.to_bits()],
+            [1_034_097_304, 1_037_600_253]
+        );
+        let official = super::casa_67518_wide_complex_division(numerator, normalizer)
+            .expect("official CASA wide division result");
+        assert_eq!(
+            [official.re.to_bits(), official.im.to_bits()],
+            [1_034_097_304, 1_037_600_252]
+        );
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn casa_67518_wide_complex_division_rejects_invalid_domain() {
+        for (numerator, normalizer) in [
+            (
+                super::AwProjectMetalWideDivisionComplex {
+                    re: f32::NAN,
+                    im: 0.0,
+                },
+                super::AwProjectMetalWideDivisionComplex { re: 1.0, im: 0.0 },
+            ),
+            (
+                super::AwProjectMetalWideDivisionComplex { re: 1.0, im: 0.0 },
+                super::AwProjectMetalWideDivisionComplex { re: 0.0, im: 0.0 },
+            ),
+        ] {
+            assert!(super::casa_67518_wide_complex_division(numerator, normalizer).is_err());
+        }
     }
 
     #[test]

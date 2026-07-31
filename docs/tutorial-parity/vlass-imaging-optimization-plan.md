@@ -5785,6 +5785,50 @@ clean is considered. No clean, full-16-SPW row, `12,150`-square development
 clean, memory-policy experiment, repeated CASA timing, or unchanged CASA
 reference was run.
 
+### 2026-07-31 CPU-wide division sidecar, invalid first attempt
+
+The same Oracle conversation selected one bounded implementation experiment
+after the installed-binary division boundary was durably checkpointed. The
+production Metal kernel retained the complete 361-tap TT0/TT1 numerator
+accumulation. A private, generation-tagged sidecar captured each raw
+numerator and compact-replay normalizer, while an exact Rust helper reproduced
+the installed CASA `6.7.5.18` ordinary-finite `___divsc3` operation graph:
+binary32 inputs widened to binary64, the audited fused denominator and
+numerator graph, binary64 division, and one narrowing to binary32. The helper
+correctly reproduces the source-zero CASA TT0 bits
+`[1034097304, 1037600252]`; a focused unit test also reproduces the current
+Metal source-zero bits `[1034097304, 1037600253]`. Normal execution and the
+existing returned-residual ABI remain unchanged.
+
+The first bounded 4,096-square four-SPW execution is invalid instrumentation,
+not scientific evidence. It completed the frozen model preparation and
+production Metal prediction, then failed closed at source ordinal one before
+writing any raw, current-control, wide-candidate, or host sidecar artifact.
+The rejected validator attempted to reconstruct every current Metal f32
+division on the CPU with an explicit `mul_add` graph. Although that graph
+matches the already-proved source-zero value, Metal's compiled division does
+not have one host-reproducible contraction graph across the complete stream.
+The failure says nothing about whether the CASA-wide candidate closes TT0,
+TT1, Taylor combination, or residual parity.
+
+The failed run log SHA-256 is
+`4a3ba3733c16104bed775305d6bd144d1b3a7ff4489def721f3ed840a6d767c0`.
+At this checkpoint the Rust source and launcher hash to
+`ebc147ec8750487cfa2bb6a3e261ff3814f3d0207acb5d7d0d90094442ff2d9e`
+and
+`901c7d88dc9ecba0984b78a258de8277abac144b2df06f90ef5fda9e32351a36`.
+Focused CASA-wide helper tests (`2 passed`), the Metal ABI layout test
+(`1 passed`), warning-free `casa-imaging` all-target clippy, Rust formatting,
+Bash syntax, and `git diff --check` passed.
+
+No replacement diagnostic, CASA call, clean, full-16-SPW row,
+`12,150`-square development clean, memory-policy experiment, repeated CASA
+timing, or unchanged CASA reference was run in this checkpoint. Before the
+same candidate can be rerun, the raw-buffer validity check must move to a
+Metal-to-Metal normalization replay (or an equivalently direct device
+identity) so it verifies the raw ABI without pretending that host arithmetic
+defines Metal's current f32 division.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
