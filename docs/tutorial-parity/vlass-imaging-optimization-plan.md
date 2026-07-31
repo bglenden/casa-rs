@@ -6656,6 +6656,85 @@ addition without using the defective auxiliary field. This checkpoint is
 required before asking the same Oracle conversation to select that
 discriminator.
 
+### 2026-07-31 raw-frame Taylor scale/add ordering certificate
+
+The same Oracle conversation selected one further offline certificate,
+`casa-rs-vlass-mtmfs-raw-frame-ordering-v1`. It compares exactly two
+operation graphs over the frozen `98,239` sources and `196,478` source-role
+values:
+
+1. the current casa-rs order, which phase-aligns raw TT0 and TT1 separately
+   before scaling aligned TT1 and adding the aligned terms; and
+2. the CASA order, which scales raw TT1, adds raw TT0 and the scaled raw TT1
+   as `Complex<Float>`, and applies the certified source phase to the
+   completed values afterward.
+
+A standalone Rust helper performed every cast, scalar multiplication, complex
+addition, and source-phase multiplication with explicit separate `f32`
+rounding boundaries. The Python driver only bound the frozen artifacts,
+audited bit patterns, and wrote the receipt. The helper independently
+reconstructed the source-typed order-one multiplier from the frozen `f64`
+channel frequency and reference-frequency bits `41e642f2b1117f64`; it did
+not consume the defective auxiliary `taylor_power1` field.
+
+All fail-closed controls passed. In particular, the current-order graph
+reproduced the earlier evidence exactly:
+
+- scaled TT1: `230` mismatches, hash
+  `3358d026bf59612cbe35bfedf6f33ad1d14ddac309fd43428d87314d959404ea`;
+- combined prediction: `434` mismatches, hash
+  `5ee1aeded69e61cd9e5e8d5bece01397c8a5a743ca8bb856653ea12dab7832cb`;
+- aligned raw TT0:
+  `0dee472a2f19ea3f03af86442f086d383980853390ecd5188066f5e8f4b1cedb`;
+  and
+- aligned raw TT1:
+  `950dc856071fb616be4d130b925d61b5d107b7580edf92b55771312ce3381545`.
+
+The CASA-order graph then closed every boundary bit-for-bit:
+
+- raw scaled TT1: `0 / 196,478` mismatches, hash
+  `9f65b3101de18ccf964f1896340d18341f592fe345fb2db8e54f46130e452e30`;
+- raw combined prediction: `0 / 196,478`, hash
+  `408bed39329591a475755b71a5c3bccfb9b1e0993166ba19eee053e8c0b81e3b`;
+- phase-aligned scaled TT1: `0 / 196,478`, hash
+  `51eb87c76d26db2a0ef7368a083c5284d841633d2f672cf9f500f1fac1ef0791`;
+  and
+- phase-aligned combined prediction: `0 / 196,478`, hash
+  `2c6a3072a7f5556c81cc5b691a8d0ac2d7b055010bb8f171ed207d5d1a5d1e5d`.
+
+All four comparisons have zero maximum component ULP distance and zero
+maximum component absolute difference. The classification is therefore
+`raw-frame-scale-add-closes-all`: the remaining `230 / 434` discrepancies
+are completely explained by moving Float Taylor scaling and
+`Complex<Float>` addition across source-frame phase alignment.
+
+The SPDX-stable v2 receipt, Rust helper source, compiled helper executable,
+helper input, and helper output hash to, respectively:
+
+- `7471c03288c43e3646b7dc707a09d21f2fb56fb478b591e707009aaee1df12e7`;
+- `90dbd78189439eb6e1f9fc5fdf088b90bace86ee01066a3132513df0d7b4338f`;
+- `fddb5af6c11b98b6e3ef3412e7bc5781c92f64471c6389c6fe80d450dabd1d57`;
+- `c8b1ba2226ae662d4b2bbe1e646ef443c166bf1687e0fd1aa6fc8f8874b8c24a`;
+  and
+- `59f8644f10ac1800ff42c5f1fec9fa5e1e530e8fde974b56a700e1dae6eeeb38`.
+
+The first invocation completed the arithmetic but failed before writing a
+receipt because one NumPy boolean was not JSON serializable. The only change
+before the successful invocation converted that control value to a native
+Python boolean; no artifact, operation graph, or scientific parameter
+changed. The commit hook then required an SPDX comment on the standalone Rust
+source. The v2 receipt supersedes v1 after that provenance-only source edit.
+Its helper input and output hashes are identical to v1, including every
+comparison hash and mismatch count; only source, executable, and receipt
+identities changed.
+
+This certificate authorizes one prediction-only experimental runtime
+candidate with the CASA raw-frame ordering. It does not authorize production
+default incorporation, UI exposure, a tolerance change, residual formation,
+CLEAN, or promotion of the four-SPW row. No CASA, MS, Metal, grid, FFT,
+product, controller, clean, full-16-SPW, full-geometry, or memory-policy
+execution occurred.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
