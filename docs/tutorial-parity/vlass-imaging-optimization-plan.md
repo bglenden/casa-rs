@@ -8291,6 +8291,82 @@ phase-liveness and traffic accounting for derived materialization, and an
 experiment lifecycle that ends in promotion, a named oracle, or deletion of
 the executable path while preserving negative evidence.
 
+### 2026-07-31 mask-moment phase-space discriminator
+
+The first Oracle-ranked architecture has now received its bounded real-row
+discriminator. A production-inert Rust census used the actual promoted
+`4,096`-square full-16-SPW initial AW pass, all `385,862` routed samples, the
+actual Briggs weights, `104` block/group source states, the deterministic
+`4,096`-pixel mask, both Taylor terms, and scales `[0,5,12]`. The exact nonzero
+multiscale support dilates that mask to `7,304` pixels with maximum offsets
+`[11,11]`; it does not assume a nominal 12-pixel square support. The diagnostic
+is bound to the promoted 641-component scientific receipt
+`f06859c9215a26b15dd32731345b9fdb1aaf1ab0fc267938638dd016b99518a1`.
+It retains the exact initial and final AW applications and tests only the
+proposed order-2/order-3 UVW-polynomial compression of the eight intermediate
+applications.
+
+The first implementation used a cheap modulo-three packing proof. It measured
+constructive rank-one feature counts of `1,293,090` at order two and
+`1,108,940` at order three, but its lower bounds were only `26,180` and
+`26,320`; the resulting decision was correctly inconclusive. That negative
+receipt is preserved rather than relabeled:
+
+- log
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260731-vlass-4096-full16-niter0-mask-sufficient-statistics-census-v1.log`,
+  SHA-256
+  `1bfaafd94c6a89b412e25d00b00820bada0d3d67a855d46b91d50d7f59724404`;
+  and
+- receipt
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/diagnostics/20260731-vlass-4096-full16-mask-sufficient-statistics-census-v1.json`,
+  SHA-256
+  `6c161dcfd7ab6f3f01291270c6b0ad0099500ba1580b8f8703bc8488f8f951c7`.
+
+The follow-up changed the discriminator rather than repeating it unchanged. It
+constructs a greedy independent set in the exact scale-dilated-mask phase
+metric. Any two retained samples have pairwise phase distance greater than
+twice the legal Taylor radius, so no legal cluster can contain both. Forward
+and reverse deterministic traversals are measured and the larger valid packing
+is retained. The tightened proof finds:
+
+- order two: `49,139` required clusters and at least `491,390` rank-one
+  features, `6.38x` the `77,000` gate;
+- order three: `19,099` required clusters and at least `381,980` rank-one
+  features, `4.96x` the gate; and
+- constructive upper counts remain `129,309` and `55,447` clusters,
+  respectively.
+
+Both orders therefore fail the feature gate even at effective Mueller rank
+one. Higher ranks can only increase state. This rigorously retires the tested
+order-2/order-3 UVW-polynomial mask-moment architecture; it does not claim that
+all possible sufficient statistics, hierarchical bases, or sparse
+reconstruction are impossible. Per the Oracle ranking, the next
+single-field discriminator is weighted low-rank A/WB after quotienting exact W,
+POINTING phase, conjugation/reflection, antenna-frame rotation/translation, and
+supported frequency scaling. No Metal response race was launched for the
+retired moment family.
+
+The decisive evidence is:
+
+- log
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260731-vlass-4096-full16-niter0-mask-sufficient-statistics-census-v2.log`,
+  SHA-256
+  `92cbd8735eabaaf12badd961dd4f0517c9a0810e2db1a4b35908a48128f8e7b0`;
+  and
+- claim-corrected receipt
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/diagnostics/20260731-vlass-4096-full16-mask-sufficient-statistics-census-v2-claim-corrected.json`,
+  SHA-256
+  `f363ff07dd0ec480d7ab7b1bd6f5c7451314a620ba15bf8404308e1ac73a96d9`.
+
+The corrected reducer narrows the decision label from the original v2
+receipt's overly broad wording to
+`retire-order-2-3-uvw-polynomial-mask-moments`; it does not alter any measured
+count or overwrite the original receipt. The two casa-rs diagnostics completed
+in `33.82` and `33.42` seconds including the required initial grid, FFTs, and
+product writes. Those wall times are turnaround receipts, not candidate
+performance. Neither run invoked CASA, CLEAN, a `12,150`-square workload, or an
+unchanged CASA reference.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.

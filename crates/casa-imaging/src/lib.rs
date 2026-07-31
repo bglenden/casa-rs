@@ -4453,12 +4453,22 @@ const AWPROJECT_SUBGRID_SPEED_OF_LIGHT_ENV: &str =
     "CASA_RS_EXPERIMENTAL_AWPROJECT_SUBGRID_SPEED_OF_LIGHT";
 const AWPROJECT_CF_KEY_FFT_OCCUPANCY_ENV: &str =
     "CASA_RS_EXPERIMENTAL_AWPROJECT_CF_KEY_FFT_OCCUPANCY";
+const AWPROJECT_MASK_SUFFICIENT_STATISTICS_CENSUS_ENV: &str =
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_MASK_SUFFICIENT_STATISTICS_CENSUS";
+const AWPROJECT_MASK_COMPONENT_UPDATES_ENV: &str =
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_MASK_COMPONENT_UPDATES";
+const AWPROJECT_MASK_TRAJECTORY_RECEIPT_SHA256_ENV: &str =
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_MASK_TRAJECTORY_RECEIPT_SHA256";
 const AWPROJECT_PHYSICAL_COMPONENT_STATE_LIMIT_BYTES: usize = 151_257_904;
 const AWPROJECT_HYBRID_STACK_COUNT_MAX: usize = 32;
 const AWPROJECT_SUBGRID_SUPPORT_SIDES: [usize; 5] = [32, 48, 64, 96, 128];
 const AWPROJECT_SUBGRID_TRACE_MAJOR_CYCLES: usize = 5;
 const AWPROJECT_SUBGRID_TRACE_THREADGROUP_CELLS: usize = 2_048;
 const AWPROJECT_CF_KEY_FFT_TILE_SIDES: [usize; 4] = [32, 64, 128, 256];
+const AWPROJECT_MASK_MOMENT_ORDERS: [usize; 2] = [2, 3];
+const AWPROJECT_MASK_MOMENT_RANKS: [usize; 4] = [1, 2, 3, 4];
+const AWPROJECT_MASK_MOMENT_PHASE_ERROR_BUDGET: f64 = 1.0e-5;
+const AWPROJECT_MASK_MOMENT_FEATURE_LIMIT: usize = 77_000;
 
 fn awproject_component_probe_enabled() -> bool {
     env::var_os(AWPROJECT_PHYSICAL_COMPONENT_PROBE_ENV).is_some()
@@ -10559,6 +10569,7 @@ where
     })?;
     #[cfg(all(target_os = "macos", not(coverage)))]
     maybe_emit_awproject_cf_key_fft_occupancy()?;
+    maybe_emit_awproject_mask_sufficient_statistics()?;
     if let Some(cache) = aw_cache {
         accumulation.aw_sample_census.log(pass, cache)?;
         if accumulation.aw_metal_stats.calls > 0 {
@@ -10922,6 +10933,688 @@ fn maybe_emit_awproject_cf_key_fft_occupancy() -> Result<(), ImagingError> {
             persistent_kernel_spectrum_bytes,
             peak_tile_scratch_bytes,
         );
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct AwProjectMaskMomentDomain {
+    geometry: ImageGeometry,
+    nterms: usize,
+    scale_bits: Vec<u32>,
+    clean_mask_pixels: usize,
+    domain_pixels: usize,
+    domain_bounds: [usize; 4],
+    max_kernel_offsets: [usize; 2],
+    center_lmn: [f64; 3],
+    delta_lmn_extents: [f64; 3],
+    mask_fingerprint: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AwProjectMaskMomentSample {
+    uvw_lambda: [f64; 3],
+    weight: f64,
+    frequency_hz: f64,
+    source_state: (usize, usize),
+}
+
+#[derive(Default)]
+struct AwProjectMaskMomentCensus {
+    domain: Option<AwProjectMaskMomentDomain>,
+    samples: Vec<AwProjectMaskMomentSample>,
+    windows: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AwProjectMaskMomentClusterCurve {
+    upper_clusters: usize,
+    upper_group_cluster_pairs: usize,
+    packing_lower_clusters: usize,
+    greedy_packing_lower_clusters: usize,
+    residue_packing_lower_clusters: usize,
+    shift_code: usize,
+    eta: f64,
+    remainder_bound: f64,
+}
+
+static AWPROJECT_MASK_MOMENT_CENSUS: OnceLock<Mutex<AwProjectMaskMomentCensus>> = OnceLock::new();
+
+fn awproject_mask_moment_domain(
+    request: &MtmfsRequest,
+) -> Result<AwProjectMaskMomentDomain, ImagingError> {
+    let clean_mask = request.clean_mask.as_ref().ok_or_else(|| {
+        ImagingError::InvalidRequest(
+            "AWProject mask sufficient-statistics census requires an explicit clean mask"
+                .to_string(),
+        )
+    })?;
+    if clean_mask.dim() != (request.geometry.nx(), request.geometry.ny()) {
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject mask sufficient-statistics census mask shape {:?} does not match image shape {:?}",
+            clean_mask.dim(),
+            (request.geometry.nx(), request.geometry.ny())
+        )));
+    }
+    let scale_sizes = if request.multiscale_scales.is_empty() {
+        vec![0.0]
+    } else {
+        request.multiscale_scales.clone()
+    };
+    let compact_kernels = scale_sizes
+        .iter()
+        .copied()
+        .map(make_compact_multiscale_kernel)
+        .collect::<Vec<_>>();
+    let mut kernel_offsets = BTreeSet::<(isize, isize)>::new();
+    let mut max_kernel_offsets = [0usize; 2];
+    for kernel in &compact_kernels {
+        let center = (kernel.dim().0 / 2, kernel.dim().1 / 2);
+        for ((x, y), value) in kernel.indexed_iter() {
+            if *value == 0.0 {
+                continue;
+            }
+            let offset_x = x as isize - center.0 as isize;
+            let offset_y = y as isize - center.1 as isize;
+            max_kernel_offsets[0] = max_kernel_offsets[0].max(offset_x.unsigned_abs());
+            max_kernel_offsets[1] = max_kernel_offsets[1].max(offset_y.unsigned_abs());
+            kernel_offsets.insert((offset_x, offset_y));
+        }
+    }
+    if kernel_offsets.is_empty() {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject mask sufficient-statistics census found no nonzero multiscale kernel taps"
+                .to_string(),
+        ));
+    }
+
+    let clean_mask_pixels = clean_mask.iter().filter(|value| **value).count();
+    if clean_mask_pixels == 0 {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject mask sufficient-statistics census requires a nonempty clean mask"
+                .to_string(),
+        ));
+    }
+    let [nx, ny] = request.geometry.image_shape;
+    let mut domain_mask = Array2::<bool>::from_elem((nx, ny), false);
+    for ((x, y), enabled) in clean_mask.indexed_iter() {
+        if !*enabled {
+            continue;
+        }
+        for &(offset_x, offset_y) in &kernel_offsets {
+            let domain_x = x as isize + offset_x;
+            let domain_y = y as isize + offset_y;
+            if domain_x >= 0 && domain_x < nx as isize && domain_y >= 0 && domain_y < ny as isize {
+                domain_mask[(domain_x as usize, domain_y as usize)] = true;
+            }
+        }
+    }
+
+    let mut domain_pixels = 0usize;
+    let mut min_x = nx;
+    let mut max_x = 0usize;
+    let mut min_y = ny;
+    let mut max_y = 0usize;
+    let mut mask_fingerprint = 0xcbf2_9ce4_8422_2325u64;
+    for ((x, y), enabled) in domain_mask.indexed_iter() {
+        if !*enabled {
+            continue;
+        }
+        domain_pixels = domain_pixels.saturating_add(1);
+        min_x = min_x.min(x);
+        max_x = max_x.max(x);
+        min_y = min_y.min(y);
+        max_y = max_y.max(y);
+        for byte in (x as u64)
+            .to_le_bytes()
+            .into_iter()
+            .chain((y as u64).to_le_bytes())
+        {
+            mask_fingerprint ^= u64::from(byte);
+            mask_fingerprint = mask_fingerprint.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    if domain_pixels == 0 {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject mask sufficient-statistics census produced an empty scale-dilated domain"
+                .to_string(),
+        ));
+    }
+
+    let center_x = 0.5 * (min_x + max_x) as f64;
+    let center_y = 0.5 * (min_y + max_y) as f64;
+    let image_center_x = nx as f64 / 2.0;
+    let image_center_y = ny as f64 / 2.0;
+    let center_l = (center_x - image_center_x) * request.geometry.cell_size_rad[0];
+    let center_m = (image_center_y - center_y) * request.geometry.cell_size_rad[1];
+    let center_radius_sq = center_l * center_l + center_m * center_m;
+    let center_n_minus_one = if center_radius_sq < 1.0 {
+        (1.0 - center_radius_sq).sqrt() - 1.0
+    } else {
+        -1.0
+    };
+    let center_lmn = [center_l, center_m, center_n_minus_one];
+    let mut delta_lmn_extents = [0.0f64; 3];
+    for ((x, y), enabled) in domain_mask.indexed_iter() {
+        if !*enabled {
+            continue;
+        }
+        let coordinate = direct_pixel_coordinate(request.geometry, x, y);
+        for (extent, delta) in delta_lmn_extents.iter_mut().zip([
+            coordinate.l - center_l,
+            coordinate.m - center_m,
+            coordinate.n_minus_one - center_n_minus_one,
+        ]) {
+            *extent = extent.max(delta.abs());
+        }
+    }
+
+    Ok(AwProjectMaskMomentDomain {
+        geometry: request.geometry,
+        nterms: request.nterms,
+        scale_bits: scale_sizes.iter().map(|scale| scale.to_bits()).collect(),
+        clean_mask_pixels,
+        domain_pixels,
+        domain_bounds: [min_x, max_x, min_y, max_y],
+        max_kernel_offsets,
+        center_lmn,
+        delta_lmn_extents,
+        mask_fingerprint,
+    })
+}
+
+fn maybe_audit_awproject_mask_sufficient_statistics(
+    request: &MtmfsRequest,
+    batch: &VisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    source_samples: &[AwProjectCompactSourceSample],
+    replay_block_ordinal: usize,
+) -> Result<(), ImagingError> {
+    if env::var_os(AWPROJECT_MASK_SUFFICIENT_STATISTICS_CENSUS_ENV).is_none() {
+        return Ok(());
+    }
+    if request.clean.niter != 0 {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject mask sufficient-statistics census is a source-feasibility diagnostic and requires niter=0"
+                .to_string(),
+        ));
+    }
+    let domain = awproject_mask_moment_domain(request)?;
+    let mut census = AWPROJECT_MASK_MOMENT_CENSUS
+        .get_or_init(|| Mutex::new(AwProjectMaskMomentCensus::default()))
+        .lock()
+        .map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject mask sufficient-statistics census lock was poisoned".to_string(),
+            )
+        })?;
+    if let Some(existing) = census.domain.as_ref() {
+        if existing != &domain {
+            return Err(ImagingError::InvalidRequest(
+                "AWProject mask sufficient-statistics census observed a changing mask/geometry contract"
+                    .to_string(),
+            ));
+        }
+    } else {
+        census.domain = Some(domain);
+    }
+    for source in source_samples {
+        let sample_index = source.sample_index;
+        let frequency_hz = *sample_frequencies_hz.get(sample_index).ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject mask sufficient-statistics census sample frequency is missing"
+                    .to_string(),
+            )
+        })?;
+        let weight = f64::from(*batch.weight.get(sample_index).ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject mask sufficient-statistics census sample weight is missing".to_string(),
+            )
+        })?);
+        let uvw_lambda = [
+            *batch.u_lambda.get(sample_index).ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject mask sufficient-statistics census U coordinate is missing"
+                        .to_string(),
+                )
+            })?,
+            *batch.v_lambda.get(sample_index).ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject mask sufficient-statistics census V coordinate is missing"
+                        .to_string(),
+                )
+            })?,
+            *batch.w_lambda.get(sample_index).ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject mask sufficient-statistics census W coordinate is missing"
+                        .to_string(),
+                )
+            })?,
+        ];
+        if !(weight.is_finite()
+            && weight > 0.0
+            && frequency_hz.is_finite()
+            && frequency_hz > 0.0
+            && uvw_lambda.iter().all(|value| value.is_finite()))
+        {
+            return Err(ImagingError::InvalidRequest(
+                "AWProject mask sufficient-statistics census encountered a non-finite or non-positive routed sample"
+                    .to_string(),
+            ));
+        }
+        census.samples.push(AwProjectMaskMomentSample {
+            uvw_lambda,
+            weight,
+            frequency_hz,
+            source_state: (replay_block_ordinal, source.group_index),
+        });
+    }
+    census.windows = census.windows.saturating_add(1);
+    Ok(())
+}
+
+fn awproject_taylor_remainder_bound(eta: f64, order: usize) -> f64 {
+    let factorial = (1..=order + 1).product::<usize>() as f64;
+    eta.exp() * eta.powi((order + 1) as i32) / factorial
+}
+
+fn awproject_eta_for_taylor_remainder(order: usize, budget: f64) -> f64 {
+    let mut lower = 0.0f64;
+    let mut upper = 1.0f64;
+    while awproject_taylor_remainder_bound(upper, order) < budget {
+        upper *= 2.0;
+    }
+    for _ in 0..96 {
+        let middle = 0.5 * (lower + upper);
+        if awproject_taylor_remainder_bound(middle, order) <= budget {
+            lower = middle;
+        } else {
+            upper = middle;
+        }
+    }
+    lower
+}
+
+fn awproject_mask_moment_bin(
+    sample: AwProjectMaskMomentSample,
+    widths: [Option<f64>; 3],
+    shift_code: usize,
+) -> (i64, i64, i64) {
+    let mut bins = [0i64; 3];
+    for axis in 0..3 {
+        if let Some(width) = widths[axis] {
+            let shift = if shift_code & (1 << axis) == 0 {
+                0.0
+            } else {
+                0.5
+            };
+            bins[axis] = (sample.uvw_lambda[axis] / width - shift).floor() as i64;
+        }
+    }
+    (bins[0], bins[1], bins[2])
+}
+
+fn awproject_mask_moment_cluster_curve(
+    samples: &[AwProjectMaskMomentSample],
+    extents: [f64; 3],
+    order: usize,
+    budget: f64,
+) -> AwProjectMaskMomentClusterCurve {
+    let eta = awproject_eta_for_taylor_remainder(order, budget);
+    let active_dimensions = extents
+        .iter()
+        .filter(|extent| **extent > 0.0)
+        .count()
+        .max(1) as f64;
+    let upper_widths = extents.map(|extent| {
+        (extent > 0.0).then_some(2.0 * eta / (std::f64::consts::TAU * active_dimensions * extent))
+    });
+    let mut best_clusters = usize::MAX;
+    let mut best_shift_code = 0usize;
+    for shift_code in 0..8 {
+        let clusters = samples
+            .iter()
+            .copied()
+            .map(|sample| awproject_mask_moment_bin(sample, upper_widths, shift_code))
+            .collect::<BTreeSet<_>>()
+            .len();
+        if clusters < best_clusters {
+            best_clusters = clusters;
+            best_shift_code = shift_code;
+        }
+    }
+    let upper_group_cluster_pairs = samples
+        .iter()
+        .copied()
+        .map(|sample| {
+            (
+                awproject_mask_moment_bin(sample, upper_widths, best_shift_code),
+                sample.source_state,
+            )
+        })
+        .collect::<BTreeSet<_>>()
+        .len();
+
+    // A cluster whose Taylor argument is bounded by eta has pairwise weighted
+    // phase distance no greater than 2*eta. Partition each axis into cells
+    // whose width is that full single-axis diameter, then retain the largest
+    // modulo-three cell class. Distinct cells in one class are separated by
+    // more than a legal cluster diameter on at least one axis, so their count
+    // is a constructive packing lower bound on every possible clustering.
+    let packing_widths = extents
+        .map(|extent| (extent > 0.0).then_some(2.0 * eta / (std::f64::consts::TAU * extent)));
+    let occupied_packing_cells = samples
+        .iter()
+        .copied()
+        .map(|sample| awproject_mask_moment_bin(sample, packing_widths, 0))
+        .collect::<BTreeSet<_>>();
+    let mut residue_counts = [0usize; 27];
+    for &(u, v, w) in &occupied_packing_cells {
+        let residue = (u.rem_euclid(3) + 3 * v.rem_euclid(3) + 9 * w.rem_euclid(3)) as usize;
+        residue_counts[residue] = residue_counts[residue].saturating_add(1);
+    }
+    let residue_packing_lower_clusters = residue_counts.into_iter().max().unwrap_or(0);
+    let greedy_packing_lower_clusters =
+        awproject_mask_moment_greedy_packing(samples, extents, eta, packing_widths, false).max(
+            awproject_mask_moment_greedy_packing(samples, extents, eta, packing_widths, true),
+        );
+    AwProjectMaskMomentClusterCurve {
+        upper_clusters: best_clusters,
+        upper_group_cluster_pairs,
+        packing_lower_clusters: residue_packing_lower_clusters.max(greedy_packing_lower_clusters),
+        greedy_packing_lower_clusters,
+        residue_packing_lower_clusters,
+        shift_code: best_shift_code,
+        eta,
+        remainder_bound: awproject_taylor_remainder_bound(eta, order),
+    }
+}
+
+fn awproject_mask_moment_greedy_packing(
+    samples: &[AwProjectMaskMomentSample],
+    extents: [f64; 3],
+    eta: f64,
+    packing_widths: [Option<f64>; 3],
+    reverse: bool,
+) -> usize {
+    type PackingIndex =
+        HashMap<(i64, i64, i64), Vec<usize>, BuildHasherDefault<MosaicMetalSampleHasher>>;
+    let mut accepted_by_cell = PackingIndex::default();
+    let mut accepted_count = 0usize;
+    let visit_order: Box<dyn Iterator<Item = usize>> = if reverse {
+        Box::new((0..samples.len()).rev())
+    } else {
+        Box::new(0..samples.len())
+    };
+    let phase_diameter = 2.0 * eta;
+    for sample_index in visit_order {
+        let sample = samples[sample_index];
+        let (cell_u, cell_v, cell_w) = awproject_mask_moment_bin(sample, packing_widths, 0);
+        let u_offsets = if packing_widths[0].is_some() {
+            -2..=2
+        } else {
+            0..=0
+        };
+        let v_offsets = if packing_widths[1].is_some() {
+            -2..=2
+        } else {
+            0..=0
+        };
+        let w_offsets = if packing_widths[2].is_some() {
+            -2..=2
+        } else {
+            0..=0
+        };
+        let mut conflicts = false;
+        'neighbors: for delta_u in u_offsets.clone() {
+            for delta_v in v_offsets.clone() {
+                for delta_w in w_offsets.clone() {
+                    let Some(neighbors) = accepted_by_cell.get(&(
+                        cell_u + delta_u,
+                        cell_v + delta_v,
+                        cell_w + delta_w,
+                    )) else {
+                        continue;
+                    };
+                    for &neighbor_index in neighbors {
+                        let neighbor = samples[neighbor_index];
+                        let phase_distance = std::f64::consts::TAU
+                            * extents
+                                .iter()
+                                .enumerate()
+                                .map(|(axis, extent)| {
+                                    extent
+                                        * (sample.uvw_lambda[axis] - neighbor.uvw_lambda[axis])
+                                            .abs()
+                                })
+                                .sum::<f64>();
+                        if phase_distance <= phase_diameter {
+                            conflicts = true;
+                            break 'neighbors;
+                        }
+                    }
+                }
+            }
+        }
+        if conflicts {
+            continue;
+        }
+        accepted_by_cell
+            .entry((cell_u, cell_v, cell_w))
+            .or_default()
+            .push(sample_index);
+        accepted_count = accepted_count.saturating_add(1);
+    }
+    accepted_count
+}
+
+fn awproject_monomial_count(order: usize) -> usize {
+    (order + 1)
+        .saturating_mul(order + 2)
+        .saturating_mul(order + 3)
+        / 6
+}
+
+fn required_awproject_mask_trajectory_contract() -> Result<(usize, String), ImagingError> {
+    let updates_text = env::var(AWPROJECT_MASK_COMPONENT_UPDATES_ENV).map_err(|_| {
+        ImagingError::InvalidRequest(format!(
+            "{AWPROJECT_MASK_COMPONENT_UPDATES_ENV} is required when the mask sufficient-statistics census is enabled"
+        ))
+    })?;
+    let updates = updates_text.parse::<usize>().map_err(|_| {
+        ImagingError::InvalidRequest(format!(
+            "{AWPROJECT_MASK_COMPONENT_UPDATES_ENV} must be a positive integer, got {updates_text}"
+        ))
+    })?;
+    if updates == 0 {
+        return Err(ImagingError::InvalidRequest(format!(
+            "{AWPROJECT_MASK_COMPONENT_UPDATES_ENV} must be positive"
+        )));
+    }
+    let receipt_sha256 =
+        env::var(AWPROJECT_MASK_TRAJECTORY_RECEIPT_SHA256_ENV).map_err(|_| {
+            ImagingError::InvalidRequest(format!(
+                "{AWPROJECT_MASK_TRAJECTORY_RECEIPT_SHA256_ENV} is required when the mask sufficient-statistics census is enabled"
+            ))
+        })?;
+    if receipt_sha256.len() != 64 || !receipt_sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(ImagingError::InvalidRequest(format!(
+            "{AWPROJECT_MASK_TRAJECTORY_RECEIPT_SHA256_ENV} must be a 64-digit hexadecimal SHA-256"
+        )));
+    }
+    Ok((updates, receipt_sha256.to_ascii_lowercase()))
+}
+
+fn maybe_emit_awproject_mask_sufficient_statistics() -> Result<(), ImagingError> {
+    if env::var_os(AWPROJECT_MASK_SUFFICIENT_STATISTICS_CENSUS_ENV).is_none() {
+        return Ok(());
+    }
+    let (component_updates, trajectory_receipt_sha256) =
+        required_awproject_mask_trajectory_contract()?;
+    let mut state = AWPROJECT_MASK_MOMENT_CENSUS
+        .get_or_init(|| Mutex::new(AwProjectMaskMomentCensus::default()))
+        .lock()
+        .map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject mask sufficient-statistics census lock was poisoned".to_string(),
+            )
+        })?;
+    let census = std::mem::take(&mut *state);
+    drop(state);
+    let domain = census.domain.ok_or_else(|| {
+        ImagingError::InvalidRequest(
+            "AWProject mask sufficient-statistics census did not observe a mask contract"
+                .to_string(),
+        )
+    })?;
+    if census.samples.is_empty() {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject mask sufficient-statistics census observed no routed samples".to_string(),
+        ));
+    }
+    let sample_count = census.samples.len();
+    let source_states = census
+        .samples
+        .iter()
+        .map(|sample| sample.source_state)
+        .collect::<BTreeSet<_>>()
+        .len();
+    let weight_sum = census
+        .samples
+        .iter()
+        .map(|sample| sample.weight)
+        .sum::<f64>();
+    let weight_sq_sum = census
+        .samples
+        .iter()
+        .map(|sample| sample.weight * sample.weight)
+        .sum::<f64>();
+    let weight_min = census
+        .samples
+        .iter()
+        .map(|sample| sample.weight)
+        .fold(f64::INFINITY, f64::min);
+    let weight_max = census
+        .samples
+        .iter()
+        .map(|sample| sample.weight)
+        .fold(0.0f64, f64::max);
+    let frequency_min_hz = census
+        .samples
+        .iter()
+        .map(|sample| sample.frequency_hz)
+        .fold(f64::INFINITY, f64::min);
+    let frequency_max_hz = census
+        .samples
+        .iter()
+        .map(|sample| sample.frequency_hz)
+        .fold(0.0f64, f64::max);
+    let scale_csv = domain
+        .scale_bits
+        .iter()
+        .map(|bits| f32::from_bits(*bits).to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    for order in AWPROJECT_MASK_MOMENT_ORDERS {
+        let curve = awproject_mask_moment_cluster_curve(
+            &census.samples,
+            domain.delta_lmn_extents,
+            order,
+            AWPROJECT_MASK_MOMENT_PHASE_ERROR_BUDGET,
+        );
+        let moment_count = awproject_monomial_count(order);
+        let cross_moment_count = awproject_monomial_count(2 * order);
+        for rank in AWPROJECT_MASK_MOMENT_RANKS {
+            let feature_upper = curve
+                .upper_clusters
+                .saturating_mul(rank)
+                .saturating_mul(moment_count);
+            let feature_lower = curve
+                .packing_lower_clusters
+                .saturating_mul(rank)
+                .saturating_mul(moment_count);
+            let cross_moments_upper = curve
+                .upper_clusters
+                .saturating_mul(rank)
+                .saturating_mul(rank)
+                .saturating_mul(cross_moment_count);
+            let state_bytes_upper = domain
+                .nterms
+                .saturating_mul(feature_upper)
+                .saturating_add(cross_moments_upper)
+                .saturating_mul(mem::size_of::<Complex32>());
+            eprintln!(
+                "awproject_mask_sufficient_statistics_census order={} rank={} \
+                 samples={} windows={} source_states={} nterms={} scales={} \
+                 clean_mask_pixels={} domain_pixels={} domain_bounds={},{},{},{} \
+                 max_kernel_offsets={},{} mask_fingerprint={:016x} \
+                 center_lmn={:.17e},{:.17e},{:.17e} \
+                 delta_lmn_extents={:.17e},{:.17e},{:.17e} \
+                 phase_error_budget={:.17e} eta={:.17e} remainder_bound={:.17e} \
+                 upper_clusters={} upper_group_cluster_pairs={} \
+                 packing_lower_clusters={} greedy_packing_lower_clusters={} \
+                 residue_packing_lower_clusters={} shift_code={} \
+                 moment_count={} cross_moment_count={} \
+                 feature_lower={} feature_upper={} cross_moments_upper={} \
+                 state_bytes_upper={} feature_limit={} state_limit_bytes={} \
+                 component_updates={} trajectory_receipt_sha256={} \
+                 weight_sum={:.17e} weight_sq_sum={:.17e} \
+                 weight_min={:.17e} weight_max={:.17e} \
+                 frequency_min_hz={:.17e} frequency_max_hz={:.17e} \
+                 operator_calls_retained=3 operator_calls_targeted=8 \
+                 factoring_contract=exact-mask-center-rephase-central-w-and-pointing-scalar-phase \
+                 component_contract=frozen-promoted-count-and-scales-not-executed-by-this-niter0-census \
+                 error_contract=scalar-phase-Taylor-remainder-bound-only-DDE-low-rank-error-not-measured \
+                 role=source-feasibility-and-phase-space-bound-not-performance-or-science-evidence",
+                order,
+                rank,
+                sample_count,
+                census.windows,
+                source_states,
+                domain.nterms,
+                scale_csv,
+                domain.clean_mask_pixels,
+                domain.domain_pixels,
+                domain.domain_bounds[0],
+                domain.domain_bounds[1],
+                domain.domain_bounds[2],
+                domain.domain_bounds[3],
+                domain.max_kernel_offsets[0],
+                domain.max_kernel_offsets[1],
+                domain.mask_fingerprint,
+                domain.center_lmn[0],
+                domain.center_lmn[1],
+                domain.center_lmn[2],
+                domain.delta_lmn_extents[0],
+                domain.delta_lmn_extents[1],
+                domain.delta_lmn_extents[2],
+                AWPROJECT_MASK_MOMENT_PHASE_ERROR_BUDGET,
+                curve.eta,
+                curve.remainder_bound,
+                curve.upper_clusters,
+                curve.upper_group_cluster_pairs,
+                curve.packing_lower_clusters,
+                curve.greedy_packing_lower_clusters,
+                curve.residue_packing_lower_clusters,
+                curve.shift_code,
+                moment_count,
+                cross_moment_count,
+                feature_lower,
+                feature_upper,
+                cross_moments_upper,
+                state_bytes_upper,
+                AWPROJECT_MASK_MOMENT_FEATURE_LIMIT,
+                AWPROJECT_PHYSICAL_COMPONENT_STATE_LIMIT_BYTES,
+                component_updates,
+                trajectory_receipt_sha256,
+                weight_sum,
+                weight_sq_sum,
+                weight_min,
+                weight_max,
+                frequency_min_hz,
+                frequency_max_hz,
+            );
+        }
     }
     Ok(())
 }
@@ -30427,6 +31120,13 @@ fn replay_awproject_compact_window(
             replay_stats.windows,
         )?;
         maybe_audit_awproject_cf_key_fft_occupancy(request, source_samples, tap_requests, bundles)?;
+        maybe_audit_awproject_mask_sufficient_statistics(
+            request,
+            batch,
+            sample_frequencies_hz,
+            source_samples,
+            replay_block_ordinal,
+        )?;
         #[cfg(all(target_os = "macos", not(coverage)))]
         maybe_run_awproject_subgrid_speed_of_light(
             request,
@@ -63206,8 +63906,8 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        AwProjectImageResponseCache, AwProjectImageResponsePlane, AwProjectPhysicalBeamResponse,
-        AwProjectPhysicalComponent, AwProjectPhysicalComponentModel,
+        AwProjectImageResponseCache, AwProjectImageResponsePlane, AwProjectMaskMomentSample,
+        AwProjectPhysicalBeamResponse, AwProjectPhysicalComponent, AwProjectPhysicalComponentModel,
         AwProjectPhysicalGeometricPhase, AwProjectPhysicalModelAmplitude,
         AwProjectPhysicalSourceFrame, AwProjectSparseModelDelta, ClarkPsfPatch, CleanConfig,
         CleanMaskProductRequest, CleanStopReason, CompatibilityMode, CubeModelChannelContribution,
@@ -63228,8 +63928,10 @@ mod tests {
         WProjectMetalSample, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
         add_shifted_kernel, add_shifted_kernel_with_support, apply_chauvenet_clipping,
         apply_weighting, aw_stokes_i_residual_for_mueller, aw_stokes_i_visibility_for_mueller,
-        awproject_cf_key_fft_padded_side, awproject_hybrid_stack_center, awproject_model_fft_plan,
-        awproject_subgrid_side_for_support, awproject_subgrid_trace_rows_per_stripe,
+        awproject_cf_key_fft_padded_side, awproject_eta_for_taylor_remainder,
+        awproject_hybrid_stack_center, awproject_mask_moment_cluster_curve,
+        awproject_mask_moment_domain, awproject_model_fft_plan, awproject_subgrid_side_for_support,
+        awproject_subgrid_trace_rows_per_stripe, awproject_taylor_remainder_bound,
         build_direct_components, build_direct_pixel_coordinates, build_image_coordinate_system,
         build_image_spectral_coordinate, build_multiscale_scale_masks,
         casa_mtmfs_scaled_kernel_value, casa_multiscale_divergence_stop_reason,
@@ -63302,6 +64004,69 @@ mod tests {
         assert_eq!(awproject_cf_key_fft_padded_side(32, 16).unwrap(), 64);
         assert_eq!(awproject_cf_key_fft_padded_side(64, 32).unwrap(), 128);
         assert_eq!(awproject_cf_key_fft_padded_side(256, 50).unwrap(), 512);
+    }
+
+    #[test]
+    fn awproject_mask_moment_domain_uses_exact_multiscale_support() {
+        let geometry = ImageGeometry {
+            image_shape: [16, 16],
+            cell_size_rad: [1.0e-4, 2.0e-4],
+        };
+        let mut mask = Array2::<bool>::from_elem((16, 16), false);
+        mask[(8, 8)] = true;
+        let domain = awproject_mask_moment_domain(&MtmfsRequest {
+            geometry,
+            visibility_batches: Vec::new(),
+            sample_frequency_batches_hz: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 2.0e9,
+            selected_frequency_range_hz: [1.0e9, 3.0e9],
+            nterms: 2,
+            multiscale_scales: vec![0.0, 2.0],
+            small_scale_bias: 0.0,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            clean: CleanConfig::default(),
+            clean_mask: Some(mask),
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        })
+        .unwrap();
+        assert_eq!(domain.clean_mask_pixels, 1);
+        assert_eq!(domain.max_kernel_offsets, [1, 1]);
+        assert_eq!(domain.domain_bounds, [7, 9, 7, 9]);
+        assert!(domain.domain_pixels > 1);
+        assert!(domain.domain_pixels <= 9);
+        assert!(domain.delta_lmn_extents[0] > 0.0);
+        assert!(domain.delta_lmn_extents[1] > domain.delta_lmn_extents[0]);
+    }
+
+    #[test]
+    fn awproject_mask_moment_phase_budget_and_packing_bounds_are_constructive() {
+        for order in [2, 3] {
+            let eta = awproject_eta_for_taylor_remainder(order, 1.0e-5);
+            assert!(awproject_taylor_remainder_bound(eta, order) <= 1.0e-5);
+            assert!(awproject_taylor_remainder_bound(eta * (1.0 + 1.0e-9), order) > 1.0e-5);
+        }
+        let samples = (0..30)
+            .map(|index| AwProjectMaskMomentSample {
+                uvw_lambda: [index as f64 * 1.0e8, 0.0, 0.0],
+                weight: 1.0,
+                frequency_hz: 2.0e9,
+                source_state: (0, 0),
+            })
+            .collect::<Vec<_>>();
+        let curve = awproject_mask_moment_cluster_curve(&samples, [1.0e-3, 0.0, 0.0], 3, 1.0e-5);
+        assert_eq!(curve.upper_clusters, samples.len());
+        assert!(curve.packing_lower_clusters >= 10);
+        assert!(curve.packing_lower_clusters <= curve.upper_clusters);
+
+        let identical = vec![samples[0]; 8];
+        let identical_curve =
+            awproject_mask_moment_cluster_curve(&identical, [1.0e-3, 0.0, 0.0], 3, 1.0e-5);
+        assert_eq!(identical_curve.upper_clusters, 1);
+        assert_eq!(identical_curve.packing_lower_clusters, 1);
     }
 
     #[test]

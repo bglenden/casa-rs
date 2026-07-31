@@ -24,6 +24,9 @@ hybrid_support_audit="${CASA_RS_VLASS_HYBRID_SUPPORT_AUDIT:-0}"
 subgrid_support_audit="${CASA_RS_VLASS_SUBGRID_SUPPORT_AUDIT:-0}"
 subgrid_speed_of_light="${CASA_RS_VLASS_SUBGRID_SPEED_OF_LIGHT:-0}"
 cf_key_fft_occupancy="${CASA_RS_VLASS_CF_KEY_FFT_OCCUPANCY:-0}"
+mask_sufficient_statistics_census="${CASA_RS_VLASS_MASK_SUFFICIENT_STATISTICS_CENSUS:-0}"
+mask_component_updates="${CASA_RS_VLASS_MASK_COMPONENT_UPDATES:-641}"
+mask_trajectory_receipt_sha256="${CASA_RS_VLASS_MASK_TRAJECTORY_RECEIPT_SHA256:-f06859c9215a26b15dd32731345b9fdb1aaf1ab0fc267938638dd016b99518a1}"
 packed_cf_experiment="${CASA_RS_VLASS_PACKED_CF_EXPERIMENT:-}"
 trust_packed_cf_experiment="${CASA_RS_VLASS_TRUST_PACKED_CF_EXPERIMENT:-0}"
 niter="${CASA_RS_VLASS_NITER:-2000}"
@@ -148,6 +151,31 @@ if [[ "$cf_key_fft_occupancy" == "1" ]]; then
     )
 elif [[ "$cf_key_fft_occupancy" != "0" ]]; then
     echo "CASA_RS_VLASS_CF_KEY_FFT_OCCUPANCY must be 0 or 1" >&2
+    exit 2
+fi
+if [[ "$mask_sufficient_statistics_census" == "1" ]]; then
+    if [[ "$niter" != "0" ]]; then
+        echo "CASA_RS_VLASS_MASK_SUFFICIENT_STATISTICS_CENSUS requires CASA_RS_VLASS_NITER=0" >&2
+        exit 2
+    fi
+    case "$mask_component_updates" in
+        ''|*[!0-9]*|0)
+            echo "CASA_RS_VLASS_MASK_COMPONENT_UPDATES must be a positive integer" >&2
+            exit 2
+            ;;
+    esac
+    if [[ ! "$mask_trajectory_receipt_sha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+        echo "CASA_RS_VLASS_MASK_TRAJECTORY_RECEIPT_SHA256 must be a 64-digit hexadecimal SHA-256" >&2
+        exit 2
+    fi
+    label="${label}-mask-sufficient-statistics-census"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_MASK_SUFFICIENT_STATISTICS_CENSUS=1
+        CASA_RS_EXPERIMENTAL_AWPROJECT_MASK_COMPONENT_UPDATES="$mask_component_updates"
+        CASA_RS_EXPERIMENTAL_AWPROJECT_MASK_TRAJECTORY_RECEIPT_SHA256="$mask_trajectory_receipt_sha256"
+    )
+elif [[ "$mask_sufficient_statistics_census" != "0" ]]; then
+    echo "CASA_RS_VLASS_MASK_SUFFICIENT_STATISTICS_CENSUS must be 0 or 1" >&2
     exit 2
 fi
 if [[ -n "$packed_cf_experiment" ]]; then
