@@ -6007,6 +6007,90 @@ unpromoted. The next discriminator must localize the source-`1,446` raw
 one-ULP boundary before any production phase change or Taylor correction is
 considered.
 
+### 2026-07-31 source-1,446 exact AW prefix certificate
+
+The same Oracle conversation selected one source-local discriminator for the
+first remaining TT0 mismatch: CASA row `35` in its first visibility buffer,
+physical MAIN row `353635`, SPW `2`, channel `19`, RR, TT0. The CASA
+interposer stopped after that one `GridToData` footprint. A new fail-closed
+casa-rs capture read the matching source ordinal `1,446` from the already
+compiled global compact replay program and stopped the residual refresh before
+its Metal prediction dispatch.
+
+The CASA wrapper initially returned failure because its postcondition still
+assumed the source-zero `9`-pixel support and `361` taps. Source `1,446`
+selects support `[10,10]` and therefore has `441` taps. The immutable trace
+itself is complete: one meta record, all `441` support-derived tap records,
+and one result record. The generic runner now derives the required tap count
+from the traced support instead of hard-coding `361`. No replacement CASA
+call was made.
+
+The corrected v2 offline comparison is valid and classifies the boundary as
+`exact-tap-prefix-final-normalization-boundary`. Across all `441` taps there
+are zero mismatches in:
+
+- tap ordinal, `iy`/`ix`, and model-grid coordinates;
+- the final degrid coefficient after W sign, POINTING phase, and conjugation;
+- the TT0 model-grid value;
+- the separately rounded complex tap product; and
+- every componentwise binary32 accumulator prefix.
+
+The final pre-source-phase numerator is also exact:
+`[969396468, 3196932265]`. CASA's normalizer
+`[1064983698, 1014081710]` is exactly the conjugate of the packed casa-rs
+normalizer `[1064983698, 3161565358]`, as required by the two equivalent
+division formulations. This excludes AW geometry, CF selection, W
+conjugation, POINTING phase, model FFT cells, tap traversal, complex product
+rounding, and accumulation order from ownership of this source's remaining
+mismatch.
+
+The first proven divergence is therefore after the complete tap prefix, at
+final complex normalization. The frozen installed-CASA TT0 oracle is
+`[3145554492, 3197138881]`, while the current casa-rs CPU-wide candidate is
+`[3145554493, 3197138881]`. The instrumented CASA rebuild returns
+`[3145554492, 3197138880]` after its tiny source phasor; it is useful for the
+tap-prefix proof but is not substituted for the frozen installed-CASA
+quotient oracle. The evidence does not yet select a replacement division
+operation graph or authorize a production default change.
+
+The casa-rs input run took `12.34` seconds, but that is not a prefix-only
+performance result: it reconstructed the frozen final state through the
+4,096-square initial dirty pass, bounded six-iteration minor-cycle setup,
+model FFT, and compact global-program build before the residual-refresh
+capture. It did not dispatch the residual Metal prediction, residual grid,
+residual FFT, products, or subsequent CLEAN work. The offline comparator
+opened no MS and executed no CASA, Metal, grid, FFT, product, or CLEAN path.
+
+The CASA trace, CASA run log, casa-rs trace, casa-rs run log, obsolete v1
+comparison, and corrected v2 comparison hash to, respectively:
+
+- `0386178c24c491e64d0b908ad53b8d164e8954c9f05a704b493321b72f6854ca`;
+- `60b4627d5c83d98bfdc762c099c7e0be7c2b8a73a022e10131a62b1affc4adad`;
+- `0051c580d9f81018a7412b2553c4a73f33bcf19e6d82941ffb03bbc8ceccf41c`;
+- `991bdea73fd05877d03a557d20988d022e7e7a03ac0da8ba2fbd74e38203fe67`;
+- `a696526a94740ea39484b8ebabfe1481fb346eb87ccb7bddca1651a5d343cceb`;
+  and
+- `2155c9009ac11a979c942b61dc7d9dbe429e62e183ed98e42e7645650d890f8a`.
+
+The executed release binary hashes to
+`0d8a0ed9bafa27326103cb3f9ef404f17f1c30191c4f0ded8d611d44b2665502`.
+The post-execution Rust source accuracy repair, four-SPW runner, generic CASA
+runner, source-specific CASA wrapper, comparator, and comparator test hash to:
+
+- `95fe37079832ce871c556b6e4388f14f031dd24277f8f7bda549e3e1a91392b9`;
+- `758b60ec5acd07d2d4ff6fedf6a4ed75098b0df70c0e6a3c48fe8618a0fee4fa`;
+- `a02bf641b9f5fb47736e221e24141ed278adf1c393ec29f8ec6a7dce96b5604f`;
+- `bb930d2513ccbbb18bbf9171bf3a39cdc434bdd2c85c312aaa02bead9b5d821e`;
+- `6e83b602d5bed4623fb3380716962a28383ffe35931c5ae5383ef06721ae2166`;
+  and
+- `0e74ea8600a3123b489291136264850822ac5d8c42a9e55f81945aca987abaeb`.
+
+Focused Rust (`1 passed`) and Python (`3 passed`) tests, Ruff, Rust
+formatting, and Bash syntax passed before this evidence was recorded. The
+four-SPW row remains unpromoted. No clean correctness row, full-16-SPW row,
+`12,150`-square development clean, memory-policy experiment, repeated CASA
+timing, or unchanged CASA reference ran.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.

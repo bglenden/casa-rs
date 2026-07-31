@@ -20727,6 +20727,256 @@ fn update_awproject_persistent_metal_prediction_results(
 static AWPROJECT_FROZEN_FINAL_STATE_REPLAY_ORDINAL: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+fn write_awproject_metal_prediction_prefix_trace(
+    path: &Path,
+    source_ordinal: usize,
+    batch: &AwProjectMetalPredictionBatch,
+    model_grids: &[Array2<Complex32>],
+) -> Result<(), ImagingError> {
+    let [model_tt0, model_tt1] = model_grids else {
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject prediction-prefix trace requires exactly two model grids, got {}",
+            model_grids.len()
+        )));
+    };
+    if model_tt0.dim() != model_tt1.dim() || model_tt0.strides() != model_tt1.strides() {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject prediction-prefix trace requires matching model-grid shapes and strides"
+                .to_string(),
+        ));
+    }
+    let sample = batch.samples.get(source_ordinal).copied().ok_or_else(|| {
+        ImagingError::InvalidRequest(format!(
+            "AWProject prediction-prefix source ordinal {source_ordinal} is outside {} samples",
+            batch.samples.len(),
+        ))
+    })?;
+    if sample.first_imaging_mueller != 0 {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject prediction-prefix source {source_ordinal} first role is Mueller {}, \
+             expected canonical RR Mueller 0",
+            sample.first_imaging_mueller,
+        )));
+    }
+    let plan = sample.first_prediction;
+    let x_support = isize::try_from(plan.x_support).map_err(|_| {
+        ImagingError::InvalidRequest(
+            "AWProject prediction-prefix X support exceeds isize".to_string(),
+        )
+    })?;
+    let y_support = isize::try_from(plan.y_support).map_err(|_| {
+        ImagingError::InvalidRequest(
+            "AWProject prediction-prefix Y support exceeds isize".to_string(),
+        )
+    })?;
+    let tap_count = usize::try_from(
+        (2_i64 * i64::from(plan.x_support) + 1)
+            .checked_mul(2_i64 * i64::from(plan.y_support) + 1)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject prediction-prefix tap count overflowed".to_string(),
+                )
+            })?,
+    )
+    .map_err(|_| {
+        ImagingError::InvalidRequest(
+            "AWProject prediction-prefix tap count exceeds usize".to_string(),
+        )
+    })?;
+    let kernel_base = usize::try_from(plan.kernel_base).map_err(|_| {
+        ImagingError::InvalidRequest(
+            "AWProject prediction-prefix kernel base exceeds usize".to_string(),
+        )
+    })?;
+    let phase_base = if plan.phase.base == u32::MAX {
+        None
+    } else {
+        Some(usize::try_from(plan.phase.base).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject prediction-prefix phase base exceeds usize".to_string(),
+            )
+        })?)
+    };
+    if kernel_base
+        .checked_add(tap_count)
+        .is_none_or(|end| end > batch.kernels.len())
+    {
+        return Err(ImagingError::Normalization(
+            "AWProject prediction-prefix kernel footprint escaped the packed arena".to_string(),
+        ));
+    }
+    if phase_base
+        .and_then(|base| base.checked_add(tap_count))
+        .is_some_and(|end| end > batch.phases.len())
+    {
+        return Err(ImagingError::Normalization(
+            "AWProject prediction-prefix phase footprint escaped the packed atlas".to_string(),
+        ));
+    }
+
+    let bits = |value: Complex32| serde_json::json!([value.re.to_bits(), value.im.to_bits()]);
+    let mut accumulator = Complex32::new(0.0, 0.0);
+    let mut taps = Vec::with_capacity(tap_count);
+    let mut tap_ordinal = 0usize;
+    for iy in -y_support..=y_support {
+        for ix in -x_support..=x_support {
+            let grid_x = isize::try_from(plan.loc_x)
+                .expect("i32 fits isize")
+                .checked_add(ix)
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or_else(|| {
+                    ImagingError::Normalization(
+                        "AWProject prediction-prefix grid X is outside the model".to_string(),
+                    )
+                })?;
+            let grid_y = isize::try_from(plan.loc_y)
+                .expect("i32 fits isize")
+                .checked_add(iy)
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or_else(|| {
+                    ImagingError::Normalization(
+                        "AWProject prediction-prefix grid Y is outside the model".to_string(),
+                    )
+                })?;
+            let model_value = *model_tt0.get((grid_x, grid_y)).ok_or_else(|| {
+                ImagingError::Normalization(format!(
+                    "AWProject prediction-prefix tap {tap_ordinal} selected model cell \
+                     ({grid_x},{grid_y}) outside {:?}",
+                    model_tt0.dim(),
+                ))
+            })?;
+            let packed = batch.kernels[kernel_base + tap_ordinal];
+            let packed_kernel = Complex32::new(packed.re, packed.im);
+            let pointing_phase = phase_base
+                .map(|base| {
+                    let phase = batch.phases[base + tap_ordinal];
+                    Complex32::new(phase.re, phase.im)
+                })
+                .unwrap_or_else(|| Complex32::new(1.0, 0.0));
+            let phased_kernel =
+                gridder::casa_aw_literal_complex_multiply(packed_kernel, pointing_phase);
+            let degrid_coefficient = phased_kernel.conj();
+            let product =
+                gridder::casa_aw_literal_complex_multiply(degrid_coefficient, model_value);
+            accumulator.re += product.re;
+            accumulator.im += product.im;
+            taps.push(serde_json::json!({
+                "tap_ordinal": tap_ordinal,
+                "iy": iy,
+                "ix": ix,
+                "grid_x": grid_x,
+                "grid_y": grid_y,
+                "kernel_index": kernel_base + tap_ordinal,
+                "phase_index": phase_base.map(|base| base + tap_ordinal),
+                "packed_kernel_bits": bits(packed_kernel),
+                "pointing_phase_bits": bits(pointing_phase),
+                "phased_kernel_bits": bits(phased_kernel),
+                "degrid_coefficient_bits": bits(degrid_coefficient),
+                "model_tt0_bits": bits(model_value),
+                "product_bits": bits(product),
+                "accumulator_bits": bits(accumulator),
+            }));
+            tap_ordinal += 1;
+        }
+    }
+    if tap_ordinal != tap_count {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject prediction-prefix traversed {tap_ordinal} taps, expected {tap_count}"
+        )));
+    }
+    let normalizer = Complex32::new(plan.normalization_re, plan.normalization_im);
+    let receipt = serde_json::json!({
+        "schema": "casa-rs-vlass-aw-prediction-prefix-trace-v1",
+        "role": "bounded_single_source_compact_replay_diagnostic_not_promotion_evidence",
+        "producer": "casa-rs",
+        "source_ordinal": source_ordinal,
+        "logical_role": "rr",
+        "model_term": 0,
+        "program": {
+            "sample_count": batch.samples.len(),
+            "kernel_value_count": batch.kernels.len(),
+            "phase_value_count": batch.phases.len(),
+        },
+        "plan": {
+            "loc": [plan.loc_x, plan.loc_y],
+            "support": [plan.x_support, plan.y_support],
+            "kernel_base": plan.kernel_base,
+            "phase_base": if plan.phase.base == u32::MAX {
+                serde_json::Value::Null
+            } else {
+                serde_json::json!(plan.phase.base)
+            },
+            "normalizer_bits": bits(normalizer),
+            "first_imaging_mueller": sample.first_imaging_mueller,
+            "second_imaging_mueller": sample.second_imaging_mueller,
+        },
+        "model": {
+            "shape": [model_tt0.shape()[0], model_tt0.shape()[1]],
+            "strides": [model_tt0.strides()[0], model_tt0.strides()[1]],
+            "term_count": model_grids.len(),
+        },
+        "arithmetic_contract": {
+            "phase": "packed-kernel-times-pointing-phase-with-four-f32-products",
+            "coefficient": "conjugate-phased-kernel",
+            "product": "coefficient-times-model-with-four-f32-products",
+            "accumulator": "componentwise-f32-add-in-y-outer-x-inner-tap-order",
+        },
+        "taps": taps,
+        "result": {
+            "tap_count": tap_count,
+            "numerator_bits": bits(accumulator),
+            "normalizer_bits": bits(normalizer),
+        },
+        "run_prerequisites_already_completed": [
+            "initial_dirty_grid_and_transform",
+            "bounded_minor_cycle",
+            "frozen_model_fft",
+            "compact_replay_program_build",
+        ],
+        "residual_refresh_stopped_before": [
+            "metal_prediction_dispatch",
+            "residual_gridding",
+            "residual_fft",
+            "products",
+        ],
+    });
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "create AWProject prediction-prefix directory {}: {error}",
+                parent.display(),
+            ))
+        })?;
+    }
+    let output = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "create AWProject prediction-prefix trace {}: {error}",
+                path.display(),
+            ))
+        })?;
+    serde_json::to_writer_pretty(output, &receipt).map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "write AWProject prediction-prefix trace {}: {error}",
+            path.display(),
+        ))
+    })?;
+    eprintln!(
+        "awproject_prediction_prefix_trace path={} source={} role=rr term=0 taps={} \
+         numerator_re_bits={} numerator_im_bits={}",
+        path.display(),
+        source_ordinal,
+        tap_count,
+        accumulator.re.to_bits(),
+        accumulator.im.to_bits(),
+    );
+    Ok(())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn emit_awproject_frozen_final_state_prediction_hashes(
     batch: &AwProjectMetalPredictionBatch,
     residuals: &[AwProjectMetalPredictionResult],
@@ -26061,6 +26311,35 @@ fn replay_awproject_metal_global_program(
             "global AWProject Metal replay requires Metal residual storage".to_string(),
         ));
     };
+    if let Some(path) =
+        env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDICTION_PREFIX_TRACE").map(PathBuf::from)
+    {
+        let source_ordinal =
+            env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDICTION_PREFIX_SOURCE_ORDINAL")
+                .map_err(|_| {
+                    ImagingError::InvalidRequest(
+                        "the AWProject prediction-prefix trace requires a source ordinal"
+                            .to_string(),
+                    )
+                })?
+                .parse::<usize>()
+                .map_err(|error| {
+                    ImagingError::InvalidRequest(format!(
+                        "invalid AWProject prediction-prefix source ordinal: {error}"
+                    ))
+                })?;
+        write_awproject_metal_prediction_prefix_trace(
+            &path,
+            source_ordinal,
+            &program.prediction_batch,
+            model_grids,
+        )?;
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject prediction-prefix trace completed before Metal prediction or residual \
+             gridding; receipt={}",
+            path.display(),
+        )));
+    }
     if *psf_term_count != 0 || *residual_term_count != request.nterms || request.nterms != 2 {
         return Err(ImagingError::Normalization(format!(
             "global AWProject Metal replay requires two residual-only terms, got psf_terms={}, residual_terms={}, nterms={}",
@@ -62271,6 +62550,100 @@ mod tests {
                 .unwrap();
         assert_eq!(cached.0, reference.0);
         assert_eq!(cached.1, reference.1);
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn awproject_prediction_prefix_trace_captures_packed_metal_operands() {
+        let prediction = super::AwProjectMetalPredictionPlan {
+            loc_x: 1,
+            loc_y: 2,
+            x_support: 0,
+            y_support: 0,
+            kernel_base: 0,
+            _pad0: 0,
+            normalization_re: 1.0,
+            normalization_im: -0.5,
+            phase: super::AwProjectMetalPhasePlan { base: 0 },
+        };
+        let batch = super::AwProjectMetalPredictionBatch {
+            samples: vec![super::AwProjectMetalPredictionSample {
+                first_prediction: prediction,
+                second_prediction: prediction,
+                first_observed_re: 0.0,
+                first_observed_im: 0.0,
+                second_observed_re: 0.0,
+                second_observed_im: 0.0,
+                taylor_x: 0.0,
+                first_imaging_mueller: 0,
+                second_imaging_mueller: 15,
+                _pad0: 0,
+            }],
+            kernels: vec![super::WProjectMetalComplex { re: 0.5, im: -0.25 }],
+            phases: vec![super::WProjectMetalComplex { re: 0.25, im: 0.75 }],
+        };
+        let mut model_tt0 = Array2::<Complex32>::zeros((4, 4));
+        model_tt0[(1, 2)] = Complex32::new(2.0, -1.0);
+        let model_tt1 = Array2::<Complex32>::zeros((4, 4));
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("prefix.json");
+
+        super::write_awproject_metal_prediction_prefix_trace(
+            &path,
+            0,
+            &batch,
+            &[model_tt0, model_tt1],
+        )
+        .unwrap();
+
+        let receipt: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            receipt["schema"],
+            "casa-rs-vlass-aw-prediction-prefix-trace-v1"
+        );
+        assert_eq!(receipt["source_ordinal"], 0);
+        assert_eq!(receipt["plan"]["loc"], serde_json::json!([1, 2]));
+        assert_eq!(receipt["result"]["tap_count"], 1);
+        let tap = &receipt["taps"][0];
+        assert_eq!(
+            tap["packed_kernel_bits"],
+            serde_json::json!([0.5_f32.to_bits(), (-0.25_f32).to_bits()])
+        );
+        assert_eq!(
+            tap["pointing_phase_bits"],
+            serde_json::json!([0.25_f32.to_bits(), 0.75_f32.to_bits()])
+        );
+        assert_eq!(
+            tap["phased_kernel_bits"],
+            serde_json::json!([0.3125_f32.to_bits(), 0.3125_f32.to_bits()])
+        );
+        assert_eq!(
+            tap["degrid_coefficient_bits"],
+            serde_json::json!([0.3125_f32.to_bits(), (-0.3125_f32).to_bits()])
+        );
+        assert_eq!(
+            tap["model_tt0_bits"],
+            serde_json::json!([2.0_f32.to_bits(), (-1.0_f32).to_bits()])
+        );
+        assert_eq!(
+            tap["product_bits"],
+            serde_json::json!([0.3125_f32.to_bits(), (-0.9375_f32).to_bits()])
+        );
+        assert_eq!(tap["accumulator_bits"], tap["product_bits"]);
+        assert!(
+            super::write_awproject_metal_prediction_prefix_trace(
+                &path,
+                0,
+                &batch,
+                &[
+                    Array2::<Complex32>::zeros((4, 4)),
+                    Array2::<Complex32>::zeros((4, 4)),
+                ],
+            )
+            .is_err(),
+            "prediction-prefix diagnostic must refuse replacement"
+        );
     }
 
     #[test]
