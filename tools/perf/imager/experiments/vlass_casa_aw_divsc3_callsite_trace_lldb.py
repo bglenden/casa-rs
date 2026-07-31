@@ -246,10 +246,67 @@ def require_complete(
         result.SetError(str(error))
 
 
+def install_helper_breakpoint(
+    debugger: lldb.SBDebugger,
+    _command: str,
+    result: lldb.SBCommandReturnObject,
+    _internal_dict: dict[str, Any],
+) -> None:
+    try:
+        _load_state()
+        target = debugger.GetSelectedTarget()
+        matching_modules = [
+            module
+            for module in target.modules
+            if Path(module.GetFileSpec().GetPath()).name == MODULE_BASENAME
+            and module.GetUUIDString().upper() == MODULE_UUID
+        ]
+        if len(matching_modules) != 1:
+            raise RuntimeError(
+                "attached process does not contain exactly one frozen "
+                "CASA synthesis image"
+            )
+        helper_address = matching_modules[0].ResolveFileAddress(EXPECTED_HELPER_VMADDR)
+        helper_load_address = helper_address.GetLoadAddress(target)
+        if helper_load_address == lldb.LLDB_INVALID_ADDRESS:
+            raise RuntimeError("could not resolve loaded CASA helper address")
+        prior_count = target.GetNumBreakpoints()
+        command_result = lldb.SBCommandReturnObject()
+        debugger.GetCommandInterpreter().HandleCommand(
+            f"breakpoint set -H -a 0x{helper_load_address:x}",
+            command_result,
+        )
+        if not command_result.Succeeded():
+            raise RuntimeError(
+                "could not install hardware helper breakpoint: "
+                + command_result.GetError()
+            )
+        if target.GetNumBreakpoints() != prior_count + 1:
+            raise RuntimeError("hardware helper breakpoint count changed")
+        breakpoint = target.GetBreakpointAtIndex(prior_count)
+        if not breakpoint.IsValid() or breakpoint.GetNumLocations() != 1:
+            raise RuntimeError(
+                "hardware helper breakpoint did not resolve exactly once"
+            )
+        breakpoint.SetScriptCallbackFunction(
+            "vlass_casa_aw_divsc3_callsite_trace_lldb.helper_entry_callback"
+        )
+        result.AppendMessage(
+            f"installed frozen CASA helper breakpoint at 0x{helper_load_address:x}"
+        )
+    except BaseException as error:
+        result.SetError(str(error))
+
+
 def __lldb_init_module(
     debugger: lldb.SBDebugger,
     _internal_dict: dict[str, Any],
 ) -> None:
+    debugger.HandleCommand(
+        "command script add -f "
+        "vlass_casa_aw_divsc3_callsite_trace_lldb.install_helper_breakpoint "
+        "vlass-install-callsite-breakpoint"
+    )
     debugger.HandleCommand(
         "command script add -f "
         "vlass_casa_aw_divsc3_callsite_trace_lldb.require_complete "

@@ -6240,6 +6240,27 @@ the hardware breakpoint by the already-audited loaded image address, and then
 continue only through the source-`1,446` return. This changes the debugger
 attachment mechanism, not the frozen manifest or scientific workload.
 
+The v4 attach launch reached normal CASA setup without entering `tclean`, but
+the existing resume guard rejected the reused source-`1,446` prefix-trace
+bundle: its copied `.model.tt0` and `.model.tt1` content no longer matched the
+frozen model images after that earlier abrupt diagnostic exit. No
+debugger-ready receipt was written, LLDB did not attach, and the empty CASA
+log confirms that no CASA task, MS read, model preparation, prediction, grid,
+FFT, product, or CLEAN work ran. The launch log and empty CASA log hash to
+`d48201961908bb28f3e8ab64084ae6cdc09721e11ec2d208638a229f28e5f487`
+and
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+
+The pre-`tclean` stop hook, loaded-address LLDB callback, and v4 runner hash to
+`ad19d81935089b2031bd5ee524c4aae0e2eceae782b22f073deee51ca6e55428`,
+`f4b5c42b937a3dc32eb1c1e382fcf5ed8f48776ccb9a37c58b74e625feccbb34`,
+and
+`8ac1e344ee9defaabde975728fe4183e20e4e5927683187d9efb95f50f049a5e`.
+The v5 replacement may create one new copy-on-write scratch MS and image
+bundle from the frozen sources, stop that fresh process at the same
+pre-`tclean` boundary, and use new artifact names. The trace contract,
+manifest, CASA parameters, and target calls remain unchanged.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
