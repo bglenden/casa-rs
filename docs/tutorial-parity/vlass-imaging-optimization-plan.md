@@ -7083,6 +7083,69 @@ No CASA imaging task or reference generation, full-16-SPW row,
 post-run comparison used only the existing frozen CASA product tree through
 the CASA Python reader.
 
+### 2026-07-30 final-model term-causality pre-run contract
+
+The same Oracle conversation selected one offline final-model discriminator
+before another clean or production change. It holds the frozen CASA residual
+terms, Phase-A principalization and restoration arithmetic, beam, alpha
+threshold, weights, metadata, and product contract fixed, and substitutes only
+the final CASA or casa-rs model TT0 and TT1 planes.
+
+Control A uses the CASA model and CASA residual and must exactly reproduce the
+already-passing Phase-A receipt, including its numerical and topology ledgers,
+before any conclusion is valid. Test B uses both casa-rs model terms with the
+same CASA residual. If B passes the numerical, topology, structured-difference,
+finite, and metadata gates for image TT0/TT1, alpha, and alpha error, the
+certificate stops as `final-model-not-sufficient`; it must not form the mixed
+term cases.
+
+Only if B fails after a valid Control A may the certificate form:
+
+- C, `tt0-rust-only`: casa-rs TT0 plus CASA TT1; and
+- D, `tt1-rust-only`: CASA TT0 plus casa-rs TT1.
+
+Their four-state truth table has exactly one result:
+`tt0-model-state-sufficient` when C fails and D passes,
+`tt1-model-state-sufficient` when C passes and D fails,
+`both-model-terms-independently-sufficient` when both fail, or
+`joint-model-term-interaction-required` when both pass. An invalid Control A
+stops as `invalid-phase-a-control`.
+
+The implementation binds candidate commit
+`778a1ba4344823398e639421915a52a266892f6a`, the exact `171`-cycle /
+`2,000`-iteration control trajectory, all `19` products, the existing
+`16`-coordinate alpha and alpha-error failure signature, and these immutable
+inputs:
+
+- Phase-A receipt:
+  `ddd6b4e42c8d40987eae14854a3fddb5877a4907743b48ae72d9e48dff924c6c`;
+- Phase-A comparison:
+  `ba3ce70cbbf7c4fd6f387eb0d8f89d537d4bef761bf2abff8f2b8be877547191`;
+- hybrid clean log:
+  `99fefee3f1fdd251fa651c70c165511517fc81a7849aa40f611fc2f2f7a4a0f3`;
+- exact-control comparison:
+  `979242b44469a8101da1f5dd9932614ca1a946fc2de1d4354c0956bc676b66ef`;
+  and
+- frozen-CASA comparison:
+  `03f8a4d8027479559749202abdfd99fe2f1bbdae905dc3a0b56d2bce272b93ab`.
+
+The sparse model ledger records each term's nonzero count, ordered support
+coordinate hash, ordered coordinate-plus-binary32-value hash, extrema, support
+differences, first value difference, and maximum ULP distance. Full-plane
+image structure uses the existing native-pixel comparator and frozen beam
+receipt. Transient raw planes are deleted after their hashes and derived
+metrics are recorded.
+
+This certificate may read only the frozen CASA and casa-rs product trees. It
+may not open the MeasurementSet, predict, grid, FFT, enter the controller or
+minor cycle, run clean, fit a beam, write a product tree, launch CASA, or
+change production behavior. Only a single-term classification that reproduces
+the exact current `16`-coordinate signature in the implicated mixed case,
+produces zero topology differences in the complementary case, and has an
+exact Control A may authorize one subsequent term-specific minor-cycle
+coefficient/update ledger. No outcome authorizes a new clean or production
+incorporation. At this pre-run checkpoint the certificate had not run.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
