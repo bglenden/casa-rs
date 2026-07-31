@@ -6261,6 +6261,41 @@ bundle from the frozen sources, stop that fresh process at the same
 pre-`tclean` boundary, and use new artifact names. The trace contract,
 manifest, CASA parameters, and target calls remain unchanged.
 
+The v5 replacement reached the intended pre-`tclean` boundary and LLDB
+attached to the exact stopped Python process. Breakpoint installation then
+failed before a breakpoint was created because this installed LLDB exposes
+the legacy output-buffer form of `SBFileSpec.GetPath()` rather than the
+zero-argument form used by the callback:
+
+```text
+error: GetPath() missing 2 required positional arguments: 'dst_path' and 'dst_len'
+```
+
+LLDB detached after that command error, which resumed the stopped process.
+The bounded four-SPW `niter=0` diagnostic therefore completed normally in
+`12.529675457975827` seconds and wrote the intentionally unreachable
+prediction bundle. It did not capture either target call, emit a raw register
+trace, run CLEAN iterations, or provide correctness evidence. This was not a
+CASA reference regeneration or timing repetition; it was one instrumented
+call-site attempt using a fresh copy-on-write scratch MS and copied frozen
+products.
+
+The v5 debugger-ready receipt, LLDB log, launch log, CASA log, unreachable NPZ,
+and unreachable JSON hash to
+`a010d35c4b28445656b94465cdd5ab15c25e625104510a4e84db031e52a235a3`,
+`161103f37d6497512e4e7b49d6ae6acf63dc664b596acd936a36f2dd2e1bd8fd`,
+`a7053a685da97bdba5e90ec0051d40d4f9bfe16bb6e6a9c5fa78bdbdf9d05323`,
+`1114fc2c0920bd1adf51379460da4febffdc7862854593eb6c81ef459030b59f`,
+`a801635e7d9529cc4dbd3f462abd10bdcd66b8283bb5894a85da419a95899b7d`,
+and
+`aa13bc1a9bb3526c05a4e1360f08397cd8fb5a3f6f1f7df16709356b2953a305`.
+The v5 runner hashes to
+`f50ce2d31dc81566c7829e28f98eb42d39dc19bb77e11da2cad8f3156c55e51d`.
+The next replacement may change only the LLDB file-spec compatibility helper,
+use fresh v6 artifact names and a fresh copy-on-write bundle, and retain the
+frozen manifest, breakpoint addresses, target calls, CASA parameters, and
+stop boundary.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
