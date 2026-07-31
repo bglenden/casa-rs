@@ -58,6 +58,7 @@ frozen_final_state_checkpoints="${CASA_RS_VLASS_FROZEN_FINAL_STATE_CHECKPOINTS:-
 prediction_sidecar_prefix="${CASA_RS_VLASS_PREDICTION_SIDECAR_PREFIX:-}"
 wide_division_sidecar_prefix="${CASA_RS_VLASS_WIDE_DIVISION_SIDECAR_PREFIX:-}"
 predivision_source_phase="${CASA_RS_VLASS_PREDIVISION_SOURCE_PHASE:-0}"
+raw_frame_taylor="${CASA_RS_VLASS_RAW_FRAME_TAYLOR:-0}"
 prediction_prefix_trace="${CASA_RS_VLASS_PREDICTION_PREFIX_TRACE:-}"
 prediction_prefix_source_ordinal="${CASA_RS_VLASS_PREDICTION_PREFIX_SOURCE_ORDINAL:-}"
 measures_dir="${CASA_RS_VLASS_MEASURES_DIR:-$HOME/.casa/data}"
@@ -102,6 +103,7 @@ image_response_dyadic_tiles_label=""
 prediction_sidecar_label=""
 wide_division_sidecar_label=""
 predivision_source_phase_label=""
+raw_frame_taylor_label=""
 prediction_prefix_trace_label=""
 grid_threads_label=""
 acceleration_label=""
@@ -215,6 +217,19 @@ if [[ "$predivision_source_phase" == "1" ]]; then
     )
 elif [[ "$predivision_source_phase" != "0" ]]; then
     echo "CASA_RS_VLASS_PREDIVISION_SOURCE_PHASE must be 0 or 1" >&2
+    exit 2
+fi
+if [[ "$raw_frame_taylor" == "1" ]]; then
+    if [[ "$predivision_source_phase" != "1" ]]; then
+        echo "CASA_RS_VLASS_RAW_FRAME_TAYLOR requires CASA_RS_VLASS_PREDIVISION_SOURCE_PHASE=1" >&2
+        exit 2
+    fi
+    raw_frame_taylor_label="-raw-frame-taylor"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_RAW_FRAME_TAYLOR=1
+    )
+elif [[ "$raw_frame_taylor" != "0" ]]; then
+    echo "CASA_RS_VLASS_RAW_FRAME_TAYLOR must be 0 or 1" >&2
     exit 2
 fi
 if [[ -n "$prediction_prefix_trace" ]]; then
@@ -683,7 +698,7 @@ if [[ "$grid_threads" != "1" ]]; then
     parallel_label="-parallel"
     parallel_argument=(--parallel)
 fi
-label="vlass-production-clean-4096-four-spw-sparse-fftw-t${fftw_threads}-niter${niter}${tapless_phase_label}${replay_compact_programs_label}${prime_replay_initial_dirty_label}${residual_only_label}${residual_live_cfs_only_label}${metal_f32_residual_fft_label}${metal_prediction_probe_label}${metal_tile_grid_probe_label}${metal_resident_chain_probe_label}${metal_resident_tile_chain_label}${metal_gpu_residual_replay_label}${metal_global_tile_replay_label}${prediction_grid_census_label}${model_delta_census_label}${incremental_model_probe_label}${incremental_model_runtime_label}${selected_model_dft_label}${image_response_cache_label}${image_response_dyadic_census_label}${image_response_dyadic_tiles_label}${prediction_sidecar_label}${wide_division_sidecar_label}${predivision_source_phase_label}${prediction_prefix_trace_label}${model_fft_label}${sparse_model_dft_label}${linear_madfm_label}${keyed_madfm_label}${radix_madfm_label}${cache_refreshed_nsigma_label}${sparse_mask_peak_search_label}${parallel_model_term_fft_label}${model_fft_timing_label}${fftw_f64_timing_label}${fftw_f64_wisdom_label}${fftw_f32_wisdom_label}${sparse_model_prep_label}${parallel_residual_term_fft_label}${persistent_metal_pack_label}${plan_threads_label}${pack_threads_label}${grid_threads_label}${parallel_label}${acceleration_label}-v1"
+label="vlass-production-clean-4096-four-spw-sparse-fftw-t${fftw_threads}-niter${niter}${tapless_phase_label}${replay_compact_programs_label}${prime_replay_initial_dirty_label}${residual_only_label}${residual_live_cfs_only_label}${metal_f32_residual_fft_label}${metal_prediction_probe_label}${metal_tile_grid_probe_label}${metal_resident_chain_probe_label}${metal_resident_tile_chain_label}${metal_gpu_residual_replay_label}${metal_global_tile_replay_label}${prediction_grid_census_label}${model_delta_census_label}${incremental_model_probe_label}${incremental_model_runtime_label}${selected_model_dft_label}${image_response_cache_label}${image_response_dyadic_census_label}${image_response_dyadic_tiles_label}${prediction_sidecar_label}${wide_division_sidecar_label}${predivision_source_phase_label}${raw_frame_taylor_label}${prediction_prefix_trace_label}${model_fft_label}${sparse_model_dft_label}${linear_madfm_label}${keyed_madfm_label}${radix_madfm_label}${cache_refreshed_nsigma_label}${sparse_mask_peak_search_label}${parallel_model_term_fft_label}${model_fft_timing_label}${fftw_f64_timing_label}${fftw_f64_wisdom_label}${fftw_f32_wisdom_label}${sparse_model_prep_label}${parallel_residual_term_fft_label}${persistent_metal_pack_label}${plan_threads_label}${pack_threads_label}${grid_threads_label}${parallel_label}${acceleration_label}-v1"
 if [[ -n "${CASA_RS_VLASS_LABEL_OVERRIDE:-}" ]]; then
     case "$CASA_RS_VLASS_LABEL_OVERRIDE" in
         *[!A-Za-z0-9._-]*)

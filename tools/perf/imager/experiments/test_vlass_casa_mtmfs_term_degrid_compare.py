@@ -91,6 +91,7 @@ class CasaMtmfsTermDegridCompareTests(unittest.TestCase):
             casars_tt1=zero,
             casars_scaled=zero,
             casars_literal_combined=zero,
+            casars_production_combined=zero,
             casa_tt0_raw=zero,
             casa_tt1_raw=zero,
             casa_tt1_scaled_raw=zero,
@@ -114,6 +115,7 @@ class CasaMtmfsTermDegridCompareTests(unittest.TestCase):
             casars_tt1=zero,
             casars_scaled=zero,
             casars_literal_combined=zero,
+            casars_production_combined=zero,
             casa_tt0_raw=zero,
             casa_tt1_raw=zero,
             casa_tt1_scaled_raw=zero,
@@ -137,6 +139,7 @@ class CasaMtmfsTermDegridCompareTests(unittest.TestCase):
             casars_tt1=zero,
             casars_scaled=zero,
             casars_literal_combined=zero,
+            casars_production_combined=zero,
             casa_tt0_raw=zero,
             casa_tt1_raw=zero,
             casa_tt1_scaled_raw=zero,
@@ -152,6 +155,38 @@ class CasaMtmfsTermDegridCompareTests(unittest.TestCase):
         self.assertEqual(
             classification,
             "taylor-scaling-or-operation-order-difference",
+        )
+        self.assertIsNone(first)
+
+    def test_raw_frame_taylor_production_prediction_can_close_nonliteral_order(
+        self,
+    ) -> None:
+        zero = np.zeros((1, 2), dtype=np.complex64)
+        literal = zero.copy()
+        literal[0, 1] = np.complex64(1.0)
+
+        classification, first = subject.classify(
+            casars_tt0=zero,
+            casars_tt1=zero,
+            casars_scaled=zero,
+            casars_literal_combined=literal,
+            casars_production_combined=zero,
+            casa_tt0_raw=zero,
+            casa_tt1_raw=zero,
+            casa_tt1_scaled_raw=zero,
+            casa_combined_raw=zero,
+            casa_tt0_rotated=zero,
+            casa_tt1_rotated=zero,
+            casa_tt1_scaled_rotated=zero,
+            casa_combined_rotated=zero,
+            power_bits_match=False,
+            power_contract_valid=False,
+            raw_frame_taylor_contract_valid=True,
+        )
+
+        self.assertEqual(
+            classification,
+            "raw-frame-taylor-production-prediction-exact",
         )
         self.assertIsNone(first)
 

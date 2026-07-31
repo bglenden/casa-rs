@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: LGPL-3.0-or-later
 """Compare CASA and casa-rs term-separated VLASS prediction boundaries."""
 
 from __future__ import annotations
@@ -215,6 +216,7 @@ def classify(
     casars_tt1: np.ndarray,
     casars_scaled: np.ndarray,
     casars_literal_combined: np.ndarray,
+    casars_production_combined: np.ndarray,
     casa_tt0_raw: np.ndarray,
     casa_tt1_raw: np.ndarray,
     casa_tt1_scaled_raw: np.ndarray,
@@ -225,6 +227,7 @@ def classify(
     casa_combined_rotated: np.ndarray,
     power_bits_match: bool,
     power_contract_valid: bool,
+    raw_frame_taylor_contract_valid: bool = False,
 ) -> tuple[str, tuple[int, int] | None]:
     tt0 = sidecar.first_pair_mismatch(casars_tt0, casa_tt0_rotated)
     if tt0 is not None:
@@ -236,6 +239,20 @@ def classify(
         if sidecar.first_pair_mismatch(casars_tt1, casa_tt1_raw) is None:
             return "tt1-phase-application-difference", tt1
         return "tt1-degrid-or-folded-phase-difference", tt1
+    literal_combined = sidecar.first_pair_mismatch(
+        casars_literal_combined,
+        casa_combined_rotated,
+    )
+    production_combined = sidecar.first_pair_mismatch(
+        casars_production_combined,
+        casa_combined_rotated,
+    )
+    if (
+        raw_frame_taylor_contract_valid
+        and literal_combined is not None
+        and production_combined is None
+    ):
+        return "raw-frame-taylor-production-prediction-exact", None
     if not power_contract_valid:
         mismatch = sidecar.first_pair_mismatch(
             casars_scaled,
@@ -254,12 +271,8 @@ def classify(
     )
     if scaled is not None:
         return "taylor-scaling-or-phase-order-difference", scaled
-    combined = sidecar.first_pair_mismatch(
-        casars_literal_combined,
-        casa_combined_rotated,
-    )
-    if combined is not None:
-        return "taylor-addition-or-phase-order-difference", combined
+    if literal_combined is not None:
+        return "taylor-addition-or-phase-order-difference", literal_combined
     if (
         sidecar.first_pair_mismatch(casa_tt0_raw, casa_tt0_raw) is not None
         or sidecar.first_pair_mismatch(casa_tt1_raw, casa_tt1_raw) is not None
@@ -282,6 +295,7 @@ def analyze(
     casa_trace: dict[str, np.ndarray],
     source_trace: dict,
     sidecar_receipt: dict,
+    raw_frame_taylor_contract: dict | None = None,
 ) -> dict[str, object]:
     selected, row_identity = select_source_records(
         records,
@@ -340,6 +354,17 @@ def analyze(
     power_mismatches = np.flatnonzero(
         casars_powers.view(np.uint32) != casa_powers.view(np.uint32)
     )
+    raw_frame_taylor_contract_valid = bool(
+        raw_frame_taylor_contract is not None
+        and raw_frame_taylor_contract["schema"]
+        == "casa-rs-vlass-aw-wide-division-sidecar-host-v1"
+        and raw_frame_taylor_contract["source_phase_sandwich"]["enabled"] is True
+        and raw_frame_taylor_contract["taylor_operation_order"]["raw_frame_enabled"]
+        is True
+        and not any(
+            raw_frame_taylor_contract["prohibited_post_prediction_stages"].values()
+        )
+    )
 
     hashes = {
         "casa_tt0_raw_sha256": boundary.hash_parallel_hands(casa_tt0_raw),
@@ -387,6 +412,7 @@ def analyze(
             casars_tt1=casars_tt1,
             casars_scaled=casars_scaled,
             casars_literal_combined=casars_literal_combined,
+            casars_production_combined=casars_combined,
             casa_tt0_raw=casa_tt0_raw,
             casa_tt1_raw=casa_tt1_raw,
             casa_tt1_scaled_raw=casa_tt1_scaled_raw,
@@ -397,6 +423,7 @@ def analyze(
             casa_combined_rotated=casa_combined_rotated,
             power_bits_match=power_bits_match,
             power_contract_valid=power_contract_valid,
+            raw_frame_taylor_contract_valid=raw_frame_taylor_contract_valid,
         )
     else:
         classification, first = "invalid-instrumentation", None
@@ -474,6 +501,12 @@ def analyze(
             int(power_mismatches[0]) if power_mismatches.size else None
         ),
         "hashes": hashes,
+        "raw_frame_taylor_contract_valid": raw_frame_taylor_contract_valid,
+        "taylor_operation_order": (
+            raw_frame_taylor_contract["taylor_operation_order"]
+            if raw_frame_taylor_contract is not None
+            else None
+        ),
         "mismatch_counts": {
             "tt0": mismatch_count(casars_tt0, casa_tt0_rotated),
             "tt1_raw": mismatch_count(casars_tt1, casa_tt1_rotated),
@@ -509,6 +542,7 @@ def main() -> None:
     parser.add_argument("--casa-npz", required=True, type=Path)
     parser.add_argument("--casars-source-trace", required=True, type=Path)
     parser.add_argument("--casars-sidecar-host", required=True, type=Path)
+    parser.add_argument("--casars-wide-host", type=Path)
     parser.add_argument("--casars-sidecar-comparison", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
@@ -535,6 +569,22 @@ def main() -> None:
     sidecar_receipt = json.loads(
         args.casars_sidecar_comparison.read_text(encoding="utf-8")
     )
+    raw_frame_taylor_contract = None
+    if args.casars_wide_host is not None:
+        raw_frame_taylor_contract = json.loads(
+            args.casars_wide_host.read_text(encoding="utf-8")
+        )
+        wide_candidate = raw_frame_taylor_contract["wide_candidate"]
+        if Path(wide_candidate["receipt"]) != args.casars_sidecar_host:
+            raise RuntimeError(
+                "wide-division receipt does not bind the selected candidate receipt"
+            )
+        if wide_candidate["receipt_sha256"] != boundary.sha256_file(
+            args.casars_sidecar_host
+        ):
+            raise RuntimeError(
+                "wide-division receipt hash differs from the selected candidate"
+            )
     result = analyze(
         host=host,
         records=records,
@@ -542,6 +592,7 @@ def main() -> None:
         casa_trace=casa_trace,
         source_trace=source_trace,
         sidecar_receipt=sidecar_receipt,
+        raw_frame_taylor_contract=raw_frame_taylor_contract,
     )
     result["inputs"] = {
         "host_receipt": str(args.host_receipt),
@@ -554,6 +605,14 @@ def main() -> None:
         "casars_source_trace_sha256": boundary.sha256_file(args.casars_source_trace),
         "casars_sidecar_host": str(args.casars_sidecar_host),
         "casars_sidecar_host_sha256": boundary.sha256_file(args.casars_sidecar_host),
+        "casars_wide_host": (
+            str(args.casars_wide_host) if args.casars_wide_host is not None else None
+        ),
+        "casars_wide_host_sha256": (
+            boundary.sha256_file(args.casars_wide_host)
+            if args.casars_wide_host is not None
+            else None
+        ),
         "casars_sidecar_comparison": str(args.casars_sidecar_comparison),
         "casars_sidecar_comparison_sha256": boundary.sha256_file(
             args.casars_sidecar_comparison
