@@ -28,6 +28,7 @@ mask_sufficient_statistics_census="${CASA_RS_VLASS_MASK_SUFFICIENT_STATISTICS_CE
 mask_component_updates="${CASA_RS_VLASS_MASK_COMPONENT_UPDATES:-641}"
 mask_trajectory_receipt_sha256="${CASA_RS_VLASS_MASK_TRAJECTORY_RECEIPT_SHA256:-f06859c9215a26b15dd32731345b9fdb1aaf1ab0fc267938638dd016b99518a1}"
 quotient_response_census_output="${CASA_RS_VLASS_QUOTIENT_RESPONSE_CENSUS_OUTPUT:-}"
+localized_rows_output="${CASA_RS_VLASS_LOCALIZED_ROWS_OUTPUT:-}"
 packed_cf_experiment="${CASA_RS_VLASS_PACKED_CF_EXPERIMENT:-}"
 trust_packed_cf_experiment="${CASA_RS_VLASS_TRUST_PACKED_CF_EXPERIMENT:-0}"
 niter="${CASA_RS_VLASS_NITER:-2000}"
@@ -195,6 +196,24 @@ if [[ -n "$quotient_response_census_output" ]]; then
     label="${label}-quotient-response-census"
     experimental_environment+=(
         CASA_RS_EXPERIMENTAL_AWPROJECT_QUOTIENT_RESPONSE_CENSUS_OUTPUT="$quotient_response_census_output"
+    )
+fi
+if [[ -n "$localized_rows_output" ]]; then
+    if [[ "$niter" != "0" ]]; then
+        echo "CASA_RS_VLASS_LOCALIZED_ROWS_OUTPUT requires CASA_RS_VLASS_NITER=0" >&2
+        exit 2
+    fi
+    if [[ "$localized_rows_output" != /* ]]; then
+        echo "CASA_RS_VLASS_LOCALIZED_ROWS_OUTPUT must be an absolute path" >&2
+        exit 2
+    fi
+    if [[ -e "$localized_rows_output" ]]; then
+        echo "refusing to overwrite localized-row census: $localized_rows_output" >&2
+        exit 2
+    fi
+    label="${label}-localized-row-census"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_LOCALIZED_ROW_CENSUS_OUTPUT="$localized_rows_output"
     )
 fi
 if [[ -n "$packed_cf_experiment" ]]; then

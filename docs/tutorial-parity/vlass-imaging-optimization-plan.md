@@ -8683,6 +8683,289 @@ scales with active model state or selected components rather than the full
 image or sampled-CF payload. They also explain why a final dense-product path
 and an iterative reconstruction path should be costed separately.
 
+### 2026-07-31 Oracle architecture reset and localized paired-state gate
+
+The architecture-reset Oracle review was asked to challenge the next
+mask-facet proposal rather than optimize it. It rejected a facet path that
+would still perform a full measurement-operator application at every major
+cycle. Its ranked first choice is instead a two-pass, dual-screen localized
+normal-operator clean with one native-screen image-domain finalizer:
+
+1. one visibility pass constructs the dirty RHS and a compact normal operator
+   restricted to the active reconstruction facet;
+2. the clean loop evaluates the resident local `b - Hm` state without revisiting
+   visibilities; and
+3. one final row pass predicts the final multiscale model, forms residual
+   visibilities, performs the full-resolution image-domain adjoint, and supplies
+   the existing 19-product assembler.
+
+If promoted, this deletes sampled-CF replay, oversampled CF lookup and tap
+materialization, adaptive source-order segmentation, full model grids and
+FFTs, degrid scatter, and all eleven visibility-domain residual refreshes. It
+is distinct from the retired full-rank inverse-CF subgrid race: that race
+executed the current mixed-support operator eleven times and omitted
+construction, FFT, scatter, products, and correctness. The new candidate
+changes the reconstruction schedule to two row passes, consumes exact
+physical forward/reverse screens rather than inverse-CF patches, and keeps only
+the active local normal state during deconvolution.
+
+The complete cold replacement boundary retains the previously derived
+`6.785`-second budget:
+
+| New boundary stage | Budget |
+| --- | ---: |
+| local normal/RHS row pass | `1.500 s` |
+| all eleven local `Hm` refreshes | `0.500 s` |
+| final model prediction | `0.750 s` |
+| full `4,096` native-screen finalizer | `3.750 s` |
+| planning, screen state, and new assembly overhead | `0.285 s` |
+| **complete operator** | **`6.785 s`** |
+
+A result from `6.785` through `13.937` seconds remains conditional research
+evidence for a possible `1.5x` row. Above `13.937` seconds the architecture is
+deleted as a breakthrough candidate. Only a cold one-shot measurement
+including both row passes, all local refreshes, prediction, finalizer,
+transforms, and product preparation can promote it. An isolated kernel may
+only kill it.
+
+The active geometry is one `128 x 128` facet from pixels `[543,2093]` through
+`[670,2220]`. It contains the exact `64 x 64` mask, its `88 x 88` scale-12
+dilation, and a 20-pixel guard. A read-only MeasurementSet census used all
+`10,400` field-1525 rows and all `665,600` requested pre-flag channel samples,
+so it is a conservative superset of the `385,862` routed samples. The facet
+center is `0.004205014687292608 rad` from the image phase center. Raw maximum
+`|w|` is `96,590.305959` wavelengths and the UVW-rotation upper bound is
+`97,066.736234` wavelengths. The full facet-corner curvature is therefore only
+`0.0211379311 rad`, below the `0.10`-rad preferred ceiling. Three Taylor terms
+bound the complex exponential remainder below `2e-5`.
+
+The exact CASA screen oracle now persists the reverse
+conjugate-frequency/conjugate-polarization screen separately; deriving it from
+the same-frequency forward screen or by dividing the normal screen is
+prohibited. Equal-state local fits at rank eight satisfy the screen and product
+gates:
+
+| Local family | relative RMS | maximum | worst-state RMS |
+| --- | ---: | ---: | ---: |
+| forward rank 8 | `1.7461e-6` | `1.8255e-6` | `1.3805e-5` |
+| reverse rank 8 | `1.0766e-6` | `1.5375e-6` | `7.2147e-6` |
+| reconstructed product, rank `8 x 8` | `6.1079e-6` | `2.0673e-7` | `1.4606e-5` |
+
+The deliberately wrong same-frequency Hermitian reverse is decisively
+sensitive: relative RMS `8.7708`, maximum error `0.066715`, and worst-state
+relative RMS `101.51`. This is only the screen-level precursor to the required
+scale-12 TT0/TT1 composite-column row experiment.
+
+The first representation exposed another architectural trap. Expanding
+independent rank-eight forward and reverse bases with separate three-term W
+bases produces `1,728` normal channels and `226,492,416` kernel bytes. It fails
+the `768`-channel and `151,257,904`-byte compact-state ceilings and is retired;
+no kernel tuning is authorized.
+
+The CF cache has only 32 physical frequency/Mueller A-screen states. The first
+screen-only gate provisionally treated the gridding and prediction state maps
+as one-to-one. Under that assumption, keeping the physical pairs exact and
+expanding the relative W polynomial directly requires `1 + 2 + 3 = 6`
+separable W channels, not a `3 x 3` cross product:
+
+```text
+32 exact screen pairs * 6 relative-W channels * 3 Taylor PSF orders
+  = 576 local normal kernels
+```
+
+The real row census then invalidated the one-to-one pairing premise. CASA's
+conjugate-frequency imaging selection and normal-frequency prediction
+selection produce `54` observed imaging/prediction
+frequency-by-Mueller pair combinations. A literal exact expansion is therefore
+`54 * 6 * 3 = 972` kernels and `127,401,984` complex-f32 bytes. Including the
+exact forward/reverse textures and two RHS planes gives `136,052,736` bytes.
+Those figures are a `128`-square cyclic-storage lower bound, not yet a valid
+operator ledger. They fit the provisional `151,257,904`-byte compact-state
+target but exceed its provisional `768`-channel preference.
+
+The `576`-kernel result is retained as preliminary screen-only evidence, not a
+promoted operator design. The real candidate must preserve all 54 observed
+state combinations. It has not yet earned visibility prediction, `Hm`, IDG
+occupancy, product, timing, state, or end-to-end correctness claims.
+
+One bounded real-row export now freezes the input to that discriminator. It
+ran the `4,096`-square, full-16-SPW row with `niter=0`; it did not run CLEAN or
+CASA. The production-inert export contains all `385,862` accepted samples in
+exact replay-block/window/source order, `20` materialization windows, and
+`49,390,336` bytes of UVW, visibility, weight, frequency, POINTING, and ordering
+state (`128` bytes per row). Production and the complete discriminator must
+stream or memory-map that input in bounded blocks and release it after the
+construction pass; retaining it beside the literal `136,052,736`-byte operator
+would exceed the compact-state ceiling.
+
+The export also caught and corrected a state-axis mistake before the
+row-operator build. There are `104` CASA SimplePB
+POINTING-by-beam-frequency groups but only one POINTING in this selected-field
+row. Those PB grouping frequencies are needed for PB/product semantics; they
+are not `104` distinct AW A-screen textures. The frozen CF cache contains
+exactly `16` represented frequencies and two Mueller elements. CASA's
+conjugate-frequency imaging selection reaches `14` of those frequencies,
+normal-frequency prediction reaches all `16`, and their union remains the
+original `32` frequency-by-Mueller screen states (`64` literal forward/reverse
+textures). The earlier 32-state local screen-family gate therefore remains
+valid, while the full normal operator must separately account for the 54
+observed imaging/prediction state pairings.
+The original row-manifest v1 field `physical_screen_states=208` mislabeled PB
+groups as AW screen states; the derived contract-v3 receipt supersedes that
+label without changing or regenerating the row payload. The source emitter
+uses a corrected v2 schema for future diagnostics.
+
+The cold current-operator export took `85.38 s`; this is not candidate
+performance evidence. Its `57.924 s` PSF-grid stage, `1,744` CF loads, `1,735`
+evictions, and `20` tap-materialization windows are negative evidence for the
+quarantined sampled-CF graph. The replacement candidate is still judged only
+at its complete two-pass boundary.
+
+The durable row evidence directory is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/20260731-vlass-localized-row-census-v1`.
+Its SHA-256 receipts are:
+
+- row payload:
+  `bcc20773dd26f68c915c5bbcb30c4aded583742bbe073df303b3211cffa3d3b9`;
+- original production-inert manifest:
+  `6bcf60bdb7b388dbaf1d3a9bbec56c7838f9c6ceb657a41c7305378a3a1bfd6c`;
+- corrected PB/AW and row-pair state contract:
+  `ff697611e40799622969d0c061c44aaaae4b0c0ca2e0c3339c3722a4afe4a22b`;
+  and
+- bounded diagnostic log:
+  `fd378bba4ef7392e06af264c4f77345ea60e5b4df1a3062ed67ab1587112e082`.
+
+The durable evidence directory is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/20260731-vlass-localized-dual-screen-gate-v1`.
+Its SHA-256 receipts are:
+
+- forward screen:
+  `e1ed8856bb254697fd7187e77ae267d9bceb4dd7ba05e656ea96099cdc41537f`;
+- reverse screen:
+  `094366e3f696dd3d86b35c5ba6aa8ddf99ce1aeefadd8c2a64846de68fd53ac0`;
+- normal screen:
+  `e499fb2e92b1645f6951270e7a532aa700fe45770df140070de92871c8b96cb6`;
+- durable screen manifest:
+  `839cb1db89b1cae56d40fd2c8de277c1c6c8fe556d3eb429326eeb6c3ea8c2eb`;
+- conservative UVW-bound receipt:
+  `39e16401c85bba3702b9b7f715ee2f7f767a37d05f46e2c3aff274c3d31a2294`;
+  and
+- localized representation gate:
+  `f26b543acda3f9503a939614f7ec5551c0b24272aca20796e36c9b839eab8935`.
+
+The first bounded row-pair contraction candidate is also negative. It fit every
+exact local forward and reverse screen independently in a shared
+total-degree-two spatial-polynomial basis, so the `54` observed state pairs
+would contract to `6 * 6 * 6 * 3 = 648` normal kernels rather than scale with
+pair count. Its complete compact state would have been about `85.2 MB`, but it
+missed the scientific discriminator before construction:
+
+- forward-screen relative RMS `7.656525e-4`;
+- reverse-screen relative RMS `5.844818e-4`;
+- sampled two-position pair relative RMS `4.846505e-4`, against the required
+  `1e-5`; and
+- worst sampled-pair state relative RMS `0.077888`.
+
+Degree three and four remained near `4e-4` pair RMS while expanding the normal
+state to `1,800` and `4,050` channels. The deliberately frequency-collapsed
+path remained strongly sensitive (`0.908` relative RMS), so the failure is
+insufficient representation rather than an insensitive gate. Spatial
+polynomial contraction is retired; no runtime implementation or tuning is
+authorized. This is the second negative localized-representation candidate
+and triggers the mandatory Oracle portfolio re-census before another
+discriminator.
+
+The durable receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/20260731-vlass-localized-spatial-basis-gate-v1/vlass-localized-spatial-basis-gate-v1.json`,
+SHA-256
+`655239bcbcdfd766f8bb6e5da23a772744ee07cf0ba5d1e9f7e044cbc0d20a31`.
+
+#### Corrected Oracle ranking: race the exact finite state
+
+After receiving the corrected PB/AW state contract and the negative
+spatial-polynomial receipt, Oracle re-ranked the portfolio without protecting
+its earlier factorization:
+
+1. exact literal observed-pair localized normal state, followed later by one
+   exact final streamed pass;
+2. exact on-demand component-response columns;
+3. a matrix-free localized Type-3 NUFFT/direct restricted operator; and
+4. native-screen IDG at every major-cycle boundary.
+
+Shared spatial-polynomial contraction, global screen/CF ranks, separate
+forward/reverse-rank Cartesian products, and another paired-rank/SVD/CUR/
+Chebyshev compression are retired for this operating regime. The retained
+streaming principle routes each row directly to one of the exact 54 ordered
+pairs, six residual-W coefficients, and three MT-MFS normal lanes. Each row
+therefore makes `18` rather than `972` channel deposits, for `6,945,516`
+deposits in the construction pass. The performance risk is the `10,692`
+channel applications in eleven complete `Hm` evaluations.
+
+The `768`-channel limit is deleted as an architectural gate. It was a
+provisional batching heuristic, not a scientific, physical-memory, or final
+acceptance limit. The `151,257,904`-byte target is also explicitly provisional:
+it was derived as the stricter of ten percent of the old replay artifact and
+twice the packed-visibility bytes. It is useful for preferring compact
+representations, but it must not veto an exact candidate that is small relative
+to the 32 GiB acceptance host and can meet the measured time gates.
+
+The exact bank must not silently treat the facet as a `128`-periodic sky. The
+scientifically consumed scale-dilated domain is `88 x 88`, so signed
+separations run from `-87` through `+87`; absent a separately certified
+non-cyclic action, the discriminator uses a `192 x 192` Toeplitz embedding.
+The exact normal bank is then `286,654,464` bytes. Adding the 64 literal
+`128`-square forward/reverse textures and two `192`-square RHS planes gives a
+minimum post-construction resident payload of `295,632,896` bytes before
+bounded FFT and command scratch. That is approximately `0.86%` of 32 GiB and
+is still a radical reduction from the `6,985,045,904`-byte compact replay
+programs. Actual host, Metal/unified-memory, hidden texture-copy, and peak
+scratch allocations remain measured gates.
+
+The next single discriminator is therefore an exact, uncompressed
+`54 * 6 * 3` construction plus eleven-`Hm` race using only the frozen
+`49,390,336`-byte row payload and the exact 16-frequency screen artifacts. It
+does not launch CASA, `tclean`, CLEAN, an imaging row, or a full-resolution
+finalizer. The cold partial-boundary gates are:
+
+| Boundary | Promote | Kill |
+| --- | ---: | ---: |
+| streamed normal/RHS construction | `<= 1.500 s` | `> 3.250 s` |
+| eleven complete local `Hm` evaluations | `<= 0.850 s` | `> 1.500 s` |
+| construction plus eleven `Hm` | `<= 2.350 s` | `> 4.750 s` |
+
+The correctness probe uses a deterministic three-atom spatial composite:
+scale 12 at one mask corner, scale 5 at the opposite corner, and a point atom
+at the legal pixel of maximum exact screen gradient. It is applied separately
+as pure TT0 and pure TT1. A direct f64 row reference retains ordered
+imaging-to-prediction state, exact residual-W phase, actual visibility
+frequency for Taylor weights, both Mueller mappings, and Briggs weights.
+Comparisons retain all 54 pair strata so conjugation or mapping errors cannot
+cancel in the sum. Deliberately substituting same-frequency pairs and
+`beam_frequency_hz` Taylor weights must each fail a Taylor-sensitive gate by
+at least ten times the candidate error.
+
+After at most one implementation correction that leaves the exact
+`54 * 6 * 3` graph unchanged, failure of correctness, measured peak memory,
+construction time, or eleven-`Hm` time retires the entire materialized local
+normal-bank family. No further SVD, CUR, Chebyshev, polynomial, interpolation,
+quantization, pair merging, or reduced-rank retry is permitted. The next
+discriminator then changes authoritative state to exact on-demand component
+response columns; matrix-free localized Type-3 action follows if that fails.
+
+No `tclean`, CLEAN, unchanged CASA reference, or `12,150`-square workload was
+run. CASA was used only as the exact physical-screen evaluator and read-only
+MeasurementSet table reader.
+
+The same Oracle conversation audited the imaging-performance skill. Five
+general guardrails were adopted: quarantine a computational graph after its
+optimistic Amdahl bound fails; require mechanistic rather than nominal family
+independence; require a one/two-pass sufficient-statistic family in small
+active-domain regimes; allow promotion only on a cold complete replacement
+boundary with an architecture-specific adversarial semantic probe; and
+re-census/re-rank the portfolio after two negative candidates or immediately
+after a premise-changing result. These rules are now in
+`.agents/skills/casa-rs-imaging-performance/SKILL.md`.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.

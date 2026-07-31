@@ -119,6 +119,17 @@ a replacement promotes. CASA defines the scientific envelope; its operator
 discretization, arithmetic ordering, reconstruction history, and storage
 structure are not implementation requirements unless the envelope says so.
 
+Quarantine the incumbent computational graph when its certified optimistic
+time cannot meet the breakthrough target with the required margin, including
+after assigning zero cost to the stage under optimization. While quarantined,
+do not tune its kernels, tiling, scheduling, caching, precision,
+interpolation, compression, or device mapping as a breakthrough candidate.
+Correctness maintenance remains allowed. The next performance discriminator
+must delete, bypass, or amortize at least one dominant graph node, full-data
+pass, global transform, or large materialization. Reopen the graph only when
+new evidence changes the scientific floor, operating-regime census, or lower
+bound.
+
 ## Operating-regime census
 
 Do not choose an operator family from the imaging-mode name alone. Before the
@@ -143,6 +154,19 @@ with an unusual pixels-to-visibilities or active-state-to-visibilities ratio
 must retain at least one candidate that exploits that regime; it must not
 inherit the architecture preferred by a more typical imaging row merely
 because that implementation already exists.
+
+When active model degrees of freedom are small relative to accepted
+measurements, the incumbent requires at least three complete measurement-
+operator invocations, and a restricted reusable state may fit the memory
+ceiling, the portfolio must include a sufficient-statistic or restricted-
+normal family. That family must reduce measurements in one construction pass,
+perform iterative reconstruction without revisiting them, and use at most one
+final measurement pass for prediction, residual formation, or dense-product
+materialization. Count Taylor and polarization terms, multiscale dilation,
+guards, spatially varying structure, and cross-facet blocks in the active
+degrees of freedom. Omit this family only with a certificate that its minimum
+state, construction lower bound, or unavoidable scientific error fails the
+envelope.
 
 ## Architecture deletion receipt
 
@@ -207,6 +231,15 @@ architectures only when they change asymptotic state or work. At least one
 candidate must eliminate the incumbent's dominant representation, and at least
 one must eliminate repeated work.
 
+For each family, identify its authoritative state, raw-measurement pass count,
+dominant asymptotic cost, measurement-operator evaluation site, and deleted
+incumbent invocations or materializations. Two proposals are not independent
+when they retain the same dominant operator invocation and differ primarily by
+rank, basis, interpolation, tiling, traversal, precision, cache, or device.
+Relative to the incumbent, a family must differ in at least two of the first
+four dimensions above and eliminate or amortize at least one dominant
+invocation.
+
 ## Dominant-representation challenge
 
 For every large retained structure, state:
@@ -225,6 +258,15 @@ must scale with compact visibility descriptors, physical model parameters,
 basis coefficients, or bounded scratch, not summed materialized convolution
 area. Mandatory dense products justify final dense computation and writes, not
 dense authoritative iterative state or simultaneous product residency.
+
+Classify every bound as a scientific invariant, external acceptance limit,
+physical resource limit, measured performance gate, or provisional engineering
+heuristic. A provisional limit such as a channel count, preferred batch size,
+rank, tile size, or cache fraction may prioritize experiments but may not
+retire an otherwise exact candidate that fits the hard memory and timing
+envelopes. Challenge it with the smallest complete construction-and-action
+race. Exact enumeration of a small finite state space is preferable to an
+approximation when it fits the hard envelope and measures faster end to end.
 
 Before quotienting a physical term from a persisted operator, prove that the
 term remains exactly recoverable after support truncation, cropping,
@@ -334,6 +376,17 @@ explain most of the miss and the identified change would cross the promotion
 gate. Do not integrate a candidate whose optimistic physical lower bound,
 memory liveness, or p90 projection cannot meet the final goal.
 
+A candidate promotes only from a cold, one-shot execution of the smallest
+complete boundary it claims to replace. Charge planning and reordering,
+representation construction, every iterative application, prediction and
+residual formation, transforms, transfers and synchronization, normalization,
+required product preparation, and recurring setup or teardown. Isolated
+kernels, prepared repeats, omitted finalizers, and operator-core timings may
+falsify but may not promote. Require one architecture-specific adversarial
+correctness probe for the most likely silent semantic failure, especially when
+the candidate changes an adjoint, DDE, polarization, frequency conjugation,
+normalization placement, or another non-commuting operation.
+
 ## Quantitative selection
 
 For every required workload:
@@ -416,6 +469,16 @@ butterfly, coalesced, averaged, or NUFFT formulation that changes that action
 count. Record the invariant that makes a family-level falsification valid.
 
 ## Forced portfolio reset
+
+After two negative candidates since the last ranking, or immediately after
+evidence invalidates a premise shared by multiple candidates, update the
+operating-regime census, lower bounds, stage/invocation graph, retired
+assumptions, and family cards; then re-rank every surviving family before
+choosing another discriminator. A third discriminator from the same
+mechanistic family is prohibited unless the re-ranking identifies evidence
+that changes its asymptotic cost, feasible state, invocation count, or
+scientific feasibility. An evidence-backed correction does not reset the
+two-negative count.
 
 Suspend a representation family when two candidates fail promotion, a
 candidate reaches its measured speed of light but still misses the goal, the

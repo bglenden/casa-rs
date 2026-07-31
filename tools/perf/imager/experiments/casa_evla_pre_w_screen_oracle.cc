@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// Emit the exact CASA 6.7.5.18 pre-W EVLA A-term and wideband normal-screen
-// families represented by a persisted AWProject CF cache. This is a bounded
-// architecture discriminator; it does not run tclean or alter the cache.
+// Emit the exact CASA 6.7.5.18 pre-W EVLA forward, reverse, and wideband
+// normal-screen families represented by a persisted AWProject CF cache. This
+// is a bounded architecture discriminator; it does not run tclean or alter
+// the cache.
 
 #include <synthesis/TransformMachines2/EVLAAperture.h>
 
@@ -83,8 +84,10 @@ struct Template {
 
 struct ScreenReceipt {
   double forward_peak = 0.0;
+  double reverse_peak = 0.0;
   double normal_peak = 0.0;
   double forward_outside_crop_peak = 0.0;
+  double reverse_outside_crop_peak = 0.0;
   double normal_outside_crop_peak = 0.0;
 };
 
@@ -443,6 +446,7 @@ void write_manifest(const std::filesystem::path &path,
                     const std::filesystem::path &cache_root,
                     const std::filesystem::path &measures_directory,
                     const std::filesystem::path &forward_path,
+                    const std::filesystem::path &reverse_path,
                     const std::filesystem::path &normal_path,
                     const Template &coordinate_template,
                     const std::vector<State> &states,
@@ -462,7 +466,7 @@ void write_manifest(const std::filesystem::path &path,
 
   output << std::setprecision(17);
   output << "{\n"
-         << "  \"schema\": \"casa-rs-vlass-evla-pre-w-screens/v1\",\n"
+         << "  \"schema\": \"casa-rs-vlass-evla-pre-w-screens/v2\",\n"
          << "  \"role\": \"production-inert-architecture-discriminator\",\n"
          << "  \"casa_semantics\": \"EVLAAperture::applySky before "
             "WTerm::applySky in AWConvFunc::fillConvFuncBuffer2\",\n"
@@ -488,6 +492,8 @@ void write_manifest(const std::filesystem::path &path,
          << "  \"state_order\": \"frequency-hz-then-mueller\",\n"
          << "  \"forward_path\": \"" << json_escape(forward_path.string())
          << "\",\n"
+         << "  \"reverse_path\": \"" << json_escape(reverse_path.string())
+         << "\",\n"
          << "  \"normal_path\": \"" << json_escape(normal_path.string())
          << "\",\n"
          << "  \"states\": [\n";
@@ -505,9 +511,12 @@ void write_manifest(const std::filesystem::path &path,
            << "\", \"band\": \"" << json_escape(state.band_name)
            << "\", \"diameter_m\": " << state.diameter_m
            << ", \"forward_peak\": " << receipt.forward_peak
+           << ", \"reverse_peak\": " << receipt.reverse_peak
            << ", \"normal_peak\": " << receipt.normal_peak
            << ", \"forward_outside_crop_peak\": "
            << receipt.forward_outside_crop_peak
+           << ", \"reverse_outside_crop_peak\": "
+           << receipt.reverse_outside_crop_peak
            << ", \"normal_outside_crop_peak\": "
            << receipt.normal_outside_crop_peak << "}";
     output << (index + 1 == states.size() ? "\n" : ",\n");
@@ -549,14 +558,17 @@ int run(const int argc, char **argv) {
 
   const std::filesystem::path forward_path =
       output_prefix.string() + ".forward.c64";
+  const std::filesystem::path reverse_path =
+      output_prefix.string() + ".reverse.c64";
   const std::filesystem::path normal_path =
       output_prefix.string() + ".normal.c64";
   const std::filesystem::path manifest_path =
       output_prefix.string() + ".manifest.json";
   std::filesystem::create_directories(output_prefix.parent_path());
   std::ofstream forward_output(forward_path, std::ios::binary);
+  std::ofstream reverse_output(reverse_path, std::ios::binary);
   std::ofstream normal_output(normal_path, std::ios::binary);
-  if (!forward_output || !normal_output) {
+  if (!forward_output || !reverse_output || !normal_output) {
     fail("cannot create screen output files");
   }
 
@@ -584,9 +596,12 @@ int run(const int argc, char **argv) {
 
     ScreenReceipt receipt;
     receipt.forward_peak = peak_amplitude(forward);
+    receipt.reverse_peak = peak_amplitude(conjugate);
     receipt.normal_peak = peak_amplitude(normal);
     receipt.forward_outside_crop_peak =
         write_crop(forward_output, forward, crop_start, crop_side);
+    receipt.reverse_outside_crop_peak =
+        write_crop(reverse_output, conjugate, crop_start, crop_side);
     receipt.normal_outside_crop_peak =
         write_crop(normal_output, normal, crop_start, crop_side);
     receipts.push_back(receipt);
@@ -595,13 +610,15 @@ int run(const int argc, char **argv) {
               << states.size() << " frequency_hz=" << state.frequency_hz
               << " mueller=" << state.mueller_element
               << " forward_peak=" << receipt.forward_peak
+              << " reverse_peak=" << receipt.reverse_peak
               << " normal_peak=" << receipt.normal_peak << "\n";
   }
   forward_output.close();
+  reverse_output.close();
   normal_output.close();
   write_manifest(manifest_path, cache_root, measures.directory(), forward_path,
-                 normal_path, coordinate_template, states, receipts, crop_start,
-                 crop_side);
+                 reverse_path, normal_path, coordinate_template, states,
+                 receipts, crop_start, crop_side);
   std::cout << manifest_path << "\n";
   return 0;
 }

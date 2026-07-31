@@ -22,6 +22,10 @@ import numpy as np
 
 SCHEMA = "casa-rs-vlass-evla-pre-w-screen-rank/v1"
 SOURCE_SCHEMA = "casa-rs-vlass-evla-pre-w-screens/v1"
+SOURCE_SCHEMAS = {
+    SOURCE_SCHEMA,
+    "casa-rs-vlass-evla-pre-w-screens/v2",
+}
 ARCSEC_TO_RAD = math.pi / (180.0 * 3600.0)
 DEFAULT_IMAGE_SIDE = 4096
 DEFAULT_CELL_ARCSEC = 0.6
@@ -51,8 +55,11 @@ def load_manifest(path: pathlib.Path) -> dict[str, Any]:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise RankError(f"cannot read screen manifest {path}: {error}") from error
-    if payload.get("schema") != SOURCE_SCHEMA:
-        raise RankError(f"screen manifest must use schema {SOURCE_SCHEMA}")
+    if payload.get("schema") not in SOURCE_SCHEMAS:
+        raise RankError(
+            "screen manifest must use one of "
+            + ", ".join(sorted(SOURCE_SCHEMAS))
+        )
     states = payload.get("states")
     crop_shape = payload.get("crop_shape")
     full_shape = payload.get("full_shape")

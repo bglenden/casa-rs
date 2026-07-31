@@ -4461,6 +4461,8 @@ const AWPROJECT_MASK_TRAJECTORY_RECEIPT_SHA256_ENV: &str =
     "CASA_RS_EXPERIMENTAL_AWPROJECT_MASK_TRAJECTORY_RECEIPT_SHA256";
 const AWPROJECT_QUOTIENT_RESPONSE_CENSUS_OUTPUT_ENV: &str =
     "CASA_RS_EXPERIMENTAL_AWPROJECT_QUOTIENT_RESPONSE_CENSUS_OUTPUT";
+const AWPROJECT_LOCALIZED_ROW_CENSUS_OUTPUT_ENV: &str =
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_LOCALIZED_ROW_CENSUS_OUTPUT";
 const AWPROJECT_PHYSICAL_COMPONENT_STATE_LIMIT_BYTES: usize = 151_257_904;
 const AWPROJECT_HYBRID_STACK_COUNT_MAX: usize = 32;
 const AWPROJECT_SUBGRID_SUPPORT_SIDES: [usize; 5] = [32, 48, 64, 96, 128];
@@ -10578,6 +10580,7 @@ where
     maybe_emit_awproject_cf_key_fft_occupancy()?;
     maybe_emit_awproject_mask_sufficient_statistics()?;
     maybe_emit_awproject_quotient_response_census(request)?;
+    maybe_emit_awproject_localized_row_census(request)?;
     if let Some(cache) = aw_cache {
         accumulation.aw_sample_census.log(pass, cache)?;
         if accumulation.aw_metal_stats.calls > 0 {
@@ -10989,6 +10992,38 @@ struct AwProjectMaskMomentClusterCurve {
 static AWPROJECT_MASK_MOMENT_CENSUS: OnceLock<Mutex<AwProjectMaskMomentCensus>> = OnceLock::new();
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Debug, Clone, Copy)]
+struct AwProjectLocalizedRow {
+    uvw_lambda: [f64; 3],
+    frequency_hz: f64,
+    beam_frequency_hz: f64,
+    pointing_direction_rad: [f64; 2],
+    pointing_pixel: [f64; 2],
+    weight: f32,
+    sumwt_factor: f32,
+    scalar_visibility: Complex32,
+    first_visibility: Complex32,
+    second_visibility: Complex32,
+    source_phase: Complex32,
+    replay_block_ordinal: u32,
+    window_ordinal: u32,
+    sample_index: u32,
+    group_index: u32,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Default)]
+struct AwProjectLocalizedRowCensus {
+    rows: Vec<AwProjectLocalizedRow>,
+    windows: usize,
+    selected_imaging_screen_states: BTreeSet<(u64, i32)>,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+static AWPROJECT_LOCALIZED_ROW_CENSUS: OnceLock<Mutex<AwProjectLocalizedRowCensus>> =
+    OnceLock::new();
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct AwProjectQuotientResponseRowKey {
     cell: AwProjectStableCellKey,
@@ -11219,6 +11254,127 @@ fn awproject_quotient_response_row(
         normalization: bundle.normalization,
         taps,
     })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn maybe_audit_awproject_localized_rows(
+    request: &MtmfsRequest,
+    batch: &VisibilityBatch,
+    parallel_hands: &AwParallelHandVisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    groups: &[GroupedVisibilityMetadata],
+    source_samples: &[AwProjectCompactSourceSample],
+    tap_requests: &[AwProjectCompactTapRequest],
+    replay_block_ordinal: usize,
+    window_ordinal: usize,
+) -> Result<(), ImagingError> {
+    if env::var_os(AWPROJECT_LOCALIZED_ROW_CENSUS_OUTPUT_ENV).is_none() {
+        return Ok(());
+    }
+    if request.geometry.image_shape != [4_096, 4_096]
+        || request.nterms != 2
+        || request.multiscale_scales != [0.0, 5.0, 12.0]
+    {
+        return Err(ImagingError::Unsupported(
+            "localized-row census is frozen to 4096-square VLASS nterms=2 scales=[0,5,12]"
+                .to_string(),
+        ));
+    }
+    let expected = batch.visibility.len();
+    if sample_frequencies_hz.len() != expected
+        || parallel_hands.len() != expected
+        || batch.u_lambda.len() != expected
+        || batch.v_lambda.len() != expected
+        || batch.w_lambda.len() != expected
+        || batch.weight.len() != expected
+        || batch.sumwt_factor.len() != expected
+    {
+        return Err(ImagingError::Normalization(
+            "localized-row census input columns are not aligned".to_string(),
+        ));
+    }
+    let replay_block_ordinal = u32::try_from(replay_block_ordinal).map_err(|_| {
+        ImagingError::InvalidRequest(
+            "localized-row census replay block ordinal exceeds u32".to_string(),
+        )
+    })?;
+    let window_ordinal = u32::try_from(window_ordinal).map_err(|_| {
+        ImagingError::InvalidRequest("localized-row census window ordinal exceeds u32".to_string())
+    })?;
+    let mut state = AWPROJECT_LOCALIZED_ROW_CENSUS
+        .get_or_init(|| Mutex::new(AwProjectLocalizedRowCensus::default()))
+        .lock()
+        .map_err(|_| {
+            ImagingError::InvalidRequest("localized-row census lock was poisoned".to_string())
+        })?;
+    state.rows.reserve(source_samples.len());
+    for source in source_samples {
+        let sample_index = source.sample_index;
+        let group = groups.get(source.group_index).ok_or_else(|| {
+            ImagingError::Normalization(
+                "localized-row census source references a missing pointing group".to_string(),
+            )
+        })?;
+        let frequency_hz = sample_frequencies_hz[sample_index];
+        let values = [
+            batch.u_lambda[sample_index],
+            batch.v_lambda[sample_index],
+            batch.w_lambda[sample_index],
+            frequency_hz,
+            group.beam_frequency_hz,
+            group.pointing_direction_rad[0],
+            group.pointing_direction_rad[1],
+        ];
+        if values.iter().any(|value| !value.is_finite()) {
+            return Err(ImagingError::Normalization(
+                "localized-row census encountered a non-finite geometry value".to_string(),
+            ));
+        }
+        let pointing_pixel = group.pointing_pixel_position.unwrap_or([f64::NAN; 2]);
+        let sample_index_u32 = u32::try_from(sample_index).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "localized-row census sample index exceeds u32".to_string(),
+            )
+        })?;
+        let group_index = u32::try_from(source.group_index).map_err(|_| {
+            ImagingError::InvalidRequest("localized-row census group index exceeds u32".to_string())
+        })?;
+        for plan in [source.first_imaging_plan, source.second_imaging_plan] {
+            let request = tap_requests.get(plan.tap_bundle).ok_or_else(|| {
+                ImagingError::Normalization(
+                    "localized-row census imaging plan escaped its tap requests".to_string(),
+                )
+            })?;
+            state.selected_imaging_screen_states.insert((
+                request.cell_key.frequency_hz.to_bits(),
+                request.cell_key.mueller_element,
+            ));
+        }
+        state.rows.push(AwProjectLocalizedRow {
+            uvw_lambda: [
+                batch.u_lambda[sample_index],
+                batch.v_lambda[sample_index],
+                batch.w_lambda[sample_index],
+            ],
+            frequency_hz,
+            beam_frequency_hz: group.beam_frequency_hz,
+            pointing_direction_rad: group.pointing_direction_rad,
+            pointing_pixel,
+            weight: batch.weight[sample_index],
+            sumwt_factor: batch.sumwt_factor[sample_index],
+            scalar_visibility: batch.visibility[sample_index],
+            first_visibility: parallel_hands.first_visibility[sample_index],
+            second_visibility: parallel_hands.second_visibility[sample_index],
+            source_phase: parallel_hands.source_phase[sample_index],
+            replay_block_ordinal,
+            window_ordinal,
+            sample_index: sample_index_u32,
+            group_index,
+        });
+    }
+    state.windows = state.windows.saturating_add(1);
+    Ok(())
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -12185,6 +12341,267 @@ fn awproject_quotient_response_matrix_row(
         }
     }
     values
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_localized_row_bytes(row: &AwProjectLocalizedRow) -> [u8; 128] {
+    let mut bytes = [0u8; 128];
+    let mut offset = 0usize;
+    let mut append = |value: &[u8]| {
+        let end = offset + value.len();
+        bytes[offset..end].copy_from_slice(value);
+        offset = end;
+    };
+    for value in [
+        row.uvw_lambda[0],
+        row.uvw_lambda[1],
+        row.uvw_lambda[2],
+        row.frequency_hz,
+        row.beam_frequency_hz,
+        row.pointing_direction_rad[0],
+        row.pointing_direction_rad[1],
+        row.pointing_pixel[0],
+        row.pointing_pixel[1],
+    ] {
+        append(&value.to_le_bytes());
+    }
+    for value in [row.weight, row.sumwt_factor] {
+        append(&value.to_le_bytes());
+    }
+    for value in [
+        row.scalar_visibility,
+        row.first_visibility,
+        row.second_visibility,
+        row.source_phase,
+    ] {
+        append(&value.re.to_le_bytes());
+        append(&value.im.to_le_bytes());
+    }
+    for value in [
+        row.replay_block_ordinal,
+        row.window_ordinal,
+        row.sample_index,
+        row.group_index,
+    ] {
+        append(&value.to_le_bytes());
+    }
+    debug_assert_eq!(offset, bytes.len());
+    bytes
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn maybe_emit_awproject_localized_row_census(request: &MtmfsRequest) -> Result<(), ImagingError> {
+    let Some(output) = env::var_os(AWPROJECT_LOCALIZED_ROW_CENSUS_OUTPUT_ENV) else {
+        return Ok(());
+    };
+    if request.clean.niter != 0 {
+        return Err(ImagingError::InvalidRequest(
+            "localized-row census requires niter=0".to_string(),
+        ));
+    }
+    let output = PathBuf::from(output);
+    if !output.is_absolute() {
+        return Err(ImagingError::InvalidRequest(format!(
+            "{AWPROJECT_LOCALIZED_ROW_CENSUS_OUTPUT_ENV} must be an absolute path"
+        )));
+    }
+    if output.exists() {
+        return Err(ImagingError::InvalidRequest(format!(
+            "refusing to overwrite localized-row census {}",
+            output.display()
+        )));
+    }
+    let mut state = AWPROJECT_LOCALIZED_ROW_CENSUS
+        .get_or_init(|| Mutex::new(AwProjectLocalizedRowCensus::default()))
+        .lock()
+        .map_err(|_| {
+            ImagingError::InvalidRequest("localized-row census lock was poisoned".to_string())
+        })?;
+    let census = std::mem::take(&mut *state);
+    drop(state);
+    if census.rows.is_empty() || census.windows == 0 {
+        return Err(ImagingError::InvalidRequest(
+            "localized-row census did not observe accepted source samples".to_string(),
+        ));
+    }
+
+    std::fs::create_dir(&output).map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "cannot create localized-row census {}: {error}",
+            output.display()
+        ))
+    })?;
+    let rows_path = output.join("rows-f64-f32-le.bin");
+    let mut rows_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&rows_path)
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "cannot create localized-row census rows {}: {error}",
+                rows_path.display()
+            ))
+        })?;
+    let mut rows_digest = Sha256::new();
+    let mut pb_pointing_frequency_groups = BTreeSet::<(u64, u64, u64, u64, u64)>::new();
+    let mut pb_beam_frequencies = BTreeSet::<u64>::new();
+    let mut pointing_states = BTreeSet::<(u64, u64, u64, u64)>::new();
+    for row in &census.rows {
+        let bytes = awproject_localized_row_bytes(row);
+        rows_digest.update(bytes);
+        rows_file.write_all(&bytes).map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "cannot write localized-row census rows {}: {error}",
+                rows_path.display()
+            ))
+        })?;
+        pb_pointing_frequency_groups.insert((
+            row.beam_frequency_hz.to_bits(),
+            row.pointing_direction_rad[0].to_bits(),
+            row.pointing_direction_rad[1].to_bits(),
+            row.pointing_pixel[0].to_bits(),
+            row.pointing_pixel[1].to_bits(),
+        ));
+        pb_beam_frequencies.insert(row.beam_frequency_hz.to_bits());
+        pointing_states.insert((
+            row.pointing_direction_rad[0].to_bits(),
+            row.pointing_direction_rad[1].to_bits(),
+            row.pointing_pixel[0].to_bits(),
+            row.pointing_pixel[1].to_bits(),
+        ));
+    }
+    rows_file.flush().map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "cannot flush localized-row census rows {}: {error}",
+            rows_path.display()
+        ))
+    })?;
+    let rows_sha256 = format!("{:x}", rows_digest.finalize());
+    let record_bytes = 128usize;
+    let total_bytes = census.rows.len().saturating_mul(record_bytes);
+    let selected_imaging_screen_states = census
+        .selected_imaging_screen_states
+        .iter()
+        .map(|(frequency_bits, mueller_element)| {
+            serde_json::json!({
+                "frequency_hz_bits": format!("{frequency_bits:016x}"),
+                "mueller_element": mueller_element,
+            })
+        })
+        .collect::<Vec<_>>();
+    let dual_screen_texture_count = selected_imaging_screen_states.len().saturating_mul(2);
+    let group_metadata = pb_pointing_frequency_groups
+        .into_iter()
+        .enumerate()
+        .map(
+            |(
+                group_ordinal,
+                (
+                    beam_frequency_bits,
+                    pointing_ra_bits,
+                    pointing_dec_bits,
+                    pointing_x_bits,
+                    pointing_y_bits,
+                ),
+            )| {
+                serde_json::json!({
+                    "group_ordinal": group_ordinal,
+                    "beam_frequency_hz_bits": format!("{beam_frequency_bits:016x}"),
+                    "pointing_ra_rad_bits": format!("{pointing_ra_bits:016x}"),
+                    "pointing_dec_rad_bits": format!("{pointing_dec_bits:016x}"),
+                    "pointing_x_pixel_bits": format!("{pointing_x_bits:016x}"),
+                    "pointing_y_pixel_bits": format!("{pointing_y_bits:016x}"),
+                })
+            },
+        )
+        .collect::<Vec<_>>();
+    let manifest = serde_json::json!({
+        "schema": "casa-rs-vlass-localized-row-census/v2",
+        "role": "production-inert-real-row-input-for-localized-normal-operator-discriminator",
+        "contract": {
+            "imsize": request.geometry.image_shape,
+            "nterms": request.nterms,
+            "scales_pixels": request.multiscale_scales,
+            "reference_frequency_hz": request.reffreq_hz,
+            "selected_frequency_range_hz": request.selected_frequency_range_hz,
+            "windows": census.windows,
+            "accepted_rows": census.rows.len(),
+            "unique_pointings": pointing_states.len(),
+            "unique_pb_beam_frequencies": pb_beam_frequencies.len(),
+            "unique_pb_pointing_frequency_groups": group_metadata.len(),
+            "selected_aw_imaging_screen_states": selected_imaging_screen_states.len(),
+            "dual_screen_texture_count": dual_screen_texture_count,
+            "screen_state_contract": "AW A-screen identity is selected CF frequency x Mueller; beam_frequency_hz is SimplePB product/group metadata and is not a distinct AW screen texture",
+            "order_contract": "replay-block,window,source-sample order from the accepted initial dirty AWProject stream",
+            "decision_scope": "standalone replacement-boundary timing and correctness discriminator only",
+        },
+        "rows": {
+            "path": "rows-f64-f32-le.bin",
+            "dtype": "explicit-little-endian-mixed-f64-f32-u32",
+            "record_bytes": record_bytes,
+            "count": census.rows.len(),
+            "bytes": total_bytes,
+            "sha256": rows_sha256,
+            "fields": [
+                {"name": "uvw_lambda", "dtype": "f64", "count": 3},
+                {"name": "frequency_hz", "dtype": "f64", "count": 1},
+                {"name": "beam_frequency_hz", "dtype": "f64", "count": 1},
+                {"name": "pointing_direction_rad", "dtype": "f64", "count": 2},
+                {"name": "pointing_pixel", "dtype": "f64", "count": 2},
+                {"name": "weight", "dtype": "f32", "count": 1},
+                {"name": "sumwt_factor", "dtype": "f32", "count": 1},
+                {"name": "scalar_visibility", "dtype": "complex64", "count": 1},
+                {"name": "first_visibility", "dtype": "complex64", "count": 1},
+                {"name": "second_visibility", "dtype": "complex64", "count": 1},
+                {"name": "source_phase", "dtype": "complex64", "count": 1},
+                {"name": "replay_block_ordinal", "dtype": "u32", "count": 1},
+                {"name": "window_ordinal", "dtype": "u32", "count": 1},
+                {"name": "sample_index", "dtype": "u32", "count": 1},
+                {"name": "group_index", "dtype": "u32", "count": 1},
+            ],
+        },
+        "pb_groups": group_metadata,
+        "selected_aw_imaging_screen_states": selected_imaging_screen_states,
+    });
+    let manifest_path = output.join("manifest.json");
+    let manifest_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&manifest_path)
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "cannot create localized-row census manifest {}: {error}",
+                manifest_path.display()
+            ))
+        })?;
+    serde_json::to_writer_pretty(manifest_file, &manifest).map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "cannot write localized-row census manifest {}: {error}",
+            manifest_path.display()
+        ))
+    })?;
+    eprintln!(
+        "awproject_localized_row_census rows={} windows={} pointings={} pb_frequencies={} \
+         pb_groups={} aw_imaging_screen_states={} dual_screen_textures={} \
+         record_bytes={} total_bytes={} rows_sha256={} \
+         role=production-inert-real-row-input-for-localized-normal-operator-discriminator",
+        census.rows.len(),
+        census.windows,
+        pointing_states.len(),
+        pb_beam_frequencies.len(),
+        group_metadata.len(),
+        selected_imaging_screen_states.len(),
+        dual_screen_texture_count,
+        record_bytes,
+        total_bytes,
+        rows_sha256,
+    );
+    Ok(())
+}
+
+#[cfg(any(not(target_os = "macos"), coverage))]
+fn maybe_emit_awproject_localized_row_census(_request: &MtmfsRequest) -> Result<(), ImagingError> {
+    Ok(())
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -32031,6 +32448,17 @@ fn replay_awproject_compact_window(
             sample_frequencies_hz,
             source_samples,
             replay_block_ordinal,
+        )?;
+        maybe_audit_awproject_localized_rows(
+            request,
+            batch,
+            parallel_hands,
+            sample_frequencies_hz,
+            groups,
+            source_samples,
+            tap_requests,
+            replay_block_ordinal,
+            replay_stats.windows,
         )?;
         maybe_audit_awproject_quotient_response(
             request,
@@ -64879,6 +65307,40 @@ mod tests {
         trace_cube_channel_residual_refresh_model_channel_lambda, trace_residual_refresh,
         trace_w_project_plan, trace_weighting,
     };
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn localized_row_census_record_has_frozen_128_byte_layout() {
+        let row = super::AwProjectLocalizedRow {
+            uvw_lambda: [1.0, 2.0, 3.0],
+            frequency_hz: 4.0,
+            beam_frequency_hz: 5.0,
+            pointing_direction_rad: [6.0, 7.0],
+            pointing_pixel: [8.0, 9.0],
+            weight: 10.0,
+            sumwt_factor: 11.0,
+            scalar_visibility: Complex32::new(12.0, 13.0),
+            first_visibility: Complex32::new(14.0, 15.0),
+            second_visibility: Complex32::new(16.0, 17.0),
+            source_phase: Complex32::new(18.0, 19.0),
+            replay_block_ordinal: 20,
+            window_ordinal: 21,
+            sample_index: 22,
+            group_index: 23,
+        };
+        let bytes = super::awproject_localized_row_bytes(&row);
+        let f64_at = |offset| f64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
+        let f32_at = |offset| f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
+        let u32_at = |offset| u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
+
+        assert_eq!(bytes.len(), 128);
+        assert_eq!(f64_at(0), 1.0);
+        assert_eq!(f64_at(64), 9.0);
+        assert_eq!(f32_at(72), 10.0);
+        assert_eq!(f32_at(108), 19.0);
+        assert_eq!(u32_at(112), 20);
+        assert_eq!(u32_at(124), 23);
+    }
 
     #[test]
     fn awproject_hybrid_stack_centers_are_symmetric_and_bounded() {
