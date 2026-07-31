@@ -93,6 +93,43 @@ cannot weaken the frozen correctness or final performance gates. Destructive
 actions and changes outside this approved VLASS wave remain governed by the
 normal repository contract.
 
+### Scientific Correctness And Performance Pareto Policy
+
+Brian redirected the wave's acceptance policy on 2026-07-30. CASA remains the
+scientific reference, but it is not an implementation transcript. Exact
+arithmetic identity, bitwise equality, identical CLEAN component order,
+identical major-cycle history, sub-ppm agreement, and exact alpha-mask
+topology at cutoff-boundary pixels are not promotion requirements.
+
+Performance is the primary optimization objective once a candidate clears the
+scientific floor. Correctness still requires all of the following:
+
+- the requested VLASS data selection, POINTING behavior, AWProject geometry,
+  MT-MFS semantics, Briggs weighting, deterministic mask, scales, and products;
+- exact product inventory plus correct coordinates and metadata, and
+  scientifically consistent PSF, PB, weights, and sumwt;
+- compliance with the existing frozen numerical ceilings;
+- stable convergence without divergence or conspicuous artifacts;
+- scientifically consistent source fluxes, positions, morphology,
+  residual/noise statistics, and dynamic range;
+- no significant beam-scale or larger coherent difference relative to the
+  reference noise and science signal; and
+- alpha comparison on a stable science domain. Documented topology differences
+  confined to the spectral-index cutoff boundary are permitted.
+
+Correctness and performance therefore form a measured Pareto frontier.
+Modest, scientifically insignificant numerical differences may be accepted
+when they enable substantial end-to-end performance gains. Once a candidate
+passes the scientific floor, further work targets measured runtime and memory
+owners rather than incidental agreement with CASA internals.
+
+This policy applies immediately to the existing `4,096`-square four-SPW
+candidate. Its approximately `5`--`6 ppm` image/residual differences and
+`16` alpha/alpha-error cutoff-boundary pixels are not blockers unless the
+bounded visual, source, noise, dynamic-range, or beam-scale review finds a
+scientifically meaningful defect. First-divergent-cycle and sub-ppm arithmetic
+forensics are stopped unless that review produces evidence that requires them.
+
 ### Iteration And Promotion Ladder
 
 Brian redirected the wave's iteration strategy on 2026-07-27 without changing
@@ -114,8 +151,10 @@ simplified proxy:
 - MT-MFS with `nterms=2`, scales `[0,5,12]`, the checksum-bound deterministic
   mask, `niter=2000`, `gain=0.1`, `nsigma=5.0`, and the frozen major/minor-cycle
   controls; and
-- the exact 19-product numerical, topology, metadata, and inventory comparison
-  contract, including mask, PB, PSF, residual, model, restored image, Taylor
+- the 19-product scientific comparison contract, including exact inventory,
+  coordinates, and metadata; frozen numerical ceilings; beam-aware structure;
+  source, residual/noise, and dynamic-range checks; and stable-domain alpha
+  comparison for mask, PB, PSF, residual, model, restored image, Taylor
   weight/sum-weight, alpha, and alpha-error products.
 
 Smaller diagnostic rows may be used only to isolate one semantic boundary.
@@ -135,18 +174,18 @@ Promotion proceeds in this order:
    all-fields workload without reducing its 63 FIELD IDs, POINTING rows, or
    mosaic behavior.
 
-Every promotion requires CASA-equivalent multiscale component selection and
-major-cycle residual behavior with no iteration divergence; every numerical,
-mask/topology, metadata, product-inventory, and protocol-integrity gate green;
-bounded planner-accounted memory; and credible end-to-end stage timings.
-Performance-only wins, matched final peaks with divergent component histories,
-or partial product comparisons do not promote.
+Every promotion requires the scientific floor above, no divergence or
+conspicuous artifact, exact inventory and metadata, bounded planner-accounted
+memory, and credible end-to-end stage timings. Component order and major-cycle
+history remain useful diagnostics but are not acceptance gates. Performance-only
+wins that fail the scientific floor, or partial product comparisons, do not
+promote.
 
 The final acceptance contract remains unchanged: single-field and all-fields,
 dirty and deterministic clean, at the frozen `12,150` by `12,150` 16-SPW
-geometry; full CASA correctness for every required product; and an independent
-minimum 10x speedup for each final row on the acceptance laptop. Reduced rows
-are development evidence only.
+geometry; full scientific correctness relative to CASA for every required
+product under the policy above; and an independent minimum 10x speedup for each
+final row on the acceptance laptop. Reduced rows are development evidence only.
 
 ### Required Full-Geometry Memory Campaign
 
@@ -192,14 +231,15 @@ next-use-aware staging or pinned subsets. Replace the artificial quarter-memory
 replay ceiling with accounting based on actual compact resident-program bytes
 and their stage overlap.
 
-Promotion from this campaign requires unchanged CASA component selection and
-major-cycle trajectory; every 19-product numerical, topology, metadata, and
-inventory gate; no divergence; credible end-to-end and stage timings; a
-recorded peak-memory and swap receipt; no unexplained allocation; and
-successful operation on the 32 GiB laptop. The production planner must adapt
-to detected physical memory, current headroom, unified-memory requirements,
-CPU/GPU characteristics, measured storage bandwidth, and the selected
-memory-pressure policy. Public task and UI surfaces expose a memory target and
+Promotion from this campaign requires the scientific floor for all 19
+products, no divergence or conspicuous artifact, credible end-to-end and stage
+timings, a recorded peak-memory and swap receipt, no unexplained allocation,
+and successful operation on the 32 GiB laptop. Exact component order,
+major-cycle trajectory, and cutoff-boundary alpha topology are diagnostic
+evidence rather than gates. The production planner must adapt to detected
+physical memory, current headroom, unified-memory requirements, CPU/GPU
+characteristics, measured storage bandwidth, and the selected memory-pressure
+policy. Public task and UI surfaces expose a memory target and
 memory-pressure policy with a safe automatic default. Intentional dependence
 on swap, a persisted replay-cache format, or another materially different
 production default still requires Brian's approval after the experiment
@@ -7327,6 +7367,32 @@ The frozen evidence is now exhausted for array-level causal localization. The
 next useful correctness artifact must be a new and distinct reduced CASA
 initial-residual array oracle; repeating an existing CASA reference or timing
 run would not help.
+
+### 2026-07-30 science-floor redirection
+
+Brian's revised Pareto policy above supersedes the promotion conclusions of
+the final-model and scalar-boundary investigations. Their receipts remain
+valid historical evidence, but exact trajectory, bitwise scalar identity,
+sub-ppm agreement, and the `16` alpha cutoff-boundary topology pixels no
+longer block the `4,096`-square four-SPW candidate. No new initial-residual
+CASA oracle or first-cycle replay will be created unless a bounded scientific
+review first finds a meaningful defect that requires causal localization.
+
+The existing hybrid candidate now enters a bounded promotion review using the
+already-frozen CASA and casa-rs products. It must record:
+
+- matched-scale visual panels for restored image, residual, model, and alpha;
+- source peak and integrated flux, centroid/position, and morphology checks;
+- off-source residual location, robust noise, distribution, and dynamic range;
+- beam-scale and progressively larger-scale difference amplitudes relative to
+  both reference noise and source signal; and
+- a stable alpha domain that excludes only documented cutoff-boundary pixels.
+
+If those checks pass alongside the existing numerical ceilings, inventory,
+metadata, PSF, PB, weight, sumwt, stability, and no-divergence evidence, the
+candidate promotes immediately to the `4,096`-square full-16-SPW row. Further
+sub-ppm arithmetic work is then prohibited unless new scientific evidence
+reopens it.
 
 ## Iteration Rules
 
