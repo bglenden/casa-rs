@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
+import signal
 import time
 from pathlib import Path
 
@@ -240,15 +242,15 @@ def main() -> None:
     profile = PROFILE_PARAMETERS[args.profile]
 
     if args.extract_only and args.resume_existing:
-        raise RuntimeError("--extract-only and --resume-existing are mutually exclusive")
+        raise RuntimeError(
+            "--extract-only and --resume-existing are mutually exclusive"
+        )
     if args.output_npz.exists():
         raise RuntimeError(f"refusing to overwrite trace: {args.output_npz}")
     if args.casa_log is not None:
         if args.extract_only:
             if not args.casa_log.is_file():
-                raise RuntimeError(
-                    f"completed CASA log is missing: {args.casa_log}"
-                )
+                raise RuntimeError(f"completed CASA log is missing: {args.casa_log}")
         else:
             if args.casa_log.exists():
                 raise RuntimeError(f"refusing to overwrite CASA log: {args.casa_log}")
@@ -271,9 +273,7 @@ def main() -> None:
     else:
         if args.resume_existing:
             if not args.scratch_ms.is_dir():
-                raise RuntimeError(
-                    f"resume scratch MS is missing: {args.scratch_ms}"
-                )
+                raise RuntimeError(f"resume scratch MS is missing: {args.scratch_ms}")
             if not prefixed_directories(args.output_prefix):
                 raise RuntimeError(
                     f"resume CASA output bundle is missing: {args.output_prefix}.*"
@@ -344,6 +344,31 @@ def main() -> None:
             }
         )
         casalog.filter("INFO")
+        debugger_ready_path = os.environ.get("CASA_VLASS_CALLSITE_DEBUGGER_READY")
+        if debugger_ready_path:
+            ready = Path(debugger_ready_path)
+            if not ready.is_absolute() or ready.exists():
+                raise RuntimeError(
+                    "CASA_VLASS_CALLSITE_DEBUGGER_READY must name a new "
+                    "absolute receipt"
+                )
+            ready.parent.mkdir(parents=True, exist_ok=True)
+            temporary = ready.with_name(f"{ready.name}.tmp.{os.getpid()}")
+            temporary.write_text(
+                json.dumps(
+                    {
+                        "schema": ("casa-rs-vlass-casa-callsite-debugger-ready-v1"),
+                        "pid": os.getpid(),
+                        "boundary": "immediately-before-tclean",
+                        "profile": args.profile,
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(ready)
+            os.kill(os.getpid(), signal.SIGSTOP)
         started = time.monotonic()
         summary = tclean(**parameters)
         elapsed_s = time.monotonic() - started
