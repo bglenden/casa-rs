@@ -6954,6 +6954,40 @@ passes unchanged. Otherwise it remains
 `bounded-correctness-pass-performance-ineligible`; no tuning sweep or clean is
 authorized by that outcome.
 
+The single authorized
+`vlass-4096-4spw-aw-hybrid-residual-path-v4` rerun reached
+`bounded-hybrid-closure`. Both fixed lanes used `FE_TONEAREST` and FPCR `0`;
+their wall times were `4.019208 ms` and `4.014375 ms`. Candidate
+spawn-to-join took `4.093708 ms`, and total candidate construction including
+serial validation and allocation took `4.617541 ms`, down from the v3
+single-lane `7.303000 ms`. Readback plus candidate construction plus tile
+update was `5.827874 ms`, below `15.000000 ms`.
+Prediction-to-tile-ready was `52.499833 ms`, below `62.690729 ms` by
+`10.190896 ms`; the constituent Metal dispatch/wait and tile-grid times were
+`46.671959 ms` and `50.904333 ms`. These are one-run observations; the lower
+Metal time is not attributed to the two-lane CPU change.
+
+All v3 scientific hashes were reproduced exactly, including the direct
+candidate, canonical residual, routed residual, tile ingress, normalized
+TT0/TT1, and normalization mask. The read-only closure therefore reproduced
+the same approximately `0.074`--`0.110 ppm` residual/image/alpha numerical
+agreement and zero alpha/alpha-error mask mismatches. The prediction receipt
+SHA-256 is
+`54a12b109dc5b655ae6c220140ced2059f56de652bc00d4452ebc0cf28d271a3`;
+the normalized-residual receipt SHA-256 is
+`f5632e7d442ff1b93468090418e9fff6e3eebf79b24ddabc2621c6b641fe665f`;
+the closure receipt SHA-256 is
+`1817048cd8dab884ac733fbb854ca550a3a4cf5c0348ef51a3c68c9a1bd552f5`;
+and the run-log SHA-256 is
+`420b3a7c74acf2217f2f4279d9482514ae9645fa5ca2140edb0b1b671c3761ab`.
+
+The closure authorizes exactly one private `4096`-square four-SPW clean
+candidate using this hybrid branch. It does not authorize a production
+default, public or UI/task exposure, a full-16-SPW row, a `12,150`-square
+run, a tolerance change, merge, or final promotion. No CASA call, clean,
+full-16-SPW row, full-size development row, or memory-policy experiment had
+run at this checkpoint.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
