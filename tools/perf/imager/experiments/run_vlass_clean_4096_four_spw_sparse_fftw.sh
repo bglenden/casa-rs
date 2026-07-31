@@ -42,6 +42,8 @@ metal_gpu_residual_replay="${CASA_RS_VLASS_METAL_GPU_RESIDUAL_REPLAY:-0}"
 metal_global_tile_replay="${CASA_RS_VLASS_METAL_GLOBAL_TILE_REPLAY:-0}"
 prediction_grid_census="${CASA_RS_VLASS_PREDICTION_GRID_CENSUS:-0}"
 model_delta_census="${CASA_RS_VLASS_MODEL_DELTA_CENSUS:-0}"
+physical_component_probe="${CASA_RS_VLASS_PHYSICAL_COMPONENT_PROBE:-0}"
+exact_component_probe="${CASA_RS_VLASS_EXACT_COMPONENT_PROBE:-0}"
 incremental_model_probe="${CASA_RS_VLASS_INCREMENTAL_MODEL_PROBE:-0}"
 incremental_model_runtime="${CASA_RS_VLASS_INCREMENTAL_MODEL_RUNTIME:-0}"
 selected_model_dft="${CASA_RS_VLASS_SELECTED_MODEL_DFT:-0}"
@@ -96,6 +98,8 @@ metal_gpu_residual_replay_label=""
 metal_global_tile_replay_label=""
 prediction_grid_census_label=""
 model_delta_census_label=""
+physical_component_probe_label=""
+exact_component_probe_label=""
 incremental_model_probe_label=""
 incremental_model_runtime_label=""
 selected_model_dft_label=""
@@ -576,6 +580,28 @@ elif [[ "$model_delta_census" != "0" ]]; then
     echo "CASA_RS_VLASS_MODEL_DELTA_CENSUS must be 0 or 1" >&2
     exit 2
 fi
+if [[ "$physical_component_probe" == "1" ]]; then
+    physical_component_probe_label="-physical-component-probe"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_PHYSICAL_COMPONENT_PROBE=1
+    )
+elif [[ "$physical_component_probe" != "0" ]]; then
+    echo "CASA_RS_VLASS_PHYSICAL_COMPONENT_PROBE must be 0 or 1" >&2
+    exit 2
+fi
+if [[ "$exact_component_probe" == "1" ]]; then
+    exact_component_probe_label="-exact-component-probe"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_EXACT_COMPONENT_PROBE=1
+    )
+elif [[ "$exact_component_probe" != "0" ]]; then
+    echo "CASA_RS_VLASS_EXACT_COMPONENT_PROBE must be 0 or 1" >&2
+    exit 2
+fi
+if [[ "$physical_component_probe" == "1" && "$exact_component_probe" == "1" ]]; then
+    echo "CASA_RS_VLASS_PHYSICAL_COMPONENT_PROBE and CASA_RS_VLASS_EXACT_COMPONENT_PROBE are mutually exclusive" >&2
+    exit 2
+fi
 if [[ "$incremental_model_probe" == "1" ]]; then
     case "$incremental_model_max_delta_positions" in
         *[!0-9]*)
@@ -764,7 +790,7 @@ if [[ "$grid_threads" != "1" ]]; then
     parallel_label="-parallel"
     parallel_argument=(--parallel)
 fi
-label="vlass-production-clean-4096-four-spw-sparse-fftw-t${fftw_threads}-niter${niter}${tapless_phase_label}${replay_compact_programs_label}${prime_replay_initial_dirty_label}${residual_only_label}${residual_live_cfs_only_label}${metal_f32_residual_fft_label}${metal_prediction_probe_label}${metal_tile_grid_probe_label}${metal_resident_chain_probe_label}${metal_resident_tile_chain_label}${metal_gpu_residual_replay_label}${metal_global_tile_replay_label}${prediction_grid_census_label}${model_delta_census_label}${incremental_model_probe_label}${incremental_model_runtime_label}${selected_model_dft_label}${image_response_cache_label}${image_response_dyadic_census_label}${image_response_dyadic_tiles_label}${prediction_sidecar_label}${wide_division_sidecar_label}${hybrid_residual_label}${hybrid_clean_label}${predivision_source_phase_label}${raw_frame_taylor_label}${prediction_prefix_trace_label}${model_fft_label}${sparse_model_dft_label}${linear_madfm_label}${keyed_madfm_label}${radix_madfm_label}${cache_refreshed_nsigma_label}${sparse_mask_peak_search_label}${parallel_model_term_fft_label}${model_fft_timing_label}${fftw_f64_timing_label}${fftw_f64_wisdom_label}${fftw_f32_wisdom_label}${sparse_model_prep_label}${parallel_residual_term_fft_label}${persistent_metal_pack_label}${plan_threads_label}${pack_threads_label}${grid_threads_label}${parallel_label}${acceleration_label}-v1"
+label="vlass-production-clean-4096-four-spw-sparse-fftw-t${fftw_threads}-niter${niter}${tapless_phase_label}${replay_compact_programs_label}${prime_replay_initial_dirty_label}${residual_only_label}${residual_live_cfs_only_label}${metal_f32_residual_fft_label}${metal_prediction_probe_label}${metal_tile_grid_probe_label}${metal_resident_chain_probe_label}${metal_resident_tile_chain_label}${metal_gpu_residual_replay_label}${metal_global_tile_replay_label}${prediction_grid_census_label}${model_delta_census_label}${physical_component_probe_label}${exact_component_probe_label}${incremental_model_probe_label}${incremental_model_runtime_label}${selected_model_dft_label}${image_response_cache_label}${image_response_dyadic_census_label}${image_response_dyadic_tiles_label}${prediction_sidecar_label}${wide_division_sidecar_label}${hybrid_residual_label}${hybrid_clean_label}${predivision_source_phase_label}${raw_frame_taylor_label}${prediction_prefix_trace_label}${model_fft_label}${sparse_model_dft_label}${linear_madfm_label}${keyed_madfm_label}${radix_madfm_label}${cache_refreshed_nsigma_label}${sparse_mask_peak_search_label}${parallel_model_term_fft_label}${model_fft_timing_label}${fftw_f64_timing_label}${fftw_f64_wisdom_label}${fftw_f32_wisdom_label}${sparse_model_prep_label}${parallel_residual_term_fft_label}${persistent_metal_pack_label}${plan_threads_label}${pack_threads_label}${grid_threads_label}${parallel_label}${acceleration_label}-v1"
 if [[ -n "${CASA_RS_VLASS_LABEL_OVERRIDE:-}" ]]; then
     case "$CASA_RS_VLASS_LABEL_OVERRIDE" in
         *[!A-Za-z0-9._-]*)

@@ -4440,6 +4440,771 @@ struct AwProjectSparseModelDelta {
     term_deltas: Vec<f32>,
 }
 
+const AWPROJECT_PHYSICAL_COMPONENT_PROBE_ENV: &str =
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_PHYSICAL_COMPONENT_PROBE";
+const AWPROJECT_EXACT_COMPONENT_PROBE_ENV: &str =
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_EXACT_COMPONENT_PROBE";
+const AWPROJECT_PHYSICAL_COMPONENT_STATE_LIMIT_BYTES: usize = 151_257_904;
+
+fn awproject_component_probe_enabled() -> bool {
+    env::var_os(AWPROJECT_PHYSICAL_COMPONENT_PROBE_ENV).is_some()
+        || env::var_os(AWPROJECT_EXACT_COMPONENT_PROBE_ENV).is_some()
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AwProjectPhysicalComponent {
+    image_x: usize,
+    image_y: usize,
+    input_x: usize,
+    input_y: usize,
+    l: f64,
+    m: f64,
+    n_minus_one: f64,
+    raw_tt0: Complex32,
+    raw_tt1: Complex32,
+    prepared_tt0: Complex32,
+    prepared_tt1: Complex32,
+}
+
+#[derive(Debug)]
+struct AwProjectPhysicalComponentModel {
+    components: Vec<AwProjectPhysicalComponent>,
+}
+
+impl AwProjectPhysicalComponentModel {
+    fn resident_bytes(&self) -> usize {
+        std::mem::size_of::<Self>().saturating_add(
+            self.components
+                .capacity()
+                .saturating_mul(std::mem::size_of::<AwProjectPhysicalComponent>()),
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AwProjectPhysicalBeamResponse {
+    None,
+    Voltage,
+    Power,
+}
+
+impl AwProjectPhysicalBeamResponse {
+    fn label(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Voltage => "voltage",
+            Self::Power => "power",
+        }
+    }
+
+    fn gain(self, voltage: f32) -> f32 {
+        match self {
+            Self::None => 1.0,
+            Self::Voltage => voltage,
+            Self::Power => voltage * voltage,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AwProjectPhysicalModelAmplitude {
+    Raw,
+    FlatSkyPrepared,
+}
+
+impl AwProjectPhysicalModelAmplitude {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Raw => "raw",
+            Self::FlatSkyPrepared => "flat-sky-prepared",
+        }
+    }
+
+    fn value(self, component: AwProjectPhysicalComponent, taylor_x: f32) -> Complex32 {
+        match self {
+            Self::Raw => component.raw_tt0 + component.raw_tt1 * taylor_x,
+            Self::FlatSkyPrepared => component.prepared_tt0 + component.prepared_tt1 * taylor_x,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AwProjectPhysicalGeometricPhase {
+    Negative,
+    Positive,
+}
+
+impl AwProjectPhysicalGeometricPhase {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Negative => "negative",
+            Self::Positive => "positive",
+        }
+    }
+
+    fn phasor(self, phase: f64) -> Complex64 {
+        match self {
+            Self::Negative => Complex64::new(phase.cos(), -phase.sin()),
+            Self::Positive => Complex64::new(phase.cos(), phase.sin()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AwProjectPhysicalSourceFrame {
+    PhaseCenter,
+    SourcePhase,
+    ConjugateSourcePhase,
+}
+
+impl AwProjectPhysicalSourceFrame {
+    fn label(self) -> &'static str {
+        match self {
+            Self::PhaseCenter => "phase-center",
+            Self::SourcePhase => "source-phase",
+            Self::ConjugateSourcePhase => "conjugate-source-phase",
+        }
+    }
+
+    fn apply(self, prediction: Complex32, source_phase: Complex32) -> Complex32 {
+        match self {
+            Self::PhaseCenter => prediction,
+            Self::SourcePhase => prediction * source_phase,
+            Self::ConjugateSourcePhase => {
+                prediction * Complex32::new(source_phase.re, -source_phase.im)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct AwProjectPhysicalProbeStats {
+    values: usize,
+    error_square_sum: f64,
+    candidate_square_sum: f64,
+    reference_square_sum: f64,
+    candidate_reference_cross: Complex64,
+    max_abs: f64,
+    reference_max_abs: f64,
+}
+
+impl AwProjectPhysicalProbeStats {
+    fn observe(&mut self, actual: Complex32, reference: Complex32) {
+        let error = actual - reference;
+        let actual = Complex64::new(f64::from(actual.re), f64::from(actual.im));
+        let reference = Complex64::new(f64::from(reference.re), f64::from(reference.im));
+        self.values = self.values.saturating_add(1);
+        self.error_square_sum += f64::from(error.norm_sqr());
+        self.candidate_square_sum += actual.norm_sqr();
+        self.reference_square_sum += reference.norm_sqr();
+        self.candidate_reference_cross += actual.conj() * reference;
+        self.max_abs = self.max_abs.max(f64::from(error.norm_sqr()).sqrt());
+        self.reference_max_abs = self.reference_max_abs.max(reference.norm());
+    }
+
+    fn rms(self) -> f64 {
+        (self.error_square_sum / self.values.max(1) as f64).sqrt()
+    }
+
+    fn relative_rms(self) -> f64 {
+        (self.error_square_sum / self.reference_square_sum.max(f64::MIN_POSITIVE)).sqrt()
+    }
+
+    fn candidate_rms(self) -> f64 {
+        (self.candidate_square_sum / self.values.max(1) as f64).sqrt()
+    }
+
+    fn reference_rms(self) -> f64 {
+        (self.reference_square_sum / self.values.max(1) as f64).sqrt()
+    }
+
+    fn best_fit_gain(self) -> Complex64 {
+        self.candidate_reference_cross / self.candidate_square_sum.max(f64::MIN_POSITIVE)
+    }
+
+    fn coherence(self) -> f64 {
+        self.candidate_reference_cross.norm()
+            / (self.candidate_square_sum * self.reference_square_sum)
+                .max(f64::MIN_POSITIVE)
+                .sqrt()
+    }
+
+    fn gain_corrected_relative_rms(self) -> f64 {
+        let corrected_error_square = (self.reference_square_sum
+            - self.candidate_reference_cross.norm_sqr()
+                / self.candidate_square_sum.max(f64::MIN_POSITIVE))
+        .max(0.0);
+        (corrected_error_square / self.reference_square_sum.max(f64::MIN_POSITIVE)).sqrt()
+    }
+
+    fn max_normalized_abs(self) -> f64 {
+        self.max_abs / self.reference_max_abs.max(f64::MIN_POSITIVE)
+    }
+}
+
+fn build_awproject_physical_component_model(
+    geometry: ImageGeometry,
+    gridder: &StandardGridder,
+    model_terms: &[Array2<f32>],
+    prepared_models: &[(Array2<Complex32>, bool)],
+    model_support_positions: &BTreeSet<(usize, usize)>,
+) -> Result<AwProjectPhysicalComponentModel, ImagingError> {
+    let [raw_tt0, raw_tt1] = model_terms else {
+        return Err(ImagingError::Unsupported(format!(
+            "physical AWProject component prediction requires two raw MT-MFS terms, got {}",
+            model_terms.len(),
+        )));
+    };
+    let [(tt0, tt0_casacore), (tt1, tt1_casacore)] = prepared_models else {
+        return Err(ImagingError::Unsupported(format!(
+            "physical AWProject component prediction requires two MT-MFS terms, got {}",
+            prepared_models.len(),
+        )));
+    };
+    if !(*tt0_casacore && *tt1_casacore) {
+        return Err(ImagingError::Unsupported(
+            "physical AWProject component prediction requires sparse casacore-layout model preparation"
+                .to_string(),
+        ));
+    }
+    let [grid_x0, grid_y0] = gridder.image_grid_origin();
+    let mut components = Vec::with_capacity(model_support_positions.len());
+    for &(image_x, image_y) in model_support_positions {
+        let input_x = grid_x0.checked_add(image_x).ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "physical AWProject component X coordinate overflowed".to_string(),
+            )
+        })?;
+        let input_y = grid_y0.checked_add(image_y).ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "physical AWProject component Y coordinate overflowed".to_string(),
+            )
+        })?;
+        let prepared_tt0 = tt0.get((input_y, input_x)).copied().ok_or_else(|| {
+            ImagingError::Normalization(
+                "physical AWProject TT0 component escaped prepared storage".to_string(),
+            )
+        })?;
+        let prepared_tt1 = tt1.get((input_y, input_x)).copied().ok_or_else(|| {
+            ImagingError::Normalization(
+                "physical AWProject TT1 component escaped prepared storage".to_string(),
+            )
+        })?;
+        let raw_tt0 = Complex32::new(raw_tt0[(image_x, image_y)], 0.0);
+        let raw_tt1 = Complex32::new(raw_tt1[(image_x, image_y)], 0.0);
+        if prepared_tt0 == Complex32::new(0.0, 0.0)
+            && prepared_tt1 == Complex32::new(0.0, 0.0)
+            && raw_tt0 == Complex32::new(0.0, 0.0)
+            && raw_tt1 == Complex32::new(0.0, 0.0)
+        {
+            continue;
+        }
+        let pixel = direct_pixel_coordinate(geometry, image_x, image_y);
+        components.push(AwProjectPhysicalComponent {
+            image_x,
+            image_y,
+            input_x,
+            input_y,
+            l: pixel.l,
+            m: pixel.m,
+            n_minus_one: pixel.n_minus_one,
+            raw_tt0,
+            raw_tt1,
+            prepared_tt0,
+            prepared_tt1,
+        });
+    }
+    Ok(AwProjectPhysicalComponentModel { components })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn predict_awproject_physical_components(
+    model: &AwProjectPhysicalComponentModel,
+    geometry: ImageGeometry,
+    phase_center_direction_rad: [f64; 2],
+    group: &GroupedVisibilityMetadata,
+    u_lambda: f64,
+    v_lambda: f64,
+    w_lambda: f64,
+    taylor_x: f32,
+    source_phase: Complex32,
+    model_amplitude: AwProjectPhysicalModelAmplitude,
+    beam_response: AwProjectPhysicalBeamResponse,
+    geometric_phase: AwProjectPhysicalGeometricPhase,
+    source_frame: AwProjectPhysicalSourceFrame,
+) -> Complex32 {
+    let pointing_pixel = group.pointing_pixel_position.unwrap_or_else(|| {
+        mosaic_pointing_pixel_position(
+            geometry,
+            phase_center_direction_rad,
+            group.pointing_direction_rad,
+        )
+    });
+    let cell_x = geometry.cell_size_rad[0].abs();
+    let cell_y = geometry.cell_size_rad[1].abs();
+    let mut prediction = Complex64::new(0.0, 0.0);
+    for component in &model.components {
+        let beam_l = (component.image_x as f64 - pointing_pixel[0]) * cell_x;
+        let beam_m = (component.image_y as f64 - pointing_pixel[1]) * cell_y;
+        let voltage = primary_beam_voltage_pattern_for_offsets(
+            group.primary_beam_model,
+            beam_l,
+            beam_m,
+            group.beam_frequency_hz,
+        );
+        let gain = beam_response.gain(voltage);
+        let model_value = model_amplitude.value(*component, taylor_x);
+        let phase = std::f64::consts::TAU
+            * (u_lambda * component.l + v_lambda * component.m + w_lambda * component.n_minus_one);
+        let phasor = geometric_phase.phasor(phase);
+        prediction += Complex64::new(f64::from(model_value.re), f64::from(model_value.im))
+            * phasor
+            * f64::from(gain);
+    }
+    source_frame.apply(
+        Complex32::new(prediction.re as f32, prediction.im as f32),
+        source_phase,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn maybe_probe_awproject_physical_components(
+    request: &MtmfsRequest,
+    mosaic: &MosaicGridderConfig,
+    batch: &VisibilityBatch,
+    parallel_hands: &AwParallelHandVisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    groups: &[GroupedVisibilityMetadata],
+    model: Option<&AwProjectPhysicalComponentModel>,
+    source_samples: &[AwProjectCompactSourceSample],
+    planned_samples: &[AwProjectCompactPlannedSample],
+    tap_requests: &[AwProjectCompactTapRequest],
+) -> Result<(), ImagingError> {
+    static PROBE_DONE: AtomicBool = AtomicBool::new(false);
+
+    if env::var_os(AWPROJECT_PHYSICAL_COMPONENT_PROBE_ENV).is_none()
+        || PROBE_DONE
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+    {
+        return Ok(());
+    }
+    let model = model.ok_or_else(|| {
+        ImagingError::InvalidRequest(
+            "physical AWProject component probe has no prepared component model".to_string(),
+        )
+    })?;
+    if model.components.is_empty() {
+        return Err(ImagingError::InvalidRequest(
+            "physical AWProject component probe has an empty component model".to_string(),
+        ));
+    }
+    let state_bytes = model.resident_bytes();
+    if state_bytes > AWPROJECT_PHYSICAL_COMPONENT_STATE_LIMIT_BYTES {
+        return Err(ImagingError::Unsupported(format!(
+            "physical AWProject component model needs {state_bytes} bytes above the \
+             {AWPROJECT_PHYSICAL_COMPONENT_STATE_LIMIT_BYTES}-byte tournament state gate",
+        )));
+    }
+    if source_samples.len() != planned_samples.len() {
+        return Err(ImagingError::Normalization(format!(
+            "physical AWProject component probe has {} source samples but {} planned samples",
+            source_samples.len(),
+            planned_samples.len(),
+        )));
+    }
+    let mut variants = Vec::with_capacity(36);
+    for model_amplitude in [
+        AwProjectPhysicalModelAmplitude::Raw,
+        AwProjectPhysicalModelAmplitude::FlatSkyPrepared,
+    ] {
+        for beam in [
+            AwProjectPhysicalBeamResponse::None,
+            AwProjectPhysicalBeamResponse::Voltage,
+            AwProjectPhysicalBeamResponse::Power,
+        ] {
+            for geometric_phase in [
+                AwProjectPhysicalGeometricPhase::Negative,
+                AwProjectPhysicalGeometricPhase::Positive,
+            ] {
+                for source_frame in [
+                    AwProjectPhysicalSourceFrame::PhaseCenter,
+                    AwProjectPhysicalSourceFrame::SourcePhase,
+                    AwProjectPhysicalSourceFrame::ConjugateSourcePhase,
+                ] {
+                    variants.push((model_amplitude, beam, geometric_phase, source_frame));
+                }
+            }
+        }
+    }
+    let started = Instant::now();
+    let mut stats = vec![AwProjectPhysicalProbeStats::default(); variants.len()];
+    for (source, planned) in source_samples.iter().zip(planned_samples) {
+        let sample_index = source.sample_index;
+        let group = groups.get(source.group_index).ok_or_else(|| {
+            ImagingError::Normalization(
+                "physical AWProject component probe group index escaped metadata".to_string(),
+            )
+        })?;
+        let taylor_x = mtmfs_casa_taylor_x(sample_frequencies_hz[sample_index], request.reffreq_hz);
+        let predictions = variants
+            .iter()
+            .copied()
+            .map(|(amplitude, beam, phase, frame)| {
+                predict_awproject_physical_components(
+                    model,
+                    request.geometry,
+                    mosaic.phase_center_direction_rad,
+                    group,
+                    batch.u_lambda[sample_index],
+                    batch.v_lambda[sample_index],
+                    batch.w_lambda[sample_index],
+                    taylor_x,
+                    parallel_hands.source_phase[sample_index],
+                    amplitude,
+                    beam,
+                    phase,
+                    frame,
+                )
+            })
+            .collect::<Vec<_>>();
+        for (plan, residual) in [
+            (source.first_imaging_plan, planned.first_residual),
+            (source.second_imaging_plan, planned.second_residual),
+        ] {
+            let mueller = tap_requests
+                .get(plan.tap_bundle)
+                .ok_or_else(|| {
+                    ImagingError::Normalization(
+                        "physical AWProject component probe tap bundle escaped requests"
+                            .to_string(),
+                    )
+                })?
+                .cell_key
+                .mueller_element;
+            let observed = aw_stokes_i_visibility_for_mueller(
+                mueller,
+                parallel_hands.first_visibility[sample_index],
+                parallel_hands.second_visibility[sample_index],
+            )?;
+            let reference_prediction = observed - residual;
+            for (candidate_stats, &candidate_prediction) in stats.iter_mut().zip(&predictions) {
+                candidate_stats.observe(candidate_prediction, reference_prediction);
+            }
+        }
+    }
+    let best = stats
+        .iter()
+        .enumerate()
+        .min_by(|(_, left), (_, right)| left.relative_rms().total_cmp(&right.relative_rms()))
+        .map(|(index, _)| index)
+        .ok_or_else(|| {
+            ImagingError::Normalization(
+                "physical AWProject component probe produced no variants".to_string(),
+            )
+        })?;
+    for ((amplitude, beam, phase, frame), observed) in variants.iter().copied().zip(&stats) {
+        let best_fit_gain = observed.best_fit_gain();
+        eprintln!(
+            "awproject_physical_component_probe variant=true amplitude={} beam={} \
+             geometric_phase={} frame={} \
+             components={} samples={} values={} state_bytes={} rms={:.9e} \
+             relative_rms={:.9e} candidate_rms={:.9e} reference_rms={:.9e} \
+             coherence={:.9e} best_fit_gain_re={:.9e} best_fit_gain_im={:.9e} \
+             gain_corrected_relative_rms={:.9e} max_abs={:.9e}",
+            amplitude.label(),
+            beam.label(),
+            phase.label(),
+            frame.label(),
+            model.components.len(),
+            source_samples.len(),
+            observed.values,
+            state_bytes,
+            observed.rms(),
+            observed.relative_rms(),
+            observed.candidate_rms(),
+            observed.reference_rms(),
+            observed.coherence(),
+            best_fit_gain.re,
+            best_fit_gain.im,
+            observed.gain_corrected_relative_rms(),
+            observed.max_abs,
+        );
+    }
+    eprintln!(
+        "awproject_physical_component_probe summary=true best_amplitude={} best_beam={} \
+         best_geometric_phase={} best_frame={} \
+         components={} samples={} state_bytes={} state_limit_bytes={} \
+         best_relative_rms={:.9e} best_coherence={:.9e} \
+         best_gain_corrected_relative_rms={:.9e} best_max_abs={:.9e} elapsed_ms={:.3} \
+         role=bounded-first-window-semantic-discriminator-not-promotion-evidence",
+        variants[best].0.label(),
+        variants[best].1.label(),
+        variants[best].2.label(),
+        variants[best].3.label(),
+        model.components.len(),
+        source_samples.len(),
+        state_bytes,
+        AWPROJECT_PHYSICAL_COMPONENT_STATE_LIMIT_BYTES,
+        stats[best].relative_rms(),
+        stats[best].coherence(),
+        stats[best].gain_corrected_relative_rms(),
+        stats[best].max_abs,
+        profile::millis(started.elapsed()),
+    );
+    Ok(())
+}
+
+fn awproject_centered_dft_axis_phase(
+    grid_index: usize,
+    input_index: usize,
+    axis_size: usize,
+) -> Complex32 {
+    let shifted_input = (input_index + axis_size / 2) % axis_size;
+    let shifted_frequency = (grid_index + axis_size / 2) % axis_size;
+    let angle =
+        -std::f64::consts::TAU * (shifted_frequency * shifted_input) as f64 / axis_size as f64;
+    Complex32::new(angle.cos() as f32, angle.sin() as f32)
+}
+
+fn awproject_exact_component_model_grid_value(
+    model: &AwProjectPhysicalComponentModel,
+    model_order: usize,
+    grid_x: usize,
+    grid_y: usize,
+    grid_width: usize,
+    grid_height: usize,
+) -> Complex32 {
+    model
+        .components
+        .iter()
+        .copied()
+        .fold(Complex32::new(0.0, 0.0), |sum, component| {
+            let amplitude = match model_order {
+                0 => component.prepared_tt0,
+                1 => component.prepared_tt1,
+                _ => Complex32::new(0.0, 0.0),
+            };
+            let phase_x = awproject_centered_dft_axis_phase(grid_x, component.input_x, grid_width);
+            let phase_y = awproject_centered_dft_axis_phase(grid_y, component.input_y, grid_height);
+            sum + (amplitude * phase_x) * phase_y
+        })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn awproject_exact_component_degrid_term(
+    model: &AwProjectPhysicalComponentModel,
+    model_order: usize,
+    plan: AwProjectCompactSamplePlan,
+    bundle: &AwProjectCompactTapBundle,
+    group_index: usize,
+    phase_tables: Option<&AwProjectPhaseTables>,
+    grid_width: usize,
+    grid_height: usize,
+) -> Complex32 {
+    let x_support = bundle.x_support as isize;
+    let y_support = bundle.y_support as isize;
+    let phase_table = awproject_compact_phase_table(bundle, group_index, phase_tables);
+    let mut tap_index = 0usize;
+    let mut value = Complex32::new(0.0, 0.0);
+    for iy in -y_support..=y_support {
+        for ix in -x_support..=x_support {
+            let grid_x = (plan.loc_x + ix) as usize;
+            let grid_y = (plan.loc_y + iy) as usize;
+            let model_value = awproject_exact_component_model_grid_value(
+                model,
+                model_order,
+                grid_x,
+                grid_y,
+                grid_width,
+                grid_height,
+            );
+            value += awproject_compact_replay_tap(bundle, phase_table, ix, iy, tap_index).conj()
+                * model_value;
+            tap_index += 1;
+        }
+    }
+    debug_assert_eq!(tap_index, bundle.values.len());
+    awproject_cpp_complex_divide(value, bundle.normalization.conj())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn maybe_probe_awproject_exact_components(
+    request: &MtmfsRequest,
+    parallel_hands: &AwParallelHandVisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    model: Option<&AwProjectPhysicalComponentModel>,
+    source_samples: &[AwProjectCompactSourceSample],
+    planned_samples: &[AwProjectCompactPlannedSample],
+    tap_requests: &[AwProjectCompactTapRequest],
+    bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    gridder: &StandardGridder,
+) -> Result<(), ImagingError> {
+    static PROBE_DONE: AtomicBool = AtomicBool::new(false);
+
+    if env::var_os(AWPROJECT_EXACT_COMPONENT_PROBE_ENV).is_none()
+        || PROBE_DONE
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+    {
+        return Ok(());
+    }
+    let model = model.ok_or_else(|| {
+        ImagingError::InvalidRequest(
+            "exact sampled-CF AWProject component probe has no prepared component model"
+                .to_string(),
+        )
+    })?;
+    if model.components.is_empty() {
+        return Err(ImagingError::InvalidRequest(
+            "exact sampled-CF AWProject component probe has an empty component model".to_string(),
+        ));
+    }
+    if source_samples.len() != planned_samples.len() {
+        return Err(ImagingError::Normalization(format!(
+            "exact sampled-CF AWProject component probe has {} source samples but {} planned samples",
+            source_samples.len(),
+            planned_samples.len(),
+        )));
+    }
+    let model_state_bytes = model.resident_bytes();
+    let visibility_state_bytes = source_samples
+        .len()
+        .saturating_mul(2)
+        .saturating_mul(std::mem::size_of::<Complex32>());
+    let resident_state_bytes = model_state_bytes.saturating_add(visibility_state_bytes);
+    if resident_state_bytes > AWPROJECT_PHYSICAL_COMPONENT_STATE_LIMIT_BYTES {
+        return Err(ImagingError::Unsupported(format!(
+            "exact sampled-CF AWProject component probe needs {resident_state_bytes} bytes above \
+             the {AWPROJECT_PHYSICAL_COMPONENT_STATE_LIMIT_BYTES}-byte tournament state gate",
+        )));
+    }
+    let [grid_width, grid_height] = gridder.grid_shape();
+    let started = Instant::now();
+    let mut stats = AwProjectPhysicalProbeStats::default();
+    let mut tap_interactions = 0usize;
+    let mut prediction_response_keys = HashSet::<(usize, Option<usize>)>::new();
+    let mut prediction_plan_references = 0usize;
+    let mut prediction_current_kernel_interactions = 0usize;
+    for (source, planned) in source_samples.iter().zip(planned_samples) {
+        let sample_index = source.sample_index;
+        let taylor_x = mtmfs_casa_taylor_x(sample_frequencies_hz[sample_index], request.reffreq_hz);
+        let predict = |plan: AwProjectCompactSamplePlan| {
+            let bundle = awproject_ready_compact_tap(bundles, plan.tap_bundle);
+            let tt0 = awproject_exact_component_degrid_term(
+                model,
+                0,
+                plan,
+                bundle,
+                source.group_index,
+                phase_tables,
+                grid_width,
+                grid_height,
+            );
+            let tt1 = awproject_exact_component_degrid_term(
+                model,
+                1,
+                plan,
+                bundle,
+                source.group_index,
+                phase_tables,
+                grid_width,
+                grid_height,
+            );
+            tt0 + tt1 * taylor_x
+        };
+        let first_prediction = predict(source.first_prediction_plan);
+        let second_prediction = predict(source.second_prediction_plan);
+        for plan in [source.first_prediction_plan, source.second_prediction_plan] {
+            let bundle = awproject_ready_compact_tap(bundles, plan.tap_bundle);
+            let bundle_taps = bundle.values.len();
+            let phase_key = (!bundle.phase_applied).then_some(source.group_index);
+            prediction_response_keys.insert((plan.tap_bundle, phase_key));
+            prediction_plan_references = prediction_plan_references.saturating_add(1);
+            prediction_current_kernel_interactions = prediction_current_kernel_interactions
+                .saturating_add(bundle_taps.saturating_mul(request.nterms));
+            tap_interactions = tap_interactions.saturating_add(
+                bundle_taps
+                    .saturating_mul(request.nterms)
+                    .saturating_mul(model.components.len()),
+            );
+        }
+        for (plan, residual) in [
+            (source.first_imaging_plan, planned.first_residual),
+            (source.second_imaging_plan, planned.second_residual),
+        ] {
+            let mueller = tap_requests
+                .get(plan.tap_bundle)
+                .ok_or_else(|| {
+                    ImagingError::Normalization(
+                        "exact sampled-CF AWProject component probe tap bundle escaped requests"
+                            .to_string(),
+                    )
+                })?
+                .cell_key
+                .mueller_element;
+            let observed = aw_stokes_i_visibility_for_mueller(
+                mueller,
+                parallel_hands.first_visibility[sample_index],
+                parallel_hands.second_visibility[sample_index],
+            )?;
+            let candidate_prediction =
+                aw_stokes_i_visibility_for_mueller(mueller, first_prediction, second_prediction)?;
+            stats.observe(candidate_prediction, observed - residual);
+        }
+    }
+    let prediction_unique_cf_values = prediction_response_keys
+        .iter()
+        .map(|(bundle_index, _)| {
+            awproject_ready_compact_tap(bundles, *bundle_index)
+                .values
+                .len()
+        })
+        .sum::<usize>();
+    let prediction_weighted_reuse =
+        prediction_current_kernel_interactions as f64 / prediction_unique_cf_values.max(1) as f64;
+    let best_fit_gain = stats.best_fit_gain();
+    eprintln!(
+        "awproject_exact_component_probe summary=true components={} samples={} values={} \
+         tap_interactions={} prediction_response_key_count={} \
+         prediction_unique_cf_values={} prediction_plan_references={} \
+         prediction_current_kernel_interactions={} prediction_weighted_reuse={:.9e} \
+         model_state_bytes={} visibility_state_bytes={} \
+         resident_state_bytes={} state_limit_bytes={} rms={:.9e} relative_rms={:.9e} \
+         candidate_rms={:.9e} reference_rms={:.9e} coherence={:.9e} \
+         best_fit_gain_re={:.9e} best_fit_gain_im={:.9e} \
+         gain_corrected_relative_rms={:.9e} max_abs={:.9e} \
+         max_normalized_abs={:.9e} elapsed_ms={:.3} \
+         role=bounded-first-window-exact-discretized-operator-discriminator-not-promotion-evidence",
+        model.components.len(),
+        source_samples.len(),
+        stats.values,
+        tap_interactions,
+        prediction_response_keys.len(),
+        prediction_unique_cf_values,
+        prediction_plan_references,
+        prediction_current_kernel_interactions,
+        prediction_weighted_reuse,
+        model_state_bytes,
+        visibility_state_bytes,
+        resident_state_bytes,
+        AWPROJECT_PHYSICAL_COMPONENT_STATE_LIMIT_BYTES,
+        stats.rms(),
+        stats.relative_rms(),
+        stats.candidate_rms(),
+        stats.reference_rms(),
+        stats.coherence(),
+        best_fit_gain.re,
+        best_fit_gain.im,
+        stats.gain_corrected_relative_rms(),
+        stats.max_abs,
+        stats.max_normalized_abs(),
+        profile::millis(started.elapsed()),
+    );
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct LosslessDyadicTileCensus {
     cells: usize,
@@ -5421,6 +6186,7 @@ where
         &weighting_plans,
         conv_sampling,
         None,
+        None,
         &mut replay_unweighted_blocks,
         SinglePlaneStreamPass::InitialDirty,
         execution_config.progress_callback.as_ref(),
@@ -5514,6 +6280,7 @@ where
             &gridder,
             &weighting_plans,
             conv_sampling,
+            None,
             None,
             &mut replay_unweighted_blocks,
             SinglePlaneStreamPass::InitialDirty,
@@ -9137,6 +9904,7 @@ fn accumulate_mosaic_mtmfs_stream_grids<F>(
     weighting_plans: &BTreeMap<(u64, u64), MosaicStreamingWeightingPlan>,
     conv_sampling: usize,
     model_grids: Option<&[Array2<Complex32>]>,
+    physical_component_model: Option<&AwProjectPhysicalComponentModel>,
     replay_unweighted_blocks: &mut F,
     pass: SinglePlaneStreamPass,
     progress_callback: Option<&StandardMfsProgressCallback>,
@@ -9324,6 +10092,7 @@ where
                     &block.sample_frequencies_hz,
                     &block.gridder_metadata.groups,
                     model_grids,
+                    physical_component_model,
                     cache,
                     controls,
                     requested_threads,
@@ -27765,6 +28534,7 @@ fn replay_awproject_compact_window(
     replay_block_ordinal: usize,
     last_window_in_block: bool,
     model_grids: Option<&[Array2<Complex32>]>,
+    physical_component_model: Option<&AwProjectPhysicalComponentModel>,
     source_samples: &[AwProjectCompactSourceSample],
     tap_requests: &[AwProjectCompactTapRequest],
     bundles: &[AwProjectCompactMaterializedTap],
@@ -27783,6 +28553,7 @@ fn replay_awproject_compact_window(
     let mut persistent_metal_resident_program = persistent_metal_resident_program;
     #[cfg(all(target_os = "macos", not(coverage)))]
     let gpu_residual_replay_requested = model_grids.is_some()
+        && !awproject_component_probe_enabled()
         && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GPU_RESIDUAL_REPLAY").is_some();
     #[cfg(all(target_os = "macos", not(coverage)))]
     let resident_metal_program_present = persistent_metal_resident_program
@@ -27857,6 +28628,32 @@ fn replay_awproject_compact_window(
             &aw_sample_census_before,
         ),
     };
+    if model_grids.is_some() {
+        maybe_probe_awproject_physical_components(
+            request,
+            mosaic,
+            batch,
+            parallel_hands,
+            sample_frequencies_hz,
+            groups,
+            physical_component_model,
+            source_samples,
+            &planned_samples,
+            tap_requests,
+        )?;
+        maybe_probe_awproject_exact_components(
+            request,
+            parallel_hands,
+            sample_frequencies_hz,
+            physical_component_model,
+            source_samples,
+            &planned_samples,
+            tap_requests,
+            bundles,
+            phase_tables,
+            gridder,
+        )?;
+    }
     replay_stats.prepare_elapsed += prepare_started.elapsed();
     #[cfg(all(target_os = "macos", not(coverage)))]
     if model_grids.is_none()
@@ -28324,6 +29121,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
     sample_frequencies_hz: &[f64],
     groups: &[GroupedVisibilityMetadata],
     model_grids: Option<&[Array2<Complex32>]>,
+    physical_component_model: Option<&AwProjectPhysicalComponentModel>,
     cache: &AwConvolutionFunctionResidentCache,
     controls: &AwProjectControls,
     requested_threads: usize,
@@ -28447,6 +29245,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
     #[cfg(all(target_os = "macos", not(coverage)))]
     let global_metal_replay = model_grids.is_some()
         && residual_only
+        && !awproject_component_probe_enabled()
         && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GLOBAL_TILE_REPLAY").is_some();
     #[cfg(any(not(target_os = "macos"), coverage))]
     let global_metal_replay = false;
@@ -28532,6 +29331,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                     replay_block_ordinal,
                     window_index + 1 == window_count,
                     model_grids,
+                    physical_component_model,
                     &window.source_samples,
                     &window.tap_requests,
                     &window.bundles,
@@ -28855,6 +29655,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
             replay_block_ordinal,
             cursor == batch.len(),
             model_grids,
+            physical_component_model,
             &source_samples,
             &tap_requests,
             &bundles,
@@ -29361,6 +30162,12 @@ where
     ) -> Result<(), ImagingError>,
 {
     let mut timings = ResidualComputationTimings::default();
+    let physical_component_probe = aw_cache.is_some() && awproject_component_probe_enabled();
+    let physical_component_support_positions = (physical_component_probe
+        && model_support_positions.is_none())
+    .then(|| nonzero_model_support_positions(model_terms));
+    let model_support_positions =
+        model_support_positions.or(physical_component_support_positions.as_ref());
     let model_has_values = model_support_positions.map_or_else(
         || {
             model_terms
@@ -29369,6 +30176,7 @@ where
         },
         |positions| !positions.is_empty(),
     );
+    let mut physical_component_model = None;
     let model_grids = if model_has_values {
         emit_standard_mfs_context_progress(
             progress_callback,
@@ -29394,7 +30202,8 @@ where
             );
         }
         let sparse_casacore_prep = aw_cache.is_some()
-            && env::var_os("CASA_RS_EXPERIMENTAL_SPARSE_AWPROJECT_MODEL_PREP").is_some()
+            && (env::var_os("CASA_RS_EXPERIMENTAL_SPARSE_AWPROJECT_MODEL_PREP").is_some()
+                || physical_component_probe)
             && model_support_positions.is_some();
         let prepared_models = model_terms
             .iter()
@@ -29445,6 +30254,16 @@ where
                 })
             })
             .collect::<Result<Vec<_>, ImagingError>>()?;
+        if physical_component_probe {
+            physical_component_model = Some(build_awproject_physical_component_model(
+                request.geometry,
+                gridder,
+                model_terms,
+                &prepared_models,
+                model_support_positions
+                    .expect("physical component probe requires sparse support positions"),
+            )?);
+        }
         let transform_model = |(prepared, casacore_storage): &(Array2<Complex32>, bool)| {
             Ok(if let Some(plan) = awproject_model_fft {
                 if *casacore_storage {
@@ -29572,6 +30391,7 @@ where
         weighting_plans,
         conv_sampling,
         model_grids.as_deref(),
+        physical_component_model.as_ref(),
         replay_unweighted_blocks,
         SinglePlaneStreamPass::ResidualRefresh,
         progress_callback,
@@ -29632,6 +30452,7 @@ where
             weighting_plans,
             conv_sampling,
             model_grids.as_deref(),
+            physical_component_model.as_ref(),
             replay_unweighted_blocks,
             SinglePlaneStreamPass::ResidualRefresh,
             progress_callback,
@@ -59262,25 +60083,30 @@ fn compute_residual_direct(
     Ok(image)
 }
 
-fn build_direct_pixel_coordinates(geometry: ImageGeometry) -> Vec<DirectPixelCoordinate> {
+fn direct_pixel_coordinate(geometry: ImageGeometry, x: usize, y: usize) -> DirectPixelCoordinate {
     let [nx, ny] = geometry.image_shape;
     let center_x = nx as f64 / 2.0;
     let center_y = ny as f64 / 2.0;
+    let l = (x as f64 - center_x) * geometry.cell_size_rad[0];
+    // Match CASA GridFT's effective Dec-axis convention. The C++
+    // gridder negates UVW's first two axes before locating samples on
+    // the padded grid, which maps positive m to lower array indices.
+    let m = (center_y - y as f64) * geometry.cell_size_rad[1];
+    let radius_sq = l * l + m * m;
+    let n_minus_one = if radius_sq < 1.0 {
+        (1.0 - radius_sq).sqrt() - 1.0
+    } else {
+        -1.0
+    };
+    DirectPixelCoordinate { l, m, n_minus_one }
+}
+
+fn build_direct_pixel_coordinates(geometry: ImageGeometry) -> Vec<DirectPixelCoordinate> {
+    let [nx, ny] = geometry.image_shape;
     let mut pixels = Vec::with_capacity(nx * ny);
     for x in 0..nx {
         for y in 0..ny {
-            let l = (x as f64 - center_x) * geometry.cell_size_rad[0];
-            // Match CASA GridFT's effective Dec-axis convention. The C++
-            // gridder negates UVW's first two axes before locating samples on
-            // the padded grid, which maps positive m to lower array indices.
-            let m = (center_y - y as f64) * geometry.cell_size_rad[1];
-            let radius_sq = l * l + m * m;
-            let n_minus_one = if radius_sq < 1.0 {
-                (1.0 - radius_sq).sqrt() - 1.0
-            } else {
-                -1.0
-            };
-            pixels.push(DirectPixelCoordinate { l, m, n_minus_one });
+            pixels.push(direct_pixel_coordinate(geometry, x, y));
         }
     }
     pixels
@@ -60569,13 +61395,15 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        AwProjectImageResponseCache, AwProjectImageResponsePlane, AwProjectSparseModelDelta,
-        ClarkPsfPatch, CleanConfig, CleanMaskProductRequest, CleanStopReason, CompatibilityMode,
-        CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver,
-        DirtyProductFftPolicy, FftBackendChoice, FftPrecisionChoice, GridderMode,
-        GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch, HogbomIterationMode,
-        HogbomPlaneMinorCycleControl, ImageGeometry, ImageWindow, ImagingError,
-        ImagingExecutionPlan, ImagingRequest, ImagingResolvedPlan, ImagingResult,
+        AwProjectImageResponseCache, AwProjectImageResponsePlane, AwProjectPhysicalBeamResponse,
+        AwProjectPhysicalComponent, AwProjectPhysicalComponentModel,
+        AwProjectPhysicalGeometricPhase, AwProjectPhysicalModelAmplitude,
+        AwProjectPhysicalSourceFrame, AwProjectSparseModelDelta, ClarkPsfPatch, CleanConfig,
+        CleanMaskProductRequest, CleanStopReason, CompatibilityMode, CubeModelChannelContribution,
+        CubeModelInterpolationBatch, Deconvolver, DirtyProductFftPolicy, FftBackendChoice,
+        FftPrecisionChoice, GridderMode, GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch,
+        HogbomIterationMode, HogbomPlaneMinorCycleControl, ImageGeometry, ImageWindow,
+        ImagingError, ImagingExecutionPlan, ImagingRequest, ImagingResolvedPlan, ImagingResult,
         ImagingStageTimings, LosslessDyadicSpatialPlane, MosaicGridderConfig,
         MosaicMtmfsVisibilityBlock, MosaicVisibilityBlock, MtmfsRequest, MultiscaleCandidate,
         ParallelHandBatch, PlaneStokes, PrimaryBeamModel, PrimaryBeamProductRequest,
@@ -60605,6 +61433,7 @@ mod tests {
         normalized_weighted_primary_beam_product, parse_experimental_frozen_restoring_beam,
         parse_standard_mfs_backend_selection, parse_standard_mfs_thread_count, peak_abs_value,
         peak_location_masked, peak_location_masked_in_window, phase_rotate_visibility,
+        predict_awproject_physical_components,
         prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config,
         primary_beam_correct_alpha_product, primary_beam_correct_image_product,
         primary_beam_limited_product, primary_beam_output_products, primary_beam_product,
@@ -60654,6 +61483,287 @@ mod tests {
             nonzero_model_support_positions(&[tt0, tt1]),
             [(1, 2), (3, 0)].into_iter().collect()
         );
+    }
+
+    fn assert_complex32_close(actual: Complex32, expected: Complex32, tolerance: f32) {
+        assert!(
+            (actual - expected).norm() <= tolerance,
+            "actual={actual:?} expected={expected:?} tolerance={tolerance}"
+        );
+    }
+
+    fn physical_prediction_test_group(
+        pointing_pixel_position: [f64; 2],
+    ) -> GroupedVisibilityMetadata {
+        GroupedVisibilityMetadata {
+            beam_frequency_hz: 2.0e9,
+            primary_beam_model: PrimaryBeamModel::Airy {
+                dish_diameter_m: 25.0,
+                blockage_diameter_m: 0.0,
+            },
+            pointing_direction_rad: [0.0, 0.0],
+            pointing_pixel_position: Some(pointing_pixel_position),
+            sample_ranges: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn awproject_physical_component_prediction_combines_mtmfs_terms() {
+        let geometry = ImageGeometry {
+            image_shape: [8, 8],
+            cell_size_rad: [1.0e-3, 1.0e-3],
+        };
+        let model = AwProjectPhysicalComponentModel {
+            components: vec![AwProjectPhysicalComponent {
+                image_x: 4,
+                image_y: 4,
+                input_x: 4,
+                input_y: 4,
+                l: 0.0,
+                m: 0.0,
+                n_minus_one: 0.0,
+                raw_tt0: Complex32::new(2.0, 0.5),
+                raw_tt1: Complex32::new(-0.25, 0.75),
+                prepared_tt0: Complex32::new(3.0, -0.5),
+                prepared_tt1: Complex32::new(0.25, 0.5),
+            }],
+        };
+        let taylor_x = 0.4;
+        let actual = predict_awproject_physical_components(
+            &model,
+            geometry,
+            [0.0, 0.0],
+            &physical_prediction_test_group([4.0, 4.0]),
+            17.0,
+            -31.0,
+            8.0,
+            taylor_x,
+            Complex32::new(0.6, 0.8),
+            AwProjectPhysicalModelAmplitude::Raw,
+            AwProjectPhysicalBeamResponse::None,
+            AwProjectPhysicalGeometricPhase::Negative,
+            AwProjectPhysicalSourceFrame::PhaseCenter,
+        );
+        assert_complex32_close(
+            actual,
+            model.components[0].raw_tt0 + model.components[0].raw_tt1 * taylor_x,
+            1.0e-6,
+        );
+    }
+
+    #[test]
+    fn awproject_physical_component_prediction_exposes_source_phase_conventions() {
+        let geometry = ImageGeometry {
+            image_shape: [8, 8],
+            cell_size_rad: [1.0e-3, 1.0e-3],
+        };
+        let model = AwProjectPhysicalComponentModel {
+            components: vec![AwProjectPhysicalComponent {
+                image_x: 5,
+                image_y: 3,
+                input_x: 5,
+                input_y: 3,
+                l: 1.0e-3,
+                m: 1.0e-3,
+                n_minus_one: (1.0_f64 - 2.0e-6).sqrt() - 1.0,
+                raw_tt0: Complex32::new(1.25, -0.5),
+                raw_tt1: Complex32::new(0.0, 0.0),
+                prepared_tt0: Complex32::new(1.25, -0.5),
+                prepared_tt1: Complex32::new(0.0, 0.0),
+            }],
+        };
+        let source_phase = Complex32::new(0.6, 0.8);
+        let predict = |frame| {
+            predict_awproject_physical_components(
+                &model,
+                geometry,
+                [0.0, 0.0],
+                &physical_prediction_test_group([4.0, 4.0]),
+                53.0,
+                -29.0,
+                11.0,
+                0.0,
+                source_phase,
+                AwProjectPhysicalModelAmplitude::Raw,
+                AwProjectPhysicalBeamResponse::None,
+                AwProjectPhysicalGeometricPhase::Negative,
+                frame,
+            )
+        };
+        let phase_center = predict(AwProjectPhysicalSourceFrame::PhaseCenter);
+        assert_complex32_close(
+            predict(AwProjectPhysicalSourceFrame::SourcePhase),
+            phase_center * source_phase,
+            1.0e-6,
+        );
+        assert_complex32_close(
+            predict(AwProjectPhysicalSourceFrame::ConjugateSourcePhase),
+            phase_center * source_phase.conj(),
+            1.0e-6,
+        );
+    }
+
+    #[test]
+    fn awproject_physical_component_prediction_exposes_voltage_and_power_beams() {
+        let geometry = ImageGeometry {
+            image_shape: [8, 8],
+            cell_size_rad: [1.0e-3, 1.0e-3],
+        };
+        let group = physical_prediction_test_group([4.0, 4.0]);
+        let model = AwProjectPhysicalComponentModel {
+            components: vec![AwProjectPhysicalComponent {
+                image_x: 5,
+                image_y: 4,
+                input_x: 5,
+                input_y: 4,
+                l: 0.0,
+                m: 0.0,
+                n_minus_one: 0.0,
+                raw_tt0: Complex32::new(2.0, -0.5),
+                raw_tt1: Complex32::new(0.0, 0.0),
+                prepared_tt0: Complex32::new(2.0, -0.5),
+                prepared_tt1: Complex32::new(0.0, 0.0),
+            }],
+        };
+        let predict = |beam_response| {
+            predict_awproject_physical_components(
+                &model,
+                geometry,
+                [0.0, 0.0],
+                &group,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                Complex32::new(1.0, 0.0),
+                AwProjectPhysicalModelAmplitude::Raw,
+                beam_response,
+                AwProjectPhysicalGeometricPhase::Negative,
+                AwProjectPhysicalSourceFrame::PhaseCenter,
+            )
+        };
+        let voltage = primary_beam_voltage_pattern_for_offsets(
+            group.primary_beam_model,
+            geometry.cell_size_rad[0],
+            0.0,
+            group.beam_frequency_hz,
+        );
+        let unattenuated = predict(AwProjectPhysicalBeamResponse::None);
+        assert_complex32_close(
+            predict(AwProjectPhysicalBeamResponse::Voltage),
+            unattenuated * voltage,
+            1.0e-6,
+        );
+        assert_complex32_close(
+            predict(AwProjectPhysicalBeamResponse::Power),
+            unattenuated * voltage * voltage,
+            1.0e-6,
+        );
+    }
+
+    #[test]
+    fn awproject_exact_component_degrid_matches_the_dense_sampled_cf_operator() {
+        let model = AwProjectPhysicalComponentModel {
+            components: vec![AwProjectPhysicalComponent {
+                image_x: 2,
+                image_y: 5,
+                input_x: 2,
+                input_y: 5,
+                l: 0.0,
+                m: 0.0,
+                n_minus_one: 0.0,
+                raw_tt0: Complex32::new(0.75, -0.25),
+                raw_tt1: Complex32::new(0.0, 0.0),
+                prepared_tt0: Complex32::new(1.25, -0.5),
+                prepared_tt1: Complex32::new(0.0, 0.0),
+            }],
+        };
+        let grid_width = 8;
+        let grid_height = 8;
+        let dense = Array2::from_shape_fn((grid_width, grid_height), |(grid_x, grid_y)| {
+            super::awproject_exact_component_model_grid_value(
+                &model,
+                0,
+                grid_x,
+                grid_y,
+                grid_width,
+                grid_height,
+            )
+        });
+        let plan = super::AwProjectCompactSamplePlan {
+            loc_x: 3,
+            loc_y: 4,
+            tap_bundle: 0,
+        };
+        let bundle = super::AwProjectCompactTapBundle {
+            values: (0..9)
+                .map(|index| {
+                    Complex32::new(
+                        0.125 + index as f32 * 0.03125,
+                        -0.25 + index as f32 * 0.015625,
+                    )
+                })
+                .collect(),
+            x_support: 1,
+            y_support: 1,
+            normalization: Complex32::new(0.875, -0.125),
+            grid_normalization: Complex64::new(1.0, 0.0),
+            sampling: 1,
+            off_x: 0,
+            off_y: 0,
+            phase_applied: true,
+        };
+        let expected = super::awproject_compact_degrid_sample(&dense, plan, &bundle, 0, None);
+        let actual = super::awproject_exact_component_degrid_term(
+            &model,
+            0,
+            plan,
+            &bundle,
+            0,
+            None,
+            grid_width,
+            grid_height,
+        );
+        assert_complex32_close(actual, expected, 1.0e-6);
+    }
+
+    #[test]
+    fn awproject_exact_component_grid_matches_centered_casacore_layout_dft() {
+        let grid_width = 8;
+        let grid_height = 8;
+        let amplitude = Complex32::new(1.25, -0.5);
+        let component = AwProjectPhysicalComponent {
+            image_x: 2,
+            image_y: 5,
+            input_x: 2,
+            input_y: 5,
+            l: 0.0,
+            m: 0.0,
+            n_minus_one: 0.0,
+            raw_tt0: amplitude,
+            raw_tt1: Complex32::new(0.0, 0.0),
+            prepared_tt0: amplitude,
+            prepared_tt1: Complex32::new(0.0, 0.0),
+        };
+        let model = AwProjectPhysicalComponentModel {
+            components: vec![component],
+        };
+        let mut prepared = Array2::<Complex32>::zeros((grid_height, grid_width));
+        prepared[(component.input_y, component.input_x)] = amplitude;
+        let transformed = super::centered_fft2(&prepared).reversed_axes();
+        for grid_x in 0..grid_width {
+            for grid_y in 0..grid_height {
+                let actual = super::awproject_exact_component_model_grid_value(
+                    &model,
+                    0,
+                    grid_x,
+                    grid_y,
+                    grid_width,
+                    grid_height,
+                );
+                assert_complex32_close(actual, transformed[(grid_x, grid_y)], 2.0e-6);
+            }
+        }
     }
 
     fn compact_replay_test_block(

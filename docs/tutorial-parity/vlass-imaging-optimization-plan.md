@@ -7971,6 +7971,107 @@ target, expands the deterministic active region, projects above `0.70x`
 incumbent work, or fails the frozen scientific floor. No production-default
 change follows from this audit.
 
+### 2026-07-31 component-prediction architecture discriminator
+
+The first real-data discriminator tested whether a CLEAN component could avoid
+the sampled AW operator by using the analytic point-source measurement
+equation with an Airy primary beam. That simpler architecture is rejected:
+
+- the first bounded run exposed a missing sparse-support precondition and
+  stopped after 15.32 seconds without producing comparison evidence. Its log
+  SHA-256 is
+  `0d95734e3331633c2e7cb6e2b68e96296939dc9c15d2980566ca6ecfab3e945f`;
+- the corrected physical probe's best primary-beam-squared prepared-model
+  variant had `1.1545` relative RMS error. Its log SHA-256 is
+  `24c51932f344ca52df42c37403cfac1df0ff71355aca4cfca0f8aedeba3eceb6`;
+  and
+- the expanded raw/prepared amplitude, no/voltage/power beam, phase-sign, and
+  source-frame tournament improved the best result only to `0.971566`
+  relative RMS error, `0.375882` coherence, and `0.926668` gain-corrected
+  relative RMS error. Its log SHA-256 is
+  `367ac527a132fafb0a684d9a418eeca463843fe0f00b6a6bf5ed2a9f1b8e14dd`.
+
+The sampled CF contains essential discretized A/WB/conjugate-beam/POINTING
+behavior that the simple Airy equation does not reproduce. This is a negative
+architecture result, not a request for more CASA trajectory forensics.
+
+The replacement discriminator factors a scale-zero delta's analytic Fourier
+phasor through the existing sampled CF degrid sum. It therefore retains the
+current tap values, orientation, conjugation, oversampling, POINTING phase,
+Mueller mapping, Taylor basis, and complex normalization while avoiding a
+dense model grid. Synthetic tests compare the factorized result both with the
+centered casacore-layout FFT and with the dense sampled-CF degrid.
+
+The first real exact-factorization run had `5.49976e-2` relative RMS error and
+`0.998496` coherence. That miss was localized to an omitted per-bundle complex
+normalization, and the synthetic test was strengthened to use a non-unit
+complex normalization. The failed log SHA-256 is
+`a9e67903631e5d0f9d969504fbb32fcd4cdd43b34e47b1356b7792049f5f714d`.
+
+After that one corrective change, the first-window, one-component real VLASS
+probe covers 25,031 samples, 50,062 parallel-hand values, and 38,807,452
+tap-term interactions. It reports:
+
+- normalized complex RMS error `1.051701040e-6`;
+- coherence `1.000000000`;
+- best-fit gain `0.9999998787 - 3.908020246e-9 i`, reported only as a
+  diagnostic and not applied;
+- maximum absolute complex error `6.813947008e-8`;
+- candidate/reference RMS `1.571400845e-2` / `1.571400655e-2`;
+- 400,608 bytes of model plus visibility state against the 151,257,904-byte
+  gate; and
+- 422.516 ms for the unbatched CPU probe.
+
+The passing log SHA-256 is
+`4391603b9f06350107b3154e1507706e8ae86a8a9ba4605d37954cb6e1c2d9f4`.
+This clears the Oracle-selected `1e-5` normalized-RMS discriminator for the
+scale-zero exact transformation. It does not establish an end-to-end speedup,
+a multiscale implementation, or a changed major-cycle schedule.
+
+A subsequent run intended only to add response-key reuse counters began before
+the final release link containing those counters completed. The resulting log,
+SHA-256
+`063b71a412b8ed68aed574cba90bd8de6132818dce6cf4a5b07fabde9ce88a36`,
+is rejected as structural-counter evidence; it repeats the old output format
+and was not replaced by another run.
+
+The follow-up Oracle review classifies the delta factorization as exact
+relative to the current discretized sampled-CF prediction operator, subject to
+all recorded FFT, origin, tap, normalization, role, and POINTING conventions.
+Skipping intermediate residual adjoints is separately a reconstruction
+schedule change. Nonzero scales are also a separate requirement because their
+Fourier scale factor depends on absolute grid location; a response cached only
+by bundle, fractional offset, and component is not generally exact for scales
+5 and 12.
+
+The revised experiment order is:
+
+1. visibility-resident component prediction with operator-call elimination;
+2. uncompensated tile-local f32 accumulation as an additive approximation and
+   memory-traffic reduction; and
+3. hybrid W/A factorization if the exact response kernel cannot obtain enough
+   reuse or if combined-AW support remains dominant.
+
+The next implementation must not retain a bundle-by-641-component cache. It
+must coalesce identical `(pixel, scale, model role)` atoms and process batches
+of 8 or 16 components. The preferred Metal design has a bundle-owned kernel
+that loads each CF value once for all component lanes and writes a bounded
+response table, followed by a source-owned kernel that applies central-grid
+phasors, normalization, POINTING, Mueller, and MT-MFS coefficients to resident
+visibilities. Its discriminator must record exact response-key count after
+POINTING expansion, unique CF values, plan references, weighted reuse, both
+kernel times and traffic, visibility traffic, and resident bytes.
+
+Promotion of that delta path requires no fitted correction, normalized complex
+RMS at most `1e-5`, normalized maximum complex error at most `1e-4`, state
+below 151,257,904 bytes, and full-component projected time no more than four
+warm current operator applications. Abort the unbatched architecture if it
+projects to eight or more applications; for 641 unique atoms that means a
+one-component path at or above `1.248%` of one warm operator application.
+Between those gates, run exactly one 16-component batch. Scientific promotion
+still requires exact or accepted scale-5/12 behavior, the 4,096-square
+full-16-SPW row, all 19 products, and the existing final workload gates.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.

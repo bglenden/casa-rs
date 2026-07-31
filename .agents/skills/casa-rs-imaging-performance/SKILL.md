@@ -155,6 +155,39 @@ basis coefficients, or bounded scratch, not summed materialized convolution
 area. Mandatory dense products justify final dense computation and writes, not
 dense authoritative iterative state or simultaneous product residency.
 
+## Operator-invocation elimination
+
+Before optimizing an expensive forward or adjoint application, count every
+invocation in the real reconstruction trajectory and explain why each one
+exists. Search first for exact fusion, persistent sufficient state, lazy
+evaluation, incremental updates, and reconstruction changes that eliminate
+whole applications. Compare total transformed work:
+
+```text
+old_calls * operator_cost
+versus
+new_calls * operator_cost
+  + incremental_update_cost
+  + persistent_state_traffic
+  + changed_schedule_cost
+```
+
+Removed-call count and interaction count are projections, not performance
+results. A call-elimination candidate must run its real update path through a
+workload-bound break-even gate. Record unique response-key count, coefficient
+or tap values visited, plan references, weighted reuse, batching width, update
+traffic, resident state, and end-to-end wall time. Reject a factorization that
+replaces a few full applications with repeated scans over a large operator
+payload unless measured batching or reuse crosses the gate.
+
+Classify exact substitution of one operator application separately from an
+algorithmic removal of residual refreshes, synchronization points, or
+major-cycle boundaries. The former may be an exact discretized
+transformation; the latter changes the reconstruction schedule and must pass
+the frozen scientific floor. A scale-zero delta discriminator does not promote
+a multiscale path unless the nonzero-scale response is also exact or its
+approximation is explicitly accepted.
+
 ## Bounded architecture tournament
 
 Give every candidate a card containing:
