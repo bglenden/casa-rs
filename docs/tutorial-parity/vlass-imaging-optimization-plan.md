@@ -6881,6 +6881,44 @@ subsequent minor cycle, or additional major cycle ran. Its log SHA-256 is
 `41a465705068e5820f4fff672f92655426bc670ccf4a9d7ffaa480d3186773cb`.
 The same no-CASA/no-full-size boundaries remain in force.
 
+The uniquely labeled
+`vlass-4096-4spw-aw-hybrid-residual-path-v3` run then completed the
+bounded hybrid path and stopped at its required pre-product boundary. The
+ordinary production prediction dispatch produced the expected observed,
+control, direct-candidate, canonical-residual, routed-residual, and
+tile-ingress hashes. It requested `11,002,768` logical bytes of raw
+wide-division state, below the `16 MiB` ceiling. Prediction-to-tile-ready
+took `64.357667 ms`: `55.636292 ms` in the Metal dispatch and wait,
+`0.805833 ms` in requested-buffer readback, `7.303000 ms` in exact CPU
+wide-division/Taylor/source-phase/residual construction, and `0.612542 ms`
+in tile update. The ordinary tile-grid dispatch took `56.019042 ms`.
+The prediction receipt SHA-256 is
+`4d888d9343ba48551b5dc6a16c6e05ee792727674221687c3923fc724f75d063`;
+the normalized-residual receipt SHA-256 is
+`b15cd4a24e69797c31710f4c1b7562373d833f32d8a3c637940e118656cfbf99`;
+and the run-log SHA-256 is
+`3e5638b2fdabf04775ad6595db4e50045276d6a51b697f719bb2ee77fc9b2215`.
+
+The read-only frozen-product closure classified the result as
+`bounded-correctness-pass-performance-ineligible`. CASA-relative RMS was
+`7.457120171824015e-8` and `7.43866261528708e-8` for residual TT0/TT1,
+`8.772828869337415e-8` and `8.845996131010321e-8` for restored image
+TT0/TT1, `1.0531400608424786e-7` for alpha, and
+`1.0960190344697252e-7` for alpha error. Alpha and alpha-error mask
+topology each had zero mismatches. The closure wrote no product tree and
+opened neither the MeasurementSet nor the convolution-function cache; its
+receipt SHA-256 is
+`aca0434d2afc99f5646b8e2b9b9f537ea6cd53f3f6a18550322f0101392900bd`.
+
+This is a bounded correctness pass, not permission to run a clean candidate:
+`64.357667 ms` exceeds the frozen `62.690729 ms`
+prediction-to-tile-ready limit by `1.666938 ms` (`2.66%`). Therefore the
+receipt's next gate remains `no-clean-candidate-authorized`. The run performed
+one initial dirty pass and one residual refresh, but no product formation,
+controller entry, subsequent minor cycle, or additional major cycle. No CASA
+call, full-16-SPW row, `12,150`-square development run, or memory-policy
+experiment ran.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
