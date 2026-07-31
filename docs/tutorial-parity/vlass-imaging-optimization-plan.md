@@ -6296,6 +6296,42 @@ use fresh v6 artifact names and a fresh copy-on-write bundle, and retain the
 frozen manifest, breakpoint addresses, target calls, CASA parameters, and
 stop boundary.
 
+The v6 replacement verified that compatibility repair and advanced to the
+first audited helper entry. LLDB resolved exactly one hardware breakpoint at
+the loaded address for VM address `0xcb2f00`, continued the stopped process,
+and stopped in `libcasacpp_synthesis.6.dylib::__divsc3` on filtered helper call
+index zero. The callback then invalidated the trace because this LLDB cannot
+read the `fpcr` register through `SBData.GetUnsignedInt64()`:
+
+```text
+read LLDB register fpcr: error: unable to read data
+```
+
+The invalid raw receipt records `next_call_index: 1` and no completed target.
+No source-zero operand/result tuple or source-`1,446` tuple was therefore
+promoted. As in v5, LLDB detached on the command error and the bounded
+four-SPW `niter=0` diagnostic completed normally, this time in
+`13.070501583977602` seconds. It ran no CLEAN iterations and is neither
+correctness nor performance evidence.
+
+The v6 debugger-ready receipt, invalid raw trace, LLDB log, launch log, CASA
+log, unreachable NPZ, and unreachable JSON hash to
+`34bfc64a6db8748af9e79394b787160d3d4326f03999b5d6d195a5a1520181ab`,
+`950a1ba852bad8f9351d0745d6c86003323a85aad77ba88ecb46310ab7da5ac0`,
+`96abf9cf38bf80bd07c0aec45f5c945128a6f66ade031dfea809402e6631bcdf`,
+`f70a9f4fcb0115123f1cfdaa61f3ad52c4bdf5706ad0ac6238f303a5c2410b06`,
+`67ba1ec3d5268c84af5056791df14fdd748a09894ba1b7f176b41b2ee0cd65e4`,
+`a801635e7d9529cc4dbd3f462abd10bdcd66b8283bb5894a85da419a95899b7d`,
+and
+`dfea20b52f4d86d2a357e253779aea24a1a08cd048bdf46b9a5f025d0b00916b`.
+The v6 runner and callback hash to
+`6e8460cd75612e5267676b0ae09248def201df29bb31091bace7bb1a29ee9685`
+and
+`e0a3058f46e79a779ceffa0fdb72983d4872102850b10c58a40f001e79f6abd4`.
+The next replacement may change only FP-state capture compatibility, use
+fresh v7 artifacts, and leave the successfully resolved breakpoint, frozen
+manifest, target calls, CASA parameters, and stop boundary unchanged.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
