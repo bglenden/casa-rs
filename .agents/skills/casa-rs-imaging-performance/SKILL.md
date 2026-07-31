@@ -119,6 +119,56 @@ a replacement promotes. CASA defines the scientific envelope; its operator
 discretization, arithmetic ordering, reconstruction history, and storage
 structure are not implementation requirements unless the envelope says so.
 
+## Operating-regime census
+
+Do not choose an operator family from the imaging-mode name alone. Before the
+architecture portfolio is ranked, record the workload's actual dimensionality:
+
+- weighted visibility samples, input bytes, fields, pointings, channels,
+  Taylor terms, polarizations, W states, and direction-dependent states;
+- output pixels, scientifically valid pixels, mask pixels after scale
+  dilation, selected components, and components per major cycle;
+- convolution cells visited, distinct executable response states, mandatory
+  dense passes, final product bytes, and peak-live bytes.
+
+Report at least output pixels per visibility, active pixels per visibility,
+components per visibility, executable operator bytes per visibility, and
+output bytes per input byte. Recompute the active-state ratios when the mask or
+component list changes materially.
+
+Use those ratios to price at least the incumbent FFT/grid representation,
+direct visibility-to-active-state work, W-stacked work, localized
+facet/subgrid work, and one transform or factorization alternative. A workload
+with an unusual pixels-to-visibilities or active-state-to-visibilities ratio
+must retain at least one candidate that exploits that regime; it must not
+inherit the architecture preferred by a more typical imaging row merely
+because that implementation already exists.
+
+## Architecture deletion receipt
+
+Every architecture-reset candidate must name the incumbent stages, calls,
+full-image passes, and persistent structures that disappear if it wins. Price
+the replacement stages and state beside those deletions. A backend, precision,
+worker, cache, tile, or scheduling change is not an architecture replacement
+when it preserves the same dominant representation and invocation schedule.
+
+While architecture-reset mode is active:
+
+- spend bounded experiments on independent representations, not successive
+  refinements of the incumbent;
+- permit at most one corrective optimization after a candidate misses its
+  gate, and only when counters predict that correction crosses the gate;
+- reject a proposal that cannot identify a deleted dominant stage or a lower
+  asymptotic work/state variable;
+- prefer a clean-sheet discriminator that bypasses production abstractions
+  over a polished implementation whose optimistic end-to-end bound already
+  misses;
+- treat a large internal refactor as acceptable when it is the measured route
+  to the frozen scientific and resource envelope.
+
+The reset ends only when a replacement promotes or new measurements invalidate
+the incumbent falsification certificate.
+
 ## Incumbent falsification certificate
 
 Before another local optimization, record:
@@ -379,6 +429,14 @@ available. Challenge the review with the actual source representation,
 counters, memory ledger, and negative experiments. Convert surviving ideas
 into tournament cards; never adopt an architecture label without a
 discriminator.
+
+Ask the reviewer to invert at least one incumbent assumption, rank clean-sheet
+families, state which expensive stages each recommendation deletes, and give
+one smallest real-workload discriminator with numeric kill and promotion
+gates. Also ask which workflow rule allowed the team to remain in the failed
+family and update this skill when that diagnosis is general rather than
+workload-specific. Treat the review as hypothesis generation: verify its
+source claims and cost model locally before changing production code.
 
 ## Promotion and path retirement
 

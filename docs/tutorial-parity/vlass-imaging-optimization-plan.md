@@ -8615,6 +8615,74 @@ experiment: adopting the screen-separated RIME as a production algorithm or
 default requires the already requested measured tradeoff and Brian's final
 incorporation approval.
 
+#### Exact pre-W screen rank result
+
+The availability gate and Stage-1 rank census are now complete. A
+production-inert C++ oracle calls the exported CASA 6.7.5.18
+`EVLAAperture::applySky` path from the exact source revision
+`418bb1a26df7c4aba663ff123b038b75a6fa0295`. It derives the screen coordinate
+system and all 32 frequency/Mueller states from the frozen 4096-square,
+full-16-SPW CF cache. This is a screen-only calculation and did not invoke
+`tclean`, CLEAN, or a 12,150-square imaging row.
+
+The persisted uncropped 2048-square CF coordinate template gives a sky-screen
+sampling of `0.00011635528346628862 rad`, approximately 24 arcseconds. The
+4096-square image footprint, dilated for scale 12, occupies 10,609 samples in
+the central 512-square screen crop. The normal/product domain is the union of
+all pixels at or above `pblimit=1e-4`, containing 21,777 samples. Its maximum
+omitted amplitude outside the crop is `1.0058090538223041e-6`, so the crop is
+complete for the stated product-domain gate.
+
+The globally optimal complex row-space reconstruction produced:
+
+| family | rank | relative RMS | maximum absolute error | worst-state relative RMS |
+| --- | ---: | ---: | ---: | ---: |
+| forward | 4 | `3.026482e-2` | `5.616845e-2` | `9.686052e-2` |
+| forward | 8 | `3.701351e-3` | `7.133765e-3` | `9.057310e-3` |
+| forward | 12 | `2.106443e-4` | `3.819668e-4` | `4.881054e-4` |
+| normal/product | 6 | `1.878241e-3` | `3.463035e-3` | `5.421532e-3` |
+| normal/product | 10 | `1.505519e-4` | `1.082877e-4` | `2.607162e-4` |
+| normal/product | 12 | `5.829503e-5` | `6.428337e-5` | `1.295415e-4` |
+
+Neither family passes the conditional ceiling: forward rank eight and
+normal/product rank ten miss the `2e-5` RMS and `6e-5` worst-state gates. Even
+rank 12 misses both gates. Global screen low rank is therefore retired; no
+higher-rank tuning or screen-separated production operator is authorized.
+The portfolio advances to a localized architecture that can exploit the
+10,609-pixel active screen footprint without requiring a global A-term basis.
+
+The exact artifacts are receipt-bound by SHA-256:
+
+- forward complex64 screens:
+  `e1ed8856bb254697fd7187e77ae267d9bceb4dd7ba05e656ea96099cdc41537f`;
+- normal/product complex64 screens:
+  `e499fb2e92b1645f6951270e7a532aa700fe45770df140070de92871c8b96cb6`;
+- CASA screen manifest:
+  `82253225c43e8a37d542a06ad4e5085cbd41107cdf17ef158cf63bd502df2843`;
+- rank receipt:
+  `199860f12f06a3d1b71d8a912e5423fe85e52d9a4bc74492b6a8feed67e79df0`.
+
+Verified copies of the screens, manifests, receipt, and generator logs are
+preserved under
+`artifacts/experiments/20260731-vlass-evla-pre-w-screen-rank-v1` in the
+external issue-446 evidence root.
+
+This negative result is stronger than the earlier cropped-response CUR result:
+it uses exact pre-truncation CASA screens on the requested scientific domains,
+so crop inversion, taper, and flat-sky ambiguity cannot explain the miss.
+
+The first operating-regime census makes the unusual workload shape explicit.
+The real 4096-square full-16-SPW row has 385,862 routed samples, 16,777,216
+output pixels, a 4,096-pixel deterministic mask, 7,304 exact
+scale-dilated model pixels, and 641 selected components. That is approximately
+`43.480` output pixels, `0.01893` active model pixels, and `0.001661`
+components per routed visibility. The current executable response payload is
+113,246,208 bytes, or approximately `293.49` bytes per routed visibility.
+These ratios require the next architecture race to include a method whose work
+scales with active model state or selected components rather than the full
+image or sampled-CF payload. They also explain why a final dense-product path
+and an iterative reconstruction path should be costed separately.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
