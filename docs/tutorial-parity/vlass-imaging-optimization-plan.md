@@ -7146,6 +7146,42 @@ exact Control A may authorize one subsequent term-specific minor-cycle
 coefficient/update ledger. No outcome authorizes a new clean or production
 incorporation. At this pre-run checkpoint the certificate had not run.
 
+The first execution stopped at `invalid-phase-a-control` before the mixed
+cases. This is invalid instrumentation evidence, not a model-term
+classification. Control A reproduced the Phase-A candidate and reference
+array SHA-256 values for image TT0/TT1, alpha, and alpha error exactly, and
+reproduced both derived mask topologies with zero mismatches. It also passed
+every numerical, topology, finite, structured-difference, and metadata gate.
+The overly strict driver guard nevertheless compared the entire reserialized
+JSON numerical dictionaries. Three accumulated `f64` reductions and two
+human-readable `f32` values differed only in their final represented bit even
+though the authoritative array hashes, binary32 element bits, counts,
+first-mismatch bit ledgers, and topology hashes were exact.
+
+The invalid execution ran only the primary batch, deleted all transient raw
+planes, and stopped after `20.482985` seconds with a peak resident footprint
+of `884,391,936` bytes. It launched no term hybrids and crossed none of the
+prohibited boundaries. Its immutable SHA-256 evidence is:
+
+- release executable:
+  `ba9c679ec323ff9aa60fe6129cfe4dccc0dcf44991970dfbdea0c5167767c5c7`;
+- primary Rust receipt:
+  `cdc086e261394e3c4e27513266b9193fcf49f10f5a49e6e870d1d69e81f9bb8b`;
+- invalid final receipt:
+  `8dade317a81b776298db2d319516299b53a30789a4ca647510549c6cfe5ee516`;
+  and
+- driver log:
+  `168e52d515039fcde871c940428ce4f3c17dc3dff1f2b15a99b918ef62f6f3ef`.
+
+The guard correction keeps “exact Control A” strict at the scientific object
+boundary: exact candidate/reference array hashes, counts, bitwise
+equal/mismatch counts, maximum ULP, first-mismatch coordinate and binary32 bit
+ledger, complete alpha/alpha-error topology ledgers, completed frozen Phase-A
+comparison, and all derived gates. It no longer requires incidental equality
+of reserialized floating reduction text. A replacement certificate remains
+conditional and bounded exactly as above; the invalid execution earns no
+scientific conclusion and no new clean.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.

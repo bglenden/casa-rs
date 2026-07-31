@@ -34,7 +34,78 @@ def batch(*cases: dict) -> dict:
     return {"cases": list(cases)}
 
 
+def phase_a_control_batch(*, candidate_hash: str = "candidate") -> dict:
+    def numeric(*, expected: bool) -> dict:
+        return {
+            "count": 4,
+            "bitwise_equal_count": 3,
+            "bitwise_mismatch_count": 1,
+            "candidate_sha256": "candidate" if expected else candidate_hash,
+            "reference_sha256": "reference",
+            "maximum_ulp_distance": 2,
+            "difference_rms": 1.0 if expected else 1.0 + 2.0e-16,
+            "first_mismatch": {
+                "location": [1, 2],
+                "candidate_bits": 3,
+                "reference_bits": 4,
+                "ulp_distance": 1,
+                "candidate": 1.0 if expected else 1.0 + 2.0e-16,
+            },
+        }
+
+    topology = {
+        "mismatch_count": 0,
+        "candidate_sha256": "mask",
+        "reference_sha256": "mask",
+    }
+    actual_products = {
+        suffix: {"numeric": numeric(expected=False)}
+        for suffix in subject.IMAGE_SUFFIXES
+    }
+    expected_products = {
+        suffix: numeric(expected=True) for suffix in subject.IMAGE_SUFFIXES
+    }
+    for suffix in (".alpha", ".alpha.error"):
+        actual_products[suffix] = {
+            "numeric": numeric(expected=False),
+            "topology": topology | {"ordered_mismatch_coordinate_sha256": "empty"},
+        }
+        expected_products[suffix] = {
+            "numeric": numeric(expected=True),
+            "topology": topology,
+        }
+    return {
+        "cases": [
+            {
+                "label": "control-a",
+                "gates": {"pass": True},
+                "products": actual_products,
+            }
+        ],
+        "frozen_identity": {
+            "phase_a_comparison_status": "completed",
+            "phase_a_contract": {"products": expected_products},
+        },
+    }
+
+
 class ModelTermCausalityTests(unittest.TestCase):
+    def test_control_exact_uses_binary_array_identity_not_json_float_spelling(
+        self,
+    ) -> None:
+        exact, checks = subject.phase_a_control_exact(phase_a_control_batch())
+
+        self.assertTrue(exact)
+        self.assertTrue(all(checks.values()))
+
+    def test_control_exact_rejects_product_hash_difference(self) -> None:
+        exact, checks = subject.phase_a_control_exact(
+            phase_a_control_batch(candidate_hash="different")
+        )
+
+        self.assertFalse(exact)
+        self.assertFalse(checks[".image.tt0.array-ledger"])
+
     def test_complete_model_pass_stops_before_hybrids(self) -> None:
         primary = batch(case("control-a", True), case("complete-rust-model", True))
 
