@@ -4444,7 +4444,10 @@ const AWPROJECT_PHYSICAL_COMPONENT_PROBE_ENV: &str =
     "CASA_RS_EXPERIMENTAL_AWPROJECT_PHYSICAL_COMPONENT_PROBE";
 const AWPROJECT_EXACT_COMPONENT_PROBE_ENV: &str =
     "CASA_RS_EXPERIMENTAL_AWPROJECT_EXACT_COMPONENT_PROBE";
+const AWPROJECT_HYBRID_SUPPORT_AUDIT_ENV: &str =
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_SUPPORT_AUDIT";
 const AWPROJECT_PHYSICAL_COMPONENT_STATE_LIMIT_BYTES: usize = 151_257_904;
+const AWPROJECT_HYBRID_STACK_COUNT_MAX: usize = 32;
 
 fn awproject_component_probe_enabled() -> bool {
     env::var_os(AWPROJECT_PHYSICAL_COMPONENT_PROBE_ENV).is_some()
@@ -5201,6 +5204,232 @@ fn maybe_probe_awproject_exact_components(
         stats.max_abs,
         stats.max_normalized_abs(),
         profile::millis(started.elapsed()),
+    );
+    Ok(())
+}
+
+fn awproject_hybrid_support_taps(
+    cache: &AwConvolutionFunctionCache,
+    request: AwProjectCompactTapRequest,
+    represented_w_values: &[f64],
+    w_increment: f64,
+    current_w_lambda: f64,
+    residual_w_lambda: f64,
+) -> Result<usize, ImagingError> {
+    let base_mueller = if current_w_lambda > 0.0 {
+        request.cell_key.mueller_element
+    } else {
+        15_i32
+            .checked_sub(request.cell_key.mueller_element)
+            .ok_or_else(|| {
+                ImagingError::Normalization(
+                    "hybrid W/A audit could not recover the input Mueller element".to_string(),
+                )
+            })?
+    };
+    let residual_mueller = if residual_w_lambda > 0.0 {
+        base_mueller
+    } else {
+        15_i32.checked_sub(base_mueller).ok_or_else(|| {
+            ImagingError::Normalization(
+                "hybrid W/A audit could not map the residual-W Mueller element".to_string(),
+            )
+        })?
+    };
+    let w_index = if represented_w_values.len() <= 1 || w_increment == 0.0 {
+        0
+    } else {
+        (w_increment * residual_w_lambda.abs())
+            .sqrt()
+            .round()
+            .clamp(0.0, (represented_w_values.len() - 1) as f64) as usize
+    };
+    let selected_key = AwConvolutionFunctionKey {
+        frequency_hz: request.cell_key.frequency_hz,
+        w_value_lambda: represented_w_values[w_index],
+        mueller_element: residual_mueller,
+        parallactic_angle_deg: request.cell_key.parallactic_angle_deg,
+    };
+    let metadata = cache.metadata(selected_key).ok_or_else(|| {
+        ImagingError::Normalization(format!(
+            "hybrid W/A audit could not find frequency={}Hz W={}lambda Mueller={} PA={}deg",
+            selected_key.frequency_hz,
+            selected_key.w_value_lambda,
+            selected_key.mueller_element,
+            selected_key.parallactic_angle_deg,
+        ))
+    })?;
+    let support = match request.key.kernel_kind {
+        AwProjectCompactKernelKind::Imaging => metadata.imaging.x_support,
+        AwProjectCompactKernelKind::Weight => metadata.weight.x_support,
+    };
+    let y_support = match request.key.kernel_kind {
+        AwProjectCompactKernelKind::Imaging => metadata.imaging.y_support,
+        AwProjectCompactKernelKind::Weight => metadata.weight.y_support,
+    };
+    support
+        .checked_mul(2)
+        .and_then(|width| width.checked_add(1))
+        .and_then(|width| {
+            y_support
+                .checked_mul(2)
+                .and_then(|height| height.checked_add(1))
+                .and_then(|height| width.checked_mul(height))
+        })
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest("hybrid W/A audit support area overflowed".to_string())
+        })
+}
+
+fn awproject_hybrid_stack_center(
+    w_lambda: f64,
+    represented_w_extent: f64,
+    stack_count: usize,
+) -> f64 {
+    if stack_count <= 1 || represented_w_extent <= 0.0 {
+        return 0.0;
+    }
+    let width = 2.0 * represented_w_extent / stack_count as f64;
+    let bin = ((w_lambda + represented_w_extent) / width)
+        .floor()
+        .clamp(0.0, (stack_count - 1) as f64);
+    -represented_w_extent + (bin + 0.5) * width
+}
+
+#[allow(clippy::too_many_arguments)]
+fn maybe_audit_awproject_hybrid_support(
+    request: &MtmfsRequest,
+    batch: &VisibilityBatch,
+    source_samples: &[AwProjectCompactSourceSample],
+    tap_requests: &[AwProjectCompactTapRequest],
+    bundles: &[AwProjectCompactMaterializedTap],
+    cache: &AwConvolutionFunctionResidentCache,
+    replay_block_ordinal: usize,
+    window_ordinal: usize,
+) -> Result<(), ImagingError> {
+    if env::var_os(AWPROJECT_HYBRID_SUPPORT_AUDIT_ENV).is_none() {
+        return Ok(());
+    }
+    let cache = cache.cache();
+    let represented_w_values = &cache.inventory().w_values_lambda;
+    let represented_w_extent = represented_w_values
+        .last()
+        .copied()
+        .unwrap_or_default()
+        .abs();
+    let first_request = tap_requests.first().ok_or_else(|| {
+        ImagingError::Normalization("hybrid W/A audit has no tap requests".to_string())
+    })?;
+    let w_increment = cache
+        .metadata(first_request.cell_key)
+        .ok_or_else(|| {
+            ImagingError::Normalization(
+                "hybrid W/A audit could not find its first CF metadata".to_string(),
+            )
+        })?
+        .imaging
+        .w_increment;
+    let psf_term_count = request
+        .nterms
+        .checked_mul(2)
+        .and_then(|value| value.checked_sub(1))
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest("hybrid W/A audit PSF term count overflowed".to_string())
+        })?;
+    let mut current_weighted_taps = 0_u64;
+    let mut a_only_weighted_taps = 0_u64;
+    let mut stack_weighted_taps = [0_u64; AWPROJECT_HYBRID_STACK_COUNT_MAX];
+    let mut stack_max_abs_residual_w = [0.0_f64; AWPROJECT_HYBRID_STACK_COUNT_MAX];
+    let mut observed_w_min = f64::INFINITY;
+    let mut observed_w_max = f64::NEG_INFINITY;
+    let mut plan_references = 0_u64;
+    for source in source_samples {
+        let sample_index = source.sample_index;
+        let w_lambda = batch.w_lambda[sample_index];
+        observed_w_min = observed_w_min.min(w_lambda);
+        observed_w_max = observed_w_max.max(w_lambda);
+        let plans = [
+            (source.first_imaging_plan, request.nterms),
+            (source.second_imaging_plan, request.nterms),
+            (source.first_psf_plan, psf_term_count),
+            (source.second_psf_plan, psf_term_count),
+            (source.first_weight_plan, psf_term_count),
+            (source.second_weight_plan, psf_term_count),
+        ];
+        for (plan, multiplicity) in plans {
+            let tap_request = *tap_requests.get(plan.tap_bundle).ok_or_else(|| {
+                ImagingError::Normalization(
+                    "hybrid W/A audit tap bundle escaped its request table".to_string(),
+                )
+            })?;
+            let current_taps = awproject_ready_compact_tap(bundles, plan.tap_bundle)
+                .values
+                .len();
+            current_weighted_taps = current_weighted_taps.saturating_add(
+                u64::try_from(current_taps.saturating_mul(multiplicity)).unwrap_or(u64::MAX),
+            );
+            let a_only_taps = awproject_hybrid_support_taps(
+                cache,
+                tap_request,
+                represented_w_values,
+                w_increment,
+                w_lambda,
+                0.0,
+            )?;
+            a_only_weighted_taps = a_only_weighted_taps.saturating_add(
+                u64::try_from(a_only_taps.saturating_mul(multiplicity)).unwrap_or(u64::MAX),
+            );
+            plan_references = plan_references.saturating_add(multiplicity as u64);
+            for stack_count in 1..=AWPROJECT_HYBRID_STACK_COUNT_MAX {
+                let stack_center =
+                    awproject_hybrid_stack_center(w_lambda, represented_w_extent, stack_count);
+                let residual_w = w_lambda - stack_center;
+                stack_max_abs_residual_w[stack_count - 1] =
+                    stack_max_abs_residual_w[stack_count - 1].max(residual_w.abs());
+                let taps = awproject_hybrid_support_taps(
+                    cache,
+                    tap_request,
+                    represented_w_values,
+                    w_increment,
+                    w_lambda,
+                    residual_w,
+                )?;
+                stack_weighted_taps[stack_count - 1] = stack_weighted_taps[stack_count - 1]
+                    .saturating_add(
+                        u64::try_from(taps.saturating_mul(multiplicity)).unwrap_or(u64::MAX),
+                    );
+            }
+        }
+    }
+    let stack_weighted_taps = stack_weighted_taps
+        .iter()
+        .map(u64::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    let stack_max_abs_residual_w = stack_max_abs_residual_w
+        .iter()
+        .map(|value| format!("{value:.9e}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    eprintln!(
+        "awproject_hybrid_support_audit block={} window={} samples={} plan_references={} \
+         represented_w_extent={:.9e} observed_w_min={:.9e} observed_w_max={:.9e} \
+         w_increment={:.9e} current_weighted_taps={} a_only_weighted_taps={} \
+         stack_counts=1-{} stack_weighted_taps={} stack_max_abs_residual_w={} \
+         role=bounded-support-and-interaction-cost-audit-not-performance-or-science-evidence",
+        replay_block_ordinal,
+        window_ordinal,
+        source_samples.len(),
+        plan_references,
+        represented_w_extent,
+        observed_w_min,
+        observed_w_max,
+        w_increment,
+        current_weighted_taps,
+        a_only_weighted_taps,
+        AWPROJECT_HYBRID_STACK_COUNT_MAX,
+        stack_weighted_taps,
+        stack_max_abs_residual_w,
     );
     Ok(())
 }
@@ -28628,6 +28857,18 @@ fn replay_awproject_compact_window(
             &aw_sample_census_before,
         ),
     };
+    if model_grids.is_none() && !gpu_residual_replay {
+        maybe_audit_awproject_hybrid_support(
+            request,
+            batch,
+            source_samples,
+            tap_requests,
+            bundles,
+            cache,
+            replay_block_ordinal,
+            replay_stats.windows,
+        )?;
+    }
     if model_grids.is_some() {
         maybe_probe_awproject_physical_components(
             request,
@@ -61417,14 +61658,14 @@ mod tests {
         WProjectMetalSample, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
         add_shifted_kernel, add_shifted_kernel_with_support, apply_chauvenet_clipping,
         apply_weighting, aw_stokes_i_residual_for_mueller, aw_stokes_i_visibility_for_mueller,
-        awproject_model_fft_plan, build_direct_components, build_direct_pixel_coordinates,
-        build_image_coordinate_system, build_image_spectral_coordinate,
-        build_multiscale_scale_masks, casa_mtmfs_scaled_kernel_value,
-        casa_multiscale_divergence_stop_reason, clean_cycle_threshold, clean_mask_image_product,
-        clean_mask_pixel_count, collapse_primary_beam_weight_samples,
-        compute_dirty_psf_and_residual_standard, compute_psf, compute_psf_direct, compute_residual,
-        compute_residual_direct, direct_predict_visibility, dirty_clean_config,
-        extract_mfs_plane_product, kernel_nonzero_support, keyed_madfm_f32,
+        awproject_hybrid_stack_center, awproject_model_fft_plan, build_direct_components,
+        build_direct_pixel_coordinates, build_image_coordinate_system,
+        build_image_spectral_coordinate, build_multiscale_scale_masks,
+        casa_mtmfs_scaled_kernel_value, casa_multiscale_divergence_stop_reason,
+        clean_cycle_threshold, clean_mask_image_product, clean_mask_pixel_count,
+        collapse_primary_beam_weight_samples, compute_dirty_psf_and_residual_standard, compute_psf,
+        compute_psf_direct, compute_residual, compute_residual_direct, direct_predict_visibility,
+        dirty_clean_config, extract_mfs_plane_product, kernel_nonzero_support, keyed_madfm_f32,
         lossless_dyadic_spatial_tile_census, make_multiscale_kernel, mean_stddev,
         mfs_image_product_peak_abs_masked, minor_cycle_stop_is_major_cycle_handoff,
         minor_cycle_stop_reason, mosaic_pointing_contributes_by_simple_pb_center,
@@ -61450,6 +61691,16 @@ mod tests {
         trace_cube_channel_residual_refresh_model_channel_lambda, trace_residual_refresh,
         trace_w_project_plan, trace_weighting,
     };
+
+    #[test]
+    fn awproject_hybrid_stack_centers_are_symmetric_and_bounded() {
+        assert_eq!(awproject_hybrid_stack_center(4.0, 10.0, 1), 0.0);
+        assert_eq!(awproject_hybrid_stack_center(-8.0, 10.0, 4), -7.5);
+        assert_eq!(awproject_hybrid_stack_center(8.0, 10.0, 4), 7.5);
+        assert_eq!(awproject_hybrid_stack_center(-10.0, 10.0, 4), -7.5);
+        assert_eq!(awproject_hybrid_stack_center(10.0, 10.0, 4), 7.5);
+        assert_eq!(awproject_hybrid_stack_center(1.0, 0.0, 8), 0.0);
+    }
 
     #[test]
     fn frozen_restoring_beam_parser_preserves_casa_units() {

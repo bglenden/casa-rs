@@ -8072,6 +8072,135 @@ Between those gates, run exactly one 16-component batch. Scientific promotion
 still requires exact or accepted scale-5/12 behavior, the 4,096-square
 full-16-SPW row, all 19 products, and the existing final workload gates.
 
+### 2026-07-31 exact-component reuse and hybrid W/A negative checkpoint
+
+The exact component factorization passed its numerical discriminator but
+failed its required structural reuse gate before a batched production kernel
+was built. A full first-window census reports:
+
+- `28,358` prediction-response keys;
+- `11,958,222` unique CF values;
+- `50,062` plan references;
+- `38,807,452` current tap-term interactions; and
+- only `3.245252681x` weighted reuse.
+
+The Oracle-derived break-even requirement for the actual 641-component
+trajectory was greater than `80.125x` reuse. Even an optimistic 16-component
+batch therefore retains an approximately `24.7x` arithmetic gap, while still
+depending on the sampled-CF source state that already fails the full-size
+memory projection. The proposed response-table architecture is rejected. This
+does not reject the exact algebraic factorization as a correctness tool; it
+rejects building and retaining responses as the production way to eliminate
+the repeated operator calls. The real-data census log has SHA-256
+`88f51ea1932988637165e397e6bbe6adbbe8b62fb512a93f673899ad763e2f7e`.
+
+The next bounded discriminator measured hybrid W/A support cost without
+changing the imaging result. An opt-in diagnostic now evaluates the exact CASA
+quadratic residual-W support selection for equal-width signed stack counts
+from 1 through 32 while preserving frequency, Mueller/conjugate-beam, PA,
+imaging/weight role, both parallel hands, and all MT-MFS imaging, PSF, and
+weight plane multiplicities. Its reducer verifies the full-16-SPW contract,
+all `385,862` samples, `6,173,792` plan references, 20 replay windows, the
+one-stack control, and the content hash before writing a cost receipt.
+
+The aggregate current work proxy is `1,722,668,832` weighted taps. The
+theoretical A-only support floor is `899,753,728`, or `0.522302204x`. The best
+tested point is 32 stacks at `926,212,576`, or `0.537661423x`, before any
+added stack FFT, phase-screen, or accumulation work. Two stacks are a negative
+control at `1.314093085x`; the curve does not fall below `0.60x` until nine
+stacks. Because the predeclared support gate required at most `0.50x`, the
+hybrid implementation is rejected before adding its unavoidable fixed work.
+The equal-width stack locations are not claimed to be globally optimal, but
+the A-only floor is independent of stack placement and already fails that
+gate.
+
+This is arithmetic and support evidence, not a runtime comparison: the
+`124.65`-second diagnostic deliberately performs 32 metadata selections per
+logical plan and must not be compared with the promoted clean timing. The log
+and reduced receipt are:
+
+- `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260731-vlass-4096-full16-niter0-hybrid-wa-support-audit-v1.log`,
+  SHA-256
+  `a393d190a4d83544aa3783be6607bf4f6058343839089ec8e30ee2dfeed1359a`;
+  and
+- `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/diagnostics/20260731-vlass-4096-full16-hybrid-wa-support-audit-v1.json`,
+  SHA-256
+  `772e902888c6f61bdd910a4d85df2a4cea0abf7b5765da0175af8fa4aa21bcfb`.
+
+This checkpoint launched one permitted 4,096-square full-16-SPW `niter=0`
+diagnostic. It launched no CASA task, no 12,150-square imaging workload, no
+clean development run, and no unchanged reference.
+
+### 2026-07-31 Oracle portfolio reset and inverse-CF subgrid race
+
+The interaction-count rejection of standalone image-domain subgridding above
+is now narrowed. It remains valid as a count: the `L=32` route performs
+`1.199739416x` as many nominal interactions as the current sampled-CF path.
+It is not a runtime rejection across unlike representations. A dense,
+compute-bound direct-subgrid kernel can price one interaction very differently
+from the incumbent irregular sampled-CF replay. The performance skill now
+requires a matched target-hardware race whenever a candidate changes the
+physical character of the work.
+
+The whole-run target gives that race an unusually demanding but explicit
+budget. The promoted row takes `42.910` seconds; `28.239768` seconds are
+assigned to the AW operator stages and `14.670232` seconds are fixed outside
+the candidate. A mathematical `2x` total boundary therefore permits at most
+`6.784768` seconds of replacement-operator work. Promotion reserves margin by
+requiring no more than `5.6479536` seconds, which projects to `20.3181856`
+seconds or `2.1119x` total. With the `1.199739416x` interaction ratio, the
+replacement needs at least `4.9936x` incumbent effective per-interaction
+throughput even to reach the abort boundary and `5.9987x` to promote.
+
+Source inspection corrected an assumption in the first Oracle response.
+casa-rs has analytic image-domain screen generation for its separate mosaic
+projector, but the VLASS AWProject path loads CASA's sampled UV CF cache. The
+Oracle follow-up therefore selected exactly one next experiment:
+
+- replay the exact 11-call full-16-SPW operator multiset with no CLEAN
+  controller, restoration, product FFTs, writes, or CASA;
+- use `L=32` direct subgrids and inverse-transform each exact discrete sampled
+  patch after its CF key, oversampling phase, conjugation, origin, and
+  normalization are fixed;
+- report a best-case core timing with those screens preloaded and a throwaway
+  timing that also includes bounded streaming inverse-CF construction; and
+- compare frozen TT0/TT1, residual, PSF/all-weight, deterministic point-source,
+  and complex Rademacher forward/adjoint probes with the current sampled-CF
+  operator.
+
+This inverse-CF path is a disposable hardware discriminator, not a production
+screen representation. It promotes only to the next investment decision:
+build a native physical A/WB/conjugate/POINTING screen generator. It does not
+authorize a production default or architecture change. The core promotion
+gates are normalized RMS at most `3e-6`, peak-relative error at most `2e-5`,
+adjointness error at most `2e-6`, projected full-size peak at most `12 GiB`,
+and operator time at most `5.6479536` seconds. A best-case core time above
+`6.784768` seconds or projected peak above `15.2 GB` aborts the full-rank
+per-sample `L=32` direct-subgrid family on this target. A time between those
+bounds, or passing time with failed numerics, is inconclusive and does not
+justify further investment in this route.
+
+The family-level claim is deliberately narrow. A failed race does not reject
+native screens with smaller effective support, low-rank or tensor action,
+visibility coalescing, 3D W-gridding/NUFFT, or reconstruction algorithms that
+eliminate operator calls.
+
+The content-bound executable contract is:
+
+- tool:
+  `tools/perf/imager/experiments/vlass_exact_screen_subgrid_race_contract.py`;
+- focused tests:
+  `tools/perf/imager/experiments/test_vlass_exact_screen_subgrid_race_contract.py`;
+- receipt:
+  `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/diagnostics/20260731-vlass-4096-full16-inverse-cf-subgrid-race-contract-v1.json`;
+  and
+- receipt SHA-256:
+  `e4697051dd224516518c91a918e8a36cbb82340aad973442d358c3ebb947ad82`.
+
+The contract generator runs neither imaging nor a benchmark. The race remains
+unexecuted. No CASA task, clean run, 12,150-square workload, or changed
+scientific reference was launched for this reset.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.

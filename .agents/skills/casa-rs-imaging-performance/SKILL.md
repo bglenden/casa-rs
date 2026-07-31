@@ -236,6 +236,51 @@ state exceeds the no-pressure memory budget, or complete stage elimination has
 an immaterial Amdahl benefit. Rank survivors by expected end-to-end gap closure
 per bounded discriminator effort, not implementation convenience.
 
+### Backpropagate the end-to-end target
+
+Translate a requested whole-run speedup into a budget for the candidate before
+writing its implementation:
+
+```text
+candidate_time_max = current_total / target_speedup - fixed_non_candidate_time
+```
+
+Reject the target as impossible when that value is non-positive. When the
+candidate changes the physical work count by a factor `rho`, its minimum
+required throughput improvement over the incumbent stage is:
+
+```text
+required_throughput_multiplier =
+  rho * incumbent_candidate_time / candidate_time_max
+```
+
+Use the target-hardware p90 for decisions and reserve explicit promotion
+margin; merely landing on the mathematical pass/fail boundary is not a
+production result. State both the promotion budget and a looser abort budget
+that closes the family only when even an optimistic lower bound misses it.
+
+### Do not price different representations with one counter
+
+Interaction, tap, pair, pixel, FFT, and byte counts are useful rejection
+filters only within representations whose physical operations have comparable
+cost. A replacement may deliberately increase an arithmetic count while
+changing irregular, memory-bound scatter/gather into dense, compute-bound
+execution. Conversely, fewer nominal interactions may lose through materialized
+state, random traffic, atomics, transforms, launches, or synchronization.
+
+When a representation changes the physical character of the work, run one
+matched target-hardware race that includes setup, packing, transforms,
+scatter/gather, transfers, command encoding, synchronization, and bounded
+state. Backpropagate the whole-run target to obtain the required kernel-family
+budget first. A count-only miss may reject on a physical lower bound, but it
+must not be presented as a measured runtime comparison across unlike
+representations.
+
+Falsify only the action family actually exercised. Failure of a direct
+subgridder with `O(sum(n_p * L_p^2))` work does not reject a low-rank,
+butterfly, coalesced, averaged, or NUFFT formulation that changes that action
+count. Record the invariant that makes a family-level falsification valid.
+
 ## Forced portfolio reset
 
 Suspend a representation family when two candidates fail promotion, a
