@@ -7182,6 +7182,49 @@ of reserialized floating reduction text. A replacement certificate remains
 conditional and bounded exactly as above; the invalid execution earns no
 scientific conclusion and no new clean.
 
+The corrected
+`20260730-vlass-4096-4spw-final-model-term-causality-v2` certificate then
+completed as `final-model-not-sufficient`. Control A reproduced all frozen
+Phase-A product-array, bit-ledger, and topology identities exactly and passed
+all derived gates. Test B, using both complete casa-rs final model terms with
+the frozen CASA residual, also passed every numerical, topology, finite,
+structured-difference, and metadata gate:
+
+- image TT0 and TT1 relative RMS differences were `0.040856 ppm` and
+  `0.100237 ppm`; both full-plane structure labels were `good`;
+- alpha and alpha-error relative RMS differences were `0.026624 ppm` and
+  `0.028091 ppm`;
+- alpha and alpha-error each had zero topology mismatches; and
+- the current `16`-coordinate failure signature was absent.
+
+The CASA and casa-rs model terms have identical `2,166`-pixel sparse support
+in both Taylor terms. Their values differ at `2,152` TT0 support locations and
+`2,159` TT1 support locations, with maximum ULP distances `6,432` and `7,936`.
+Those final value differences are therefore real, but substituting both of
+them together is insufficient to reproduce the current clean product defect
+when the residual is held to CASA.
+
+The conditional driver correctly skipped C and D and created no hybrid
+receipt. The full certificate took `18.697603` seconds with peak resident
+footprint `876,904,448` bytes, removed all transient planes, and crossed none
+of the prohibited boundaries. Its immutable SHA-256 evidence is:
+
+- primary Rust receipt:
+  `9cb231ca10608553f2820c7521e09a22f7d7e0a395859415056ee1b4ccc62573`;
+- final certificate:
+  `8bd1f8a945dad841d2986264d7f9aeaa5e2c9ab000740973b033bf4052609ab7`;
+  and
+- driver log:
+  `617b880c447833eea47f1efce4a8e416aadf36081f336f324370e39332d3f951`.
+
+This falsifies the complete final model planes as a sufficient cause of the
+remaining clean mismatch; it does not prove that model evolution is
+irrelevant during earlier cycles. Per the same Oracle decision tree, the next
+correctness owner is a first-divergent major-cycle state checkpoint. No
+single-term coefficient/update ledger, new clean, production incorporation,
+full-16-SPW row, full-size row, or memory campaign is authorized by this
+result.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
