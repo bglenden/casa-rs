@@ -29,9 +29,9 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
-        self.workload_result_4096 = self.root / "workload-4096.json"
         self.comparison = self.root / "comparison.json"
-        self.trajectory = self.root / "trajectory.json"
+        self.comparison_input = self.root / "comparison-input.json"
+        self.run_log = self.root / "run.log"
         self.promotion = self.root / "promotion.json"
         self.artifact_root = self.root / "external-artifacts"
         self.artifact_root.mkdir()
@@ -87,118 +87,113 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
             },
         }
         comparison = {
-            "status": "completed",
+            "status": "comparison_incomplete",
+            "comparison_mode": "full",
             "requested_products": list(campaign.EXPECTED_19_PRODUCTS),
             "product_inventory": {"status": "matched"},
             "products": {
-                product: {"status": "compared"}
+                product: {
+                    "status": (
+                        "topology_mismatch"
+                        if product in {".alpha", ".alpha.error"}
+                        else "compared"
+                    ),
+                    "metadata": {"parity": True},
+                }
                 for product in campaign.EXPECTED_19_PRODUCTS
             },
             "require_exact_product_inventory": True,
             "require_metadata_parity": True,
-            "tolerances": {"default": {"require_topology_parity": True}},
-            "tolerance_evaluation": {"status": "passed"},
-            "structured_difference_review": {"label": "good"},
         }
         self.comparison.write_text(
             json.dumps(comparison),
             encoding="utf-8",
         )
-        workload_result = {
-            "kind": "workload_run",
-            "status": "completed",
-            "mode": {
-                "bench_mode": "clean",
-                "image_shape": [4096, 4096],
-                "channel_count": 64,
-                "nterms": 2,
-                "niter": 2000,
-                "gridder": "awproject",
-                "deconvolver": "mtmfs",
-                "wprojplanes": "32",
-            },
-            "command": {
-                "kind": "legacy_benchmark_script",
-                "env": {
-                    "IMAGER_BENCH_IMSIZE": "4096",
-                    "IMAGER_BENCH_FIELD": "1525",
-                    "IMAGER_BENCH_SPW": "2~17",
-                    "IMAGER_BENCH_MODE": "clean",
-                    "IMAGER_BENCH_CHANNEL_COUNT": "64",
-                    "IMAGER_BENCH_NTERMS": "2",
-                    "IMAGER_BENCH_NITER": "2000",
-                    "IMAGER_BENCH_WPROJPLANES": "32",
-                    "IMAGER_BENCH_GRIDDER": "awproject",
-                    "IMAGER_BENCH_DECONVOLVER": "mtmfs",
-                    "IMAGER_BENCH_ATERM": "1",
-                    "IMAGER_BENCH_WBAWP": "1",
-                    "IMAGER_BENCH_CONJBEAMS": "1",
-                    "IMAGER_BENCH_USEPOINTING": "1",
-                },
-            },
-            "comparison": {
-                "products": list(campaign.EXPECTED_19_PRODUCTS),
-                "require_exact_product_inventory": True,
-                "require_metadata_parity": True,
-            },
-            "results": {"product_comparison": comparison},
+        self.comparison_input.write_text(
+            json.dumps({"products": list(campaign.EXPECTED_19_PRODUCTS)}),
+            encoding="utf-8",
+        )
+        output_products = ",".join(campaign.EXPECTED_19_PRODUCTS)
+        self.run_log.write_text(
+            "\n".join(
+                (
+                    "single_plane_execution_plan "
+                    "spectral=mfs projection=awproject deconvolver=mtmfs "
+                    "weighting=briggs source_stream=bounded "
+                    f"output_products={output_products}",
+                    "casa_mfs_frequency_edge_range low_field=1525 high_field=1525",
+                    "mfs_ddid_execution_plan "
+                    "spws=2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17 "
+                    "rows=10400 selected_channel_visits=665600 "
+                    "bounded_row_groups=true",
+                    "awproject_plan "
+                    "image_shape=4096x4096 wplanes=32 "
+                    "primary_beam=evla-lband-common aterm=true psterm=false "
+                    "wbawp=true conjbeams=true usepointing=true cf_freqs=16",
+                    "frontend stage=cli/warning_emit count=0",
+                    "Wrote CASA-compatible products at prefix /tmp/rust "
+                    "(385862 gridded samples, 6 major cycles, "
+                    "641 minor iterations, stop=Some(NsigmaThresholdReached))",
+                )
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        reviewer_source = Path(__file__).with_name("vlass_scientific_floor_review.py")
+        numerical_metrics = {
+            product: {
+                "diff_rms_over_reference_rms": 1.0e-6,
+                "diff_abs_max_over_reference_peak": 2.0e-6,
+            }
+            for product in campaign.EXPECTED_19_PRODUCTS
         }
-        self.workload_result_4096.write_text(
-            json.dumps(workload_result),
-            encoding="utf-8",
-        )
-        workload_result_sha256 = campaign.sha256_file(self.workload_result_4096)
-        comparison_sha256 = campaign.sha256_file(self.comparison)
-        self.trajectory.write_text(
-            json.dumps(
-                {
-                    "status": "completed",
-                    "geometry": campaign._expected_bound_geometry(
-                        "single-field",
-                        imsize=4096,
-                    ),
-                    "coverage": {
-                        "casa_complete": True,
-                        "rust_complete": True,
-                        "same_cycle_count": True,
-                    },
-                    "discrete_parity": {"status": "passed"},
-                    "aligned_cycles": 5,
-                    "casa_cycles": 5,
-                    "rust_cycles": 5,
-                    "no_divergence": True,
-                    "component_selection": {"status": "passed"},
-                    "major_cycle_residual": {"status": "passed"},
-                    "workload_result_sha256": workload_result_sha256,
-                    "comparison_receipt_sha256": comparison_sha256,
-                }
-            ),
-            encoding="utf-8",
-        )
         self.promotion.write_text(
             json.dumps(
                 {
                     "schema_version": 1,
-                    "kind": "vlass_4096_full16_promotion",
-                    "status": "promoted",
-                    "workload_kind": "single-field",
-                    "geometry": {
-                        "imsize": 4096,
-                        "spw": "2~17",
-                        "field": "1525",
-                        "dataset_selection": "single_field",
-                        "field_count": 1,
-                        "nterms": 2,
-                        "wprojplanes": 32,
-                        "product_count": 19,
+                    "kind": "vlass_scientific_floor_review",
+                    "status": "passed",
+                    "decision": "promote",
+                    "failures": [],
+                    "scope": {
+                        "workload": campaign.PROMOTED_4096_WORKLOAD_IDS["single-field"],
+                        "evidence_only": True,
+                        "runs_casa": False,
+                        "runs_imaging": False,
+                        "shape": [4096, 4096],
+                        "products": list(campaign.EXPECTED_19_PRODUCTS),
                     },
-                    "gates": {gate: True for gate in campaign.PROMOTION_GATES},
-                    "workload_result": str(self.workload_result_4096),
-                    "workload_result_sha256": workload_result_sha256,
-                    "comparison_receipt": str(self.comparison),
-                    "comparison_receipt_sha256": comparison_sha256,
-                    "trajectory_receipt": str(self.trajectory),
-                    "trajectory_receipt_sha256": campaign.sha256_file(self.trajectory),
+                    "gates": {gate: True for gate in campaign.SCIENTIFIC_FLOOR_GATES},
+                    "contract": {
+                        "numerical_diff_rms_over_reference_rms_max": 1.0e-3,
+                        "numerical_diff_abs_max_over_reference_peak_max": 5.0e-3,
+                    },
+                    "metrics": {
+                        "comparison": {
+                            "passed": True,
+                            "failures": [],
+                            "metadata_failures": [],
+                            "numerical_metrics": numerical_metrics,
+                        }
+                    },
+                    "input": {
+                        "reviewer_source": {
+                            "path": str(reviewer_source),
+                            "sha256": campaign.sha256_file(reviewer_source),
+                        },
+                        "comparison": {
+                            "path": str(self.comparison),
+                            "sha256": campaign.sha256_file(self.comparison),
+                        },
+                        "comparison_input": {
+                            "path": str(self.comparison_input),
+                            "sha256": campaign.sha256_file(self.comparison_input),
+                        },
+                        "run_log": {
+                            "path": str(self.run_log),
+                            "sha256": campaign.sha256_file(self.run_log),
+                        },
+                    },
                 }
             ),
             encoding="utf-8",
@@ -845,86 +840,53 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
         )
         self.assertEqual(len(campaign.POLICIES), len(set(campaign.POLICIES)))
 
-    def test_promotion_receipt_binds_geometry_and_both_evidence_rows(self) -> None:
+    def test_promotion_receipt_binds_scientific_floor_and_geometry(self) -> None:
         reference = campaign.validate_promoted_4096_receipt(self.promotion)
         self.assertEqual(reference.path, str(self.promotion.resolve()))
         self.assertEqual(len(reference.sha256), 64)
 
         value = json.loads(self.promotion.read_text(encoding="utf-8"))
-        value["geometry"]["spw"] = "2,7,12,17"
+        value["scope"]["shape"] = [2048, 2048]
         self.promotion.write_text(json.dumps(value), encoding="utf-8")
-        with self.assertRaisesRegex(campaign.CampaignError, "geometry must bind"):
+        with self.assertRaisesRegex(campaign.CampaignError, "scientific scope"):
             campaign.validate_promoted_4096_receipt(self.promotion)
 
     def test_promotion_rejects_changed_referenced_content(self) -> None:
-        value = json.loads(self.promotion.read_text(encoding="utf-8"))
-        value["workload_result_sha256"] = "0" * 64
-        self.promotion.write_text(json.dumps(value), encoding="utf-8")
-        with self.assertRaisesRegex(campaign.CampaignError, "does not match"):
+        self.run_log.write_text("changed\n", encoding="utf-8")
+        with self.assertRaisesRegex(campaign.CampaignError, "sha256 does not match"):
             campaign.validate_promoted_4096_receipt(self.promotion)
 
-    def test_promotion_rejects_wrong_4096_workload_after_rehash(self) -> None:
-        workload = json.loads(self.workload_result_4096.read_text(encoding="utf-8"))
-        workload["mode"]["image_shape"] = [2048, 2048]
-        self.workload_result_4096.write_text(
-            json.dumps(workload),
-            encoding="utf-8",
+    def test_promotion_rejects_wrong_run_geometry_after_rehash(self) -> None:
+        text = self.run_log.read_text(encoding="utf-8").replace(
+            "image_shape=4096x4096",
+            "image_shape=2048x2048",
         )
-        workload_sha256 = campaign.sha256_file(self.workload_result_4096)
-        trajectory = json.loads(self.trajectory.read_text(encoding="utf-8"))
-        trajectory["workload_result_sha256"] = workload_sha256
-        self.trajectory.write_text(json.dumps(trajectory), encoding="utf-8")
+        self.run_log.write_text(text, encoding="utf-8")
         promotion = json.loads(self.promotion.read_text(encoding="utf-8"))
-        promotion["workload_result_sha256"] = workload_sha256
-        promotion["trajectory_receipt_sha256"] = campaign.sha256_file(self.trajectory)
+        promotion["input"]["run_log"]["sha256"] = campaign.sha256_file(self.run_log)
         self.promotion.write_text(json.dumps(promotion), encoding="utf-8")
-        with self.assertRaisesRegex(campaign.CampaignError, "mode/geometry mismatch"):
+        with self.assertRaisesRegex(campaign.CampaignError, "AW/POINTING geometry"):
             campaign.validate_promoted_4096_receipt(self.promotion)
 
-    def test_promotion_rejects_failed_comparison_tolerance_after_rehash(self) -> None:
+    def test_promotion_rejects_failed_scientific_gate(self) -> None:
+        promotion = json.loads(self.promotion.read_text(encoding="utf-8"))
+        promotion["gates"]["stable_alpha_and_cutoff_boundary"] = False
+        self.promotion.write_text(json.dumps(promotion), encoding="utf-8")
+        with self.assertRaisesRegex(
+            campaign.CampaignError,
+            "stable_alpha_and_cutoff_boundary",
+        ):
+            campaign.validate_promoted_4096_receipt(self.promotion)
+
+    def test_promotion_accepts_cutoff_topology_without_trajectory_receipt(self) -> None:
+        reference = campaign.validate_promoted_4096_receipt(self.promotion)
+        self.assertEqual(reference.path, str(self.promotion.resolve()))
+        promotion = json.loads(self.promotion.read_text(encoding="utf-8"))
+        self.assertNotIn("trajectory_receipt", promotion)
         comparison = json.loads(self.comparison.read_text(encoding="utf-8"))
-        comparison["tolerance_evaluation"]["status"] = "failed"
-        self.comparison.write_text(json.dumps(comparison), encoding="utf-8")
-        comparison_sha256 = campaign.sha256_file(self.comparison)
-
-        workload = json.loads(self.workload_result_4096.read_text(encoding="utf-8"))
-        workload["results"]["product_comparison"] = comparison
-        self.workload_result_4096.write_text(
-            json.dumps(workload),
-            encoding="utf-8",
+        self.assertEqual(
+            "topology_mismatch", comparison["products"][".alpha"]["status"]
         )
-        workload_sha256 = campaign.sha256_file(self.workload_result_4096)
-
-        trajectory = json.loads(self.trajectory.read_text(encoding="utf-8"))
-        trajectory["workload_result_sha256"] = workload_sha256
-        trajectory["comparison_receipt_sha256"] = comparison_sha256
-        self.trajectory.write_text(json.dumps(trajectory), encoding="utf-8")
-
-        promotion = json.loads(self.promotion.read_text(encoding="utf-8"))
-        promotion["workload_result_sha256"] = workload_sha256
-        promotion["comparison_receipt_sha256"] = comparison_sha256
-        promotion["trajectory_receipt_sha256"] = campaign.sha256_file(self.trajectory)
-        self.promotion.write_text(json.dumps(promotion), encoding="utf-8")
-        with self.assertRaisesRegex(
-            campaign.CampaignError,
-            "tolerance evaluation did not pass",
-        ):
-            campaign.validate_promoted_4096_receipt(self.promotion)
-
-    def test_promotion_rejects_incomplete_component_trajectory_after_rehash(
-        self,
-    ) -> None:
-        trajectory = json.loads(self.trajectory.read_text(encoding="utf-8"))
-        trajectory["component_selection"]["status"] = "failed"
-        self.trajectory.write_text(json.dumps(trajectory), encoding="utf-8")
-        promotion = json.loads(self.promotion.read_text(encoding="utf-8"))
-        promotion["trajectory_receipt_sha256"] = campaign.sha256_file(self.trajectory)
-        self.promotion.write_text(json.dumps(promotion), encoding="utf-8")
-        with self.assertRaisesRegex(
-            campaign.CampaignError,
-            "component_selection trajectory evidence did not pass",
-        ):
-            campaign.validate_promoted_4096_receipt(self.promotion)
 
     def test_workload_kind_binds_single_field_or_exact_63_field_selector(self) -> None:
         all_fields = campaign.load_json(
@@ -944,39 +906,25 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
             )
 
         value = json.loads(self.promotion.read_text(encoding="utf-8"))
-        value["workload_kind"] = "all-fields"
-        value["geometry"].update(
-            {
-                "field": campaign.ALL_FIELDS_SELECTOR,
-                "dataset_selection": "all_fields",
-                "field_count": 63,
-            }
-        )
-        workload = json.loads(self.workload_result_4096.read_text(encoding="utf-8"))
-        workload["command"]["env"]["IMAGER_BENCH_FIELD"] = campaign.ALL_FIELDS_SELECTOR
-        self.workload_result_4096.write_text(
-            json.dumps(workload),
+        value["scope"]["workload"] = campaign.PROMOTED_4096_WORKLOAD_IDS["all-fields"]
+        self.run_log.write_text(
+            self.run_log.read_text(encoding="utf-8")
+            .replace("rows=10400", "rows=655200")
+            .replace(
+                "casa_mfs_frequency_edge_range low_field=1525 high_field=1525\n",
+                "",
+            ),
             encoding="utf-8",
         )
-        value["workload_result_sha256"] = campaign.sha256_file(
-            self.workload_result_4096
-        )
-        trajectory = json.loads(self.trajectory.read_text(encoding="utf-8"))
-        trajectory["geometry"] = campaign._expected_bound_geometry(
-            "all-fields",
-            imsize=4096,
-        )
-        trajectory["workload_result_sha256"] = value["workload_result_sha256"]
-        self.trajectory.write_text(json.dumps(trajectory), encoding="utf-8")
-        value["trajectory_receipt_sha256"] = campaign.sha256_file(self.trajectory)
+        value["input"]["run_log"]["sha256"] = campaign.sha256_file(self.run_log)
         self.promotion.write_text(json.dumps(value), encoding="utf-8")
         campaign.validate_promoted_4096_receipt(
             self.promotion,
             workload_kind="all-fields",
         )
-        value["geometry"]["field_count"] = 62
+        value["scope"]["workload"] = "wrong-all-fields-workload"
         self.promotion.write_text(json.dumps(value), encoding="utf-8")
-        with self.assertRaisesRegex(campaign.CampaignError, "field_count.*63"):
+        with self.assertRaisesRegex(campaign.CampaignError, "scientific scope"):
             campaign.validate_promoted_4096_receipt(
                 self.promotion,
                 workload_kind="all-fields",

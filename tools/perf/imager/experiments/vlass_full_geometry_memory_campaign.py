@@ -141,11 +141,21 @@ EXPECTED_19_PRODUCTS = (
 EXPECTED_DIRTY_PRODUCTS = tuple(
     product for product in EXPECTED_19_PRODUCTS if product != ".mask"
 )
-PROMOTION_GATES = (
-    "casa_component_trajectory",
-    "major_cycle_trajectory",
+SCIENTIFIC_FLOOR_GATES = (
+    "inventory_metadata_and_frozen_numerical_ceilings",
+    "source_photometry_position_and_morphology",
+    "residual_noise_and_distribution",
+    "dynamic_range",
+    "beam_and_larger_scale_difference_amplitude",
+    "stable_alpha_and_cutoff_boundary",
+)
+PROMOTED_4096_WORKLOAD_IDS = {
+    "single-field": "vlass-fragment-single-field-clean-4096-full-16-spw",
+    "all-fields": "vlass-fragment-all-fields-clean-4096-full-16-spw",
+}
+SCIENTIFIC_PROMOTION_GATES = (
+    "scientific_floor",
     "numerical",
-    "topology",
     "metadata",
     "product_inventory",
     "no_divergence",
@@ -171,7 +181,7 @@ CLEAN_EXECUTION_GATES = (
     *MEMORY_EXECUTION_GATES,
 )
 CLEAN_PROMOTION_GATES = (
-    *PROMOTION_GATES,
+    *SCIENTIFIC_PROMOTION_GATES,
     *MEMORY_EXECUTION_GATES,
 )
 MEMORY_CAMPAIGN_PROMOTION_SCOPE = "memory-campaign-only"
@@ -1153,78 +1163,286 @@ def _validate_workload_kind_binding(
         raise CampaignError(f"{receipt_path}: workload_kind must be {workload_kind!r}")
 
 
+def _resolve_hashed_scientific_input(
+    receipt_path: Path,
+    inputs: dict[str, Any],
+    field: str,
+) -> Path:
+    """Resolve and verify one content-bound scientific-floor input."""
+
+    reference = inputs.get(field)
+    if not isinstance(reference, dict):
+        raise CampaignError(f"{receipt_path}: input.{field} must be a JSON object")
+    path = resolve_receipt_reference(
+        receipt_path,
+        reference.get("path"),
+        field=f"input.{field}.path",
+    )
+    expected = reference.get("sha256")
+    if (
+        not isinstance(expected, str)
+        or re.fullmatch(r"[0-9a-f]{64}", expected) is None
+        or expected != sha256_file(path)
+    ):
+        raise CampaignError(
+            f"{receipt_path}: input.{field}.sha256 does not match {path}"
+        )
+    return path
+
+
+def _validate_scientific_floor_comparison(
+    receipt: dict[str, Any],
+    *,
+    receipt_path: Path,
+    comparison_path: Path,
+    comparison_input_path: Path,
+) -> None:
+    """Validate the exact product/numerical boundary accepted by the reviewer."""
+
+    comparison = load_json(comparison_path, label="scientific-floor comparison")
+    comparison_input = load_json(
+        comparison_input_path,
+        label="scientific-floor comparison input",
+    )
+    if comparison.get("requested_products") != list(EXPECTED_19_PRODUCTS):
+        raise CampaignError(
+            f"{comparison_path}: comparison must request the exact 19 products"
+        )
+    if comparison_input.get("products") != list(EXPECTED_19_PRODUCTS):
+        raise CampaignError(
+            f"{comparison_input_path}: comparison input must bind the exact 19 products"
+        )
+    if (
+        comparison.get("comparison_mode") != "full"
+        or comparison.get("product_inventory", {}).get("status") != "matched"
+        or comparison.get("require_exact_product_inventory") is not True
+        or comparison.get("require_metadata_parity") is not True
+    ):
+        raise CampaignError(
+            f"{comparison_path}: comparison inventory/metadata boundary did not pass"
+        )
+    products = comparison.get("products")
+    if not isinstance(products, dict) or set(products) != set(EXPECTED_19_PRODUCTS):
+        raise CampaignError(
+            f"{comparison_path}: comparison result inventory is not exact"
+        )
+    for suffix in EXPECTED_19_PRODUCTS:
+        allowed = (
+            {"compared", "topology_mismatch"}
+            if suffix in {".alpha", ".alpha.error"}
+            else {"compared"}
+        )
+        if products[suffix].get("status") not in allowed:
+            raise CampaignError(f"{comparison_path}: {suffix} comparison is incomplete")
+        if products[suffix].get("metadata", {}).get("parity") is not True:
+            raise CampaignError(f"{comparison_path}: {suffix} metadata differs")
+
+    metrics = receipt.get("metrics")
+    reviewed = metrics.get("comparison") if isinstance(metrics, dict) else None
+    if (
+        not isinstance(reviewed, dict)
+        or reviewed.get("passed") is not True
+        or reviewed.get("failures") != []
+        or reviewed.get("metadata_failures") != []
+    ):
+        raise CampaignError(
+            f"{receipt_path}: reviewed numerical/metadata comparison did not pass"
+        )
+    numerical = reviewed.get("numerical_metrics")
+    if not isinstance(numerical, dict) or set(numerical) != set(EXPECTED_19_PRODUCTS):
+        raise CampaignError(
+            f"{receipt_path}: reviewed numerical inventory is not exact"
+        )
+    contract = receipt.get("contract")
+    if not isinstance(contract, dict):
+        raise CampaignError(f"{receipt_path}: scientific contract is missing")
+    rms_limit = contract.get("numerical_diff_rms_over_reference_rms_max")
+    peak_limit = contract.get("numerical_diff_abs_max_over_reference_peak_max")
+    if not _non_negative_number(rms_limit) or not _non_negative_number(peak_limit):
+        raise CampaignError(f"{receipt_path}: numerical ceilings are invalid")
+    for suffix, values in numerical.items():
+        rms = (
+            values.get("diff_rms_over_reference_rms")
+            if isinstance(values, dict)
+            else None
+        )
+        peak = (
+            values.get("diff_abs_max_over_reference_peak")
+            if isinstance(values, dict)
+            else None
+        )
+        if (
+            not _non_negative_number(rms)
+            or not _non_negative_number(peak)
+            or rms > rms_limit
+            or peak > peak_limit
+        ):
+            raise CampaignError(
+                f"{receipt_path}: {suffix} exceeds the reviewed numerical ceiling"
+            )
+
+
+def _validate_scientific_floor_run_log(
+    path: Path,
+    *,
+    workload_kind: str,
+) -> None:
+    """Bind the promoted products to the required live AW/POINTING execution."""
+
+    text = path.read_text(encoding="utf-8")
+    expected_rows = 10_400 if workload_kind == "single-field" else 655_200
+    execution_line = next(
+        (
+            line
+            for line in text.splitlines()
+            if line.startswith("single_plane_execution_plan ")
+        ),
+        "",
+    )
+    required_execution_tokens = (
+        "spectral=mfs",
+        "projection=awproject",
+        "deconvolver=mtmfs",
+        "weighting=briggs",
+        "source_stream=bounded",
+    )
+    if any(token not in execution_line for token in required_execution_tokens):
+        raise CampaignError(
+            f"{path}: promoted run lacks the required MFS/AWProject/MT-MFS plan"
+        )
+    output_token = next(
+        (
+            token.removeprefix("output_products=")
+            for token in execution_line.split()
+            if token.startswith("output_products=")
+        ),
+        "",
+    )
+    planned_products = output_token.split(",")
+    if len(planned_products) != len(EXPECTED_19_PRODUCTS) or set(
+        planned_products
+    ) != set(EXPECTED_19_PRODUCTS):
+        raise CampaignError(f"{path}: promoted run did not plan the exact 19 products")
+
+    ddid_line = next(
+        (
+            line
+            for line in text.splitlines()
+            if line.startswith("mfs_ddid_execution_plan ")
+        ),
+        "",
+    )
+    expected_spws = ",".join(str(value) for value in range(2, 18))
+    if (
+        f"spws={expected_spws}" not in ddid_line
+        or f"rows={expected_rows}" not in ddid_line
+        or "selected_channel_visits=" not in ddid_line
+        or "bounded_row_groups=true" not in ddid_line
+    ):
+        raise CampaignError(
+            f"{path}: promoted run does not bind the full-16-SPW row selection"
+        )
+
+    aw_line = next(
+        (line for line in text.splitlines() if line.startswith("awproject_plan ")),
+        "",
+    )
+    required_aw_tokens = (
+        "image_shape=4096x4096",
+        "wplanes=32",
+        "primary_beam=evla-lband-common",
+        "aterm=true",
+        "psterm=false",
+        "wbawp=true",
+        "conjbeams=true",
+        "usepointing=true",
+        "cf_freqs=16",
+    )
+    if any(token not in aw_line for token in required_aw_tokens):
+        raise CampaignError(f"{path}: promoted run lacks required AW/POINTING geometry")
+    if workload_kind == "single-field":
+        observed_fields = {
+            int(value) for value in re.findall(r"(?:low|high)_field=(\d+)", text)
+        }
+        if observed_fields != {1525}:
+            raise CampaignError(f"{path}: promoted run does not bind single field 1525")
+    if "frontend stage=cli/warning_emit count=0" not in text:
+        raise CampaignError(f"{path}: promoted run did not report zero warnings")
+    completion = re.search(
+        r"Wrote CASA-compatible products .+ "
+        r"\((\d+) gridded samples, (\d+) major cycles, "
+        r"(\d+) minor iterations, stop=Some\(([^)]+)\)\)",
+        text,
+    )
+    if (
+        completion is None
+        or int(completion.group(1)) < 1
+        or int(completion.group(3)) < 1
+    ):
+        raise CampaignError(
+            f"{path}: promoted run has no stable completed clean receipt"
+        )
+    if "diverg" in completion.group(4).lower():
+        raise CampaignError(f"{path}: promoted run reports divergence")
+
+
 def validate_promoted_4096_receipt(
     path: Path,
     *,
     workload_kind: str = "single-field",
 ) -> EvidenceRef:
-    """Validate the explicit 4096/full-16-SPW promotion gate."""
+    """Validate the active scientific 4096/full-16-SPW promotion gate."""
 
     path = path.expanduser().resolve()
-    receipt = load_json(path, label="4096 promotion receipt")
-    if receipt.get("kind") != "vlass_4096_full16_promotion":
-        raise CampaignError(
-            f"{path}: kind must be vlass_4096_full16_promotion; a bare comparison "
-            "receipt is insufficient because it does not bind full-16-SPW geometry"
-        )
-    if receipt.get("status") != "promoted":
-        raise CampaignError(f"{path}: promotion status must be promoted")
-    _validate_workload_kind_binding(
-        receipt,
-        receipt_path=path,
-        workload_kind=workload_kind,
-    )
-    geometry = receipt.get("geometry")
-    expected = _expected_bound_geometry(workload_kind, imsize=4096)
-    if not isinstance(geometry, dict) or any(
-        geometry.get(key) != value for key, value in expected.items()
+    receipt = load_json(path, label="4096 scientific-floor receipt")
+    if receipt.get("kind") != "vlass_scientific_floor_review":
+        raise CampaignError(f"{path}: kind must be vlass_scientific_floor_review")
+    if (
+        receipt.get("status") != "passed"
+        or receipt.get("decision") != "promote"
+        or receipt.get("failures") != []
     ):
-        raise CampaignError(f"{path}: geometry must bind {expected}")
-    require_true_gates(receipt, PROMOTION_GATES, receipt_path=path)
-    workload_result_path = resolve_receipt_reference(
+        raise CampaignError(f"{path}: scientific-floor decision is not promoted")
+    if workload_kind not in PROMOTED_4096_WORKLOAD_IDS:
+        raise CampaignError(f"unsupported workload kind: {workload_kind}")
+    scope = receipt.get("scope")
+    expected_workload = PROMOTED_4096_WORKLOAD_IDS[workload_kind]
+    if (
+        not isinstance(scope, dict)
+        or scope.get("workload") != expected_workload
+        or scope.get("shape") != [4096, 4096]
+        or scope.get("products") != list(EXPECTED_19_PRODUCTS)
+        or scope.get("evidence_only") is not True
+        or scope.get("runs_casa") is not False
+        or scope.get("runs_imaging") is not False
+    ):
+        raise CampaignError(
+            f"{path}: scientific scope must bind {expected_workload!r}, "
+            "4096-square geometry, and the exact 19 products"
+        )
+    require_true_gates(receipt, SCIENTIFIC_FLOOR_GATES, receipt_path=path)
+    inputs = receipt.get("input")
+    if not isinstance(inputs, dict):
+        raise CampaignError(f"{path}: scientific inputs are missing")
+    reviewer_path = _resolve_hashed_scientific_input(path, inputs, "reviewer_source")
+    if reviewer_path.name != "vlass_scientific_floor_review.py":
+        raise CampaignError(f"{path}: reviewer source is not canonical")
+    comparison_path = _resolve_hashed_scientific_input(path, inputs, "comparison")
+    comparison_input_path = _resolve_hashed_scientific_input(
         path,
-        receipt.get("workload_result"),
-        field="workload_result",
+        inputs,
+        "comparison_input",
     )
-    comparison_path = resolve_receipt_reference(
-        path,
-        receipt.get("comparison_receipt"),
-        field="comparison_receipt",
-    )
-    trajectory_path = resolve_receipt_reference(
-        path,
-        receipt.get("trajectory_receipt"),
-        field="trajectory_receipt",
-    )
-    workload_result_sha256 = require_content_hash(
+    run_log_path = _resolve_hashed_scientific_input(path, inputs, "run_log")
+    _validate_scientific_floor_comparison(
         receipt,
         receipt_path=path,
-        field="workload_result_sha256",
-        referenced_path=workload_result_path,
+        comparison_path=comparison_path,
+        comparison_input_path=comparison_input_path,
     )
-    comparison_receipt_sha256 = require_content_hash(
-        receipt,
-        receipt_path=path,
-        field="comparison_receipt_sha256",
-        referenced_path=comparison_path,
-    )
-    require_content_hash(
-        receipt,
-        receipt_path=path,
-        field="trajectory_receipt_sha256",
-        referenced_path=trajectory_path,
-    )
-    comparison = validate_comparison_receipt(comparison_path)
-    validate_4096_workload_result(
-        workload_result_path,
+    _validate_scientific_floor_run_log(
+        run_log_path,
         workload_kind=workload_kind,
-        comparison=comparison,
-    )
-    validate_trajectory_receipt(
-        trajectory_path,
-        expected_geometry=expected,
-        workload_result_sha256=workload_result_sha256,
-        comparison_receipt_sha256=comparison_receipt_sha256,
     )
     return EvidenceRef(path=str(path), sha256=sha256_file(path))
 

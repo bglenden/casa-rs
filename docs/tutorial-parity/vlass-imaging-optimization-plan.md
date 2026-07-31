@@ -7756,6 +7756,145 @@ behavior. It must not become a reason to tune the 7 GiB replay representation
 indefinitely. No CASA task or full-size clean run was launched for this
 architecture reset.
 
+### 2026-07-31 full-size falsification and second architecture tournament
+
+The first full-geometry action was a bounded planner-only memory-policy sweep.
+It did not launch CASA, casa-rs imaging, a `12,150`-square dirty row, or a
+full-size clean row, and it did not allocate the projected grids. The sweep
+used the required 32 GiB laptop (`34,359,738,368` physical bytes, ten logical
+CPUs, four performance cores) and wrote receipts under
+`memory-campaign-v2`.
+
+All five policies reject the current full-size representation:
+
+- Aggressive admission had `15,204,843,520` no-swap bytes available against
+  `21,322,901,712` fixed bytes. Receipt SHA-256:
+  `3ab1cdd4b41e643569b5b63ce57081146272b559945807d4e8d9d32fefc1eee9`;
+  planner-log SHA-256:
+  `3b05f88f1584be3a4e4af1336fd264a2da7ee07a57a5683a986b00015eca0db4`.
+- Hybrid admission had `15,287,058,432` no-swap bytes available against
+  `21,327,012,457` fixed bytes. Receipt SHA-256:
+  `45a7bca04c056ed936b7829b295343eb352ef312003c60c5ebfc96f749621471`;
+  planner-log SHA-256:
+  `687fb8dbb6c5f9031ded947e9f08dc7cf92e16ffb994d8d83f803491ffd17389`.
+- Stage-aware admission had `15,161,147,392` no-swap bytes available against
+  `21,320,716,905` fixed bytes. Receipt SHA-256:
+  `8537a40a4ea13a9f3415d3251267fe0de675fd3942240c3f4824b38348b95174`;
+  planner-log SHA-256:
+  `a17598f36b9e60c03656114f772a76417fc9edd7c6936e6482eb62d585001713`.
+- Conservative admission had `15,161,769,984` no-swap bytes available against
+  `21,320,748,035` fixed bytes. Receipt SHA-256:
+  `beed2183c0b582354471c23cc9b6808082ef8866290490c3d2cee96fbc3d6adf`;
+  planner-log SHA-256:
+  `ba40101e578bbd1bd32aaa754ba8df183ac9ded5d011f979942180e058a44397`.
+- Intentional oversubscription requested `38,654,705,664` bytes. The Rust
+  planner admitted a CPU fallback, but the campaign correctly rejected it
+  because the requested runtime swap actions are not implemented. Its
+  `18,895,680,000` grid bytes contributed to a projected
+  `34,557,307,783`-byte dirty-transform lifetime peak and a
+  `34,659,905,087`-byte process total, exceeding its
+  `15,215,674,040`-byte ceiling by `19,444,231,047` bytes. Receipt SHA-256:
+  `8ee5ba16d7299cef8b4c1006d5e4e5cd755fcd6230cb5fe8ff08d13557cafebc`;
+  planner-log SHA-256:
+  `6da92e8246e6d0f018fcad2bb81b9dc9bca976fe879efd794606bb9942225250`.
+
+The unified Metal requirement was `19,334,509,056` bytes, also above measured
+headroom. The four preflight-rejection receipts currently preserve the exact
+failure only in their hashed planner logs rather than parsing the failed
+planner evidence into their normal memory ledger; that receipt-quality defect
+must be fixed without rerunning this unchanged sweep.
+
+This is the incumbent falsification certificate required by the
+imaging-performance skill. The packed sampled-CF replay is a strong
+`4,096`-square correctness and performance comparator, but it is not the
+presumed production destination: its persistent state still scales with the
+sum of sampled CF patch areas, and the fixed full-size state is already larger
+than the measured no-pressure budget before all stage overlap is admitted.
+Moving those values to mmap, GPU memory, compiled programs, compressed
+descriptors that are expanded before use, or a different traversal order
+would not change that scaling. No `12,150`-square dirty row may start until a
+replacement representation passes a bounded memory-liveness and performance
+discriminator.
+
+A second Oracle review was asked specifically to attack this conclusion and
+look for architectural changes rather than local tuning. Its advice is an
+adversarial hypothesis set, not authority. After checking the proposals
+against the real timing, state formulas, POINTING/AWProject/MT-MFS semantics,
+and negative experiments, the active tournament is:
+
+1. Visibility-resident, mask-local major cycles with lazy dense finalization.
+   Residual visibilities remain authoritative; restricted adjoints update the
+   deterministic mask or bounded facets; component prediction updates
+   visibility residuals directly; dense PSF, residual, restoration, and all 19
+   products are produced only at required boundaries.
+2. An image-domain-gridding-style subgrid operator for mandatory full-field
+   forward and adjoint work, with bounded subgrid scratch and no persistent or
+   transient sampled CF patches.
+3. A low-rank A/WB/POINTING basis coupled to a high-accuracy W-gridder, but
+   only if a rank audit performed after removing W and exact POINTING phase
+   proves that the required pass count has margin.
+4. W stacking with a measured residual-W projection term, selected from a
+   cost curve over stack counts rather than by adopting 32 W planes as 32
+   stacks.
+5. A separable or tensor CF action that executes in factorized form and never
+   expands back to the sampled patch representation.
+
+Fused vector-valued MT-MFS/AW applications, exact visibility coalescing, and
+controlled baseline-dependent averaging are cross-cutting work-elimination
+audits. Uncompensated f32 grids and block-float or f16 CF storage remain a
+memory-feasibility fallback with an exact or f64 diagnostic path, not the
+leading architecture. Source order, spatial order, tile size, worker count,
+prefetch, and GPU placement are supporting tactics and do not count as
+separate architecture candidates.
+
+The immediate bounded tournament contains no full imaging run:
+
+- inventory the deterministic CLEAN mask and count current forward, adjoint,
+  FFT, and dense-image passes over the actual major-cycle trajectory;
+- estimate image-domain subgrid occupancy and work for side lengths
+  `32`, `48`, `64`, and `96` using the actual visibility, W, frequency,
+  support, and pointing signatures;
+- measure the A/WB basis rank only after factoring W and exact POINTING phase;
+- measure separable CF rank without reconstructing sampled patches;
+- derive the W-stack cost curve for stack counts `1` through `32`;
+- measure reuse available to fused MT-MFS/AW moments; and
+- count exact coalescing and error-bounded averaging opportunities.
+
+Only three executable discriminators follow those audits: a
+visibility-resident component predictor plus restricted adjoint, one coherent
+image-domain subgrid adjoint on the real `4,096` signatures, and one
+basis-weighted W-gridder only if its rank audit passes.
+
+The visibility-local candidate aborts if it removes fewer than half of the
+expensive operator calls, projects above `0.70x` current CLEAN operator work,
+materially expands the deterministic active region, or fails the frozen
+science floor. It promotes at no more than `0.35x` incumbent CLEAN operator
+work and at least `1.5x` end-to-end improvement with credible full-size p50 and
+p90 projections.
+
+The image-domain subgrid candidate aborts if no tested side length passes the
+science floor with at least `1.25x` operator speedup, the best projection
+exceeds `0.80x` incumbent work, W/master fixed work exceeds 30% of its target,
+or retained state exceeds 10% of the packed artifact. It promotes only with at
+least `2x` operator speedup, no sampled-CF values, bounded worker scratch, and
+a passing full-size liveness projection. A matrix-free claim additionally
+requires persistent state below both 10% of the current artifact and twice
+retained visibility bytes wherever practical.
+
+The low-rank and W-stack candidates must compare required pass count against a
+cost-derived maximum. They abort when projected work exceeds `0.70x` of the
+incumbent, required rank scales approximately with field count, or the frozen
+science floor fails. The f32/f16 fallback promotes only at least `1.5x` end to
+end, bounded no-swap memory, and a passing structured comparison.
+
+The reusable imaging-performance skill now makes this discipline general: it
+requires an incumbent falsification certificate, at least four independent
+architecture families, explicit state and work formulas, bounded tournament
+cards, quantitative kill and promotion gates, a forced portfolio reset, and
+retirement of superseded production paths. This update changes the search
+method, not the VLASS scientific contract, iteration ladder, final workloads,
+or independent 10x acceptance requirement.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.

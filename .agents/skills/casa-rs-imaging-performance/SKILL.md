@@ -78,30 +78,158 @@ tuning for end-to-end progress.
 13. Prefer explicit parameters over environment variables.
     Environment variables are acceptable for diagnostics, but performance behavior should be controllable through explicit API/CLI parameters.
 
-## Breakthrough search
+## Architecture-reset gate
 
-- Keep a portfolio spanning work elimination, representation changes, data
-  movement, precision, CPU concurrency, and GPU residency. Do not spend a wave
-  moving one local bottleneck among these categories.
-- Use operator-anatomy discriminators before large rewrites. Separate planning,
-  representation construction, decoding, arithmetic, destination traffic,
-  accumulation precision, FFT/normalization, and product materialization.
-- In pixels-much-greater-than-visibilities regimes, explicitly challenge dense
-  global grids, expanded convolution programs, repeated full-image passes, and
-  global-per-pointing work. Spatial tiles are an ownership substrate, not
-  automatically the breakthrough.
-- Maintain an approximation budget by stage. An approximate experiment must
-  expose a tunable error control and an exact or higher-precision diagnostic
-  fallback. Promote it only through the same frozen scientific floor.
-- For a major architecture reset, seek an independent adversarial review when
-  one is available. Then challenge its model with the actual source
-  representation, counters, memory ledger, and prior negative experiments.
-  Convert the surviving ideas into ranked, falsifiable experiments; do not
-  copy an attractive architecture label into the plan without a discriminator.
-- After repeated local changes produce only small deltas, stop that family and
-  reopen the architecture portfolio. Revisit a rejected cache, tile, worker,
-  precision, or algorithm choice only when new evidence invalidates its
-  falsification.
+Enter architecture-reset mode when any of these is true:
+
+- The incumbent cannot satisfy production-geometry memory liveness without
+  swap or unimplemented oversubscription.
+- Ideal removal of the stage being optimized cannot close a material fraction
+  of the remaining end-to-end gap.
+- Two successive changes preserve the same dominant scaling variable, move the
+  bottleneck, or produce only local improvements.
+- Persistent state scales with convolution support, expanded operator entries,
+  dense iterative pixels, or output products that need not coexist.
+- A replacement has a credible lower asymptotic work or state bound.
+
+While this gate is active, freeze further production optimization of the
+incumbent family. Retain it only as a benchmark or scientific comparator until
+a replacement promotes. CASA defines the scientific envelope; its operator
+discretization, arithmetic ordering, reconstruction history, and storage
+structure are not implementation requirements unless the envelope says so.
+
+## Incumbent falsification certificate
+
+Before another local optimization, record:
+
+1. The incumbent's dominant scaling variables.
+2. Persistent and peak-live bytes as formulas, not only observations.
+3. Physical reads, writes, updates, arithmetic, FFTs, and full-image passes.
+4. The end-to-end Amdahl bound if the proposed stage became free.
+5. Production-geometry memory and wall-time projections.
+6. The observation that would falsify the incumbent as a production
+   architecture.
+
+If memory or lower-bound analysis already falsifies the incumbent, do not
+repair it merely because it is implemented.
+
+## Mandatory architecture portfolio
+
+Carry candidates from at least four independent families until bounded
+evidence rejects all but one:
+
+- Work elimination: reduce full forward/adjoint applications, dense passes, or
+  eagerly generated products.
+- Measurement-operator replacement: use a different gridding, degridding,
+  subgrid, facet, stacking, or transform architecture.
+- Factorization: separate W, A, pointing, frequency, polarization, and
+  convolution structure; test basis, separable, tensor, or parametric forms.
+- Sparse or local iterative state: restrict authoritative reconstruction state
+  to the scientifically active region and derive dense products lazily.
+- Visibility reduction: exact coalescing or controlled averaging under an
+  explicit error budget.
+- A different reconstruction algorithm that reduces expensive operator calls.
+
+Precision, worker count, cache policy, source order, tile size, GPU use, and
+compression format are tactics within a family. They count as independent
+architectures only when they change asymptotic state or work. At least one
+candidate must eliminate the incumbent's dominant representation, and at least
+one must eliminate repeated work.
+
+## Dominant-representation challenge
+
+For every large retained structure, state:
+
+- Why it is semantically authoritative.
+- Why it must exist at that resolution and for that lifetime.
+- Why it cannot be generated or applied in bounded tiles, subgrids, facets,
+  basis passes, or visibility-domain form.
+- Its bytes per visibility, output pixel, operator state, and useful update.
+
+Moving values into mmap, a GPU buffer, a compiled program, a descriptor heap,
+or another process does not compress the representation. A factorized
+representation must execute in factorized form; expanding it back to the
+original patches or operator entries fails the challenge. Matrix-free state
+must scale with compact visibility descriptors, physical model parameters,
+basis coefficients, or bounded scratch, not summed materialized convolution
+area. Mandatory dense products justify final dense computation and writes, not
+dense authoritative iterative state or simultaneous product residency.
+
+## Bounded architecture tournament
+
+Give every candidate a card containing:
+
+- Classification: exact transformation, tunable discretization, explicit
+  approximation, or different reconstruction algorithm.
+- Dominant scaling variables and expected full-size scaling.
+- Persistent-state and phase-liveness equations.
+- Counts of forward, adjoint, FFT, and dense-image passes.
+- Physical byte traffic, arithmetic, expensive functions, launches, transfers,
+  and synchronization.
+- The cheapest discriminator using actual source signatures.
+- Required metrics, science checks, pre-code kill condition, abort gate,
+  promotion gate, and broader-family falsification.
+- Full-size p50 and p90 projections for every required workload.
+
+Any approximation must expose a tunable error control and an exact or
+higher-precision diagnostic fallback.
+
+Prefer discriminators that exercise real operator states, support
+distribution, mask geometry, pointing distribution, and output moments without
+producing every final product. Give a candidate one bounded discriminator and
+at most one corrective optimization. Permit the correction only when counters
+explain most of the miss and the identified change would cross the promotion
+gate. Do not integrate a candidate whose optimistic physical lower bound,
+memory liveness, or p90 projection cannot meet the final goal.
+
+## Quantitative selection
+
+For every required workload:
+
+1. Measure mandatory input, output, FFT, zeroing, and dense-image costs.
+2. Measure sequential, irregular, scatter, atomic, arithmetic, phase, launch,
+   transfer, and synchronization speed of light on the target hardware.
+3. Bound each serial phase by the maximum of its bandwidth, arithmetic, and
+   expensive-operation limits.
+4. Sum serial phase bounds and charge setup, transforms, materialization,
+   product derivation, and writes.
+5. Compute peak physical liveness by phase, including resident mmap pages, GPU
+   allocations, and FFT workspaces.
+6. Score a candidate by its worst normalized result across all required
+   workloads; do not average away a losing mode.
+
+Reject before implementation when the optimistic bound lacks margin, live
+state exceeds the no-pressure memory budget, or complete stage elimination has
+an immaterial Amdahl benefit. Rank survivors by expected end-to-end gap closure
+per bounded discriminator effort, not implementation convenience.
+
+## Forced portfolio reset
+
+Suspend a representation family when two candidates fail promotion, a
+candidate reaches its measured speed of light but still misses the goal, the
+next change preserves the dominant scaling variable, the candidate can improve
+only a small-Amdahl stage, or its full-size projection worsens with image,
+field, direction-dependent state, or support count. Reopen it only when new
+measurements invalidate the falsification.
+
+Seek an independent adversarial review for a major reset when one is
+available. Challenge the review with the actual source representation,
+counters, memory ledger, and negative experiments. Convert surviving ideas
+into tournament cards; never adopt an architecture label without a
+discriminator.
+
+## Promotion and path retirement
+
+Promote only after the frozen science floor, medium and large end-to-end
+scaling, bounded memory without unintended swap, every required workload, and
+all setup, transfers, synchronization, derivation, and writes pass. `auto`
+must select the winner from workload and hardware characteristics.
+
+After promotion, make the winner the production default and remove losing
+production implementations, adapters, duplicate planners, stale environment
+controls, and unused artifact formats. Retain only an explicitly justified
+serial or high-accuracy reference for tests or unsupported workloads. Do not
+retain the old path "just in case."
 
 ## Iteration dataset scaling
 
@@ -157,3 +285,13 @@ When an estimated performance run will take many tens of minutes or more, create
   a small Amdahl benefit.
 - Repeating a rejected cache, tile, worker, precision, or algorithm experiment
   without new evidence.
+- Renaming, relocating, or compiling the same materialized operator values.
+- Expanding a compact or factorized description before each replay.
+- Counting precision, scheduling, caching, worker, or GPU variants as
+  independent architecture candidates.
+- Optimizing one operator application without counting how many applications
+  the reconstruction requires.
+- Performing full-field work during masked reconstruction without proving it
+  affects component selection.
+- Leaving a superseded representation in production after its replacement
+  promotes.
