@@ -6988,6 +6988,29 @@ run, a tolerance change, merge, or final promotion. No CASA call, clean,
 full-16-SPW row, full-size development row, or memory-policy experiment had
 run at this checkpoint.
 
+The clean-use checkpoint carries that exact arithmetic into the ordinary
+major-cycle runtime behind the private
+`CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_CLEAN` control. Unlike the frozen
+diagnostic, it does not accept frozen model, weight, beam, or expected stream
+hashes. Each exact residual refresh requests the same compact raw
+wide-division buffer, runs the certified fixed two-lane indexed builder,
+hashes the resulting routed residual in source order, copies it into the
+ordinary persistent tile batch, and fails closed unless a second source-order
+hash proves bit-identical tile ingress. The log records both hashes, lane
+construction time, both integrity-hash times, and the verified
+prediction-to-tile-ready wall for every exact refresh.
+
+The frozen diagnostic still stops after normalized residuals, and its
+expected hashes and receipt schema are unchanged. The clean runner makes the
+two modes mutually exclusive, requires Metal global tile replay plus the
+pre-division source-phase and raw-frame Taylor contracts, and rejects any
+frozen state. The control is not exposed through the task schema, public API,
+workbench UI, automatic planner, or default runtime. The focused
+serial-versus-two-lane fixture additionally requires the residual-only
+integrity hash to equal the residual member of the existing complete
+visibility-hash contract. At this checkpoint the authorized clean had not yet
+run; its component trajectory and 19 products therefore remained unearned.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.

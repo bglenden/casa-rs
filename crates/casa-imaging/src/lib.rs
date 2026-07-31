@@ -21117,6 +21117,27 @@ fn hash_awproject_prediction_visibilities(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+fn hash_awproject_prediction_residuals(residuals: &[AwProjectMetalPredictionResult]) -> String {
+    let mut residual_hash = Sha256::new();
+    for (sample_ordinal, residual) in residuals.iter().enumerate() {
+        residual_hash.update(
+            u64::try_from(sample_ordinal)
+                .unwrap_or(u64::MAX)
+                .to_le_bytes(),
+        );
+        for value in [
+            residual.first_residual_re,
+            residual.first_residual_im,
+            residual.second_residual_re,
+            residual.second_residual_im,
+        ] {
+            residual_hash.update(value.to_bits().to_le_bytes());
+        }
+    }
+    format!("{:x}", residual_hash.finalize())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn hash_awproject_tile_ingress_residuals(batch: &AwProjectMetalBatch) -> String {
     let mut residual_hash = Sha256::new();
     for (sample_ordinal, sample) in batch.samples.iter().enumerate() {
@@ -27204,34 +27225,55 @@ fn replay_awproject_metal_global_program(
         let hybrid_prefix =
             env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_RESIDUAL_PREFIX")
                 .map(PathBuf::from);
-        if [sidecar_prefix.is_some(), wide_division_prefix.is_some(), hybrid_prefix.is_some()]
-            .into_iter()
-            .filter(|enabled| *enabled)
-            .count()
+        let hybrid_clean =
+            env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_CLEAN").is_some();
+        let hybrid_enabled = hybrid_prefix.is_some() || hybrid_clean;
+        if [
+            sidecar_prefix.is_some(),
+            wide_division_prefix.is_some(),
+            hybrid_prefix.is_some(),
+            hybrid_clean,
+        ]
+        .into_iter()
+        .filter(|enabled| *enabled)
+        .count()
             > 1
         {
             return Err(ImagingError::InvalidRequest(
-                "the prediction sidecar, wide-division sidecar, and hybrid residual path are \
-                 mutually exclusive"
+                "the prediction sidecar, wide-division sidecar, hybrid residual diagnostic, and \
+                 hybrid clean path are mutually exclusive"
                     .to_string(),
             ));
         }
         if hybrid_prefix.is_some()
-            && (env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_FROZEN_FINAL_STATE_CHECKPOINTS")
+            && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_FROZEN_FINAL_STATE_CHECKPOINTS")
                 .is_none()
-                || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDIVISION_SOURCE_PHASE")
-                    .is_none()
+        {
+            return Err(ImagingError::InvalidRequest(
+                "the hybrid AW residual diagnostic requires frozen-final-state checkpoints"
+                    .to_string(),
+            ));
+        }
+        if hybrid_clean
+            && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_FROZEN_FINAL_STATE_CHECKPOINTS").is_some()
+        {
+            return Err(ImagingError::InvalidRequest(
+                "the hybrid AW clean path cannot use frozen-final-state checkpoints".to_string(),
+            ));
+        }
+        if hybrid_enabled
+            && (env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDIVISION_SOURCE_PHASE").is_none()
                 || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_RAW_FRAME_TAYLOR").is_none())
         {
             return Err(ImagingError::InvalidRequest(
-                "the hybrid AW residual path requires frozen-final-state checkpoints, \
-                 pre-division source phase, and raw-frame Taylor ordering"
+                "the hybrid AW path requires pre-division source phase and raw-frame Taylor \
+                 ordering"
                     .to_string(),
             ));
         }
         let sidecar_generation = sidecar_prefix.as_ref().map(|_| 1);
         let wide_division_generation = wide_division_prefix.as_ref().map(|_| 1);
-        let hybrid_generation = hybrid_prefix.as_ref().map(|_| 1);
+        let hybrid_generation = hybrid_enabled.then_some(1);
         #[cfg(all(target_os = "macos", not(coverage)))]
         use objc2_metal::MTLDevice;
         let metal_allocated_before = hybrid_prefix
@@ -27276,53 +27318,50 @@ fn replay_awproject_metal_global_program(
             prediction_host_readback,
             candidate_elapsed,
             candidate_builder,
+            candidate_hash_elapsed,
+            candidate_residual_hash,
             residuals,
         ) =
-            if hybrid_prefix.is_some() {
-                let expected = |name: &str| {
-                    env::var(name).map_err(|_| {
-                        ImagingError::InvalidRequest(format!(
-                            "the hybrid AW residual path requires {name}",
-                        ))
-                    })
-                };
-                let expected_observed = expected(
-                    "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_OBSERVED_SHA256",
-                )?;
-                let expected_control_prediction = expected(
-                    "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CONTROL_PREDICTION_SHA256",
-                )?;
-                let expected_control_residual = expected(
-                    "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CONTROL_RESIDUAL_SHA256",
-                )?;
-                let expected_candidate_prediction = expected(
-                    "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_PREDICTION_SHA256",
-                )?;
-                let expected_candidate_canonical_residual = expected(
-                    "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_CANONICAL_RESIDUAL_SHA256",
-                )?;
-                let expected_candidate_tile_residual = expected(
-                    "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_TILE_RESIDUAL_SHA256",
-                )?;
-                let control_hashes =
-                    hash_awproject_prediction_visibilities(&program.prediction_batch, &dispatch.results)?;
-                for (label, actual, expected) in [
-                    ("observed", &control_hashes.observed, &expected_observed),
-                    (
-                        "control prediction",
-                        &control_hashes.predicted,
-                        &expected_control_prediction,
-                    ),
-                    (
-                        "control residual",
-                        &control_hashes.residual,
-                        &expected_control_residual,
-                    ),
-                ] {
-                    if actual != expected {
-                        return Err(ImagingError::Normalization(format!(
-                            "hybrid AW residual {label} hash differs: {actual} != {expected}",
-                        )));
+            if hybrid_enabled {
+                if hybrid_prefix.is_some() {
+                    let expected = |name: &str| {
+                        env::var(name).map_err(|_| {
+                            ImagingError::InvalidRequest(format!(
+                                "the hybrid AW residual path requires {name}",
+                            ))
+                        })
+                    };
+                    let expected_observed = expected(
+                        "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_OBSERVED_SHA256",
+                    )?;
+                    let expected_control_prediction = expected(
+                        "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CONTROL_PREDICTION_SHA256",
+                    )?;
+                    let expected_control_residual = expected(
+                        "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CONTROL_RESIDUAL_SHA256",
+                    )?;
+                    let control_hashes = hash_awproject_prediction_visibilities(
+                        &program.prediction_batch,
+                        &dispatch.results,
+                    )?;
+                    for (label, actual, expected) in [
+                        ("observed", &control_hashes.observed, &expected_observed),
+                        (
+                            "control prediction",
+                            &control_hashes.predicted,
+                            &expected_control_prediction,
+                        ),
+                        (
+                            "control residual",
+                            &control_hashes.residual,
+                            &expected_control_residual,
+                        ),
+                    ] {
+                        if actual != expected {
+                            return Err(ImagingError::Normalization(format!(
+                                "hybrid AW residual {label} hash differs: {actual} != {expected}",
+                            )));
+                        }
                     }
                 }
                 let candidate = build_awproject_wide_division_candidate_two_lane(
@@ -27330,48 +27369,74 @@ fn replay_awproject_metal_global_program(
                     &program.prediction_batch,
                     &dispatch,
                 )?;
-                let candidate_hashes = hash_awproject_prediction_visibilities(
-                    &program.prediction_batch,
-                    &candidate.results,
-                )?;
-                let candidate_audit = candidate.audit.as_deref().ok_or_else(|| {
-                    ImagingError::Normalization(
-                        "hybrid AW residual candidate omitted its direct prediction audit"
-                            .to_string(),
-                    )
-                })?;
-                let candidate_combined_hash =
-                    hash_awproject_direct_combined_predictions(candidate_audit);
-                let candidate_canonical_residual_hash =
-                    hash_awproject_direct_canonical_residuals(candidate_audit);
-                for (label, actual, expected) in [
-                    (
-                        "candidate observed",
-                        &candidate_hashes.observed,
-                        &expected_observed,
-                    ),
-                    (
-                        "candidate prediction",
-                        &candidate_combined_hash,
-                        &expected_candidate_prediction,
-                    ),
-                    (
-                        "candidate canonical residual",
-                        &candidate_canonical_residual_hash,
-                        &expected_candidate_canonical_residual,
-                    ),
-                    (
-                        "candidate tile residual",
-                        &candidate_hashes.residual,
-                        &expected_candidate_tile_residual,
-                    ),
-                ] {
-                    if actual != expected {
-                        return Err(ImagingError::Normalization(format!(
-                            "hybrid AW residual {label} hash differs: {actual} != {expected}",
-                        )));
+                let candidate_hash_started = Instant::now();
+                let candidate_residual_hash = if hybrid_prefix.is_some() {
+                    let candidate_hashes = hash_awproject_prediction_visibilities(
+                        &program.prediction_batch,
+                        &candidate.results,
+                    )?;
+                    let candidate_audit = candidate.audit.as_deref().ok_or_else(|| {
+                        ImagingError::Normalization(
+                            "hybrid AW residual candidate omitted its direct prediction audit"
+                                .to_string(),
+                        )
+                    })?;
+                    let candidate_combined_hash =
+                        hash_awproject_direct_combined_predictions(candidate_audit);
+                    let candidate_canonical_residual_hash =
+                        hash_awproject_direct_canonical_residuals(candidate_audit);
+                    let expected = |name: &str| {
+                        env::var(name).map_err(|_| {
+                            ImagingError::InvalidRequest(format!(
+                                "the hybrid AW residual path requires {name}",
+                            ))
+                        })
+                    };
+                    let expected_observed = expected(
+                        "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_OBSERVED_SHA256",
+                    )?;
+                    let expected_candidate_prediction = expected(
+                        "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_PREDICTION_SHA256",
+                    )?;
+                    let expected_candidate_canonical_residual = expected(
+                        "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_CANONICAL_RESIDUAL_SHA256",
+                    )?;
+                    let expected_candidate_tile_residual = expected(
+                        "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_TILE_RESIDUAL_SHA256",
+                    )?;
+                    for (label, actual, expected) in [
+                        (
+                            "candidate observed",
+                            &candidate_hashes.observed,
+                            &expected_observed,
+                        ),
+                        (
+                            "candidate prediction",
+                            &candidate_combined_hash,
+                            &expected_candidate_prediction,
+                        ),
+                        (
+                            "candidate canonical residual",
+                            &candidate_canonical_residual_hash,
+                            &expected_candidate_canonical_residual,
+                        ),
+                        (
+                            "candidate tile residual",
+                            &candidate_hashes.residual,
+                            &expected_candidate_tile_residual,
+                        ),
+                    ] {
+                        if actual != expected {
+                            return Err(ImagingError::Normalization(format!(
+                                "hybrid AW residual {label} hash differs: {actual} != {expected}",
+                            )));
+                        }
                     }
-                }
+                    candidate_hashes.residual
+                } else {
+                    hash_awproject_prediction_residuals(&candidate.results)
+                };
+                let candidate_hash_elapsed = candidate_hash_started.elapsed();
                 let dispatch_elapsed = dispatch.elapsed;
                 let dispatch_readback = dispatch.host_readback;
                 let candidate_elapsed = candidate.elapsed;
@@ -27387,6 +27452,8 @@ fn replay_awproject_metal_global_program(
                     dispatch_readback,
                     candidate_elapsed,
                     Some(candidate_builder),
+                    candidate_hash_elapsed,
+                    Some(candidate_residual_hash),
                     residuals,
                 )
             } else {
@@ -27395,26 +27462,26 @@ fn replay_awproject_metal_global_program(
                     dispatch.host_readback,
                     Duration::ZERO,
                     None,
+                    Duration::ZERO,
+                    None,
                     dispatch.results,
                 )
             };
         let tile_update_started = Instant::now();
         update_awproject_persistent_metal_prediction_results(&mut program.tile_batch, &residuals)?;
         let tile_update_elapsed = tile_update_started.elapsed();
-        let tile_ingress_hash = hash_awproject_tile_ingress_residuals(&program.tile_batch);
-        if hybrid_prefix.is_some() {
-            let expected = env::var(
-                "CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_TILE_RESIDUAL_SHA256",
-            )
-            .map_err(|_| {
-                ImagingError::InvalidRequest(
-                    "the hybrid AW residual path requires its candidate residual hash".to_string(),
-                )
-            })?;
-            if tile_ingress_hash != expected {
+        let (tile_ingress_hash, tile_ingress_hash_elapsed) = if hybrid_enabled {
+            let tile_ingress_hash_started = Instant::now();
+            let tile_ingress_hash = hash_awproject_tile_ingress_residuals(&program.tile_batch);
+            (tile_ingress_hash, tile_ingress_hash_started.elapsed())
+        } else {
+            (String::new(), Duration::ZERO)
+        };
+        if let Some(candidate_residual_hash) = candidate_residual_hash.as_deref() {
+            if tile_ingress_hash != candidate_residual_hash {
                 return Err(ImagingError::Normalization(format!(
                     "hybrid AW residual tile ingress changed candidate bits: \
-                     {tile_ingress_hash} != {expected}",
+                     {tile_ingress_hash} != {candidate_residual_hash}",
                 )));
             }
         }
@@ -27577,6 +27644,40 @@ fn replay_awproject_metal_global_program(
                 tile_stats.total.as_secs_f64() * 1_000.0,
                 receipt_path.display(),
             );
+        } else if hybrid_clean {
+            let candidate_builder = candidate_builder.as_ref().ok_or_else(|| {
+                ImagingError::Normalization(
+                    "hybrid AW clean path lost its two-lane builder receipt".to_string(),
+                )
+            })?;
+            eprintln!(
+                "awproject_hybrid_clean_refresh status=exact-candidate-tile-ready \
+                 samples={} candidate_residual_sha256={} tile_ingress_sha256={} \
+                 candidate_builder={} candidate_workers=2 candidate_split={} \
+                 metal_dispatch_ms={:.6} host_readback_ms={:.6} cpu_candidate_ms={:.6} \
+                 candidate_hash_ms={:.6} tile_update_ms={:.6} tile_ingress_hash_ms={:.6} \
+                 verified_prediction_to_tile_ready_ms={:.6} tile_grid_ms={:.6}",
+                residuals.len(),
+                candidate_residual_hash.as_deref().unwrap_or_default(),
+                tile_ingress_hash,
+                candidate_builder.mode,
+                candidate_builder.split_ordinal,
+                prediction_elapsed.as_secs_f64() * 1_000.0,
+                prediction_host_readback.as_secs_f64() * 1_000.0,
+                candidate_elapsed.as_secs_f64() * 1_000.0,
+                candidate_hash_elapsed.as_secs_f64() * 1_000.0,
+                tile_update_elapsed.as_secs_f64() * 1_000.0,
+                tile_ingress_hash_elapsed.as_secs_f64() * 1_000.0,
+                (prediction_elapsed
+                    + prediction_host_readback
+                    + candidate_elapsed
+                    + candidate_hash_elapsed
+                    + tile_update_elapsed)
+                    .saturating_add(tile_ingress_hash_elapsed)
+                    .as_secs_f64()
+                    * 1_000.0,
+                tile_stats.total.as_secs_f64() * 1_000.0,
+            );
         }
         let stats = AwProjectMetalResidentChainStats {
             samples: program.prediction_batch.samples.len(),
@@ -27593,7 +27694,9 @@ fn replay_awproject_metal_global_program(
             total: prediction_elapsed
                 + prediction_host_readback
                 + candidate_elapsed
+                + candidate_hash_elapsed
                 + tile_update_elapsed
+                + tile_ingress_hash_elapsed
                 + tile_stats.total,
         };
         Ok::<_, ImagingError>((stats, executor_setup))
@@ -63544,6 +63647,14 @@ mod tests {
                 awproject_two_lane_candidate_bits(&parallel),
                 awproject_two_lane_candidate_bits(&serial),
                 "source_count={source_count}"
+            );
+            let visibility_hashes =
+                super::hash_awproject_prediction_visibilities(&batch, &parallel.results)
+                    .expect("full prediction visibility hashes");
+            assert_eq!(
+                super::hash_awproject_prediction_residuals(&parallel.results),
+                visibility_hashes.residual,
+                "residual-only integrity hash source_count={source_count}"
             );
             for (ordinal, sample) in parallel
                 .audit

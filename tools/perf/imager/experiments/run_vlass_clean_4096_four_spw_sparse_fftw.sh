@@ -58,6 +58,7 @@ frozen_final_state_checkpoints="${CASA_RS_VLASS_FROZEN_FINAL_STATE_CHECKPOINTS:-
 prediction_sidecar_prefix="${CASA_RS_VLASS_PREDICTION_SIDECAR_PREFIX:-}"
 wide_division_sidecar_prefix="${CASA_RS_VLASS_WIDE_DIVISION_SIDECAR_PREFIX:-}"
 hybrid_residual_prefix="${CASA_RS_VLASS_HYBRID_RESIDUAL_PREFIX:-}"
+hybrid_clean="${CASA_RS_VLASS_HYBRID_CLEAN:-0}"
 predivision_source_phase="${CASA_RS_VLASS_PREDIVISION_SOURCE_PHASE:-0}"
 raw_frame_taylor="${CASA_RS_VLASS_RAW_FRAME_TAYLOR:-0}"
 prediction_prefix_trace="${CASA_RS_VLASS_PREDICTION_PREFIX_TRACE:-}"
@@ -104,6 +105,7 @@ image_response_dyadic_tiles_label=""
 prediction_sidecar_label=""
 wide_division_sidecar_label=""
 hybrid_residual_label=""
+hybrid_clean_label=""
 predivision_source_phase_label=""
 raw_frame_taylor_label=""
 prediction_prefix_trace_label=""
@@ -209,8 +211,9 @@ if [[ -n "$wide_division_sidecar_prefix" ]]; then
     )
 fi
 if [[ -n "$hybrid_residual_prefix" ]]; then
-    if [[ -n "$prediction_sidecar_prefix" || -n "$wide_division_sidecar_prefix" ]]; then
-        echo "hybrid residual path and prediction sidecars are mutually exclusive" >&2
+    if [[ -n "$prediction_sidecar_prefix" || -n "$wide_division_sidecar_prefix" \
+        || "$hybrid_clean" == "1" ]]; then
+        echo "hybrid residual diagnostic, hybrid clean, and prediction sidecars are mutually exclusive" >&2
         exit 2
     fi
     if [[ "$frozen_final_state_checkpoints" != "1" \
@@ -238,9 +241,37 @@ if [[ -n "$hybrid_residual_prefix" ]]; then
         CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_TILE_RESIDUAL_SHA256=6f48df4cfed851012bbc84b3ceb125a7113cff221f819b770fc49f546781e21f
     )
 fi
+if [[ "$hybrid_clean" == "1" ]]; then
+    if [[ -n "$prediction_sidecar_prefix" || -n "$wide_division_sidecar_prefix" \
+        || -n "$hybrid_residual_prefix" || -n "$prediction_prefix_trace" ]]; then
+        echo "hybrid clean, prediction diagnostics, and residual diagnostics are mutually exclusive" >&2
+        exit 2
+    fi
+    if [[ "$frozen_final_state_checkpoints" != "0" \
+        || -n "$frozen_model_prefix" \
+        || -n "$frozen_weight_image" \
+        || -n "$frozen_restoring_beam" ]]; then
+        echo "CASA_RS_VLASS_HYBRID_CLEAN requires a clean-from-zero workload without frozen state" >&2
+        exit 2
+    fi
+    if [[ "$predivision_source_phase" != "1" \
+        || "$raw_frame_taylor" != "1" \
+        || "$metal_global_tile_replay" != "1" ]]; then
+        echo "CASA_RS_VLASS_HYBRID_CLEAN requires pre-division source phase, raw-frame Taylor ordering, and global Metal replay" >&2
+        exit 2
+    fi
+    hybrid_clean_label="-hybrid-clean"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_CLEAN=1
+    )
+elif [[ "$hybrid_clean" != "0" ]]; then
+    echo "CASA_RS_VLASS_HYBRID_CLEAN must be 0 or 1" >&2
+    exit 2
+fi
 if [[ "$predivision_source_phase" == "1" ]]; then
-    if [[ -z "$wide_division_sidecar_prefix" && -z "$hybrid_residual_prefix" ]]; then
-        echo "CASA_RS_VLASS_PREDIVISION_SOURCE_PHASE requires a wide-division sidecar or hybrid residual path" >&2
+    if [[ -z "$wide_division_sidecar_prefix" && -z "$hybrid_residual_prefix" \
+        && "$hybrid_clean" != "1" ]]; then
+        echo "CASA_RS_VLASS_PREDIVISION_SOURCE_PHASE requires a wide-division sidecar, hybrid residual diagnostic, or hybrid clean" >&2
         exit 2
     fi
     predivision_source_phase_label="-predivision-source-phase"
@@ -267,8 +298,9 @@ fi
 if [[ -n "$prediction_prefix_trace" ]]; then
     if [[ -n "$prediction_sidecar_prefix" \
         || -n "$wide_division_sidecar_prefix" \
-        || -n "$hybrid_residual_prefix" ]]; then
-        echo "prediction-prefix trace, prediction sidecars, and the hybrid residual path are mutually exclusive" >&2
+        || -n "$hybrid_residual_prefix" \
+        || "$hybrid_clean" == "1" ]]; then
+        echo "prediction-prefix trace, prediction sidecars, hybrid residual diagnostic, and hybrid clean are mutually exclusive" >&2
         exit 2
     fi
     if [[ "$frozen_final_state_checkpoints" != "1" ]]; then
@@ -732,7 +764,7 @@ if [[ "$grid_threads" != "1" ]]; then
     parallel_label="-parallel"
     parallel_argument=(--parallel)
 fi
-label="vlass-production-clean-4096-four-spw-sparse-fftw-t${fftw_threads}-niter${niter}${tapless_phase_label}${replay_compact_programs_label}${prime_replay_initial_dirty_label}${residual_only_label}${residual_live_cfs_only_label}${metal_f32_residual_fft_label}${metal_prediction_probe_label}${metal_tile_grid_probe_label}${metal_resident_chain_probe_label}${metal_resident_tile_chain_label}${metal_gpu_residual_replay_label}${metal_global_tile_replay_label}${prediction_grid_census_label}${model_delta_census_label}${incremental_model_probe_label}${incremental_model_runtime_label}${selected_model_dft_label}${image_response_cache_label}${image_response_dyadic_census_label}${image_response_dyadic_tiles_label}${prediction_sidecar_label}${wide_division_sidecar_label}${hybrid_residual_label}${predivision_source_phase_label}${raw_frame_taylor_label}${prediction_prefix_trace_label}${model_fft_label}${sparse_model_dft_label}${linear_madfm_label}${keyed_madfm_label}${radix_madfm_label}${cache_refreshed_nsigma_label}${sparse_mask_peak_search_label}${parallel_model_term_fft_label}${model_fft_timing_label}${fftw_f64_timing_label}${fftw_f64_wisdom_label}${fftw_f32_wisdom_label}${sparse_model_prep_label}${parallel_residual_term_fft_label}${persistent_metal_pack_label}${plan_threads_label}${pack_threads_label}${grid_threads_label}${parallel_label}${acceleration_label}-v1"
+label="vlass-production-clean-4096-four-spw-sparse-fftw-t${fftw_threads}-niter${niter}${tapless_phase_label}${replay_compact_programs_label}${prime_replay_initial_dirty_label}${residual_only_label}${residual_live_cfs_only_label}${metal_f32_residual_fft_label}${metal_prediction_probe_label}${metal_tile_grid_probe_label}${metal_resident_chain_probe_label}${metal_resident_tile_chain_label}${metal_gpu_residual_replay_label}${metal_global_tile_replay_label}${prediction_grid_census_label}${model_delta_census_label}${incremental_model_probe_label}${incremental_model_runtime_label}${selected_model_dft_label}${image_response_cache_label}${image_response_dyadic_census_label}${image_response_dyadic_tiles_label}${prediction_sidecar_label}${wide_division_sidecar_label}${hybrid_residual_label}${hybrid_clean_label}${predivision_source_phase_label}${raw_frame_taylor_label}${prediction_prefix_trace_label}${model_fft_label}${sparse_model_dft_label}${linear_madfm_label}${keyed_madfm_label}${radix_madfm_label}${cache_refreshed_nsigma_label}${sparse_mask_peak_search_label}${parallel_model_term_fft_label}${model_fft_timing_label}${fftw_f64_timing_label}${fftw_f64_wisdom_label}${fftw_f32_wisdom_label}${sparse_model_prep_label}${parallel_residual_term_fft_label}${persistent_metal_pack_label}${plan_threads_label}${pack_threads_label}${grid_threads_label}${parallel_label}${acceleration_label}-v1"
 if [[ -n "${CASA_RS_VLASS_LABEL_OVERRIDE:-}" ]]; then
     case "$CASA_RS_VLASS_LABEL_OVERRIDE" in
         *[!A-Za-z0-9._-]*)
