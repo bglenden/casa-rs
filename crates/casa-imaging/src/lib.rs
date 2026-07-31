@@ -9954,6 +9954,7 @@ struct AwProjectMetalWideDivisionComplex {
 struct AwProjectMetalWideDivisionTerm {
     numerator: AwProjectMetalWideDivisionComplex,
     normalizer: AwProjectMetalWideDivisionComplex,
+    current_f32: AwProjectMetalWideDivisionComplex,
 }
 
 #[repr(C)]
@@ -16448,6 +16449,7 @@ struct AwPredictionAuditSample {
 struct AwWideDivisionTerm {
     float2 numerator;
     float2 normalizer;
+    float2 current_f32;
 };
 
 struct AwWideDivisionRole {
@@ -16644,6 +16646,7 @@ static inline AwWideDivisionTerm aw_degrid_prediction_raw(
     AwWideDivisionTerm raw;
     raw.numerator = value;
     raw.normalizer = float2(plan.normalization_re, plan.normalization_im);
+    raw.current_f32 = float2(0.0f);
     return raw;
 }
 
@@ -16675,10 +16678,10 @@ kernel void awproject_predict_residual_samples(
         return;
     }
     const AwPredictionSample sample = samples[sample_index];
-    const AwWideDivisionTerm first_model_term0_raw =
+    AwWideDivisionTerm first_model_term0_raw =
         aw_degrid_prediction_raw(
             sample.first_prediction, kernels, phases, model_tt0, params);
-    const AwWideDivisionTerm first_model_term1_raw =
+    AwWideDivisionTerm first_model_term1_raw =
         aw_degrid_prediction_raw(
             sample.first_prediction, kernels, phases, model_tt1, params);
     const float2 first_model_term0 =
@@ -16687,10 +16690,10 @@ kernel void awproject_predict_residual_samples(
         aw_degrid_prediction_current_f32(first_model_term1_raw);
     const float2 first_prediction =
         first_model_term0 + first_model_term1 * sample.taylor_x;
-    const AwWideDivisionTerm second_model_term0_raw =
+    AwWideDivisionTerm second_model_term0_raw =
         aw_degrid_prediction_raw(
             sample.second_prediction, kernels, phases, model_tt0, params);
-    const AwWideDivisionTerm second_model_term1_raw =
+    AwWideDivisionTerm second_model_term1_raw =
         aw_degrid_prediction_raw(
             sample.second_prediction, kernels, phases, model_tt1, params);
     const float2 second_model_term0 =
@@ -16732,6 +16735,10 @@ kernel void awproject_predict_residual_samples(
         audit[sample_index].written_generation = params.audit_generation;
     }
     if (params.wide_division_generation != 0u) {
+        first_model_term0_raw.current_f32 = first_model_term0;
+        first_model_term1_raw.current_f32 = first_model_term1;
+        second_model_term0_raw.current_f32 = second_model_term0;
+        second_model_term1_raw.current_f32 = second_model_term1;
         wide_division[sample_index].sample_ordinal = sample_index;
         wide_division[sample_index].first_imaging_mueller =
             sample.first_imaging_mueller;
@@ -20823,7 +20830,7 @@ fn casa_67518_wide_complex_division(
     Ok(output)
 }
 
-#[cfg(all(target_os = "macos", not(coverage)))]
+#[cfg(all(test, target_os = "macos", not(coverage)))]
 fn current_f32_complex_division(
     raw: AwProjectMetalWideDivisionTerm,
 ) -> Result<AwProjectMetalPredictionAuditComplex, ImagingError> {
@@ -20900,21 +20907,25 @@ fn build_awproject_wide_division_candidate(
                 "wide-division raw topology differs at source {ordinal}",
             )));
         }
-        let first_term0_current = current_f32_complex_division(raw.first.model_term0)?;
-        let first_term1_current = current_f32_complex_division(raw.first.model_term1)?;
-        let second_term0_current = current_f32_complex_division(raw.second.model_term0)?;
-        let second_term1_current = current_f32_complex_division(raw.second.model_term1)?;
         for (label, reconstructed, captured) in [
-            ("first TT0", first_term0_current, control.first.model_term0),
-            ("first TT1", first_term1_current, control.first.model_term1),
+            (
+                "first TT0",
+                raw.first.model_term0.current_f32,
+                control.first.model_term0,
+            ),
+            (
+                "first TT1",
+                raw.first.model_term1.current_f32,
+                control.first.model_term1,
+            ),
             (
                 "second TT0",
-                second_term0_current,
+                raw.second.model_term0.current_f32,
                 control.second.model_term0,
             ),
             (
                 "second TT1",
-                second_term1_current,
+                raw.second.model_term1.current_f32,
                 control.second.model_term1,
             ),
         ] {
@@ -20922,7 +20933,7 @@ fn build_awproject_wide_division_candidate(
                 || reconstructed.im.to_bits() != captured.im.to_bits()
             {
                 return Err(ImagingError::Normalization(format!(
-                    "wide-division raw capture does not reconstruct the current Metal {label} value at source {ordinal}",
+                    "wide-division device identity differs from the current Metal {label} value at source {ordinal}",
                 )));
             }
         }
@@ -21463,6 +21474,7 @@ fn write_awproject_wide_division_sidecar(
     let append_term = |output: &mut Vec<u8>, term: AwProjectMetalWideDivisionTerm| {
         append_complex(output, term.numerator);
         append_complex(output, term.normalizer);
+        append_complex(output, term.current_f32);
     };
     let append_role = |output: &mut Vec<u8>, role: AwProjectMetalWideDivisionRole| {
         append_term(output, role.model_term0);
@@ -21553,7 +21565,7 @@ fn write_awproject_wide_division_sidecar(
             "hybrid_total": (current.elapsed + candidate.elapsed).as_secs_f64() * 1_000.0,
         },
         "integrity": {
-            "raw_reconstructs_current_metal_terms_bit_exact": true,
+            "raw_device_identity_matches_current_metal_terms_bit_exact": true,
             "unexpected_generation_count": 0,
             "unexpected_ordinal_count": 0,
             "unexpected_mueller_count": 0,
@@ -61797,7 +61809,7 @@ mod tests {
         );
         assert_eq!(
             std::mem::size_of::<super::AwProjectMetalWideDivisionTerm>(),
-            16
+            24
         );
         assert_eq!(
             std::mem::align_of::<super::AwProjectMetalWideDivisionTerm>(),
@@ -61805,7 +61817,7 @@ mod tests {
         );
         assert_eq!(
             std::mem::size_of::<super::AwProjectMetalWideDivisionRole>(),
-            32
+            48
         );
         assert_eq!(
             std::mem::align_of::<super::AwProjectMetalWideDivisionRole>(),
@@ -61813,7 +61825,7 @@ mod tests {
         );
         assert_eq!(
             std::mem::size_of::<super::AwProjectMetalWideDivisionSample>(),
-            80
+            112
         );
         assert_eq!(
             std::mem::align_of::<super::AwProjectMetalWideDivisionSample>(),
@@ -61825,7 +61837,7 @@ mod tests {
         );
         assert_eq!(
             std::mem::offset_of!(super::AwProjectMetalWideDivisionSample, second),
-            48
+            64
         );
         assert_eq!(std::mem::size_of::<super::AwProjectMetalTileParams>(), 24);
         assert_eq!(std::mem::align_of::<super::AwProjectMetalTileParams>(), 4);
@@ -61861,6 +61873,7 @@ mod tests {
         let raw = super::AwProjectMetalWideDivisionTerm {
             numerator,
             normalizer,
+            current_f32: super::AwProjectMetalWideDivisionComplex::default(),
         };
         let current =
             super::current_f32_complex_division(raw).expect("current f32 division result");

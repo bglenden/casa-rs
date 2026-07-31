@@ -5829,6 +5829,101 @@ Metal-to-Metal normalization replay (or an equivalently direct device
 identity) so it verifies the raw ABI without pretending that host arithmetic
 defines Metal's current f32 division.
 
+### 2026-07-31 CPU-wide division sidecar, valid replacement
+
+After the invalid first attempt was committed, pushed, and recorded on draft
+PR `#451`, the same diagnostic received one narrow instrumentation repair.
+Each raw Metal term now carries a direct device identity: the numerator and
+normalizer locals plus the result returned when those exact locals pass
+through the same compiled Metal f32 normalization function. The host requires
+all `392,956` direct device results to match the unchanged production audit
+before evaluating the separate CASA-wide candidate. It no longer tries to
+model Metal division on the CPU.
+
+The one replacement 4,096-square four-SPW prediction-only run completed at its
+intentional stop in `11.38` seconds. The `98,239` source records produced an
+11,002,768-byte raw sidecar with zero topology, generation, Mueller,
+nonfinite, zero-normalizer, or device-identity failures. The unchanged control
+audit and result SHA-256 values are exactly the prior frozen values
+`7a8b6038aa8a78bfc0bc70ed9e02ad2588c80f7b1db3b026ab409fb9872bde4f`
+and
+`dcdf3389e7b20165973e8f237091a9db7a24cd6526ed8682a6376a522bf2b3b4`.
+The old-output comparator is valid for that control and retains its existing
+classification and identities.
+
+The CPU evaluated the `392,956` CASA-wide complex divisions, TT1 scaling,
+term addition, residual subtraction, and output write in `1.392791` ms. The
+instrumented Metal prediction dispatch and wait took `55.454125` ms, making
+the measured hybrid boundary `56.846916` ms. This is strong cost evidence for
+the arithmetic seam, but not yet an end-to-end performance result or a
+measurement of instrumentation overhead against an otherwise identical
+unobserved dispatch.
+
+The candidate is a large correctness improvement but is not exact:
+
+- TT0 source-role mismatches fall from `111,784` to `387`;
+- raw TT1 mismatches fall from `111,564` to `416`;
+- scaled TT1 mismatches fall from `101,100` to `441`;
+- separately ordered combined mismatches fall from `117,763` to `439`;
+- production-combined mismatches are also `439`, with no candidate
+  multiply/add contraction difference; and
+- CASA and casa-rs Taylor-power bits differ at `71,588` source ordinals,
+  beginning at ordinal zero, although most of those one-bit power differences
+  do not survive TT1 scaling.
+
+The first remaining term mismatch is source ordinal `42`, LL. The candidate
+TT0 bits `[3184550467, 899659451]` exactly match CASA's raw TT0 bits, while
+CASA's phase-rotated TT0 bits are `[3184550467, 899659479]`. The valid
+term-separated classifier therefore remains
+`tt0-degrid-or-folded-phase-difference`, but the evidence now narrows that
+label: the installed-CASA wide division closes the previous owner and exposes
+folded phase-application order as the earliest remaining boundary. The
+candidate combined and returned-residual SHA-256 values are
+`443c59a722f7065e80d06688700a123e89475643f3d35b4a33b7045257aad18c`
+and
+`e8b20cbc5f94fdce3057370eaa5af657ac5f03fb7d8cc0b83d3ce2e9bcf7b928`,
+not the required CASA values
+`2c6a3072a7f5556c81cc5b691a8d0ac2d7b055010bb8f171ed207d5d1a5d1e5d`
+and
+`4db5487bff286e841718aec4a600f3b5c1ebf3aa602c5120a0796832355ad6d9`.
+
+Applying the generic old-output comparator directly to the intentionally
+changed candidate produced `invalid-instrumentation` because that comparator
+defines validity to include the old stored-residual hash. Its receipt is
+preserved as negative tool-applicability evidence and supports no
+classification. The frozen CASA term oracle plus candidate audit provide the
+valid comparison.
+
+The run log, raw sidecar, aggregate host receipt, unchanged-control
+comparison, inapplicable candidate generic comparison, and valid
+term-separated v3 comparison hash to, respectively:
+
+- `7b2fb26ad3e605f02e8bff004806fb0cefe3167dd40bd8a8a6a6a0892da1a310`;
+- `bc6d3d01e949e33b623a4febc6020f33d2fd1d57beece80e5a043a8d2b3c992a`;
+- `79f6dd1799c10d287d812d7cd27e91920b55682173a811d37feac4e1ac85a2ac`;
+- `c242952178ca08ae2b80bd5c568768fb3b98edd856aa003435efbc80cdf7b2f4`;
+- `c3e0e3c3973482866116f59355b320ae6829a433b5034bb0813a1cc129eeabb0`;
+  and
+- `c0aaccfd0a457e695153cf14e72e0d654bad1fa250c0e55ec019bec8e12c54b8`.
+
+The release executable, Rust source, launcher, term comparator, and comparator
+test hash to, respectively:
+
+- `9fd91939df96933e0b744a94442489a0f5a19a8aa98399f8a8278f65b1eb1ed6`;
+- `9b990c8484007c9dcefdeecef4225e9374fd7509a2a79ddc4cb2f865b2948eaa`;
+- `901c7d88dc9ecba0984b78a258de8277abac144b2df06f90ef5fda9e32351a36`;
+- `ad7815bfdaf5619adfcf259c82d47f8ab48b159d8364b6bf20e85445f0366824`;
+  and
+- `3e63007fdeba47524f262930e7da15a5b99360538f5968f4fba298e6a888a3d3`.
+
+The candidate is not incorporated into the production default and the
+four-SPW row remains unpromoted. No CASA call, clean, full-16-SPW row,
+`12,150`-square development clean, memory-policy experiment, repeated CASA
+timing, or unchanged CASA reference ran. Before another runtime experiment,
+the same Oracle conversation must select the smallest discriminator for
+CASA's post-degrid phase order while preserving the now-proved wide-division
+boundary.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.

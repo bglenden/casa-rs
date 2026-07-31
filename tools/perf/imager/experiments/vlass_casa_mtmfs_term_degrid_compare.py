@@ -261,8 +261,7 @@ def classify(
             casa_tt1_scaled_raw,
         )
         is not None
-        or sidecar.first_pair_mismatch(casa_combined_raw, casa_combined_raw)
-        is not None
+        or sidecar.first_pair_mismatch(casa_combined_raw, casa_combined_raw) is not None
     ):
         raise AssertionError("unreachable self-comparison mismatch")
     return "term-separated-prediction-exact", None
@@ -327,22 +326,17 @@ def analyze(
     power_bits_match = bool(
         np.array_equal(casars_powers.view(np.uint32), casa_powers.view(np.uint32))
     )
+    power_mismatches = np.flatnonzero(
+        casars_powers.view(np.uint32) != casa_powers.view(np.uint32)
+    )
 
     hashes = {
         "casa_tt0_raw_sha256": boundary.hash_parallel_hands(casa_tt0_raw),
         "casa_tt1_raw_sha256": boundary.hash_parallel_hands(casa_tt1_raw),
-        "casa_tt1_scaled_raw_sha256": boundary.hash_parallel_hands(
-            casa_tt1_scaled_raw
-        ),
-        "casa_combined_raw_sha256": boundary.hash_parallel_hands(
-            casa_combined_raw
-        ),
-        "casa_tt0_phase_rotated_sha256": boundary.hash_parallel_hands(
-            casa_tt0_rotated
-        ),
-        "casa_tt1_phase_rotated_sha256": boundary.hash_parallel_hands(
-            casa_tt1_rotated
-        ),
+        "casa_tt1_scaled_raw_sha256": boundary.hash_parallel_hands(casa_tt1_scaled_raw),
+        "casa_combined_raw_sha256": boundary.hash_parallel_hands(casa_combined_raw),
+        "casa_tt0_phase_rotated_sha256": boundary.hash_parallel_hands(casa_tt0_rotated),
+        "casa_tt1_phase_rotated_sha256": boundary.hash_parallel_hands(casa_tt1_rotated),
         "casa_tt1_scaled_phase_rotated_sha256": boundary.hash_parallel_hands(
             casa_tt1_scaled_rotated
         ),
@@ -371,9 +365,7 @@ def analyze(
             hashes["casa_combined_phase_rotated_sha256"]
             == boundary.hash_parallel_hands(frozen_casa_combined),
             hashes["casa_combined_phase_rotated_sha256"]
-            == sidecar_receipt["hashes"][
-                "casa_phase_rotated_model_data_sha256"
-            ],
+            == sidecar_receipt["hashes"]["casa_phase_rotated_model_data_sha256"],
             np.all(np.isfinite(selected["taylor_power1"])),
         )
     )
@@ -451,9 +443,7 @@ def analyze(
                 role,
             ),
             "casa_taylor_power_bits": int(casa_powers[ordinal].view(np.uint32)),
-            "casars_taylor_power_bits": int(
-                casars_powers[ordinal].view(np.uint32)
-            ),
+            "casars_taylor_power_bits": int(casars_powers[ordinal].view(np.uint32)),
         }
 
     return {
@@ -465,6 +455,10 @@ def analyze(
         "casa_full_record_count": int(records.size),
         "row_identity": row_identity,
         "power_bits_match": power_bits_match,
+        "power_mismatch_count": int(power_mismatches.size),
+        "first_power_mismatch": (
+            int(power_mismatches[0]) if power_mismatches.size else None
+        ),
         "hashes": hashes,
         "mismatch_counts": {
             "tt0": mismatch_count(casars_tt0, casa_tt0_rotated),
@@ -520,12 +514,8 @@ def main() -> None:
         raise RuntimeError("CASA binary byte length differs from host receipt")
     with np.load(args.casa_npz) as loaded:
         casa_trace = {name: np.asarray(loaded[name]) for name in loaded.files}
-    source_trace = json.loads(
-        args.casars_source_trace.read_text(encoding="utf-8")
-    )
-    casars_host = json.loads(
-        args.casars_sidecar_host.read_text(encoding="utf-8")
-    )
+    source_trace = json.loads(args.casars_source_trace.read_text(encoding="utf-8"))
+    casars_host = json.loads(args.casars_sidecar_host.read_text(encoding="utf-8"))
     audit_path = Path(casars_host["audit"]["path"])
     audit = np.fromfile(audit_path, dtype=sidecar.AUDIT_DTYPE)
     sidecar_receipt = json.loads(
@@ -547,13 +537,9 @@ def main() -> None:
         "casa_npz": str(args.casa_npz),
         "casa_npz_sha256": boundary.sha256_file(args.casa_npz),
         "casars_source_trace": str(args.casars_source_trace),
-        "casars_source_trace_sha256": boundary.sha256_file(
-            args.casars_source_trace
-        ),
+        "casars_source_trace_sha256": boundary.sha256_file(args.casars_source_trace),
         "casars_sidecar_host": str(args.casars_sidecar_host),
-        "casars_sidecar_host_sha256": boundary.sha256_file(
-            args.casars_sidecar_host
-        ),
+        "casars_sidecar_host_sha256": boundary.sha256_file(args.casars_sidecar_host),
         "casars_sidecar_comparison": str(args.casars_sidecar_comparison),
         "casars_sidecar_comparison_sha256": boundary.sha256_file(
             args.casars_sidecar_comparison
