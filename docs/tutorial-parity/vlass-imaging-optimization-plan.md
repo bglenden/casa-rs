@@ -6735,6 +6735,97 @@ CLEAN, or promotion of the four-SPW row. No CASA, MS, Metal, grid, FFT,
 product, controller, clean, full-16-SPW, full-geometry, or memory-policy
 execution occurred.
 
+### 2026-07-31 raw-frame Taylor prediction-only runtime candidate
+
+The authorized runtime candidate now preserves both pre-phase wide-division
+values and separately phase-aligned diagnostic terms. When the private
+`CASA_RS_EXPERIMENTAL_AWPROJECT_RAW_FRAME_TAYLOR` control is enabled together
+with the source-phase candidate, it performs the production prediction
+arithmetic in the certified CASA order:
+
+1. wide-normalize raw TT0 and TT1;
+2. scale raw TT1 and add it to raw TT0 as separately rounded `Complex32`
+   arithmetic; and
+3. apply the source phase once to the completed prediction.
+
+The control is fail-closed behind the prediction-only wide-division sidecar.
+It is not a production default, public/task parameter, or UI surface.
+
+One bounded real `4,096`-square, four-SPW execution completed at the deliberate
+pre-residual-grid stop in `11.83` seconds. It retained all `98,239` sources and
+`196,478` RR/LL source-role values. The input and unchanged control paths
+reproduced the prior evidence exactly:
+
+- raw numerator/normalizer stream:
+  `bc6d3d01e949e33b623a4febc6020f33d2fd1d57beece80e5a043a8d2b3c992a`;
+- control audit:
+  `7a8b6038aa8a78bfc0bc70ed9e02ad2588c80f7b1db3b026ab409fb9872bde4f`;
+  and
+- control result:
+  `dcdf3389e7b20165973e8f237091a9db7a24cd6526ed8682a6376a522bf2b3b4`.
+
+The candidate's separately aligned TT0 and TT1 remain bit-exact with CASA.
+Reconstructing the obsolete aligned-frame Taylor order from those terms still
+produces the expected `230` scaled-TT1 and `434` combined source-role
+mismatches, including literal-combined hash
+`5ee1aeded69e61cd9e5e8d5bece01397c8a5a743ca8bb856653ea12dab7832cb`.
+That is the negative control.
+
+The actual candidate production prediction closes the real boundary:
+
+- candidate production-combined hash:
+  `2c6a3072a7f5556c81cc5b691a8d0ac2d7b055010bb8f171ed207d5d1a5d1e5d`;
+- frozen CASA phase-aligned combined hash:
+  `2c6a3072a7f5556c81cc5b691a8d0ac2d7b055010bb8f171ed207d5d1a5d1e5d`;
+- production-combined mismatches: `0 / 196,478`; and
+- local-result/readback mismatches: `0`.
+
+The independent term comparator binds the nested candidate receipt to the
+aggregate raw-frame operation-order receipt and classifies the result
+`raw-frame-taylor-production-prediction-exact`. All input, row-identity,
+source-order, CASA-product, topology, and prohibited-stage controls pass.
+The first comparison receipt correctly reported the zero production mismatch
+but retained its legacy scaling-first classification because it did not bind
+the aggregate operation-order contract. The comparator was updated and run
+once more over the same frozen artifacts; no imaging or CASA execution was
+repeated. The provisional v1 and contract-bound v2 receipts hash to,
+respectively:
+
+- `ee42eb2cb2d15aad02d3370e1bbfa2b53601ea7b4c51d323f41d98152d6a69d9`;
+  and
+- `bbab4ddf639911e4079797c3b0027834405cdf6ab66332bf5342235c1d53e19f`.
+
+The instrumented Metal prediction dispatch/wait took `50.152583` ms. The CPU
+wide division, raw-frame Taylor scale/add, source-phase restoration, residual
+subtraction, and output write took `7.446833` ms, for a `57.599416` ms hybrid
+boundary. These are arithmetic-boundary diagnostic costs, not end-to-end
+performance evidence.
+
+The run log, aggregate host receipt, candidate audit, candidate result, and
+nested candidate receipt hash to:
+
+- `572652d0ef6043452eb9450846276ac8cedeccb3176841b2813037beab1bf25f`;
+- `71325b2d256ce1dd080bcf6605fc54de533771a17e5ebe5644049060a69feeb5`;
+- `d9f1747a38baa7c1f538791d1e07881183861ab7645458a3fe43c29b2ec3460a`;
+- `c344c5c014fe01feb0f3995cf894ec3bb1026a1b1091e21fe2a79d0720df0089`;
+  and
+- `14fb8f96547bf17de2962ff88ff1c92515a7adf1c62af6bdf8277490a6a38ec4`.
+
+The release executable, runner, comparator, and comparator test hash to:
+
+- `fad8bec66042b1693b97fbd2ca8c2aafc47c682b8e4df65358dcbf02d0fc5ae6`;
+- `baf611fd71d748b8153a877eff21a9f21618784e679820386787d1a065962d31`;
+- `c82eeaa14cb1b2b4463684e35d6fdc6d7388463ea856af3cafb51446f45c015e`;
+  and
+- `5a93818d34d074c481df85e30c977cf8c20ff428ad1cab30128337c29bae993a`.
+
+No CASA call, residual grid, residual FFT, image/product formation, controller
+step, CLEAN, full-16-SPW row, `12,150`-square development run, or memory-policy
+experiment ran. This earns exact prediction-boundary correctness only. The
+four-SPW clean row remains unpromoted until the operation order is carried
+through the production residual path and the component, major-cycle, topology,
+metadata, inventory, mask, and 19-product gates all pass.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.

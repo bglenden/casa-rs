@@ -21131,6 +21131,38 @@ fn awproject_restore_source_phase(
     })
 }
 
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_raw_frame_taylor_prediction(
+    term0: AwProjectMetalPredictionAuditComplex,
+    term1: AwProjectMetalPredictionAuditComplex,
+    taylor_x: f32,
+    source_phase: Complex32,
+) -> Result<AwProjectMetalPredictionAuditComplex, ImagingError> {
+    if ![
+        term0.re,
+        term0.im,
+        term1.re,
+        term1.im,
+        taylor_x,
+        source_phase.re,
+        source_phase.im,
+    ]
+    .into_iter()
+    .all(f32::is_finite)
+    {
+        return Err(ImagingError::Normalization(
+            "AWProject raw-frame Taylor prediction requires finite inputs".to_string(),
+        ));
+    }
+    let scaled_re = term1.re * taylor_x;
+    let scaled_im = term1.im * taylor_x;
+    let combined = AwProjectMetalPredictionAuditComplex {
+        re: term0.re + scaled_re,
+        im: term0.im + scaled_im,
+    };
+    awproject_restore_source_phase(combined, source_phase)
+}
+
 #[cfg(all(test, target_os = "macos", not(coverage)))]
 fn current_f32_complex_division(
     raw: AwProjectMetalWideDivisionTerm,
@@ -21196,6 +21228,13 @@ fn build_awproject_wide_division_candidate(
     let started = Instant::now();
     let source_phase_enabled =
         env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDIVISION_SOURCE_PHASE").is_some();
+    let raw_frame_taylor_enabled =
+        env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_RAW_FRAME_TAYLOR").is_some();
+    if raw_frame_taylor_enabled && !source_phase_enabled {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject raw-frame Taylor ordering requires pre-division source phase".to_string(),
+        ));
+    }
     let mut audit = Vec::with_capacity(batch.samples.len());
     let mut results = Vec::with_capacity(batch.samples.len());
     for (ordinal, ((sample, raw), control)) in
@@ -21249,27 +21288,46 @@ fn build_awproject_wide_division_candidate(
                 term.numerator
             };
             let divided = casa_67518_wide_complex_division(numerator, term.normalizer)?;
-            if source_phase_enabled {
+            let aligned = if source_phase_enabled {
                 awproject_restore_source_phase(divided, source_phase)
             } else {
                 Ok(divided)
-            }
+            }?;
+            Ok::<_, ImagingError>((divided, aligned))
         };
-        let first_term0 = divide_term(raw.first.model_term0)?;
-        let first_term1 = divide_term(raw.first.model_term1)?;
-        let second_term0 = divide_term(raw.second.model_term0)?;
-        let second_term1 = divide_term(raw.second.model_term1)?;
-        let first_scaled_re = first_term1.re * sample.taylor_x;
-        let first_scaled_im = first_term1.im * sample.taylor_x;
-        let second_scaled_re = second_term1.re * sample.taylor_x;
-        let second_scaled_im = second_term1.im * sample.taylor_x;
-        let first_prediction = AwProjectMetalPredictionAuditComplex {
-            re: first_term0.re + first_scaled_re,
-            im: first_term0.im + first_scaled_im,
+        let (first_term0_raw_frame, first_term0) = divide_term(raw.first.model_term0)?;
+        let (first_term1_raw_frame, first_term1) = divide_term(raw.first.model_term1)?;
+        let (second_term0_raw_frame, second_term0) = divide_term(raw.second.model_term0)?;
+        let (second_term1_raw_frame, second_term1) = divide_term(raw.second.model_term1)?;
+        let aligned_frame_prediction =
+            |term0: AwProjectMetalPredictionAuditComplex,
+             term1: AwProjectMetalPredictionAuditComplex| {
+                let scaled_re = term1.re * sample.taylor_x;
+                let scaled_im = term1.im * sample.taylor_x;
+                AwProjectMetalPredictionAuditComplex {
+                    re: term0.re + scaled_re,
+                    im: term0.im + scaled_im,
+                }
+            };
+        let first_prediction = if raw_frame_taylor_enabled {
+            awproject_raw_frame_taylor_prediction(
+                first_term0_raw_frame,
+                first_term1_raw_frame,
+                sample.taylor_x,
+                source_phase,
+            )?
+        } else {
+            aligned_frame_prediction(first_term0, first_term1)
         };
-        let second_prediction = AwProjectMetalPredictionAuditComplex {
-            re: second_term0.re + second_scaled_re,
-            im: second_term0.im + second_scaled_im,
+        let second_prediction = if raw_frame_taylor_enabled {
+            awproject_raw_frame_taylor_prediction(
+                second_term0_raw_frame,
+                second_term1_raw_frame,
+                sample.taylor_x,
+                source_phase,
+            )?
+        } else {
+            aligned_frame_prediction(second_term0, second_term1)
         };
         let first_observed = AwProjectMetalPredictionAuditComplex {
             re: sample.first_observed_re,
@@ -21844,10 +21902,16 @@ fn write_awproject_wide_division_sidecar(
     let complex_divisions = raw.len().saturating_mul(4);
     let source_phase_enabled =
         env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDIVISION_SOURCE_PHASE").is_some();
+    let raw_frame_taylor_enabled =
+        env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_RAW_FRAME_TAYLOR").is_some();
     let receipt = serde_json::json!({
         "schema": "casa-rs-vlass-aw-wide-division-sidecar-host-v1",
         "role": "bounded_prediction_only_correctness_and_cost_diagnostic_not_performance_evidence",
-        "classification": "casa-6.7.5.18-official-divsc3-ordinary-finite-cpu-hybrid-candidate",
+        "classification": if raw_frame_taylor_enabled {
+            "casa-6.7.5.18-wide-division-raw-frame-taylor-source-phase-candidate"
+        } else {
+            "casa-6.7.5.18-official-divsc3-ordinary-finite-cpu-hybrid-candidate"
+        },
         "generation": generation,
         "sample_count": raw.len(),
         "complex_division_count": complex_divisions,
@@ -21890,6 +21954,15 @@ fn write_awproject_wide_division_sidecar(
             "postdivision": "normalized Complex32 term times the recorded source phasor to restore the observed visibility frame",
             "arithmetic": "four separately rounded binary32 products followed by separately rounded add/subtract",
             "raw_sidecar_numerator": "pre-source-phase Metal numerator",
+        },
+        "taylor_operation_order": {
+            "raw_frame_enabled": raw_frame_taylor_enabled,
+            "graph": if raw_frame_taylor_enabled {
+                "wide-normalize raw TT0/TT1; scale raw TT1; add raw TT0 and scaled TT1 as Complex32; apply source phase once to combined prediction"
+            } else {
+                "wide-normalize and source-phase-align TT0/TT1 separately; scale aligned TT1; add aligned terms as Complex32"
+            },
+            "term_audit": "phase-aligned raw TT0 and raw TT1 remain separately available for diagnostic comparison",
         },
         "prohibited_post_prediction_stages": {
             "residual_grid_dispatch": false,
@@ -62264,6 +62337,31 @@ mod tests {
         assert_eq!(
             [restored.re.to_bits(), restored.im.to_bits()],
             [3_145_554_492, 3_197_138_881]
+        );
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn awproject_source775_raw_frame_taylor_prediction_matches_installed_casa_bits() {
+        let term0 = super::AwProjectMetalPredictionAuditComplex {
+            re: f32::from_bits(1_033_296_435),
+            im: f32::from_bits(3_197_747_399),
+        };
+        let term1 = super::AwProjectMetalPredictionAuditComplex {
+            re: f32::from_bits(990_227_072),
+            im: f32::from_bits(3_218_595_292),
+        };
+        let taylor_x = f32::from_bits(3_198_777_242);
+        let source_phase =
+            Complex32::new(f32::from_bits(1_065_353_216), f32::from_bits(2_925_936_363));
+
+        let prediction =
+            super::awproject_raw_frame_taylor_prediction(term0, term1, taylor_x, source_phase)
+                .expect("raw-frame Taylor prediction");
+
+        assert_eq!(
+            [prediction.re.to_bits(), prediction.im.to_bits()],
+            [1_033_205_827, 1_048_841_177]
         );
     }
 
