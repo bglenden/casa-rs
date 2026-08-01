@@ -298,7 +298,45 @@ STORAGE_BANDWIDTH_PROBE_BYTES = 64 * MIB
 STORAGE_BANDWIDTH_PROBE_BLOCK_BYTES = 4 * MIB
 SPILL_READ_BANDWIDTH_ENV = "CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND"
 SPILL_WRITE_BANDWIDTH_ENV = "CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND"
+COLLAPSE_COMPENSATION_ENV = (
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_COLLAPSE_COMPENSATION_TO_F32"
+)
 LABEL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+PACKED_CF_MAGIC = b"CASARS_AWCF_V2\0\0"
+PACKED_CF_HEADER_BYTES = 32
+PROMOTED_PACKED_RUNTIME_PROFILE = "vlass-full16-packed-cf-v2-stage-separated"
+PROMOTED_PACKED_RUNTIME_IMAGING = {
+    "standard_mfs_acceleration": "metal",
+    "parallel": True,
+    "standard_mfs_grid_threads": 2,
+    "imaging_fft_precision": "f64",
+    "imaging_fft_backend": "fftw",
+    "imaging_prepare_workers": 1,
+    "imaging_read_ahead_blocks": 1,
+    "cf_resident_mb": 256,
+}
+PROMOTED_PACKED_RUNTIME_COMMON_ENV = {
+    "CASA_RS_FFTW_THREADS": "1",
+    "CASA_RS_EXPERIMENTAL_MT_MFS_SPARSE_RHS": "1",
+}
+PROMOTED_PACKED_RUNTIME_CLEAN_ENV = {
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_IMAGE_RESPONSE_CACHE": "1",
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_ONLY_REFRESH": "1",
+    "CASA_RS_AWPROJECT_MODEL_FFT_THREADS_EXPERIMENT": "8",
+    "CASA_RS_EXPERIMENTAL_PARALLEL_MODEL_TERM_FFT": "1",
+    "CASA_RS_EXPERIMENTAL_SPARSE_AWPROJECT_MODEL_PREP": "1",
+    "CASA_RS_EXPERIMENTAL_PARALLEL_RESIDUAL_TERM_FFT": "1",
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_RESIDENT_TILE_CHAIN": "1",
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GPU_RESIDUAL_REPLAY": "1",
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_TILE_SIDE": "16",
+    "CASA_RS_EXPERIMENTAL_CACHE_REFRESHED_NSIGMA": "1",
+    "CASA_RS_EXPERIMENTAL_SPARSE_MASK_PEAK_SEARCH": "1",
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_RESIDENT_PROGRAM_COMPACTION": "1",
+}
+FORBIDDEN_PROMOTED_PACKED_RUNTIME_ENV = (
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_PRIME_REPLAY_INITIAL_DIRTY",
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_REPLAY_RETENTION_BYTES",
+)
 
 
 class CampaignError(ValueError):
@@ -453,6 +491,239 @@ def sha256_file(path: Path) -> str:
         while chunk := handle.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def packed_cf_evidence(path: Path) -> dict[str, Any]:
+    """Content-address one exact packed-CF source and its format identity."""
+
+    path = path.expanduser().resolve()
+    if not path.is_file():
+        raise CampaignError(f"packed-CF candidate does not exist: {path}")
+    try:
+        with path.open("rb") as handle:
+            header = handle.read(PACKED_CF_HEADER_BYTES)
+    except OSError as error:
+        raise CampaignError(
+            f"cannot read packed-CF candidate {path}: {error}"
+        ) from error
+    if len(header) != PACKED_CF_HEADER_BYTES or header[:16] != PACKED_CF_MAGIC:
+        raise CampaignError(
+            f"packed-CF candidate does not have the V2 exact-source header: {path}"
+        )
+    metadata_fingerprint = int.from_bytes(header[16:24], "little")
+    pair_count = int.from_bytes(header[24:32], "little")
+    if pair_count < 1:
+        raise CampaignError(f"packed-CF candidate has no CF pairs: {path}")
+    return {
+        "path": str(path),
+        "sha256": sha256_file(path),
+        "bytes": path.stat().st_size,
+        "format": "CASARS_AWCF_V2",
+        "metadata_fingerprint": f"{metadata_fingerprint:016x}",
+        "pair_count": pair_count,
+    }
+
+
+def fftw_library_evidence(path: Path) -> dict[str, Any]:
+    """Bind the f64 FFTW core and threads libraries selected by the runtime."""
+
+    path = path.expanduser().resolve()
+    if not path.is_dir():
+        raise CampaignError(f"FFTW library directory does not exist: {path}")
+    candidates = (
+        ("libfftw3.dylib", "libfftw3_threads.dylib"),
+        ("libfftw3.3.dylib", "libfftw3_threads.3.dylib"),
+        ("libfftw3.so", "libfftw3_threads.so"),
+        ("libfftw3.so.3", "libfftw3_threads.so.3"),
+    )
+    selected: tuple[Path, Path] | None = None
+    for core_name, threads_name in candidates:
+        core = path / core_name
+        threads = path / threads_name
+        if core.is_file() and threads.is_file():
+            selected = (core.resolve(), threads.resolve())
+            break
+    if selected is None:
+        raise CampaignError(
+            f"FFTW directory has no supported f64 core/threads pair: {path}"
+        )
+    core, threads = selected
+    return {
+        "directory": str(path),
+        "core": {
+            "path": str(core),
+            "bytes": core.stat().st_size,
+            "sha256": sha256_file(core),
+        },
+        "threads": {
+            "path": str(threads),
+            "bytes": threads.stat().st_size,
+            "sha256": sha256_file(threads),
+        },
+    }
+
+
+def candidate_runtime_binding(
+    *,
+    mode: str,
+    use_promoted_packed_runtime: bool,
+    packed_cf_path: Path | None,
+    fftw_library_dir: Path | None,
+    collapse_compensation_to_f32: bool = False,
+) -> dict[str, Any]:
+    """Resolve an immutable runtime profile for one campaign invocation."""
+
+    if not use_promoted_packed_runtime:
+        if (
+            packed_cf_path is not None
+            or fftw_library_dir is not None
+            or collapse_compensation_to_f32
+        ):
+            raise CampaignError(
+                "--packed-cf-experiment, --fftw-library-dir, and "
+                "--collapse-compensation-to-f32 require "
+                "--use-promoted-packed-runtime"
+            )
+        return {
+            "schema_version": 1,
+            "profile": "base-workload-runtime",
+            "promoted_reduced_candidate": False,
+            "imaging_overrides": {},
+            "environment": {},
+            "forbidden_environment": [],
+            "packed_cf": None,
+            "fftw": None,
+        }
+    if packed_cf_path is None:
+        raise CampaignError(
+            "--use-promoted-packed-runtime requires --packed-cf-experiment"
+        )
+    if fftw_library_dir is None:
+        configured_fftw = os.environ.get("CASA_RS_FFTW_LIBRARY_DIR")
+        fftw_library_dir = (
+            Path(configured_fftw)
+            if configured_fftw
+            else Path("/opt/homebrew/opt/fftw/lib")
+        )
+    packed_cf = packed_cf_evidence(packed_cf_path)
+    fftw = fftw_library_evidence(fftw_library_dir)
+    environment = dict(PROMOTED_PACKED_RUNTIME_COMMON_ENV)
+    environment.update(
+        {
+            "CASA_RS_FFTW_LIBRARY_DIR": fftw["directory"],
+            "CASA_RS_AWPROJECT_PACKED_CF_EXPERIMENT": packed_cf["path"],
+            "CASA_RS_AWPROJECT_TRUST_PACKED_CF_EXPERIMENT": "1",
+        }
+    )
+    if mode == "clean":
+        environment.update(PROMOTED_PACKED_RUNTIME_CLEAN_ENV)
+    if collapse_compensation_to_f32:
+        environment[COLLAPSE_COMPENSATION_ENV] = "1"
+    if any(name in environment for name in FORBIDDEN_PROMOTED_PACKED_RUNTIME_ENV):
+        raise CampaignError(
+            "internal error: promoted full-geometry runtime overlaps replay with "
+            "the initial grid or overrides planner-owned replay retention"
+        )
+    return {
+        "schema_version": 1,
+        "profile": PROMOTED_PACKED_RUNTIME_PROFILE,
+        "promoted_reduced_candidate": True,
+        "source_promotion": {
+            "workload": "vlass-fragment-single-field-clean-4096-full-16-spw",
+            "wall_seconds": 42.91,
+            "scientific_floor_receipt_sha256": (
+                "131120ea9ea8318e457a91a9b3ea19ded85f4c96ecc226187cebe1691c5ad938"
+            ),
+        },
+        "stage_policy_delta": {
+            "initial_dirty_replay_prime": False,
+            "reason": (
+                "compile replay on first residual use so its measured working set "
+                "does not overlap the full compensated initial-grid peak"
+            ),
+            "planner_owns_replay_retention_bytes": True,
+            "known_last_use_release_boundary": ("after-final-residual-before-finish"),
+        },
+        "precision_policy_delta": {
+            "experimental": collapse_compensation_to_f32,
+            "classification": (
+                "explicit-numerical-approximation"
+                if collapse_compensation_to_f32
+                else "unchanged-compensated-f32-pair"
+            ),
+            "compensation_residency": (
+                "collapsed-f32-before-transform"
+                if collapse_compensation_to_f32
+                else "retained-through-transform"
+            ),
+            "reduced_full16_evidence": (
+                {
+                    "workload": ("vlass-fragment-single-field-clean-4096-full-16-spw"),
+                    "wall_seconds": 71.386,
+                    "scientific_floor_receipt_sha256": (
+                        "97df719a331d88f890914448cd08c41d7828b62ac5ea247b858b25196b4fc9ad"
+                    ),
+                    "all_scientific_gates_passed": True,
+                }
+                if collapse_compensation_to_f32
+                else None
+            ),
+        },
+        "imaging_overrides": dict(PROMOTED_PACKED_RUNTIME_IMAGING),
+        "environment": environment,
+        "forbidden_environment": list(FORBIDDEN_PROMOTED_PACKED_RUNTIME_ENV),
+        "packed_cf": packed_cf,
+        "fftw": fftw,
+    }
+
+
+def campaign_tooling_evidence(*, include_binary: bool = False) -> dict[str, Any]:
+    """Content-address the campaign entry points and exact Rust executable."""
+
+    paths = [
+        Path(__file__).resolve(),
+        RUN_WORKLOAD.resolve(),
+        (REPO_ROOT / "scripts" / "bench-imager-vs-casa.sh").resolve(),
+    ]
+    if include_binary:
+        paths.append((REPO_ROOT / "target" / "release" / "casars-imager").resolve())
+    missing = [path for path in paths if not path.is_file()]
+    if missing:
+        raise CampaignError(
+            "campaign tooling is not built or present: "
+            + ", ".join(str(path) for path in missing)
+        )
+    return {
+        "schema_version": 1,
+        "files": [
+            {
+                "path": str(path),
+                "bytes": path.stat().st_size,
+                "sha256": sha256_file(path),
+            }
+            for path in paths
+        ],
+    }
+
+
+def validate_campaign_tooling_evidence(evidence: dict[str, Any]) -> None:
+    """Fail if an entry point or executable changed after the campaign claim."""
+
+    files = evidence.get("files")
+    if not isinstance(files, list) or not files:
+        raise CampaignError("campaign tooling evidence has no files")
+    for item in files:
+        if not isinstance(item, dict):
+            raise CampaignError("campaign tooling evidence contains a non-object")
+        path = Path(str(item.get("path", "")))
+        expected_bytes = item.get("bytes")
+        expected_sha256 = item.get("sha256")
+        if (
+            not path.is_file()
+            or path.stat().st_size != expected_bytes
+            or sha256_file(path) != expected_sha256
+        ):
+            raise CampaignError(f"campaign tooling changed after claim: {path}")
 
 
 def load_json(path: Path, *, label: str) -> dict[str, Any]:
@@ -1549,6 +1820,7 @@ def derive_rust_only_manifest(
     campaign_label: str,
     memory_target_mb: int | None,
     workload_kind: str = "single-field",
+    candidate_runtime: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create one single-run manifest while preserving science parameters."""
 
@@ -1563,6 +1835,15 @@ def derive_rust_only_manifest(
     manifest["id"] = f"{campaign_label}-{mode}-{policy}"
     manifest.pop("casa", None)
     imaging = manifest["imaging"]
+    runtime = candidate_runtime or {
+        "imaging_overrides": {},
+        "environment": {},
+        "forbidden_environment": [],
+    }
+    imaging_overrides = runtime.get("imaging_overrides")
+    if not isinstance(imaging_overrides, dict):
+        raise CampaignError("candidate runtime imaging_overrides must be an object")
+    imaging.update(imaging_overrides)
     imaging["imaging_memory_pressure_policy"] = policy
     if memory_target_mb is None:
         imaging.pop("imaging_memory_target_mb", None)
@@ -1590,6 +1871,22 @@ def derive_rust_only_manifest(
         raise CampaignError("base workload run.env must be a JSON object")
     run_env.pop(SPILL_READ_BANDWIDTH_ENV, None)
     run_env.pop(SPILL_WRITE_BANDWIDTH_ENV, None)
+    runtime_environment = runtime.get("environment")
+    if not isinstance(runtime_environment, dict) or not all(
+        isinstance(key, str) and isinstance(value, str)
+        for key, value in runtime_environment.items()
+    ):
+        raise CampaignError("candidate runtime environment must be a string map")
+    forbidden_environment = runtime.get("forbidden_environment")
+    if not isinstance(forbidden_environment, list) or not all(
+        isinstance(name, str) for name in forbidden_environment
+    ):
+        raise CampaignError(
+            "candidate runtime forbidden_environment must be a string list"
+        )
+    for name in forbidden_environment:
+        run_env.pop(name, None)
+    run_env.update(runtime_environment)
     run_env["CASA_RS_STANDARD_MFS_PROFILE_DETAIL"] = "1"
     return manifest
 
@@ -1813,7 +2110,14 @@ def resolved_memory_target_evidence(
     if semantics != "incremental-operation-residency":
         mismatches.append("memory_target_semantics")
     if planning_values_valid:
-        expected_process_ceiling = min(physical, baseline + headroom)
+        physical_ceiling_policy = policy in {
+            "aggressive",
+            "oversubscribe",
+            "hybrid",
+        }
+        expected_process_ceiling = (
+            physical if physical_ceiling_policy else min(physical, baseline + headroom)
+        )
         expected_operation_budget = max(0, expected_process_ceiling - baseline)
         expected_target_projected_total = baseline + observed
         expected_target_projected_excess = max(
@@ -1824,10 +2128,12 @@ def resolved_memory_target_evidence(
             mismatches.append("process_baseline_bytes")
         if process_ceiling != expected_process_ceiling:
             mismatches.append("process_total_ceiling_bytes")
-        if (
-            process_ceiling_origin
-            != "baseline-plus-no-swap-headroom-capped-to-physical"
-        ):
+        expected_ceiling_origin = (
+            "physical-memory-ceiling"
+            if physical_ceiling_policy
+            else "baseline-plus-no-swap-headroom-capped-to-physical"
+        )
+        if process_ceiling_origin != expected_ceiling_origin:
             mismatches.append("process_total_ceiling_origin")
         if operation_budget != expected_operation_budget:
             mismatches.append("incremental_operation_budget_bytes")
@@ -2032,6 +2338,7 @@ def validate_full_geometry_lifetime_contract(
     mode: str,
     allocation_bytes_by_component: dict[str, int],
     lifetimes: list[dict[str, Any]],
+    decisions: list[dict[str, Any]],
     execution_plan: dict[str, Any],
     planning_resources: dict[str, Any],
     runtime_actions: dict[str, Any],
@@ -2120,29 +2427,74 @@ def validate_full_geometry_lifetime_contract(
         mismatches.append("direct Metal host scratch: positive allocation is required")
 
     expected_grid_backing = "UnifiedMemory" if metal_eligible else "HostHeap"
+    compensation_residency = next(
+        (
+            decision.get("value")
+            for decision in decisions
+            if isinstance(decision, dict)
+            and decision.get("name") == "awproject_compensation_residency"
+        ),
+        None,
+    )
+    collapse_compensation = (
+        metal_eligible and compensation_residency == "collapsed-f32-before-transform"
+    )
     grid_rows = _component_lifetime_rows(lifetimes, "grids")
-    expected_grid_rows = 2 if mode == "clean" else 1
+    expected_grid_rows = (
+        (4 if mode == "clean" else 2)
+        if collapse_compensation
+        else (2 if mode == "clean" else 1)
+    )
     if len(grid_rows) != expected_grid_rows:
         mismatches.append(
             f"grids: expected {expected_grid_rows} residency interval(s), "
             f"observed {len(grid_rows)}"
         )
     else:
-        expected_residencies = [
-            (
-                FULL_GEOMETRY_EXACT_COMPONENT_BYTES["grids"],
-                "initial-grid",
-                "dirty-transform",
-            )
-        ]
-        if mode == "clean":
-            expected_residencies.append(
+        if collapse_compensation:
+            expected_residencies = [
                 (
-                    FULL_GEOMETRY_RESIDUAL_GRID_BYTES,
-                    "residual-grid",
-                    "residual-transform",
+                    FULL_GEOMETRY_EXACT_COMPONENT_BYTES["grids"],
+                    "initial-grid",
+                    "initial-grid",
+                ),
+                (
+                    FULL_GEOMETRY_EXACT_COMPONENT_BYTES["grids"] // 2,
+                    "dirty-transform",
+                    "dirty-transform",
+                ),
+            ]
+            if mode == "clean":
+                expected_residencies.extend(
+                    [
+                        (
+                            FULL_GEOMETRY_RESIDUAL_GRID_BYTES,
+                            "residual-grid",
+                            "residual-grid",
+                        ),
+                        (
+                            FULL_GEOMETRY_RESIDUAL_GRID_BYTES // 2,
+                            "residual-transform",
+                            "residual-transform",
+                        ),
+                    ]
                 )
-            )
+        else:
+            expected_residencies = [
+                (
+                    FULL_GEOMETRY_EXACT_COMPONENT_BYTES["grids"],
+                    "initial-grid",
+                    "dirty-transform",
+                )
+            ]
+            if mode == "clean":
+                expected_residencies.append(
+                    (
+                        FULL_GEOMETRY_RESIDUAL_GRID_BYTES,
+                        "residual-grid",
+                        "residual-transform",
+                    )
+                )
         for row, (bytes_, live_from, live_through) in zip(
             grid_rows,
             expected_residencies,
@@ -2597,6 +2949,8 @@ def validate_full_geometry_lifetime_contract(
         "exact_expected_bytes_by_component": exact_expected,
         "expected_initial_grid_bytes": FULL_GEOMETRY_EXACT_COMPONENT_BYTES["grids"],
         "expected_residual_grid_bytes": FULL_GEOMETRY_RESIDUAL_GRID_BYTES,
+        "compensation_residency": compensation_residency,
+        "collapse_compensation": collapse_compensation,
         "allowed_fft_bytes": sorted(FULL_GEOMETRY_FFT_BYTES_ALLOWED),
         "expected_grid_backing": expected_grid_backing,
         "lifetime_logical_bytes_by_component": lifetime_logical_by_component,
@@ -2931,6 +3285,11 @@ def extract_execution_memory_evidence(
             lifetime
             for lifetime in memory.get("lifetimes", [])
             if isinstance(lifetime, dict)
+        ],
+        decisions=[
+            decision
+            for decision in memory.get("decisions", [])
+            if isinstance(decision, dict)
         ],
         execution_plan=execution_plan,
         planning_resources=planning_resources,
@@ -3535,6 +3894,11 @@ def planner_preflight_evidence(
             for lifetime in memory.get("lifetimes", [])
             if isinstance(lifetime, dict)
         ],
+        decisions=[
+            decision
+            for decision in memory.get("decisions", [])
+            if isinstance(decision, dict)
+        ],
         execution_plan=execution_plan if isinstance(execution_plan, dict) else {},
         planning_resources=(
             planning_resources if isinstance(planning_resources, dict) else {}
@@ -3609,6 +3973,8 @@ def experiment_fingerprint(
     storage_bandwidth: dict[str, Any],
     stop_thresholds: StopThresholds,
     execution_intent: str,
+    candidate_runtime: dict[str, Any] | None = None,
+    tooling_evidence: dict[str, Any] | None = None,
 ) -> str:
     """Bind every input that can make a memory experiment meaningfully new."""
 
@@ -3628,6 +3994,8 @@ def experiment_fingerprint(
             "storage_bandwidth": storage_bandwidth,
             "stop_thresholds": asdict(stop_thresholds),
             "execution_intent": execution_intent,
+            "candidate_runtime": candidate_runtime,
+            "tooling_evidence": tooling_evidence,
         }
     )
 
@@ -3944,6 +4312,59 @@ def validate_rust_only_workload_result(path: Path, *, expected_status: str) -> N
         raise CampaignError(f"{path}: CASA-capable command kind is forbidden")
 
 
+def validate_candidate_runtime_result(
+    path: Path,
+    *,
+    candidate_runtime: dict[str, Any],
+) -> None:
+    """Prove the workload command carried the content-bound candidate controls."""
+
+    result = load_json(path, label="workload result")
+    command = result.get("command")
+    if not isinstance(command, dict):
+        raise CampaignError(f"{path}: workload has no command receipt")
+    observed_environment = command.get("env")
+    if not isinstance(observed_environment, dict):
+        raise CampaignError(f"{path}: workload has no command environment receipt")
+    expected_environment = candidate_runtime.get("environment")
+    if not isinstance(expected_environment, dict):
+        raise CampaignError("candidate runtime has no environment map")
+    environment_mismatches = [
+        f"{name}={observed_environment.get(name)!r}"
+        for name, expected in expected_environment.items()
+        if observed_environment.get(name) != expected
+    ]
+    forbidden = candidate_runtime.get("forbidden_environment")
+    if not isinstance(forbidden, list):
+        raise CampaignError("candidate runtime has no forbidden-environment list")
+    environment_mismatches.extend(
+        f"{name}=present" for name in forbidden if name in observed_environment
+    )
+    if environment_mismatches:
+        raise CampaignError(
+            f"{path}: candidate runtime environment mismatch: "
+            + ", ".join(environment_mismatches)
+        )
+
+    rust = command.get("rust")
+    intended = rust.get("intended_parameters") if isinstance(rust, dict) else None
+    if not isinstance(intended, dict):
+        raise CampaignError(f"{path}: workload has no Rust intended-parameter receipt")
+    imaging_overrides = candidate_runtime.get("imaging_overrides")
+    if not isinstance(imaging_overrides, dict):
+        raise CampaignError("candidate runtime has no imaging-overrides map")
+    parameter_mismatches = [
+        f"{name}={intended.get(name)!r}"
+        for name, expected in imaging_overrides.items()
+        if intended.get(name) != expected
+    ]
+    if parameter_mismatches:
+        raise CampaignError(
+            f"{path}: candidate runtime imaging override mismatch: "
+            + ", ".join(parameter_mismatches)
+        )
+
+
 def receipt_template(
     *,
     mode: str,
@@ -3963,6 +4384,8 @@ def receipt_template(
     artifact_root: Path,
     thresholds: StopThresholds,
     requested_memory_target_mb: int | None,
+    candidate_runtime: dict[str, Any] | None = None,
+    tooling_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the durable claim before any subprocess can start."""
 
@@ -3987,6 +4410,8 @@ def receipt_template(
         "derived_manifest_sha256": sha256_file(manifest_path),
         "command": command,
         "command_environment": command_environment,
+        "candidate_runtime": candidate_runtime,
+        "tooling_evidence": tooling_evidence,
         "storage_bandwidth": storage_bandwidth,
         "targets": {
             "imsize": 12150,
@@ -4071,8 +4496,9 @@ def parser() -> argparse.ArgumentParser:
         help=(
             "planner-only opens the real MS/CF inputs and executes allocation-free "
             "Rust planner probes for all five policies; dirty validates or executes "
-            "all five; clean validates or executes the selected reviewed dirty "
-            "policy; validate-clean-promotion verifies a memory-campaign-only "
+            "all five unless --policy selects one bounded row; clean validates or "
+            "executes the selected reviewed dirty policy; "
+            "validate-clean-promotion verifies a memory-campaign-only "
             "full-size clean candidate without launching a workload or satisfying "
             "the separate final four-row 10x acceptance contract"
         ),
@@ -4084,6 +4510,14 @@ def parser() -> argparse.ArgumentParser:
         help="select the single field or exact connected 63-field VLASS workload",
     )
     result.add_argument("--promoted-4096-receipt", type=Path, required=True)
+    result.add_argument(
+        "--policy",
+        choices=POLICIES,
+        help=(
+            "execute or dry-run only one dirty policy after the mandatory "
+            "planner-only five-policy sweep; invalid for other modes"
+        ),
+    )
     result.add_argument("--dirty-policy-receipt", type=Path)
     result.add_argument("--clean-promotion-receipt", type=Path)
     result.add_argument("--receipt-dir", type=Path, required=True)
@@ -4097,6 +4531,39 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--output-dir", type=Path)
     result.add_argument("--artifact-root", type=Path)
     result.add_argument("--memory-target-mb", type=int)
+    result.add_argument(
+        "--use-promoted-packed-runtime",
+        action="store_true",
+        help=(
+            "bind the promoted 4096-square full-16-SPW packed-CF runtime while "
+            "delaying replay compilation until the initial full-size grids are gone"
+        ),
+    )
+    result.add_argument(
+        "--packed-cf-experiment",
+        type=Path,
+        help=(
+            "exact V2 packed-CF file; required by --use-promoted-packed-runtime "
+            "and content-addressed in every experiment receipt"
+        ),
+    )
+    result.add_argument(
+        "--fftw-library-dir",
+        type=Path,
+        help=(
+            "directory containing the f64 FFTW core/threads libraries; defaults "
+            "to CASA_RS_FFTW_LIBRARY_DIR or the Homebrew path"
+        ),
+    )
+    result.add_argument(
+        "--collapse-compensation-to-f32",
+        action="store_true",
+        help=(
+            "run the scientifically reviewed experimental precision policy that "
+            "folds each AW compensation plane into its f32 high plane before the "
+            "dirty or residual transform; requires --use-promoted-packed-runtime"
+        ),
+    )
     result.add_argument(
         "--execute-12150",
         action="store_true",
@@ -4133,6 +4600,8 @@ def run_campaign(args: argparse.Namespace) -> list[Path]:
         )
     if args.mode == "planner-only" and args.execute_12150:
         raise CampaignError("planner-only forbids --execute-12150")
+    if args.policy is not None and args.mode != "dirty":
+        raise CampaignError("--policy is valid only for dirty mode")
     clean_modes = {"clean", "validate-clean-promotion"}
     if args.mode not in clean_modes and args.dirty_policy_receipt is not None:
         raise CampaignError(
@@ -4204,7 +4673,7 @@ def run_campaign(args: argparse.Namespace) -> list[Path]:
         policies = (policy,)
         science_mode = "clean"
     else:
-        policies = POLICIES
+        policies = (args.policy,) if args.policy is not None else POLICIES
         science_mode = "dirty"
 
     override_path = (
@@ -4227,6 +4696,16 @@ def run_campaign(args: argparse.Namespace) -> list[Path]:
         workload_kind=args.workload_kind,
     )
     base_ref = EvidenceRef(path=str(base_path), sha256=sha256_file(base_path))
+    runtime_binding = candidate_runtime_binding(
+        mode=science_mode,
+        use_promoted_packed_runtime=args.use_promoted_packed_runtime,
+        packed_cf_path=args.packed_cf_experiment,
+        fftw_library_dir=args.fftw_library_dir,
+        collapse_compensation_to_f32=args.collapse_compensation_to_f32,
+    )
+    tooling = campaign_tooling_evidence(
+        include_binary=args.use_promoted_packed_runtime,
+    )
 
     receipt_dir = args.receipt_dir.expanduser().resolve()
     output_dir = (
@@ -4281,6 +4760,7 @@ def run_campaign(args: argparse.Namespace) -> list[Path]:
             campaign_label=args.campaign_label,
             memory_target_mb=args.memory_target_mb,
             workload_kind=args.workload_kind,
+            candidate_runtime=runtime_binding,
         )
         apply_storage_bandwidth_environment(
             manifest,
@@ -4337,6 +4817,8 @@ def run_campaign(args: argparse.Namespace) -> list[Path]:
             storage_bandwidth=storage_bandwidth,
             stop_thresholds=thresholds,
             execution_intent=execution_intent,
+            candidate_runtime=runtime_binding,
+            tooling_evidence=tooling,
         )
         duplicate = find_duplicate_receipt(receipt_dir, fingerprint)
         if duplicate is not None:
@@ -4395,6 +4877,8 @@ def run_campaign(args: argparse.Namespace) -> list[Path]:
             artifact_root=row_artifact_root,
             thresholds=thresholds,
             requested_memory_target_mb=args.memory_target_mb,
+            candidate_runtime=runtime_binding,
+            tooling_evidence=tooling,
         )
         claim_receipt(receipt_path, receipt)
         receipt_paths.append(receipt_path)
@@ -4415,6 +4899,7 @@ def run_campaign(args: argparse.Namespace) -> list[Path]:
                     "stdout_log_path": str(stdout_log),
                     "stdout_log_sha256": sha256_file(stdout_log),
                 }
+                validate_campaign_tooling_evidence(tooling)
                 if completed.returncode != 0:
                     raise CampaignError(
                         f"planner preflight exited with status {completed.returncode}"
@@ -4461,12 +4946,17 @@ def run_campaign(args: argparse.Namespace) -> list[Path]:
                 thresholds=thresholds,
                 stdout_log_path=stdout_log,
             )
+            validate_campaign_tooling_evidence(tooling)
             receipt["outer_monitor"] = asdict(monitor)
             workload_result = locate_workload_result(run_output_dir, stdout_log)
             expected_status = "completed" if args.execute_12150 else "dry_run"
             validate_rust_only_workload_result(
                 workload_result,
                 expected_status=expected_status,
+            )
+            validate_candidate_runtime_result(
+                workload_result,
+                candidate_runtime=runtime_binding,
             )
             receipt["run_workload_result"] = {
                 "path": str(workload_result),

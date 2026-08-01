@@ -355,7 +355,7 @@ mod tests {
     fn imager_vlass_controls_share_one_catalog_owned_awproject_surface() {
         let catalog = builtin_surface_catalog().unwrap();
         let surface = catalog.surface("imager").unwrap();
-        assert_eq!(surface.contract_version(), 7);
+        assert_eq!(surface.contract_version(), 8);
         let memory_target = catalog
             .catalog
             .concepts
@@ -371,6 +371,7 @@ mod tests {
         for name in [
             "cfcache",
             "cf_resident_mb",
+            "aw_major_cycle_operator",
             "facets",
             "psfphasecenter",
             "vptable",

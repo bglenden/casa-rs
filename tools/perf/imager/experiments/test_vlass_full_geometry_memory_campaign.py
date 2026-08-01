@@ -207,7 +207,11 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
         physical = campaign.ACCEPTANCE_PHYSICAL_MEMORY_BYTES
         headroom = 30 * campaign.GIB
         baseline = campaign.GIB
-        process_total_ceiling = min(physical, baseline + headroom)
+        process_total_ceiling = (
+            physical
+            if policy in {"aggressive", "oversubscribe", "hybrid"}
+            else min(physical, baseline + headroom)
+        )
         operation_budget = max(0, process_total_ceiling - baseline)
         requested = (
             memory_target_mb * campaign.MIB if memory_target_mb is not None else None
@@ -258,7 +262,11 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
         *,
         mode: str = "dirty",
         memory_target_mb: int | None = None,
+        metal_eligible: bool = False,
+        collapse_compensation: bool = False,
     ) -> str:
+        if collapse_compensation and not metal_eligible:
+            raise ValueError("compensation collapse requires Metal eligibility")
         memory_target_bytes, memory_target_origin = cls.resolved_target(
             policy,
             memory_target_mb,
@@ -266,13 +274,27 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
         physical_memory_bytes = campaign.ACCEPTANCE_PHYSICAL_MEMORY_BYTES
         no_swap_headroom_bytes = 30 * campaign.GIB
         process_baseline_bytes = campaign.GIB
-        process_total_ceiling_bytes = min(
-            physical_memory_bytes,
-            process_baseline_bytes + no_swap_headroom_bytes,
+        physical_ceiling_policy = policy in {
+            "aggressive",
+            "oversubscribe",
+            "hybrid",
+        }
+        process_total_ceiling_bytes = (
+            physical_memory_bytes
+            if physical_ceiling_policy
+            else min(
+                physical_memory_bytes,
+                process_baseline_bytes + no_swap_headroom_bytes,
+            )
         )
         incremental_operation_budget_bytes = max(
             0,
             process_total_ceiling_bytes - process_baseline_bytes,
+        )
+        process_total_ceiling_origin = (
+            "physical-memory-ceiling"
+            if physical_ceiling_policy
+            else "baseline-plus-no-swap-headroom-capped-to-physical"
         )
         target_projected_process_total_bytes = (
             process_baseline_bytes + memory_target_bytes
@@ -332,6 +354,17 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
                     ),
                 }
             )
+        if metal_eligible:
+            components.update(
+                {
+                    "direct Metal host scratch": 4 * campaign.MIB,
+                    "AWProject compensated f64 readback": (
+                        campaign.FULL_GEOMETRY_EXACT_COMPONENT_BYTES[
+                            "AWProject compensated f64 readback"
+                        ]
+                    ),
+                }
+            )
         allocation_ids: dict[str, str] = {}
         allocation_rows = []
         lifetime_specs: list[dict[str, object]] = []
@@ -356,6 +389,7 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
             *,
             index: int = 0,
             next_use: str = "none",
+            backing: str = "HostHeap",
         ) -> None:
             lifetime_specs.append(
                 {
@@ -363,7 +397,7 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
                     "component": component,
                     "logical_bytes": components[component],
                     "residency_index": index,
-                    "backing": "HostHeap",
+                    "backing": backing,
                     "resident_bytes": resident_bytes,
                     "stored_bytes": 0,
                     "live_from": live_from,
@@ -372,21 +406,61 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
                 }
             )
 
-        add_lifetime(
-            "grids",
-            components["grids"],
-            "initial-grid",
-            "dirty-transform",
-            next_use="stage:residual-grid" if mode == "clean" else "none",
-        )
-        if mode == "clean":
+        grid_backing = "UnifiedMemory" if metal_eligible else "HostHeap"
+        if collapse_compensation:
             add_lifetime(
                 "grids",
-                campaign.FULL_GEOMETRY_RESIDUAL_GRID_BYTES,
-                "residual-grid",
-                "residual-transform",
-                index=1,
+                components["grids"],
+                "initial-grid",
+                "initial-grid",
+                next_use="stage:dirty-transform",
+                backing=grid_backing,
             )
+            add_lifetime(
+                "grids",
+                components["grids"] // 2,
+                "dirty-transform",
+                "dirty-transform",
+                index=1,
+                next_use="stage:residual-grid" if mode == "clean" else "none",
+                backing=grid_backing,
+            )
+            if mode == "clean":
+                add_lifetime(
+                    "grids",
+                    campaign.FULL_GEOMETRY_RESIDUAL_GRID_BYTES,
+                    "residual-grid",
+                    "residual-grid",
+                    index=2,
+                    next_use="stage:residual-transform",
+                    backing=grid_backing,
+                )
+                add_lifetime(
+                    "grids",
+                    campaign.FULL_GEOMETRY_RESIDUAL_GRID_BYTES // 2,
+                    "residual-transform",
+                    "residual-transform",
+                    index=3,
+                    backing=grid_backing,
+                )
+        else:
+            add_lifetime(
+                "grids",
+                components["grids"],
+                "initial-grid",
+                "dirty-transform",
+                next_use="stage:residual-grid" if mode == "clean" else "none",
+                backing=grid_backing,
+            )
+            if mode == "clean":
+                add_lifetime(
+                    "grids",
+                    campaign.FULL_GEOMETRY_RESIDUAL_GRID_BYTES,
+                    "residual-grid",
+                    "residual-transform",
+                    index=1,
+                    backing=grid_backing,
+                )
         add_lifetime(
             "source row blocks",
             components["source row blocks"],
@@ -490,6 +564,29 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
                 "residual-grid",
                 "residual-transform",
             )
+        if metal_eligible:
+            add_lifetime(
+                "direct Metal host scratch",
+                components["direct Metal host scratch"],
+                "initial-grid",
+                "residual-grid" if mode == "clean" else "initial-grid",
+                backing="UnifiedMemory",
+            )
+            add_lifetime(
+                "AWProject compensated f64 readback",
+                components["AWProject compensated f64 readback"],
+                "dirty-transform",
+                "dirty-transform",
+                next_use="stage:residual-transform" if mode == "clean" else "none",
+            )
+            if mode == "clean":
+                add_lifetime(
+                    "AWProject compensated f64 readback",
+                    components["AWProject compensated f64 readback"],
+                    "residual-transform",
+                    "residual-transform",
+                    index=1,
+                )
 
         stage_index = {
             stage: index
@@ -498,15 +595,26 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
         stage_peaks = []
         for stage in campaign.REQUIRED_LIFETIME_STAGES:
             index = stage_index[stage]
-            resident = sum(
-                int(spec["resident_bytes"])
+            live_specs = [
+                spec
                 for spec in lifetime_specs
                 if stage_index[str(spec["live_from"])]
                 <= index
                 <= stage_index[str(spec["live_through"])]
+            ]
+            resident = sum(int(spec["resident_bytes"]) for spec in live_specs)
+            host_heap = sum(
+                int(spec["resident_bytes"])
+                for spec in live_specs
+                if spec["backing"] == "HostHeap"
             )
-            stage_peaks.append((stage, resident))
-        peak_bytes = max(resident for _, resident in stage_peaks)
+            unified_memory = sum(
+                int(spec["resident_bytes"])
+                for spec in live_specs
+                if spec["backing"] == "UnifiedMemory"
+            )
+            stage_peaks.append((stage, resident, host_heap, unified_memory))
+        peak_bytes = max(resident for _, resident, _, _ in stage_peaks)
         logical_bytes = sum(components.values())
         lifetime_rows = [
             "standard_mfs_execution_lifetime "
@@ -521,10 +629,11 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
         stages = "\n".join(
             "standard_mfs_execution_lifetime_stage "
             f"stage={stage} resident_bytes={resident} stored_bytes=0 "
-            f"host_heap_bytes={resident} unified_memory_bytes=0 metal_private_bytes=0 "
+            f"host_heap_bytes={host_heap} unified_memory_bytes={unified_memory} "
+            "metal_private_bytes=0 "
             "memory_mapped_bytes=0 temporary_spill_bytes=0 "
             "memory_mapped_stored_bytes=0 temporary_spill_stored_bytes=0"
-            for stage, resident in stage_peaks
+            for stage, resident, host_heap, unified_memory in stage_peaks
         )
         policy_actions = {
             "conservative-no-swap": (
@@ -569,8 +678,7 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
                 f"{incremental_operation_budget_bytes} "
                 f"process_baseline_bytes={process_baseline_bytes} "
                 f"process_total_ceiling_bytes={process_total_ceiling_bytes} "
-                "process_total_ceiling_origin="
-                "baseline-plus-no-swap-headroom-capped-to-physical "
+                f"process_total_ceiling_origin={process_total_ceiling_origin} "
                 "target_projected_process_total_bytes="
                 f"{target_projected_process_total_bytes} "
                 "target_projected_process_excess_bytes="
@@ -598,10 +706,20 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
                 f"{max(0, process_baseline_bytes + peak_bytes - process_total_ceiling_bytes)} "
                 f"lifetime_peak_bytes={peak_bytes} planned_peak_bytes={peak_bytes} "
                 "lifetime_stored_peak_bytes=0 lifetime_stored_peak_stage=none "
-                "metal_eligible=false",
+                f"metal_eligible={str(metal_eligible).lower()}",
                 *allocation_rows,
                 stages,
                 *lifetime_rows,
+                *(
+                    [
+                        "standard_mfs_execution_decision "
+                        "name=awproject_compensation_residency "
+                        "value=collapsed-f32-before-transform origin=UserPolicy "
+                        "reason=test-collapse"
+                    ]
+                    if collapse_compensation
+                    else []
+                ),
                 *(
                     [
                         "awproject_compact_replay_cache "
@@ -967,6 +1085,102 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
             campaign.workload_harness.validate_workload_manifest(
                 derived,
                 source="zero target fixture",
+            )
+
+    def test_promoted_packed_runtime_is_content_bound_and_stage_separated(
+        self,
+    ) -> None:
+        packed_cf = self.root / "candidate.awcf"
+        packed_cf.write_bytes(
+            campaign.PACKED_CF_MAGIC
+            + (0x8A229DFDFDB8BA0E).to_bytes(8, "little")
+            + (1024).to_bytes(8, "little")
+            + b"exact-packed-payload"
+        )
+        fftw = self.root / "fftw"
+        fftw.mkdir()
+        (fftw / "libfftw3.dylib").write_bytes(b"fftw-core")
+        (fftw / "libfftw3_threads.dylib").write_bytes(b"fftw-threads")
+        runtime = campaign.candidate_runtime_binding(
+            mode="clean",
+            use_promoted_packed_runtime=True,
+            packed_cf_path=packed_cf,
+            fftw_library_dir=fftw,
+            collapse_compensation_to_f32=True,
+        )
+        self.assertEqual(
+            campaign.PROMOTED_PACKED_RUNTIME_PROFILE,
+            runtime["profile"],
+        )
+        self.assertEqual(
+            campaign.sha256_file(packed_cf), runtime["packed_cf"]["sha256"]
+        )
+        self.assertEqual(
+            "8a229dfdfdb8ba0e", runtime["packed_cf"]["metadata_fingerprint"]
+        )
+        self.assertEqual(1024, runtime["packed_cf"]["pair_count"])
+        self.assertEqual(
+            "1",
+            runtime["environment"][campaign.COLLAPSE_COMPENSATION_ENV],
+        )
+        self.assertEqual(
+            "collapsed-f32-before-transform",
+            runtime["precision_policy_delta"]["compensation_residency"],
+        )
+        self.assertEqual(
+            ("97df719a331d88f890914448cd08c41d7828b62ac5ea247b858b25196b4fc9ad"),
+            runtime["precision_policy_delta"]["reduced_full16_evidence"][
+                "scientific_floor_receipt_sha256"
+            ],
+        )
+        self.assertIs(
+            runtime["stage_policy_delta"]["initial_dirty_replay_prime"],
+            False,
+        )
+        for name in campaign.FORBIDDEN_PROMOTED_PACKED_RUNTIME_ENV:
+            self.assertNotIn(name, runtime["environment"])
+
+        base = campaign.load_json(
+            campaign.DEFAULT_CLEAN_WORKLOAD,
+            label="clean base workload",
+        )
+        base["run"]["env"] = {
+            "CASA_RS_EXPERIMENTAL_AWPROJECT_PRIME_REPLAY_INITIAL_DIRTY": "1",
+            "CASA_RS_EXPERIMENTAL_AWPROJECT_REPLAY_RETENTION_BYTES": "999",
+        }
+        derived = campaign.derive_rust_only_manifest(
+            base,
+            mode="clean",
+            policy="aggressive",
+            campaign_label="promoted-packed-runtime",
+            memory_target_mb=None,
+            candidate_runtime=runtime,
+        )
+        self.assertEqual(
+            runtime["imaging_overrides"]["imaging_fft_backend"],
+            derived["imaging"]["imaging_fft_backend"],
+        )
+        self.assertEqual(
+            str(packed_cf.resolve()),
+            derived["run"]["env"]["CASA_RS_AWPROJECT_PACKED_CF_EXPERIMENT"],
+        )
+        self.assertEqual(
+            "1",
+            derived["run"]["env"][campaign.COLLAPSE_COMPENSATION_ENV],
+        )
+        for name in campaign.FORBIDDEN_PROMOTED_PACKED_RUNTIME_ENV:
+            self.assertNotIn(name, derived["run"]["env"])
+
+        with self.assertRaisesRegex(
+            campaign.CampaignError,
+            "collapse-compensation-to-f32 require",
+        ):
+            campaign.candidate_runtime_binding(
+                mode="dirty",
+                use_promoted_packed_runtime=False,
+                packed_cf_path=None,
+                fftw_library_dir=None,
+                collapse_compensation_to_f32=True,
             )
 
     def test_storage_probe_is_content_checked_reused_and_cleaned(self) -> None:
@@ -1375,26 +1589,24 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
     ) -> None:
         gib = campaign.GIB
         planning_resources = {
-            "memory_target_bytes": 12 * gib,
+            "memory_target_bytes": 20 * gib,
             "memory_target_semantics": "incremental-operation-residency",
             "memory_target_origin": "cli-aggressive-physical-ceiling",
             "physical_memory_bytes": 32 * gib,
             "no_swap_headroom_bytes": 12 * gib,
             "process_physical_footprint_bytes": 2 * gib,
             "process_baseline_bytes": 2 * gib,
-            "process_total_ceiling_bytes": 14 * gib,
-            "process_total_ceiling_origin": (
-                "baseline-plus-no-swap-headroom-capped-to-physical"
-            ),
-            "incremental_operation_budget_bytes": 12 * gib,
-            "target_projected_process_total_bytes": 14 * gib,
+            "process_total_ceiling_bytes": 32 * gib,
+            "process_total_ceiling_origin": "physical-memory-ceiling",
+            "incremental_operation_budget_bytes": 30 * gib,
+            "target_projected_process_total_bytes": 22 * gib,
             "target_projected_process_excess_bytes": 0,
         }
         execution_plan = {
-            "memory_target_bytes": 12 * gib,
+            "memory_target_bytes": 20 * gib,
             "memory_target_semantics": "incremental-operation-residency",
             "process_baseline_bytes": 2 * gib,
-            "process_total_ceiling_bytes": 14 * gib,
+            "process_total_ceiling_bytes": 32 * gib,
             "planned_peak_bytes": 10 * gib,
             "projected_process_total_bytes": 12 * gib,
             "projected_process_excess_bytes": 0,
@@ -1407,28 +1619,27 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
             execution_plan=execution_plan,
         )
         self.assertIs(True, evidence["matches"])
-        self.assertEqual(12 * gib, evidence["expected_bytes"])
+        self.assertEqual(20 * gib, evidence["expected_bytes"])
         self.assertEqual(
-            14 * gib,
+            32 * gib,
             evidence["expected_process_total_ceiling_bytes"],
         )
         self.assertEqual(
-            12 * gib,
+            30 * gib,
             evidence["expected_incremental_operation_budget_bytes"],
         )
 
-        old_total_ceiling_target = dict(planning_resources)
-        old_total_ceiling_target.update(
+        legacy_no_swap_capped_target = dict(planning_resources)
+        legacy_no_swap_capped_target.update(
             {
-                "memory_target_bytes": 14 * gib,
-                "target_projected_process_total_bytes": 16 * gib,
-                "target_projected_process_excess_bytes": 2 * gib,
+                "memory_target_bytes": 12 * gib,
+                "target_projected_process_total_bytes": 14 * gib,
             }
         )
         old_execution_plan = dict(execution_plan)
-        old_execution_plan["memory_target_bytes"] = 14 * gib
+        old_execution_plan["memory_target_bytes"] = 12 * gib
         rejected = campaign.resolved_memory_target_evidence(
-            old_total_ceiling_target,
+            legacy_no_swap_capped_target,
             policy="aggressive",
             requested_memory_target_mb=20 * 1024,
             execution_plan=old_execution_plan,
@@ -1441,44 +1652,42 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
     ) -> None:
         gib = campaign.GIB
         planning_resources = {
-            "memory_target_bytes": 20 * gib,
+            "memory_target_bytes": 36 * gib,
             "memory_target_semantics": "incremental-operation-residency",
             "memory_target_origin": "cli-intentional-oversubscription",
             "physical_memory_bytes": 32 * gib,
             "no_swap_headroom_bytes": 12 * gib,
             "process_physical_footprint_bytes": 2 * gib,
             "process_baseline_bytes": 2 * gib,
-            "process_total_ceiling_bytes": 14 * gib,
-            "process_total_ceiling_origin": (
-                "baseline-plus-no-swap-headroom-capped-to-physical"
-            ),
-            "incremental_operation_budget_bytes": 12 * gib,
-            "target_projected_process_total_bytes": 22 * gib,
-            "target_projected_process_excess_bytes": 8 * gib,
+            "process_total_ceiling_bytes": 32 * gib,
+            "process_total_ceiling_origin": "physical-memory-ceiling",
+            "incremental_operation_budget_bytes": 30 * gib,
+            "target_projected_process_total_bytes": 38 * gib,
+            "target_projected_process_excess_bytes": 6 * gib,
         }
         execution_plan = {
-            "memory_target_bytes": 20 * gib,
+            "memory_target_bytes": 36 * gib,
             "memory_target_semantics": "incremental-operation-residency",
             "process_baseline_bytes": 2 * gib,
-            "process_total_ceiling_bytes": 14 * gib,
-            "planned_peak_bytes": 20 * gib,
-            "projected_process_total_bytes": 22 * gib,
-            "projected_process_excess_bytes": 8 * gib,
+            "process_total_ceiling_bytes": 32 * gib,
+            "planned_peak_bytes": 36 * gib,
+            "projected_process_total_bytes": 38 * gib,
+            "projected_process_excess_bytes": 6 * gib,
         }
 
         evidence = campaign.resolved_memory_target_evidence(
             planning_resources,
             policy="oversubscribe",
-            requested_memory_target_mb=20 * 1024,
+            requested_memory_target_mb=36 * 1024,
             execution_plan=execution_plan,
         )
         self.assertIs(True, evidence["matches"])
         self.assertEqual(
-            8 * gib,
+            6 * gib,
             evidence["expected_target_projected_process_excess_bytes"],
         )
         self.assertEqual(
-            8 * gib,
+            6 * gib,
             evidence["execution_projection"]["expected_projected_process_excess_bytes"],
         )
 
@@ -1500,7 +1709,7 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
                 rejected = campaign.resolved_memory_target_evidence(
                     invalid_planning,
                     policy="oversubscribe",
-                    requested_memory_target_mb=20 * 1024,
+                    requested_memory_target_mb=36 * 1024,
                     execution_plan=execution_plan,
                 )
                 self.assertIs(False, rejected["matches"])
@@ -1511,7 +1720,7 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
         rejected_execution = campaign.resolved_memory_target_evidence(
             planning_resources,
             policy="oversubscribe",
-            requested_memory_target_mb=20 * 1024,
+            requested_memory_target_mb=36 * 1024,
             execution_plan=invalid_execution,
         )
         self.assertIs(False, rejected_execution["matches"])
@@ -2061,6 +2270,30 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
         with self.assertRaisesRegex(campaign.CampaignError, "unchanged repeated"):
             campaign.run_campaign(args)
 
+    def test_planner_lifetime_accepts_collapsed_metal_compensation(self) -> None:
+        planner_log = self.root / "collapsed-metal-planner.log"
+        planner_log.write_text(
+            self.planner_log(
+                "aggressive",
+                metal_eligible=True,
+                collapse_compensation=True,
+            ),
+            encoding="utf-8",
+        )
+        evidence = campaign.planner_preflight_evidence(
+            planner_log,
+            expected_policy="aggressive",
+            expected_memory_target_mb=None,
+        )
+        self.assertEqual("admitted", evidence["status"])
+        lifetime = evidence["full_geometry_lifetime_contract"]
+        self.assertTrue(lifetime["complete"], lifetime["mismatches"])
+        self.assertTrue(lifetime["collapse_compensation"])
+        self.assertEqual(
+            "collapsed-f32-before-transform",
+            lifetime["compensation_residency"],
+        )
+
     def test_planner_policy_failure_does_not_skip_later_policies(self) -> None:
         args = campaign.parser().parse_args(
             [
@@ -2128,6 +2361,80 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
             "explicit --artifact-root",
         ):
             campaign.run_campaign(args)
+
+    def test_dirty_policy_selector_is_bounded_and_rejected_for_planner_only(
+        self,
+    ) -> None:
+        invalid = campaign.parser().parse_args(
+            [
+                "--policy",
+                "aggressive",
+                "--promoted-4096-receipt",
+                str(self.promotion),
+                "--receipt-dir",
+                str(self.root / "invalid-campaign"),
+            ]
+        )
+        with self.assertRaisesRegex(
+            campaign.CampaignError,
+            "valid only for dirty mode",
+        ):
+            campaign.run_campaign(invalid)
+
+        casa_python = self.root / "casa-python"
+        casa_python.write_text("#!/bin/sh\n", encoding="utf-8")
+        artifact_root = self.root / "external-artifacts"
+        args = campaign.parser().parse_args(
+            [
+                "--mode",
+                "dirty",
+                "--policy",
+                "aggressive",
+                "--promoted-4096-receipt",
+                str(self.promotion),
+                "--receipt-dir",
+                str(self.root / "bounded-campaign"),
+                "--artifact-root",
+                str(artifact_root),
+                "--execute-12150",
+            ]
+        )
+        storage = {
+            "schema_version": 1,
+            "status": "measured",
+            "receipt": {
+                "path": str(self.root / "storage.json"),
+                "sha256": "a" * 64,
+            },
+            "volume_path": str(artifact_root),
+            "read_bytes_per_second": 321,
+            "write_bytes_per_second": 123,
+            "command_environment": {
+                campaign.SPILL_READ_BANDWIDTH_ENV: "321",
+                campaign.SPILL_WRITE_BANDWIDTH_ENV: "123",
+            },
+        }
+        with (
+            mock.patch.dict(
+                campaign.os.environ,
+                {"CASA_RS_CASA_PYTHON": str(casa_python)},
+                clear=False,
+            ),
+            mock.patch.object(
+                campaign,
+                "storage_bandwidth_evidence",
+                return_value=storage,
+            ),
+            mock.patch.object(
+                campaign,
+                "run_bounded_command",
+                side_effect=campaign.CampaignError("bounded test stop"),
+            ),
+        ):
+            paths = campaign.run_campaign(args)
+        self.assertEqual(1, len(paths))
+        receipt = json.loads(paths[0].read_text(encoding="utf-8"))
+        self.assertEqual("aggressive", receipt["policy"])
 
     def test_execute_campaign_measures_storage_once_and_injects_every_policy(
         self,

@@ -1585,11 +1585,20 @@ pub fn plan_imaging_execution_with_context(
         0
     };
     let direct_metal_scratch_bytes = if policy.prefer_metal && resources.metal_available {
+        // The persistent grid and direct Metal scratch share one unified-memory
+        // working set. Process admission alone is insufficient on Apple GPUs:
+        // Metal can reject a command even when the combined allocation still
+        // fits physical RAM. Bound scratch by the device slice remaining after
+        // the grid so plane segmentation is chosen before buffer allocation.
+        let device_scratch_capacity = resources
+            .metal_device_budget_bytes
+            .saturating_sub(grid_bytes);
         policy
             .direct_metal_scratch_limit_bytes
             .unwrap_or(workload.direct_metal_scratch_candidate_bytes)
             .min(workload.direct_metal_scratch_candidate_bytes)
             .min(optional_capacity)
+            .min(device_scratch_capacity)
     } else {
         0
     };
@@ -2300,6 +2309,41 @@ mod tests {
         assert_eq!(plan.allocation_bytes("resident tiles"), 0);
         assert_eq!(plan.allocation_bytes("tile queue"), 0);
         assert!(plan.maximum_planned_resident_bytes <= plan.usable_memory_bytes);
+    }
+
+    #[test]
+    fn direct_metal_grid_and_scratch_share_one_device_budget() {
+        const MIB: usize = 1024 * 1024;
+        let mut full_grid = workload();
+        full_grid.tile_queue_entry_bytes = 0;
+        full_grid.direct_metal_scratch_candidate_bytes = 256 * MIB;
+        let assigned = ImagingResources {
+            usable_memory_bytes: 2 * 1024 * MIB,
+            cpu_capacity: 8,
+            metal_available: true,
+            metal_device_budget_bytes: 96 * MIB,
+        };
+        let plan = plan_imaging_execution(
+            &full_grid,
+            &assigned,
+            &ImagingExecutionPolicy {
+                prefer_metal: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let grid_bytes = plan.allocation_bytes("grids");
+        let scratch_bytes = plan.allocation_bytes("direct Metal host scratch");
+        assert_eq!(
+            scratch_bytes,
+            assigned.metal_device_budget_bytes - grid_bytes
+        );
+        assert_eq!(
+            grid_bytes + scratch_bytes,
+            assigned.metal_device_budget_bytes
+        );
+        assert!(plan.metal.eligible);
     }
 
     #[test]

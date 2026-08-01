@@ -968,6 +968,7 @@ mod tests {
         config.aw_project = Some(AwProjectControls {
             cf_cache: PathBuf::from("/tmp/vlass-cf-cache"),
             cf_resident_bytes: 512 * 1024 * 1024,
+            major_cycle_operator: casa_imaging::AwProjectMajorCycleOperator::DirectReplay,
             facets: 1,
             w_plane_count: Some(32),
             psf_phase_center_direction_rad: None,

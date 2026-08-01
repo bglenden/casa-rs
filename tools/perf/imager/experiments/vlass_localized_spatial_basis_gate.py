@@ -22,7 +22,7 @@ import numpy as np
 
 
 SCHEMA = "casa-rs-vlass-localized-spatial-basis-gate/v1"
-ROW_CONTRACT_SCHEMA = "casa-rs-vlass-localized-row-census-contract/v2"
+ROW_CONTRACT_SCHEMA = "casa-rs-vlass-localized-row-census-contract/v3"
 SCREEN_RMS_LIMIT = 2.0e-5
 SCREEN_MAX_LIMIT = 2.0e-4
 SCREEN_WORST_STATE_RMS_LIMIT = 6.0e-5

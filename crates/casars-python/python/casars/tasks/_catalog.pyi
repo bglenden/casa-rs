@@ -293,6 +293,7 @@ def imager(
     imaging_fft_precision: Literal['auto', 'f32', 'f64'] = ...,
     projection: Literal['SIN'] = ...,
     standard_mfs_grid_threads: int | Literal['auto'] = ...,
+    aw_major_cycle_operator: Literal['direct-replay', 'ordered-response'] = ...,
     parameters: TaskParameters | None = ...,
     profile: StrPath | None = ... ,
     base_source: Literal["defaults", "last", "last_successful"] = ... ,

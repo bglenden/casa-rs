@@ -8221,7 +8221,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 7,
+      "contract_version": 8,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -11844,6 +11844,54 @@
           }
         },
         {
+          "name": "aw_major_cycle_operator",
+          "concept": {
+            "id": "parameter.aw_major_cycle_operator",
+            "semantic_revision": 1
+          },
+          "order": 91,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "direct-replay"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "equals",
+            "parameter": "gridder",
+            "value": {
+              "kind": "string",
+              "value": "awproject"
+            }
+          },
+          "surface_note": "ordered-response is an opt-in compiled normal operator; unsupported geometry, precision, memory, or accelerator configurations fail closed rather than reverting silently.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--aw-major-cycle-operator"
+              ],
+              "metavar": "MODE"
+            },
+            "provider": {
+              "field": "aw_major_cycle_operator",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "aw_major_cycle_operator"
+            },
+            "presentation": {
+              "label": "AW Major-Cycle Operator",
+              "group": "Advanced Wide-Field",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
           "name": "facets",
           "concept": {
             "id": "parameter.facets",
@@ -12810,6 +12858,12 @@
           "changed_defaults": [
             "imaging_memory_pressure_policy"
           ]
+        },
+        {
+          "from_contract": 7,
+          "to_contract": 8,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },

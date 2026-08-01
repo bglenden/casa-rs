@@ -27,7 +27,7 @@ from typing import Any
 import numpy as np
 
 
-SCHEMA = "casa-rs-vlass-ordered-response-segmented-construction/v7"
+SCHEMA = "casa-rs-vlass-ordered-response-segmented-construction/v10"
 GRAPH_SCRIPT = "vlass_localized_ordered_response_graph_contract.py"
 PAIR_COUNT = 54
 IMAGING_STATE_COUNT = 28
@@ -248,12 +248,39 @@ def coefficient_basis(
     frequency = np.asarray(rows["frequency_hz"], dtype=np.float64)
     taylor = frequency / reference - 1.0
     w = np.asarray(facet_uvw[:, 2], dtype=np.float64)
-    weight = np.asarray(rows["weight"], dtype=np.float64) * np.asarray(
-        rows["sumwt_factor"], dtype=np.float64
-    )
+    # VisibilityBatch stores the average parallel-hand weight and records the
+    # two-hand sumwt multiplier separately.  This construction expands RR and
+    # LL explicitly, so each route receives the stored weight exactly once.
+    weight = np.asarray(rows["weight"], dtype=np.float64)
     iw = 1j * math.tau * w
     w_coefficients = np.stack([np.ones(rows.size), iw, iw * iw / 2.0], axis=1)
     return weight, w_coefficients, taylor
+
+
+def expanded_prediction_inverse_normalization(rows: np.ndarray) -> np.ndarray:
+    normalization = np.stack(
+        [
+            np.asarray(
+                rows["first_prediction_normalization"],
+                dtype=np.complex128,
+            ),
+            np.asarray(
+                rows["second_prediction_normalization"],
+                dtype=np.complex128,
+            ),
+        ],
+        axis=1,
+    ).reshape(-1)
+    norm_squared = np.abs(normalization) ** 2
+    if (
+        np.any(~np.isfinite(normalization))
+        or np.any(~np.isfinite(norm_squared))
+        or np.any(norm_squared <= 0.0)
+    ):
+        raise ConstructionError(
+            "prediction normalization contains a non-finite or zero route"
+        )
+    return 1.0 / np.conj(normalization)
 
 
 def controlled_response_coefficients(
@@ -265,7 +292,9 @@ def controlled_response_coefficients(
     response = (
         weight[:, None, None] * w_coefficients[:, :, None] * moments[:, None, :]
     ).reshape(rows.size, RESPONSE_COEFFICIENTS)
-    return np.repeat(response, 2, axis=0).astype(np.complex128)
+    expanded = np.repeat(response, 2, axis=0).astype(np.complex128)
+    expanded *= expanded_prediction_inverse_normalization(rows)[:, None]
+    return expanded
 
 
 def controlled_rhs_coefficients(
@@ -426,7 +455,18 @@ def sampled_f64_output(
         state_offsets = bucket_offsets[state_start : state_start + PIXELS + 1]
         nonempty = np.flatnonzero(np.diff(state_offsets))
         if nonempty.size == 0:
-            raise ConstructionError(f"state {state} has no construction groups")
+            samples.append(
+                {
+                    "state": state,
+                    "x": 0,
+                    "y": 0,
+                    "values": [
+                        [0.0, 0.0] for _ in range(coefficient_count)
+                    ],
+                    "empty_state": True,
+                }
+            )
+            continue
         selected = nonempty[np.linspace(0, nonempty.size - 1, 4, dtype=np.int64)]
         for pixel in selected:
             output_y, output_x = divmod(int(pixel), SIDE)
@@ -583,8 +623,9 @@ def derive(source_path: pathlib.Path, output_dir: pathlib.Path) -> dict[str, Any
         },
         "classification": {
             "route_geometry": (
-                "real frozen 4096-square full-16-SPW row in the orthonormal "
-                "tangent frame at the 128-square reconstruction-facet center"
+                f"real frozen 4096-square {rows.size}-row selection in the "
+                "orthonormal tangent frame at the 128-square "
+                "reconstruction-facet center"
             ),
             "coalescing": (
                 f"exact within the {KERNEL_DESCRIPTION} discretization on the "
@@ -592,8 +633,11 @@ def derive(source_path: pathlib.Path, output_dir: pathlib.Path) -> dict[str, Any
             ),
             "accumulation": "stable source-order complex-f64 segmented sum",
             "coefficient_recipe": (
-                "facet-frame total-order-two W and actual-frequency MT-MFS "
-                "recipe validated by the physical semantic gate"
+                "one stored average-hand weight per explicit RR/LL route, "
+                "per-route inverse-conjugate executable prediction-CF "
+                "normalization, facet-frame total-order-two W, and "
+                "actual-frequency MT-MFS recipe validated by the physical "
+                "semantic gate"
             ),
             "metal_output_construction": "not measured by this receipt",
         },

@@ -126,6 +126,9 @@ class PhysicalSemanticGateTests(unittest.TestCase):
         prediction_screen = np.asarray([0.9 + 0.1j, 0.8 - 0.2j, 0.7 + 0.3j])
         wrong_prediction_screen = np.asarray([0.5 - 0.4j, 0.6 + 0.5j, 0.9 - 0.1j])
         left_screen = np.asarray([0.8 - 0.1j, 0.7 + 0.2j, 0.9 - 0.3j])
+        prediction_inverse_normalization = np.linspace(0.4, 1.2, rows) + 1j * np.linspace(
+            -0.2, 0.3, rows
+        )
 
         exact, candidate, wrong_screen, wrong_taylor_result = GATE.evaluate_pair(
             u=u,
@@ -144,6 +147,7 @@ class PhysicalSemanticGateTests(unittest.TestCase):
             model_term=1,
             prediction_screen=prediction_screen,
             wrong_prediction_screen=wrong_prediction_screen,
+            prediction_inverse_normalization=prediction_inverse_normalization,
             left_screen=left_screen,
             row_chunk=7,
         )

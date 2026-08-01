@@ -78,6 +78,30 @@ def test_dense_bucket_prefixes_follow_state_y_x_order() -> None:
         assert values[begin, 0] == expected_value
 
 
+def test_unobserved_resident_state_has_an_explicit_zero_sample() -> None:
+    state = np.asarray([1], dtype=np.uint16)
+    x = np.asarray([10], dtype=np.int16)
+    y = x.copy()
+    offset = np.zeros(1, dtype=np.int16)
+    coefficients = np.asarray([[3 + 4j]], dtype=np.complex128)
+
+    _, _, _, _, samples = subject.stable_segment(
+        state,
+        (x, y, offset, offset),
+        coefficients,
+        2,
+    )
+
+    assert samples[0] == {
+        "state": 0,
+        "x": 0,
+        "y": 0,
+        "values": [[0.0, 0.0]],
+        "empty_state": True,
+    }
+    assert [sample["state"] for sample in samples[1:]] == [1, 1, 1, 1]
+
+
 def test_standard_j7_kernel_lut_is_normalized_symmetric_and_sensitive() -> None:
     assert subject.controlled_kernel_weight(0, -2) == subject.controlled_kernel_weight(
         0, 2
@@ -133,3 +157,32 @@ def test_parallel_hand_shape_guard_rejects_missing_route_coefficients() -> None:
         assert "different lengths" in str(error)
     else:
         raise AssertionError("route/coefficient shape mismatch unexpectedly passed")
+
+
+def test_parallel_hand_weights_and_prediction_normalizations_are_applied_once() -> None:
+    rows = np.zeros(2, dtype=subject.load_graph_module().ROW_DTYPE)
+    rows["weight"] = [2.0, 3.0]
+    rows["sumwt_factor"] = [2.0, 2.0]
+    rows["first_prediction_normalization"] = [2.0 + 0.0j, 1.0 + 1.0j]
+    rows["second_prediction_normalization"] = [4.0 + 0.0j, 2.0 - 2.0j]
+
+    inverse = subject.expanded_prediction_inverse_normalization(rows)
+
+    np.testing.assert_allclose(
+        inverse,
+        [
+            0.5 + 0.0j,
+            0.25 + 0.0j,
+            0.5 + 0.5j,
+            0.25 - 0.25j,
+        ],
+    )
+    np.testing.assert_allclose(
+        np.repeat(np.asarray(rows["weight"], dtype=np.float64), 2) * inverse,
+        [
+            1.0 + 0.0j,
+            0.5 + 0.0j,
+            1.5 + 1.5j,
+            0.75 - 0.75j,
+        ],
+    )

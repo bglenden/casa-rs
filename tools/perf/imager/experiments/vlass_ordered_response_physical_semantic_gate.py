@@ -31,7 +31,7 @@ from typing import Any
 import numpy as np
 
 
-SCHEMA = "casa-rs-vlass-ordered-response-physical-semantic-gate/v2"
+SCHEMA = "casa-rs-vlass-ordered-response-physical-semantic-gate/v3"
 GRAPH_SCRIPT = "vlass_localized_ordered_response_graph_contract.py"
 SCREEN_SCHEMA = "casa-rs-vlass-evla-pre-w-screens/v2"
 IMAGE_SIDE = 4096
@@ -563,12 +563,17 @@ def evaluate_pair(
     model_term: int,
     prediction_screen: np.ndarray,
     wrong_prediction_screen: np.ndarray,
+    prediction_inverse_normalization: np.ndarray,
     left_screen: np.ndarray,
     row_chunk: int = ROW_CHUNK,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Return exact-W, contracted, same-frequency, and wrong-Taylor responses."""
 
     rows = u.size
+    if prediction_inverse_normalization.shape != (rows,):
+        raise PhysicalSemanticGateError(
+            "prediction inverse normalization does not match the route count"
+        )
     outputs = output_l.size
     exact = np.zeros((MODEL_TERMS, outputs), dtype=np.complex128)
     contracted = np.zeros_like(exact)
@@ -595,11 +600,14 @@ def evaluate_pair(
         chunk_weight = weight[chunk]
         chunk_taylor = taylor[chunk]
         chunk_wrong_taylor = wrong_taylor[chunk]
+        chunk_prediction_inverse_normalization = prediction_inverse_normalization[chunk]
         uv_source = np.exp(
             -1j * math.tau * (np.outer(chunk_u, source_l) + np.outer(chunk_v, source_m))
         )
         source_moments = uv_source @ right_basis
         wrong_source_moments = uv_source @ wrong_right_basis
+        source_moments *= chunk_prediction_inverse_normalization[:, None]
+        wrong_source_moments *= chunk_prediction_inverse_normalization[:, None]
         exact_source = np.exp(
             -1j
             * math.tau
@@ -610,6 +618,7 @@ def evaluate_pair(
             )
         )
         exact_prediction = exact_source @ (model_values * prediction_screen)
+        exact_prediction *= chunk_prediction_inverse_normalization
         if model_term:
             exact_prediction *= chunk_taylor
         uv_output = np.exp(
@@ -793,10 +802,32 @@ def run_gate(
         axis=0,
     )
     repeated_weight = np.repeat(
-        np.asarray(rows["weight"], dtype=np.float64)
-        * np.asarray(rows["sumwt_factor"], dtype=np.float64),
+        np.asarray(rows["weight"], dtype=np.float64),
         2,
     )
+    prediction_normalization = np.stack(
+        [
+            np.asarray(
+                rows["first_prediction_normalization"],
+                dtype=np.complex128,
+            ),
+            np.asarray(
+                rows["second_prediction_normalization"],
+                dtype=np.complex128,
+            ),
+        ],
+        axis=1,
+    ).reshape(-1)
+    prediction_normalization_norm_squared = np.abs(prediction_normalization) ** 2
+    if (
+        np.any(~np.isfinite(prediction_normalization))
+        or np.any(~np.isfinite(prediction_normalization_norm_squared))
+        or np.any(prediction_normalization_norm_squared <= 0.0)
+    ):
+        raise PhysicalSemanticGateError(
+            "prediction normalization contains a non-finite or zero route"
+        )
+    prediction_inverse_normalization = 1.0 / np.conj(prediction_normalization)
     row_manifest = load_json(pathlib.Path(source["sources"]["row_manifest"]))
     reference_frequency = float(row_manifest["contract"]["reference_frequency_hz"])
     taylor = np.repeat(
@@ -856,6 +887,9 @@ def run_gate(
                 model_term=model_term,
                 prediction_screen=source_screens[prediction_state],
                 wrong_prediction_screen=source_screens[wrong_prediction_state],
+                prediction_inverse_normalization=prediction_inverse_normalization[
+                    indices
+                ],
                 left_screen=np.conj(output_screens[imaging_state]),
             )
             exact_values[pair, model_term] = exact
@@ -969,6 +1003,14 @@ def run_gate(
                     "ftATerm_l*conj(ftATermSq_l)"
                 ),
                 "response": "conj(A_imaging(output))*A_prediction(source)",
+                "prediction_cf_normalization": (
+                    "each explicit RR/LL prediction route is divided by the "
+                    "conjugate executable compact-CF normalization"
+                ),
+                "parallel_hand_weight": (
+                    "the stored average-hand weight is applied once to each "
+                    "explicit RR/LL route; sumwt_factor is not applied again"
+                ),
             },
         },
         "geometry": {

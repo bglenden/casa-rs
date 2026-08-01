@@ -6,8 +6,9 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use casa_imaging::{
-    AwProjectControls, AwProjectNormalization, CleanStopReason, Deconvolver, GaussianUvTaper,
-    HogbomIterationMode, MinorCycleTrace, RestoringBeamMode, UvTaperSize, WTermMode, WeightingMode,
+    AwProjectControls, AwProjectMajorCycleOperator, AwProjectNormalization, CleanStopReason,
+    Deconvolver, GaussianUvTaper, HogbomIterationMode, MinorCycleTrace, RestoringBeamMode,
+    UvTaperSize, WTermMode, WeightingMode,
 };
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, CubeInterpolation,
@@ -33,7 +34,7 @@ use crate::{
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
 pub const IMAGER_TASK_PROTOCOL_NAME: &str = "casa_imager_task";
 /// Stable protocol version advertised by `casars-imager --protocol-info`.
-pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 4;
+pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 5;
 /// Version of the newline-delimited imager progress-event payload.
 pub const IMAGER_PROGRESS_EVENT_SCHEMA_VERSION: u32 = 1;
 /// Version of the authoritative observability snapshot embedded in progress events.
@@ -1463,6 +1464,10 @@ fn default_aw_normalization() -> ImagerAwProjectNormalization {
     ImagerAwProjectNormalization::Flatnoise
 }
 
+fn default_aw_major_cycle_operator() -> ImagerAwProjectMajorCycleOperator {
+    ImagerAwProjectMajorCycleOperator::DirectReplay
+}
+
 /// `w`-term handling mode for the imaging task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
@@ -1762,6 +1767,35 @@ impl From<ImagerAwProjectNormalization> for AwProjectNormalization {
     }
 }
 
+/// AWProject major-cycle normal-operator implementation in the JSON task contract.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImagerAwProjectMajorCycleOperator {
+    /// Re-run the exact visibility prediction/adjoint stream for each refresh.
+    #[default]
+    DirectReplay,
+    /// Use the compact source-order resident ordered-response operator.
+    OrderedResponse,
+}
+
+impl From<AwProjectMajorCycleOperator> for ImagerAwProjectMajorCycleOperator {
+    fn from(value: AwProjectMajorCycleOperator) -> Self {
+        match value {
+            AwProjectMajorCycleOperator::DirectReplay => Self::DirectReplay,
+            AwProjectMajorCycleOperator::OrderedResponse => Self::OrderedResponse,
+        }
+    }
+}
+
+impl From<ImagerAwProjectMajorCycleOperator> for AwProjectMajorCycleOperator {
+    fn from(value: ImagerAwProjectMajorCycleOperator) -> Self {
+        match value {
+            ImagerAwProjectMajorCycleOperator::DirectReplay => Self::DirectReplay,
+            ImagerAwProjectMajorCycleOperator::OrderedResponse => Self::OrderedResponse,
+        }
+    }
+}
+
 /// Canonical CASA AWProject controls shared by saved profiles and task APIs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -1771,6 +1805,9 @@ pub struct ImagerAwProjectConfig {
     /// Per-allocation full-cell LRU and compact source-order tap ceiling in MiB.
     #[serde(default = "default_aw_cf_resident_mb")]
     pub cf_resident_mb: usize,
+    /// Normal operator used for repeated CLEAN major-cycle residual refreshes.
+    #[serde(default = "default_aw_major_cycle_operator")]
+    pub major_cycle_operator: ImagerAwProjectMajorCycleOperator,
     /// CASA facet count.
     #[serde(default = "default_one_usize")]
     pub facets: usize,
@@ -1816,6 +1853,7 @@ impl From<&AwProjectControls> for ImagerAwProjectConfig {
         Self {
             cf_cache: value.cf_cache.clone(),
             cf_resident_mb: value.cf_resident_bytes.div_ceil(1024 * 1024),
+            major_cycle_operator: value.major_cycle_operator.into(),
             facets: value.facets,
             psf_phase_center_direction_rad: value.psf_phase_center_direction_rad,
             vp_table: value.vp_table.clone(),
@@ -1845,6 +1883,7 @@ impl ImagerAwProjectConfig {
         Ok(AwProjectControls {
             cf_cache: self.cf_cache,
             cf_resident_bytes,
+            major_cycle_operator: self.major_cycle_operator.into(),
             facets: self.facets,
             w_plane_count,
             psf_phase_center_direction_rad: self.psf_phase_center_direction_rad,
@@ -3162,14 +3201,14 @@ mod tests {
     use super::{
         IMAGER_OBSERVABILITY_SCHEMA_VERSION, IMAGER_TASK_PROTOCOL_NAME,
         IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifactKind, ImagerAutoMultiThresholdConfig,
-        ImagerAwProjectConfig, ImagerAwProjectNormalization, ImagerCleanMaskMode,
-        ImagerCleanStopReason, ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation,
-        ImagerDeconvolver, ImagerHogbomIterationMode, ImagerObservedResourceId,
-        ImagerObservedResourceState, ImagerObservedStageKind, ImagerPlaneSelection,
-        ImagerProgressDetail, ImagerProgressEvent, ImagerProgressRuntime, ImagerProjection,
-        ImagerRestoringBeamMode, ImagerRunTaskRequest, ImagerSaveModel, ImagerSpectralMode,
-        ImagerTaskRequest, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
-        awproject_run_report, imager_task_schema_bundle,
+        ImagerAwProjectConfig, ImagerAwProjectMajorCycleOperator, ImagerAwProjectNormalization,
+        ImagerCleanMaskMode, ImagerCleanStopReason, ImagerCubeAxisConfig, ImagerCubeAxisValue,
+        ImagerCubeInterpolation, ImagerDeconvolver, ImagerHogbomIterationMode,
+        ImagerObservedResourceId, ImagerObservedResourceState, ImagerObservedStageKind,
+        ImagerPlaneSelection, ImagerProgressDetail, ImagerProgressEvent, ImagerProgressRuntime,
+        ImagerProjection, ImagerRestoringBeamMode, ImagerRunTaskRequest, ImagerSaveModel,
+        ImagerSpectralMode, ImagerTaskRequest, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode,
+        ImagerWeighting, awproject_run_report, imager_task_schema_bundle,
     };
     use crate::{
         CliConfig, ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy,
@@ -3578,6 +3617,8 @@ mod tests {
             OsString::from("cf-cache/vlass-spw2-17"),
             OsString::from("--cf-resident-mb"),
             OsString::from("384"),
+            OsString::from("--aw-major-cycle-operator"),
+            OsString::from("ordered-response"),
             OsString::from("--wprojplanes"),
             OsString::from("32"),
             OsString::from("--usepointing"),
@@ -3606,6 +3647,10 @@ mod tests {
         let aw = decoded.aw_project.as_ref().unwrap();
         assert_eq!(aw.cf_cache, PathBuf::from("cf-cache/vlass-spw2-17"));
         assert_eq!(aw.cf_resident_mb, 384);
+        assert_eq!(
+            aw.major_cycle_operator,
+            ImagerAwProjectMajorCycleOperator::OrderedResponse
+        );
 
         let restored = decoded.to_cli_config().unwrap();
         let controls = restored.aw_project.as_ref().unwrap();
@@ -3613,6 +3658,10 @@ mod tests {
         assert!(controls.use_pointing);
         assert_eq!(controls.cf_resident_bytes, 384 * 1024 * 1024);
         assert_eq!(controls.cf_cache, PathBuf::from("cf-cache/vlass-spw2-17"));
+        assert_eq!(
+            controls.major_cycle_operator,
+            casa_imaging::AwProjectMajorCycleOperator::OrderedResponse
+        );
 
         let mut unsupported = serde_json::to_value(decoded).unwrap();
         unsupported["projection"] = serde_json::Value::String("TAN".to_string());
@@ -4285,6 +4334,7 @@ mod tests {
             aw_project: Some(ImagerAwProjectConfig {
                 cf_cache: PathBuf::from("/tmp/vlass-cf-cache"),
                 cf_resident_mb: 512,
+                major_cycle_operator: ImagerAwProjectMajorCycleOperator::DirectReplay,
                 facets: 1,
                 psf_phase_center_direction_rad: None,
                 vp_table: None,

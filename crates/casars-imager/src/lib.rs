@@ -34,19 +34,19 @@ use casa_imaging::fft_backend::{
 };
 use casa_imaging::{
     AwConvolutionFunctionEntryMetadata, AwParallelHandVisibilityBatch, AwProjectControls,
-    AwProjectGridderConfig, AwProjectNormalization, AxisKind, BeamFit, BeamFitDebugSummary,
-    CleanConfig, CleanMaskProductRequest, CleanStopReason, CompatibilityMetadata,
-    CompatibilityMode, CubeAutoMultiThresholdConfig, CubeImagingDiagnostics, CubeImagingResult,
-    CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, DirtyImagingResult,
-    DirtyProductFftPolicy, GaussianUvTaper, GridderMode, GroupedVisibilityMetadata,
-    GroupedVisibilityMetadataBatch, HogbomIterationMode, HogbomPlaneMinorCycleControl,
-    ImageGeometry, ImageProduct, ImageProductMetadata, ImageProductRole, ImageProductSet,
-    ImagingDetectedResources, ImagingDiagnostics, ImagingError, ImagingExecutionPlan,
-    ImagingExecutionPolicy, ImagingMemoryAllocation, ImagingMemoryAllocationLifecycle,
-    ImagingMemoryBacking, ImagingMemoryLifetimeLedger, ImagingMemoryNextUse,
-    ImagingMemoryPressurePolicy as CoreImagingMemoryPressurePolicy, ImagingMemoryResidency,
-    ImagingMemoryStage, ImagingPlanAdmission, ImagingPlanningContext, ImagingRequest,
-    ImagingResolvedPlan, ImagingResources, ImagingResult, ImagingSpectralSchedule,
+    AwProjectGridderConfig, AwProjectMajorCycleOperator, AwProjectNormalization, AxisKind, BeamFit,
+    BeamFitDebugSummary, CleanConfig, CleanMaskProductRequest, CleanStopReason,
+    CompatibilityMetadata, CompatibilityMode, CubeAutoMultiThresholdConfig, CubeImagingDiagnostics,
+    CubeImagingResult, CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver,
+    DirtyImagingResult, DirtyProductFftPolicy, GaussianUvTaper, GridderMode,
+    GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch, HogbomIterationMode,
+    HogbomPlaneMinorCycleControl, ImageGeometry, ImageProduct, ImageProductMetadata,
+    ImageProductRole, ImageProductSet, ImagingDetectedResources, ImagingDiagnostics, ImagingError,
+    ImagingExecutionPlan, ImagingExecutionPolicy, ImagingMemoryAllocation,
+    ImagingMemoryAllocationLifecycle, ImagingMemoryBacking, ImagingMemoryLifetimeLedger,
+    ImagingMemoryNextUse, ImagingMemoryPressurePolicy as CoreImagingMemoryPressurePolicy,
+    ImagingMemoryResidency, ImagingMemoryStage, ImagingPlanAdmission, ImagingPlanningContext,
+    ImagingRequest, ImagingResolvedPlan, ImagingResources, ImagingResult, ImagingSpectralSchedule,
     ImagingStageTimings, ImagingTileAnchor, ImagingWorkloadShape, MinorCycleTrace,
     MosaicGridderConfig, ParallelHandBatch, ParallelWorkerCalibrationRequest, PlaneStokes,
     PrimaryBeamModel, PrimaryBeamProductRequest, PrimaryBeamWeightSample,
@@ -160,7 +160,8 @@ pub use schema::command_schema;
 pub use task_contract::{
     IMAGER_OBSERVABILITY_SCHEMA_VERSION, IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
     IMAGER_PROGRESS_STDERR_PREFIX, IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION,
-    ImagerArtifact, ImagerArtifactKind, ImagerAutoMultiThresholdConfig, ImagerAwProjectRunReport,
+    ImagerArtifact, ImagerArtifactKind, ImagerAutoMultiThresholdConfig, ImagerAwProjectConfig,
+    ImagerAwProjectMajorCycleOperator, ImagerAwProjectNormalization, ImagerAwProjectRunReport,
     ImagerBackendDiagnostic, ImagerChannelRunResult, ImagerCleanMaskMode, ImagerCleanStopReason,
     ImagerCoreStageTimings, ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation,
     ImagerDeconvolver, ImagerFrontendStageTimings as ImagerFrontendTaskStageTimings,
@@ -6378,7 +6379,10 @@ fn run_standard_mfs_plan_probe_from_config(config: &CliConfig) -> Result<RunSumm
         .iter()
         .map(|plan| plan.active_selected_rows.len().div_ceil(row_block_rows))
         .sum::<usize>();
-    let strategy = if !clean_is_dirty(config) && config.aw_project.is_some() {
+    let strategy = if !clean_is_dirty(config)
+        && config.aw_project.as_ref().is_some_and(|controls| {
+            controls.major_cycle_operator == AwProjectMajorCycleOperator::DirectReplay
+        }) {
         admit_awproject_compact_replay_retention(base_strategy, stream_block_count)?
     } else {
         base_strategy
@@ -11037,7 +11041,10 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         .iter()
         .map(|plan| plan.active_selected_rows.len().div_ceil(row_block_rows))
         .sum::<usize>();
-    let strategy = if !clean_is_dirty(config) && config.aw_project.is_some() {
+    let strategy = if !clean_is_dirty(config)
+        && config.aw_project.as_ref().is_some_and(|controls| {
+            controls.major_cycle_operator == AwProjectMajorCycleOperator::DirectReplay
+        }) {
         admit_awproject_compact_replay_retention(base_strategy, stream_block_count)?
     } else {
         base_strategy
@@ -26120,6 +26127,7 @@ impl CliConfig {
         let mut aw_project_requested = false;
         let mut aw_cf_cache = None::<PathBuf>;
         let mut aw_cf_resident_mb = 256usize;
+        let mut aw_major_cycle_operator = AwProjectMajorCycleOperator::DirectReplay;
         let mut aw_facets = 1usize;
         let mut aw_psf_phase_center = None::<String>;
         let mut aw_vp_table = None::<PathBuf>;
@@ -26336,6 +26344,13 @@ impl CliConfig {
                     if aw_cf_resident_mb == 0 {
                         return Err("--cf-resident-mb must be positive".to_string());
                     }
+                    continue;
+                }
+                "--aw-major-cycle-operator" => {
+                    aw_major_cycle_operator = parse_awproject_major_cycle_operator(&next_value(
+                        &mut args,
+                        "--aw-major-cycle-operator",
+                    )?)?;
                     continue;
                 }
                 "--facets" => {
@@ -26865,6 +26880,7 @@ impl CliConfig {
             Some(AwProjectControls {
                 cf_cache,
                 cf_resident_bytes,
+                major_cycle_operator: aw_major_cycle_operator,
                 facets: aw_facets,
                 w_plane_count: w_project_planes,
                 psf_phase_center_direction_rad,
@@ -38212,6 +38228,10 @@ fn standard_mfs_memory_allocation_lifetimes(
     } else {
         host
     };
+    let collapse_awproject_compensation = plan.decisions.iter().any(|decision| {
+        decision.name == "awproject_compensation_residency"
+            && decision.value == "collapsed-f32-before-transform"
+    });
     let mut component_occurrences = HashMap::<&str, usize>::new();
 
     plan.memory_allocations
@@ -38223,7 +38243,11 @@ fn standard_mfs_memory_allocation_lifetimes(
                 .or_insert(1);
             let bytes = allocation.bytes;
             let backing = match allocation.component {
-                "grids" | "Metal grouped input cache" | "direct Metal host scratch"
+                "grids"
+                | "Metal grouped input cache"
+                | "direct Metal host scratch"
+                | "AWProject ordered-response resident operator"
+                | "AWProject ordered-response construction transient"
                     if plan.metal.eligible =>
                 {
                     grid_backing
@@ -38258,21 +38282,69 @@ fn standard_mfs_memory_allocation_lifetimes(
                     } else {
                         NoFurtherUse
                     };
-                    let mut residencies = vec![standard_mfs_memory_residency(
-                        backing,
-                        bytes,
-                        InitialGrid,
-                        DirtyTransform,
-                        initial_next_use,
-                    )];
-                    if has_clean_cycles {
-                        residencies.push(standard_mfs_memory_residency(
+                    let transformed_initial_bytes = if collapse_awproject_compensation {
+                        bytes / 2
+                    } else {
+                        bytes
+                    };
+                    let transformed_residual_bytes = if collapse_awproject_compensation {
+                        residual_bytes / 2
+                    } else {
+                        residual_bytes
+                    };
+                    let mut residencies = if collapse_awproject_compensation {
+                        vec![
+                            standard_mfs_memory_residency(
+                                backing,
+                                bytes,
+                                InitialGrid,
+                                InitialGrid,
+                                AtStage(DirtyTransform),
+                            ),
+                            standard_mfs_memory_residency(
+                                backing,
+                                transformed_initial_bytes,
+                                DirtyTransform,
+                                DirtyTransform,
+                                initial_next_use,
+                            ),
+                        ]
+                    } else {
+                        vec![standard_mfs_memory_residency(
                             backing,
-                            residual_bytes,
-                            ResidualGrid,
-                            ResidualTransform,
-                            NoFurtherUse,
-                        ));
+                            bytes,
+                            InitialGrid,
+                            DirtyTransform,
+                            initial_next_use,
+                        )]
+                    };
+                    if has_clean_cycles {
+                        if collapse_awproject_compensation {
+                            residencies.extend([
+                                standard_mfs_memory_residency(
+                                    backing,
+                                    residual_bytes,
+                                    ResidualGrid,
+                                    ResidualGrid,
+                                    AtStage(ResidualTransform),
+                                ),
+                                standard_mfs_memory_residency(
+                                    backing,
+                                    transformed_residual_bytes,
+                                    ResidualTransform,
+                                    ResidualTransform,
+                                    NoFurtherUse,
+                                ),
+                            ]);
+                        } else {
+                            residencies.push(standard_mfs_memory_residency(
+                                backing,
+                                residual_bytes,
+                                ResidualGrid,
+                                ResidualTransform,
+                                NoFurtherUse,
+                            ));
+                        }
                     }
                     residencies
                 }
@@ -38464,6 +38536,24 @@ fn standard_mfs_memory_allocation_lifetimes(
                 "AWProject MT-MFS bounded multiscale scratch" => {
                     vec![standard_mfs_memory_residency(
                         host,
+                        bytes,
+                        MinorCycle,
+                        MinorCycle,
+                        NoFurtherUse,
+                    )]
+                }
+                "AWProject ordered-response resident operator" => {
+                    vec![standard_mfs_memory_residency(
+                        backing,
+                        bytes,
+                        MinorCycle,
+                        ResidualTransform,
+                        NoFurtherUse,
+                    )]
+                }
+                "AWProject ordered-response construction transient" => {
+                    vec![standard_mfs_memory_residency(
+                        backing,
                         bytes,
                         MinorCycle,
                         MinorCycle,
@@ -38925,6 +39015,186 @@ fn awproject_product_writer_scratch_bytes(image_pixels: usize) -> Result<usize, 
     )
 }
 
+const VLASS_ORDERED_RESPONSE_SIDE: usize = 192;
+const VLASS_ORDERED_RESPONSE_CONSTRUCTION_SIDE: usize = 384;
+const VLASS_ORDERED_RESPONSE_ACTIVE_PIXELS: usize = 7_304;
+const VLASS_ORDERED_RESPONSE_FREQUENCY_STATES: usize = 54;
+const VLASS_ORDERED_RESPONSE_PAIR_STATES: usize = 9;
+const VLASS_ORDERED_RESPONSE_RIGHT_FACTOR_PLANES: usize = 32 * 3;
+const VLASS_ORDERED_RESPONSE_LEFT_FACTOR_PLANES: usize = 28 * 3;
+const VLASS_ORDERED_RESPONSE_ACTION_COUNT: usize = 1_296;
+const VLASS_ORDERED_RESPONSE_ACTION_OFFSET_COUNT: usize = 169;
+const VLASS_ORDERED_RESPONSE_CONSTRUCTION_GROUPS: usize = 771_724;
+
+fn vlass_ordered_response_memory_bytes() -> Result<(usize, usize), String> {
+    let side_pixels = checked_imaging_product(
+        [VLASS_ORDERED_RESPONSE_SIDE, VLASS_ORDERED_RESPONSE_SIDE],
+        "VLASS ordered-response resident crop pixels",
+    )?;
+    let construction_pixels = checked_imaging_product(
+        [
+            VLASS_ORDERED_RESPONSE_CONSTRUCTION_SIDE,
+            VLASS_ORDERED_RESPONSE_CONSTRUCTION_SIDE,
+        ],
+        "VLASS ordered-response construction pixels",
+    )?;
+    let resident_bytes = checked_imaging_sum(
+        [
+            checked_imaging_product(
+                [
+                    2,
+                    VLASS_ORDERED_RESPONSE_SIDE,
+                    side_pixels,
+                    std::mem::size_of::<Complex32>(),
+                ],
+                "VLASS ordered-response FFT buffers",
+            )?,
+            checked_imaging_product(
+                [
+                    VLASS_ORDERED_RESPONSE_FREQUENCY_STATES,
+                    VLASS_ORDERED_RESPONSE_PAIR_STATES,
+                    side_pixels,
+                    std::mem::size_of::<Complex32>(),
+                ],
+                "VLASS ordered-response response bank",
+            )?,
+            checked_imaging_product(
+                [
+                    VLASS_ORDERED_RESPONSE_RIGHT_FACTOR_PLANES,
+                    side_pixels,
+                    std::mem::size_of::<Complex32>(),
+                ],
+                "VLASS ordered-response right factors",
+            )?,
+            checked_imaging_product(
+                [
+                    VLASS_ORDERED_RESPONSE_LEFT_FACTOR_PLANES,
+                    side_pixels,
+                    std::mem::size_of::<Complex32>(),
+                ],
+                "VLASS ordered-response left factors",
+            )?,
+            checked_imaging_product(
+                [2, side_pixels, std::mem::size_of::<f32>()],
+                "VLASS ordered-response compact model",
+            )?,
+            checked_imaging_product(
+                [
+                    VLASS_ORDERED_RESPONSE_ACTIVE_PIXELS,
+                    2,
+                    std::mem::size_of::<usize>(),
+                ],
+                "VLASS ordered-response active pixel coordinates",
+            )?,
+            checked_imaging_product(
+                [
+                    VLASS_ORDERED_RESPONSE_ACTION_COUNT,
+                    std::mem::size_of::<[u32; 4]>(),
+                ],
+                "VLASS ordered-response mixer actions",
+            )?,
+            checked_imaging_product(
+                [
+                    VLASS_ORDERED_RESPONSE_ACTION_OFFSET_COUNT,
+                    std::mem::size_of::<u32>(),
+                ],
+                "VLASS ordered-response action offsets",
+            )?,
+            checked_imaging_product(
+                [
+                    VLASS_ORDERED_RESPONSE_ACTIVE_PIXELS,
+                    std::mem::size_of::<u32>(),
+                ],
+                "VLASS ordered-response active indices",
+            )?,
+            checked_imaging_product(
+                [
+                    VLASS_ORDERED_RESPONSE_ACTIVE_PIXELS,
+                    2,
+                    std::mem::size_of::<f32>(),
+                ],
+                "VLASS ordered-response captured dirty values",
+            )?,
+            checked_imaging_product(
+                [
+                    VLASS_ORDERED_RESPONSE_ACTIVE_PIXELS,
+                    2,
+                    std::mem::size_of::<Complex32>(),
+                ],
+                "VLASS ordered-response feedback",
+            )?,
+        ],
+        "VLASS ordered-response resident operator",
+    )?;
+    let construction_transient_bytes = checked_imaging_sum(
+        [
+            checked_imaging_product(
+                [
+                    2,
+                    VLASS_ORDERED_RESPONSE_FREQUENCY_STATES,
+                    construction_pixels,
+                    std::mem::size_of::<Complex32>(),
+                ],
+                "VLASS ordered-response construction FFT buffers",
+            )?,
+            checked_imaging_product(
+                [
+                    2,
+                    VLASS_ORDERED_RESPONSE_FREQUENCY_STATES,
+                    side_pixels,
+                    std::mem::size_of::<Complex32>(),
+                ],
+                "VLASS ordered-response construction response crops",
+            )?,
+            checked_imaging_product(
+                [
+                    VLASS_ORDERED_RESPONSE_FREQUENCY_STATES
+                        .checked_mul(construction_pixels)
+                        .and_then(|value| value.checked_add(1))
+                        .ok_or_else(|| {
+                            "VLASS ordered-response construction offset count overflowed"
+                                .to_string()
+                        })?,
+                    std::mem::size_of::<u32>(),
+                ],
+                "VLASS ordered-response construction offsets",
+            )?,
+            checked_imaging_product(
+                [
+                    VLASS_ORDERED_RESPONSE_CONSTRUCTION_GROUPS,
+                    2,
+                    std::mem::size_of::<f32>(),
+                ],
+                "VLASS ordered-response construction group metadata",
+            )?,
+            checked_imaging_product(
+                [
+                    VLASS_ORDERED_RESPONSE_CONSTRUCTION_GROUPS,
+                    VLASS_ORDERED_RESPONSE_PAIR_STATES,
+                    std::mem::size_of::<Complex32>(),
+                ],
+                "VLASS ordered-response construction coefficients",
+            )?,
+            checked_imaging_product(
+                [
+                    65_536usize.checked_add(1).ok_or_else(|| {
+                        "VLASS ordered-response screen offset count overflowed".to_string()
+                    })?,
+                    15,
+                    std::mem::size_of::<f32>(),
+                ],
+                "VLASS ordered-response construction screen offsets",
+            )?,
+            checked_imaging_product(
+                [VLASS_ORDERED_RESPONSE_SIDE, std::mem::size_of::<f32>()],
+                "VLASS ordered-response construction phase table",
+            )?,
+        ],
+        "VLASS ordered-response construction transient",
+    )?;
+    Ok((resident_bytes, construction_transient_bytes))
+}
+
 fn awproject_mtmfs_in_place_fft_eligible(config: &CliConfig) -> bool {
     if config.imsize & 1 != 0 {
         return false;
@@ -39029,6 +39299,22 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     let mosaic_full_grid = can_plan_mosaic_mfs_acceleration(config, 1);
     let awproject_mtmfs =
         mosaic_full_grid && config.deconvolver == Deconvolver::Mtmfs && config.aw_project.is_some();
+    let ordered_response_enabled = awproject_mtmfs
+        && !clean_is_dirty(config)
+        && config.aw_project.as_ref().is_some_and(|controls| {
+            controls.major_cycle_operator == AwProjectMajorCycleOperator::OrderedResponse
+        });
+    if ordered_response_enabled
+        && (config.imsize != 4_096
+            || config.nterms != 2
+            || config.multiscale_scales.as_slice() != [0.0, 5.0, 12.0])
+    {
+        return Err(
+            "AWProject ordered-response v1 requires the 4096-square VLASS development geometry, \
+             nterms=2, and scales=[0,5,12]"
+                .to_string(),
+        );
+    }
     let image_pixels =
         checked_imaging_product([config.imsize, config.imsize], "standard-MFS image pixels")?;
     // The streaming mosaic/AWProject gridder deliberately uses image-sized,
@@ -39283,14 +39569,15 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     let prefer_metal = matches!(
         config.standard_mfs_acceleration,
         StandardMfsAccelerationPolicy::Metal
-    ) || [
-        config.standard_mfs_backend.as_deref(),
-        config.standard_mfs_residual_backend.as_deref(),
-        config.standard_mfs_initial_dirty_backend.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    .any(|value| value.to_ascii_lowercase().contains("metal"));
+    ) || ordered_response_enabled
+        || [
+            config.standard_mfs_backend.as_deref(),
+            config.standard_mfs_residual_backend.as_deref(),
+            config.standard_mfs_initial_dirty_backend.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|value| value.to_ascii_lowercase().contains("metal"));
     let explicit_workers = config
         .standard_mfs_grid_threads
         .as_deref()
@@ -39480,10 +39767,21 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         )?
     };
 
+    let unified_memory_requirement_bytes = if prefer_metal {
+        checked_imaging_sum(
+            [
+                grid_bytes,
+                direct_metal_scratch_candidate_bytes.max(metal_grouped_input_cache_candidate_bytes),
+            ],
+            "Metal grid and execution candidate",
+        )?
+    } else {
+        0
+    };
     let planning_resources = imaging_planning_resource_assignment(
         config,
         memory_target,
-        direct_metal_scratch_candidate_bytes,
+        unified_memory_requirement_bytes,
     );
     let mut plan = plan_imaging_execution_with_context(
         &ImagingWorkloadShape {
@@ -39550,6 +39848,12 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         &planning_resources.context,
     )
     .map_err(|error| error.to_string())?;
+    if ordered_response_enabled && !plan.metal.eligible {
+        return Err(
+            "AWProject ordered-response requires an admitted Metal/unified-memory execution plan"
+                .to_string(),
+        );
+    }
     if !deferred_lifetime_allocations.is_empty() {
         plan.workload
             .fixed_allocations
@@ -39623,6 +39927,29 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     } else {
         0
     };
+    let collapse_awproject_compensation = plan.metal.eligible
+        && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_COLLAPSE_COMPENSATION_TO_F32").is_some();
+    plan.decisions.push(casa_imaging::ImagingPlanDecision {
+        name: "awproject_compensation_residency",
+        value: if collapse_awproject_compensation {
+            "collapsed-f32-before-transform"
+        } else {
+            "two-float-through-transform"
+        }
+        .to_string(),
+        origin: if collapse_awproject_compensation {
+            casa_imaging::ImagingPlanOrigin::UserPolicy
+        } else {
+            casa_imaging::ImagingPlanOrigin::Workload
+        },
+        reason: if collapse_awproject_compensation {
+            "the measured experiment folds the final f32 compensation into the f32 grid and releases one full grid batch before sequential f64 readback"
+                .to_string()
+        } else {
+            "the exact compensated grid retains high and low f32 batches through sequential f64 readback"
+                .to_string()
+        },
+    });
     let multiscale_minor_cycle_scratch_bytes = if clean_is_dirty(config) {
         0
     } else {
@@ -39632,6 +39959,12 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             image_pixels,
         )?
     };
+    let (ordered_response_resident_bytes, ordered_response_construction_transient_bytes) =
+        if ordered_response_enabled {
+            vlass_ordered_response_memory_bytes()?
+        } else {
+            (0, 0)
+        };
     let finish_state_bytes = awproject_mtmfs_finish_state_bytes(config.nterms, image_pixels)?;
     let product_state_bytes = awproject_mtmfs_product_state_bytes(config.nterms, image_pixels)?;
     let product_writer_scratch_bytes = awproject_product_writer_scratch_bytes(image_pixels)?;
@@ -39648,6 +39981,20 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             stage: "minor-cycle",
             bytes: multiscale_minor_cycle_scratch_bytes,
         });
+    }
+    if ordered_response_resident_bytes > 0 {
+        plan.memory_allocations.extend([
+            ImagingMemoryAllocation {
+                component: "AWProject ordered-response resident operator",
+                stage: "minor-cycle",
+                bytes: ordered_response_resident_bytes,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject ordered-response construction transient",
+                stage: "minor-cycle",
+                bytes: ordered_response_construction_transient_bytes,
+            },
+        ]);
     }
     plan.memory_allocations.extend([
         ImagingMemoryAllocation {
@@ -39673,6 +40020,8 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             pointing_index_bytes,
             image_working_set_bytes,
             multiscale_minor_cycle_scratch_bytes,
+            ordered_response_resident_bytes,
+            ordered_response_construction_transient_bytes,
             aw_safety_margin_bytes,
         ],
         "AWProject MT-MFS multiscale minor-cycle peak",
@@ -39835,6 +40184,36 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
                 "one scale RHS stack, compact-kernel FFT work, and scale masks coexist with the run state"
                     .to_string()
             },
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_major_cycle_operator",
+            value: if ordered_response_enabled {
+                "ordered-response"
+            } else {
+                "direct-replay"
+            }
+            .to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::UserPolicy,
+            reason: if ordered_response_enabled {
+                "the explicitly selected compact exact-source-order Metal operator replaces intermediate visibility replays; the final residual is refreshed by exact visibility replay"
+                    .to_string()
+            } else {
+                "major-cycle residuals use exact visibility replay".to_string()
+            },
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_ordered_response_resident_bytes",
+            value: ordered_response_resident_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "exact compact buffers from the validated 4096-square v1 response-bank contract"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_ordered_response_construction_transient_bytes",
+            value: ordered_response_construction_transient_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "exact construction buffers that overlap the resident response operator only while it is built"
+                .to_string(),
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_finish_peak_bytes",
@@ -40244,7 +40623,11 @@ fn imaging_planning_resource_assignment(
         metal,
         storage,
     );
-    let metal_device_budget_bytes = imaging_metal_device_budget_bytes(memory_target, metal);
+    let metal_device_budget_bytes = imaging_metal_device_budget_bytes(
+        memory_target,
+        metal,
+        config.imaging_memory_pressure_policy,
+    );
     log_imaging_planning_resource_detection(
         &context,
         memory_target,
@@ -40368,17 +40751,45 @@ fn imaging_metal_memory_detection() -> ImagingMetalMemoryDetection {
     imaging_metal_platform_detection::detect()
 }
 
-fn assigned_unified_memory_budget_bytes(memory_target: ImagingProcessMemoryLedger) -> usize {
-    memory_target
-        .available_memory_bytes
-        .map_or(memory_target.target_bytes, |headroom| {
-            memory_target.target_bytes.min(headroom)
-        })
+fn assigned_unified_memory_budget_bytes(
+    memory_target: ImagingProcessMemoryLedger,
+    policy: ImagingMemoryPressurePolicy,
+) -> usize {
+    match policy {
+        ImagingMemoryPressurePolicy::Oversubscribe => memory_target.target_bytes,
+        ImagingMemoryPressurePolicy::Aggressive | ImagingMemoryPressurePolicy::Hybrid => {
+            // A unified GPU allocation competes with the host and kernel for
+            // the same physical pages. The full-geometry VLASS campaign showed
+            // that assigning Metal the entire physical-process ceiling caused
+            // destructive paging before the initial grid completed. Permit a
+            // small compression cushion, but keep transient Metal scratch near
+            // measured live headroom. Intentional oversubscription remains the
+            // explicit policy for exceeding this bound.
+            let compression_cushion_bytes = memory_target
+                .system_memory_bytes
+                .map_or(0, |physical| physical / 64);
+            memory_target
+                .available_memory_bytes
+                .map_or(memory_target.target_bytes, |headroom| {
+                    memory_target
+                        .target_bytes
+                        .min(headroom.saturating_add(compression_cushion_bytes))
+                })
+        }
+        ImagingMemoryPressurePolicy::Auto
+        | ImagingMemoryPressurePolicy::ConservativeNoSwap
+        | ImagingMemoryPressurePolicy::StageAware => memory_target
+            .available_memory_bytes
+            .map_or(memory_target.target_bytes, |headroom| {
+                memory_target.target_bytes.min(headroom)
+            }),
+    }
 }
 
 fn imaging_metal_device_budget_bytes(
     memory_target: ImagingProcessMemoryLedger,
     metal: ImagingMetalMemoryDetection,
+    policy: ImagingMemoryPressurePolicy,
 ) -> usize {
     if !metal.device_available {
         return 0;
@@ -40393,9 +40804,11 @@ fn imaging_metal_device_budget_bytes(
     match metal.has_unified_memory {
         Some(true) => {
             // Unified Metal resources already consume the same physical-memory
-            // headroom assigned to the process. Cap the device view of that
-            // shared pool instead of treating it as an additional budget.
-            device_headroom_bytes.min(assigned_unified_memory_budget_bytes(memory_target))
+            // pool assigned to the process. Safe policies use current no-swap
+            // headroom; aggressive and oversubscribed policies deliberately
+            // expose their larger process target while remaining capped by
+            // Metal's recommended working set.
+            device_headroom_bytes.min(assigned_unified_memory_budget_bytes(memory_target, policy))
         }
         Some(false) => device_headroom_bytes,
         None => 0,
@@ -40476,7 +40889,7 @@ fn imaging_planning_resource_log_line(
 ) -> String {
     let resources = &context.detected_resources;
     format!(
-        "standard_mfs_planning_resources memory_pressure_policy={} memory_target_bytes={} memory_target_semantics=incremental-operation-residency memory_target_origin={} incremental_operation_budget_bytes={} process_baseline_bytes={} process_total_ceiling_bytes={} process_total_ceiling_origin={} target_projected_process_total_bytes={} target_projected_process_excess_bytes={} physical_memory_bytes={} physical_memory_origin={} no_swap_headroom_bytes={} no_swap_headroom_origin={} process_physical_footprint_bytes={} process_physical_footprint_origin={} logical_cpu_threads={} logical_cpu_threads_origin={} performance_cpu_cores={} performance_cpu_cores_origin={} metal_device_available={} metal_has_unified_memory={} metal_recommended_working_set_bytes={} metal_current_allocated_bytes={} metal_device_budget_bytes={} metal_memory_origin={} unified_memory_requirement_bytes={} unified_memory_requirement_origin=workload-direct-metal-scratch-candidate storage_read_bytes_per_second={} storage_read_origin={} storage_write_bytes_per_second={} storage_write_origin={}",
+        "standard_mfs_planning_resources memory_pressure_policy={} memory_target_bytes={} memory_target_semantics=incremental-operation-residency memory_target_origin={} incremental_operation_budget_bytes={} process_baseline_bytes={} process_total_ceiling_bytes={} process_total_ceiling_origin={} target_projected_process_total_bytes={} target_projected_process_excess_bytes={} physical_memory_bytes={} physical_memory_origin={} no_swap_headroom_bytes={} no_swap_headroom_origin={} process_physical_footprint_bytes={} process_physical_footprint_origin={} logical_cpu_threads={} logical_cpu_threads_origin={} performance_cpu_cores={} performance_cpu_cores_origin={} metal_device_available={} metal_has_unified_memory={} metal_recommended_working_set_bytes={} metal_current_allocated_bytes={} metal_device_budget_bytes={} metal_memory_origin={} unified_memory_requirement_bytes={} unified_memory_requirement_origin=workload-metal-grid-plus-execution-candidate storage_read_bytes_per_second={} storage_read_origin={} storage_write_bytes_per_second={} storage_write_origin={}",
         context.memory_pressure_policy.label(),
         memory_target.target_bytes,
         memory_target.source,
@@ -40553,10 +40966,20 @@ fn imaging_process_memory_ledger(config: &CliConfig) -> ImagingProcessMemoryLedg
 }
 
 fn process_total_ceiling_from_snapshot(
+    policy: ImagingMemoryPressurePolicy,
     system_memory_bytes: Option<usize>,
     available_memory_bytes: Option<usize>,
     baseline_process_bytes: usize,
 ) -> (Option<usize>, &'static str) {
+    if matches!(
+        policy,
+        ImagingMemoryPressurePolicy::Aggressive
+            | ImagingMemoryPressurePolicy::Oversubscribe
+            | ImagingMemoryPressurePolicy::Hybrid
+    ) && system_memory_bytes.is_some()
+    {
+        return (system_memory_bytes, "physical-memory-ceiling");
+    }
     match (system_memory_bytes, available_memory_bytes) {
         (Some(physical), Some(available)) => (
             Some(physical.min(baseline_process_bytes.saturating_add(available))),
@@ -40587,6 +41010,7 @@ fn imaging_process_memory_ledger_from_snapshot(
             });
     let (process_total_ceiling_bytes, process_total_ceiling_origin) =
         process_total_ceiling_from_snapshot(
+            config.imaging_memory_pressure_policy,
             system_memory_bytes,
             available_memory_bytes,
             baseline_process_bytes,
@@ -50436,6 +50860,18 @@ fn parse_awproject_normalization(text: &str) -> Result<AwProjectNormalization, S
     }
 }
 
+fn parse_awproject_major_cycle_operator(text: &str) -> Result<AwProjectMajorCycleOperator, String> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "direct-replay" | "direct_replay" | "direct" => {
+            Ok(AwProjectMajorCycleOperator::DirectReplay)
+        }
+        "ordered-response" | "ordered_response" => Ok(AwProjectMajorCycleOperator::OrderedResponse),
+        _ => Err(format!(
+            "unsupported --aw-major-cycle-operator value {text:?}; expected direct-replay or ordered-response"
+        )),
+    }
+}
+
 fn parse_f64_list(text: &str, option: &str) -> Result<Vec<f64>, String> {
     if text.trim().is_empty() {
         return Err(format!("{option} requires at least one value"));
@@ -54069,6 +54505,8 @@ Options:
   --gridder MODE            standard, wproject, mosaic, or awproject
   --cfcache PATH            CASA AWProject convolution-function cache (required for awproject)
   --cf-resident-mb N        per-allocation AW full-cell/tap ceiling in MiB
+  --aw-major-cycle-operator MODE
+                            direct-replay (default) or ordered-response
   --facets N                AWProject facet count (the VLASS slice requires 1)
   --psfphasecenter TEXT     optional AWProject PSF phase center
   --vptable PATH            optional AWProject voltage-pattern table
@@ -60660,6 +61098,10 @@ mod tests {
             assert!(!config.write_preview_pngs);
             assert_eq!(awproject.cf_cache, cf_cache);
             assert_eq!(awproject.cf_resident_bytes, 256 * 1024 * 1024);
+            assert_eq!(
+                awproject.major_cycle_operator,
+                AwProjectMajorCycleOperator::DirectReplay
+            );
             assert_eq!(awproject.facets, 1);
             assert_eq!(awproject.w_plane_count, Some(32));
             assert_eq!(awproject.psf_phase_center_direction_rad, None);
@@ -61096,6 +61538,65 @@ mod tests {
     }
 
     #[test]
+    fn vlass_ordered_response_memory_contract_matches_production_buffers() {
+        assert_eq!(
+            vlass_ordered_response_memory_bytes().unwrap(),
+            (310_295_300, 256_773_888)
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires a visible macOS Metal device"]
+    fn vlass_ordered_response_plan_accounts_for_resident_and_construction_overlap() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("ordered-response-planner-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let mut config = awproject_mtmfs_planner_config(cf_cache, 32 * 1024);
+        config.imsize = 4_096;
+        config.multiscale_scales = vec![0.0, 5.0, 12.0];
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
+        config.imaging_memory_pressure_policy = ImagingMemoryPressurePolicy::Oversubscribe;
+        config.aw_project.as_mut().unwrap().major_cycle_operator =
+            AwProjectMajorCycleOperator::OrderedResponse;
+
+        let plan = standard_mfs_memory_plan(&config, 64, 1024);
+
+        assert_eq!(
+            plan.allocation_bytes("AWProject ordered-response resident operator"),
+            310_295_300
+        );
+        assert_eq!(
+            plan.allocation_bytes("AWProject ordered-response construction transient"),
+            256_773_888
+        );
+        assert_eq!(
+            plan.allocation_bytes("AWProject compact replay retention"),
+            0
+        );
+        assert!(plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_major_cycle_operator"
+                && decision.value == "ordered-response"
+                && decision.reason.contains("final residual")
+        }));
+        for component in [
+            "AWProject ordered-response resident operator",
+            "AWProject ordered-response construction transient",
+        ] {
+            let allocation = plan
+                .memory_lifetime_ledger
+                .allocations
+                .iter()
+                .find(|allocation| allocation.component == component)
+                .expect("ordered-response allocation has a semantic lifetime");
+            assert_eq!(
+                allocation.residencies[0].backing,
+                ImagingMemoryBacking::UnifiedMemory
+            );
+        }
+    }
+
+    #[test]
     fn awproject_mtmfs_memory_plan_accounts_for_exact_grid_and_external_indexes() {
         let tmp = tempdir().unwrap();
         let cf_cache = tmp.path().join("planner-cf-cache");
@@ -61295,6 +61796,68 @@ mod tests {
     }
 
     #[test]
+    fn awproject_compensation_collapse_shortens_full_geometry_grid_residency() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("full-geometry-collapse-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let mut config = awproject_mtmfs_planner_config(cf_cache, 65_536);
+        config.imsize = 12_150;
+        config.imaging_memory_pressure_policy = ImagingMemoryPressurePolicy::Oversubscribe;
+
+        let mut plan = standard_mfs_memory_plan(&config, 64, 1024);
+        plan.usable_memory_bytes = usize::MAX;
+        let decision = plan
+            .decisions
+            .iter_mut()
+            .find(|decision| decision.name == "awproject_compensation_residency")
+            .expect("compensation-residency decision");
+        decision.value = "collapsed-f32-before-transform".to_string();
+        rebuild_standard_mfs_memory_lifetime_ledger(&mut plan, true)
+            .expect("collapsed semantic ledger");
+
+        let grid = plan
+            .memory_lifetime_ledger
+            .allocations
+            .iter()
+            .find(|allocation| allocation.component == "grids")
+            .expect("full-geometry grid lifetime");
+        assert_eq!(grid.logical_bytes, 18_895_680_000);
+        assert_eq!(grid.residencies.len(), 4);
+        assert_eq!(
+            grid.residencies
+                .iter()
+                .map(|residency| (
+                    residency.live_from,
+                    residency.live_through,
+                    residency.resident_bytes,
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    ImagingMemoryStage::InitialGrid,
+                    ImagingMemoryStage::InitialGrid,
+                    18_895_680_000,
+                ),
+                (
+                    ImagingMemoryStage::DirtyTransform,
+                    ImagingMemoryStage::DirtyTransform,
+                    9_447_840_000,
+                ),
+                (
+                    ImagingMemoryStage::ResidualGrid,
+                    ImagingMemoryStage::ResidualGrid,
+                    4_723_920_000,
+                ),
+                (
+                    ImagingMemoryStage::ResidualTransform,
+                    ImagingMemoryStage::ResidualTransform,
+                    2_361_960_000,
+                ),
+            ]
+        );
+    }
+
+    #[test]
     fn standard_mfs_semantic_memory_lifetimes_record_aw_stage_overlap() {
         let tmp = tempdir().unwrap();
         let cf_cache = tmp.path().join("semantic-ledger-cf-cache");
@@ -61369,6 +61932,16 @@ mod tests {
                 component: "AWProject compact replay retention",
                 stage: "run",
                 bytes: 29,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject ordered-response resident operator",
+                stage: "minor-cycle",
+                bytes: 37,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject ordered-response construction transient",
+                stage: "minor-cycle",
+                bytes: 41,
             },
         ];
 
@@ -61461,6 +62034,42 @@ mod tests {
             replay.residencies[0].backing,
             ImagingMemoryBacking::HostHeap
         );
+        let ordered_response = lifetimes
+            .iter()
+            .find(|allocation| {
+                allocation.component == "AWProject ordered-response resident operator"
+            })
+            .expect("ordered-response lifetime");
+        assert_eq!(
+            ordered_response.residencies[0].backing,
+            ImagingMemoryBacking::UnifiedMemory
+        );
+        assert_eq!(
+            (
+                ordered_response.residencies[0].live_from,
+                ordered_response.residencies[0].live_through,
+            ),
+            (
+                ImagingMemoryStage::MinorCycle,
+                ImagingMemoryStage::ResidualTransform,
+            )
+        );
+        let ordered_response_construction = lifetimes
+            .iter()
+            .find(|allocation| {
+                allocation.component == "AWProject ordered-response construction transient"
+            })
+            .expect("ordered-response construction lifetime");
+        assert_eq!(
+            (
+                ordered_response_construction.residencies[0].live_from,
+                ordered_response_construction.residencies[0].live_through,
+            ),
+            (
+                ImagingMemoryStage::MinorCycle,
+                ImagingMemoryStage::MinorCycle,
+            )
+        );
 
         let readback = lifetimes
             .iter()
@@ -61496,8 +62105,8 @@ mod tests {
             .expect("residual-grid stage");
         assert_eq!(
             residual_peak.bytes_for_backing(ImagingMemoryBacking::UnifiedMemory),
-            24,
-            "nterms=2 residual refreshes must retain only two of the eight initial grid planes"
+            61,
+            "nterms=2 residual refreshes retain two of eight initial grid planes plus the resident ordered-response operator"
         );
         assert_eq!(
             plan.maximum_planned_resident_bytes,
@@ -61784,42 +62393,63 @@ mod tests {
         let system_bytes = Some(32 * GIB);
         let no_swap_headroom_bytes = Some(12 * GIB);
         let baseline_process_bytes = 2 * GIB;
-        let process_total_ceiling_bytes = 14 * GIB;
-        let incremental_operation_budget_bytes = 12 * GIB;
+        let safe_process_total_ceiling_bytes = 14 * GIB;
+        let safe_incremental_operation_budget_bytes = 12 * GIB;
+        let physical_process_total_ceiling_bytes = 32 * GIB;
+        let physical_incremental_operation_budget_bytes = 30 * GIB;
 
         let cases = [
             (
                 ImagingMemoryPressurePolicy::Auto,
                 12 * GIB,
                 "available-memory-ledger",
+                safe_process_total_ceiling_bytes,
+                safe_incremental_operation_budget_bytes,
             ),
             (
                 ImagingMemoryPressurePolicy::ConservativeNoSwap,
                 12 * GIB,
                 "available-memory-ledger",
+                safe_process_total_ceiling_bytes,
+                safe_incremental_operation_budget_bytes,
             ),
             (
                 ImagingMemoryPressurePolicy::Aggressive,
-                incremental_operation_budget_bytes,
+                physical_incremental_operation_budget_bytes,
                 "aggressive-physical-ledger",
+                physical_process_total_ceiling_bytes,
+                physical_incremental_operation_budget_bytes,
             ),
             (
                 ImagingMemoryPressurePolicy::Oversubscribe,
                 0,
                 "oversubscribe-requires-explicit-target",
+                physical_process_total_ceiling_bytes,
+                physical_incremental_operation_budget_bytes,
             ),
             (
                 ImagingMemoryPressurePolicy::StageAware,
                 12 * GIB,
                 "available-memory-ledger",
+                safe_process_total_ceiling_bytes,
+                safe_incremental_operation_budget_bytes,
             ),
             (
                 ImagingMemoryPressurePolicy::Hybrid,
-                incremental_operation_budget_bytes,
+                physical_incremental_operation_budget_bytes,
                 "hybrid-physical-ledger",
+                physical_process_total_ceiling_bytes,
+                physical_incremental_operation_budget_bytes,
             ),
         ];
-        for (policy, expected_bytes, expected_source) in cases {
+        for (
+            policy,
+            expected_bytes,
+            expected_source,
+            expected_process_ceiling,
+            expected_operation_budget,
+        ) in cases
+        {
             config.imaging_memory_pressure_policy = policy;
             let target = imaging_process_memory_ledger_from_snapshot(
                 &config,
@@ -61831,12 +62461,12 @@ mod tests {
             assert_eq!(target.source, expected_source, "policy={policy:?}");
             assert_eq!(
                 target.process_total_ceiling_bytes,
-                Some(process_total_ceiling_bytes),
+                Some(expected_process_ceiling),
                 "policy={policy:?}"
             );
             assert_eq!(
                 target.incremental_operation_budget_bytes,
-                Some(incremental_operation_budget_bytes),
+                Some(expected_operation_budget),
                 "policy={policy:?}"
             );
         }
@@ -61869,7 +62499,7 @@ mod tests {
                 no_swap_headroom_bytes,
                 baseline_process_bytes,
             );
-            assert_eq!(capped.target_bytes, incremental_operation_budget_bytes);
+            assert_eq!(capped.target_bytes, 20 * GIB);
             assert_eq!(capped.source, expected_source);
         }
     }
@@ -61924,7 +62554,7 @@ mod tests {
     }
 
     #[test]
-    fn non_oversubscription_explicit_targets_cap_to_incremental_budget() {
+    fn explicit_targets_respect_each_policy_process_ceiling() {
         const GIB: usize = 1024 * 1024 * 1024;
         let mut config =
             minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
@@ -61944,11 +62574,20 @@ mod tests {
                 Some(12 * GIB),
                 2 * GIB,
             );
-            assert_eq!(ledger.target_bytes, 12 * GIB, "policy={policy:?}");
-            assert_eq!(
-                ledger.projected_process_total_bytes(ledger.target_bytes),
-                ledger.process_total_ceiling_bytes,
-                "policy={policy:?}"
+            let expected = if matches!(
+                policy,
+                ImagingMemoryPressurePolicy::Aggressive | ImagingMemoryPressurePolicy::Hybrid
+            ) {
+                20 * GIB
+            } else {
+                12 * GIB
+            };
+            assert_eq!(ledger.target_bytes, expected, "policy={policy:?}");
+            assert!(
+                ledger
+                    .projected_process_total_bytes(ledger.target_bytes)
+                    .zip(ledger.process_total_ceiling_bytes)
+                    .is_some_and(|(projected, ceiling)| projected <= ceiling)
             );
         }
     }
@@ -61959,22 +62598,22 @@ mod tests {
         let mut config =
             minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
         config.imaging_memory_pressure_policy = ImagingMemoryPressurePolicy::Oversubscribe;
-        config.imaging_memory_target_mb = Some(20 * 1024);
+        config.imaging_memory_target_mb = Some(36 * 1024);
         let ledger = imaging_process_memory_ledger_from_snapshot(
             &config,
             Some(32 * GIB),
             Some(12 * GIB),
             2 * GIB,
         );
-        assert_eq!(ledger.target_bytes, 20 * GIB);
-        assert_eq!(ledger.process_total_ceiling_bytes, Some(14 * GIB));
+        assert_eq!(ledger.target_bytes, 36 * GIB);
+        assert_eq!(ledger.process_total_ceiling_bytes, Some(32 * GIB));
         assert_eq!(
             ledger.projected_process_total_bytes(ledger.target_bytes),
-            Some(22 * GIB)
+            Some(38 * GIB)
         );
         assert_eq!(
             ledger.projected_process_excess_bytes(ledger.target_bytes),
-            Some(8 * GIB)
+            Some(6 * GIB)
         );
 
         let cpu = ImagingCpuResourceDetection {
@@ -61994,19 +62633,19 @@ mod tests {
             imaging_planning_context_from_detection(&config, ledger, 0, cpu, metal, storage);
         let line = imaging_planning_resource_log_line(&context, ledger, cpu, metal, 0, storage);
         assert!(line.contains("memory_target_semantics=incremental-operation-residency"));
-        assert!(line.contains(&format!("process_total_ceiling_bytes={}", 14 * GIB)));
+        assert!(line.contains(&format!("process_total_ceiling_bytes={}", 32 * GIB)));
         assert!(line.contains(&format!(
             "target_projected_process_total_bytes={}",
-            22 * GIB
+            38 * GIB
         )));
         assert!(line.contains(&format!(
             "target_projected_process_excess_bytes={}",
-            8 * GIB
+            6 * GIB
         )));
     }
 
     #[test]
-    fn resolved_plan_projection_adds_baseline_to_planned_residency() {
+    fn resolved_oversubscribe_projection_adds_baseline_against_physical_ceiling() {
         const GIB: usize = 1024 * 1024 * 1024;
         let mut config =
             minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
@@ -62026,20 +62665,12 @@ mod tests {
         .expect("oversubscription planner fixture");
         let projection = standard_mfs_process_projection(&plan);
         assert_eq!(projection.baseline_bytes, Some(2 * GIB));
-        assert_eq!(projection.total_ceiling_bytes, Some(2 * GIB + 1));
+        assert_eq!(projection.total_ceiling_bytes, Some(32 * GIB));
         assert_eq!(
             projection.projected_total_bytes,
             Some(2 * GIB + plan.maximum_planned_resident_bytes)
         );
-        assert_eq!(
-            projection.projected_excess_bytes,
-            Some(plan.maximum_planned_resident_bytes.saturating_sub(1))
-        );
-        assert!(
-            projection
-                .projected_excess_bytes
-                .is_some_and(|value| value > 0)
-        );
+        assert_eq!(projection.projected_excess_bytes, Some(0));
     }
 
     #[test]
@@ -62122,7 +62753,11 @@ mod tests {
             origin: "test",
         };
         assert_eq!(
-            imaging_metal_device_budget_bytes(memory_target, unified),
+            imaging_metal_device_budget_bytes(
+                memory_target,
+                unified,
+                ImagingMemoryPressurePolicy::Auto,
+            ),
             12 * GIB,
             "unified allocations share the smaller no-swap process headroom"
         );
@@ -62131,9 +62766,37 @@ mod tests {
             ..memory_target
         };
         assert_eq!(
-            imaging_metal_device_budget_bytes(process_target_limited, unified),
+            imaging_metal_device_budget_bytes(
+                process_target_limited,
+                unified,
+                ImagingMemoryPressurePolicy::Auto,
+            ),
             8 * GIB,
             "the process assignment remains binding even with more system headroom"
+        );
+        let aggressive_target = ImagingProcessMemoryLedger {
+            target_bytes: 30 * GIB,
+            process_total_ceiling_bytes: Some(32 * GIB),
+            incremental_operation_budget_bytes: Some(31 * GIB),
+            ..memory_target
+        };
+        assert_eq!(
+            imaging_metal_device_budget_bytes(
+                aggressive_target,
+                unified,
+                ImagingMemoryPressurePolicy::Aggressive,
+            ),
+            12 * GIB + GIB / 2,
+            "aggressive unified Metal adds only a bounded compression cushion to live headroom"
+        );
+        assert_eq!(
+            imaging_metal_device_budget_bytes(
+                aggressive_target,
+                unified,
+                ImagingMemoryPressurePolicy::Oversubscribe,
+            ),
+            20 * GIB,
+            "intentional oversubscription may use the larger target up to the device working set"
         );
 
         let device_limited = ImagingMetalMemoryDetection {
@@ -62141,7 +62804,11 @@ mod tests {
             ..unified
         };
         assert_eq!(
-            imaging_metal_device_budget_bytes(memory_target, device_limited),
+            imaging_metal_device_budget_bytes(
+                memory_target,
+                device_limited,
+                ImagingMemoryPressurePolicy::Auto,
+            ),
             4 * GIB,
             "recommended working set minus current allocation is also binding"
         );
@@ -62151,7 +62818,11 @@ mod tests {
             ..unified
         };
         assert_eq!(
-            imaging_metal_device_budget_bytes(memory_target, unknown_memory_topology),
+            imaging_metal_device_budget_bytes(
+                memory_target,
+                unknown_memory_topology,
+                ImagingMemoryPressurePolicy::Auto,
+            ),
             0,
             "unknown memory topology must not invent a second memory pool"
         );
@@ -67284,6 +67955,15 @@ mod tests {
         );
         assert!(parse_gridder_request("widefield").is_err());
         assert!(parse_gridder_request("awp2").is_err());
+        assert_eq!(
+            parse_awproject_major_cycle_operator("direct-replay").unwrap(),
+            AwProjectMajorCycleOperator::DirectReplay
+        );
+        assert_eq!(
+            parse_awproject_major_cycle_operator("ordered-response").unwrap(),
+            AwProjectMajorCycleOperator::OrderedResponse
+        );
+        assert!(parse_awproject_major_cycle_operator("approximate").is_err());
 
         assert_eq!(parse_mask_box("1,2,3,4").unwrap(), [1, 2, 3, 4]);
         assert!(parse_mask_box("1,2,3").is_err());

@@ -1812,7 +1812,7 @@ fn load_physical_resident_fixture(receipt_path: &Path) -> PhysicalResidentFixtur
         serde_json::from_slice(&receipt_bytes).expect("physical semantic receipt JSON");
     assert_eq!(
         receipt["schema"].as_str(),
-        Some("casa-rs-vlass-ordered-response-physical-semantic-gate/v2")
+        Some("casa-rs-vlass-ordered-response-physical-semantic-gate/v3")
     );
     assert_eq!(receipt["gate"]["passed"].as_bool(), Some(true));
     let fixture = &receipt["resident_integration_fixture"];
@@ -2359,7 +2359,7 @@ fn vlass_real_route_output_owner_construction_probe() {
         serde_json::from_slice(&manifest_bytes).expect("construction manifest JSON");
     assert_eq!(
         manifest["schema"].as_str(),
-        Some("casa-rs-vlass-ordered-response-segmented-construction/v7")
+        Some("casa-rs-vlass-ordered-response-segmented-construction/v10")
     );
     let response_offsets = artifact_bytes(&artifact_dir, "response-bucket-offsets-u32-le.bin");
     let response_meta = artifact_bytes(&artifact_dir, "response-group-meta-i16-le.bin");
@@ -2565,7 +2565,7 @@ fn vlass_physical_private_resident_ordered_response_probe() {
             .expect("construction manifest JSON");
     assert_eq!(
         construction_manifest["schema"].as_str(),
-        Some("casa-rs-vlass-ordered-response-segmented-construction/v9")
+        Some("casa-rs-vlass-ordered-response-segmented-construction/v12")
     );
     assert_eq!(
         construction_manifest["geometry"]["construction_grid_side"].as_u64(),

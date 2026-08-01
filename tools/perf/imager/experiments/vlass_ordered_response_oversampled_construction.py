@@ -18,7 +18,7 @@ import sys
 BASE_SCRIPT = pathlib.Path(__file__).with_name(
     "vlass_ordered_response_segmented_construction.py"
 )
-SCHEMA = "casa-rs-vlass-ordered-response-segmented-construction/v8"
+SCHEMA = "casa-rs-vlass-ordered-response-segmented-construction/v11"
 CONSTRUCTION_SIDE = 384
 
 

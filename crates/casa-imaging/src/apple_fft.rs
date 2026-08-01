@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Apple-native FFT adapters used behind the shared imaging FFT contract.
 
+#[cfg(all(target_os = "macos", not(coverage)))]
+pub(crate) mod ordered_response;
+
 use std::{
     cell::RefCell,
     collections::{HashMap, hash_map::Entry},
@@ -3779,7 +3782,7 @@ mod tests {
     #[test]
     #[serial]
     #[ignore = "production-inert VLASS private-resident exact-batch MPSGraph gate"]
-    fn vlass_ordered_response_private_resident_mpsgraph_batch_probe() {
+    fn vlass_private_resident_mpsgraph_192_batch_probe() {
         assert!(
             mpsgraph_f32_available(),
             "VLASS private-resident MPSGraph gate requires a visible Metal device"
@@ -3957,5 +3960,99 @@ mod tests {
                 .collect::<Vec<_>>(),
             encode.iter().map(Duration::as_secs_f64).collect::<Vec<_>>(),
         );
+        if let Some(receipt_path) =
+            std::env::var_os("CASA_RS_VLASS_MPSGRAPH_PRIVATE_RESIDENT_RECEIPT")
+                .map(std::path::PathBuf::from)
+        {
+            assert!(
+                receipt_path.is_absolute(),
+                "VLASS private-resident MPSGraph receipt path must be absolute"
+            );
+            if let Some(parent) = receipt_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .expect("create VLASS private-resident MPSGraph receipt directory");
+            }
+            let receipt = serde_json::json!({
+                "schema": "casa-rs-vlass-private-resident-mpsgraph-192-batch-probe/v1",
+                "role": "production-inert-target-hardware-speed-of-light-not-imaging-performance",
+                "geometry": {
+                    "side": SIDE,
+                    "forward_batch": FORWARD_BATCH,
+                    "inverse_batch": INVERSE_BATCH,
+                    "complex_precision": "f32",
+                    "buffer_storage": "metal-private",
+                    "buffer_count": 2,
+                    "buffer_bytes_each": BUFFER_BYTES,
+                    "feedback_completion_boundary": "one-commit-and-wait-per-forward-inverse-pair",
+                },
+                "samples": {
+                    "measured_pairs": MEASURED_PAIRS,
+                    "total_s": total.iter().map(Duration::as_secs_f64).collect::<Vec<_>>(),
+                    "commit_to_completion_s": completion
+                        .iter()
+                        .map(Duration::as_secs_f64)
+                        .collect::<Vec<_>>(),
+                    "device_s": device_times
+                        .iter()
+                        .map(Duration::as_secs_f64)
+                        .collect::<Vec<_>>(),
+                    "encode_s": encode.iter().map(Duration::as_secs_f64).collect::<Vec<_>>(),
+                },
+                "summary": {
+                    "forward_compile_s": forward_compile.as_secs_f64(),
+                    "inverse_compile_s": inverse_compile.as_secs_f64(),
+                    "first_use_s": first_use.as_secs_f64(),
+                    "warmup_total_s": warmup.total.as_secs_f64(),
+                    "warmup_device_s": warmup
+                        .device
+                        .expect("complete warmup command-buffer GPU interval")
+                        .as_secs_f64(),
+                    "total_p50_s": total_p50.as_secs_f64(),
+                    "total_p90_s": total_p90.as_secs_f64(),
+                    "commit_to_completion_p50_s": completion_p50.as_secs_f64(),
+                    "commit_to_completion_p90_s": completion_p90.as_secs_f64(),
+                    "device_p50_s": device_p50.as_secs_f64(),
+                    "device_p90_s": device_p90.as_secs_f64(),
+                    "encode_p50_s": encode_p50.as_secs_f64(),
+                    "encode_p90_s": encode_p90.as_secs_f64(),
+                },
+                "gate": {
+                    "green_total_p90_s_max": 0.045,
+                    "viable_total_p90_s_max": 0.065,
+                    "mpsgraph_backend_kill_total_p90_s_min": 0.090,
+                    "decision": if total_p90 <= Duration::from_millis(45) {
+                        "green-private-resident-mpsgraph-backend"
+                    } else if total_p90 <= Duration::from_millis(65) {
+                        "viable-private-resident-mpsgraph-backend"
+                    } else if total_p90 > Duration::from_millis(90) {
+                        "kill-mpsgraph-for-this-batch-shape"
+                    } else {
+                        "marginal-private-resident-mpsgraph-backend"
+                    },
+                },
+                "prohibited_claims": [
+                    "not-an-imaging-row",
+                    "not-an-operator-construction-timing",
+                    "not-a-casa-speedup",
+                    "not-a-scientific-correctness-result",
+                ],
+            });
+            let mut output = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&receipt_path)
+                .expect("create VLASS private-resident MPSGraph receipt");
+            serde_json::to_writer_pretty(&mut output, &receipt)
+                .expect("write VLASS private-resident MPSGraph receipt");
+            std::io::Write::write_all(&mut output, b"\n")
+                .expect("terminate VLASS private-resident MPSGraph receipt");
+            output
+                .sync_all()
+                .expect("sync VLASS private-resident MPSGraph receipt");
+            eprintln!(
+                "vlass_mpsgraph_private_resident_exact_batch_receipt path={}",
+                receipt_path.display()
+            );
+        }
     }
 }

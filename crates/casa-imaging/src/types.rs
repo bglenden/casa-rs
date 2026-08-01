@@ -278,6 +278,23 @@ pub enum AwProjectNormalization {
     PbSquare,
 }
 
+/// AWProject normal-operator implementation used for CLEAN major cycles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AwProjectMajorCycleOperator {
+    /// Re-read the visibility stream and apply the exact prediction/adjoint
+    /// pair at every major-cycle residual refresh.
+    #[default]
+    DirectReplay,
+    /// Compile the selected AWProject stream into a compact, source-order
+    /// image-domain normal operator and keep its hot application state
+    /// resident on the accelerator.
+    ///
+    /// This is an opt-in performance path. The runtime validates its geometry,
+    /// precision, memory, and accelerator prerequisites and fails closed rather
+    /// than silently falling back to direct replay.
+    OrderedResponse,
+}
+
 /// Shared controls for CASA `gridder='awproject'` execution.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AwProjectControls {
@@ -289,6 +306,8 @@ pub struct AwProjectControls {
     /// LRU and to the compact exact-source-order tap arena; the application
     /// planner charges both allocations.
     pub cf_resident_bytes: usize,
+    /// Normal-operator implementation used for repeated CLEAN major cycles.
+    pub major_cycle_operator: AwProjectMajorCycleOperator,
     /// CASA `facets`; only one facet is supported by this execution slice.
     pub facets: usize,
     /// Explicit CASA W-plane count; `None` accepts the cache inventory.
@@ -331,6 +350,7 @@ impl AwProjectControls {
         Self {
             cf_cache,
             cf_resident_bytes: 256 * 1024 * 1024,
+            major_cycle_operator: AwProjectMajorCycleOperator::DirectReplay,
             facets: 1,
             w_plane_count: None,
             psf_phase_center_direction_rad: None,

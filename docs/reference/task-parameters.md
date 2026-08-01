@@ -10,16 +10,16 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 401
+- Concepts: 402
 - Surfaces: 42 (40 task, 2 session)
-- Surface bindings: 773
+- Surface bindings: 774
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 4 | <code>msexplore</code> | 68 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 3 | <code>calibration</code> | 51 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 3 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Imager](#surface-imager)<br><code>imager</code> | task | 7 | <code>imager</code> | 91 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
+| [Imager](#surface-imager)<br><code>imager</code> | task | 8 | <code>imager</code> | 92 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 3 | <code>simobserve</code> | 43 | Generate a CASA-compatible synthetic VLA MeasurementSet |
 | [Table Browser](#surface-tablebrowser)<br><code>tablebrowser</code> | session | 3 | <code>table_browser</code> | 7 | browse arbitrary casacore tables |
 | [ImExplore](#surface-imexplore)<br><code>imexplore</code> | session | 3 | <code>image_browser</code> | 17 | browse persistent casacore images |
@@ -234,7 +234,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Imager (<code>imager</code>)
 
 - Kind: `task`
-- Contract version: `7`
+- Contract version: `8`
 - Category: Imaging
 - Provider family: `imager`
 - Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet
@@ -332,6 +332,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>imaging_fft_precision</code> | <code>parameter.imaging_fft_precision@r1</code> | <code>choice (3 values)</code> | <code>"auto"</code>; optional | Execution Resources | Imaging-wide FFT precision policy<br><em>Surface:</em> auto selects only a correctness-qualified FFT precision and reports any fallback. |
 | <code>projection</code> | <code>parameter.projection@r1</code> | <code>choice (1 values)</code> | <code>"SIN"</code>; optional | Stage Parameters | Sky projection used for the image direction coordinate<br><em>Surface:</em> Unsupported projections fail before imaging; the value is never silently rewritten to SIN. |
 | <code>standard_mfs_grid_threads</code> | <code>parameter.standard_mfs_grid_threads@r1</code> | <code>optional&lt;integer&gt; (states: auto)</code> | <code>"auto"</code>; optional | Execution Resources | Grid-stage worker selection for standard, mosaic, and AWProject MFS imaging<br><em>Surface:</em> auto delegates to the resource-adaptive execution planner; a positive integer is an explicit override. |
+| <code>aw_major_cycle_operator</code> | <code>parameter.aw_major_cycle_operator@r1</code> | <code>choice (2 values)</code> | <code>"direct-replay"</code>; optional | Advanced Wide-Field | AWProject major-cycle normal-operator implementation<br><em>Surface:</em> ordered-response is an opt-in compiled normal operator; unsupported geometry, precision, memory, or accelerator configurations fail closed rather than reverting silently. |
 
 <a id="surface-simobserve"></a>
 

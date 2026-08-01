@@ -9017,6 +9017,33 @@
       "persistence_class": "profile"
     },
     {
+      "id": "parameter.aw_major_cycle_operator",
+      "semantic_revision": 1,
+      "casa_name": "aw_major_cycle_operator",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "direct-replay",
+          "ordered-response"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "AWProject major-cycle normal-operator implementation",
+        "details": "direct-replay replays exact visibility prediction and adjoint work for every residual refresh. ordered-response compiles the selected source stream into a compact accelerator-resident image-domain operator and fails closed when its scientific or resource prerequisites are not met.",
+        "examples": [
+          "direct-replay",
+          "ordered-response"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "parameter.computepastep",
       "semantic_revision": 1,
       "casa_name": "computepastep",

@@ -21,7 +21,7 @@ import numpy as np
 
 
 SCHEMA = "casa-rs-vlass-localized-ordered-response-graph-contract/v1"
-SOURCE_SCHEMA = "casa-rs-vlass-localized-row-census-contract/v2"
+SOURCE_SCHEMA = "casa-rs-vlass-localized-row-census-contract/v3"
 EXPECTED_PAIR_COUNT = 54
 EXPECTED_IMAGING_STATES = 28
 EXPECTED_PREDICTION_STATES = 32
@@ -54,6 +54,8 @@ ROW_DTYPE = np.dtype(
         ("first_visibility", "<c8"),
         ("second_visibility", "<c8"),
         ("source_phase", "<c8"),
+        ("first_prediction_normalization", "<c8"),
+        ("second_prediction_normalization", "<c8"),
         ("replay_block_ordinal", "<u4"),
         ("window_ordinal", "<u4"),
         ("sample_index", "<u4"),
@@ -106,10 +108,54 @@ def nearest_indices(values: np.ndarray, candidates: np.ndarray) -> np.ndarray:
 def source_pairs(contract: dict[str, Any]) -> list[dict[str, Any]]:
     if contract.get("schema") != SOURCE_SCHEMA:
         raise GraphContractError(f"source contract must use {SOURCE_SCHEMA}")
-    selection = contract.get("aw_screen_selection")
-    if not isinstance(selection, dict):
-        raise GraphContractError("source contract lacks aw_screen_selection")
-    pairs = selection.get("imaging_prediction_state_pairs")
+    state_universe = contract.get("ordered_response_state_universe")
+    if state_universe is None:
+        selection = contract.get("aw_screen_selection")
+        if not isinstance(selection, dict):
+            raise GraphContractError("source contract lacks aw_screen_selection")
+        pairs = selection.get("imaging_prediction_state_pairs")
+    else:
+        if not isinstance(state_universe, dict):
+            raise GraphContractError(
+                "ordered_response_state_universe must be an object"
+            )
+        source_path = pathlib.Path(
+            str(state_universe.get("source_contract", ""))
+        )
+        if not source_path.is_absolute():
+            raise GraphContractError(
+                "ordered-response state-universe source must be absolute"
+            )
+        if sha256_file(source_path) != state_universe.get(
+            "source_contract_sha256"
+        ):
+            raise GraphContractError(
+                "ordered-response state-universe source SHA-256 differs"
+            )
+        universe_contract = load_json(source_path)
+        if universe_contract.get("schema") != SOURCE_SCHEMA:
+            raise GraphContractError(
+                f"state-universe source contract must use {SOURCE_SCHEMA}"
+            )
+        universe_sources = universe_contract.get("sources")
+        universe_selection = universe_contract.get("aw_screen_selection")
+        if not isinstance(universe_sources, dict) or not isinstance(
+            universe_selection, dict
+        ):
+            raise GraphContractError(
+                "state-universe source lacks sources or aw_screen_selection"
+            )
+        if universe_sources.get(
+            "screen_manifest_sha256"
+        ) != state_universe.get("source_screen_manifest_sha256"):
+            raise GraphContractError(
+                "state-universe source screen-manifest SHA-256 differs"
+            )
+        pairs = state_universe.get("imaging_prediction_state_pairs")
+        if pairs != universe_selection.get("imaging_prediction_state_pairs"):
+            raise GraphContractError(
+                "resident ordered AW pairs differ from their source contract"
+            )
     if not isinstance(pairs, list) or len(pairs) != EXPECTED_PAIR_COUNT:
         observed = len(pairs) if isinstance(pairs, list) else "non-list"
         raise GraphContractError(

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import json
 import pathlib
 
 import numpy as np
@@ -96,3 +98,39 @@ def test_pair_count_is_a_fail_closed_contract() -> None:
 
     with pytest.raises(MODULE.GraphContractError, match="expected 54"):
         MODULE.graph_dimensions(contract)
+
+
+def test_explicit_resident_state_universe_is_hash_bound(
+    tmp_path: pathlib.Path,
+) -> None:
+    universe = synthetic_source_contract()
+    universe["sources"] = {"screen_manifest_sha256": "screen-sha"}
+    universe_path = tmp_path / "universe.json"
+    universe_path.write_text(json.dumps(universe), encoding="utf-8")
+    universe_sha256 = hashlib.sha256(universe_path.read_bytes()).hexdigest()
+    observed = {
+        "schema": MODULE.SOURCE_SCHEMA,
+        "aw_screen_selection": {
+            "imaging_prediction_state_pairs": universe[
+                "aw_screen_selection"
+            ]["imaging_prediction_state_pairs"][:20],
+        },
+        "ordered_response_state_universe": {
+            "source_contract": str(universe_path),
+            "source_contract_sha256": universe_sha256,
+            "source_screen_manifest_sha256": "screen-sha",
+            "imaging_prediction_state_pairs": universe[
+                "aw_screen_selection"
+            ]["imaging_prediction_state_pairs"],
+        },
+    }
+
+    assert MODULE.source_pairs(observed) == universe[
+        "aw_screen_selection"
+    ]["imaging_prediction_state_pairs"]
+
+    observed["ordered_response_state_universe"][
+        "source_contract_sha256"
+    ] = "0" * 64
+    with pytest.raises(MODULE.GraphContractError, match="SHA-256 differs"):
+        MODULE.source_pairs(observed)

@@ -9395,6 +9395,271 @@ source failure. The checkpoint did not alter those tests or their HTTP
 implementation, and no duplicate unrestricted workspace gate was launched
 solely for assurance.
 
+### 2026-08-01 corrected ordered-response semantics and family retirement
+
+The first real ordered-response shadow exposed two source-contract mistakes
+before the representation could be judged. `VisibilityBatch.weight` is the
+average parallel-hand weight: expanding one row to RR and LL consumes that
+weight once per hand, while `sumwt_factor=2` describes the paired sum-weight
+accounting and must not multiply it again. Prediction also divides each route
+by its selected compact CF's complex normalization. The frozen source schema
+is therefore v3 and carries both exact prediction normalizations so the
+construction applies `1 / conj(normalization)` per route.
+
+New production-inert `niter=0` censuses froze both development selections
+without running CASA or CLEAN:
+
+- four SPWs: `98,239` rows, `196,478` RR/LL routes, five windows, `16.59`
+  seconds; manifest SHA-256
+  `222d72a52497c477a8443b9bc2307afa6f250c6445cc3fb3b0c26cef127d534a`
+  and resident-universe contract SHA-256
+  `cfee11e085f78764e995f6c886ae6712f4a3eb1a0a20d2747b59c574a11d621e`;
+- full 16 SPWs: `385,862` rows, `771,724` RR/LL routes, 20 windows, `35.16`
+  seconds; manifest SHA-256
+  `f4ba598514dd5afef434ab15d8372ef8fec772eca948b75782e7ac390b7393f9`
+  and observed-state contract SHA-256
+  `f2963aa9a894e15c2b862095987765d5df94bac7527a2df4654c0f50fa8ec82b`.
+
+The corrected v12 constructions hash to
+`dfba768135e0f2e6c3fa50a3de4be4acca1b60efa4054793468b879359e2af0d`
+for four SPWs and
+`9a7f482315a5f593c5ce1fa8f71c073c14dca8b3742710c8be71ed8339c7c8dd`
+for full 16 SPWs. The direct-f64 physical semantic gate passes at
+`2.643104264e-10` relative L2 and `4.217607790e-10` normalized Linf; its
+receipt SHA-256 is
+`4c263365c8cf5af0efb94cebd9fda8198c420451acf6b7ceb8bcad460f13b8a2`.
+The production Metal operator bound to the matching full-16 construction
+passes its ignored integration fixture at `1.284106525e-5` relative L2 and
+`8.920303970e-6` normalized Linf. These results prove the corrected algebra
+and its GPU implementation; they do not prove that the analytic physical
+screen represents the executable compact-CF consumer.
+
+One bounded four-SPW `niter=7` exact shadow then made that distinction
+decisive. The resident refresh itself took `21.892 ms`, but comparison with
+the ordinary compact-tap visibility replay found:
+
+| Term | response relative L2 | normalized Linf | fitted scale | correlation |
+| ---: | ---: | ---: | ---: | ---: |
+| TT0 | `0.3116088` | `0.2973300` | `0.7886431` | `0.9862902` |
+| TT1 | `0.1982474` | `0.1376422` | `0.8672408` | `0.9918424` |
+
+The high correlations and unequal fitted scales show that the corrected
+weight and normalization semantics removed much of the earlier
+over-response, but a scalar calibration cannot repair the remaining
+position/state-dependent error. The shadow restored the exact residual before
+continuing and wrote no performance-candidate result. Its log SHA-256 is
+`296bbaece00a8e11bb1bbf8ae0d77a6f4d32585102811ebd5deed4a85fe9a194`.
+
+The analytic physical-screen/total-W ordered-response representation is
+retired as a scientific candidate. Its graph, construction, and semantic
+fixtures remain useful negative evidence, but no further scalar fit,
+polynomial degree, screen-rank, or production CLEAN may tune this family.
+The next replacement must either preserve the executable compact-tap response
+in a mask-local operator or reduce the number of feedback-dependent exact
+operator calls while retaining the incumbent compact replay. An exact-tap
+interpolation or response-column experiment is a new representation only if
+its source state includes the cropped/oversampled tap action that this family
+omitted.
+
+The representation failure does not retire the Metal FFT boundary. A renamed,
+production-inert target-hardware gate compiled persistent forward-192 and
+inverse-168 complex-f32 MPSGraph executables, bound them to two
+`56,623,104`-byte private Metal buffers, and measured 11 sequential
+forward/inverse pairs with one commit-and-completion wait per pair. Its
+`10.062708 ms` total p90 and `9.383625 ms` p50 pass the `45 ms` green gate by
+a wide margin; device p90 was `9.442167 ms`, first use was `22.121875 ms`,
+and both executable compilations together took `2.268584 ms`. The immutable
+receipt SHA-256 is
+`72b0f686c936a933d977fe8e1d9877acc73826fae67a5dea1cc728b4aa4c8e42`.
+This is a backend speed-of-light result, not an operator-construction, imaging,
+correctness, or CASA-speedup claim. It shows that a scientifically correct
+192-square resident local operator has substantial FFT headroom.
+
+### 2026-08-01 five-direction exact-replay deconvolution discriminator
+
+Oracle selected a five-direction flexible-GCR discriminator as the first
+architecturally different deconvolution experiment. The production-inert path
+uses the existing MT-MFS multiscale minor cycle only to generate sparse model
+directions, measures each direction with the authoritative compact
+source-order replay, applies two-pass modified Gram-Schmidt in response space,
+and takes a real minimum-residual step without assuming that the ordered
+AWProject operator is Hermitian or positive definite. The first candidate
+retained exact responses only on the `7,304`-pixel union of the clean mask
+dilated by the three scale supports.
+
+The bounded `4,096`-square four-SPW run completed normally in `19.14` seconds
+wall and `15.213` seconds core. It used five feedback directions plus one final
+validation replay, `354` raw minor-cycle updates, `1,927` merged model pixels,
+and seven reported major cycles. This is `1.538x` faster than the promoted
+`29.43`-second casa-rs candidate and would be `189.75x` faster than the frozen
+`3,631.809729`-second CASA row if it passed science. The maintained response
+and final exact replay agreed to `2.497383831e-6` in the configured metric,
+and the final response objective was `0.6780519668` of the promoted incumbent
+objective.
+
+The speed result is rejected. The frozen 19-product comparison found
+scientifically material departures:
+
+- image TT0/TT1 relative RMS differences `0.350453` and `0.348988`;
+- residual TT0/TT1 relative RMS differences `0.290556` and `0.314363`;
+- model TT0/TT1 relative RMS differences `0.441800` and `0.561055`;
+- image TT0 source-region integrated flux `0.0091187`, versus CASA
+  `0.00360907`; and
+- alpha and alpha-error topology mismatches plus bad structured-difference
+  classifications for all image, residual, and model Taylor products.
+
+Mask, PB, all PSF terms, all sumwt terms, and all weight terms remained
+correct, confirming that the failure is isolated to the alternative
+deconvolution result rather than the shared geometry or weighting boundary.
+The local residual objective allowed the exact source response outside the
+small optimization domain, and therefore the restored image and sidelobe
+field, to escape the solve. No tolerance was changed and no scientific-floor
+receipt was manufactured from the failed comparison.
+
+The immutable local-GCR receipts and SHA-256 digests are:
+
+- run log:
+  `a580d0988f03e7ac964840b62ca8707ef53fa2e5991a4dd249b362fa0ff1a396`;
+- comparison input:
+  `702f47e2e0dfcb1162b540144cf6a2485ffd6abcdb05ddcdaddc37cca10cbe08`;
+- comparison result:
+  `0897b7041083416f913f28422f85bf534d3250eaaf20cefdf7b42c2f85b4c1ab`;
+  and
+- comparison log:
+  `882d6a8d3fef9d7779c1f2830df47e1261467057340cee99b28d2c4680b32e7a`.
+
+A second bounded variant widened the retained response to the complete
+`4,096`-square TT0/TT1 image, a `640 MiB` five-direction state within the
+Oracle `1.5 GiB` ceiling. It failed closed before deconvolution: the configured
+full-image normal-equation-residual objective was `71.55279138` for the dirty
+image but `72.19607128` for the scientifically accepted incumbent. Ordinary
+unweighted full-image L2 therefore penalizes the accepted source subtraction
+in this spatially correlated residual and cannot be the production objective.
+The early-stop log SHA-256 is
+`c83836928b1392739d69157b055e8f89070f9566cb4103d86f1a6329a361baf5`.
+
+Together these results retire both unregularized image-space objective
+choices: the mask-local norm is underconstrained scientifically, while the
+full normal-equation-image norm is not monotonic under the accepted clean.
+They do not retire the exact compact replay, sparse direction generation, or
+the measured `19.14`-second execution architecture. The next discriminator
+must use a scientifically meaningful objective, with weighted
+visibility-domain fitting the leading candidate. No CASA task, full-16-SPW
+row, or `12,150`-square development clean was run.
+
+### 2026-08-01 full-geometry memory-policy campaign checkpoint
+
+The full-16 development row now supplies positive evidence for an opt-in
+compensation-lifetime experiment. Immediately after exact fixed-point Metal
+accumulation, the low f32 compensation plane is added to the high plane and
+released before sequential f64 readback and FFT. On the `4,096`-square,
+full-16-SPW clean row this released `1,073,741,824` initial-grid bytes and
+`268,435,456` bytes at each residual refresh. The cold mapped-CF run completed
+in `71.386` seconds with the same `641` updates and six major-cycle reports.
+Image, model, and residual normalized differences were `4.6` to `5.8` ppm;
+the scientific-floor receipt passed all six source, flux, centroid,
+morphology, noise, dynamic-range, and alpha-stability groups. The immutable
+evidence is:
+
+- run log SHA-256
+  `395be24287cc11884cb5c1423b2d4070e2573c79ba9457446c8ea4ed5ed78343`;
+- comparison SHA-256
+  `e41c117fb2ed177547cda7db84cbda722a14c5fc32b69473e896310ee202a05a`;
+- trajectory comparison SHA-256
+  `ad360a24256329dcf7f924f6bbfda6f33af83c661445d54a4fb5c703cd506d61`;
+  and
+- scientific-floor receipt SHA-256
+  `97df719a331d88f890914448cd08c41d7828b62ac5ea247b858b25196b4fc9ad`.
+
+This precision/lifetime change remains explicitly experimental. It is neither
+the production default nor a final incorporation decision.
+
+The first full-geometry aggressive execution without that collapse was
+stopped at `205.378` seconds and row `5,850/10,400`. It had already swapped
+out `8,967,356,416` bytes, swapped in `3,487,416,320` bytes, reached
+`16,860,902,851` bytes total swap used, and crossed the campaign's destructive
+pressure boundary. Its receipt SHA-256 is
+`2d41c9532d9d98e8efa26b3f61f670ed3141513d5470c6ddc14964af2c4bd761`;
+its harness-log SHA-256 is
+`ac1de70f36d993f6816d9a270d71b6fad65b5d0641718df6ac670c661c82d09f`.
+This rejects the approximately `7.904` GiB direct-Metal scratch overlap on the
+32 GiB laptop; it does not reject modest compression or swapping.
+
+The collapse-aware planner then exposed and repaired a campaign-verifier
+defect. The v9 verifier still required one uninterrupted full-compensation
+grid interval and rejected the new explicit high-only transform interval.
+Those v9 receipts are tooling-negative evidence only; no allocation, MS
+stream, grid, product, or CASA call occurred. The corrected v10 sweep was also
+allocation-free. Conservative-no-swap and stage-aware were rejected because
+their approximately `20.5` GB live headroom was below the approximately
+`21.59` GB fixed imaging phase. Hybrid fit the ledger but correctly failed
+because its requested next-use demotion actions are not implemented.
+Aggressive and oversubscribe were admitted:
+
+- aggressive modeled `29,318,239,159` bytes at the finish peak, a
+  `29,421,344,343`-byte projected process total, and
+  `2,120,076,800` bytes of direct-Metal scratch; receipt SHA-256
+  `6f05009c4c789943d5780b9da29d07708be29451b3a876bd0b396f6d3911f14f`;
+- oversubscribe modeled `30,655,504,035` bytes at the initial-grid peak and
+  restored the approximately `7.904` GiB scratch shape rejected above;
+  receipt SHA-256
+  `03f2f4a8c51bf29b7554e148807ace2f3d028939830b1b0403e9e31042e75f8c`;
+- conservative-no-swap, stage-aware, and hybrid receipt SHA-256 values are,
+  respectively,
+  `f9f60915e845669a773419da4695679841e794f98eb0de903ec7aeb53a4550c6`,
+  `f14b31445218c2e477086c8c528968760bf5d0bd4f2ee96f6f862ecc5983e797`,
+  and
+  `88438d2b51e9c6de2974826df242c3b7513dc3d51d1146703bb15d84c35eefc9`.
+
+Exactly one v10-selected full-geometry dirty execution was then run with the
+aggressive policy, packed mapped CFs, f64 FFTW, and experimental f32
+compensation collapse. Imaging itself completed normally in `263.970`
+seconds. Peak process physical footprint was `25,634,316,648` bytes, peak
+resident memory was `18,745,393,152` bytes, host compression peaked at
+`10,889,756,672` bytes, swap-in increased `224,870,400` bytes, and swap-out
+increased `290,586,624` bytes. Free memory never fell below 12 percent and
+the workload monitor observed no throttled pages. The collapse released
+`9,447,840,000` compensation bytes in `537.346` ms; sequential f64 readback
+took `1,353.249` ms.
+
+The memory behavior was tolerable, but the candidate is rejected on
+performance. The campaign retained only a `256` MiB CF working set: seven
+cells, `9,002` loads, zero hits, and `8,995` evictions. The resulting cyclic
+cache thrash made initial gridding `219.318` seconds and the end-to-end row
+`2.525x` slower than the existing `104.542929`-second full-geometry dirty
+candidate. It provides only `1,276.157076625037 / 263.970 = 4.834x` over
+frozen CASA, versus the existing `12.207x`.
+
+The outer campaign wall applied to imaging plus the full-array frozen-product
+comparator. At `600.094` seconds it terminated the comparator while product
+12 of 18 was starting. The preceding eleven product computations completed,
+but no consolidated comparison or scientific-floor receipt was written.
+Because the candidate already fails the performance promotion gate, no
+replacement imaging run and no redundant full comparison were launched. No
+full-size clean and no CASA `tclean` call occurred. The rejected execution
+evidence is:
+
+- campaign receipt SHA-256
+  `7a364d807b7f74b4c118559a6e9b59d9ebf6c5123a4485f2b752354df3296bf4`;
+- workload log SHA-256
+  `fe2f81bdd7b7aa68be9853f87e95d925368a99c13b7dd66854ae117b1f5e1cbc`;
+- host-telemetry receipt SHA-256
+  `50f57223acca29ff5bd573dc55b6d1c0c51678ed9c56dff468976f81c0b10eb6`;
+- partial comparison log SHA-256
+  `080c66a5827d41f3fb093696c4615466f528bd40cd0853fb39fc0c96bd03eb71`;
+  and
+- outer harness log SHA-256
+  `8ca8ebd6f43db0cccb42d34715e9d7f20cc513622834c5dfa6e04452472b090a`.
+
+The positive policy conclusion is narrow: stage-aware compensation release
+makes the full grid feasible with bounded compression and modest swap I/O.
+The negative performance conclusion is equally important: the planner must
+optimize the known cyclic CF working set as well as physical admission. An
+ordinary cache smaller than that working set is not an acceptable automatic
+trade for lower peak memory. The final clean campaign remains unrun, and the
+frozen `104.542929`-second / `12.207x` dirty result remains the promoted
+full-geometry dirty performance evidence.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.

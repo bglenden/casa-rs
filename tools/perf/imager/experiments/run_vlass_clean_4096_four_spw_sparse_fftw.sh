@@ -11,6 +11,18 @@ grid_threads="${CASA_RS_VLASS_GRID_THREADS:-1}"
 plan_threads="${CASA_RS_VLASS_AW_PLAN_THREADS:-1}"
 pack_threads="${CASA_RS_VLASS_AW_PACK_THREADS:-1}"
 standard_mfs_acceleration="${CASA_RS_VLASS_STANDARD_MFS_ACCELERATION:-cpu}"
+aw_major_cycle_operator="${CASA_RS_VLASS_AW_MAJOR_CYCLE_OPERATOR:-direct-replay}"
+ordered_response_physical_receipt="${CASA_RS_VLASS_ORDERED_RESPONSE_PHYSICAL_RECEIPT:-}"
+ordered_response_construction_dir="${CASA_RS_VLASS_ORDERED_RESPONSE_CONSTRUCTION_DIR:-}"
+ordered_response_shadow_exact="${CASA_RS_VLASS_ORDERED_RESPONSE_SHADOW_EXACT:-0}"
+localized_rows_output="${CASA_RS_VLASS_LOCALIZED_ROWS_OUTPUT:-}"
+flexible_gcr="${CASA_RS_VLASS_FLEXIBLE_GCR:-0}"
+flexible_gcr_incumbent_prefix="${CASA_RS_VLASS_FLEXIBLE_GCR_INCUMBENT_PREFIX:-}"
+component_trace_limit="${CASA_RS_VLASS_COMPONENT_TRACE_LIMIT:-0}"
+visibility_objective="${CASA_RS_VLASS_VISIBILITY_OBJECTIVE:-0}"
+decision_response_support="${CASA_RS_VLASS_DECISION_RESPONSE_SUPPORT:-}"
+decision_response_cache="${CASA_RS_VLASS_DECISION_RESPONSE_CACHE:-}"
+decision_response_column_limit="${CASA_RS_VLASS_DECISION_RESPONSE_COLUMN_LIMIT:-}"
 niter="${CASA_RS_VLASS_NITER:-6}"
 residual_only_refresh="${CASA_RS_VLASS_RESIDUAL_ONLY_REFRESH:-0}"
 tapless_phase="${CASA_RS_VLASS_TAPLESS_PHASE:-0}"
@@ -53,6 +65,12 @@ image_response_dyadic_tiles="${CASA_RS_VLASS_IMAGE_RESPONSE_DYADIC_TILES:-0}"
 incremental_model_max_delta_positions="${CASA_RS_VLASS_INCREMENTAL_MODEL_MAX_DELTA_POSITIONS:-1}"
 metal_tile_side="${CASA_RS_VLASS_METAL_TILE_SIDE:-16}"
 replay_retention_bytes="${CASA_RS_VLASS_REPLAY_RETENTION_BYTES:-}"
+packed_cf_experiment="${CASA_RS_VLASS_PACKED_CF_EXPERIMENT:-}"
+trust_packed_cf_experiment="${CASA_RS_VLASS_TRUST_PACKED_CF_EXPERIMENT:-0}"
+collapse_compensation_to_f32="${CASA_RS_VLASS_COLLAPSE_COMPENSATION_TO_F32:-0}"
+spw_selection="${CASA_RS_VLASS_SPW_SELECTION:-2,7,12,17}"
+cf_cache_override="${CASA_RS_VLASS_CF_CACHE:-}"
+memory_target_mb="${CASA_RS_VLASS_MEMORY_TARGET_MB:-16384}"
 frozen_model_prefix="${CASA_RS_VLASS_FROZEN_MODEL_PREFIX:-}"
 frozen_weight_image="${CASA_RS_VLASS_FROZEN_WEIGHT_IMAGE:-}"
 frozen_restoring_beam="${CASA_RS_VLASS_FROZEN_RESTORING_BEAM:-}"
@@ -70,6 +88,8 @@ ms="$root/data/frozen-clean-b80d5e87487a/VLASS1.2.sb36484946.eb36542800.58574.42
 residual_only_label=""
 tapless_phase_label=""
 replay_compact_programs_label=""
+packed_cf_label=""
+collapse_compensation_label=""
 prime_replay_initial_dirty_label=""
 plan_threads_label=""
 pack_threads_label=""
@@ -115,9 +135,180 @@ raw_frame_taylor_label=""
 prediction_prefix_trace_label=""
 grid_threads_label=""
 acceleration_label=""
+aw_major_cycle_operator_label=""
+ordered_response_shadow_exact_label=""
+flexible_gcr_label=""
+component_trace_label=""
+visibility_objective_label=""
+decision_response_label=""
 parallel_label=""
 parallel_argument=(--no-parallel)
 experimental_environment=(CASA_RS_VLASS_EXPERIMENT_RUNNER=1)
+case "$aw_major_cycle_operator" in
+    direct-replay)
+        if [[ -n "$ordered_response_physical_receipt" \
+            || -n "$ordered_response_construction_dir" ]]; then
+            echo "ordered-response artifacts require CASA_RS_VLASS_AW_MAJOR_CYCLE_OPERATOR=ordered-response" >&2
+            exit 2
+        fi
+        ;;
+    ordered-response)
+        aw_major_cycle_operator_label="-ordered-response"
+        if [[ "$ordered_response_physical_receipt" != /* \
+            || "$ordered_response_construction_dir" != /* ]]; then
+            echo "ordered-response requires absolute physical-receipt and construction-directory paths" >&2
+            exit 2
+        fi
+        if [[ ! -f "$ordered_response_physical_receipt" \
+            || ! -d "$ordered_response_construction_dir" ]]; then
+            echo "ordered-response artifact input is missing" >&2
+            exit 2
+        fi
+        experimental_environment+=(
+            CASA_RS_VLASS_ORDERED_RESPONSE_PHYSICAL_RECEIPT="$ordered_response_physical_receipt"
+            CASA_RS_VLASS_ORDERED_RESPONSE_CONSTRUCTION_DIR="$ordered_response_construction_dir"
+        )
+        ;;
+    *)
+        echo "CASA_RS_VLASS_AW_MAJOR_CYCLE_OPERATOR must be direct-replay or ordered-response" >&2
+        exit 2
+        ;;
+esac
+if [[ "$ordered_response_shadow_exact" == "1" ]]; then
+    if [[ "$aw_major_cycle_operator" != "ordered-response" ]]; then
+        echo "ordered-response shadow exact requires CASA_RS_VLASS_AW_MAJOR_CYCLE_OPERATOR=ordered-response" >&2
+        exit 2
+    fi
+    ordered_response_shadow_exact_label="-shadow-exact"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_ORDERED_RESPONSE_SHADOW_EXACT=1
+    )
+elif [[ "$ordered_response_shadow_exact" != "0" ]]; then
+    echo "CASA_RS_VLASS_ORDERED_RESPONSE_SHADOW_EXACT must be 0 or 1" >&2
+    exit 2
+fi
+if [[ -n "$localized_rows_output" ]]; then
+    if [[ "$niter" != "0" ]]; then
+        echo "CASA_RS_VLASS_LOCALIZED_ROWS_OUTPUT requires CASA_RS_VLASS_NITER=0" >&2
+        exit 2
+    fi
+    if [[ "$localized_rows_output" != /* ]]; then
+        echo "CASA_RS_VLASS_LOCALIZED_ROWS_OUTPUT must be an absolute path" >&2
+        exit 2
+    fi
+    if [[ -e "$localized_rows_output" ]]; then
+        echo "refusing to overwrite localized-row census: $localized_rows_output" >&2
+        exit 2
+    fi
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_LOCALIZED_ROW_CENSUS_OUTPUT="$localized_rows_output"
+    )
+fi
+if [[ "$flexible_gcr" == "1" ]]; then
+    if [[ "$aw_major_cycle_operator" != "direct-replay" \
+        || "$ordered_response_shadow_exact" != "0" \
+        || "$image_response_cache" != "0" \
+        || "$hybrid_clean" != "0" \
+        || -n "$frozen_model_prefix" ]]; then
+        echo "flexible GCR requires direct replay and cannot combine with ordered-response shadow, image-response cache, hybrid clean, or a frozen model" >&2
+        exit 2
+    fi
+    if [[ "$niter" -lt 640 ]]; then
+        echo "CASA_RS_VLASS_FLEXIBLE_GCR requires CASA_RS_VLASS_NITER>=640" >&2
+        exit 2
+    fi
+    if [[ "$flexible_gcr_incumbent_prefix" != /* ]]; then
+        echo "CASA_RS_VLASS_FLEXIBLE_GCR_INCUMBENT_PREFIX must be an absolute product prefix" >&2
+        exit 2
+    fi
+    for term in 0 1; do
+        if [[ ! -d "${flexible_gcr_incumbent_prefix}.residual.tt${term}" ]]; then
+            echo "flexible-GCR incumbent residual term does not exist: ${flexible_gcr_incumbent_prefix}.residual.tt${term}" >&2
+            exit 2
+        fi
+    done
+    flexible_gcr_label="-flexible-gcr5"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_FLEXIBLE_GCR=1
+        CASA_RS_EXPERIMENTAL_AWPROJECT_FLEXIBLE_GCR_INCUMBENT_PREFIX="$flexible_gcr_incumbent_prefix"
+    )
+elif [[ "$flexible_gcr" != "0" ]]; then
+    echo "CASA_RS_VLASS_FLEXIBLE_GCR must be 0 or 1" >&2
+    exit 2
+elif [[ -n "$flexible_gcr_incumbent_prefix" ]]; then
+    echo "CASA_RS_VLASS_FLEXIBLE_GCR_INCUMBENT_PREFIX requires CASA_RS_VLASS_FLEXIBLE_GCR=1" >&2
+    exit 2
+fi
+if [[ -n "$decision_response_support" ]]; then
+    if [[ "$decision_response_support" != /* \
+        || ! -f "$decision_response_support" ]]; then
+        echo "CASA_RS_VLASS_DECISION_RESPONSE_SUPPORT must name an existing absolute support receipt" >&2
+        exit 2
+    fi
+    if [[ "$niter" != "2000" \
+        || "$aw_major_cycle_operator" != "direct-replay" \
+        || "$flexible_gcr" != "0" \
+        || "$image_response_cache" != "0" \
+        || "$visibility_objective" != "0" \
+        || -n "$frozen_model_prefix" \
+        || "$replay_compact_programs" != "1" \
+        || "$prime_replay_initial_dirty" != "1" \
+        || "$sparse_model_prep" != "1" \
+        || "$metal_global_tile_replay" != "1" ]]; then
+        echo "exact decision responses require the niter=2000 direct-replay row with compact replay, initial-dirty priming, sparse model preparation, global Metal replay, and no competing clean experiment" >&2
+        exit 2
+    fi
+    if [[ "$decision_response_cache" != /* ]]; then
+        echo "CASA_RS_VLASS_DECISION_RESPONSE_CACHE must be an absolute cache prefix" >&2
+        exit 2
+    fi
+    case "$decision_response_column_limit" in
+        ''|*[!0-9]*|0)
+            if [[ -n "$decision_response_column_limit" ]]; then
+                echo "CASA_RS_VLASS_DECISION_RESPONSE_COLUMN_LIMIT must be a positive integer" >&2
+                exit 2
+            fi
+            ;;
+    esac
+    decision_response_label="-exact-decision-response"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_DECISION_RESPONSE_SUPPORT="$decision_response_support"
+        CASA_RS_EXPERIMENTAL_AWPROJECT_DECISION_RESPONSE_CACHE="$decision_response_cache"
+    )
+    if [[ -n "$decision_response_column_limit" ]]; then
+        experimental_environment+=(
+            CASA_RS_EXPERIMENTAL_AWPROJECT_DECISION_RESPONSE_COLUMN_LIMIT="$decision_response_column_limit"
+        )
+    fi
+elif [[ -n "$decision_response_cache" || -n "$decision_response_column_limit" ]]; then
+    echo "decision-response cache controls require CASA_RS_VLASS_DECISION_RESPONSE_SUPPORT" >&2
+    exit 2
+fi
+case "$component_trace_limit" in
+    *[!0-9]*)
+        echo "CASA_RS_VLASS_COMPONENT_TRACE_LIMIT must be a non-negative integer" >&2
+        exit 2
+        ;;
+esac
+if [[ "$component_trace_limit" -gt 0 ]]; then
+    component_trace_label="-component-trace${component_trace_limit}"
+    experimental_environment+=(
+        CASA_RS_MTMFS_COMPONENT_TRACE_LIMIT="$component_trace_limit"
+    )
+fi
+if [[ "$visibility_objective" == "1" ]]; then
+    if [[ "$metal_global_tile_replay" != "1" ]]; then
+        echo "CASA_RS_VLASS_VISIBILITY_OBJECTIVE requires CASA_RS_VLASS_METAL_GLOBAL_TILE_REPLAY=1" >&2
+        exit 2
+    fi
+    visibility_objective_label="-visibility-objective"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_VISIBILITY_OBJECTIVE=1
+    )
+elif [[ "$visibility_objective" != "0" ]]; then
+    echo "CASA_RS_VLASS_VISIBILITY_OBJECTIVE must be 0 or 1" >&2
+    exit 2
+fi
 if [[ -n "$frozen_model_prefix" ]]; then
     for term in 0 1; do
         if [[ ! -d "${frozen_model_prefix}.model.tt${term}" ]]; then
@@ -335,8 +526,10 @@ elif [[ "$tapless_phase" != "0" ]]; then
     exit 2
 fi
 if [[ "$replay_compact_programs" == "1" ]]; then
-    if [[ "$image_response_cache" != "1" ]]; then
-        echo "CASA_RS_VLASS_REPLAY_COMPACT_PROGRAMS requires CASA_RS_VLASS_IMAGE_RESPONSE_CACHE=1" >&2
+    if [[ "$image_response_cache" != "1" \
+        && "$flexible_gcr" != "1" \
+        && -z "$decision_response_support" ]]; then
+        echo "CASA_RS_VLASS_REPLAY_COMPACT_PROGRAMS requires image-response cache, flexible GCR, or exact decision responses" >&2
         exit 2
     fi
     replay_compact_programs_label="-compact-replay-programs"
@@ -790,7 +983,13 @@ if [[ "$grid_threads" != "1" ]]; then
     parallel_label="-parallel"
     parallel_argument=(--parallel)
 fi
-label="vlass-production-clean-4096-four-spw-sparse-fftw-t${fftw_threads}-niter${niter}${tapless_phase_label}${replay_compact_programs_label}${prime_replay_initial_dirty_label}${residual_only_label}${residual_live_cfs_only_label}${metal_f32_residual_fft_label}${metal_prediction_probe_label}${metal_tile_grid_probe_label}${metal_resident_chain_probe_label}${metal_resident_tile_chain_label}${metal_gpu_residual_replay_label}${metal_global_tile_replay_label}${prediction_grid_census_label}${model_delta_census_label}${physical_component_probe_label}${exact_component_probe_label}${incremental_model_probe_label}${incremental_model_runtime_label}${selected_model_dft_label}${image_response_cache_label}${image_response_dyadic_census_label}${image_response_dyadic_tiles_label}${prediction_sidecar_label}${wide_division_sidecar_label}${hybrid_residual_label}${hybrid_clean_label}${predivision_source_phase_label}${raw_frame_taylor_label}${prediction_prefix_trace_label}${model_fft_label}${sparse_model_dft_label}${linear_madfm_label}${keyed_madfm_label}${radix_madfm_label}${cache_refreshed_nsigma_label}${sparse_mask_peak_search_label}${parallel_model_term_fft_label}${model_fft_timing_label}${fftw_f64_timing_label}${fftw_f64_wisdom_label}${fftw_f32_wisdom_label}${sparse_model_prep_label}${parallel_residual_term_fft_label}${persistent_metal_pack_label}${plan_threads_label}${pack_threads_label}${grid_threads_label}${parallel_label}${acceleration_label}-v1"
+if [[ -n "$packed_cf_experiment" ]]; then
+    packed_cf_label="-packed-cf"
+fi
+if [[ "$collapse_compensation_to_f32" == "1" ]]; then
+    collapse_compensation_label="-collapse-compensation-f32"
+fi
+label="vlass-production-clean-4096-four-spw-sparse-fftw-t${fftw_threads}-niter${niter}${aw_major_cycle_operator_label}${ordered_response_shadow_exact_label}${flexible_gcr_label}${component_trace_label}${visibility_objective_label}${decision_response_label}${tapless_phase_label}${replay_compact_programs_label}${packed_cf_label}${collapse_compensation_label}${prime_replay_initial_dirty_label}${residual_only_label}${residual_live_cfs_only_label}${metal_f32_residual_fft_label}${metal_prediction_probe_label}${metal_tile_grid_probe_label}${metal_resident_chain_probe_label}${metal_resident_tile_chain_label}${metal_gpu_residual_replay_label}${metal_global_tile_replay_label}${prediction_grid_census_label}${model_delta_census_label}${physical_component_probe_label}${exact_component_probe_label}${incremental_model_probe_label}${incremental_model_runtime_label}${selected_model_dft_label}${image_response_cache_label}${image_response_dyadic_census_label}${image_response_dyadic_tiles_label}${prediction_sidecar_label}${wide_division_sidecar_label}${hybrid_residual_label}${hybrid_clean_label}${predivision_source_phase_label}${raw_frame_taylor_label}${prediction_prefix_trace_label}${model_fft_label}${sparse_model_dft_label}${linear_madfm_label}${keyed_madfm_label}${radix_madfm_label}${cache_refreshed_nsigma_label}${sparse_mask_peak_search_label}${parallel_model_term_fft_label}${model_fft_timing_label}${fftw_f64_timing_label}${fftw_f64_wisdom_label}${fftw_f32_wisdom_label}${sparse_model_prep_label}${parallel_residual_term_fft_label}${persistent_metal_pack_label}${plan_threads_label}${pack_threads_label}${grid_threads_label}${parallel_label}${acceleration_label}-v1"
 if [[ -n "${CASA_RS_VLASS_LABEL_OVERRIDE:-}" ]]; then
     case "$CASA_RS_VLASS_LABEL_OVERRIDE" in
         *[!A-Za-z0-9._-]*)
@@ -802,8 +1001,43 @@ if [[ -n "${CASA_RS_VLASS_LABEL_OVERRIDE:-}" ]]; then
 fi
 output="$root/artifacts/products/$label/rust"
 log="$root/receipts/runs/${receipt_date}-$label.log"
-cf_cache="$root/cf-cache/6.7.5.18/single-field-4096-four-spw"
+cf_cache="${cf_cache_override:-$root/cf-cache/6.7.5.18/single-field-4096-four-spw}"
 mask="$root/masks/vlass-single-field-peak-box-4096.mask"
+
+if [[ -n "$packed_cf_experiment" ]]; then
+    if [[ "$packed_cf_experiment" != /* || ! -f "$packed_cf_experiment" ]]; then
+        echo "CASA_RS_VLASS_PACKED_CF_EXPERIMENT must name an existing absolute file" >&2
+        exit 2
+    fi
+    packed_cf_label="-packed-cf"
+    experimental_environment+=(
+        CASA_RS_VLASS_PACKED_CF_EXPERIMENT="$packed_cf_experiment"
+    )
+    if [[ "$trust_packed_cf_experiment" == "1" ]]; then
+        experimental_environment+=(CASA_RS_VLASS_TRUST_PACKED_CF_EXPERIMENT=1)
+    elif [[ "$trust_packed_cf_experiment" != "0" ]]; then
+        echo "CASA_RS_VLASS_TRUST_PACKED_CF_EXPERIMENT must be 0 or 1" >&2
+        exit 2
+    fi
+elif [[ "$trust_packed_cf_experiment" != "0" ]]; then
+    echo "CASA_RS_VLASS_TRUST_PACKED_CF_EXPERIMENT requires CASA_RS_VLASS_PACKED_CF_EXPERIMENT" >&2
+    exit 2
+fi
+if [[ "$collapse_compensation_to_f32" == "1" ]]; then
+    collapse_compensation_label="-collapse-compensation-f32"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_COLLAPSE_COMPENSATION_TO_F32=1
+    )
+elif [[ "$collapse_compensation_to_f32" != "0" ]]; then
+    echo "CASA_RS_VLASS_COLLAPSE_COMPENSATION_TO_F32 must be 0 or 1" >&2
+    exit 2
+fi
+case "$memory_target_mb" in
+    ''|*[!0-9]*|0)
+        echo "CASA_RS_VLASS_MEMORY_TARGET_MB must be a positive integer" >&2
+        exit 2
+        ;;
+esac
 
 case "$fftw_threads" in
     ''|*[!0-9]*|0)
@@ -812,8 +1046,8 @@ case "$fftw_threads" in
         ;;
 esac
 case "$niter" in
-    ''|*[!0-9]*|0)
-        echo "CASA_RS_VLASS_NITER must be a positive integer" >&2
+    ''|*[!0-9]*)
+        echo "CASA_RS_VLASS_NITER must be a non-negative integer" >&2
         exit 2
         ;;
 esac
@@ -847,7 +1081,7 @@ set +e
     --cell-arcsec 0.6 \
     --field 1525 \
     --phasecenter-field 1525 \
-    --spw 2,7,12,17 \
+    --spw "$spw_selection" \
     --channel-start 0 \
     --channel-count 64 \
     --specmode mfs \
@@ -868,7 +1102,7 @@ set +e
     --imaging-fft-backend fftw \
     "${parallel_argument[@]}" \
     --standard-mfs-grid-threads "$grid_threads" \
-    --imaging-memory-target-mb 16384 \
+    --imaging-memory-target-mb "$memory_target_mb" \
     --imaging-prepare-workers 1 \
     --imaging-read-ahead-blocks 1 \
     --hogbom-iteration-mode strict \
@@ -889,6 +1123,7 @@ set +e
     --wprojplanes 32 \
     --cfcache "$cf_cache" \
     --cf-resident-mb 256 \
+    --aw-major-cycle-operator "$aw_major_cycle_operator" \
     --facets 1 \
     --computepastep 360.0 \
     --rotatepastep 360.0 \
@@ -991,6 +1226,17 @@ if [[ -n "$hybrid_residual_prefix" ]]; then
     fi
     echo "$log"
     exit 0
+fi
+if [[ -n "$decision_response_support" \
+    && "$run_status" -ne 0 \
+    && -n "$decision_response_column_limit" \
+    && -f "${decision_response_cache}.json" \
+    && -f "${decision_response_cache}.f32le" ]]; then
+    if /usr/bin/grep -Fq \
+        "awproject_exact_decision_response_checkpoint" "$log"; then
+        echo "$log"
+        exit 0
+    fi
 fi
 if [[ "$run_status" -ne 0 ]]; then
     exit "$run_status"

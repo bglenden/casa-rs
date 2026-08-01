@@ -20,10 +20,9 @@ from typing import Any
 import numpy as np
 
 
-SCHEMA = "casa-rs-vlass-localized-row-census-contract/v2"
+SCHEMA = "casa-rs-vlass-localized-row-census-contract/v3"
 ROW_SCHEMAS = {
-    "casa-rs-vlass-localized-row-census/v1",
-    "casa-rs-vlass-localized-row-census/v2",
+    "casa-rs-vlass-localized-row-census/v3",
 }
 SCREEN_SCHEMA = "casa-rs-vlass-evla-pre-w-screens/v2"
 ROW_DTYPE = np.dtype(
@@ -39,6 +38,8 @@ ROW_DTYPE = np.dtype(
         ("first_visibility", "<c8"),
         ("second_visibility", "<c8"),
         ("source_phase", "<c8"),
+        ("first_prediction_normalization", "<c8"),
+        ("second_prediction_normalization", "<c8"),
         ("replay_block_ordinal", "<u4"),
         ("window_ordinal", "<u4"),
         ("sample_index", "<u4"),
@@ -92,9 +93,120 @@ def unique_pointing_count(groups: list[dict[str, Any]]) -> int:
     return len({tuple(group[field] for field in fields) for group in groups})
 
 
+def pair_key(pair: dict[str, Any]) -> tuple[int, int, int, int]:
+    try:
+        return (
+            int(round(float(pair["imaging_frequency_hz"]))),
+            int(pair["imaging_mueller_element"]),
+            int(round(float(pair["prediction_frequency_hz"]))),
+            int(pair["prediction_mueller_element"]),
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise CensusContractError(
+            "ordered-response state pair has an invalid shape"
+        ) from error
+
+
+def attach_ordered_response_state_universe(
+    contract: dict[str, Any],
+    state_universe_contract_path: pathlib.Path,
+) -> None:
+    """Attach an explicit resident superset without rewriting observed states."""
+
+    source_path = state_universe_contract_path.resolve()
+    universe_contract = load_json(source_path)
+    if universe_contract.get("schema") != SCHEMA:
+        raise CensusContractError(
+            f"ordered-response state universe must use {SCHEMA}"
+        )
+    observed_sources = contract.get("sources")
+    universe_sources = universe_contract.get("sources")
+    observed_selection = contract.get("aw_screen_selection")
+    universe_selection = universe_contract.get("aw_screen_selection")
+    if not all(
+        isinstance(value, dict)
+        for value in (
+            observed_sources,
+            universe_sources,
+            observed_selection,
+            universe_selection,
+        )
+    ):
+        raise CensusContractError(
+            "ordered-response state universe lacks source or AW selection metadata"
+        )
+    assert isinstance(observed_sources, dict)
+    assert isinstance(universe_sources, dict)
+    assert isinstance(observed_selection, dict)
+    assert isinstance(universe_selection, dict)
+    if (
+        observed_sources.get("screen_manifest_sha256")
+        != universe_sources.get("screen_manifest_sha256")
+    ):
+        raise CensusContractError(
+            "ordered-response state universe uses a different physical screen manifest"
+        )
+    if (
+        observed_selection.get("persisted_cf_frequencies_hz")
+        != universe_selection.get("persisted_cf_frequencies_hz")
+        or observed_selection.get("mueller_elements")
+        != universe_selection.get("mueller_elements")
+    ):
+        raise CensusContractError(
+            "ordered-response state universe changes the persisted CF state axes"
+        )
+
+    observed_pairs = observed_selection.get("imaging_prediction_state_pairs")
+    resident_pairs = universe_selection.get("imaging_prediction_state_pairs")
+    if not isinstance(observed_pairs, list) or not isinstance(resident_pairs, list):
+        raise CensusContractError(
+            "ordered-response state universe lacks ordered AW pair lists"
+        )
+    observed_keys = {pair_key(pair) for pair in observed_pairs}
+    resident_keys = {pair_key(pair) for pair in resident_pairs}
+    if len(observed_keys) != len(observed_pairs):
+        raise CensusContractError("observed ordered AW pair list contains duplicates")
+    if len(resident_keys) != len(resident_pairs):
+        raise CensusContractError("resident ordered AW pair list contains duplicates")
+    if not observed_keys.issubset(resident_keys):
+        raise CensusContractError(
+            "ordered-response resident state universe omits an observed row route"
+        )
+    resident_imaging_states = {
+        (key[0], key[1]) for key in resident_keys
+    }
+    resident_prediction_states = {
+        (key[2], key[3]) for key in resident_keys
+    }
+    contract["ordered_response_state_universe"] = {
+        "role": (
+            "explicit provenance-bound resident superset; observed row selection "
+            "remains authoritative in aw_screen_selection"
+        ),
+        "source_contract": str(source_path),
+        "source_contract_sha256": sha256_file(source_path),
+        "source_screen_manifest_sha256": universe_sources[
+            "screen_manifest_sha256"
+        ],
+        "imaging_prediction_state_pairs": resident_pairs,
+        "observed_ordered_aw_pairs": len(observed_pairs),
+        "resident_ordered_aw_pairs": len(resident_pairs),
+        "inactive_resident_ordered_aw_pairs": len(resident_pairs)
+        - len(observed_pairs),
+        "resident_imaging_frequency_mueller_states": len(
+            resident_imaging_states
+        ),
+        "resident_prediction_frequency_mueller_states": len(
+            resident_prediction_states
+        ),
+        "observed_pairs_are_subset": True,
+    }
+
+
 def derive_contract(
     row_manifest_path: pathlib.Path,
     screen_manifest_path: pathlib.Path,
+    state_universe_contract_path: pathlib.Path | None = None,
 ) -> dict[str, Any]:
     row_manifest = load_json(row_manifest_path)
     screen_manifest = load_json(screen_manifest_path)
@@ -102,8 +214,8 @@ def derive_contract(
         raise CensusContractError("unsupported localized-row census schema")
     if screen_manifest.get("schema") != SCREEN_SCHEMA:
         raise CensusContractError(f"screen manifest must use {SCREEN_SCHEMA}")
-    if ROW_DTYPE.itemsize != 128:
-        raise AssertionError(f"localized row dtype is {ROW_DTYPE.itemsize}, expected 128")
+    if ROW_DTYPE.itemsize != 144:
+        raise AssertionError(f"localized row dtype is {ROW_DTYPE.itemsize}, expected 144")
 
     row_info = row_manifest.get("rows")
     contract = row_manifest.get("contract")
@@ -135,6 +247,36 @@ def derive_contract(
         )
 
     rows = np.memmap(row_path, dtype=ROW_DTYPE, mode="r", shape=(row_count,))
+    weights = np.asarray(rows["weight"], dtype=np.float64)
+    sumwt_factors = np.asarray(rows["sumwt_factor"], dtype=np.float64)
+    prediction_normalizations = np.stack(
+        [
+            np.asarray(
+                rows["first_prediction_normalization"],
+                dtype=np.complex128,
+            ),
+            np.asarray(
+                rows["second_prediction_normalization"],
+                dtype=np.complex128,
+            ),
+        ],
+        axis=1,
+    )
+    prediction_normalization_norm_squared = np.abs(prediction_normalizations) ** 2
+    if np.any(~np.isfinite(weights)) or np.any(weights <= 0.0):
+        raise CensusContractError("row weights are not positive and finite")
+    if not np.all(sumwt_factors == 2.0):
+        raise CensusContractError(
+            "VLASS Stokes-I row sumwt_factor is not exactly two parallel hands"
+        )
+    if (
+        np.any(~np.isfinite(prediction_normalizations))
+        or np.any(~np.isfinite(prediction_normalization_norm_squared))
+        or np.any(prediction_normalization_norm_squared <= 0.0)
+    ):
+        raise CensusContractError(
+            "prediction CF normalizations are not non-zero and finite"
+        )
     sample_frequencies_hz = np.asarray(rows["frequency_hz"], dtype=np.float64)
     reference_frequency_hz = float(contract["reference_frequency_hz"])
     radicand = (
@@ -196,7 +338,7 @@ def derive_contract(
         str(group["beam_frequency_hz_bits"]) for group in groups
     }
     screen_manifest_sha256 = sha256_file(screen_manifest_path)
-    return {
+    result = {
         "schema": SCHEMA,
         "role": "production-inert-contract-correction-and-row-state-discriminator",
         "sources": {
@@ -211,6 +353,21 @@ def derive_contract(
             "count": row_count,
             "record_bytes": ROW_DTYPE.itemsize,
             "bytes": expected_bytes,
+            "parallel_hand_routes": 2 * row_count,
+            "weight_semantics": (
+                "stored average-hand weight is applied once per explicit RR/LL "
+                "route; sumwt_factor=2 is diagnostic and is not multiplied again"
+            ),
+            "prediction_normalization_semantics": (
+                "each explicit RR/LL route retains the executable compact-CF "
+                "normalization used by degridding as 1/conj(normalization)"
+            ),
+            "prediction_normalization_abs_min": float(
+                np.min(np.abs(prediction_normalizations))
+            ),
+            "prediction_normalization_abs_max": float(
+                np.max(np.abs(prediction_normalizations))
+            ),
         },
         "pb_grouping": {
             "unique_pointings": unique_pointing_count(groups),
@@ -262,12 +419,26 @@ def derive_contract(
             ),
         },
     }
+    if state_universe_contract_path is not None:
+        attach_ordered_response_state_universe(
+            result,
+            state_universe_contract_path,
+        )
+    return result
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--row-manifest", type=pathlib.Path, required=True)
     parser.add_argument("--screen-manifest", type=pathlib.Path, required=True)
+    parser.add_argument(
+        "--ordered-response-state-universe-contract",
+        type=pathlib.Path,
+        help=(
+            "optional census contract whose ordered AW pairs form an explicit "
+            "resident superset without changing the observed selection"
+        ),
+    )
     parser.add_argument("--output", type=pathlib.Path, required=True)
     return parser.parse_args()
 
@@ -276,7 +447,11 @@ def main() -> int:
     args = parse_args()
     if args.output.exists():
         raise CensusContractError(f"refusing to overwrite {args.output}")
-    payload = derive_contract(args.row_manifest, args.screen_manifest)
+    payload = derive_contract(
+        args.row_manifest,
+        args.screen_manifest,
+        args.ordered_response_state_universe_contract,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
