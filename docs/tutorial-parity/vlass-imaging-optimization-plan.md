@@ -9210,35 +9210,38 @@ The synthetic f32 result differs from its explicit contraction by
 host transfer occurred. This is `5.03x` inside the `0.85 s` eleven-action
 budget.
 
-The real frozen route construction then passed the selected `192/J7`
-output-owner race. The CPU stage uses all `385,862` physical rows and
-`771,724` parallel-hand routes. It derives the exact state and subpixel route,
-stable-sorts with source ordinal as the final tie-breaker, performs
-complex-f64 segmented accumulation, converts each group once to complex-f32,
-and releases response scratch before building the RHS groups. It produced the
-expected `372,870` response groups and `370,650` RHS groups in `0.547069 s`
+The first real frozen route construction appeared to pass the selected
+`192/J7` output-owner race. Its CPU stage used all `385,862` physical rows and
+`771,724` parallel-hand routes. It derived the state and subpixel route,
+stable-sorted with source ordinal as the final tie-breaker, performed
+complex-f64 segmented accumulation, converted each group once to
+complex-f32, and released response scratch before building the RHS groups. It
+reported `372,870` response groups and `370,650` RHS groups in `0.547069 s`
 with `669,483,008` bytes peak RSS. The f64-to-f32 relative L2 differences were
 `2.563305e-8` for the response and `2.520834e-8` for the RHS.
 
-The Metal stage forms all `486` response and `168` RHS `192`-square grids with
-one output owner per ordered-state/cell, nine or six register accumulators,
-and no atomics, reductions, clipping, or lane-specific launches. Its cold
-command took `0.177590 s` wall and `0.167605 s` device time. Combined
-segmentation, output allocation, and Metal formation took `0.724698 s`, a
-`2.07x` margin inside the `1.50 s` construction gate. The Metal stage accounts
-for `252,578,596` resident bytes. Across four deterministic cells in every
-state, its worst coefficient-wise differences from direct complex-f64
-construction were `3.969275e-7` relative L2 and `5.230825e-7` normalized Linf
-for the response, and `2.526991e-7` and `5.298215e-7` for the RHS.
+That apparent pass is now invalidated as scientific construction evidence.
+The implementation sorted group records as `(state, x, y, ...)`, while the
+bucket offsets and Metal reader interpreted them as `(state, y, x, ...)`.
+The sampled self-check used the same incorrect layout, so CPU and Metal agreed
+on a scientifically wrong response-bank index. The timing remains indicative
+of construction cost only. The corrected evidence is recorded below.
 
-The measured controlled construction plus all eleven complete applications is
-therefore `0.893514 s`, `2.63x` inside the `2.35 s` combined breakthrough
-gate. This is a `[measured]` architecture discriminator, not an end-to-end
-speedup: it omits the real physical-screen coefficient binding, the
+The corresponding Metal stage formed all `486` response and `168` RHS
+`192`-square grids with one output owner per ordered-state/cell, nine or six
+register accumulators, and no atomics, reductions, clipping, or lane-specific
+launches. Its cold command took `0.177590 s` wall and `0.167605 s` device time.
+Combined segmentation, output allocation, and Metal formation took
+`0.724698 s`. The stage accounted for `252,578,596` resident bytes. Its
+reported coefficient checks are also invalidated because they indexed the
+same transposed bucket layout.
+
+The old combined `0.893514 s` construction-plus-eleven-action calculation is
+retained only as a timing discriminator. It is not correctness-bearing because
+the construction half used the invalid bucket layout. It never established an
+end-to-end speedup and omitted the real physical-screen coefficient binding,
 three-atom direct-row semantic gate, final model prediction, full-resolution
-finalizer, dense products, and imager integration. It does prove that FFT,
-ordered mixing, compact construction, and feedback synchronization are no
-longer physical blockers for the replacement graph.
+finalizer, dense products, and imager integration.
 
 Two invalid construction attempts are not negative architecture evidence.
 Both were stopped before a valid phase result because a prototype expression
@@ -9250,15 +9253,10 @@ made the complete construction finish in under one second. The earlier
 tentative attribution to simultaneous response/RHS materialization is
 superseded by this concrete cause.
 
-The next semantic gate remains bounded and mandatory. It binds the exact CASA
-forward/reverse screen artifacts and production coefficient recipe, retains
-all `54` ordered pair strata, and compares pure-TT0 and pure-TT1 three-atom
-scale-12/scale-5/point actions against a direct f64 row operator. Wrong
-same-frequency screens and PB-frequency Taylor coordinates must remain
-tenfold-sensitive controls. Only after that passes may the controlled
-construction become the real response/RHS state and proceed to final
-prediction, the native-screen full-resolution finalizer, and a reduced
-scientific row.
+The bounded semantic gate described here has now passed and is superseded by
+the physical-screen evidence below. Final prediction, the native-screen
+full-resolution finalizer, production integration, and the reduced scientific
+row remain outstanding.
 
 The new immutable receipts are:
 
@@ -9270,6 +9268,8 @@ The new immutable receipts are:
   `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/20260731-vlass-ordered-response-segmented-construction-v2/manifest.json`,
   SHA-256
   `11fff8030d2c5269c1ee13093e2c64c43f619c57c21e6718970a9dc78ce35eb0`;
+  this receipt is invalidated for scientific layout by the bucket-order defect
+  above and remains timing evidence only;
   and
 - real-route output-owner construction:
   `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/20260731-vlass-real-route-output-owner-construction-probe-v1/20260731-vlass-real-route-output-owner-construction-probe-v1.json`,
@@ -9278,6 +9278,88 @@ The new immutable receipts are:
 
 No CASA call, CLEAN run, imaging workload, full finalizer, or
 `12,150`-square development run produced this evidence.
+
+#### Physical-screen resident `Hm` breakthrough and bucket-order correction
+
+The mandatory physical semantic fixture now binds the production coefficient
+recipe to real forward A screens, exact POINTING-relative sampling, all `54`
+ordered pair strata, `7,304` active support pixels, `507` source pixels, and
+`28` output probes. It carries aggregate contracted and direct references for
+pure-TT0 and pure-TT1 scale-12, scale-5, and point-source atoms. Its exact-W
+discriminator passes with `2.643140151e-10` relative L2 and
+`4.175336906e-10` normalized Linf in `36.696 s`. The immutable v2 fixture is:
+
+- `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/20260731-vlass-ordered-response-physical-semantic-gate-v2/vlass-ordered-response-physical-semantic-gate-v2.json`,
+  SHA-256
+  `5ec14a9ccedf9c7859b9cecb981b2f7a7d57667a042cde92082aa9fb9a7e0153`.
+
+The corrected production-J7 output-owner construction sorts and buckets the
+records consistently as `(state, y, x, ...)`. It produces `372,910` response
+groups and `370,730` RHS groups. Segmentation took `0.604210292 s` with
+`681,574,400` bytes peak RSS; combined segmentation and Metal construction
+took `0.780710792 s`. Sampled response construction differs from direct f64 by
+`2.638390626e-7` relative L2 and `4.487601750e-7` normalized Linf. RHS
+construction differs by `2.951162278e-7` and `6.231278022e-7`, respectively.
+Its corrected receipt is:
+
+- `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/20260731-vlass-ordered-response-segmented-construction-v8/manifest.json`,
+  SHA-256
+  `a57e6af589972832bf825d2d4f664dbfdce94e9ca4f044e4b76e12c09fdc4239`.
+
+The complete physical resident `Hm` discriminator uses the real pair map,
+physical forward screens, exact POINTING-relative coordinates, all `7,304`
+active pixels, and a real three-atom pure-TT0/TT1 model. It materializes `192`
+forward planes, `168` inverse planes, `486` response planes, and all `1,296`
+mixing actions. The left-factor bank is deduplicated across output Taylor terms.
+Response UV is stored in FFT order and inverse normalization is explicit.
+
+A high-accuracy construction uses a temporary two-times, `384`-square grid,
+a width-14 beta-32.2 exponential-of-semicircle NUFFT kernel, exact f32 subcell
+coordinates, and a 65,536-interval interpolation table. It batches six pairs
+or `54` response planes at a time, retains the compact `192`-square hot bank,
+and bounds transient allocation. The construction itself matches its direct
+f64 response and RHS samples at `2.569122045e-8` and `2.518674652e-8`
+relative L2. Its final schema-bound receipt is:
+
+- `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/experiments/20260731-vlass-ordered-response-segmented-construction-v9/manifest.json`,
+  SHA-256
+  `6127295aad66057da2c72ea7cd071c7fbe68a047822f9d6605fda9286ac361be`.
+
+Applied to the physical semantic fixture, that resident operator passes at
+`1.282088038e-5` contracted relative L2 and `9.029214164e-6` normalized Linf.
+Its direct exact-W comparison is `1.282085503e-5` relative L2 and
+`9.029209095e-6` normalized Linf. The fitted complex scale is
+`1.000001884960318 + 6.493974802e-7 i`. This approximately `12.8 ppm`
+component-boundary error is below the current experimental scientific floor;
+it is not an end-to-end product comparison.
+
+Physical fixture and factor loading took `4.168223417 s`; response
+construction took `1.706329834 s`. Eleven hot resident applications measured
+`0.014354666 s` wall p50, `0.015430625 s` wall p90,
+`0.013537 s` device p50, and `0.014059833 s` device p90. The hot resident
+ledger is `310,414,916` bytes; construction transient GPU allocation is
+`159,252,480` bytes, construction input is `97,521,408` bytes, and the
+construction peak ledger is `567,188,804` bytes.
+
+The negative kernel experiments are retained without overstating them. After
+the bucket-order repair, `192/J7` plus deapodization measured `0.108049`
+relative L2 for the complete physical `Hm`; a true two-times `384/J7`
+construction measured `0.0627154`. Before the repair, a high-accuracy
+exponential-of-semicircle attempt measured `0.0563875`; that value is
+invalidated by the same layout defect. These results reject J7 accuracy for
+the complete operator but do not reject the resident-response architecture.
+The earlier v4, v5, and v6 construction receipts are likewise superseded for
+scientific correctness because their internal checks shared the incorrect
+layout.
+
+This breakthrough remains production-inert behind an ignored component test.
+It does not yet implement production RHS ownership, final model prediction,
+the native-screen full-resolution finalizer, dense products, the all-fields
+source-frame phase, or an end-to-end imager route. It establishes neither a
+clean timing nor a CASA speedup. The next production step is an opt-in
+experimental integration with task and UI controls, followed by the frozen
+`4,096`-square four-SPW scientific row. No CASA call, tclean invocation,
+imaging workload, or `12,150`-square development clean produced this evidence.
 
 #### Checkpoint verification and speedup classification
 
@@ -9293,10 +9375,11 @@ clean.
 
 The checkpoint stabilization gates were:
 
-- `CARGO_INCREMENTAL=0 cargo test -p casa-imaging`: `412` passed, `14`
+- `CARGO_INCREMENTAL=0 cargo test -p casa-imaging --lib`: `412` passed, `15`
   ignored, no failures;
-- the three ordered-response Python test modules: `8` passed;
-- Ruff over the six ordered-response Python source/test files: clean;
+- the four ordered-response construction/semantic Python test modules: `14`
+  passed;
+- Ruff over the eight ordered-response Python source/test files: clean;
 - `CARGO_INCREMENTAL=0 cargo clippy -p casa-imaging --all-targets -- -D
   warnings`: clean;
 - `cargo fmt --all -- --check`, `git diff --check`, and `just docs-check`:

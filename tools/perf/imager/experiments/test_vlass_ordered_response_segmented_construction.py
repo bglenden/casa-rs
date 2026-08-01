@@ -48,21 +48,84 @@ def test_stable_segment_preserves_source_order_and_builds_dense_buckets() -> Non
     assert len(samples) == 8
 
 
-def test_controlled_kernel_lut_is_symmetric_and_subpixel_sensitive() -> None:
+def test_dense_bucket_prefixes_follow_state_y_x_order() -> None:
+    state = np.zeros(4, dtype=np.uint16)
+    x = np.asarray([8, 7, 8, 7], dtype=np.int16)
+    y = np.asarray([7, 8, 8, 7], dtype=np.int16)
+    offset_x = np.asarray([1, 2, 3, 4], dtype=np.int16)
+    offset_y = np.zeros(4, dtype=np.int16)
+    coefficients = np.asarray([[10], [20], [30], [40]], dtype=np.complex128)
+
+    offsets, meta, values, _, _ = subject.stable_segment(
+        state,
+        (x, y, offset_x, offset_y),
+        coefficients,
+        1,
+    )
+
+    expected = {
+        (7, 7): (4, 40),
+        (8, 7): (1, 10),
+        (7, 8): (2, 20),
+        (8, 8): (3, 30),
+    }
+    for (x_value, y_value), (expected_offset, expected_value) in expected.items():
+        bucket = y_value * subject.SIDE + x_value
+        begin = int(offsets[bucket])
+        end = int(offsets[bucket + 1])
+        assert end - begin == 1
+        assert int(meta["offset_x"][begin]) == expected_offset
+        assert values[begin, 0] == expected_value
+
+
+def test_standard_j7_kernel_lut_is_normalized_symmetric_and_sensitive() -> None:
     assert subject.controlled_kernel_weight(0, -2) == subject.controlled_kernel_weight(
         0, 2
     )
     assert subject.controlled_kernel_weight(25, 1) != subject.controlled_kernel_weight(
         -25, 1
     )
-    assert subject.controlled_kernel_weight(0, 0) == 1.0
+    for offset in (-50, -25, 0, 25, 50):
+        total = sum(
+            subject.controlled_kernel_weight(offset, delta) for delta in range(-3, 4)
+        )
+        assert abs(total - 1.0) < 2.0e-7
+    assert subject.controlled_kernel_weight(0, 0) < 1.0
+
+
+def test_facet_rotation_preserves_direction_phase_differences() -> None:
+    dtype = np.dtype([("uvw_lambda", "<f8", (3,))])
+    rows = np.zeros(2, dtype=dtype)
+    rows["uvw_lambda"] = [
+        [-8196.2, -13477.0, 12544.9],
+        [104409.9, -86371.3, -35215.4],
+    ]
+    pixels = np.asarray([[563, 2113], [650, 2200]], dtype=np.float64)
+    global_l = (pixels[:, 0] - subject.IMAGE_REFERENCE_PIXEL) * subject.CELL_RAD
+    global_m = (subject.IMAGE_REFERENCE_PIXEL - pixels[:, 1]) * subject.CELL_RAD
+    global_eta = np.sqrt(1.0 - global_l**2 - global_m**2) - 1.0
+    global_directions = np.column_stack([global_l, global_m, global_eta])
+    basis = subject.facet_basis()
+    full_directions = np.column_stack([global_l, global_m, 1.0 + global_eta])
+    local = full_directions @ basis
+    local_directions = np.column_stack([local[:, 0], local[:, 1], local[:, 2] - 1.0])
+
+    global_phase = rows["uvw_lambda"] @ (global_directions[1] - global_directions[0])
+    local_phase = subject.rotate_uvw_to_facet(rows) @ (
+        local_directions[1] - local_directions[0]
+    )
+
+    np.testing.assert_allclose(
+        local_phase,
+        global_phase,
+        rtol=2.0e-12,
+        atol=2.0e-12,
+    )
 
 
 def test_parallel_hand_shape_guard_rejects_missing_route_coefficients() -> None:
     state = np.asarray([0, 0], dtype=np.uint16)
-    geometry = tuple(
-        np.asarray([10, 10], dtype=np.int16) for _ in range(4)
-    )
+    geometry = tuple(np.asarray([10, 10], dtype=np.int16) for _ in range(4))
     coefficients = np.ones((1, 2), dtype=np.complex128)
     try:
         subject.stable_segment(state, geometry, coefficients, 1)
