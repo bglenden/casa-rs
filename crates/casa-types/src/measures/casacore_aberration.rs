@@ -7,7 +7,9 @@
 //! using SOFA for most direction work, but frequency/radial-velocity parity
 //! with casacore requires this exact Earth orbital-velocity series.
 
-const AU_M: f64 = 149_597_870_700.0;
+// Casacore's `UnitVal(1e-8, "AU/d")` uses the legacy IAU light-time
+// definition `C::c * 499.0047837 s`, not the modern exact AU metre value.
+const AU_M: f64 = 299_792_458.0 * 499.004_783_7;
 const DAY_S: f64 = 86_400.0;
 const JD_CENTURY_DAYS: f64 = 36_525.0;
 const MJD_J2000: f64 = 51_544.5;
@@ -68,6 +70,74 @@ pub(crate) fn earth_barycentric_velocity_ms(tdb_mjd: f64) -> [f64; 3] {
     velocity_ms
 }
 
+/// Evaluate the time derivative paired with casacore's standard aberration
+/// series, in metres per second per day.
+pub(crate) fn earth_barycentric_velocity_derivative_ms_per_day(tdb_mjd: f64) -> [f64; 3] {
+    let t = (tdb_mjd - MJD_J2000) / JD_CENTURY_DAYS;
+    let mut fa = [0.0; 13];
+    let mut dfa = [0.0; 13];
+    for (i, [base, rate]) in ABER_FUND.iter().copied().enumerate() {
+        fa[i] = base + rate * t;
+        dfa[i] = rate;
+    }
+
+    let mut derivative_ms_per_century = [0.0; 3];
+
+    for (row, args) in MUL_ABER_ARG.iter().enumerate() {
+        let mut phase = 0.0;
+        let mut phase_derivative = 0.0;
+        for ((arg, fund), derivative) in args.iter().zip(fa.iter()).zip(dfa.iter()).take(6) {
+            phase += f64::from(*arg) * *fund;
+            phase_derivative += f64::from(*arg) * *derivative;
+        }
+        let (sin_phase, cos_phase) = phase.sin_cos();
+        let coeff = mul_aber_coefficients(row, t);
+        let coeff_derivative = mul_aber_coefficient_derivatives(row, t);
+        derivative_ms_per_century[0] += coeff_derivative[0] * sin_phase
+            + coeff_derivative[1] * cos_phase
+            + (coeff[0] * cos_phase - coeff[1] * sin_phase) * phase_derivative;
+        derivative_ms_per_century[1] += coeff_derivative[2] * sin_phase
+            + coeff_derivative[3] * cos_phase
+            + (coeff[2] * cos_phase - coeff[3] * sin_phase) * phase_derivative;
+        derivative_ms_per_century[2] += coeff_derivative[4] * sin_phase
+            + coeff_derivative[5] * cos_phase
+            + (coeff[4] * cos_phase - coeff[5] * sin_phase) * phase_derivative;
+    }
+
+    for (args, coeff) in MUL_ABER_SUN_ARG.iter().zip(MUL_SUN_ABER.iter()) {
+        let mut phase = 0.0;
+        let mut phase_derivative = 0.0;
+        for ((arg, fund), derivative) in args.iter().zip(fa[1..8].iter()).zip(dfa[1..8].iter()) {
+            phase += f64::from(*arg) * *fund;
+            phase_derivative += f64::from(*arg) * *derivative;
+        }
+        let (sin_phase, cos_phase) = phase.sin_cos();
+        let coeff = scale_six(coeff);
+        derivative_ms_per_century[0] +=
+            (coeff[0] * cos_phase - coeff[1] * sin_phase) * phase_derivative;
+        derivative_ms_per_century[1] +=
+            (coeff[2] * cos_phase - coeff[3] * sin_phase) * phase_derivative;
+        derivative_ms_per_century[2] +=
+            (coeff[4] * cos_phase - coeff[5] * sin_phase) * phase_derivative;
+    }
+
+    for (args, coeff) in MUL_ABER_EARTH_ARG.iter().zip(MUL_EARTH_ABER.iter()) {
+        let mut phase = 0.0;
+        let mut phase_derivative = 0.0;
+        for ((arg, fund), derivative) in args.iter().zip(fa[8..13].iter()).zip(dfa[8..13].iter()) {
+            phase += f64::from(*arg) * *fund;
+            phase_derivative += f64::from(*arg) * *derivative;
+        }
+        let (sin_phase, cos_phase) = phase.sin_cos();
+        let coeff = scale_three(coeff);
+        derivative_ms_per_century[0] += coeff[0] * cos_phase * phase_derivative;
+        derivative_ms_per_century[1] += -coeff[1] * sin_phase * phase_derivative;
+        derivative_ms_per_century[2] += -coeff[2] * sin_phase * phase_derivative;
+    }
+
+    derivative_ms_per_century.map(|value| value / JD_CENTURY_DAYS)
+}
+
 fn mul_aber_coefficients(row: usize, t: f64) -> [f64; 6] {
     if row < 3 {
         std::array::from_fn(|index| {
@@ -80,6 +150,20 @@ fn mul_aber_coefficients(row: usize, t: f64) -> [f64; 6] {
         })
     } else {
         scale_six(&MUL_ABER[row])
+    }
+}
+
+fn mul_aber_coefficient_derivatives(row: usize, t: f64) -> [f64; 6] {
+    if row < 3 {
+        std::array::from_fn(|index| {
+            let offset = index * 3;
+            let coeff = MUL_ABER_TD[row];
+            let c1 = coeff[offset + 1] as f64;
+            let c2 = coeff[offset + 2] as f64;
+            (c1 + 2.0 * t * c2) * SERIES_FACTOR_MS
+        })
+    } else {
+        [0.0; 6]
     }
 }
 
@@ -269,6 +353,63 @@ const MUL_EARTH_ABER: [[i16; 3]; 17] = [
     [1, 0, 0],
     [0, 0, -1],
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn analytic_velocity_derivative_matches_centered_difference() {
+        let epoch_mjd = 58_574.453_934_895_835;
+        let step_days = 1.0e-5;
+        let before = earth_barycentric_velocity_ms(epoch_mjd - step_days);
+        let after = earth_barycentric_velocity_ms(epoch_mjd + step_days);
+        let numeric: [f64; 3] =
+            std::array::from_fn(|axis| (after[axis] - before[axis]) / (2.0 * step_days));
+        let analytic = earth_barycentric_velocity_derivative_ms_per_day(epoch_mjd);
+
+        for axis in 0..3 {
+            let error = (analytic[axis] - numeric[axis]).abs();
+            assert!(
+                error < 1.0e-3,
+                "axis {axis}: analytic={} numeric={} error={error}",
+                analytic[axis],
+                numeric[axis]
+            );
+        }
+    }
+
+    #[test]
+    fn vlass_epoch_value_and_derivative_match_casacore_standard() {
+        let epoch_mjd = 5_060_832_454.125 / DAY_S;
+        let velocity = earth_barycentric_velocity_ms(epoch_mjd);
+        let derivative = earth_barycentric_velocity_derivative_ms_per_day(epoch_mjd);
+        let expected_velocity = [
+            5_261.670_144_560_937,
+            -26_924.829_152_160_273,
+            -11_670.562_910_349_39,
+        ];
+        let expected_derivative = [
+            505.619_637_024_065_87,
+            89.909_565_479_466_96,
+            38.829_128_143_600_03,
+        ];
+        for axis in 0..3 {
+            assert!(
+                (velocity[axis] - expected_velocity[axis]).abs() < 1.0e-9,
+                "velocity axis {axis}: actual={} expected={}",
+                velocity[axis],
+                expected_velocity[axis],
+            );
+            assert!(
+                (derivative[axis] - expected_derivative[axis]).abs() < 1.0e-9,
+                "derivative axis {axis}: actual={} expected={}",
+                derivative[axis],
+                expected_derivative[axis],
+            );
+        }
+    }
+}
 
 const MUL_ABER_TD: [[i64; 18]; 3] = [
     [

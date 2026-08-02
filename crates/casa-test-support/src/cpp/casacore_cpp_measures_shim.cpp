@@ -900,6 +900,51 @@ int measures_shim_frequency_convert_via_mutated_model(
     }
 }
 
+int measures_shim_frequency_convert_via_reset_frame(
+    double freq_hz, const char* ref_in, const char* ref_out,
+    double initial_dir_lon, double initial_dir_lat,
+    double initial_epoch_mjd,
+    double target_dir_lon, double target_dir_lat,
+    double target_epoch_mjd, const char* dir_ref,
+    double obs_lon, double obs_lat, double obs_h,
+    double* freq_out)
+{
+    try {
+        auto tp_in = parse_frequency_ref(ref_in);
+        auto tp_out = parse_frequency_ref(ref_out);
+        auto tp_dir = parse_direction_ref(dir_ref);
+
+        MDirection initial_dir(
+            MVDirection(Quantity(initial_dir_lon, "rad"),
+                        Quantity(initial_dir_lat, "rad")),
+            tp_dir);
+        MEpoch initial_epoch(MVEpoch(initial_epoch_mjd), MEpoch::UTC);
+        MPosition obs(
+            MVPosition(Quantity(obs_h, "m"),
+                       Quantity(obs_lon, "rad"),
+                       Quantity(obs_lat, "rad")),
+            MPosition::WGS84);
+        MeasFrame frame(initial_epoch, obs, initial_dir);
+
+        // Match MSUtil::getFreqRangeInSpw exactly: construct the converter
+        // once against the initial frame, mutate that shared frame, and then
+        // invoke the converter with a Quantity.
+        MFrequency::Convert converter(tp_in, MFrequency::Ref(tp_out, frame));
+        MEpoch target_epoch(MVEpoch(target_epoch_mjd), MEpoch::UTC);
+        MDirection target_dir(
+            MVDirection(Quantity(target_dir_lon, "rad"),
+                        Quantity(target_dir_lat, "rad")),
+            tp_dir);
+        frame.resetEpoch(target_epoch);
+        frame.resetDirection(target_dir);
+
+        *freq_out = converter(Quantity(freq_hz, "Hz")).get("Hz").getValue();
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
 int measures_shim_frequency_convert_between_frames(
     double freq_hz, const char* ref_in, const char* ref_out,
     double src_dir_lon, double src_dir_lat, const char* src_dir_ref,

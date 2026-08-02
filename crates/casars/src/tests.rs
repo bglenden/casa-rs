@@ -9376,7 +9376,7 @@ fn imager_summary_tabs_do_not_treat_stokes_i_as_ms_correlation_selector() {
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imager_app(), schema, config);
     app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
-    app.set_text_value("polarization", "I");
+    app.set_text_value("stokes", "I");
 
     app.set_active_result_tab(ResultTab::Observations);
 

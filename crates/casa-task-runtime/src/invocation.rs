@@ -455,6 +455,99 @@ mod tests {
     }
 
     #[test]
+    fn vlass_awproject_profile_projects_one_complete_direct_cli_request() {
+        let bundle = builtin_surface_bundle("imager").unwrap();
+        let mut session = ParameterSession::defaults(bundle).unwrap();
+        for (name, value) in [
+            ("vis", ParameterValue::String("vlass.ms".into())),
+            ("imagename", ParameterValue::String("products/vlass".into())),
+            ("field", ParameterValue::String("1525".into())),
+            ("spw", ParameterValue::String("9".into())),
+            ("uvrange", ParameterValue::String("<12km".into())),
+            ("intent", ParameterValue::String("*TARGET*".into())),
+            ("stokes", ParameterValue::String("I".into())),
+            ("gridder", ParameterValue::String("awproject".into())),
+            ("cfcache", ParameterValue::String("/cache/vlass".into())),
+            ("deconvolver", ParameterValue::String("mtmfs".into())),
+            ("scales", ParameterValue::String("0,5,12".into())),
+            ("normtype", ParameterValue::String("flatnoise".into())),
+            ("parallel", ParameterValue::Bool(false)),
+            ("usepointing", ParameterValue::Bool(true)),
+            ("write_pb", ParameterValue::Bool(true)),
+            ("aterm", ParameterValue::Bool(true)),
+            ("psterm", ParameterValue::Bool(false)),
+            ("wbawp", ParameterValue::Bool(true)),
+            ("conjbeams", ParameterValue::Bool(true)),
+            ("mosweight", ParameterValue::Bool(false)),
+        ] {
+            session
+                .set(name, value)
+                .unwrap_or_else(|error| panic!("set VLASS profile parameter {name}: {error}"));
+        }
+        for (name, value) in [
+            ("nterms", 2_i64),
+            ("wprojplanes", 32),
+            ("cf_resident_mb", 256),
+            ("facets", 1),
+        ] {
+            session
+                .set(name, ParameterValue::Integer(value))
+                .unwrap_or_else(|error| panic!("set VLASS profile parameter {name}: {error}"));
+        }
+        session
+            .set("pblimit", ParameterValue::Float(0.0001))
+            .unwrap();
+
+        let invocation = project_provider_invocation(&session, |_family, _values, direct| {
+            Ok(ProviderInvocationAdaptation::direct(direct))
+        })
+        .unwrap();
+        let has_pair =
+            |flag: &str, value: &str| invocation.args.windows(2).any(|pair| pair == [flag, value]);
+        for (flag, value) in [
+            ("--ms", "vlass.ms"),
+            ("--imagename", "products/vlass"),
+            ("--field", "1525"),
+            ("--spw", "9"),
+            ("--uvrange", "<12km"),
+            ("--intent", "*TARGET*"),
+            ("--stokes", "I"),
+            ("--gridder", "awproject"),
+            ("--cfcache", "/cache/vlass"),
+            ("--cf-resident-mb", "256"),
+            ("--facets", "1"),
+            ("--wprojplanes", "32"),
+            ("--deconvolver", "mtmfs"),
+            ("--nterms", "2"),
+            ("--scales", "0,5,12"),
+            ("--normtype", "flatnoise"),
+            ("--pblimit", "0.0001"),
+        ] {
+            assert!(
+                has_pair(flag, value),
+                "missing {flag} {value:?}: {:?}",
+                invocation.args
+            );
+        }
+        for flag in [
+            "--usepointing",
+            "--write-pb",
+            "--aterm",
+            "--no-psterm",
+            "--wbawp",
+            "--conjbeams",
+            "--no-mosweight",
+            "--no-parallel",
+        ] {
+            assert!(
+                invocation.args.iter().any(|argument| argument == flag),
+                "missing {flag}: {:?}",
+                invocation.args
+            );
+        }
+    }
+
+    #[test]
     fn provider_adapter_must_consume_every_active_parameter_without_cli_spelling() {
         let bundle = builtin_surface_bundle("simobserve").unwrap();
         let mut session = ParameterSession::defaults(bundle).unwrap();

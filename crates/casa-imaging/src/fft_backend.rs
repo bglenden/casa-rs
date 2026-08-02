@@ -7,6 +7,7 @@
 //! candidate proves the same centered 2-D complex FFT semantics used by the
 //! current RustFFT path.
 
+use std::ffi::c_int;
 use std::fmt;
 use std::time::Duration;
 
@@ -137,7 +138,7 @@ pub enum FftBackendChoice {
     MetalVkFft,
     /// Apple MPSGraph FFT implementation candidate.
     MetalMpsGraph,
-    /// Local-only FFTW benchmark hook, excluded from default distribution.
+    /// Explicit local-only FFTW experiment, excluded from automatic selection.
     FftwLocalBench,
 }
 
@@ -497,13 +498,16 @@ pub fn select_fft_backend(spec: Fft2Spec) -> FftBackendSelection {
                 reason: capability.reason,
             }
         }
-        FftBackendChoice::FftwLocalBench => FftBackendSelection {
-            requested_backend: spec.backend_choice,
-            selected_backend: FftBackendChoice::FftwLocalBench,
-            requested_backend_supported: false,
-            fallback_used: false,
-            reason: "fftw_local_benchmark_hook_requires_external_command",
-        },
+        FftBackendChoice::FftwLocalBench => {
+            let capability = fft_backend_capability(FftBackendChoice::FftwLocalBench, spec);
+            FftBackendSelection {
+                requested_backend: spec.backend_choice,
+                selected_backend: FftBackendChoice::FftwLocalBench,
+                requested_backend_supported: capability.supported,
+                fallback_used: false,
+                reason: capability.reason,
+            }
+        }
     }
 }
 
@@ -536,12 +540,36 @@ pub fn fft_backend_capability(backend: FftBackendChoice, spec: Fft2Spec) -> FftB
             reason: metal_vkfft_unavailable_reason(spec),
         },
         FftBackendChoice::MetalMpsGraph => metal_mpsgraph_capability(backend, spec),
-        FftBackendChoice::FftwLocalBench => FftBackendCapability {
-            backend,
-            implemented: false,
-            supported: false,
-            reason: "fftw_local_benchmark_hook_requires_external_command",
-        },
+        FftBackendChoice::FftwLocalBench => {
+            let configured = crate::fftw_local::configured();
+            let shape_supported = spec.shape.rows > 0
+                && spec.shape.columns > 0
+                && spec.shape.batch > 0
+                && spec.shape.rows & 1 == 0
+                && spec.shape.columns & 1 == 0
+                && spec.shape.rows <= c_int::MAX as usize
+                && spec.shape.columns <= c_int::MAX as usize;
+            let supported = configured
+                && spec.precision == FftPrecision::F64
+                && spec.placement == FftPlacement::Host
+                && shape_supported;
+            FftBackendCapability {
+                backend,
+                implemented: configured,
+                supported,
+                reason: if !configured {
+                    "fftw_local_runtime_requires_CASA_RS_FFTW_LIBRARY_DIR"
+                } else if spec.precision != FftPrecision::F64 {
+                    "fftw_local_runtime_supports_f64_only"
+                } else if spec.placement != FftPlacement::Host {
+                    "fftw_local_runtime_requires_host_placement"
+                } else if !shape_supported {
+                    "fftw_local_runtime_requires_non_empty_even_int_range_axes"
+                } else {
+                    "fftw_local_explicit_f64_host_transform_supported"
+                },
+            }
+        }
     }
 }
 
@@ -877,10 +905,10 @@ pub(crate) fn transform_f64(
             )),
         },
         FftBackendChoice::Accelerate => accelerate_transform_f64(input, direction, use_case),
-        FftBackendChoice::Auto
-        | FftBackendChoice::MetalVkFft
-        | FftBackendChoice::MetalMpsGraph
-        | FftBackendChoice::FftwLocalBench => {
+        FftBackendChoice::FftwLocalBench => {
+            crate::fftw_local::centered_transform_f64(input, direction, use_case)
+        }
+        FftBackendChoice::Auto | FftBackendChoice::MetalVkFft | FftBackendChoice::MetalMpsGraph => {
             Err("backend_is_not_a_concrete_implemented_f64_transform")
         }
     }

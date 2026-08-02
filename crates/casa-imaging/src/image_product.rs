@@ -307,21 +307,22 @@ impl<'a> ImageProductSet<'a> {
             .find(|product| product.metadata.role == role)
     }
 
-    /// Attach a shared mask to the first product with a role.
-    pub fn set_first_role_shared_mask(
+    /// Attach a shared mask to every product with a role.
+    pub fn set_role_shared_mask(
         &mut self,
         role: ImageProductRole,
         mask: Arc<ArrayD<bool>>,
-    ) -> bool {
-        let Some(product) = self
+    ) -> usize {
+        let mut updated = 0usize;
+        for product in self
             .products
             .iter_mut()
-            .find(|product| product.metadata.role == role)
-        else {
-            return false;
-        };
-        product.metadata_mut().set_shared_mask(mask);
-        true
+            .filter(|product| product.metadata.role == role)
+        {
+            product.metadata_mut().set_shared_mask(mask.clone());
+            updated += 1;
+        }
+        updated
     }
 
     /// Add a CASA-style clean-mask product.
@@ -531,27 +532,37 @@ pub fn mtmfs_image_product_set<'a>(result: &'a MtmfsResult) -> ImageProductSet<'
     ));
     let psf_beam = image_beam_set_from_beam(result.beam);
     let image_beam = image_beam_set_from_beam(result.beam);
+    let restored_mask = result
+        .image_terms
+        .first()
+        .map(|image| Arc::new(image.mapv(|_| true).into_dyn()));
+    let alpha_mask = result
+        .alpha_mask
+        .as_ref()
+        .map(|mask| Arc::new(mask.clone().into_dyn()));
     for (term_index, psf_term) in result.psf_terms.iter().enumerate() {
+        let beam_set = if term_index == 0 {
+            psf_beam.clone()
+        } else {
+            ImageBeamSet::default()
+        };
         set.push_borrowed(
             format!(".psf.tt{term_index}"),
             psf_term,
             ImageProductMetadata::new(
                 ImageProductRole::Psf,
                 result.compatibility.psf_units.as_str(),
-                psf_beam.clone(),
+                beam_set,
             ),
         );
     }
     for (term_index, residual_term) in result.residual_terms.iter().enumerate() {
-        set.push_borrowed(
-            format!(".residual.tt{term_index}"),
-            residual_term,
-            ImageProductMetadata::new(
-                ImageProductRole::Residual,
-                result.compatibility.residual_units.as_str(),
-                image_beam.clone(),
-            ),
-        );
+        let mut metadata =
+            ImageProductMetadata::new(ImageProductRole::Residual, "", ImageBeamSet::default());
+        if let Some(mask) = restored_mask.as_ref() {
+            metadata = metadata.with_shared_mask(mask.clone());
+        }
+        set.push_borrowed(format!(".residual.tt{term_index}"), residual_term, metadata);
     }
     for (term_index, model_term) in result.model_terms.iter().enumerate() {
         set.push_borrowed(
@@ -565,15 +576,15 @@ pub fn mtmfs_image_product_set<'a>(result: &'a MtmfsResult) -> ImageProductSet<'
         );
     }
     for (term_index, image_term) in result.image_terms.iter().enumerate() {
-        set.push_borrowed(
-            format!(".image.tt{term_index}"),
-            image_term,
-            ImageProductMetadata::new(
-                ImageProductRole::Image,
-                result.compatibility.image_units.as_str(),
-                image_beam.clone(),
-            ),
+        let mut metadata = ImageProductMetadata::new(
+            ImageProductRole::Image,
+            result.compatibility.image_units.as_str(),
+            image_beam.clone(),
         );
+        if let Some(mask) = restored_mask.as_ref() {
+            metadata = metadata.with_shared_mask(mask.clone());
+        }
+        set.push_borrowed(format!(".image.tt{term_index}"), image_term, metadata);
     }
     for (term_index, sumwt_term) in result.sumwt_terms.iter().enumerate() {
         set.push_borrowed(
@@ -582,19 +593,27 @@ pub fn mtmfs_image_product_set<'a>(result: &'a MtmfsResult) -> ImageProductSet<'
             ImageProductMetadata::new(ImageProductRole::Sumwt, "", ImageBeamSet::default()),
         );
     }
-    if let Some(alpha) = result.alpha.as_ref() {
+    for (term_index, weight_term) in result.weight_terms.iter().enumerate() {
         set.push_borrowed(
-            ".alpha",
-            alpha,
-            ImageProductMetadata::new(ImageProductRole::Alpha, "", image_beam.clone()),
+            format!(".weight.tt{term_index}"),
+            weight_term,
+            ImageProductMetadata::new(ImageProductRole::Weight, "", ImageBeamSet::default()),
         );
     }
+    if let Some(alpha) = result.alpha.as_ref() {
+        let mut metadata =
+            ImageProductMetadata::new(ImageProductRole::Alpha, "", image_beam.clone());
+        if let Some(mask) = alpha_mask.as_ref() {
+            metadata = metadata.with_shared_mask(mask.clone());
+        }
+        set.push_borrowed(".alpha", alpha, metadata);
+    }
     if let Some(alpha_error) = result.alpha_error.as_ref() {
-        set.push_borrowed(
-            ".alpha.error",
-            alpha_error,
-            ImageProductMetadata::new(ImageProductRole::AlphaError, "", image_beam),
-        );
+        let mut metadata = ImageProductMetadata::new(ImageProductRole::AlphaError, "", image_beam);
+        if let Some(mask) = alpha_mask {
+            metadata = metadata.with_shared_mask(mask);
+        }
+        set.push_borrowed(".alpha.error", alpha_error, metadata);
     }
     set
 }
@@ -732,5 +751,51 @@ mod tests {
         let set = cube_image_product_set(&result, RestoringBeamMode::Common, None).unwrap();
         let image = set.first_by_role(ImageProductRole::Image).unwrap();
         assert!(image.metadata().beam_set().single_beam().is_some());
+    }
+
+    #[test]
+    fn mtmfs_product_set_attaches_the_psf_beam_only_to_term_zero() {
+        let beam = Some(BeamFit {
+            major_fwhm_rad: 1.0,
+            minor_fwhm_rad: 0.5,
+            position_angle_rad: 0.1,
+        });
+        let result = MtmfsResult {
+            psf_terms: vec![image(1.0), image(2.0), image(3.0)],
+            residual_terms: vec![image(4.0), image(5.0)],
+            model_terms: vec![image(6.0), image(7.0)],
+            image_terms: vec![image(8.0), image(9.0)],
+            sumwt_terms: vec![image(10.0), image(11.0), image(12.0)],
+            weight_terms: vec![image(13.0), image(14.0), image(15.0)],
+            alpha: Some(image(16.0)),
+            alpha_error: Some(image(17.0)),
+            alpha_mask: Some(Array4::from_elem((2, 2, 1, 2), true)),
+            awproject: None,
+            beam,
+            diagnostics: diagnostics(),
+            compatibility: compatibility(),
+        };
+
+        let set = mtmfs_image_product_set(&result);
+        let products = set.products();
+        for (suffix, has_beam) in [
+            (".psf.tt0", true),
+            (".psf.tt1", false),
+            (".psf.tt2", false),
+            (".image.tt0", true),
+            (".image.tt1", true),
+            (".alpha", true),
+            (".alpha.error", true),
+        ] {
+            let product = products
+                .iter()
+                .find(|product| product.suffix() == suffix)
+                .unwrap();
+            assert_eq!(
+                product.metadata().beam_set().single_beam().is_some(),
+                has_beam,
+                "unexpected restoring beam topology for {suffix}"
+            );
+        }
     }
 }

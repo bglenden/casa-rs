@@ -23,7 +23,8 @@
 use crate::error::{MsError, MsResult};
 use crate::ms::MeasurementSet;
 use crate::selection::syntax::{ChannelSelection, parse_spw_selector};
-use casa_tables::Table;
+use casa_tables::{SelectedArray1DCells, Table};
+use casa_types::ArrayValue;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -114,8 +115,37 @@ pub(crate) struct CompiledMsSelection {
     state_ids: Vec<i32>,
     observation_ids: Vec<i32>,
     array_ids: Vec<i32>,
+    uv_ranges: Vec<UvSelectionRange>,
+    uv_taql_exprs: Vec<String>,
     taql_exprs: Vec<String>,
     correlation_types: Vec<i32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum UvBoundOp {
+    Greater,
+    GreaterEqual,
+    Less,
+    LessEqual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct UvBound {
+    pub(crate) value: f64,
+    pub(crate) op: UvBoundOp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum UvUnit {
+    Meters(f64),
+    Lambda(f64),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct UvSelectionRange {
+    pub(crate) lower: Option<UvBound>,
+    pub(crate) upper: Option<UvBound>,
+    pub(crate) unit: UvUnit,
 }
 
 /// Explicit resource inputs for deterministic selected-row block planning.
@@ -833,6 +863,10 @@ impl CompiledMsSelection {
             clauses.push(format!("ARRAY_ID IN [{}]", int_list(&self.array_ids)));
         }
 
+        for expr in &self.uv_taql_exprs {
+            clauses.push(format!("({expr})"));
+        }
+
         for expr in &self.taql_exprs {
             clauses.push(format!("({expr})"));
         }
@@ -1049,6 +1083,17 @@ fn apply_structured_selection(
     let state_ids: HashSet<i32> = sel.state_ids.iter().copied().collect();
     let observation_ids: HashSet<i32> = sel.observation_ids.iter().copied().collect();
     let array_ids: HashSet<i32> = sel.array_ids.iter().copied().collect();
+    let uv_lambda_by_ddid = if sel
+        .uv_ranges
+        .iter()
+        .any(|range| matches!(range.unit, UvUnit::Lambda(_)))
+    {
+        parser::ddid_to_lambda_map(ms)?
+            .into_iter()
+            .collect::<BTreeMap<_, _>>()
+    } else {
+        BTreeMap::new()
+    };
 
     if !sel.spw_ids.is_empty() && spw_ddids.is_empty() {
         return Ok(Vec::new());
@@ -1057,7 +1102,9 @@ fn apply_structured_selection(
     let table = ms.main_table();
     let column_request = StructuredSelectionColumnRequest {
         field: !field_ids.is_empty(),
-        data_desc: !sel.spw_ids.is_empty() || !data_desc_ids.is_empty(),
+        data_desc: !sel.spw_ids.is_empty()
+            || !data_desc_ids.is_empty()
+            || !uv_lambda_by_ddid.is_empty(),
         antenna1: !antenna_ids.is_empty() || !baselines.is_empty(),
         antenna2: !antenna_ids.is_empty() || !baselines.is_empty(),
         time: sel.time_range.is_some(),
@@ -1065,6 +1112,7 @@ fn apply_structured_selection(
         state: !state_ids.is_empty(),
         observation: !observation_ids.is_empty(),
         array: !array_ids.is_empty(),
+        uvw: !sel.uv_ranges.is_empty(),
     };
     let rows_per_block = rows_per_block.unwrap_or_else(|| table.row_count().max(1));
     let mut load_columns_ns = 0u64;
@@ -1094,6 +1142,7 @@ fn apply_structured_selection(
                 &state_ids,
                 &observation_ids,
                 &array_ids,
+                &uv_lambda_by_ddid,
             ) {
                 rows.push(row);
             }
@@ -1106,7 +1155,7 @@ fn apply_structured_selection(
         "structured_selection",
         setup_started_at.elapsed().as_nanos() as u64,
         Some(format!(
-            "rows={} row_count={} load_columns={:.3}s filter_rows={:.3}s requested=field:{} data_desc:{} antenna:{} time:{} scan:{} state:{} observation:{} array:{}",
+            "rows={} row_count={} load_columns={:.3}s filter_rows={:.3}s requested=field:{} data_desc:{} antenna:{} time:{} scan:{} state:{} observation:{} array:{} uvrange:{}",
             rows.len(),
             table.row_count(),
             load_columns_ns as f64 / 1_000_000_000.0,
@@ -1119,6 +1168,7 @@ fn apply_structured_selection(
             !state_ids.is_empty(),
             !observation_ids.is_empty(),
             !array_ids.is_empty(),
+            !sel.uv_ranges.is_empty(),
         )),
     );
 
@@ -1139,6 +1189,7 @@ fn structured_row_matches(
     state_ids: &HashSet<i32>,
     observation_ids: &HashSet<i32>,
     array_ids: &HashSet<i32>,
+    uv_lambda_by_ddid: &BTreeMap<i32, f64>,
 ) -> bool {
     if columns
         .field
@@ -1171,6 +1222,20 @@ fn structured_row_matches(
     {
         return false;
     }
+    if let Some(uvw) = columns.uvw.as_ref() {
+        let data_desc_id = columns
+            .data_desc
+            .as_ref()
+            .and_then(|values| values.get(slot))
+            .copied();
+        if !sel
+            .uv_ranges
+            .iter()
+            .any(|range| uv_range_matches(*range, uvw[slot], data_desc_id, uv_lambda_by_ddid))
+        {
+            return false;
+        }
+    }
     columns
         .scan
         .as_ref()
@@ -1187,6 +1252,40 @@ fn structured_row_matches(
             .array
             .as_ref()
             .is_none_or(|column| array_ids.contains(&column[slot]))
+}
+
+fn uv_range_matches(
+    range: UvSelectionRange,
+    uvw_m: [f64; 3],
+    data_desc_id: Option<i32>,
+    uv_lambda_by_ddid: &BTreeMap<i32, f64>,
+) -> bool {
+    let unit_to_meters = match range.unit {
+        UvUnit::Meters(scale) => scale,
+        UvUnit::Lambda(scale) => {
+            let Some(lambda_m) = data_desc_id
+                .and_then(|id| uv_lambda_by_ddid.get(&id))
+                .copied()
+            else {
+                return false;
+            };
+            lambda_m * scale
+        }
+    };
+    let distance_squared_m2 = uvw_m[0] * uvw_m[0] + uvw_m[1] * uvw_m[1];
+    if !(unit_to_meters.is_finite() && unit_to_meters > 0.0 && distance_squared_m2.is_finite()) {
+        return false;
+    }
+    let compare = |bound: UvBound| {
+        let bound_squared_m2 = (bound.value * unit_to_meters).powi(2);
+        match bound.op {
+            UvBoundOp::Greater => distance_squared_m2 > bound_squared_m2,
+            UvBoundOp::GreaterEqual => distance_squared_m2 >= bound_squared_m2,
+            UvBoundOp::Less => distance_squared_m2 < bound_squared_m2,
+            UvBoundOp::LessEqual => distance_squared_m2 <= bound_squared_m2,
+        }
+    };
+    range.lower.is_none_or(compare) && range.upper.is_none_or(compare)
 }
 
 fn selection_profile_enabled() -> bool {
@@ -1231,6 +1330,7 @@ struct StructuredSelectionColumnRequest {
     state: bool,
     observation: bool,
     array: bool,
+    uvw: bool,
 }
 
 #[derive(Debug, Default)]
@@ -1244,6 +1344,7 @@ struct StructuredSelectionColumns {
     state: Option<Vec<i32>>,
     observation: Option<Vec<i32>>,
     array: Option<Vec<i32>>,
+    uvw: Option<Vec<[f64; 3]>>,
 }
 
 fn load_structured_selection_columns(
@@ -1281,6 +1382,9 @@ fn load_structured_selection_columns(
         if request.array {
             columns.array = Some(Vec::new());
         }
+        if request.uvw {
+            columns.uvw = Some(Vec::new());
+        }
         return Ok(columns);
     }
 
@@ -1311,8 +1415,73 @@ fn load_structured_selection_columns(
     if request.array {
         columns.array = Some(load_i32_column(table, "ARRAY_ID", rows)?);
     }
+    if request.uvw {
+        columns.uvw = Some(load_uvw_column(table, rows)?);
+    }
 
     Ok(columns)
+}
+
+fn load_uvw_column(table: &Table, rows: &[usize]) -> MsResult<Vec<[f64; 3]>> {
+    let accessor = table.column_accessor("UVW")?;
+    if let Ok(cells) = accessor.array_cells_1d_typed_uncached(rows) {
+        let SelectedArray1DCells::Float64(values) = cells else {
+            return Err(MsError::ColumnTypeMismatch {
+                column: "UVW".to_string(),
+                table: "MAIN".to_string(),
+                expected: "Float64 array".to_string(),
+                found: format!("{:?}", cells.primitive_type()),
+            });
+        };
+        if values.axis0_count() != 3 {
+            return Err(MsError::ColumnTypeMismatch {
+                column: "UVW".to_string(),
+                table: "MAIN".to_string(),
+                expected: "f64[3]".to_string(),
+                found: format!("f64[{}]", values.axis0_count()),
+            });
+        }
+        return Ok(values
+            .into_values()
+            .chunks_exact(3)
+            .map(|uvw| [uvw[0], uvw[1], uvw[2]])
+            .collect());
+    }
+
+    let values = accessor.array_cells_owned_uncached(rows)?;
+    values
+        .into_iter()
+        .zip(rows.iter().copied())
+        .map(|(value, row)| match value {
+            Some(ArrayValue::Float64(values)) if values.len() == 3 => {
+                let values = values
+                    .as_slice()
+                    .ok_or_else(|| MsError::ColumnTypeMismatch {
+                        column: format!("UVW[row={row}]"),
+                        table: "MAIN".to_string(),
+                        expected: "contiguous f64[3]".to_string(),
+                        found: "non-contiguous Float64 array".to_string(),
+                    })?;
+                Ok([values[0], values[1], values[2]])
+            }
+            Some(ArrayValue::Float64(values)) => Err(MsError::ColumnTypeMismatch {
+                column: format!("UVW[row={row}]"),
+                table: "MAIN".to_string(),
+                expected: "f64[3]".to_string(),
+                found: format!("f64[{}]", values.len()),
+            }),
+            Some(other) => Err(MsError::ColumnTypeMismatch {
+                column: format!("UVW[row={row}]"),
+                table: "MAIN".to_string(),
+                expected: "Float64 array".to_string(),
+                found: format!("{:?}", other.primitive_type()),
+            }),
+            None => Err(MsError::MissingColumn {
+                column: format!("UVW[row={row}]"),
+                table: "MAIN".to_string(),
+            }),
+        })
+        .collect()
 }
 
 fn load_i32_column(table: &Table, column: &str, rows: &[usize]) -> MsResult<Vec<i32>> {

@@ -601,7 +601,10 @@ dependencies = [
  "casa-lattices",
  "casa-test-support",
  "casa-types",
+ "libloading",
  "libm",
+ "memmap2",
+ "nalgebra",
  "ndarray",
  "num-complex",
  "objc2",
@@ -609,8 +612,10 @@ dependencies = [
  "objc2-metal",
  "objc2-metal-performance-shaders",
  "objc2-metal-performance-shaders-graph",
+ "rayon",
  "rustfft",
  "serial_test",
+ "tempfile",
  "thiserror 2.0.18",
 ]
 
