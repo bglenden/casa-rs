@@ -12,34 +12,40 @@ pub(crate) fn solve_symmetric_ldlt_casacore<const N: usize>(
     known: [f64; N],
 ) -> Option<[f64; N]> {
     for row in 0..N {
-        let mut diagonal = normal[row][row];
-        for prior in 0..row {
-            diagonal -= normal[prior][row] * normal[prior][row] / normal[prior][prior];
+        let (prior_rows, current_and_after) = normal.split_at_mut(row);
+        let current_row = &mut current_and_after[0];
+        let original_diagonal = current_row[row];
+        let mut diagonal = original_diagonal;
+        for (prior, prior_row) in prior_rows.iter().enumerate() {
+            diagonal -= prior_row[row] * prior_row[row] / prior_row[prior];
         }
-        if !diagonal.is_finite() || diagonal * diagonal / normal[row][row] <= 1.0e-12 {
+        if !diagonal.is_finite() || diagonal * diagonal / original_diagonal <= 1.0e-12 {
             return None;
         }
-        normal[row][row] = diagonal;
+        current_row[row] = diagonal;
         for column in row + 1..N {
-            for prior in 0..row {
-                normal[row][column] -=
-                    normal[prior][row] * normal[prior][column] / normal[prior][prior];
+            for (prior, prior_row) in prior_rows.iter().enumerate() {
+                current_row[column] -= prior_row[row] * prior_row[column] / prior_row[prior];
             }
         }
     }
 
     let mut solution = [0.0; N];
     for row in 0..N {
-        solution[row] = known[row];
-        for prior in 0..row {
-            solution[row] -= normal[prior][row] * solution[prior] / normal[prior][prior];
+        let (prior_solutions, current_and_after) = solution.split_at_mut(row);
+        let current_solution = &mut current_and_after[0];
+        *current_solution = known[row];
+        for (prior, prior_solution) in prior_solutions.iter().enumerate() {
+            *current_solution -= normal[prior][row] * *prior_solution / normal[prior][prior];
         }
     }
     for row in (0..N).rev() {
-        for column in row + 1..N {
-            solution[row] -= normal[row][column] * solution[column];
+        let (_, current_and_after) = solution.split_at_mut(row);
+        let (current, later_solutions) = current_and_after.split_at_mut(1);
+        for (offset, later_solution) in later_solutions.iter().enumerate() {
+            current[0] -= normal[row][row + offset + 1] * *later_solution;
         }
-        solution[row] /= normal[row][row];
+        current[0] /= normal[row][row];
     }
     Some(solution)
 }
