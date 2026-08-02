@@ -11,8 +11,8 @@
       "manifest_sha256": "d8de70dabf3c1b768a69dc9d0f2a1e8e159b29b67e668079272c7b08bac98bdf",
       "authorized_at": "2026-08-02T16:26:44Z",
       "started_at": "2026-08-02T16:31:32Z",
-      "completed_at": null,
-      "disposition": "running",
+      "completed_at": "2026-08-02T18:35:51Z",
+      "disposition": "rejected_invalid_science_configuration",
       "external_invalidation": false,
       "max_wall_seconds": 604800,
       "run_id": "20260802T163132Z-vlass-fragment-all-fields-clean-cap20000-casa-1e77d471",
@@ -32,8 +32,37 @@
           "counted_as_scientific_launch": false
         }
       ],
-      "receipt_path": null,
-      "receipt_sha256": null
+      "receipt_path": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-b-fragment63-clean-cap20000-v1/receipts/20260802T163132Z-vlass-fragment-all-fields-clean-cap20000-casa-1e77d471.json",
+      "receipt_sha256": "b62daf1de4549d4f5ca186c1b5c02ce501089d97ba72cfc61cefe9fb35084bb5",
+      "evidence": {
+        "tclean_wall_seconds": 6902.788125415915,
+        "actual_minor_iterations": 0,
+        "model_peak_abs": 0.0,
+        "full_residual_peak_abs": 0.43187782168388367,
+        "full_residual_peak_pixel": [4633, 6183],
+        "masked_residual_peak_abs": 0.0006592079880647361,
+        "nsigma_threshold": 0.00169344,
+        "configured_mask_blc": [6243, 6003],
+        "configured_mask_trc": [6306, 6066],
+        "casa_log_sha256": "535248c9c1910d94666df59a5d45dd5b66e25b759d1587acfa862e1f064671c0",
+        "casa_result_sha256": "207f27a9a72550b473b793dbb22c0e99b53f4678b13287e02a953de7ebb73003",
+        "comparison_input_sha256": "eec618e13d431de7e4695b5d272d7e78d9297a503d4d6062558ef0dd987dba12",
+        "comparison_sha256": "abbd0399326c1319e370421491bde3c756e229edbd6da5329951eb3ab4f476f4",
+        "harness_failure": "The comparator correctly rejected the empty model, but an operational-failure tolerance bug then obscured that scientific failure as a run-result schema error."
+      }
     }
-  ]
+  ],
+  "pending_reference_amendment": {
+    "status": "awaits_explicit_user_approval",
+    "reason": "The approved v1 CASA-B launch used a mask that did not cover the measured 0.431878 Jy residual peak and therefore selected zero clean components. The recovery contract does not silently grant a replacement launch for an avoidable configuration defect.",
+    "row_id": "CASA-B-FRAGMENT63-CLEAN-CAP20000-v2",
+    "base_manifest_path": "tools/perf/imager/workloads/vlass-fragment-all-fields-clean-casa-v2.json",
+    "base_manifest_sha256": "0cabbe5fdc2f687a10fce3653d018e09db7349a0a1299d16a4f6772557f9f5d9",
+    "manifest_path": "tools/perf/imager/workloads/vlass-fragment-all-fields-clean-cap20000-casa-v2.json",
+    "manifest_sha256": "63948fe140d5c06c00b924eea407e5afe8ccb2f99e2c927290d9de4644002053",
+    "corrected_mask_path": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/masks/vlass-single-field-peak-box.mask",
+    "corrected_mask_sha256": "fabf361e6609a4d66c251458c2ed31bc80978d936e78a39a8f449bd1a63dc322",
+    "corrected_mask_blc": [4602, 6152],
+    "corrected_mask_trc": [4665, 6215]
+  }
 }

@@ -18,23 +18,43 @@ The machine-readable decision is
 
 ## Primary selection
 
-The primary seed is the v59 exact-host-f64 clean path:
+The primary seed is the already-promoted `c23831b08` reduced-clean
+checkpoint:
 
 - shared multi-SPW, POINTING, AWProject, MT-MFS, product, planner, telemetry,
   and UI/task substrate;
-- compact exact source-order AW replay with f64 FFTW; and
-- mask- and scale-supported sparse MT-MFS minor-cycle state.
+- compact exact source-order AW replay, the promoted Metal replay paths, and
+  f64 FFTW;
+- mask- and scale-supported sparse MT-MFS minor-cycle state; and
+- the four-SPW hybrid-clean and full-16-SPW v59 configurations that had already
+  passed the frozen scientific floor.
 
-The nearest durable source checkpoint is
-`9a14c6b5748e1a56367ca9adf8ad9e1667cd1626`. The shared-substrate extraction
-boundary is `95cdb0664f15c32657100057e62531806a801dda`; the later evidence-only
-scientific promotion is `c23831b08c87489e63ed411e440ec98085b44b4e`.
+The exact durable source checkpoint and scientific-promotion commit are both
+`c23831b081555423e15c76e6f71215251ee68fd9`. The shared-substrate extraction
+boundary remains `95cdb0664f15c32657100057e62531806a801dda`.
 
-The historical v59 run log did not embed a Git revision. Consequently,
-`9a14c6b57` is a source seed, not an unearned claim of byte-identical
-provenance. PR3 must create a new immutable recovery freeze and rerun the
-4096-square four-SPW and full-16-SPW gates before any full-geometry casa-rs
-row.
+The first audit draft incorrectly selected the older
+`9a14c6b5748e1a56367ca9adf8ad9e1667cd1626` seed and recorded a malformed
+`c23831b08` expansion. A graph and source audit showed that `9a14c6b57`
+predates the promoted hybrid-clean and full-16 correctness work. Its neutral
+Mac-mini run was stopped after 8 minutes 26 seconds while still near major
+cycle 40; the preserved partial log has SHA-256
+`d3be7d42353b84338106ee3ff76048e832f0e27a1091d226ff640a53c3206df1`.
+The first PR3 trim from that obsolete seed also failed the four-SPW science
+comparison by 28 to 45 percent and omitted `.mask`; its run-log and comparison
+hashes are
+`6a88cba1ab3522d5683664f2269e51303f1396b96ab87832925ade5f65004a0d`
+and
+`55afa68eecc4e33395908ebb02086131571424ab56e98977a33c9c873243a0b4`.
+Neither result is a candidate.
+
+The corrected checkpoint was rebuilt from a clean detached worktree on the
+Mac mini. The exact binary SHA-256 is
+`4eaa35ae7cbbfcb1f8286dede7d48d0336ac1183c14113292f1f89942c9b6398`;
+the four-SPW runner SHA-256 is
+`1a9ba23a044908dd29120fe1137b86d09e5e25491b6f31be938a968bfadfe448`.
+The exact 4096-square four-SPW and full-16-SPW gates were then rerun once for
+this checkpoint before any full-geometry casa-rs row.
 
 The read-only evidence revalidated for selection is:
 
@@ -48,6 +68,22 @@ The read-only evidence revalidated for selection is:
 
 The dirty result is supporting operator evidence only. It is not a clean
 speedup and cannot substitute for CASA A or CASA B.
+
+The corrected checkpoint's new Mac-mini receipts are:
+
+| Evidence | Result | SHA-256 |
+| --- | --- | --- |
+| Four-SPW run log | 46.14 s; 171 major cycles; 2,000 iterations; 19 products; zero warnings | `32b54ea0fa067202b502099e88fa8bd2d3b419ba46cd19e46db05b7700e21d46` |
+| Four-SPW full comparison | Exact inventory and metadata; expected alpha cutoff topology only | `f96a1906f584c21d01afc1a43f4fbf9a814f5dfdad095a5c4e863edeed70f9a3` |
+| Four-SPW scientific floor | Promoted; every scientific gate passed | `4fa269de10f0bd29e9dd021e19ae39777fd61231328ab3eacc01ca2352c0aaa6` |
+| Full-16 run log | 76.23 s; 641 components; six reported cycles including final refresh; 19 products; zero warnings | `e059da388f70a9d1b735d602fee6e1df66b956f5493359f87ce018eadd5c9b95` |
+| Full-16 full comparison | Exact inventory and metadata; expected alpha cutoff topology only | `eadfb13466c64d346bf6bec6c30725028f655713568ee0afa952a1fcc31a347a` |
+| Full-16 scientific floor | Promoted; every scientific gate passed | `a98548ba0f9d96d5fe72304e69e08b8af5c77362aa687cc135115cdde243b057` |
+
+The four-SPW and full-16 launcher receipts measured peak RSS of
+8,271,118,336 and 6,573,064,192 bytes, respectively, with zero swaps. These
+are development-host measurements, not final 32 GiB laptop acceptance or
+matched full-geometry clean speedups.
 
 ## Conditional reserve
 
@@ -101,8 +137,10 @@ into the recovery train.
 
 PR2 reconstructs the production shared substrate through `95cdb0664`, without
 historical experiments or the removed optimization ledger. PR3 applies only
-the production deltas needed for the v59 seed through `9a14c6b57`, removes
-diagnostic-only controls, and creates the new immutable candidate freeze.
+the production deltas needed for the promoted `c23831b08` checkpoint, removes
+diagnostic-only controls, exposes the selected planner/runtime policy through
+canonical task and UI parameters, and creates the new immutable candidate
+freeze. The later architecture tournament remains excluded.
 
 The reduced ladder then runs once for that freeze. A passing primary proceeds
 to matched full-geometry A and B rows using the new frozen CASA references.
