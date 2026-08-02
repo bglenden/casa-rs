@@ -143,7 +143,11 @@ class RecoveryContractTests(unittest.TestCase):
             for entry in self.ledger["entries"]
             if entry["row_id"] == pending["row_id"]
         )
-        self.assertEqual("authorized", launch["disposition"])
+        self.assertEqual("running", launch["disposition"])
+        self.assertEqual(
+            "20260802T191330Z-vlass-fragment-all-fields-clean-cap20000-casa-v2-5a0b3b07",
+            launch["run_id"],
+        )
         self.assertEqual(pending["manifest_sha256"], launch["manifest_sha256"])
         self.assertEqual(
             "ab7b6c3fa142d0cb3d0f54236b142b08b0aa837f120ffbf4314742723be04b27",
