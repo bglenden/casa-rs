@@ -132,6 +132,7 @@ class RecoveryContractTests(unittest.TestCase):
             "research_only",
             "selected_primary",
             "selected_reserve",
+            "included_in_primary",
         }
         self.assertTrue(all(entry["status"] in allowed for entry in entries))
         self.assertLessEqual(
@@ -143,6 +144,34 @@ class RecoveryContractTests(unittest.TestCase):
         if self.catalog["audit_status"] == "pending":
             self.assertIsNone(self.catalog["primary_candidate"])
             self.assertIsNone(self.catalog["reserve_candidate"])
+        elif self.catalog["audit_status"] == "complete":
+            primary = self.catalog["primary_candidate"]
+            reserve = self.catalog["reserve_candidate"]
+            assert isinstance(primary, dict)
+            self.assertEqual(
+                primary["id"],
+                next(
+                    entry["id"]
+                    for entry in entries
+                    if entry["status"] == "selected_primary"
+                ),
+            )
+            self.assertEqual(40, len(primary["source_seed_commit"]))
+            if reserve is not None:
+                assert isinstance(reserve, dict)
+                self.assertEqual(
+                    reserve["id"],
+                    next(
+                        entry["id"]
+                        for entry in entries
+                        if entry["status"] == "selected_reserve"
+                    ),
+                )
+                self.assertEqual(40, len(reserve["source_seed_commit"]))
+        else:
+            self.fail(
+                f"unsupported salvage audit status: {self.catalog['audit_status']}"
+            )
 
 
 if __name__ == "__main__":

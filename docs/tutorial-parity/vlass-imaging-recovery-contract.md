@@ -16,7 +16,8 @@ The machine-readable controlling record is
 `tools/perf/imager/vlass_recovery_contract.json`. Launches are recorded in
 `tools/perf/imager/vlass_recovery_launch_ledger.json`; the bounded audit of
 already-created work is recorded in
-`tools/perf/imager/vlass_recovery_salvage_catalog.json`. The longer historical
+`tools/perf/imager/vlass_recovery_salvage_catalog.json` and summarized in
+`vlass-imaging-recovery-salvage-audit.md`. The longer historical
 optimization plan remains available at archive commit `4c3cf8cc9`; current
 `main` intentionally removed that 10,000-line experimental ledger, and this
 PR does not resurrect it. Where the archived plan's older scheduling language
