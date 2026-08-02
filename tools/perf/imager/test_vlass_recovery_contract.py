@@ -157,6 +157,39 @@ class RecoveryContractTests(unittest.TestCase):
                 ),
             )
             self.assertEqual(40, len(primary["source_seed_commit"]))
+            self.assertEqual(
+                "c23831b081555423e15c76e6f71215251ee68fd9",
+                primary["source_seed_commit"],
+            )
+            self.assertEqual(
+                primary["source_seed_commit"],
+                primary["scientific_promotion_commit"],
+            )
+            self.assertEqual(64, len(primary["candidate_binary_sha256"]))
+            validations = [
+                evidence
+                for evidence in primary["evidence"]
+                if evidence["kind"] == "recovery_checkpoint_validation"
+            ]
+            self.assertEqual(2, len(validations))
+            self.assertEqual(
+                {
+                    "4096-square four-SPW real VLASS clean",
+                    "4096-square full-16-SPW real VLASS clean",
+                },
+                {validation["workload"] for validation in validations},
+            )
+            for validation in validations:
+                self.assertEqual("promote", validation["decision"])
+                self.assertEqual(0, validation["swaps"])
+                self.assertEqual(64, len(validation["run_log_sha256"]))
+                self.assertEqual(64, len(validation["comparison_sha256"]))
+                self.assertEqual(64, len(validation["scientific_floor_sha256"]))
+            by_id = {entry["id"]: entry for entry in entries}
+            self.assertEqual("retired", by_id["obsolete-9a14-source-seed"]["status"])
+            self.assertEqual(
+                "retired", by_id["db41-obsolete-seed-pr3-trim"]["status"]
+            )
             if reserve is not None:
                 assert isinstance(reserve, dict)
                 self.assertEqual(
