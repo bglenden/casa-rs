@@ -2,5 +2,24 @@
   "schema_version": 1,
   "contract_id": "vlass-merge-recovery-20260802-v1",
   "contract_path": "tools/perf/imager/vlass_recovery_contract.json",
-  "entries": []
+  "entries": [
+    {
+      "launch_id": "CASA-B-001",
+      "executor": "casa",
+      "row_id": "CASA-B-FRAGMENT63-CLEAN-CAP20000-v1",
+      "manifest_path": "tools/perf/imager/workloads/vlass-fragment-all-fields-clean-cap20000-casa.json",
+      "manifest_sha256": "d8de70dabf3c1b768a69dc9d0f2a1e8e159b29b67e668079272c7b08bac98bdf",
+      "authorized_at": "2026-08-02T16:26:44Z",
+      "started_at": null,
+      "completed_at": null,
+      "disposition": "authorized_pending_start",
+      "external_invalidation": false,
+      "max_wall_seconds": 604800,
+      "output_dir": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-b-fragment63-clean-cap20000-v1/receipts",
+      "artifact_root": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-b-fragment63-clean-cap20000-v1/artifacts",
+      "cf_cache_root": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache",
+      "receipt_path": null,
+      "receipt_sha256": null
+    }
+  ]
 }
