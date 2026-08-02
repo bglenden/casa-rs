@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import pathlib
 import subprocess
 from dataclasses import dataclass
 from typing import Any
 
-from .artifacts import ArtifactError, atomic_write_json, load_json_object
+from .artifacts import ArtifactError, atomic_write_json
 from .subprocesses import run_command
 
 
@@ -17,6 +19,7 @@ class CasaProtocolResult:
     status: str
     return_code: int | None
     output: dict[str, Any] | None
+    output_sha256: str | None
     reason: str | None
     request_path: pathlib.Path
     output_path: pathlib.Path
@@ -42,6 +45,7 @@ def run_json_file_protocol(
             "unavailable",
             None,
             None,
+            None,
             "CASA Python is not configured",
             request_path,
             output_path,
@@ -50,6 +54,7 @@ def run_json_file_protocol(
     if not script.is_file():
         return _result(
             "failed_execution",
+            None,
             None,
             None,
             f"checked-in CASA program is missing: {script}",
@@ -70,6 +75,7 @@ def run_json_file_protocol(
             "failed_execution",
             None,
             None,
+            None,
             str(error),
             request_path,
             output_path,
@@ -81,17 +87,23 @@ def run_json_file_protocol(
             "failed_execution",
             completed.returncode,
             None,
+            None,
             f"CASA program exited {completed.returncode}",
             request_path,
             output_path,
             log_path,
         )
     try:
-        output = load_json_object(output_path, description="CASA protocol output")
-    except ArtifactError as error:
+        payload = output_path.read_bytes()
+        output_sha256 = hashlib.sha256(payload).hexdigest()
+        output = json.loads(payload)
+        if not isinstance(output, dict):
+            raise ArtifactError("CASA protocol output must contain a JSON object")
+    except (OSError, json.JSONDecodeError, ArtifactError) as error:
         return _result(
             "failed_execution",
             completed.returncode,
+            None,
             None,
             str(error),
             request_path,
@@ -102,6 +114,7 @@ def run_json_file_protocol(
         "completed",
         completed.returncode,
         output,
+        output_sha256,
         None,
         request_path,
         output_path,
@@ -113,6 +126,7 @@ def _result(
     status: str,
     return_code: int | None,
     output: dict[str, Any] | None,
+    output_sha256: str | None,
     reason: str | None,
     request_path: pathlib.Path,
     output_path: pathlib.Path,
@@ -122,6 +136,7 @@ def _result(
         status=status,
         return_code=return_code,
         output=output,
+        output_sha256=output_sha256,
         reason=reason,
         request_path=request_path,
         output_path=output_path,
