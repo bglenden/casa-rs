@@ -9,7 +9,10 @@ import pathlib
 import tempfile
 import unittest
 
-from perf_harness import load_run_result
+from perf_harness.schema import (
+    LEGACY_RUN_RESULT_SCHEMA_VERSION,
+    validate_legacy_run_result_v2,
+)
 
 import migrate_evidence_v1_to_v2 as migration
 
@@ -79,9 +82,22 @@ class EvidenceMigrationTests(unittest.TestCase):
             migration.migrate_manifest(manifest)
             migration.migrate_manifest(manifest)
 
-            run = load_run_result(evidence / "run.json")
-            comparison = load_run_result(evidence / "comparison.json")
-            alternating = load_run_result(evidence / "alternating.json")
+            run = json.loads((evidence / "run.json").read_text(encoding="utf-8"))
+            comparison = json.loads(
+                (evidence / "comparison.json").read_text(encoding="utf-8")
+            )
+            alternating = json.loads(
+                (evidence / "alternating.json").read_text(encoding="utf-8")
+            )
+            for name, value in (
+                ("run", run),
+                ("comparison", comparison),
+                ("alternating", alternating),
+            ):
+                validate_legacy_run_result_v2(value, source=name)
+                self.assertEqual(
+                    LEGACY_RUN_RESULT_SCHEMA_VERSION, value["schema_version"]
+                )
             self.assertEqual("workload_run", run["kind"])
             self.assertEqual("image_comparison", comparison["kind"])
             self.assertEqual(

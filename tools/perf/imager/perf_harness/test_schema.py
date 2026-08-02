@@ -45,6 +45,7 @@ VLASS_WORKLOADS = {
     "vlass-fragment-single-field-cold.json",
     "vlass-fragment-all-fields.json",
     "vlass-fragment-all-fields-clean-casa.json",
+    "vlass-fragment-all-fields-clean-cap20000-casa.json",
     "vlass-fragment-all-fields-cold.json",
     "vlass-fragment-smoke-cold.json",
     "vlass-fragment-smoke-warm.json",
