@@ -45,12 +45,13 @@ class RecoveryContractTests(unittest.TestCase):
         self.assertEqual(
             [
                 "CASA-B-FRAGMENT63-CLEAN-CAP20000-v1",
+                "CASA-B-FRAGMENT63-CLEAN-CAP20000-v2",
                 "CASA-A-SINGLE-CLEAN-N2000-v1",
             ],
             schedule["launch_order"],
         )
         by_id = {row["id"]: row for row in rows}
-        self.assertEqual(2, len(by_id))
+        self.assertEqual(3, len(by_id))
         for row in rows:
             manifest_path = ROOT / row["manifest_path"]
             self.assertEqual(row["manifest_sha256"], sha256(manifest_path))
@@ -123,11 +124,31 @@ class RecoveryContractTests(unittest.TestCase):
     def test_pending_casa_b_v2_corrects_mask_without_mutating_v1(self) -> None:
         pending = self.ledger["pending_reference_amendment"]
         assert isinstance(pending, dict)
-        self.assertEqual("awaits_explicit_user_approval", pending["status"])
+        self.assertEqual("approved", pending["status"])
+        self.assertEqual("Brian Glendenning", pending["approved_by"])
         base_path = ROOT / pending["base_manifest_path"]
         cap_path = ROOT / pending["manifest_path"]
         self.assertEqual(pending["base_manifest_sha256"], sha256(base_path))
         self.assertEqual(pending["manifest_sha256"], sha256(cap_path))
+
+        schedule = self.contract["casa_reference_schedule"]
+        assert isinstance(schedule, dict)
+        row = next(item for item in schedule["rows"] if item["id"] == pending["row_id"])
+        self.assertEqual(pending["manifest_path"], row["manifest_path"])
+        self.assertEqual(pending["manifest_sha256"], row["manifest_sha256"])
+        self.assertIn(pending["row_id"], schedule["launch_order"])
+
+        launch = next(
+            entry
+            for entry in self.ledger["entries"]
+            if entry["row_id"] == pending["row_id"]
+        )
+        self.assertEqual("authorized", launch["disposition"])
+        self.assertEqual(pending["manifest_sha256"], launch["manifest_sha256"])
+        self.assertEqual(
+            "ab7b6c3fa142d0cb3d0f54236b142b08b0aa837f120ffbf4314742723be04b27",
+            launch["dry_run_receipt_sha256"],
+        )
 
         base = load_json(base_path)
         cap = load_json(cap_path)

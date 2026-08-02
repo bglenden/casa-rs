@@ -127,8 +127,10 @@ and
 `63948fe140d5c06c00b924eea407e5afe8ccb2f99e2c927290d9de4644002053`.
 The original v1 manifests remain unchanged. Because this was an avoidable
 configuration defect rather than an external invalidation, the corrected v2
-launch remains blocked on Brian's explicit approval; CASA-A has not been
-launched.
+launch required separate approval. Brian explicitly approved it on
+2026-08-02. Its fail-closed dry-run receipt is
+`ab7b6c3fa142d0cb3d0f54236b142b08b0aa837f120ffbf4314742723be04b27`;
+CASA-A has not been launched.
 
 ## Candidate budget and promotion
 

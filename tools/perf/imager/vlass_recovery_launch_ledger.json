@@ -50,10 +50,36 @@
         "comparison_sha256": "abbd0399326c1319e370421491bde3c756e229edbd6da5329951eb3ab4f476f4",
         "harness_failure": "The comparator correctly rejected the empty model, but an operational-failure tolerance bug then obscured that scientific failure as a run-result schema error."
       }
+    },
+    {
+      "launch_id": "CASA-B-002",
+      "executor": "casa",
+      "row_id": "CASA-B-FRAGMENT63-CLEAN-CAP20000-v2",
+      "manifest_path": "tools/perf/imager/workloads/vlass-fragment-all-fields-clean-cap20000-casa-v2.json",
+      "manifest_sha256": "63948fe140d5c06c00b924eea407e5afe8ccb2f99e2c927290d9de4644002053",
+      "authorized_at": "2026-08-02T19:11:04Z",
+      "started_at": null,
+      "completed_at": null,
+      "disposition": "authorized",
+      "external_invalidation": false,
+      "max_wall_seconds": 604800,
+      "run_id": null,
+      "dataset_root": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-b-fragment63-clean-cap20000-v1/dataset-root/b80d5e87487ab8ab01faa064c4cd48db6d93446fd0add208c051dd574e0d353a",
+      "dataset_tree_sha256_at_launch": "037db124913cdf66de670698536f1bb38c9dbac3725a561fd79eee8bb055fd91",
+      "output_dir": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-b-fragment63-clean-cap20000-v2/receipts",
+      "artifact_root": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-b-fragment63-clean-cap20000-v2/artifacts",
+      "cf_cache_root": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache",
+      "dry_run_receipt_path": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-b-fragment63-clean-cap20000-v2/receipts/20260802T191052Z-vlass-fragment-all-fields-clean-cap20000-casa-v2-8a0d102c.json",
+      "dry_run_receipt_sha256": "ab7b6c3fa142d0cb3d0f54236b142b08b0aa837f120ffbf4314742723be04b27",
+      "partial_bundle_path": null,
+      "receipt_path": null,
+      "receipt_sha256": null
     }
   ],
   "pending_reference_amendment": {
-    "status": "awaits_explicit_user_approval",
+    "status": "approved",
+    "approved_at": "2026-08-02T19:11:04Z",
+    "approved_by": "Brian Glendenning",
     "reason": "The approved v1 CASA-B launch used a mask that did not cover the measured 0.431878 Jy residual peak and therefore selected zero clean components. The recovery contract does not silently grant a replacement launch for an avoidable configuration defect.",
     "row_id": "CASA-B-FRAGMENT63-CLEAN-CAP20000-v2",
     "base_manifest_path": "tools/perf/imager/workloads/vlass-fragment-all-fields-clean-casa-v2.json",
