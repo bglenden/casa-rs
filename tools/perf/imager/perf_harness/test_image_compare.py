@@ -277,6 +277,17 @@ class ImageComparisonProtocolTests(unittest.TestCase):
         self.assertEqual("out_of_tolerance", failed["status"])
         self.assertEqual("failed", failed["tolerance_evaluation"]["status"])
 
+        operational_failure = apply_tolerance_contract(
+            {
+                "status": "failed_execution",
+                "reason": "comparison runtime unavailable",
+                "products": {},
+            },
+            {"tolerances": contract},
+        )
+        self.assertEqual("failed_execution", operational_failure["status"])
+        self.assertNotIn("tolerance_evaluation", operational_failure)
+
     def test_nonaccepted_structure_review_retains_exact_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

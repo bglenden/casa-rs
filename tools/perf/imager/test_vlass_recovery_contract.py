@@ -120,6 +120,43 @@ class RecoveryContractTests(unittest.TestCase):
                 invalidations, schedule["shared_external_invalidation_retries"]
             )
 
+    def test_pending_casa_b_v2_corrects_mask_without_mutating_v1(self) -> None:
+        pending = self.ledger["pending_reference_amendment"]
+        assert isinstance(pending, dict)
+        self.assertEqual("awaits_explicit_user_approval", pending["status"])
+        base_path = ROOT / pending["base_manifest_path"]
+        cap_path = ROOT / pending["manifest_path"]
+        self.assertEqual(pending["base_manifest_sha256"], sha256(base_path))
+        self.assertEqual(pending["manifest_sha256"], sha256(cap_path))
+
+        base = load_json(base_path)
+        cap = load_json(cap_path)
+        for value in (base, cap):
+            value.pop("id")
+            value.pop("mode_id")
+            value.pop("description")
+            run = value["run"]
+            assert isinstance(run, dict)
+            run.pop("run_label")
+            run.pop("evidence_role")
+            review = value["review"]
+            assert isinstance(review, dict)
+            review["required_evidence_roles"] = []
+        base_imaging = base["imaging"]
+        assert isinstance(base_imaging, dict)
+        base_imaging["niter"] = 20000
+        self.assertEqual(base, cap)
+
+        cap_imaging = cap["imaging"]
+        assert isinstance(cap_imaging, dict)
+        self.assertEqual(pending["corrected_mask_path"], cap_imaging["mask_image"])
+        self.assertEqual(pending["corrected_mask_sha256"], cap_imaging["mask_sha256"])
+        comparison = cap["comparison"]
+        assert isinstance(comparison, dict)
+        source = comparison["source_regions"][0]
+        self.assertEqual(pending["corrected_mask_blc"], source["blc"])
+        self.assertEqual(pending["corrected_mask_trc"], source["trc"])
+
     def test_salvage_catalog_selects_at_most_primary_and_reserve(self) -> None:
         self.assertEqual(self.contract["id"], self.catalog["contract_id"])
         entries = self.catalog["entries"]

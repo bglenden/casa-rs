@@ -96,6 +96,40 @@ mount, storage, or host failure. CASA parameter changes, scientific failure,
 timeout, or an avoidable harness defect do not silently earn more retries.
 No unchanged dirty or reduced CASA reference is rerun.
 
+### CASA-B v1 negative evidence
+
+`CASA-B-FRAGMENT63-CLEAN-CAP20000-v1` completed its CASA imaging call on
+2026-08-02 in `6,902.788125 s`, but it is not a valid clean reference. The
+configured mask covered pixels `[6243, 6003]` through `[6306, 6066]`, while
+the measured `0.431877822 Jy` residual peak was at `[4633, 6183]`. The
+largest residual inside the mask was only `0.000659208 Jy`, below CASA's
+`0.00169344 Jy` `nsigma` threshold. CASA therefore selected zero minor
+iterations, produced an empty model, and performed only the dirty and
+restoration work. The elapsed time must not be reported as an all-fields
+clean baseline.
+
+The v1 receipt is
+`b62daf1de4549d4f5ca186c1b5c02ce501089d97ba72cfc61cefe9fb35084bb5`;
+its CASA log is
+`535248c9c1910d94666df59a5d45dd5b66e25b759d1587acfa862e1f064671c0`.
+The comparator correctly rejected the empty model, but the harness then
+decorated the operational failure with a numerical tolerance result and
+obscured it as a schema error. The regression is covered by the focused
+comparison-protocol test.
+
+The launch ledger records a proposed v2 amendment using the already existing
+source mask at pixels `[4602, 6152]` through `[4665, 6215]`, whose stable tree
+SHA-256 is
+`fabf361e6609a4d66c251458c2ed31bc80978d936e78a39a8f449bd1a63dc322`.
+The proposed base and CAP20000 manifest SHA-256 values are respectively
+`0cabbe5fdc2f687a10fce3653d018e09db7349a0a1299d16a4f6772557f9f5d9`
+and
+`63948fe140d5c06c00b924eea407e5afe8ccb2f99e2c927290d9de4644002053`.
+The original v1 manifests remain unchanged. Because this was an avoidable
+configuration defect rather than an external invalidation, the corrected v2
+launch remains blocked on Brian's explicit approval; CASA-A has not been
+launched.
+
 ## Candidate budget and promotion
 
 The salvage audit receives at most eight engineer-hours. It may select one
