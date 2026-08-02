@@ -483,7 +483,7 @@ pub(crate) struct ExperimentalMappedCfCell {
 pub(crate) enum AwConvolutionFunctionReplayCell {
     Owned(Arc<AwConvolutionFunctionCell>),
     #[cfg(unix)]
-    Mapped(ExperimentalMappedCfCell),
+    Mapped(Box<ExperimentalMappedCfCell>),
 }
 
 impl AwConvolutionFunctionReplayCell {
@@ -846,7 +846,7 @@ impl AwConvolutionFunctionResidentCache {
         })?;
         #[cfg(unix)]
         let loaded = if let Some(store) = self.cache.experimental_packed.as_ref() {
-            AwConvolutionFunctionReplayCell::Mapped(store.mapped_cell(stable, metadata)?)
+            AwConvolutionFunctionReplayCell::Mapped(Box::new(store.mapped_cell(stable, metadata)?))
         } else {
             AwConvolutionFunctionReplayCell::Owned(Arc::new(self.cache.load(key)?))
         };
@@ -1166,6 +1166,48 @@ impl AwConvolutionFunctionCache {
         }
         self.select_key_for_sample_scanned(
             requested_cf_frequency_hz,
+            w_lambda,
+            selected_mueller_element,
+            parallactic_angle_deg,
+        )
+    }
+
+    /// Select the CF cell used by CASA `AWVisResampler::GridToData`.
+    ///
+    /// Prediction deliberately does not reuse the forward-gridding cell:
+    /// CASA selects the normal (not conjugate-beam) frequency and swaps the
+    /// direct/conjugate Mueller mapping before applying the W-sign
+    /// conjugation in the degridding loop.
+    pub fn select_key_for_prediction_sample(
+        &self,
+        sample_frequency_hz: f64,
+        w_lambda: f64,
+        mueller_element: i32,
+        parallactic_angle_deg: f64,
+    ) -> Option<AwConvolutionFunctionKey> {
+        if !(sample_frequency_hz.is_finite()
+            && sample_frequency_hz > 0.0
+            && w_lambda.is_finite()
+            && parallactic_angle_deg.is_finite())
+        {
+            return None;
+        }
+        let selected_mueller_element = if w_lambda > 0.0 {
+            15_i32.checked_sub(mueller_element)?
+        } else {
+            mueller_element
+        };
+        #[cfg(unix)]
+        if self.experimental_direct_sample_select {
+            return self.select_key_for_sample_direct(
+                sample_frequency_hz,
+                w_lambda,
+                selected_mueller_element,
+                parallactic_angle_deg,
+            );
+        }
+        self.select_key_for_sample_scanned(
+            sample_frequency_hz,
             w_lambda,
             selected_mueller_element,
             parallactic_angle_deg,
@@ -2382,6 +2424,70 @@ mod tests {
     }
 
     #[test]
+    fn prediction_selection_uses_casa_grid_to_data_mueller_mapping() {
+        let temp = TempDir::new().unwrap();
+        for (mueller_index, mueller_element) in [0, 15].into_iter().enumerate() {
+            for weight in [false, true] {
+                let family = if weight { "WTCFS" } else { "CFS" };
+                write_test_cell_with_mueller(
+                    temp.path(),
+                    &format!("{family}_0_0_CF_0_0_{mueller_index}.im"),
+                    1.1e9,
+                    0.0,
+                    mueller_element,
+                    weight,
+                );
+            }
+        }
+
+        let cache = AwConvolutionFunctionCache::open(temp.path()).unwrap();
+        assert_eq!(
+            cache
+                .select_key_for_prediction_sample(1.1e9, 1.0, 0, 30.0)
+                .unwrap()
+                .mueller_element,
+            15
+        );
+        assert_eq!(
+            cache
+                .select_key_for_prediction_sample(1.1e9, 0.0, 0, 30.0)
+                .unwrap()
+                .mueller_element,
+            0
+        );
+        assert_eq!(
+            cache
+                .select_key_for_prediction_sample(1.1e9, -1.0, 15, 30.0)
+                .unwrap()
+                .mueller_element,
+            15
+        );
+        #[cfg(unix)]
+        {
+            let mut direct_cache = cache.clone();
+            direct_cache.experimental_direct_sample_select = true;
+            for w_lambda in [-1.0, 0.0, 1.0] {
+                for mueller_element in [0, 15] {
+                    assert_eq!(
+                        direct_cache.select_key_for_prediction_sample(
+                            1.1e9,
+                            w_lambda,
+                            mueller_element,
+                            30.0,
+                        ),
+                        cache.select_key_for_prediction_sample(
+                            1.1e9,
+                            w_lambda,
+                            mueller_element,
+                            30.0,
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn sample_selection_uses_casa_forward_conjugate_frequency_map() {
         let temp = TempDir::new().unwrap();
         for (frequency_index, (frequency_hz, conjugate_frequency_hz)) in
@@ -2407,6 +2513,10 @@ mod tests {
             .select_key_for_sample(1.0e9, 2.0e9, 1.0, 0, 30.0, true)
             .unwrap();
         assert_eq!(key.frequency_hz, 2.0e9);
+        let prediction_key = cache
+            .select_key_for_prediction_sample(1.0e9, 0.0, 0, 30.0)
+            .unwrap();
+        assert_eq!(prediction_key.frequency_hz, 1.0e9);
     }
 
     #[test]

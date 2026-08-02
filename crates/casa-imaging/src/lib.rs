@@ -1231,10 +1231,22 @@ struct ParallelWorkerResolution {
     explanation: String,
 }
 
+#[derive(Debug)]
+struct ParallelWorkerOnlineCalibrationState {
+    candidates: Vec<usize>,
+    sequence: Vec<usize>,
+    cursor: usize,
+    observations: Vec<parallel_worker::ParallelWorkerTimingObservation>,
+    elapsed: Duration,
+    windows: usize,
+    extension_rounds: usize,
+}
+
 #[derive(Clone, Debug)]
 struct ParallelWorkerCalibrationControl {
     request: ParallelWorkerCalibrationRequest,
     resolution: Arc<OnceLock<ParallelWorkerResolution>>,
+    online: Arc<Mutex<Option<ParallelWorkerOnlineCalibrationState>>>,
 }
 
 /// Runtime execution knobs for standard-MFS backends.
@@ -1281,9 +1293,10 @@ pub struct StandardMfsExecutionPlan {
     pub observability_callback: Option<StandardMfsObservabilityCallback>,
     /// Optional frontend-supplied, resource-bounded worker calibration.
     ///
-    /// The request contains no host discovery. The first eligible exact
-    /// weighted-task replay resolves it once and all later windows reuse the
-    /// same admitted worker count.
+    /// The request contains no host discovery. Initial production windows run
+    /// a deterministic counterbalanced worker trial; no visibility or output
+    /// update is replayed solely for calibration. Once resolved, all later
+    /// windows reuse the admitted worker count.
     parallel_worker_calibration: Option<ParallelWorkerCalibrationControl>,
 }
 
@@ -1317,6 +1330,7 @@ impl StandardMfsExecutionPlan {
         self.parallel_worker_calibration = Some(ParallelWorkerCalibrationControl {
             request,
             resolution: Arc::new(OnceLock::new()),
+            online: Arc::new(Mutex::new(None)),
         });
         self
     }
@@ -4683,6 +4697,24 @@ where
         clean_request.clean.niter,
         &mut warnings,
     )?;
+    let multiscale_basis = if clean_request.clean.niter == 0
+        || clean_request.multiscale_scales.is_empty()
+    {
+        None
+    } else {
+        let setup_started = Instant::now();
+        let basis = MtmfsMultiscaleBasis::new(&clean_request, &psf_state.psf_terms, &scale_sizes);
+        stage_timings.deconvolver_setup += setup_started.elapsed();
+        Some(basis)
+    };
+    if profile::standard_mfs_profile_detail_enabled() {
+        for scale_hessian in &scale_hessians {
+            eprintln!(
+                "mosaic_mtmfs_scale_hessian scale_pixels={} hessian={:?} inverse={:?}",
+                scale_hessian.scale_size, scale_hessian.hessian, scale_hessian.inverse,
+            );
+        }
+    }
     let principal_hessian = &scale_hessians[0];
     let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
         &psf_state.psf_terms[0],
@@ -4740,6 +4772,7 @@ where
             &clean_request,
             &psf_state.psf_terms,
             &scale_hessians,
+            multiscale_basis.as_ref(),
             &mut model_terms,
             &mut residual_terms,
             cycle_reported_niter,
@@ -4757,6 +4790,27 @@ where
             &model_terms[0],
             probe,
         ));
+        if profile::standard_mfs_profile_detail_enabled() {
+            let trace = minor_cycle_traces
+                .last()
+                .expect("the just-recorded MT-MFS minor-cycle trace must exist");
+            eprintln!(
+                "mosaic_mtmfs_minor_cycle cycle={} start_iteration={} reported_updates={} actual_updates={} start_peak={} approximate_end_peak={} cycle_threshold={} nsigma_threshold={} model_flux={} initial_scale_pixels={:?} initial_candidate_strength={:?} initial_candidate_position={:?} stop_reason={:?}",
+                trace.cycle_index,
+                trace.start_reported_iteration,
+                trace.reported_updates,
+                trace.actual_updates,
+                trace.start_peak_residual_jy_per_beam,
+                trace.end_peak_residual_jy_per_beam,
+                trace.cycle_threshold_jy_per_beam,
+                trace.nsigma_threshold_jy_per_beam,
+                trace.model_flux_jy,
+                trace.initial_scale_pixels,
+                trace.initial_candidate_strength_jy_per_beam,
+                trace.initial_candidate_position,
+                trace.clean_stop_reason,
+            );
+        }
         reported_minor_iterations += outcome.reported_updates;
         final_cycle_threshold_jy_per_beam = outcome.final_cycle_threshold_jy_per_beam;
         let mut stop_after_refresh = None::<CleanStopReason>;
@@ -4825,6 +4879,15 @@ where
         refresh_latest_minor_cycle_trace_residual(&mut minor_cycle_traces, &residual_terms[0]);
         let refreshed_peak =
             peak_abs_value_masked(&residual_terms[0], clean_request.clean_mask.as_ref());
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "mosaic_mtmfs_residual_refresh major_cycle={} reported_iterations={} refreshed_peak={} model_flux={}",
+                major_cycles,
+                reported_minor_iterations,
+                refreshed_peak,
+                model_terms[0].iter().copied().sum::<f32>(),
+            );
+        }
         let refreshed_nsigma_threshold_jy_per_beam = nsigma_threshold_jy_per_beam(
             &residual_terms[0],
             clean_request.clean_mask.as_ref(),
@@ -4868,6 +4931,14 @@ where
             None,
         )?;
         refresh_latest_minor_cycle_trace_residual(&mut minor_cycle_traces, &residual_terms[0]);
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "mosaic_mtmfs_final_residual_refresh reported_iterations={} refreshed_peak={} model_flux={}",
+                reported_minor_iterations,
+                peak_abs_value_masked(&residual_terms[0], clean_request.clean_mask.as_ref()),
+                model_terms[0].iter().copied().sum::<f32>(),
+            );
+        }
     }
     let accounted = stage_timings
         .minor_cycle_solve
@@ -7562,6 +7633,8 @@ struct AwProjectCompactSourceSample {
     group_index: usize,
     first_imaging_plan: AwProjectCompactSamplePlan,
     second_imaging_plan: AwProjectCompactSamplePlan,
+    first_prediction_plan: AwProjectCompactSamplePlan,
+    second_prediction_plan: AwProjectCompactSamplePlan,
     first_psf_plan: AwProjectCompactSamplePlan,
     second_psf_plan: AwProjectCompactSamplePlan,
     first_weight_plan: AwProjectCompactSamplePlan,
@@ -7576,13 +7649,15 @@ struct AwProjectCompactTapSpec {
 }
 
 type AwProjectCompactSourceOutcome =
-    Result<[AwProjectCompactTapSpec; 6], AwProjectCompactSourceRejection>;
+    Result<[AwProjectCompactTapSpec; 8], AwProjectCompactSourceRejection>;
 
 enum AwProjectCompactSourceRejection {
     NotGridable,
     InvalidInput,
     FirstImaging(gridder::AwProjectSamplePlanRejection),
     SecondImaging(gridder::AwProjectSamplePlanRejection),
+    FirstPrediction(gridder::AwProjectSamplePlanRejection),
+    SecondPrediction(gridder::AwProjectSamplePlanRejection),
     FirstPsf(gridder::AwProjectSamplePlanRejection),
     SecondPsf(gridder::AwProjectSamplePlanRejection),
 }
@@ -8331,6 +8406,7 @@ fn awproject_ready_compact_tap(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn awproject_compact_sample_tile_ids(
     sample: AwProjectCompactPlannedSample,
     bundles: &[AwProjectCompactMaterializedTap],
@@ -8462,6 +8538,7 @@ fn awproject_compact_sample_tile_ids(
     Ok(tap_pixel_updates)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn plan_awproject_compact_tiles(
     samples: &[AwProjectCompactPlannedSample],
     bundles: &[AwProjectCompactMaterializedTap],
@@ -8838,6 +8915,7 @@ impl AwProjectCompactTileReplayCounters {
 }
 
 #[inline(always)]
+#[allow(clippy::too_many_arguments)]
 fn awproject_compact_accumulate_role_scalar(
     role: AwProjectCompactTileFragmentRole,
     sample: AwProjectCompactPlannedSample,
@@ -9043,6 +9121,7 @@ unsafe fn awproject_compact_accumulate_y_pair_neon(
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
+#[allow(clippy::too_many_arguments)]
 unsafe fn awproject_compact_accumulate_role_2x2_neon(
     role: AwProjectCompactTileFragmentRole,
     sample: AwProjectCompactPlannedSample,
@@ -9382,6 +9461,7 @@ fn execute_awproject_compact_f64_tile_stripe(
     counters
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_awproject_compact_f64_tiles(
     grids: &mut MosaicMtmfsHostGrids,
     tile_plan: &AwProjectCompactTilePlan,
@@ -9568,6 +9648,7 @@ fn execute_awproject_compact_sparse_f64_tile_stripe(
     counters
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_awproject_compact_sparse_f64_tiles(
     grids: &mut MosaicMtmfsSparseHostGrids,
     tile_plan: &AwProjectCompactTilePlan,
@@ -9830,7 +9911,7 @@ fn execute_awproject_compact_sparse_f64_scheduled_tiles(
     let counters = thread::scope(|scope| {
         let mut handles = Vec::with_capacity(worker_count);
         for _worker_index in 0..worker_count {
-            let tasks = tasks;
+            let task_slice = tasks;
             let slots = grids.slots.as_slice();
             let next_task = &next_task;
             let cancelled = &cancelled;
@@ -9845,7 +9926,7 @@ fn execute_awproject_compact_sparse_f64_scheduled_tiles(
                     let claim_started = Instant::now();
                     let task_index = next_task.fetch_add(1, Ordering::Relaxed);
                     worker_counters.scheduler_claim_elapsed += claim_started.elapsed();
-                    let Some(task) = tasks.get(task_index) else {
+                    let Some(task) = task_slice.get(task_index) else {
                         worker_counters.scheduler_empty_claims += 1;
                         break;
                     };
@@ -9946,26 +10027,21 @@ fn execute_awproject_compact_sparse_f64_dynamic_tiles(
     neon_2x2: bool,
     reverse_task_order: bool,
     calibration: Option<&ParallelWorkerCalibrationControl>,
-    calibration_storage_is_pristine: bool,
+    _calibration_storage_is_pristine: bool,
 ) -> Result<AwProjectCompactDynamicTileResult, ImagingError> {
     let schedule = build_awproject_compact_sparse_f64_dynamic_tile_schedule(
         grids,
         tile_plan,
         reverse_task_order,
     )?;
-    let resolved_threads = resolve_awproject_parallel_worker_count(
-        calibration,
-        calibration_storage_is_pristine,
-        grids,
-        tile_plan,
-        &schedule.tasks,
-        samples,
-        bundles,
-        phase_tables,
-        reffreq_hz,
-        requested_threads,
-        neon_2x2,
-    )?;
+    let worker_decision =
+        select_awproject_parallel_worker_count(calibration, &schedule.tasks, requested_threads)?;
+    let calibration_work_units = schedule
+        .tasks
+        .iter()
+        .map(|task| u128::from(task.estimated_bytes))
+        .fold(0u128, u128::saturating_add);
+    let execution_started = Instant::now();
     let counters = execute_awproject_compact_sparse_f64_scheduled_tiles(
         grids,
         tile_plan,
@@ -9974,104 +10050,22 @@ fn execute_awproject_compact_sparse_f64_dynamic_tiles(
         bundles,
         phase_tables,
         reffreq_hz,
-        resolved_threads,
+        worker_decision.workers,
         neon_2x2,
     )?;
+    if worker_decision.observe_production_window {
+        observe_awproject_parallel_production_window(
+            calibration.expect("an observed production window has calibration control"),
+            worker_decision.workers,
+            execution_started.elapsed(),
+            calibration_work_units,
+        )?;
+    }
     Ok(AwProjectCompactDynamicTileResult {
         counters,
         build_elapsed: schedule.build_elapsed,
         sort_elapsed: schedule.sort_elapsed,
         task_estimated_bytes_max: schedule.task_estimated_bytes_max,
-    })
-}
-
-fn awproject_parallel_calibration_task_subset(
-    tasks: &[AwProjectCompactSparseF64TileTask],
-    maximum_workers: usize,
-) -> Option<Vec<AwProjectCompactSparseF64TileTask>> {
-    let minimum_count = maximum_workers.checked_mul(2)?;
-    if maximum_workers == 0 || tasks.len() < minimum_count {
-        return None;
-    }
-    let target_count = tasks.len().min(minimum_count.max(32));
-    if target_count == tasks.len() {
-        return Some(tasks.to_vec());
-    }
-    let denominator = target_count - 1;
-    Some(
-        (0..target_count)
-            .map(|index| {
-                let source_index = index * (tasks.len() - 1) / denominator;
-                tasks[source_index]
-            })
-            .collect(),
-    )
-}
-
-fn zero_awproject_compact_sparse_f64_tasks(
-    grids: &MosaicMtmfsSparseHostGrids,
-    tasks: &[AwProjectCompactSparseF64TileTask],
-) -> Result<(), ImagingError> {
-    for task in tasks {
-        let tile_lock = grids
-            .slots
-            .get(task.tile_index)
-            .and_then(Option::as_ref)
-            .ok_or_else(|| {
-                ImagingError::InvalidRequest(format!(
-                    "parallel worker calibration lost tile {} while discarding scratch output",
-                    task.tile_index
-                ))
-            })?;
-        let mut tile = tile_lock.lock().map_err(|_| {
-            ImagingError::InvalidRequest(format!(
-                "parallel worker calibration tile {} was poisoned while discarding scratch output",
-                task.tile_index
-            ))
-        })?;
-        let zero_planes = |planes: &mut [Option<Box<[Complex64]>>]| {
-            for plane in planes.iter_mut().flatten() {
-                plane.fill(Complex64::new(0.0, 0.0));
-            }
-        };
-        zero_planes(&mut tile.psf_planes);
-        zero_planes(&mut tile.residual_planes);
-        zero_planes(&mut tile.weight_planes);
-    }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn observe_awproject_parallel_worker_candidate(
-    grids: &MosaicMtmfsSparseHostGrids,
-    tile_plan: &AwProjectCompactTilePlan,
-    tasks: &[AwProjectCompactSparseF64TileTask],
-    samples: &[AwProjectCompactPlannedSample],
-    bundles: &[AwProjectCompactMaterializedTap],
-    phase_tables: Option<&AwProjectPhaseTables>,
-    reffreq_hz: f64,
-    workers: usize,
-    neon_2x2: bool,
-) -> Result<parallel_worker::ParallelWorkerTimingObservation, ImagingError> {
-    let started = Instant::now();
-    let replay = execute_awproject_compact_sparse_f64_scheduled_tiles(
-        grids,
-        tile_plan,
-        tasks,
-        samples,
-        bundles,
-        phase_tables,
-        reffreq_hz,
-        workers,
-        neon_2x2,
-    );
-    let elapsed_ns = started.elapsed().as_nanos().max(1);
-    let discard = zero_awproject_compact_sparse_f64_tasks(grids, tasks);
-    replay?;
-    discard?;
-    Ok(parallel_worker::ParallelWorkerTimingObservation {
-        workers,
-        elapsed_ns,
     })
 }
 
@@ -10085,6 +10079,41 @@ fn record_parallel_worker_resolution(
         .get()
         .expect("parallel worker resolution was set")
         .workers
+}
+
+fn parallel_worker_candidate_log_value(candidates: &[usize]) -> String {
+    candidates
+        .iter()
+        .map(usize::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn parallel_worker_score_log_value(
+    scores: &[parallel_worker::ParallelWorkerCandidateScore],
+) -> String {
+    scores
+        .iter()
+        .map(|score| {
+            format!(
+                "{}:{}ns:{}:{}-{}",
+                score.workers,
+                score.mean_elapsed_ns,
+                score.combined_score,
+                score.interval_min_score,
+                score.interval_max_score
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn parallel_worker_reason_log_value(reason: &str) -> String {
+    reason
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("_")
+        .replace('=', ":")
 }
 
 fn parallel_worker_fallback_resolution(
@@ -10101,15 +10130,15 @@ fn parallel_worker_fallback_resolution(
     .max(1);
     let explanation = reason.into();
     eprintln!(
-        "standard_mfs_parallel_worker_plan requested=auto resolved={} source=auto-conservative-fallback hard_cap={} candidates={:?} topology_high_capacity_boundary={} reason={}",
+        "standard_mfs_parallel_worker_plan requested=auto resolved={} source=auto-conservative-fallback hard_cap={} candidates={} topology_high_capacity_boundary={} reason={}",
         workers,
         control.request.hard_cap(),
-        candidates,
+        parallel_worker_candidate_log_value(candidates),
         control
             .request
             .highest_capacity_class_boundary()
             .unwrap_or(0),
-        explanation,
+        parallel_worker_reason_log_value(&explanation),
     );
     record_parallel_worker_resolution(
         control,
@@ -10121,230 +10150,255 @@ fn parallel_worker_fallback_resolution(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-fn resolve_awproject_parallel_worker_count(
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ParallelWorkerWindowDecision {
+    workers: usize,
+    observe_production_window: bool,
+}
+
+fn select_awproject_parallel_worker_count(
     calibration: Option<&ParallelWorkerCalibrationControl>,
-    calibration_storage_is_pristine: bool,
-    grids: &MosaicMtmfsSparseHostGrids,
-    tile_plan: &AwProjectCompactTilePlan,
     tasks: &[AwProjectCompactSparseF64TileTask],
-    samples: &[AwProjectCompactPlannedSample],
-    bundles: &[AwProjectCompactMaterializedTap],
-    phase_tables: Option<&AwProjectPhaseTables>,
-    reffreq_hz: f64,
     requested_threads: usize,
-    neon_2x2: bool,
-) -> Result<usize, ImagingError> {
+) -> Result<ParallelWorkerWindowDecision, ImagingError> {
     let Some(control) = calibration else {
-        return Ok(requested_threads.max(1).min(tasks.len().max(1)));
+        return Ok(ParallelWorkerWindowDecision {
+            workers: requested_threads.max(1).min(tasks.len().max(1)),
+            observe_production_window: false,
+        });
     };
     if let Some(resolution) = control.resolution.get() {
-        return Ok(resolution.workers.max(1).min(tasks.len().max(1)));
+        return Ok(ParallelWorkerWindowDecision {
+            workers: resolution.workers.max(1).min(tasks.len().max(1)),
+            observe_production_window: false,
+        });
     }
     let actual_weights = tasks
         .iter()
         .map(|task| task.estimated_bytes)
         .collect::<Vec<_>>();
     if actual_weights.is_empty() {
-        return Ok(record_parallel_worker_resolution(
+        let workers = record_parallel_worker_resolution(
             control,
             ParallelWorkerResolution {
                 workers: 1,
                 source: ParallelWorkerSelectionSource::AutoConservativeFallback,
                 explanation: "no weighted tile tasks".to_string(),
             },
-        ));
+        );
+        return Ok(ParallelWorkerWindowDecision {
+            workers,
+            observe_production_window: false,
+        });
     }
+
     let hard_cap = control.request.hard_cap().min(actual_weights.len()).max(1);
-    let mut candidates = control
-        .request
-        .coarse_candidates()
-        .iter()
-        .copied()
-        .map(|workers| workers.min(hard_cap))
-        .filter(|workers| *workers > 0)
-        .collect::<Vec<_>>();
-    candidates.sort_unstable();
-    candidates.dedup();
-    if !calibration_storage_is_pristine {
-        return Ok(parallel_worker_fallback_resolution(
-            control,
-            &actual_weights,
-            &candidates,
-            "the first eligible sparse tile window did not have pristine output storage",
-        ));
-    }
-    let maximum_workers = candidates.iter().copied().max().unwrap_or(1);
-    let Some(calibration_tasks) =
-        awproject_parallel_calibration_task_subset(tasks, maximum_workers)
-    else {
-        return Ok(parallel_worker_fallback_resolution(
-            control,
-            &actual_weights,
-            &candidates,
-            "the weighted task set cannot supply two calibration waves at the hard cap",
-        ));
-    };
-    let calibration_weights = calibration_tasks
-        .iter()
-        .map(|task| task.estimated_bytes)
-        .collect::<Vec<_>>();
-    let calibration_started = Instant::now();
-    let mut observations = Vec::new();
-    for workers in candidates.iter().copied() {
-        observations.push(observe_awproject_parallel_worker_candidate(
-            grids,
-            tile_plan,
-            &calibration_tasks,
-            samples,
-            bundles,
-            phase_tables,
-            reffreq_hz,
-            workers,
-            neon_2x2,
-        )?);
-        if calibration_started.elapsed() >= control.request.maximum_elapsed() {
-            return Ok(parallel_worker_fallback_resolution(
+    let mut online = control.online.lock().map_err(|_| {
+        ImagingError::InvalidRequest(
+            "parallel worker production-window calibration state was poisoned".to_string(),
+        )
+    })?;
+    if online.is_none() {
+        let coarse_candidates = control
+            .request
+            .coarse_candidates()
+            .iter()
+            .copied()
+            .filter(|workers| *workers > 0 && *workers <= hard_cap)
+            .collect::<Vec<_>>();
+        let mut candidates =
+            parallel_worker::adjacent_parallel_worker_candidates(&coarse_candidates, hard_cap);
+        if let Some(boundary) = control.request.highest_capacity_class_boundary() {
+            candidates.retain(|workers| *workers >= boundary);
+        }
+        candidates.sort_unstable();
+        candidates.dedup();
+        if candidates.is_empty() {
+            drop(online);
+            let workers = parallel_worker_fallback_resolution(
                 control,
                 &actual_weights,
-                &candidates,
-                "coarse exact-kernel calibration exhausted its elapsed-time budget",
-            ));
+                &[hard_cap],
+                "no topology candidate fits the production tile window",
+            );
+            return Ok(ParallelWorkerWindowDecision {
+                workers,
+                observe_production_window: false,
+            });
         }
-    }
-    let coarse_scores = parallel_worker::score_parallel_worker_candidates(
-        &actual_weights,
-        &calibration_weights,
-        &observations,
-    );
-    let Some(coarse_winner) = parallel_worker::choose_parallel_worker_score(
-        &coarse_scores,
-        control.request.score_tie_tolerance_ppm(),
-    ) else {
-        return Ok(parallel_worker_fallback_resolution(
-            control,
-            &actual_weights,
-            &candidates,
-            "coarse exact-kernel calibration produced no score",
-        ));
-    };
-    let mut neighbor_candidates = [
-        coarse_winner.workers.saturating_sub(1),
-        coarse_winner.workers.saturating_add(1).min(hard_cap),
-    ]
-    .into_iter()
-    .filter(|workers| *workers > 0 && !candidates.contains(workers))
-    .collect::<Vec<_>>();
-    neighbor_candidates.sort_unstable();
-    neighbor_candidates.dedup();
-    for workers in neighbor_candidates {
-        observations.push(observe_awproject_parallel_worker_candidate(
-            grids,
-            tile_plan,
-            &calibration_tasks,
-            samples,
-            bundles,
-            phase_tables,
-            reffreq_hz,
-            workers,
-            neon_2x2,
-        )?);
-        candidates.push(workers);
-        if calibration_started.elapsed() >= control.request.maximum_elapsed() {
-            return Ok(parallel_worker_fallback_resolution(
+        if candidates.len() == 1 {
+            let workers = candidates[0];
+            drop(online);
+            let workers = record_parallel_worker_resolution(
                 control,
-                &actual_weights,
-                &candidates,
-                "neighbor exact-kernel calibration exhausted its elapsed-time budget",
-            ));
+                ParallelWorkerResolution {
+                    workers,
+                    source: ParallelWorkerSelectionSource::AutoCalibrated,
+                    explanation: "the resource slice admits one worker candidate".to_string(),
+                },
+            );
+            eprintln!(
+                "standard_mfs_parallel_worker_plan requested=auto resolved={} source=auto-calibrated hard_cap={} candidates={} topology_high_capacity_boundary={} calibration_mode=production-windows calibration_stage=single-candidate calibration_windows=0 calibration_elapsed_ms=0.000 uncertainty={} scores=",
+                workers,
+                hard_cap,
+                workers,
+                control
+                    .request
+                    .highest_capacity_class_boundary()
+                    .unwrap_or(0),
+                workers,
+            );
+            return Ok(ParallelWorkerWindowDecision {
+                workers,
+                observe_production_window: false,
+            });
         }
+        let sequence =
+            parallel_worker::counterbalanced_parallel_worker_sequence(&candidates, 2, false);
+        eprintln!(
+            "standard_mfs_parallel_worker_calibration_stage stage=full-bracket-production-windows candidates={} sequence={}",
+            parallel_worker_candidate_log_value(&candidates),
+            parallel_worker_candidate_log_value(&sequence),
+        );
+        *online = Some(ParallelWorkerOnlineCalibrationState {
+            candidates,
+            sequence,
+            cursor: 0,
+            observations: Vec::new(),
+            elapsed: Duration::ZERO,
+            windows: 0,
+            extension_rounds: 0,
+        });
     }
-    candidates.sort_unstable();
-    candidates.dedup();
-    let refined_scores = parallel_worker::score_parallel_worker_candidates(
-        &actual_weights,
-        &calibration_weights,
-        &observations,
+    let state = online
+        .as_ref()
+        .expect("online worker calibration was initialized");
+    let workers = state.sequence[state.cursor];
+    if tasks.len() < workers {
+        return Ok(ParallelWorkerWindowDecision {
+            workers: requested_threads.max(1).min(tasks.len()),
+            observe_production_window: false,
+        });
+    }
+    Ok(ParallelWorkerWindowDecision {
+        workers,
+        observe_production_window: true,
+    })
+}
+
+fn observe_awproject_parallel_production_window(
+    control: &ParallelWorkerCalibrationControl,
+    workers: usize,
+    elapsed: Duration,
+    work_units: u128,
+) -> Result<(), ImagingError> {
+    let mut online = control.online.lock().map_err(|_| {
+        ImagingError::InvalidRequest(
+            "parallel worker production-window calibration state was poisoned".to_string(),
+        )
+    })?;
+    let state = online.as_mut().ok_or_else(|| {
+        ImagingError::InvalidRequest(
+            "parallel worker production-window observation has no active calibration".to_string(),
+        )
+    })?;
+    let expected_workers = state.sequence.get(state.cursor).copied().ok_or_else(|| {
+        ImagingError::InvalidRequest(
+            "parallel worker production-window calibration cursor exceeded its sequence"
+                .to_string(),
+        )
+    })?;
+    if workers != expected_workers {
+        return Err(ImagingError::InvalidRequest(format!(
+            "parallel worker production-window observation used {workers} workers, expected {expected_workers}"
+        )));
+    }
+    let elapsed_ns = elapsed.as_nanos().max(1);
+    let work_units = work_units.max(1);
+    state
+        .observations
+        .push(parallel_worker::ParallelWorkerTimingObservation {
+            workers,
+            elapsed_ns,
+            work_units,
+        });
+    state.elapsed += elapsed;
+    state.windows += 1;
+    state.cursor += 1;
+    eprintln!(
+        "standard_mfs_parallel_worker_calibration_window stage=full-bracket window={} workers={} elapsed_ms={:.3} work_units={}",
+        state.windows,
+        workers,
+        profile::millis(elapsed),
+        work_units,
     );
-    let mut repeat_candidates = refined_scores
+    if state.cursor < state.sequence.len() {
+        return Ok(());
+    }
+
+    let scores = parallel_worker::score_parallel_worker_candidates(&state.observations);
+    let uncertainty = parallel_worker::parallel_worker_uncertainty_scores(&scores)
         .iter()
-        .take(2)
         .map(|score| score.workers)
         .collect::<Vec<_>>();
-    repeat_candidates.reverse();
-    for workers in repeat_candidates {
-        observations.push(observe_awproject_parallel_worker_candidate(
-            grids,
-            tile_plan,
-            &calibration_tasks,
-            samples,
-            bundles,
-            phase_tables,
-            reffreq_hz,
-            workers,
-            neon_2x2,
-        )?);
-        if calibration_started.elapsed() >= control.request.maximum_elapsed() {
-            return Ok(parallel_worker_fallback_resolution(
-                control,
-                &actual_weights,
-                &candidates,
-                "counterbalanced exact-kernel repeats exhausted their elapsed-time budget",
-            ));
-        }
-    }
-    let final_scores = parallel_worker::score_parallel_worker_candidates(
-        &actual_weights,
-        &calibration_weights,
-        &observations,
+    eprintln!(
+        "standard_mfs_parallel_worker_calibration_stage stage=full-bracket-production-windows calibration_windows={} candidates={} uncertainty={} scores={}",
+        state.windows,
+        parallel_worker_candidate_log_value(&state.candidates),
+        parallel_worker_candidate_log_value(&uncertainty),
+        parallel_worker_score_log_value(&scores),
     );
-    let Some(selected) = parallel_worker::choose_parallel_worker_score(
-        &final_scores,
-        control.request.score_tie_tolerance_ppm(),
-    ) else {
-        return Ok(parallel_worker_fallback_resolution(
-            control,
-            &actual_weights,
-            &candidates,
-            "exact-kernel calibration produced no final score",
-        ));
-    };
-    let scores = final_scores
-        .iter()
-        .map(|score| {
-            format!(
-                "{}:{}ns:{}",
-                score.workers, score.mean_elapsed_ns, score.combined_score
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",");
+
+    if uncertainty.len() > 2
+        && state.extension_rounds == 0
+        && state.elapsed < control.request.maximum_elapsed()
+    {
+        let extension =
+            parallel_worker::counterbalanced_parallel_worker_sequence(&uncertainty, 1, true);
+        state.sequence.extend(extension);
+        state.extension_rounds += 1;
+        return Ok(());
+    }
+    let (selected, uncertainty) = parallel_worker::choose_parallel_worker_with_topology_prior(
+        &scores,
+        control.request.highest_capacity_class_boundary(),
+        control.request.hard_cap(),
+    )
+    .ok_or_else(|| {
+        ImagingError::InvalidRequest(
+            "production-window worker calibration produced no score".to_string(),
+        )
+    })?;
+    let score_log = parallel_worker_score_log_value(&scores);
+    let uncertainty_log = parallel_worker_candidate_log_value(&uncertainty);
+    let candidate_log = parallel_worker_candidate_log_value(&state.candidates);
     let explanation = format!(
-        "calibrated {} deterministic weighted tiles with scores [{}]",
-        calibration_tasks.len(),
-        scores
+        "calibrated {} authoritative production windows with uncertainty [{}] and \
+         normalized scores [{}]",
+        state.windows, uncertainty_log, score_log
     );
     eprintln!(
-        "standard_mfs_parallel_worker_plan requested=auto resolved={} source=auto-calibrated hard_cap={} candidates={:?} topology_high_capacity_boundary={} calibration_tasks={} calibration_elapsed_ms={:.3} scores={}",
+        "standard_mfs_parallel_worker_plan requested=auto resolved={} source=auto-calibrated hard_cap={} candidates={} topology_high_capacity_boundary={} calibration_mode=production-windows calibration_stage=full-bracket calibration_windows={} calibration_elapsed_ms={:.3} uncertainty={} scores={}",
         selected.workers,
-        hard_cap,
-        candidates,
+        control.request.hard_cap(),
+        candidate_log,
         control
             .request
             .highest_capacity_class_boundary()
             .unwrap_or(0),
-        calibration_tasks.len(),
-        profile::millis(calibration_started.elapsed()),
-        scores,
+        state.windows,
+        profile::millis(state.elapsed),
+        uncertainty_log,
+        score_log,
     );
-    Ok(record_parallel_worker_resolution(
-        control,
-        ParallelWorkerResolution {
-            workers: selected.workers,
-            source: ParallelWorkerSelectionSource::AutoCalibrated,
-            explanation,
-        },
-    ))
+    let resolution = ParallelWorkerResolution {
+        workers: selected.workers,
+        source: ParallelWorkerSelectionSource::AutoCalibrated,
+        explanation,
+    };
+    drop(online);
+    record_parallel_worker_resolution(control, resolution);
+    Ok(())
 }
 
 enum AwProjectCompactF64PlaneTask<'a> {
@@ -10448,6 +10502,7 @@ fn execute_awproject_compact_f64_plane_tasks(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn grid_awproject_compact_samples_host_f64(
     grids: &mut MosaicMtmfsHostGrids,
     samples: &[AwProjectCompactPlannedSample],
@@ -10585,6 +10640,7 @@ fn grid_awproject_compact_samples_host_f64(
     Ok(None)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn grid_awproject_compact_samples_sparse_host_f64(
     grids: &mut MosaicMtmfsSparseHostGrids,
     samples: &[AwProjectCompactPlannedSample],
@@ -12086,6 +12142,7 @@ fn classify_awproject_compact_source_sample(
     cache: &AwConvolutionFunctionResidentCache,
     controls: &AwProjectControls,
     pa_deg: f64,
+    model_prediction: bool,
 ) -> Result<AwProjectCompactSourceOutcome, ImagingError> {
     if !batch.gridable[sample_index] {
         return Ok(Err(AwProjectCompactSourceRejection::NotGridable));
@@ -12132,6 +12189,22 @@ fn classify_awproject_compact_source_sample(
     let second_key = select_key(uvw_lambda[2], 15, "LL")?;
     let first_zero_w_key = select_key(0.0, 0, "W=0 RR weight")?;
     let second_zero_w_key = select_key(0.0, 15, "W=0 LL weight")?;
+    let select_prediction_key = |mueller_element, label: &str| {
+        cache
+            .cache()
+            .select_key_for_prediction_sample(
+                frequency_hz,
+                uvw_lambda[2],
+                mueller_element,
+                pa_deg,
+            )
+            .ok_or_else(|| {
+                ImagingError::ConvolutionFunctionCache(format!(
+                    "no {label} AWProject prediction CF cell for frequency {frequency_hz} Hz, W {} lambda",
+                    uvw_lambda[2],
+                ))
+            })
+    };
 
     let first_imaging = match awproject_compact_tap_spec(
         gridder,
@@ -12158,6 +12231,49 @@ fn classify_awproject_compact_source_sample(
         Err(reason) => {
             return Ok(Err(AwProjectCompactSourceRejection::SecondImaging(reason)));
         }
+    };
+    // CASA GridToData selects a distinct prediction CF: normal frequency and
+    // the inverse direct/conjugate Mueller mapping. Reusing and conjugating
+    // the forward gridding bundle is only valid for a scalar symmetric CF.
+    let first_prediction = if model_prediction {
+        let key = select_prediction_key(0, "RR")?;
+        match awproject_compact_tap_spec(
+            gridder,
+            cache,
+            group_index,
+            key,
+            AwProjectCompactKernelKind::Imaging,
+            uvw_lambda,
+        ) {
+            Ok(spec) => spec,
+            Err(reason) => {
+                return Ok(Err(AwProjectCompactSourceRejection::FirstPrediction(
+                    reason,
+                )));
+            }
+        }
+    } else {
+        first_imaging
+    };
+    let second_prediction = if model_prediction {
+        let key = select_prediction_key(15, "LL")?;
+        match awproject_compact_tap_spec(
+            gridder,
+            cache,
+            group_index,
+            key,
+            AwProjectCompactKernelKind::Imaging,
+            uvw_lambda,
+        ) {
+            Ok(spec) => spec,
+            Err(reason) => {
+                return Ok(Err(AwProjectCompactSourceRejection::SecondPrediction(
+                    reason,
+                )));
+            }
+        }
+    } else {
+        second_imaging
     };
     let first_psf = match awproject_compact_tap_spec(
         gridder,
@@ -12214,6 +12330,8 @@ fn classify_awproject_compact_source_sample(
     Ok(Ok([
         first_imaging,
         second_imaging,
+        first_prediction,
+        second_prediction,
         first_psf,
         second_psf,
         first_weight,
@@ -12238,6 +12356,14 @@ fn observe_awproject_compact_source_rejection(
             accumulation.aw_sample_census.observe_plan_rejection(reason);
         }
         AwProjectCompactSourceRejection::SecondImaging(reason) => {
+            accumulation.aw_sample_census.rejected_ll_imaging_plan += 1;
+            accumulation.aw_sample_census.observe_plan_rejection(reason);
+        }
+        AwProjectCompactSourceRejection::FirstPrediction(reason) => {
+            accumulation.aw_sample_census.rejected_rr_imaging_plan += 1;
+            accumulation.aw_sample_census.observe_plan_rejection(reason);
+        }
+        AwProjectCompactSourceRejection::SecondPrediction(reason) => {
             accumulation.aw_sample_census.rejected_ll_imaging_plan += 1;
             accumulation.aw_sample_census.observe_plan_rejection(reason);
         }
@@ -12411,6 +12537,7 @@ fn classify_awproject_compact_source_chunk(
     start: usize,
     end: usize,
     requested_workers: usize,
+    model_prediction: bool,
 ) -> Result<Vec<Result<AwProjectCompactSourceOutcome, ImagingError>>, ImagingError> {
     let sample_count = end.saturating_sub(start);
     let worker_count = requested_workers.max(1).min(sample_count.max(1));
@@ -12428,6 +12555,7 @@ fn classify_awproject_compact_source_chunk(
                     cache,
                     controls,
                     pa_deg,
+                    model_prediction,
                 )
             })
             .collect());
@@ -12455,6 +12583,7 @@ fn classify_awproject_compact_source_chunk(
                             cache,
                             controls,
                             pa_deg,
+                            model_prediction,
                         )
                     })
                     .collect::<Vec<_>>()
@@ -12484,17 +12613,15 @@ fn awproject_compact_plan(
 }
 
 fn awproject_compact_candidate_tap_bytes(
-    specs: &[AwProjectCompactTapSpec; 6],
+    specs: &[AwProjectCompactTapSpec],
     existing: &AwProjectCompactTapIndex,
 ) -> Result<usize, ImagingError> {
-    let mut candidate_keys = [None; 6];
+    let mut candidate_keys = [None; 8];
     let mut candidate_count = 0usize;
     let mut additional_tap_bytes = 0usize;
     for spec in specs {
         let key = spec.request.key;
-        let already_candidate = candidate_keys[..candidate_count]
-            .iter()
-            .any(|candidate| *candidate == Some(key));
+        let already_candidate = candidate_keys[..candidate_count].contains(&Some(key));
         if !existing.contains_key(&key) && !already_candidate {
             candidate_keys[candidate_count] = Some(key);
             candidate_count += 1;
@@ -12830,6 +12957,8 @@ fn prepare_awproject_compact_planned_samples(
         for (role, plan) in [
             sample.first_imaging_plan,
             sample.second_imaging_plan,
+            sample.first_prediction_plan,
+            sample.second_prediction_plan,
             sample.first_psf_plan,
             sample.second_psf_plan,
         ]
@@ -12840,9 +12969,11 @@ fn prepare_awproject_compact_planned_samples(
                 rejected = Some(match role {
                     0 => AwProjectCompactSourceRejection::FirstImaging(reason),
                     1 => AwProjectCompactSourceRejection::SecondImaging(reason),
-                    2 => AwProjectCompactSourceRejection::FirstPsf(reason),
-                    3 => AwProjectCompactSourceRejection::SecondPsf(reason),
-                    _ => unreachable!("compact AWProject role index is bounded by four plans"),
+                    2 => AwProjectCompactSourceRejection::FirstPrediction(reason),
+                    3 => AwProjectCompactSourceRejection::SecondPrediction(reason),
+                    4 => AwProjectCompactSourceRejection::FirstPsf(reason),
+                    5 => AwProjectCompactSourceRejection::SecondPsf(reason),
+                    _ => unreachable!("compact AWProject role index is bounded by six plans"),
                 });
                 break;
             }
@@ -12885,6 +13016,10 @@ fn prepare_awproject_compact_planned_samples(
             awproject_ready_compact_tap(bundles, sample.first_imaging_plan.tap_bundle);
         let second_imaging =
             awproject_ready_compact_tap(bundles, sample.second_imaging_plan.tap_bundle);
+        let first_prediction_tap =
+            awproject_ready_compact_tap(bundles, sample.first_prediction_plan.tap_bundle);
+        let second_prediction_tap =
+            awproject_ready_compact_tap(bundles, sample.second_prediction_plan.tap_bundle);
         let first_psf = awproject_ready_compact_tap(bundles, sample.first_psf_plan.tap_bundle);
         let second_psf = awproject_ready_compact_tap(bundles, sample.second_psf_plan.tap_bundle);
         let residual_norm_sum = f64::from(first_imaging.normalization.norm())
@@ -12920,15 +13055,15 @@ fn prepare_awproject_compact_planned_samples(
                 let taylor_weight = taylor_weights[model_order];
                 first_prediction += awproject_compact_degrid_sample(
                     model_grid,
-                    sample.first_imaging_plan,
-                    first_imaging,
+                    sample.first_prediction_plan,
+                    first_prediction_tap,
                     sample.group_index,
                     phase_tables,
                 ) * taylor_weight;
                 second_prediction += awproject_compact_degrid_sample(
                     model_grid,
-                    sample.second_imaging_plan,
-                    second_imaging,
+                    sample.second_prediction_plan,
+                    second_prediction_tap,
                     sample.group_index,
                     phase_tables,
                 ) * taylor_weight;
@@ -13196,6 +13331,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                     cursor,
                     plan_end,
                     plan_workers,
+                    model_grids.is_some(),
                 )?);
             }
             let outcome = pending_outcomes
@@ -13242,7 +13378,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                 break;
             }
 
-            let mut bundle_indices = [0usize; 6];
+            let mut bundle_indices = [0usize; 8];
             for (role_index, spec) in specs.into_iter().enumerate() {
                 let bundle_index = if let Some(&index) = tap_indices.get(&spec.request.key) {
                     index
@@ -13259,10 +13395,15 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                 group_index: source_group_route[cursor],
                 first_imaging_plan: awproject_compact_plan(specs[0].geometry, bundle_indices[0]),
                 second_imaging_plan: awproject_compact_plan(specs[1].geometry, bundle_indices[1]),
-                first_psf_plan: awproject_compact_plan(specs[2].geometry, bundle_indices[2]),
-                second_psf_plan: awproject_compact_plan(specs[3].geometry, bundle_indices[3]),
-                first_weight_plan: awproject_compact_plan(specs[4].geometry, bundle_indices[4]),
-                second_weight_plan: awproject_compact_plan(specs[5].geometry, bundle_indices[5]),
+                first_prediction_plan: awproject_compact_plan(specs[2].geometry, bundle_indices[2]),
+                second_prediction_plan: awproject_compact_plan(
+                    specs[3].geometry,
+                    bundle_indices[3],
+                ),
+                first_psf_plan: awproject_compact_plan(specs[4].geometry, bundle_indices[4]),
+                second_psf_plan: awproject_compact_plan(specs[5].geometry, bundle_indices[5]),
+                first_weight_plan: awproject_compact_plan(specs[6].geometry, bundle_indices[6]),
+                second_weight_plan: awproject_compact_plan(specs[7].geometry, bundle_indices[7]),
             });
             planned_tap_bytes = next_tap_bytes;
             accumulation.aw_sample_census.attempted_samples += 1;
@@ -18812,6 +18953,14 @@ pub fn run_mtmfs(
         request.clean.niter,
         &mut warnings,
     )?;
+    let multiscale_basis = if request.clean.niter == 0 || request.multiscale_scales.is_empty() {
+        None
+    } else {
+        let setup_started = Instant::now();
+        let basis = MtmfsMultiscaleBasis::new(request, &psf_state.psf_terms, &scale_sizes);
+        stage_timings.deconvolver_setup += setup_started.elapsed();
+        Some(basis)
+    };
     let principal_hessian = &scale_hessians[0];
 
     let controller_started = Instant::now();
@@ -18862,6 +19011,7 @@ pub fn run_mtmfs(
             request,
             &psf_state.psf_terms,
             &scale_hessians,
+            multiscale_basis.as_ref(),
             &mut model_terms,
             &mut residual_terms,
             cycle_reported_niter,
@@ -34957,6 +35107,7 @@ fn run_mtmfs_minor_cycle(
     request: &MtmfsRequest,
     psf_terms: &[Array2<f32>],
     scale_hessians: &[MtmfsScaleHessian],
+    multiscale_basis: Option<&MtmfsMultiscaleBasis>,
     model_terms: &mut [Array2<f32>],
     residual_terms: &mut [Array2<f32>],
     cycle_reported_niter: usize,
@@ -34968,8 +35119,8 @@ fn run_mtmfs_minor_cycle(
     if !request.multiscale_scales.is_empty() {
         return run_mtmfs_multiscale_minor_cycle(
             request,
-            psf_terms,
             scale_hessians,
+            multiscale_basis.expect("MT-MFS multiscale requests must prepare a scale basis"),
             model_terms,
             residual_terms,
             cycle_reported_niter,
@@ -35050,8 +35201,8 @@ fn run_mtmfs_minor_cycle(
 #[allow(clippy::too_many_arguments)]
 fn run_mtmfs_multiscale_minor_cycle(
     request: &MtmfsRequest,
-    psf_terms: &[Array2<f32>],
     scale_hessians: &[MtmfsScaleHessian],
+    basis: &MtmfsMultiscaleBasis,
     model_terms: &mut [Array2<f32>],
     residual_terms: &mut [Array2<f32>],
     cycle_reported_niter: usize,
@@ -35061,37 +35212,21 @@ fn run_mtmfs_multiscale_minor_cycle(
 ) -> (HogbomMinorCycleOutcome, MinorCycleProbe) {
     let scale_sizes = effective_mtmfs_multiscale_scales(request);
     debug_assert_eq!(scale_sizes.len(), scale_hessians.len());
+    debug_assert_eq!(scale_sizes, basis.scale_sizes);
     debug_assert!(
         scale_sizes
             .iter()
             .zip(scale_hessians)
             .all(|(size, hessian)| *size == hessian.scale_size)
     );
-    let compact_scale_kernels = scale_sizes
-        .iter()
-        .map(|scale| make_compact_multiscale_kernel(*scale))
-        .collect::<Vec<_>>();
-    let scale_masks = request
-        .clean_mask
-        .as_ref()
-        .map(|mask| build_mtmfs_scale_masks(mask, &compact_scale_kernels, &scale_sizes));
-    let max_scale = scale_sizes.iter().copied().fold(0.0f32, f32::max);
-    let scale_bias = if max_scale > 0.0 && scale_sizes.len() > 1 {
-        scale_sizes
-            .iter()
-            .map(|scale| 1.0 - request.small_scale_bias * (*scale / max_scale))
-            .collect::<Vec<_>>()
-    } else {
-        vec![1.0; scale_sizes.len()]
-    };
-    let Some(first_candidate) = find_mtmfs_multiscale_component(
-        residual_terms,
-        &compact_scale_kernels,
-        scale_hessians,
-        &scale_bias,
-        scale_masks.as_deref(),
-        request.clean_mask.as_ref(),
-    ) else {
+    let minor_started = Instant::now();
+    let mut scale_rhs_terms = basis.convolve_residual_terms(residual_terms);
+    let Some(first_candidate) =
+        find_mtmfs_multiscale_component(&scale_rhs_terms, basis, scale_hessians)
+    else {
+        let minor_elapsed = minor_started.elapsed();
+        stage_timings.minor_cycle += minor_elapsed;
+        stage_timings.minor_cycle_solve += minor_elapsed;
         return (
             HogbomMinorCycleOutcome {
                 updated_model: false,
@@ -35114,14 +35249,17 @@ fn run_mtmfs_multiscale_minor_cycle(
         initial_candidate_position: Some([first_candidate.position.0, first_candidate.position.1]),
     };
     let principal_hessian_peak = scale_hessians[0].hessian[0][0];
-    let initial_cycle_peak = peak_abs_value_masked(&residual_terms[0], request.clean_mask.as_ref())
-        / principal_hessian_peak;
+    let initial_cycle_peak =
+        basis.peak_abs_scale_zero(&scale_rhs_terms[0]) / principal_hessian_peak;
     if let Some(reason) = minor_cycle_stop_reason(
         initial_cycle_peak,
         request.clean.threshold_jy_per_beam,
         cycle_threshold_jy_per_beam,
         nsigma_threshold_jy_per_beam,
     ) {
+        let minor_elapsed = minor_started.elapsed();
+        stage_timings.minor_cycle += minor_elapsed;
+        stage_timings.minor_cycle_solve += minor_elapsed;
         return (
             HogbomMinorCycleOutcome {
                 updated_model: false,
@@ -35139,21 +35277,16 @@ fn run_mtmfs_multiscale_minor_cycle(
     let mut cycle_component_updates = 0usize;
     let mut updated_model = false;
     let mut stop_reason = None;
-    let minor_started = Instant::now();
+    let mut next_candidate = Some(first_candidate);
     while cycle_component_updates < cycle_component_budget {
-        let Some(candidate) = find_mtmfs_multiscale_component(
-            residual_terms,
-            &compact_scale_kernels,
-            scale_hessians,
-            &scale_bias,
-            scale_masks.as_deref(),
-            request.clean_mask.as_ref(),
-        ) else {
+        let Some(candidate) = next_candidate
+            .take()
+            .or_else(|| find_mtmfs_multiscale_component(&scale_rhs_terms, basis, scale_hessians))
+        else {
             stop_reason = Some(CleanStopReason::NoCleanablePixels);
             break;
         };
-        let peak_abs = peak_abs_value_masked(&residual_terms[0], request.clean_mask.as_ref())
-            / principal_hessian_peak;
+        let peak_abs = basis.peak_abs_scale_zero(&scale_rhs_terms[0]) / principal_hessian_peak;
         if let Some(reason) = minor_cycle_stop_reason(
             peak_abs,
             request.clean.threshold_jy_per_beam,
@@ -35173,21 +35306,23 @@ fn run_mtmfs_multiscale_minor_cycle(
             let component = request.clean.gain * *coefficient;
             add_shifted_kernel(
                 &mut model_terms[term_index],
-                &compact_scale_kernels[candidate.scale_index],
+                &basis.compact_scale_kernels[candidate.scale_index],
                 candidate.position,
                 component,
             );
         }
-        subtract_mtmfs_multiscale_component(
-            residual_terms,
-            psf_terms,
-            &compact_scale_kernels[candidate.scale_index],
+        basis.subtract_rhs_component(
+            &mut scale_rhs_terms,
+            candidate.scale_index,
             candidate.position,
             request.clean.gain,
             &coeffs,
         );
         cycle_component_updates += 1;
         updated_model = true;
+    }
+    if updated_model {
+        basis.write_scale_zero_rhs(&mut scale_rhs_terms[0], residual_terms);
     }
     let minor_elapsed = minor_started.elapsed();
     stage_timings.minor_cycle += minor_elapsed;
@@ -35217,9 +35352,355 @@ struct MtmfsMultiscaleCandidate {
     coefficients: Vec<f32>,
 }
 
+#[derive(Clone)]
+enum MtmfsScaleRhs {
+    Dense(Vec<Array2<f32>>),
+    Sparse(Vec<Vec<f32>>),
+}
+
+struct MtmfsMultiscaleBasis {
+    scale_sizes: Vec<f32>,
+    compact_scale_kernels: Vec<Array2<f32>>,
+    scale_bias: Vec<f32>,
+    scale_masks: Option<Vec<Array2<bool>>>,
+    scale_search_positions: Vec<Option<Vec<(usize, usize)>>>,
+    psf_pair_patches: Vec<Vec<Array2<f32>>>,
+    sparse_rhs: bool,
+}
+
+impl MtmfsMultiscaleBasis {
+    fn new(request: &MtmfsRequest, psf_terms: &[Array2<f32>], scale_sizes: &[f32]) -> Self {
+        Self::new_with_sparse(request, psf_terms, scale_sizes, true)
+    }
+
+    fn new_with_sparse(
+        request: &MtmfsRequest,
+        psf_terms: &[Array2<f32>],
+        scale_sizes: &[f32],
+        enable_sparse_rhs: bool,
+    ) -> Self {
+        let compact_scale_kernels = scale_sizes
+            .iter()
+            .map(|scale| make_compact_multiscale_kernel(*scale))
+            .collect::<Vec<_>>();
+        let max_scale = scale_sizes.iter().copied().fold(0.0f32, f32::max);
+        let scale_bias = if max_scale > 0.0 && scale_sizes.len() > 1 {
+            scale_sizes
+                .iter()
+                .map(|scale| 1.0 - request.small_scale_bias * (*scale / max_scale))
+                .collect::<Vec<_>>()
+        } else {
+            vec![1.0; scale_sizes.len()]
+        };
+        let image_pixels =
+            request.geometry.image_shape[0].saturating_mul(request.geometry.image_shape[1]);
+        let sparse_scale_search_positions = enable_sparse_rhs
+            .then(|| {
+                request.clean_mask.as_ref().and_then(|mask| {
+                    build_sparse_mtmfs_scale_search_positions(
+                        mask,
+                        &compact_scale_kernels,
+                        scale_sizes,
+                    )
+                })
+            })
+            .flatten();
+        let (scale_masks, scale_search_positions) = if let Some(positions) =
+            sparse_scale_search_positions
+        {
+            (
+                None,
+                positions
+                    .into_iter()
+                    .map(Some)
+                    .collect::<Vec<Option<Vec<(usize, usize)>>>>(),
+            )
+        } else {
+            let scale_masks = request
+                .clean_mask
+                .as_ref()
+                .map(|mask| build_mtmfs_scale_masks(mask, &compact_scale_kernels, scale_sizes));
+            let scale_search_positions = scale_masks
+                .as_ref()
+                .map(|masks| {
+                    masks
+                        .iter()
+                        .map(|mask| {
+                            let positions = mask
+                                .indexed_iter()
+                                .filter_map(|(position, cleanable)| cleanable.then_some(position))
+                                .collect::<Vec<_>>();
+                            (positions.len().saturating_mul(8) <= image_pixels).then_some(positions)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_else(|| vec![None; scale_sizes.len()]);
+            (scale_masks, scale_search_positions)
+        };
+        let sparse_rhs = enable_sparse_rhs
+            && request.clean_mask.is_some()
+            && scale_search_positions.iter().all(Option::is_some)
+            && scale_masks.is_none();
+        if enable_sparse_rhs {
+            let position_counts = scale_search_positions
+                .iter()
+                .map(|positions| positions.as_ref().map_or(image_pixels, Vec::len))
+                .collect::<Vec<_>>();
+            let rhs_bytes = position_counts
+                .iter()
+                .copied()
+                .sum::<usize>()
+                .saturating_mul(request.nterms)
+                .saturating_mul(std::mem::size_of::<f32>());
+            eprintln!(
+                "mtmfs_multiscale_rhs storage={} selection=automatic image_pixels={} clean_mask_pixels={} scale_position_counts={position_counts:?} rhs_bytes={rhs_bytes}",
+                if sparse_rhs {
+                    "sparse-positions"
+                } else {
+                    "dense-fallback"
+                },
+                image_pixels,
+                request.clean_mask.as_ref().map_or(image_pixels, |mask| mask
+                    .iter()
+                    .filter(|value| **value)
+                    .count()),
+            );
+        }
+
+        let psf_peak_position =
+            casa_mtmfs_psf_peak_position(psf_terms.first().expect("PSF term"), max_scale);
+        let psf_support = casa_mtmfs_psf_patch_support(psf_terms[0].dim(), max_scale);
+        let mut psf_pair_patches =
+            Vec::with_capacity(scale_sizes.len() * (scale_sizes.len() + 1) / 2);
+        for high_scale in 0..scale_sizes.len() {
+            for low_scale in 0..=high_scale {
+                let combined_kernel = convolve_compact_scale_kernels(
+                    &compact_scale_kernels[high_scale],
+                    &compact_scale_kernels[low_scale],
+                );
+                psf_pair_patches.push(
+                    psf_terms
+                        .iter()
+                        .map(|psf| {
+                            bounded_circular_convolution_patch(
+                                psf,
+                                &combined_kernel,
+                                psf_peak_position,
+                                psf_support,
+                            )
+                        })
+                        .collect(),
+                );
+            }
+        }
+
+        Self {
+            scale_sizes: scale_sizes.to_vec(),
+            compact_scale_kernels,
+            scale_bias,
+            scale_masks,
+            scale_search_positions,
+            psf_pair_patches,
+            sparse_rhs,
+        }
+    }
+
+    fn convolve_residual_terms(&self, residual_terms: &[Array2<f32>]) -> Vec<MtmfsScaleRhs> {
+        self.convolve_residual_terms_with_sparse(residual_terms, self.sparse_rhs)
+    }
+
+    fn convolve_residual_terms_with_sparse(
+        &self,
+        residual_terms: &[Array2<f32>],
+        sparse_enabled: bool,
+    ) -> Vec<MtmfsScaleRhs> {
+        self.compact_scale_kernels
+            .iter()
+            .zip(&self.scale_search_positions)
+            .map(|(kernel, positions)| {
+                if sparse_enabled && let Some(positions) = positions {
+                    return MtmfsScaleRhs::Sparse(sample_mtmfs_terms_for_scale(
+                        residual_terms,
+                        kernel,
+                        positions,
+                    ));
+                }
+                MtmfsScaleRhs::Dense(convolve_mtmfs_terms_for_scale(residual_terms, kernel))
+            })
+            .collect()
+    }
+
+    fn peak_abs_scale_zero(&self, rhs: &MtmfsScaleRhs) -> f32 {
+        match rhs {
+            MtmfsScaleRhs::Sparse(terms) => {
+                terms[0].iter().copied().map(f32::abs).fold(0.0, f32::max)
+            }
+            MtmfsScaleRhs::Dense(terms) => {
+                let image = &terms[0];
+                if let Some(positions) = &self.scale_search_positions[0] {
+                    return positions
+                        .iter()
+                        .map(|position| image[*position].abs())
+                        .fold(0.0f32, f32::max);
+                }
+                peak_abs_value_masked(
+                    image,
+                    self.scale_masks.as_ref().map(|scale_masks| &scale_masks[0]),
+                )
+            }
+        }
+    }
+
+    fn write_scale_zero_rhs(
+        &self,
+        scale_zero_rhs: &mut MtmfsScaleRhs,
+        residual_terms: &mut [Array2<f32>],
+    ) {
+        match scale_zero_rhs {
+            MtmfsScaleRhs::Dense(rhs_terms) => {
+                for (residual_term, rhs_term) in residual_terms.iter_mut().zip(rhs_terms.iter_mut())
+                {
+                    std::mem::swap(residual_term, rhs_term);
+                }
+            }
+            MtmfsScaleRhs::Sparse(rhs_terms) => {
+                let positions = self.scale_search_positions[0]
+                    .as_ref()
+                    .expect("sparse scale-zero RHS requires sparse search positions");
+                for (residual_term, rhs_values) in residual_terms.iter_mut().zip(rhs_terms) {
+                    for (&position, &value) in positions.iter().zip(rhs_values.iter()) {
+                        residual_term[position] = value;
+                    }
+                }
+            }
+        }
+    }
+
+    fn psf_pair_patch(
+        &self,
+        left_scale: usize,
+        right_scale: usize,
+        psf_order: usize,
+    ) -> &Array2<f32> {
+        let high = left_scale.max(right_scale);
+        let low = left_scale.min(right_scale);
+        &self.psf_pair_patches[high * (high + 1) / 2 + low][psf_order]
+    }
+
+    fn subtract_rhs_component(
+        &self,
+        scale_rhs_terms: &mut [MtmfsScaleRhs],
+        selected_scale: usize,
+        position: (usize, usize),
+        gain: f32,
+        coefficients: &[f32],
+    ) {
+        let nterms = coefficients.len();
+        for (target_scale, rhs) in scale_rhs_terms.iter_mut().enumerate() {
+            match rhs {
+                MtmfsScaleRhs::Dense(rhs_terms) => {
+                    for (residual_order, rhs_term) in rhs_terms.iter_mut().enumerate() {
+                        for (model_order, coefficient) in coefficients.iter().copied().enumerate() {
+                            let psf_order = residual_order + model_order;
+                            debug_assert!(psf_order < 2 * nterms - 1);
+                            subtract_shifted_kernel(
+                                rhs_term,
+                                self.psf_pair_patch(target_scale, selected_scale, psf_order),
+                                position,
+                                gain * coefficient,
+                            );
+                        }
+                    }
+                }
+                MtmfsScaleRhs::Sparse(rhs_terms) => {
+                    let positions = self.scale_search_positions[target_scale]
+                        .as_ref()
+                        .expect("sparse RHS requires sparse search positions");
+                    for (residual_order, rhs_values) in rhs_terms.iter_mut().enumerate() {
+                        for (model_order, coefficient) in coefficients.iter().copied().enumerate() {
+                            let psf_order = residual_order + model_order;
+                            debug_assert!(psf_order < 2 * nterms - 1);
+                            subtract_shifted_kernel_at_positions(
+                                rhs_values,
+                                positions,
+                                self.psf_pair_patch(target_scale, selected_scale, psf_order),
+                                position,
+                                gain * coefficient,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn make_compact_multiscale_kernel(scale_size: f32) -> Array2<f32> {
     let radius = scale_size.ceil().max(0.0) as usize;
     make_multiscale_kernel((2 * radius + 1, 2 * radius + 1), scale_size)
+}
+
+fn convolve_compact_scale_kernels(left: &Array2<f32>, right: &Array2<f32>) -> Array2<f32> {
+    let output_shape = (
+        left.dim().0 + right.dim().0 - 1,
+        left.dim().1 + right.dim().1 - 1,
+    );
+    let mut output = Array2::<f32>::zeros(output_shape);
+    for ((left_x, left_y), left_value) in left.indexed_iter() {
+        if *left_value == 0.0 {
+            continue;
+        }
+        for ((right_x, right_y), right_value) in right.indexed_iter() {
+            if *right_value != 0.0 {
+                output[(left_x + right_x, left_y + right_y)] += *left_value * *right_value;
+            }
+        }
+    }
+    output
+}
+
+fn casa_mtmfs_psf_patch_support(image_shape: (usize, usize), max_scale_size: f32) -> usize {
+    let mut support = ((4.0f32 * 4.0 + max_scale_size * max_scale_size).sqrt() * 20.0) as usize;
+    support = support.max(80).min(image_shape.0).min(image_shape.1);
+    if support % 2 != 0 {
+        support -= 1;
+    }
+    support
+}
+
+fn bounded_circular_convolution_patch(
+    image: &Array2<f32>,
+    compact_kernel: &Array2<f32>,
+    center: (usize, usize),
+    support: usize,
+) -> Array2<f32> {
+    let (nx, ny) = image.dim();
+    let patch_center = support / 2;
+    let kernel_center = (compact_kernel.dim().0 / 2, compact_kernel.dim().1 / 2);
+    let taps = compact_kernel
+        .indexed_iter()
+        .filter_map(|((x, y), value)| {
+            (*value != 0.0).then_some((
+                x as isize - kernel_center.0 as isize,
+                y as isize - kernel_center.1 as isize,
+                *value,
+            ))
+        })
+        .collect::<Vec<_>>();
+    let mut patch = Array2::<f32>::zeros((support, support));
+    for (offset_x, offset_y, value) in taps {
+        for patch_x in 0..support {
+            let image_x = (center.0 as isize + patch_x as isize - patch_center as isize - offset_x)
+                .rem_euclid(nx as isize) as usize;
+            for patch_y in 0..support {
+                let image_y =
+                    (center.1 as isize + patch_y as isize - patch_center as isize - offset_y)
+                        .rem_euclid(ny as isize) as usize;
+                patch[(patch_x, patch_y)] += value * image[(image_x, image_y)];
+            }
+        }
+    }
+    patch
 }
 
 fn materialize_centered_compact_kernel(
@@ -35269,10 +35750,158 @@ fn convolve_mtmfs_terms_for_scale(
         .collect()
 }
 
+fn sample_mtmfs_terms_for_scale(
+    terms: &[Array2<f32>],
+    compact_kernel: &Array2<f32>,
+    positions: &[(usize, usize)],
+) -> Vec<Vec<f32>> {
+    if compact_kernel_is_unit_impulse(compact_kernel) {
+        return terms
+            .iter()
+            .map(|term| positions.iter().map(|position| term[*position]).collect())
+            .collect();
+    }
+    let (nx, ny) = terms[0].dim();
+    let kernel_center = (compact_kernel.dim().0 / 2, compact_kernel.dim().1 / 2);
+    let taps = compact_kernel
+        .indexed_iter()
+        .filter_map(|((x, y), value)| {
+            (*value != 0.0).then_some((
+                x as isize - kernel_center.0 as isize,
+                y as isize - kernel_center.1 as isize,
+                *value,
+            ))
+        })
+        .collect::<Vec<_>>();
+    terms
+        .iter()
+        .map(|term| {
+            positions
+                .iter()
+                .map(|&(x, y)| {
+                    taps.iter()
+                        .fold(0.0f32, |sum, &(offset_x, offset_y, value)| {
+                            let source_x = (x as isize - offset_x).rem_euclid(nx as isize) as usize;
+                            let source_y = (y as isize - offset_y).rem_euclid(ny as isize) as usize;
+                            sum + value * term[(source_x, source_y)]
+                        })
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn subtract_shifted_kernel_at_positions(
+    values: &mut [f32],
+    positions: &[(usize, usize)],
+    kernel: &Array2<f32>,
+    peak_index: (usize, usize),
+    scale_factor: f32,
+) {
+    debug_assert_eq!(values.len(), positions.len());
+    let kernel_center = (kernel.dim().0 / 2, kernel.dim().1 / 2);
+    let kernel_x_min = peak_index.0 as isize - kernel_center.0 as isize;
+    let kernel_y_min = peak_index.1 as isize - kernel_center.1 as isize;
+    for (value, &(x, y)) in values.iter_mut().zip(positions) {
+        let kernel_x = x as isize - kernel_x_min;
+        let kernel_y = y as isize - kernel_y_min;
+        if kernel_x >= 0
+            && kernel_y >= 0
+            && kernel_x < kernel.dim().0 as isize
+            && kernel_y < kernel.dim().1 as isize
+        {
+            *value -= scale_factor * kernel[(kernel_x as usize, kernel_y as usize)];
+        }
+    }
+}
+
 fn fft_convolve_real_compact(image: &Array2<f32>, compact_kernel: &Array2<f32>) -> Array2<f32> {
     convolve_mtmfs_terms_for_scale(std::slice::from_ref(image), compact_kernel)
         .pop()
         .expect("one compact convolution input should produce one output")
+}
+
+fn build_sparse_mtmfs_scale_search_positions(
+    mask: &Array2<bool>,
+    compact_kernels: &[Array2<f32>],
+    scale_sizes: &[f32],
+) -> Option<Vec<Vec<(usize, usize)>>> {
+    let (nx, ny) = mask.dim();
+    let image_pixels = nx.saturating_mul(ny);
+    let source_positions = mask
+        .indexed_iter()
+        .filter_map(|(position, cleanable)| cleanable.then_some(position))
+        .collect::<Vec<_>>();
+    let maximum_kernel_taps = compact_kernels
+        .iter()
+        .map(|kernel| kernel.iter().filter(|value| **value != 0.0).count())
+        .max()
+        .unwrap_or(1);
+    if source_positions.len().saturating_mul(8) > image_pixels
+        || source_positions.len().saturating_mul(maximum_kernel_taps) > image_pixels
+    {
+        return None;
+    }
+    let mut scale_positions = Vec::with_capacity(compact_kernels.len());
+    for (scale_index, (kernel, scale_size)) in compact_kernels
+        .iter()
+        .zip(scale_sizes.iter().copied())
+        .enumerate()
+    {
+        if compact_kernel_is_unit_impulse(kernel) {
+            scale_positions.push(source_positions.clone());
+            continue;
+        }
+        let kernel_center = (kernel.dim().0 / 2, kernel.dim().1 / 2);
+        let taps = kernel
+            .indexed_iter()
+            .filter_map(|((x, y), value)| {
+                (*value != 0.0).then_some((
+                    x as isize - kernel_center.0 as isize,
+                    y as isize - kernel_center.1 as isize,
+                    *value,
+                ))
+            })
+            .collect::<Vec<_>>();
+        let mut candidates =
+            HashSet::with_capacity(source_positions.len().saturating_mul(taps.len().min(8)));
+        for &(source_x, source_y) in &source_positions {
+            for &(offset_x, offset_y, _) in &taps {
+                candidates.insert((
+                    (source_x as isize + offset_x).rem_euclid(nx as isize) as usize,
+                    (source_y as isize + offset_y).rem_euclid(ny as isize) as usize,
+                ));
+            }
+        }
+        let border = (scale_size * 1.5) as usize;
+        let mut positions = candidates
+            .into_iter()
+            .filter(|&(x, y)| {
+                if scale_index > 0
+                    && (x <= border
+                        || y <= border
+                        || x >= nx.saturating_sub(border + 1)
+                        || y >= ny.saturating_sub(border + 1))
+                {
+                    return false;
+                }
+                let convolved = taps
+                    .iter()
+                    .fold(0.0f32, |sum, &(offset_x, offset_y, value)| {
+                        let source_x = (x as isize - offset_x).rem_euclid(nx as isize) as usize;
+                        let source_y = (y as isize - offset_y).rem_euclid(ny as isize) as usize;
+                        sum + value * if mask[(source_x, source_y)] { 1.0 } else { 0.0 }
+                    });
+                convolved > 0.1
+            })
+            .collect::<Vec<_>>();
+        positions.sort_unstable();
+        if positions.len().saturating_mul(8) > image_pixels {
+            return None;
+        }
+        scale_positions.push(positions);
+    }
+    Some(scale_positions)
 }
 
 fn build_mtmfs_scale_masks(
@@ -35284,58 +35913,84 @@ fn build_mtmfs_scale_masks(
     compact_kernels
         .iter()
         .zip(scale_sizes.iter().copied())
-        .map(|(compact_kernel, scale_size)| {
+        .enumerate()
+        .map(|(scale_index, (compact_kernel, scale_size))| {
             let convolved = fft_convolve_real_compact(&mask_values, compact_kernel);
-            let mut scale_mask = convolved.mapv(|value| value > 0.9);
-            apply_casa_multiscale_edge_mask(&mut scale_mask, scale_size);
+            // MultiTermMatrixCleaner::setupUserMask uses a fixed 0.1
+            // threshold here (independent of MatrixCleaner's 0.9 default).
+            let mut scale_mask = convolved.mapv(|value| value > 0.1);
+            if scale_index > 0 {
+                apply_casa_multiscale_edge_mask(&mut scale_mask, scale_size);
+            }
             scale_mask
         })
         .collect()
 }
 
 fn find_mtmfs_multiscale_component(
-    residual_terms: &[Array2<f32>],
-    compact_scale_kernels: &[Array2<f32>],
+    scale_rhs_terms: &[MtmfsScaleRhs],
+    basis: &MtmfsMultiscaleBasis,
     scale_hessians: &[MtmfsScaleHessian],
-    scale_bias: &[f32],
-    scale_masks: Option<&[Array2<bool>]>,
-    clean_mask: Option<&Array2<bool>>,
 ) -> Option<MtmfsMultiscaleCandidate> {
     let mut best = None::<(MtmfsMultiscaleCandidate, f32)>;
-    for (scale_index, (compact_kernel, scale_hessian)) in
-        compact_scale_kernels.iter().zip(scale_hessians).enumerate()
+    for (scale_index, (rhs, scale_hessian)) in
+        scale_rhs_terms.iter().zip(scale_hessians).enumerate()
     {
-        let rhs_terms = convolve_mtmfs_terms_for_scale(residual_terms, compact_kernel);
-        let (nx, ny) = rhs_terms.first()?.dim();
-        let search_mask = scale_masks.map(|masks| &masks[scale_index]).or(clean_mask);
-        for x in 0..nx {
-            for y in 0..ny {
-                if search_mask.is_some_and(|mask| !mask[(x, y)]) {
+        let mut consider_values = |position: (usize, usize), rhs_values: Vec<f32>| {
+            let coefficients = solve_mtmfs_coefficients(&rhs_values, &scale_hessian.inverse);
+            let score = coefficients
+                .iter()
+                .zip(rhs_values.iter())
+                .map(|(coefficient, value)| coefficient * value)
+                .sum::<f32>();
+            let biased_score = score.abs() * basis.scale_bias[scale_index];
+            if best
+                .as_ref()
+                .is_none_or(|(_, best_score)| biased_score > *best_score)
+            {
+                best = Some((
+                    MtmfsMultiscaleCandidate {
+                        scale_index,
+                        position,
+                        coefficients,
+                    },
+                    biased_score,
+                ));
+            }
+        };
+        match rhs {
+            MtmfsScaleRhs::Sparse(rhs_terms) => {
+                let positions = basis.scale_search_positions[scale_index]
+                    .as_ref()
+                    .expect("sparse RHS requires sparse search positions");
+                for (position_index, &position) in positions.iter().enumerate() {
+                    consider_values(
+                        position,
+                        rhs_terms.iter().map(|term| term[position_index]).collect(),
+                    );
+                }
+            }
+            MtmfsScaleRhs::Dense(rhs_terms) => {
+                let (nx, ny) = rhs_terms.first()?.dim();
+                let mut consider_position = |position: (usize, usize)| {
+                    consider_values(
+                        position,
+                        rhs_terms.iter().map(|term| term[position]).collect(),
+                    );
+                };
+                if let Some(positions) = &basis.scale_search_positions[scale_index] {
+                    for &position in positions {
+                        consider_position(position);
+                    }
                     continue;
                 }
-                let rhs = rhs_terms
-                    .iter()
-                    .map(|term| term[(x, y)])
-                    .collect::<Vec<_>>();
-                let coefficients = solve_mtmfs_coefficients(&rhs, &scale_hessian.inverse);
-                let score = coefficients
-                    .iter()
-                    .zip(rhs.iter())
-                    .map(|(coefficient, value)| coefficient * value)
-                    .sum::<f32>();
-                let biased_score = score.abs() * scale_bias[scale_index];
-                if best
-                    .as_ref()
-                    .is_none_or(|(_, best_score)| biased_score > *best_score)
-                {
-                    best = Some((
-                        MtmfsMultiscaleCandidate {
-                            scale_index,
-                            position: (x, y),
-                            coefficients,
-                        },
-                        biased_score,
-                    ));
+                let search_mask = basis.scale_masks.as_ref().map(|masks| &masks[scale_index]);
+                for x in 0..nx {
+                    for y in 0..ny {
+                        if search_mask.is_none_or(|mask| mask[(x, y)]) {
+                            consider_position((x, y));
+                        }
+                    }
                 }
             }
         }
@@ -35343,6 +35998,7 @@ fn find_mtmfs_multiscale_component(
     best.map(|(candidate, _)| candidate)
 }
 
+#[cfg(test)]
 fn subtract_mtmfs_multiscale_component(
     residual_terms: &mut [Array2<f32>],
     psf_terms: &[Array2<f32>],
@@ -42979,7 +43635,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_kernel_worker_calibration_discards_trials_and_reuses_one_resolution() {
+    fn production_window_worker_calibration_updates_each_window_once_and_resolves() {
         let (fixture_samples, bundles) = compact_sparse_scheduler_fixture();
         let base = fixture_samples[0];
         let samples = (0..40)
@@ -42999,51 +43655,55 @@ mod tests {
             .collect::<Vec<_>>();
 
         let mut baseline = super::MosaicMtmfsSparseHostGrids::new(24, 32, 4, 1, 1).unwrap();
-        super::grid_awproject_compact_samples_sparse_host_f64(
-            &mut baseline,
-            &samples,
-            &bundles,
-            None,
-            cfg!(target_arch = "aarch64"),
-            true,
-            false,
-            2.0e9,
-            3,
-            None,
-        )
-        .unwrap();
-
         let request = super::ParallelWorkerCalibrationRequest::new(
-            vec![1, 2, 4],
+            vec![2, 3, 4],
             4,
             Some(2),
             Duration::from_secs(5),
-            20_000,
         )
         .unwrap();
         let control = super::ParallelWorkerCalibrationControl {
             request,
             resolution: std::sync::Arc::new(std::sync::OnceLock::new()),
+            online: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
         let mut calibrated = super::MosaicMtmfsSparseHostGrids::new(24, 32, 4, 1, 1).unwrap();
-        super::grid_awproject_compact_samples_sparse_host_f64(
-            &mut calibrated,
-            &samples,
-            &bundles,
-            None,
-            cfg!(target_arch = "aarch64"),
-            true,
-            false,
-            2.0e9,
-            1,
-            Some(&control),
-        )
-        .unwrap();
+        for _ in 0..32 {
+            super::grid_awproject_compact_samples_sparse_host_f64(
+                &mut baseline,
+                &samples,
+                &bundles,
+                None,
+                cfg!(target_arch = "aarch64"),
+                true,
+                false,
+                2.0e9,
+                3,
+                None,
+            )
+            .unwrap();
+            super::grid_awproject_compact_samples_sparse_host_f64(
+                &mut calibrated,
+                &samples,
+                &bundles,
+                None,
+                cfg!(target_arch = "aarch64"),
+                true,
+                false,
+                2.0e9,
+                1,
+                Some(&control),
+            )
+            .unwrap();
+            if control.resolution.get().is_some() {
+                break;
+            }
+        }
         let resolution = control
             .resolution
             .get()
-            .expect("the first pristine window resolves worker calibration");
-        assert!((1..=4).contains(&resolution.workers));
+            .expect("counterbalanced production windows resolve worker calibration");
+        assert!((2..=4).contains(&resolution.workers));
 
         for kind in [
             super::MosaicMtmfsSparsePlaneKind::Psf,
@@ -43055,6 +43715,32 @@ mod tests {
                 calibrated.take_dense_plane(kind, 0).unwrap(),
             );
         }
+    }
+
+    #[test]
+    fn parallel_worker_receipt_values_are_single_token_key_values() {
+        assert_eq!(
+            super::parallel_worker_candidate_log_value(&[4, 6, 8, 10]),
+            "4,6,8,10"
+        );
+        assert_eq!(
+            super::parallel_worker_score_log_value(&[
+                super::parallel_worker::ParallelWorkerCandidateScore {
+                    workers: 6,
+                    mean_elapsed_ns: 9,
+                    interval_min_score: 10,
+                    interval_max_score: 11,
+                    combined_score: 10,
+                }
+            ]),
+            "6:9ns:10:10-11"
+        );
+        assert_eq!(
+            super::parallel_worker_reason_log_value(
+                "the exact-kernel calibration = elapsed budget"
+            ),
+            "the_exact-kernel_calibration_:_elapsed_budget"
+        );
     }
 
     #[test]
@@ -49998,19 +50684,201 @@ mod tests {
                 inverse: vec![vec![100.0]],
             },
         ];
-        let candidate = super::find_mtmfs_multiscale_component(
-            &[residual],
-            &compact_kernels,
-            &hessians,
-            &[1.0, 1.0],
-            None,
-            None,
-        )
-        .expect("select component");
+        let scale_rhs_terms = compact_kernels
+            .iter()
+            .map(|kernel| {
+                super::MtmfsScaleRhs::Dense(super::convolve_mtmfs_terms_for_scale(
+                    &[residual.clone()],
+                    kernel,
+                ))
+            })
+            .collect::<Vec<_>>();
+        let basis = super::MtmfsMultiscaleBasis {
+            scale_sizes: vec![0.0, 3.0],
+            compact_scale_kernels: compact_kernels,
+            scale_bias: vec![1.0, 1.0],
+            scale_masks: None,
+            scale_search_positions: vec![None, None],
+            psf_pair_patches: Vec::new(),
+            sparse_rhs: false,
+        };
+        let candidate = super::find_mtmfs_multiscale_component(&scale_rhs_terms, &basis, &hessians)
+            .expect("select component");
 
         assert_eq!(candidate.scale_index, 1);
         assert_eq!(candidate.position, (8, 8));
         assert!((candidate.coefficients[0] - 100.0 * scale_rhs).abs() < 1.0e-5);
+    }
+
+    #[test]
+    fn mtmfs_sparse_rhs_preserves_dense_candidate_selection() {
+        let shape = (16, 16);
+        let mut residual = Array2::<f32>::zeros(shape);
+        residual[(8, 8)] = 1.0;
+        residual[(7, 10)] = -0.35;
+        let compact_kernels = vec![
+            super::make_compact_multiscale_kernel(0.0),
+            super::make_compact_multiscale_kernel(3.0),
+        ];
+        let positions = (0..shape.0)
+            .flat_map(|x| (0..shape.1).map(move |y| (x, y)))
+            .collect::<Vec<_>>();
+        let basis = super::MtmfsMultiscaleBasis {
+            scale_sizes: vec![0.0, 3.0],
+            compact_scale_kernels: compact_kernels,
+            scale_bias: vec![1.0, 1.0],
+            scale_masks: None,
+            scale_search_positions: vec![Some(positions.clone()), Some(positions)],
+            psf_pair_patches: Vec::new(),
+            sparse_rhs: false,
+        };
+        let hessians = vec![
+            super::MtmfsScaleHessian {
+                scale_size: 0.0,
+                hessian: vec![vec![1.0]],
+                inverse: vec![vec![1.0]],
+            },
+            super::MtmfsScaleHessian {
+                scale_size: 3.0,
+                hessian: vec![vec![4.0]],
+                inverse: vec![vec![0.25]],
+            },
+        ];
+        let dense = basis.convolve_residual_terms_with_sparse(&[residual.clone()], false);
+        let sparse = basis.convolve_residual_terms_with_sparse(&[residual], true);
+
+        let dense_candidate =
+            super::find_mtmfs_multiscale_component(&dense, &basis, &hessians).unwrap();
+        let sparse_candidate =
+            super::find_mtmfs_multiscale_component(&sparse, &basis, &hessians).unwrap();
+
+        assert_eq!(sparse_candidate.scale_index, dense_candidate.scale_index);
+        assert_eq!(sparse_candidate.position, dense_candidate.position);
+        assert!(
+            (sparse_candidate.coefficients[0] - dense_candidate.coefficients[0]).abs() < 2.0e-5
+        );
+    }
+
+    #[test]
+    fn mtmfs_sparse_rhs_minor_cycle_matches_dense_model_and_masked_residual() {
+        let shape = (64, 64);
+        let center = (shape.0 / 2, shape.1 / 2);
+        let psf0 = Array2::from_shape_fn(shape, |(x, y)| {
+            let radius2 =
+                (x as f32 - center.0 as f32).powi(2) + (y as f32 - center.1 as f32).powi(2);
+            (-radius2 / 18.0).exp()
+        });
+        let psf_terms = vec![
+            psf0.clone(),
+            psf0.mapv(|value| 0.05 * value),
+            psf0.mapv(|value| 0.4 * value),
+        ];
+        let clean_mask = Array2::from_shape_fn(shape, |(x, y)| {
+            (30..=34).contains(&x) && (30..=34).contains(&y)
+        });
+        let request = MtmfsRequest {
+            geometry: ImageGeometry {
+                image_shape: [shape.0, shape.1],
+                cell_size_rad: [1.0e-4, 1.0e-4],
+            },
+            visibility_batches: Vec::new(),
+            sample_frequency_batches_hz: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.4e9,
+            selected_frequency_range_hz: [1.3e9, 1.5e9],
+            nterms: 2,
+            multiscale_scales: vec![0.0, 3.0],
+            small_scale_bias: 0.0,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            clean: CleanConfig {
+                niter: 8,
+                major_cycle_limit: None,
+                gain: 0.1,
+                threshold_jy_per_beam: 0.0,
+                nsigma: 0.0,
+                psf_cutoff: 0.35,
+                minor_cycle_length: 8,
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.05,
+                max_psf_fraction: 0.8,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            },
+            clean_mask: Some(clean_mask.clone()),
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let scale_sizes = super::effective_mtmfs_multiscale_scales(&request);
+        let hessians =
+            super::mtmfs_scale_hessians(&psf_terms, request.nterms, &scale_sizes).unwrap();
+        let dense_basis =
+            super::MtmfsMultiscaleBasis::new_with_sparse(&request, &psf_terms, &scale_sizes, false);
+        let sparse_basis =
+            super::MtmfsMultiscaleBasis::new_with_sparse(&request, &psf_terms, &scale_sizes, true);
+        assert!(!dense_basis.sparse_rhs);
+        assert!(sparse_basis.sparse_rhs);
+        let residual_terms = vec![
+            Array2::from_shape_fn(shape, |(x, y)| {
+                let radius2 =
+                    (x as f32 - center.0 as f32).powi(2) + (y as f32 - center.1 as f32).powi(2);
+                0.8 * (-radius2 / 12.0).exp()
+            }),
+            Array2::from_shape_fn(shape, |(x, y)| {
+                let radius2 =
+                    (x as f32 - center.0 as f32).powi(2) + (y as f32 - center.1 as f32).powi(2);
+                0.12 * (-radius2 / 14.0).exp()
+            }),
+        ];
+        let mut dense_model = vec![Array2::<f32>::zeros(shape); request.nterms];
+        let mut sparse_model = dense_model.clone();
+        let mut dense_residual = residual_terms.clone();
+        let mut sparse_residual = residual_terms;
+        let mut dense_timings = ImagingStageTimings::default();
+        let mut sparse_timings = ImagingStageTimings::default();
+
+        let (dense_outcome, _) = super::run_mtmfs_multiscale_minor_cycle(
+            &request,
+            &hessians,
+            &dense_basis,
+            &mut dense_model,
+            &mut dense_residual,
+            5,
+            0.01,
+            0.0,
+            &mut dense_timings,
+        );
+        let (sparse_outcome, _) = super::run_mtmfs_multiscale_minor_cycle(
+            &request,
+            &hessians,
+            &sparse_basis,
+            &mut sparse_model,
+            &mut sparse_residual,
+            5,
+            0.01,
+            0.0,
+            &mut sparse_timings,
+        );
+
+        assert_eq!(sparse_outcome.updated_model, dense_outcome.updated_model);
+        assert_eq!(sparse_outcome.actual_updates, dense_outcome.actual_updates);
+        assert_eq!(
+            sparse_outcome.reported_updates,
+            dense_outcome.reported_updates
+        );
+        assert_eq!(sparse_outcome.stop_reason, dense_outcome.stop_reason);
+        for (sparse_term, dense_term) in sparse_model.iter().zip(&dense_model) {
+            for (&sparse_value, &dense_value) in sparse_term.iter().zip(dense_term) {
+                assert!((sparse_value - dense_value).abs() < 2.0e-4);
+            }
+        }
+        for (sparse_term, dense_term) in sparse_residual.iter().zip(&dense_residual) {
+            for (position, cleanable) in clean_mask.indexed_iter() {
+                if *cleanable {
+                    assert!((sparse_term[position] - dense_term[position]).abs() < 2.0e-4);
+                }
+            }
+        }
     }
 
     #[test]
@@ -50028,6 +50896,228 @@ mod tests {
 
         for (actual, expected) in actual.iter().zip(expected.iter()) {
             assert!((actual - expected).abs() < 3.0e-5);
+        }
+    }
+
+    #[test]
+    fn mtmfs_sparse_scale_rhs_samples_match_dense_convolution() {
+        let shape = (32, 28);
+        let terms = vec![
+            Array2::from_shape_fn(shape, |(x, y)| {
+                ((x * 11 + y * 7) as f32 * 0.03125).sin()
+                    + 0.2 * ((x as f32 - 13.0).powi(2) + (y as f32 - 9.0).powi(2)).sqrt()
+            }),
+            Array2::from_shape_fn(shape, |(x, y)| ((x * 3 + y * 5) as f32 * 0.0625).cos()),
+        ];
+        let compact = super::make_compact_multiscale_kernel(5.0);
+        let positions = [(0, 0), (1, 27), (16, 14), (31, 0), (31, 27)];
+        let sparse = super::sample_mtmfs_terms_for_scale(&terms, &compact, &positions);
+        let dense = super::convolve_mtmfs_terms_for_scale(&terms, &compact);
+
+        for (sparse_term, dense_term) in sparse.iter().zip(&dense) {
+            for (&sparse_value, &position) in sparse_term.iter().zip(&positions) {
+                assert!(
+                    (sparse_value - dense_term[position]).abs() < 5.0e-4,
+                    "sparse value {sparse_value} did not match dense value {} at {position:?}",
+                    dense_term[position]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mtmfs_sparse_scale_masks_match_dense_casa_thresholds() {
+        let shape = (128, 120);
+        let mask = Array2::from_shape_fn(shape, |(x, y)| {
+            (59..=65).contains(&x) && (54..=61).contains(&y)
+        });
+        let scale_sizes = [0.0, 3.0, 5.0];
+        let kernels = scale_sizes
+            .iter()
+            .map(|scale| super::make_compact_multiscale_kernel(*scale))
+            .collect::<Vec<_>>();
+        let dense_masks = super::build_mtmfs_scale_masks(&mask, &kernels, &scale_sizes);
+        let sparse_positions =
+            super::build_sparse_mtmfs_scale_search_positions(&mask, &kernels, &scale_sizes)
+                .expect("small mask should use sparse positions");
+
+        for (dense_mask, sparse_positions) in dense_masks.iter().zip(&sparse_positions) {
+            let dense_positions = dense_mask
+                .indexed_iter()
+                .filter_map(|(position, cleanable)| cleanable.then_some(position))
+                .collect::<Vec<_>>();
+            assert_eq!(*sparse_positions, dense_positions);
+        }
+    }
+
+    #[test]
+    fn mtmfs_sparse_scale_masks_fall_back_for_broad_masks() {
+        let shape = (64, 60);
+        let mask =
+            Array2::from_shape_fn(shape, |(x, y)| (8..56).contains(&x) && (8..52).contains(&y));
+        let scale_sizes = [0.0, 3.0, 5.0];
+        let kernels = scale_sizes
+            .iter()
+            .map(|scale| super::make_compact_multiscale_kernel(*scale))
+            .collect::<Vec<_>>();
+
+        assert!(
+            super::build_sparse_mtmfs_scale_search_positions(&mask, &kernels, &scale_sizes)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn mtmfs_sparse_rhs_patch_update_matches_dense_positions() {
+        let shape = (32, 28);
+        let positions = [(0, 0), (8, 8), (15, 12), (16, 14), (18, 16), (31, 27)];
+        let mut dense = Array2::from_shape_fn(shape, |(x, y)| (x * 7 + y * 11) as f32 * 0.01);
+        let mut sparse = positions
+            .iter()
+            .map(|position| dense[*position])
+            .collect::<Vec<_>>();
+        let kernel = Array2::from_shape_fn((9, 7), |(x, y)| (x * 5 + y * 3) as f32 * -0.002);
+        let peak = (16, 14);
+        let scale_factor = -0.17;
+
+        super::subtract_shifted_kernel(&mut dense, &kernel, peak, scale_factor);
+        super::subtract_shifted_kernel_at_positions(
+            &mut sparse,
+            &positions,
+            &kernel,
+            peak,
+            scale_factor,
+        );
+
+        for (&actual, &position) in sparse.iter().zip(&positions) {
+            assert_eq!(actual, dense[position]);
+        }
+    }
+
+    #[test]
+    fn mtmfs_bounded_cross_scale_psf_patch_matches_full_image_convolution() {
+        let shape = (128, 120);
+        let center = (61, 58);
+        let image = Array2::from_shape_fn(shape, |(x, y)| {
+            ((x * 17 + y * 11) as f32 * 0.021).sin() + ((x * 3 + y * 5) as f32 * 0.013).cos()
+        });
+        let left = super::make_compact_multiscale_kernel(3.0);
+        let right = super::make_compact_multiscale_kernel(5.0);
+        let combined = super::convolve_compact_scale_kernels(&left, &right);
+        let support = super::casa_mtmfs_psf_patch_support(shape, 5.0);
+        let actual = super::bounded_circular_convolution_patch(&image, &combined, center, support);
+        let expected = super::fft_convolve_real_compact(&image, &combined);
+        let patch_center = support / 2;
+
+        for x in 0..support {
+            for y in 0..support {
+                let expected_x = (center.0 + shape.0 + x - patch_center) % shape.0;
+                let expected_y = (center.1 + shape.1 + y - patch_center) % shape.1;
+                assert!(
+                    (actual[(x, y)] - expected[(expected_x, expected_y)]).abs() < 5.0e-4,
+                    "mismatch at ({x}, {y}): actual={} expected={}",
+                    actual[(x, y)],
+                    expected[(expected_x, expected_y)]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mtmfs_cached_cross_scale_rhs_update_matches_full_image_reference() {
+        let shape = (64, 64);
+        let center = (shape.0 / 2, shape.1 / 2);
+        let compact_scale_kernels = vec![
+            super::make_compact_multiscale_kernel(0.0),
+            super::make_compact_multiscale_kernel(3.0),
+        ];
+        let psf_terms = (0..3)
+            .map(|order| {
+                Array2::from_shape_fn(shape, |(x, y)| {
+                    let radius2 =
+                        (x as f32 - center.0 as f32).powi(2) + (y as f32 - center.1 as f32).powi(2);
+                    (1.0 + order as f32 * 0.1) * (-radius2 / 24.0).exp()
+                })
+            })
+            .collect::<Vec<_>>();
+        let support = super::casa_mtmfs_psf_patch_support(shape, 3.0);
+        let mut psf_pair_patches = Vec::new();
+        for high_scale in 0..2 {
+            for low_scale in 0..=high_scale {
+                let combined = super::convolve_compact_scale_kernels(
+                    &compact_scale_kernels[high_scale],
+                    &compact_scale_kernels[low_scale],
+                );
+                psf_pair_patches.push(
+                    psf_terms
+                        .iter()
+                        .map(|psf| {
+                            super::bounded_circular_convolution_patch(
+                                psf, &combined, center, support,
+                            )
+                        })
+                        .collect(),
+                );
+            }
+        }
+        let basis = super::MtmfsMultiscaleBasis {
+            scale_sizes: vec![0.0, 3.0],
+            compact_scale_kernels,
+            scale_bias: vec![1.0, 1.0],
+            scale_masks: None,
+            scale_search_positions: vec![None, None],
+            psf_pair_patches,
+            sparse_rhs: false,
+        };
+        let residual_terms = vec![
+            Array2::from_shape_fn(shape, |(x, y)| (x * 7 + y * 11) as f32 * 0.001),
+            Array2::from_shape_fn(shape, |(x, y)| (x * 3 + y * 5) as f32 * -0.002),
+        ];
+        let mut actual = basis.convolve_residual_terms(&residual_terms);
+        let mut expected = actual.clone();
+        let selected_scale = 1;
+        let position = (29, 37);
+        let gain = 0.1;
+        let coefficients = [0.8, -0.35];
+
+        basis.subtract_rhs_component(&mut actual, selected_scale, position, gain, &coefficients);
+        for (target_scale, rhs) in expected.iter_mut().enumerate() {
+            let super::MtmfsScaleRhs::Dense(rhs_terms) = rhs else {
+                panic!("dense reference expected");
+            };
+            let combined = super::convolve_compact_scale_kernels(
+                &basis.compact_scale_kernels[target_scale],
+                &basis.compact_scale_kernels[selected_scale],
+            );
+            for (residual_order, rhs_term) in rhs_terms.iter_mut().enumerate() {
+                for (model_order, coefficient) in coefficients.iter().copied().enumerate() {
+                    let convolved_psf = super::fft_convolve_real_compact(
+                        &psf_terms[residual_order + model_order],
+                        &combined,
+                    );
+                    super::subtract_shifted_kernel(
+                        rhs_term,
+                        &convolved_psf,
+                        position,
+                        gain * coefficient,
+                    );
+                }
+            }
+        }
+
+        for (actual_scale, expected_scale) in actual.iter().zip(expected.iter()) {
+            let (
+                super::MtmfsScaleRhs::Dense(actual_scale),
+                super::MtmfsScaleRhs::Dense(expected_scale),
+            ) = (actual_scale, expected_scale)
+            else {
+                panic!("dense reference expected");
+            };
+            for (actual_term, expected_term) in actual_scale.iter().zip(expected_scale.iter()) {
+                for (actual, expected) in actual_term.iter().zip(expected_term.iter()) {
+                    assert!((actual - expected).abs() < 8.0e-4);
+                }
+            }
         }
     }
 

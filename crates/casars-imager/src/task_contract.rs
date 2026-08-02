@@ -3021,7 +3021,13 @@ pub(crate) fn build_artifacts(request: &ImagerRunTaskRequest) -> Vec<ImagerArtif
         .to_cli_config()
         .expect("canonical imager request must reconstruct its validated CLI config");
     let plan = crate::single_plane_plan::build_single_plane_execution_plan(&config, false, 1);
-    plan.output_products
+    let mut output_products = plan.output_products;
+    if PathBuf::from(format!("{base}.mask")).exists()
+        && !output_products.iter().any(|suffix| suffix == ".mask")
+    {
+        output_products.push(".mask".to_string());
+    }
+    output_products
         .iter()
         .map(|suffix| {
             let kind = artifact_kind_for_product_suffix(suffix);
@@ -4143,7 +4149,7 @@ mod tests {
         assert_eq!(standard_config.correlation.as_deref(), Some("XX"));
 
         let standard_artifacts = super::build_artifacts(&standard);
-        assert_eq!(standard_artifacts.len(), 5);
+        assert_eq!(standard_artifacts.len(), 6);
         let standard_psf = standard_artifacts
             .iter()
             .find(|artifact| artifact.kind == ImagerArtifactKind::Psf)
@@ -4164,7 +4170,7 @@ mod tests {
             ..standard
         };
         let mtmfs_artifacts = super::build_artifacts(&mtmfs);
-        assert_eq!(mtmfs_artifacts.len(), 14);
+        assert_eq!(mtmfs_artifacts.len(), 15);
         assert_eq!(
             mtmfs_artifacts
                 .iter()
@@ -4214,7 +4220,7 @@ mod tests {
             ..mtmfs
         };
         let awproject_artifacts = super::build_artifacts(&awproject);
-        assert_eq!(awproject_artifacts.len(), 18);
+        assert_eq!(awproject_artifacts.len(), 19);
         assert_eq!(
             awproject_artifacts
                 .iter()

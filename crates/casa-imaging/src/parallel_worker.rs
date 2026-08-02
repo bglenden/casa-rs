@@ -2,13 +2,13 @@
 //! Pure planning formulas for bounded parallel worker selection.
 //!
 //! Host discovery and policy remain frontend responsibilities. Imaging
-//! kernels supply deterministic relative task weights and exact-kernel timing
-//! observations; this module combines those explicit inputs without reading
-//! process or machine state.
+//! kernels supply deterministic relative task weights and production-window
+//! timing observations; this module combines those explicit inputs without
+//! reading process or machine state.
 
 use std::time::Duration;
 
-/// Bounded exact-kernel calibration requested by an application frontend.
+/// Bounded production-window calibration requested by an application frontend.
 ///
 /// The request is an internal execution-policy detail rather than a science
 /// parameter. Candidate counts are generated from the resource slice assigned
@@ -19,7 +19,6 @@ pub struct ParallelWorkerCalibrationRequest {
     hard_cap: usize,
     highest_capacity_class_boundary: Option<usize>,
     maximum_elapsed: Duration,
-    score_tie_tolerance_ppm: u32,
 }
 
 impl ParallelWorkerCalibrationRequest {
@@ -29,16 +28,12 @@ impl ParallelWorkerCalibrationRequest {
         hard_cap: usize,
         highest_capacity_class_boundary: Option<usize>,
         maximum_elapsed: Duration,
-        score_tie_tolerance_ppm: u32,
     ) -> Result<Self, &'static str> {
         if hard_cap == 0 {
             return Err("parallel worker calibration hard cap must be positive");
         }
         if maximum_elapsed.is_zero() {
             return Err("parallel worker calibration duration must be positive");
-        }
-        if score_tie_tolerance_ppm > 1_000_000 {
-            return Err("parallel worker calibration tie tolerance exceeds one");
         }
         if highest_capacity_class_boundary.is_some_and(|value| value == 0 || value > hard_cap) {
             return Err("parallel worker calibration capacity-class boundary exceeds the hard cap");
@@ -57,7 +52,6 @@ impl ParallelWorkerCalibrationRequest {
             hard_cap,
             highest_capacity_class_boundary,
             maximum_elapsed,
-            score_tie_tolerance_ppm,
         })
     }
 
@@ -75,10 +69,6 @@ impl ParallelWorkerCalibrationRequest {
 
     pub(crate) fn maximum_elapsed(&self) -> Duration {
         self.maximum_elapsed
-    }
-
-    pub(crate) fn score_tie_tolerance_ppm(&self) -> u32 {
-        self.score_tie_tolerance_ppm
     }
 }
 
@@ -130,27 +120,102 @@ pub(crate) fn modeled_lpt_makespan(weights: &[u64], workers: usize) -> Option<u1
     loads.into_iter().max()
 }
 
+/// Expands a sparse topology probe into the integer bracket around each probe.
+///
+/// Adjacent values make the production-window calibration sensitive to
+/// scheduler plateaus without turning a large assigned CPU set into an
+/// exhaustive sweep.
+pub(crate) fn adjacent_parallel_worker_candidates(
+    coarse_candidates: &[usize],
+    hard_cap: usize,
+) -> Vec<usize> {
+    let hard_cap = hard_cap.max(1);
+    let mut candidates = Vec::with_capacity(coarse_candidates.len().saturating_mul(3));
+    for workers in coarse_candidates
+        .iter()
+        .copied()
+        .filter(|workers| *workers > 0 && *workers <= hard_cap)
+    {
+        candidates.extend(
+            [
+                workers.saturating_sub(1).max(1),
+                workers,
+                workers.saturating_add(1).min(hard_cap),
+            ]
+            .into_iter(),
+        );
+    }
+    candidates.sort_unstable();
+    candidates.dedup();
+    candidates
+}
+
+/// Builds deterministic forward/reverse trial rounds.
+pub(crate) fn counterbalanced_parallel_worker_sequence(
+    candidates: &[usize],
+    round_pairs: usize,
+    reverse_first: bool,
+) -> Vec<usize> {
+    let mut ascending = candidates.to_vec();
+    ascending.sort_unstable();
+    ascending.dedup();
+    let mut descending = ascending.clone();
+    descending.reverse();
+    let (first, second) = if reverse_first {
+        (&descending, &ascending)
+    } else {
+        (&ascending, &descending)
+    };
+    let mut sequence = Vec::with_capacity(
+        ascending
+            .len()
+            .saturating_mul(round_pairs.saturating_mul(2)),
+    );
+    for _ in 0..round_pairs {
+        sequence.extend(first.iter().copied());
+        sequence.extend(second.iter().copied());
+    }
+    sequence
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ParallelWorkerTimingObservation {
     pub(crate) workers: usize,
     pub(crate) elapsed_ns: u128,
+    pub(crate) work_units: u128,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ParallelWorkerCandidateScore {
     pub(crate) workers: usize,
-    pub(crate) modeled_actual_makespan: u128,
-    pub(crate) modeled_calibration_makespan: u128,
     pub(crate) mean_elapsed_ns: u128,
-    pub(crate) repeat_spread_ns: u128,
+    pub(crate) interval_min_score: u128,
+    pub(crate) interval_max_score: u128,
     pub(crate) combined_score: u128,
 }
 
+fn student_t_95_critical(sample_count: usize) -> f64 {
+    match sample_count {
+        0 | 1 => 0.0,
+        2 => 12.706,
+        3 => 4.303,
+        4 => 3.182,
+        5 => 2.776,
+        6 => 2.571,
+        7 => 2.447,
+        8 => 2.365,
+        9 => 2.306,
+        10 => 2.262,
+        11..=15 => 2.201,
+        16..=30 => 2.086,
+        _ => 1.960,
+    }
+}
+
 pub(crate) fn score_parallel_worker_candidates(
-    actual_weights: &[u64],
-    calibration_weights: &[u64],
     observations: &[ParallelWorkerTimingObservation],
 ) -> Vec<ParallelWorkerCandidateScore> {
+    const SCORE_WORK_UNITS: u128 = 1_000_000_000;
     let mut workers = observations
         .iter()
         .map(|observation| observation.workers)
@@ -162,31 +227,48 @@ pub(crate) fn score_parallel_worker_candidates(
         let samples = observations
             .iter()
             .filter(|observation| observation.workers == workers)
-            .map(|observation| observation.elapsed_ns)
             .collect::<Vec<_>>();
-        let Some(modeled_actual_makespan) = modeled_lpt_makespan(actual_weights, workers) else {
-            continue;
-        };
-        let Some(modeled_calibration_makespan) = modeled_lpt_makespan(calibration_weights, workers)
-        else {
-            continue;
-        };
-        let elapsed_sum = samples.iter().copied().fold(0u128, u128::saturating_add);
+        let elapsed_sum = samples
+            .iter()
+            .map(|observation| observation.elapsed_ns)
+            .fold(0u128, u128::saturating_add);
         let mean_elapsed_ns = elapsed_sum / samples.len().max(1) as u128;
-        let repeat_spread_ns = samples
+        let normalized_scores = samples
+            .iter()
+            .map(|observation| {
+                observation.elapsed_ns.saturating_mul(SCORE_WORK_UNITS)
+                    / observation.work_units.max(1)
+            })
+            .collect::<Vec<_>>();
+        let combined_score = normalized_scores
             .iter()
             .copied()
-            .max()
-            .unwrap_or_default()
-            .saturating_sub(samples.iter().copied().min().unwrap_or_default());
-        let combined_score = mean_elapsed_ns.saturating_mul(modeled_actual_makespan)
-            / modeled_calibration_makespan.max(1);
+            .fold(0u128, u128::saturating_add)
+            / normalized_scores.len().max(1) as u128;
+        let (interval_min_score, interval_max_score) = if normalized_scores.len() < 2 {
+            (combined_score, combined_score)
+        } else {
+            let mean = combined_score as f64;
+            let sample_variance = normalized_scores
+                .iter()
+                .map(|score| {
+                    let delta = *score as f64 - mean;
+                    delta * delta
+                })
+                .sum::<f64>()
+                / (normalized_scores.len() - 1) as f64;
+            let standard_error = (sample_variance / normalized_scores.len() as f64).sqrt();
+            let margin = student_t_95_critical(normalized_scores.len()) * standard_error;
+            (
+                (mean - margin).max(0.0).floor() as u128,
+                (mean + margin).ceil() as u128,
+            )
+        };
         scores.push(ParallelWorkerCandidateScore {
             workers,
-            modeled_actual_makespan,
-            modeled_calibration_makespan,
             mean_elapsed_ns,
-            repeat_spread_ns,
+            interval_min_score,
+            interval_max_score,
             combined_score,
         });
     }
@@ -194,20 +276,54 @@ pub(crate) fn score_parallel_worker_candidates(
     scores
 }
 
-pub(crate) fn choose_parallel_worker_score(
+pub(crate) fn choose_parallel_worker_with_topology_prior(
     scores: &[ParallelWorkerCandidateScore],
-    tie_tolerance_ppm: u32,
-) -> Option<ParallelWorkerCandidateScore> {
-    let best = *scores.first()?;
-    let tolerance = best
-        .combined_score
-        .saturating_mul(u128::from(tie_tolerance_ppm))
-        / 1_000_000;
-    scores
+    highest_capacity_class_boundary: Option<usize>,
+    hard_cap: usize,
+) -> Option<(ParallelWorkerCandidateScore, Vec<usize>)> {
+    let uncertainty_scores = parallel_worker_uncertainty_scores(scores);
+    let mut uncertainty = uncertainty_scores
+        .iter()
+        .map(|score| score.workers)
+        .collect::<Vec<_>>();
+    uncertainty.sort_unstable();
+    let empirical_best = scores.first().copied()?;
+    let Some(boundary) = highest_capacity_class_boundary else {
+        return Some((empirical_best, uncertainty));
+    };
+    let boundary = boundary.max(1).min(hard_cap.max(1));
+    let efficiency_capacity = hard_cap.saturating_sub(boundary);
+    let topology_prior = boundary.saturating_add(efficiency_capacity.div_ceil(2));
+    let selected = uncertainty_scores
         .iter()
         .copied()
-        .filter(|score| score.combined_score <= best.combined_score.saturating_add(tolerance))
-        .min_by_key(|score| score.workers)
+        .min_by_key(|score| {
+            (
+                score.workers.abs_diff(topology_prior),
+                score.workers,
+                score.combined_score,
+            )
+        })
+        .unwrap_or(empirical_best);
+    Some((selected, uncertainty))
+}
+
+pub(crate) fn parallel_worker_uncertainty_scores(
+    scores: &[ParallelWorkerCandidateScore],
+) -> Vec<ParallelWorkerCandidateScore> {
+    let Some(best) = scores.first().copied() else {
+        return Vec::new();
+    };
+    let mut uncertainty = scores
+        .iter()
+        .copied()
+        .filter(|score| {
+            score.interval_min_score <= best.interval_max_score
+                && best.interval_min_score <= score.interval_max_score
+        })
+        .collect::<Vec<_>>();
+    uncertainty.sort_unstable_by_key(|score| score.workers);
+    uncertainty
 }
 
 pub(crate) fn conservative_parallel_worker_fallback(
@@ -237,8 +353,9 @@ pub(crate) fn conservative_parallel_worker_fallback(
 #[cfg(test)]
 mod tests {
     use super::{
-        ParallelWorkerTimingObservation, choose_parallel_worker_score,
-        conservative_parallel_worker_fallback, modeled_lpt_makespan,
+        ParallelWorkerTimingObservation, adjacent_parallel_worker_candidates,
+        choose_parallel_worker_with_topology_prior, conservative_parallel_worker_fallback,
+        counterbalanced_parallel_worker_sequence, modeled_lpt_makespan,
         score_parallel_worker_candidates, topology_parallel_worker_candidates,
     };
 
@@ -256,6 +373,10 @@ mod tests {
             topology_parallel_worker_candidates(8, None),
             vec![1, 3, 6, 8]
         );
+        assert_eq!(
+            topology_parallel_worker_candidates(8, Some(4)),
+            vec![4, 5, 7, 8]
+        );
         assert_eq!(topology_parallel_worker_candidates(1, Some(1)), vec![1]);
     }
 
@@ -269,59 +390,147 @@ mod tests {
     }
 
     #[test]
-    fn injected_calibration_selects_six_and_smaller_noisy_ties() {
-        let actual = vec![100; 120];
-        let calibration = vec![100; 24];
+    fn production_window_candidate_sequence_is_bounded_and_counterbalanced() {
+        assert_eq!(
+            adjacent_parallel_worker_candidates(&[4, 6, 8, 10], 10),
+            vec![3, 4, 5, 6, 7, 8, 9, 10]
+        );
+        assert_eq!(
+            counterbalanced_parallel_worker_sequence(&[4, 6, 8], 2, false),
+            vec![4, 6, 8, 8, 6, 4, 4, 6, 8, 8, 6, 4]
+        );
+        assert_eq!(
+            counterbalanced_parallel_worker_sequence(&[4, 6, 8], 1, true),
+            vec![8, 6, 4, 4, 6, 8]
+        );
+    }
+
+    #[test]
+    fn normalized_production_windows_select_six_and_topology_breaks_overlap() {
         let observations = [
             ParallelWorkerTimingObservation {
                 workers: 4,
                 elapsed_ns: 800,
+                work_units: 100,
             },
             ParallelWorkerTimingObservation {
                 workers: 5,
                 elapsed_ns: 660,
+                work_units: 100,
             },
             ParallelWorkerTimingObservation {
                 workers: 6,
                 elapsed_ns: 500,
+                work_units: 100,
             },
             ParallelWorkerTimingObservation {
                 workers: 7,
                 elapsed_ns: 560,
+                work_units: 100,
             },
             ParallelWorkerTimingObservation {
                 workers: 8,
                 elapsed_ns: 620,
+                work_units: 100,
             },
             ParallelWorkerTimingObservation {
                 workers: 10,
                 elapsed_ns: 700,
+                work_units: 100,
             },
         ];
-        let scores = score_parallel_worker_candidates(&actual, &calibration, &observations);
-        assert_eq!(
-            choose_parallel_worker_score(&scores, 20_000)
-                .unwrap()
-                .workers,
-            6
-        );
+        let scores = score_parallel_worker_candidates(&observations);
+        assert_eq!(scores.first().unwrap().workers, 6);
 
         let tied = [
             ParallelWorkerTimingObservation {
                 workers: 5,
                 elapsed_ns: 500,
+                work_units: 100,
             },
             ParallelWorkerTimingObservation {
                 workers: 6,
-                elapsed_ns: 495,
+                elapsed_ns: 505,
+                work_units: 100,
+            },
+            ParallelWorkerTimingObservation {
+                workers: 5,
+                elapsed_ns: 510,
+                work_units: 100,
+            },
+            ParallelWorkerTimingObservation {
+                workers: 6,
+                elapsed_ns: 500,
+                work_units: 100,
             },
         ];
-        let tied_scores = score_parallel_worker_candidates(&actual, &calibration, &tied);
+        let tied_scores = score_parallel_worker_candidates(&tied);
         assert_eq!(
-            choose_parallel_worker_score(&tied_scores, 20_000)
+            choose_parallel_worker_with_topology_prior(&tied_scores, Some(4), 8)
                 .unwrap()
+                .0
                 .workers,
-            5
+            6
+        );
+
+        let broad_laptop_overlap = [5, 9, 6, 8, 10, 4, 7]
+            .into_iter()
+            .enumerate()
+            .map(|(rank, workers)| super::ParallelWorkerCandidateScore {
+                workers,
+                mean_elapsed_ns: 700 + rank as u128,
+                interval_min_score: 8_000,
+                interval_max_score: 10_000,
+                combined_score: 8_700 + rank as u128 * 50,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            choose_parallel_worker_with_topology_prior(&broad_laptop_overlap, Some(4), 10)
+                .unwrap()
+                .0
+                .workers,
+            7
+        );
+        let broad_mini_overlap = (4..=8)
+            .map(|workers| super::ParallelWorkerCandidateScore {
+                workers,
+                mean_elapsed_ns: 700,
+                interval_min_score: 8_000,
+                interval_max_score: 10_000,
+                combined_score: 9_000,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            choose_parallel_worker_with_topology_prior(&broad_mini_overlap, Some(4), 8)
+                .unwrap()
+                .0
+                .workers,
+            6
+        );
+
+        let four_window_small_sample = [
+            (5, 850),
+            (5, 812),
+            (5, 851),
+            (5, 844),
+            (7, 878),
+            (7, 883),
+            (7, 858),
+            (7, 865),
+        ]
+        .map(|(workers, elapsed_ns)| ParallelWorkerTimingObservation {
+            workers,
+            elapsed_ns,
+            work_units: 100,
+        });
+        let four_window_scores = score_parallel_worker_candidates(&four_window_small_sample);
+        assert_eq!(four_window_scores.first().unwrap().workers, 5);
+        assert_eq!(
+            choose_parallel_worker_with_topology_prior(&four_window_scores, Some(4), 10)
+                .unwrap()
+                .0
+                .workers,
+            7
         );
     }
 

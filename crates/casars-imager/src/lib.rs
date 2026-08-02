@@ -36753,11 +36753,10 @@ fn standard_mfs_worker_planner_experiment_enabled() -> bool {
 }
 
 fn standard_mfs_grid_workers_requested_auto(config: &CliConfig) -> bool {
-    config.imaging_prepare_workers.is_none()
-        && config
-            .standard_mfs_grid_threads
-            .as_deref()
-            .is_none_or(|value| value.trim().eq_ignore_ascii_case("auto"))
+    config
+        .standard_mfs_grid_threads
+        .as_deref()
+        .is_none_or(|value| value.trim().eq_ignore_ascii_case("auto"))
 }
 
 fn standard_mfs_parallel_worker_calibration_request(
@@ -36779,13 +36778,12 @@ fn standard_mfs_parallel_worker_calibration_request(
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
-        .unwrap_or(10_000);
+        .unwrap_or(20_000);
     ParallelWorkerCalibrationRequest::new(
         candidates,
         assigned_parallelism,
         highest_capacity_class_boundary,
         Duration::from_millis(maximum_elapsed_ms),
-        20_000,
     )
     .ok()
 }
@@ -45281,17 +45279,7 @@ fn run_products_to_image_product_set<'a>(
             products.mosaic_weight.clone(),
         )
         .map_err(|error| error.to_string())?,
-        RunProducts::Mtmfs(products) => {
-            let mut set = mtmfs_image_product_set(&products.result);
-            append_mtmfs_primary_beam_products(
-                config,
-                coords,
-                &mut set,
-                products,
-                single_field_pb_context,
-            )?;
-            return Ok(set);
-        }
+        RunProducts::Mtmfs(products) => mtmfs_image_product_set(&products.result),
     };
 
     if let Some(clean_mask) = clean_mask {
@@ -45308,12 +45296,21 @@ fn run_products_to_image_product_set<'a>(
             }
         }
     }
-    append_single_plane_primary_beam_products(
-        config,
-        coords,
-        &mut product_set,
-        single_field_pb_context,
-    )?;
+    match result {
+        RunProducts::Mtmfs(products) => append_mtmfs_primary_beam_products(
+            config,
+            coords,
+            &mut product_set,
+            products,
+            single_field_pb_context,
+        )?,
+        RunProducts::Mfs(_) | RunProducts::Cube(_) => append_single_plane_primary_beam_products(
+            config,
+            coords,
+            &mut product_set,
+            single_field_pb_context,
+        )?,
+    }
     Ok(product_set)
 }
 
@@ -47077,6 +47074,7 @@ fn chunk_mfs_mosaic_metadata_batches_from_explicit_beam_frequencies(
     Ok(batches)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn chunk_mfs_mosaic_metadata_batches_from_beam_lookup(
     sample_frequency_hz: &[f64],
     sample_spw_ids: &[usize],
@@ -47191,6 +47189,7 @@ fn constant_beam_frequency_by_spw(
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn try_chunk_mfs_mosaic_metadata_batches_with_constant_beam_frequency(
     sample_frequency_hz: &[f64],
     sample_spw_ids: &[usize],
@@ -55684,6 +55683,21 @@ mod tests {
     }
 
     #[test]
+    fn grid_worker_auto_selection_is_independent_of_prepare_workers() {
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imaging_prepare_workers = Some(1);
+
+        assert!(standard_mfs_grid_workers_requested_auto(&config));
+
+        config.standard_mfs_grid_threads = Some("auto".to_string());
+        assert!(standard_mfs_grid_workers_requested_auto(&config));
+
+        config.standard_mfs_grid_threads = Some("6".to_string());
+        assert!(!standard_mfs_grid_workers_requested_auto(&config));
+    }
+
+    #[test]
     fn cube_slab_plane_workers_honor_imaging_worker_limit() {
         let mut config =
             minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
@@ -59412,9 +59426,17 @@ mod tests {
             None,
         );
 
-        let product_set =
-            run_products_to_image_product_set(&config, &coords, &run_products, None, None)
-                .expect("assemble mosaic MT-MFS PB products");
+        let clean_mask = EffectiveCleanMask::Plane(
+            Array2::from_shape_vec((2, 2), vec![true, false, true, false]).unwrap(),
+        );
+        let product_set = run_products_to_image_product_set(
+            &config,
+            &coords,
+            &run_products,
+            Some(&clean_mask),
+            None,
+        )
+        .expect("assemble mosaic MT-MFS PB products");
         let suffixes = product_set
             .products()
             .iter()
@@ -59428,6 +59450,20 @@ mod tests {
         assert!(suffixes.contains(&".image.tt0.pbcor".to_string()));
         assert!(suffixes.contains(&".image.tt1.pbcor".to_string()));
         assert!(!suffixes.contains(&".alpha.pbcor".to_string()));
+        assert!(suffixes.contains(&".mask".to_string()));
+        let clean_mask_product = product_set
+            .products()
+            .iter()
+            .find(|product| product.suffix() == ".mask")
+            .expect("MT-MFS user clean mask product");
+        assert_eq!(
+            clean_mask_product
+                .data()
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![1.0, 0.0, 1.0, 0.0],
+        );
         for product in product_set.products().iter().filter(|product| {
             product.suffix().starts_with(".residual.tt")
                 || product.suffix().starts_with(".image.tt")
