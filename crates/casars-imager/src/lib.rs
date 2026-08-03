@@ -49499,7 +49499,9 @@ fn run_products_to_image_product_set<'a>(
         RunProducts::Mtmfs(products) => mtmfs_image_product_set(&products.result),
     };
 
-    if let Some(clean_mask) = clean_mask {
+    if !clean_is_dirty(config)
+        && let Some(clean_mask) = clean_mask
+    {
         match clean_mask {
             EffectiveCleanMask::Plane(mask) => {
                 let channel_count = product_set.metadata().channel_frequencies_hz().len();
@@ -66073,6 +66075,7 @@ mod tests {
             minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
         config.deconvolver = Deconvolver::Mtmfs;
         config.nterms = 2;
+        config.niter = 10;
         config.pbcor = true;
         config.write_pb = true;
         config.mosaic_pb_limit = 0.1;
@@ -66220,6 +66223,24 @@ mod tests {
         assert_eq!(pbcor_tt1.data()[[0, 0, 0, 0]], 1.0);
         assert_eq!(pbcor_tt1.data()[[0, 1, 0, 0]], 2.0);
         assert_eq!(pbcor_tt1.data()[[1, 0, 0, 0]], 0.0);
+
+        let mut dirty_config = config.clone();
+        dirty_config.niter = 0;
+        let dirty_product_set = run_products_to_image_product_set(
+            &dirty_config,
+            &coords,
+            &run_products,
+            Some(&clean_mask),
+            None,
+        )
+        .expect("assemble dirty mosaic MT-MFS products");
+        assert!(
+            dirty_product_set
+                .products()
+                .iter()
+                .all(|product| product.suffix() != ".mask"),
+            "CASA does not emit a clean mask for niter=0"
+        );
     }
 
     #[test]

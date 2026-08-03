@@ -51,9 +51,10 @@ pub(crate) fn build_single_plane_execution_plan(
         config.use_mask == CleanMaskMode::User,
         config.w_term_mode,
     ));
-    if config.use_mask == CleanMaskMode::User
-        || !config.mask_boxes.is_empty()
-        || config.mask_image.is_some()
+    if !crate::clean_is_dirty(config)
+        && (config.use_mask == CleanMaskMode::User
+            || !config.mask_boxes.is_empty()
+            || config.mask_image.is_some())
     {
         plan.output_products.push(".mask".to_string());
     }
@@ -224,6 +225,8 @@ mod tests {
             "standard",
             "--interpolation",
             "nearest",
+            "--niter",
+            "10",
         ]);
         let plan = build_single_plane_execution_plan(&config, false, 1);
 
@@ -280,6 +283,8 @@ mod tests {
             "standard",
             "--interpolation",
             "nearest",
+            "--niter",
+            "10",
         ]);
         let plan = build_single_plane_execution_plan(&config, false, 1);
 
@@ -339,7 +344,14 @@ mod tests {
 
     #[test]
     fn wproject_with_pb_products_keeps_pb_requirement_explicit() {
-        let config = parse(["--gridder", "wproject", "--write-pb", "--pbcor"]);
+        let config = parse([
+            "--gridder",
+            "wproject",
+            "--write-pb",
+            "--pbcor",
+            "--niter",
+            "10",
+        ]);
         let plan = build_single_plane_execution_plan(&config, false, 1);
 
         assert_eq!(plan.projection, SinglePlaneProjectionPlan::WProjection);
@@ -380,6 +392,8 @@ mod tests {
             "--nterms",
             "2",
             "--write-pb",
+            "--niter",
+            "10",
         ]);
         let plan = build_single_plane_execution_plan(&config, false, 1);
 
@@ -447,6 +461,8 @@ mod tests {
             "2",
             "--mask-box",
             "1,2,3,4",
+            "--niter",
+            "10",
         ]);
         let plan = build_single_plane_execution_plan(&config, false, 1);
 
@@ -457,6 +473,33 @@ mod tests {
         assert!(
             plan.log_line()
                 .contains(".weight.tt2,.alpha,.alpha.error,.mask")
+        );
+    }
+
+    #[test]
+    fn dirty_plan_does_not_report_clean_mask_product() {
+        let config = parse([
+            "--gridder",
+            "awproject",
+            "--cfcache",
+            "/tmp/casa-aw-cache",
+            "--usepointing",
+            "--deconvolver",
+            "mtmfs",
+            "--nterms",
+            "2",
+            "--mask-box",
+            "1,2,3,4",
+            "--niter",
+            "0",
+        ]);
+        let plan = build_single_plane_execution_plan(&config, false, 1);
+
+        assert!(
+            plan.output_products
+                .iter()
+                .all(|product| product != ".mask"),
+            "CASA does not emit a clean mask for niter=0"
         );
     }
 
