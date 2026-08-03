@@ -187,20 +187,53 @@ This evidence accepts CASA-B as the matched reference to which the eventual
 casa-rs all-fields row will be compared. It makes no claim yet about casa-rs
 full-geometry correctness or speedup.
 
-### CASA-A launch
+### CASA-A accepted clean reference
 
-After CASA-B v2 passed validation, the approved CASA-A single-field reference
-started at `2026-08-03T18:27:22Z` with run ID
-`20260803T182722Z-vlass-fragment-single-field-clean-casa-399f12d9`. Its
-one-time dry-run receipt is
-`44e6741d093a5ca488d6099990cf4938e4dcf87119a4e7f32aa6ec3f51e7003c`.
-The request binds field 1525, all 16 SPWs, 10,400 selected rows,
-12,150-square geometry, `niter=2000`, the same corrected mask hash, the exact
-19-product contract, and the preverified single-field warm CF-cache tree
-`fd473479f9b4b0a7a1e21f26a44c458eb1ecf4b785d8dbdd3fadf339fb675fa5`.
-The outer process is bounded to 259,200 seconds, with TERM followed by a
-300-second kill grace period. This section records a launch, not a result;
-timing, convergence, products, and telemetry remain pending.
+The approved single-field run completed successfully on 2026-08-03 and is
+the frozen CASA-A clean reference. CASA selected 1,103 cumulative MT-MFS minor
+iterations across eight minor cycles. The last minor cycle reduced the masked
+peak to `0.00235388 Jy/beam`, below that cycle's `0.00235472 Jy/beam` n-sigma
+threshold. After the ninth and final major cycle CASA measured
+`0.00234316 Jy/beam` in the mask and `0.0283284 Jy/beam` over the full image,
+reported its global stopping criterion, and completed normally. The full-image
+peak lies outside the deliberately bounded source mask.
+
+The measured `tclean` wall time is `3,798.068812 s` (1 h 3 m 18.069 s), and
+the checked protocol total is `3,846.651839 s`. The completed receipt is
+`f9216878e3372ecb4a81f565e33e6b5b2729abf20d0c1d7313892ac4db6a680d`;
+the manifest is
+`5da8ce24c92b2d47e53784e8600976bf37708086309820cb1b61af6f8982bd9e`.
+The retained request, result, combined output, CASA log, and host-telemetry
+SHA-256 values are respectively
+`dc9ee1cb0a985a08a2cfd275905cece050c692636ac45be39d7094c803c6eaad`,
+`fe5f22cfe2fc7b7b1b3441916114ecb8812df9ac73c13b43a8a5551434fb7936`,
+`b850a0f44df8a0b4437b0ccaa679de62fb3c113de07b1181724dec69244889f8`,
+`573dce4f9675a8f1053ad4f8779a1993f6d28eb67bedafa026f0de4e2cfa291c`,
+and
+`ee59ea9efbd61139194693b57347436e988ad1a1d7288b36455de2a6c158cf38`.
+All retained hashes were independently re-read after bundle promotion.
+
+The receipt binds field 1525, all 16 SPWs, 10,400 selected MS rows,
+12,150-square geometry, `niter=2000`, corrected mask hash
+`fabf361e6609a4d66c251458c2ed31bc80978d936e78a39a8f449bd1a63dc322`,
+and the frozen AWProject, 32-W-plane, POINTING, A-term, WB A-projection,
+conjugate-beam, Briggs, MT-MFS `nterms=2`, and scales `[0,5,12]` controls.
+Bundle validation passed for the exact 19-product inventory. The product trees
+total 9,579,098,756 logical bytes; their individual stable hashes are recorded
+in the launch ledger.
+
+The CASA process peaked at 13,784,383,488 bytes RSS. Host telemetry recorded a
+minimum 33% free memory, zero throttled pages, 361,460,219,904 bytes of
+swap-in, and 405,832,564,736 bytes of swap-out. The substantial cumulative
+swap traffic did not produce throttling, convergence loss, or a terminal
+memory-pressure stall. Process I/O was 505,119,948,800 bytes read and
+123,118,936,064 bytes written, with 9,531 major page faults.
+
+The known startup `measures_update` SEVERE reports an unmanaged local measures
+tree; it does not invalidate the bound runtime, data, successful imaging call,
+or retained products. This evidence accepts CASA-A as the matched reference to
+which the eventual casa-rs single-field row will be compared. It makes no
+claim yet about casa-rs full-geometry correctness or speedup.
 
 ## Candidate budget and promotion
 

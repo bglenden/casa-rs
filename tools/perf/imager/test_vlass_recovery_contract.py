@@ -126,7 +126,7 @@ class RecoveryContractTests(unittest.TestCase):
             for entry in casa_entries
             if entry["row_id"] == "CASA-A-SINGLE-CLEAN-N2000-v1"
         )
-        self.assertEqual("running", casa_a["disposition"])
+        self.assertEqual("accepted_reference", casa_a["disposition"])
         self.assertEqual(259200, casa_a["max_wall_seconds"])
         self.assertEqual(
             "5da8ce24c92b2d47e53784e8600976bf37708086309820cb1b61af6f8982bd9e",
@@ -136,6 +136,24 @@ class RecoveryContractTests(unittest.TestCase):
             "44e6741d093a5ca488d6099990cf4938e4dcf87119a4e7f32aa6ec3f51e7003c",
             casa_a["dry_run_receipt_sha256"],
         )
+        self.assertEqual(
+            "f9216878e3372ecb4a81f565e33e6b5b2729abf20d0c1d7313892ac4db6a680d",
+            casa_a["receipt_sha256"],
+        )
+        evidence = casa_a["evidence"]
+        assert isinstance(evidence, dict)
+        self.assertEqual(1103, evidence["actual_minor_iterations"])
+        self.assertEqual(8, evidence["minor_cycle_count"])
+        self.assertEqual("nsigma", evidence["stop_reason"])
+        self.assertEqual(1, evidence["field_count"])
+        self.assertEqual(16, evidence["spw_count"])
+        self.assertEqual(10400, evidence["selected_rows"])
+        self.assertEqual([12150, 12150], evidence["imsize"])
+        self.assertEqual(19, evidence["product_count"])
+        product_hashes = evidence["product_tree_sha256_by_suffix"]
+        assert isinstance(product_hashes, dict)
+        self.assertEqual(19, len(product_hashes))
+        self.assertEqual(0, evidence["pages_throttled_max"])
 
     def test_casa_b_v2_corrects_mask_and_records_accepted_reference(self) -> None:
         pending = self.ledger["pending_reference_amendment"]
