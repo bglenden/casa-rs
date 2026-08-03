@@ -29,6 +29,7 @@
     "shared_external_invalidation_retries": 1,
     "launch_order": [
       "CASA-B-FRAGMENT63-CLEAN-CAP20000-v1",
+      "CASA-B-FRAGMENT63-CLEAN-CAP20000-v2",
       "CASA-A-SINGLE-CLEAN-N2000-v1"
     ],
     "rows": [
@@ -40,6 +41,22 @@
         "normal_launches": 1,
         "base_manifest_path": "tools/perf/imager/workloads/vlass-fragment-all-fields-clean-casa.json",
         "base_manifest_sha256": "06974233a596f857b2877c0a6538caa6fadcab4c1b1bcb33cd66ba98dfe98a23",
+        "only_science_parameter_delta": {
+          "imaging.niter": {
+            "from": 2000,
+            "to": 20000
+          }
+        }
+      },
+      {
+        "id": "CASA-B-FRAGMENT63-CLEAN-CAP20000-v2",
+        "manifest_path": "tools/perf/imager/workloads/vlass-fragment-all-fields-clean-cap20000-casa-v2.json",
+        "manifest_sha256": "63948fe140d5c06c00b924eea407e5afe8ccb2f99e2c927290d9de4644002053",
+        "max_wall_seconds": 604800,
+        "normal_launches": 1,
+        "authorization": "Explicitly approved by Brian Glendenning on 2026-08-02 after CASA-B v1 was rejected because its mask missed the measured source.",
+        "base_manifest_path": "tools/perf/imager/workloads/vlass-fragment-all-fields-clean-casa-v2.json",
+        "base_manifest_sha256": "0cabbe5fdc2f687a10fce3653d018e09db7349a0a1299d16a4f6772557f9f5d9",
         "only_science_parameter_delta": {
           "imaging.niter": {
             "from": 2000,
