@@ -232,6 +232,53 @@ class RecoveryContractTests(unittest.TestCase):
         self.assertEqual(pending["corrected_mask_blc"], source["blc"])
         self.assertEqual(pending["corrected_mask_trc"], source["trc"])
 
+    def test_reduced_ladder_records_matched_release_timing_and_failed_gate(
+        self,
+    ) -> None:
+        entries = self.ledger["reduced_ladder_entries"]
+        assert isinstance(entries, list)
+        self.assertEqual(1, len(entries))
+        pair = entries[0]
+        self.assertEqual(
+            "REDUCED-ALL63-DIRTY-4096-4SPW-001",
+            pair["pair_id"],
+        )
+        self.assertEqual("failed_promotion", pair["disposition"])
+
+        selection = pair["selection"]
+        assert isinstance(selection, dict)
+        self.assertEqual(63, selection["field_count"])
+        self.assertEqual(4, selection["spw_count"])
+        self.assertEqual([4096, 4096], selection["imsize"])
+        self.assertEqual(18, selection["product_count"])
+
+        casa = pair["casa"]
+        rust = pair["casa_rs"]
+        performance = pair["performance"]
+        comparison = pair["comparison"]
+        for value in (casa, rust, performance, comparison):
+            assert isinstance(value, dict)
+        manifest = ROOT / casa["manifest_path"]
+        self.assertEqual(casa["manifest_sha256"], sha256(manifest))
+        self.assertEqual(64, len(casa["receipt_sha256"]))
+        self.assertEqual(64, len(rust["binary_sha256"]))
+        self.assertEqual(64, len(rust["run_log_sha256"]))
+        self.assertAlmostEqual(
+            casa["tclean_wall_seconds"] / rust["wall_seconds"],
+            performance["speedup_casa_over_casa_rs"],
+        )
+        self.assertEqual("below_target", performance["status"])
+        self.assertEqual("comparison_failed", comparison["status"])
+        self.assertEqual("matched", comparison["inventory"])
+        self.assertEqual(
+            "mismatch",
+            comparison["restoring_beam_metadata"],
+        )
+        self.assertEqual(
+            [".psf.tt1", ".psf.tt2", ".weight.tt1"],
+            comparison["structured_difference_products"],
+        )
+
     def test_salvage_catalog_selects_at_most_primary_and_reserve(self) -> None:
         self.assertEqual(self.contract["id"], self.catalog["contract_id"])
         entries = self.catalog["entries"]

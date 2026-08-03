@@ -234,6 +234,73 @@
       }
     }
   ],
+  "reduced_ladder_entries": [
+    {
+      "pair_id": "REDUCED-ALL63-DIRTY-4096-4SPW-001",
+      "row_id": "VLASS-ALL63-DIRTY-4096-4SPW",
+      "disposition": "failed_promotion",
+      "selection": {
+        "field_selection": "1107~1127,1512~1532,1542~1562",
+        "field_count": 63,
+        "spw_selection": "2,7,12,17",
+        "spw_count": 4,
+        "selected_rows": 163800,
+        "imsize": [4096, 4096],
+        "niter": 0,
+        "product_count": 18
+      },
+      "casa": {
+        "run_id": "20260803T203820Z-vlass-fragment-all-fields-dirty-4096-four-spw-casa-ab87a6f1",
+        "manifest_path": "tools/perf/imager/workloads/vlass-fragment-all-fields-dirty-4096-four-spw-casa.json",
+        "manifest_sha256": "56d16d32aecf23c8e5b7a22af9ab68648d9bd39d7a79b9e83f59be4173cd4d83",
+        "receipt_path": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-c-all63-dirty-4096-four-spw-retry1/receipts/20260803T203820Z-vlass-fragment-all-fields-dirty-4096-four-spw-casa-ab87a6f1.json",
+        "receipt_sha256": "24c36370670d8c88fcc8849061a34a84a2e25477050bafaeab2cc5317b4fef99",
+        "tclean_wall_seconds": 541.3524050839478
+      },
+      "casa_rs": {
+        "source_commit": "8667b5760d88948548da3e06aa402cd10e11378b",
+        "binary_path": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-candidates/8667b5760d88948548da3e06aa402cd10e11378b/casars-imager",
+        "binary_sha256": "3a8d671a9935f85379dd1d4418153f1236913b3554fc87e36b9875a4ad372648",
+        "run_path": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-candidates/8667b5760d88948548da3e06aa402cd10e11378b/runs/20260803T-vlass-all63-dirty-4096-four-spw-metadata-fix",
+        "run_log_sha256": "6eb766d65cf9c5f66262d14f3342859c2a9b157ac89098bad93584ff4ba94c09",
+        "wall_seconds": 225.1,
+        "frontend_seconds": 224.469997,
+        "core_seconds": 220.512977,
+        "psf_grid_seconds": 217.062677,
+        "peak_rss_bytes": 10045800448,
+        "peak_memory_footprint_bytes": 13899198224,
+        "swaps": 0
+      },
+      "performance": {
+        "speedup_casa_over_casa_rs": 2.404941826141803,
+        "required_speedup": 10.0,
+        "status": "below_target"
+      },
+      "comparison": {
+        "path": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-candidates/8667b5760d88948548da3e06aa402cd10e11378b/runs/20260803T-vlass-all63-dirty-4096-four-spw-metadata-fix/comparison.comparison.json",
+        "sha256": "2cc4cb2636c84551c4bb30f5e81649f746f4dab819757549257416a799903bee",
+        "input_sha256": "2fa493f2557fc69cb84c86579c38227710074f3cb1aa1753a71f9838bdc25568",
+        "status": "comparison_failed",
+        "inventory": "matched",
+        "coordinate_shape_unit_mask_metadata": "matched",
+        "restoring_beam_metadata": "mismatch",
+        "restoring_beam_products": [
+          ".alpha",
+          ".alpha.error",
+          ".image.tt0",
+          ".image.tt1",
+          ".psf.tt0"
+        ],
+        "structured_difference_review": "investigate",
+        "structured_difference_products": [
+          ".psf.tt1",
+          ".psf.tt2",
+          ".weight.tt1"
+        ],
+        "scope_note": "No tolerance or acceptance contract was changed. The ladder stops at this first failed boundary."
+      }
+    }
+  ],
   "pending_reference_amendment": {
     "status": "approved",
     "approved_at": "2026-08-02T19:11:04Z",

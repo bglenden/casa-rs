@@ -1735,13 +1735,16 @@ def _validate_structure_basis_fit(
         or not _less_equal_with_roundoff(residual_rms, diff_rms)
     ):
         raise ValueError(f"{label} basis-fit RMS values are inconsistent")
-    expected_r2 = (
-        1.0 - (residual_rms * residual_rms) / (diff_rms * diff_rms)
-        if diff_rms > 0.0
-        else None
-    )
-    if not _optional_numbers_close(r2, expected_r2):
-        raise ValueError(f"{label} basis-fit r2 is not derived")
+    # The producer derives R² from the target's sum of squared deviations
+    # about its mean, while diff_rms is the raw root mean square about zero.
+    # Those values are not interchangeable when the difference has a nonzero
+    # mean, so the serialized fields cannot independently rederive R².
+    # The fitted model contains an offset, hence a finite derived R² must stay
+    # in the closed unit interval apart from roundoff.
+    if r2 is not None and not _less_equal_with_roundoff(0.0, r2):
+        raise ValueError(f"{label} basis-fit r2 is negative")
+    if r2 is not None and not _less_equal_with_roundoff(r2, 1.0):
+        raise ValueError(f"{label} basis-fit r2 exceeds one")
 
 
 def _validate_large_scale_power(

@@ -235,6 +235,60 @@ or retained products. This evidence accepts CASA-A as the matched reference to
 which the eventual casa-rs single-field row will be compared. It makes no
 claim yet about casa-rs full-geometry correctness or speedup.
 
+### First reduced all-fields pair
+
+The first missing all-63-field ladder row has been executed once and is
+frozen. It retains all 63 fields and POINTING rows, SPWs `2,7,12,17`,
+`4096`-square geometry, AWProject with 32 W planes, A/WB/conjugate beams,
+Briggs weighting, MT-MFS `nterms=2`, and the dirty `niter=0` 18-product
+contract. No larger row was launched.
+
+The CASA run
+`20260803T203820Z-vlass-fragment-all-fields-dirty-4096-four-spw-casa-ab87a6f1`
+took `541.352405 s` in `tclean`. Its receipt SHA-256 is
+`24c36370670d8c88fcc8849061a34a84a2e25477050bafaeab2cc5317b4fef99`.
+The matching release casa-rs executable was built from
+`8667b5760d88948548da3e06aa402cd10e11378b`; its SHA-256 is
+`3a8d671a9935f85379dd1d4418153f1236913b3554fc87e36b9875a4ad372648`.
+It took `225.10 s` wall, yielding a matched CASA/casa-rs speedup of
+`2.405x`. This is an early performance warning, not acceptance: it is below
+the required `10x`. The casa-rs core took `220.513 s`, of which
+`217.063 s` was the initial PSF grid. Peak RSS was `10,045,800,448` bytes,
+peak physical footprint was `13,899,198,224` bytes, and the process recorded
+zero swaps.
+
+This candidate fixed the two immediately preceding parity defects. Dirty
+imaging no longer emits the clean mask, so the exact 18-product inventory now
+matches CASA. Shape, unit, masks, coordinate topology, WCS operation grouping,
+and all coordinate values also match for every product. The ordinary
+full-array numerical amplitudes remain small: representative RMS ratios are
+about `38.2 ppm` for `.image.tt0`, `42.0 ppm` for `.psf.tt0`, `53.2 ppm`
+for `.residual.tt1`, `4.43 ppm` for `.alpha`, and `2.10 ppm` for
+`.weight.tt1`; both model terms are exactly zero.
+
+The row nevertheless fails promotion under the unchanged contract. Five
+beam-bearing products differ in restoring-beam metadata because the
+independently fitted PSFs differ slightly. The casa-rs and CASA major axes are
+respectively `2.9585349559783936` and `2.9585354328155518` arcsec; their
+position angles are `69.54161071777344` and `69.54159545898438` degrees.
+Feeding the frozen CASA and casa-rs PSFs separately through the shared beam
+fitter reproduces those values, localizing the remaining beam difference to
+the PSF arrays rather than the fitter. The structured-difference review also
+requires investigation for `.psf.tt1`, `.psf.tt2`, and `.weight.tt1`.
+No tolerance was relaxed and the ladder stops at this first failed semantic
+boundary.
+
+The comparison SHA-256 is
+`2cc4cb2636c84551c4bb30f5e81649f746f4dab819757549257416a799903bee`;
+the bound input and run-log SHA-256 values are
+`2fa493f2557fc69cb84c86579c38227710074f3cb1aa1753a71f9838bdc25568`
+and
+`6eb766d65cf9c5f66262d14f3342859c2a9b157ac89098bad93584ff4ba94c09`.
+The comparison validator was corrected after this row exposed an invalid
+attempt to reconstruct offset-inclusive regression R-squared from raw RMS.
+The corrected validator accepts the receipt schema and leaves the scientific
+failure unchanged.
+
 ## Candidate budget and promotion
 
 The salvage audit receives at most eight engineer-hours. It may select one
@@ -276,6 +330,12 @@ Each final row independently requires at least 10x against its corresponding
 matched CASA reference. No speedup is inferred across dirty versus clean,
 single-field versus 63-field, reduced versus full geometry, or different
 product sets.
+
+For every newly completed CASA and release casa-rs pair with identical
+processing, report `CASA wall / casa-rs wall` immediately. A failing
+correctness pair still reports the ratio as diagnostic evidence, clearly
+labelled non-promotable. This early-warning rule does not turn unmatched or
+debug-build timings into performance evidence.
 
 ## Finite delivery train
 

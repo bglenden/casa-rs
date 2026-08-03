@@ -7550,6 +7550,61 @@ campaign is therefore unblocked. The next permitted executions are bounded
 planner dry-runs and the required `12,150`-square dirty memory-policy row, not
 routine full-size clean development runs.
 
+### 2026-08-03 finite-recovery all-fields dirty boundary
+
+The finite recovery now overrides the older single-field scheduling statement
+immediately above. Per Brian's direction, a `4096`-square equivalent is
+skipped whenever the same semantics have already passed at `12,150` square.
+For the still-missing all-63-field ladder, execution stopped at its first
+failure: the `4096`-square, four-SPW dirty row.
+
+The one frozen CASA reference used all 63 fields, POINTING, SPWs
+`2,7,12,17`, AWProject with 32 W planes, A/WB/conjugate beams, Briggs
+weighting, MT-MFS `nterms=2`, and `niter=0`. Its run ID is
+`20260803T203820Z-vlass-fragment-all-fields-dirty-4096-four-spw-casa-ab87a6f1`,
+its receipt SHA-256 is
+`24c36370670d8c88fcc8849061a34a84a2e25477050bafaeab2cc5317b4fef99`,
+and CASA `tclean` took `541.352405 s`. It is frozen and will not be rerun.
+
+The matching release casa-rs binary came from
+`8667b5760d88948548da3e06aa402cd10e11378b`, with SHA-256
+`3a8d671a9935f85379dd1d4418153f1236913b3554fc87e36b9875a4ad372648`.
+It took `225.10 s`, so the matched ratio is only `2.405x`. The core took
+`220.513 s`, dominated by `217.063 s` in the initial PSF grid. Peak RSS was
+`10,045,800,448` bytes, peak footprint was `13,899,198,224` bytes, and the
+process recorded zero swaps. This is a performance warning because it misses
+the `10x` requirement; it is not promoted performance evidence.
+
+The candidate repaired exact dirty inventory and coordinate metadata:
+all 18 products, shapes, units, masks, coordinate topology, WCS operation
+grouping, and coordinate values match. Numerical RMS ratios range from
+sub-ppm through about `53.2 ppm`, and both model terms are exactly zero.
+Promotion still fails without any tolerance change:
+
+- five beam-bearing products inherit a restoring-beam mismatch from their
+  slightly different PSFs; major-axis and position-angle differences are
+  about `0.161 ppm` and `0.219 ppm`;
+- the common beam fitter reproduces CASA's beam from the CASA PSF and
+  casa-rs's beam from the casa-rs PSF, so the fitter is not the defect; and
+- structured review remains `investigate` for `.psf.tt1`, `.psf.tt2`, and
+  `.weight.tt1`.
+
+The comparison SHA-256 is
+`2cc4cb2636c84551c4bb30f5e81649f746f4dab819757549257416a799903bee`;
+its input and casa-rs log SHA-256 values are
+`2fa493f2557fc69cb84c86579c38227710074f3cb1aa1753a71f9838bdc25568`
+and
+`6eb766d65cf9c5f66262d14f3342859c2a9b157ac89098bad93584ff4ba94c09`.
+The validator's offset-inclusive regression R-squared check was fixed after
+this receipt exposed that R-squared cannot be reconstructed from raw,
+non-centered RMS. The corrected validation leaves the scientific failure
+unchanged.
+
+For every subsequent new matched CASA/release-casa-rs pair, report
+`CASA wall / casa-rs wall` immediately, even when the pair fails correctness.
+Such a ratio is explicitly diagnostic until the corresponding promotion
+contract passes.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
