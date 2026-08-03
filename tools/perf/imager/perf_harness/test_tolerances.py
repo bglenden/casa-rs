@@ -104,6 +104,91 @@ class ImagingToleranceTests(unittest.TestCase):
         with self.assertRaisesRegex(ToleranceContractError, "known-label list"):
             validate_tolerance_contract(contract)
 
+        contract = make_contract()
+        contract["default"]["beam_kernel_nrmse"] = 0.001
+        with self.assertRaisesRegex(ToleranceContractError, "contract-v2"):
+            validate_tolerance_contract(contract)
+
+    def test_v2_scientific_equivalence_gates_beam_centroid_and_coherence(
+        self,
+    ) -> None:
+        contract = make_v2_contract()
+        comparison = make_comparison()
+        comparison["beam_info"] = {"fwhm_pixels": [5, 3]}
+        product = comparison["products"][".image.tt0"]
+        for side in ("left", "right"):
+            product["metadata"][side]["restoring_beam"] = {
+                "major": {"value": 2.0, "unit": "arcsec"},
+                "minor": {"value": 1.0, "unit": "arcsec"},
+                "positionangle": {"value": 10.0, "unit": "deg"},
+            }
+        product["source_regions"][0]["left"]["centroid_pixels"] = [4.01, 8.0]
+        product["source_regions"][0]["right"]["centroid_pixels"] = [4.0, 8.0]
+        product["structured_difference"]["beam_block_rms_by_scale"] = [
+            {
+                "approx_independent_beams_per_block": 64.0,
+                "normalized_block_mean_rms": 5.0e-5,
+            }
+        ]
+
+        self.assertEqual(
+            "passed",
+            evaluate_comparison_tolerances(comparison, contract)["status"],
+        )
+
+        mutations = {
+            "beam_kernel": lambda value: value["products"][".image.tt0"]["metadata"][
+                "left"
+            ]["restoring_beam"]["positionangle"].update(value=11.0),
+            "beam_area": lambda value: value["products"][".image.tt0"]["metadata"][
+                "left"
+            ]["restoring_beam"]["major"].update(value=2.01),
+            "centroid": lambda value: value["products"][".image.tt0"]["source_regions"][
+                0
+            ]["left"].update(centroid_pixels=[4.1, 8.0]),
+            "coherence": lambda value: value["products"][".image.tt0"][
+                "structured_difference"
+            ]["beam_block_rms_by_scale"][0].update(normalized_block_mean_rms=1.0001e-4),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                changed = copy.deepcopy(comparison)
+                mutate(changed)
+                self.assertEqual(
+                    "failed",
+                    evaluate_comparison_tolerances(changed, contract)["status"],
+                )
+
+    def test_beam_kernel_metric_does_not_overweight_circular_beam_pa(self) -> None:
+        contract = make_v2_contract()
+        comparison = make_comparison()
+        comparison["beam_info"] = {"fwhm_pixels": [4, 4]}
+        product = comparison["products"][".image.tt0"]
+        for side, angle in (("left", 89.0), ("right", 0.0)):
+            product["metadata"][side]["restoring_beam"] = {
+                "major": {"value": 2.0, "unit": "arcsec"},
+                "minor": {"value": 2.0, "unit": "arcsec"},
+                "positionangle": {"value": angle, "unit": "deg"},
+            }
+        product["source_regions"][0]["left"]["centroid_pixels"] = [4.0, 8.0]
+        product["source_regions"][0]["right"]["centroid_pixels"] = [4.0, 8.0]
+        product["structured_difference"]["beam_block_rms_by_scale"] = [
+            {
+                "approx_independent_beams_per_block": 64.0,
+                "normalized_block_mean_rms": 0.0,
+            }
+        ]
+
+        result = evaluate_comparison_tolerances(comparison, contract)
+
+        self.assertEqual("passed", result["status"])
+        kernel_check = next(
+            check
+            for check in result["checks"]
+            if check["name"] == ".image.tt0.beam_kernel_nrmse"
+        )
+        self.assertLessEqual(kernel_check["actual"], 1.0e-12)
+
     def test_source_region_inventory_is_exact(self) -> None:
         missing = make_comparison()
         missing["products"][".image.tt0"]["source_regions"] = []
@@ -178,6 +263,28 @@ def make_contract() -> dict:
             "allowed_structure_labels": ["good"],
         },
         "products": {".image.tt0": {}},
+    }
+
+
+def make_v2_contract() -> dict:
+    return {
+        "contract_version": 2,
+        "require_full_array": True,
+        "default": {
+            "coherent_block_rms_over_right_rms": 1.0e-4,
+            "diff_abs_max_over_right_peak": 0.005,
+            "diff_rms_over_right_rms": 0.001,
+            "require_topology_parity": True,
+        },
+        "products": {
+            ".image.tt0": {
+                "beam_area_relative": 0.001,
+                "beam_kernel_nrmse": 0.001,
+                "centroid_beams": 0.01,
+                "integrated_flux_relative": 0.001,
+                "peak_relative": 0.001,
+            }
+        },
     }
 
 

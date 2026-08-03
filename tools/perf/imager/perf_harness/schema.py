@@ -23,7 +23,12 @@ from .image_compare import (
     validate_comparison_output,
 )
 from .host_telemetry import HostTelemetryError, validate_host_telemetry
-from .tolerances import ToleranceContractError, validate_tolerance_contract
+from .tolerances import (
+    CONTRACT_VERSION as TOLERANCE_CONTRACT_VERSION,
+    LEGACY_CONTRACT_VERSIONS as LEGACY_TOLERANCE_CONTRACT_VERSIONS,
+    ToleranceContractError,
+    validate_tolerance_contract,
+)
 
 
 WORKLOAD_SCHEMA_VERSION = 1
@@ -2518,10 +2523,15 @@ def _validate_comparison_structured_review(value: Any, *, source: str) -> None:
 def _validate_tolerance_evaluation(value: Any, *, source: str) -> None:
     evaluation = _require_dict(value, source)
     _allowed_fields(evaluation, COMPARISON_TOLERANCE_EVALUATION_FIELDS, source)
-    if evaluation.get("contract_version") != 1 or isinstance(
-        evaluation.get("contract_version"), bool
-    ):
-        raise ContractError(f"{source}: contract_version must be 1")
+    version = evaluation.get("contract_version")
+    accepted_versions = {
+        TOLERANCE_CONTRACT_VERSION,
+        *LEGACY_TOLERANCE_CONTRACT_VERSIONS,
+    }
+    if isinstance(version, bool) or version not in accepted_versions:
+        raise ContractError(
+            f"{source}: contract_version must be one of {sorted(accepted_versions)}"
+        )
     _nonempty_string(evaluation, "status", source)
     for key in ("failed_checks", "incomplete_checks"):
         _string_list_allow_empty(evaluation.get(key), f"{source}: {key}")

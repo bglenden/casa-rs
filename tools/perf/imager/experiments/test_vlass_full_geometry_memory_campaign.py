@@ -911,6 +911,39 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
         ):
             campaign.validate_promoted_4096_receipt(self.promotion)
 
+    def test_passed_tolerances_make_structure_review_diagnostic(self) -> None:
+        comparison = json.loads(self.comparison.read_text(encoding="utf-8"))
+        comparison["structured_difference_review"] = {
+            "label": "investigate",
+            "summary": "bounded low-amplitude coherent difference",
+        }
+        self.comparison.write_text(json.dumps(comparison), encoding="utf-8")
+
+        validated = campaign.validate_comparison_receipt(self.comparison)
+
+        self.assertEqual(
+            "investigate",
+            validated["structured_difference_review"]["label"],
+        )
+
+    def test_diagnostic_component_and_cycle_mismatch_does_not_block_promotion(
+        self,
+    ) -> None:
+        trajectory = json.loads(self.trajectory.read_text(encoding="utf-8"))
+        trajectory["coverage"]["same_cycle_count"] = False
+        trajectory["discrete_parity"]["status"] = "diagnostic_mismatch"
+        trajectory["rust_cycles"] = 6
+        trajectory["component_selection"]["status"] = "diagnostic_mismatch"
+        trajectory["major_cycle_residual"]["status"] = "diagnostic_mismatch"
+        self.trajectory.write_text(json.dumps(trajectory), encoding="utf-8")
+        promotion = json.loads(self.promotion.read_text(encoding="utf-8"))
+        promotion["trajectory_receipt_sha256"] = campaign.sha256_file(self.trajectory)
+        self.promotion.write_text(json.dumps(promotion), encoding="utf-8")
+
+        reference = campaign.validate_promoted_4096_receipt(self.promotion)
+
+        self.assertEqual(str(self.promotion.resolve()), reference.path)
+
     def test_promotion_rejects_incomplete_component_trajectory_after_rehash(
         self,
     ) -> None:
@@ -922,7 +955,7 @@ class VlassFullGeometryMemoryCampaignTest(unittest.TestCase):
         self.promotion.write_text(json.dumps(promotion), encoding="utf-8")
         with self.assertRaisesRegex(
             campaign.CampaignError,
-            "component_selection trajectory evidence did not pass",
+            "component_selection trajectory evidence must pass",
         ):
             campaign.validate_promoted_4096_receipt(self.promotion)
 

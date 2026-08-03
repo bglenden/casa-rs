@@ -7,16 +7,27 @@ import math
 from typing import Any
 
 
-CONTRACT_VERSION = 1
+CONTRACT_VERSION = 2
+LEGACY_CONTRACT_VERSIONS = {1}
 NUMERICAL_CEILINGS = {
+    "beam_area_relative",
+    "beam_kernel_nrmse",
     "beam_major_relative",
     "beam_minor_relative",
     "beam_pa_degrees",
+    "centroid_beams",
     "centroid_pixels",
+    "coherent_block_rms_over_right_rms",
     "diff_abs_max_over_right_peak",
     "diff_rms_over_right_rms",
     "integrated_flux_relative",
     "peak_relative",
+}
+V2_NUMERICAL_CEILINGS = {
+    "beam_area_relative",
+    "beam_kernel_nrmse",
+    "centroid_beams",
+    "coherent_block_rms_over_right_rms",
 }
 BOOLEAN_REQUIREMENTS = {"require_topology_parity"}
 TOLERANCE_FIELDS = (
@@ -36,13 +47,19 @@ def validate_tolerance_contract(value: Any, *, source: str = "tolerances") -> No
         raise ToleranceContractError(
             f"{source} fields must be exactly {', '.join(sorted(expected))}"
         )
-    if value.get("contract_version") != CONTRACT_VERSION:
+    version = value.get("contract_version")
+    if version not in {CONTRACT_VERSION, *LEGACY_CONTRACT_VERSIONS}:
         raise ToleranceContractError(
-            f"{source}.contract_version must be {CONTRACT_VERSION}"
+            f"{source}.contract_version must be one of "
+            f"{sorted({CONTRACT_VERSION, *LEGACY_CONTRACT_VERSIONS})}"
         )
     if not isinstance(value.get("require_full_array"), bool):
         raise ToleranceContractError(f"{source}.require_full_array must be a boolean")
-    _validate_thresholds(value.get("default"), source=f"{source}.default")
+    _validate_thresholds(
+        value.get("default"),
+        source=f"{source}.default",
+        contract_version=version,
+    )
     products = value.get("products")
     if not isinstance(products, dict):
         raise ToleranceContractError(f"{source}.products must be an object")
@@ -51,7 +68,11 @@ def validate_tolerance_contract(value: Any, *, source: str = "tolerances") -> No
             raise ToleranceContractError(
                 f"{source}.products keys must be product suffixes"
             )
-        _validate_thresholds(thresholds, source=f"{source}.products[{suffix!r}]")
+        _validate_thresholds(
+            thresholds,
+            source=f"{source}.products[{suffix!r}]",
+            contract_version=version,
+        )
 
 
 def evaluate_comparison_tolerances(
@@ -134,12 +155,14 @@ def evaluate_comparison_tolerances(
                 product,
                 thresholds,
                 expected_regions=expected_regions,
+                beam_info=comparison.get("beam_info"),
             )
         )
+    checks.extend(_beam_reference_checks(products, contract))
     return _result(checks)
 
 
-def _validate_thresholds(value: Any, *, source: str) -> None:
+def _validate_thresholds(value: Any, *, source: str, contract_version: int) -> None:
     if not isinstance(value, dict):
         raise ToleranceContractError(f"{source} must be an object")
     unknown = sorted(set(value) - TOLERANCE_FIELDS)
@@ -147,6 +170,13 @@ def _validate_thresholds(value: Any, *, source: str) -> None:
         raise ToleranceContractError(
             f"{source} has unknown field(s): {', '.join(unknown)}"
         )
+    if contract_version in LEGACY_CONTRACT_VERSIONS:
+        unsupported = sorted(set(value) & V2_NUMERICAL_CEILINGS)
+        if unsupported:
+            raise ToleranceContractError(
+                f"{source} uses contract-v2 field(s) with contract_version "
+                f"{contract_version}: {', '.join(unsupported)}"
+            )
     for name in NUMERICAL_CEILINGS & set(value):
         number = value[name]
         if (
@@ -182,6 +212,7 @@ def _evaluate_product(
     thresholds: dict[str, Any],
     *,
     expected_regions: list[dict[str, Any]],
+    beam_info: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
     direct_metrics = {
@@ -191,6 +222,14 @@ def _evaluate_product(
     for name, actual in direct_metrics.items():
         if name in thresholds:
             checks.append(_ceiling_check(f"{suffix}.{name}", actual, thresholds[name]))
+    if "coherent_block_rms_over_right_rms" in thresholds:
+        checks.append(
+            _ceiling_check(
+                f"{suffix}.coherent_block_rms_over_right_rms",
+                _coherent_block_rms_over_right_rms(product),
+                thresholds["coherent_block_rms_over_right_rms"],
+            )
+        )
     if thresholds.get("require_topology_parity"):
         topology = product.get("topology_parity")
         checks.append(
@@ -215,6 +254,7 @@ def _evaluate_product(
             product,
             thresholds,
             expected_regions=expected_regions,
+            beam_info=beam_info,
         )
     )
     if "allowed_structure_labels" in thresholds:
@@ -263,6 +303,35 @@ def _evaluate_product(
     return checks
 
 
+def _beam_reference_checks(
+    products: dict[str, Any], contract: dict[str, Any]
+) -> list[dict[str, Any]]:
+    checks = []
+    for suffix in sorted(products):
+        thresholds = {**contract["default"], **contract["products"].get(suffix, {})}
+        if not ({"beam_kernel_nrmse", "beam_area_relative"} & set(thresholds)):
+            continue
+        product = products[suffix]
+        metadata = product.get("metadata") if isinstance(product, dict) else None
+        if "beam_kernel_nrmse" in thresholds:
+            checks.append(
+                _ceiling_check(
+                    f"{suffix}.beam_kernel_nrmse",
+                    _beam_kernel_nrmse(metadata),
+                    thresholds["beam_kernel_nrmse"],
+                )
+            )
+        if "beam_area_relative" in thresholds:
+            checks.append(
+                _ceiling_check(
+                    f"{suffix}.beam_area_relative",
+                    _beam_area_relative(metadata),
+                    thresholds["beam_area_relative"],
+                )
+            )
+    return checks
+
+
 def _beam_checks(
     suffix: str, product: dict[str, Any], thresholds: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -307,8 +376,10 @@ def _source_region_checks(
     thresholds: dict[str, Any],
     *,
     expected_regions: list[dict[str, Any]],
+    beam_info: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
     names = {
+        "centroid_beams",
         "centroid_pixels",
         "integrated_flux_relative",
         "peak_relative",
@@ -433,6 +504,30 @@ def _source_region_checks(
                     thresholds["centroid_pixels"],
                 )
             )
+        if "centroid_beams" in names:
+            left = _nested(region, "left", "centroid_pixels")
+            right = _nested(region, "right", "centroid_pixels")
+            distance_beams = None
+            beam_width_pixels = _beam_width_pixels(beam_info)
+            if (
+                beam_width_pixels is not None
+                and isinstance(left, list)
+                and isinstance(right, list)
+                and len(left) == len(right)
+                and left
+                and all(_finite(value) for value in [*left, *right])
+            ):
+                distance_pixels = math.sqrt(
+                    sum((float(a) - float(b)) ** 2 for a, b in zip(left, right))
+                )
+                distance_beams = distance_pixels / beam_width_pixels
+            checks.append(
+                _ceiling_check(
+                    f"{suffix}.source[{region_id}].centroid_beams",
+                    distance_beams,
+                    thresholds["centroid_beams"],
+                )
+            )
         if "integrated_flux_relative" in names:
             checks.append(
                 _ceiling_check(
@@ -456,6 +551,143 @@ def _source_region_checks(
                 )
             )
     return checks
+
+
+def _coherent_block_rms_over_right_rms(product: dict[str, Any]) -> float | None:
+    structure = product.get("structured_difference")
+    if not isinstance(structure, dict):
+        return None
+    if _nested(structure, "review", "label") == "not_applicable_exact_zero":
+        return 0.0
+    blocks = structure.get("beam_block_rms_by_scale")
+    if not isinstance(blocks, list):
+        return None
+    if not blocks:
+        # Non-spatial products have no meaningful beam-scale coherence. Their
+        # full-array NRMSE and peak gates remain mandatory.
+        return 0.0 if structure.get("status") == "computed" else None
+    large_blocks = [
+        block
+        for block in blocks
+        if isinstance(block, dict)
+        and _finite(block.get("approx_independent_beams_per_block"))
+        and float(block["approx_independent_beams_per_block"]) >= 64.0
+        and _finite(block.get("normalized_block_mean_rms"))
+    ]
+    if not large_blocks:
+        return None
+    return max(float(block["normalized_block_mean_rms"]) for block in large_blocks)
+
+
+def _beam_width_pixels(beam_info: dict[str, Any] | None) -> float | None:
+    widths = beam_info.get("fwhm_pixels") if isinstance(beam_info, dict) else None
+    if (
+        not isinstance(widths, list)
+        or len(widths) < 2
+        or not all(_finite(value) and float(value) > 0.0 for value in widths[:2])
+    ):
+        return None
+    return math.sqrt(float(widths[0]) * float(widths[1]))
+
+
+def _beam_area_relative(metadata: Any) -> float | None:
+    left = _beam_parameters(metadata, "left")
+    right = _beam_parameters(metadata, "right")
+    if left is None or right is None:
+        return None
+    left_area = left[0] * left[1]
+    right_area = right[0] * right[1]
+    return abs(left_area / right_area - 1.0) if right_area > 0.0 else None
+
+
+def _beam_kernel_nrmse(metadata: Any) -> float | None:
+    left = _beam_parameters(metadata, "left")
+    right = _beam_parameters(metadata, "right")
+    if left is None or right is None:
+        return None
+    left_covariance = _beam_covariance(*left)
+    right_covariance = _beam_covariance(*right)
+    left_det = _determinant_2x2(left_covariance)
+    right_det = _determinant_2x2(right_covariance)
+    left_inverse = _inverse_2x2(left_covariance)
+    right_inverse = _inverse_2x2(right_covariance)
+    if (
+        left_det <= 0.0
+        or right_det <= 0.0
+        or left_inverse is None
+        or right_inverse is None
+    ):
+        return None
+    inverse_sum = (
+        (
+            left_inverse[0][0] + right_inverse[0][0],
+            left_inverse[0][1] + right_inverse[0][1],
+        ),
+        (
+            left_inverse[1][0] + right_inverse[1][0],
+            left_inverse[1][1] + right_inverse[1][1],
+        ),
+    )
+    inverse_sum_det = _determinant_2x2(inverse_sum)
+    if inverse_sum_det <= 0.0:
+        return None
+    left_energy = math.pi * math.sqrt(left_det)
+    right_energy = math.pi * math.sqrt(right_det)
+    cross_energy = 2.0 * math.pi / math.sqrt(inverse_sum_det)
+    difference_energy = max(0.0, left_energy + right_energy - 2.0 * cross_energy)
+    return math.sqrt(difference_energy / right_energy)
+
+
+def _beam_parameters(metadata: Any, side: str) -> tuple[float, float, float] | None:
+    major = _beam_quantity(metadata, side, "major", output_unit="arcsec")
+    minor = _beam_quantity(metadata, side, "minor", output_unit="arcsec")
+    pa_degrees = _beam_quantity(metadata, side, "positionangle", output_unit="deg")
+    if (
+        not _finite(major)
+        or not _finite(minor)
+        or not _finite(pa_degrees)
+        or float(major) <= 0.0
+        or float(minor) <= 0.0
+    ):
+        return None
+    return float(major), float(minor), math.radians(float(pa_degrees))
+
+
+def _beam_covariance(
+    major_fwhm: float, minor_fwhm: float, pa_radians: float
+) -> tuple[tuple[float, float], tuple[float, float]]:
+    fwhm_to_sigma = 1.0 / math.sqrt(8.0 * math.log(2.0))
+    major2 = (major_fwhm * fwhm_to_sigma) ** 2
+    minor2 = (minor_fwhm * fwhm_to_sigma) ** 2
+    cosine = math.cos(pa_radians)
+    sine = math.sin(pa_radians)
+    diagonal = (major2 - minor2) * cosine * sine
+    return (
+        (
+            major2 * cosine * cosine + minor2 * sine * sine,
+            diagonal,
+        ),
+        (
+            diagonal,
+            major2 * sine * sine + minor2 * cosine * cosine,
+        ),
+    )
+
+
+def _determinant_2x2(matrix: tuple[tuple[float, float], tuple[float, float]]) -> float:
+    return matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0]
+
+
+def _inverse_2x2(
+    matrix: tuple[tuple[float, float], tuple[float, float]],
+) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    determinant = _determinant_2x2(matrix)
+    if not math.isfinite(determinant) or determinant <= 0.0:
+        return None
+    return (
+        (matrix[1][1] / determinant, -matrix[0][1] / determinant),
+        (-matrix[1][0] / determinant, matrix[0][0] / determinant),
+    )
 
 
 def _relative_scalar(left: Any, right: Any) -> float | None:

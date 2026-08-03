@@ -2663,22 +2663,43 @@ accepted without explicit signoff.
 
 ### Numerical And Structural Acceptance
 
-Run the serial CASA oracle twice before freezing tolerances. Set each product's
-tolerance to the tighter of its hard ceiling and a documented repeatability
-floor allowance. Tolerances are frozen before casa-rs optimization begins.
+Generate each CASA oracle once and freeze it. A multi-run CASA median is
+deferred unless the CASA parameters, data selection, geometry, or products
+change, or casa-rs reaches a final performance boundary closely enough that
+CASA variance could change pass/fail. Numerical tolerances are frozen before
+using a matched pair for casa-rs optimization.
 
-Hard outer ceilings are:
+The active optimization-safe scientific-equivalence contract is
+`tools/perf/imager/contracts/vlass-scientific-equivalence-v2.json`. Its hard
+outer ceilings and exact semantic requirements are:
 
 - exact shape, coordinate frame, reference pixel/value, increments, units,
-  masks, and product topology;
-- beam major/minor relative error no greater than `1e-3`, beam position-angle
-  error no greater than 0.1 degree, and source-centroid error no greater than
-  0.05 pixel;
+  masks, product topology, requested field/SPW/POINTING selection, and product
+  inventory;
+- normalized full-array RMS difference no greater than `1e-3` and maximum
+  absolute difference divided by the CASA peak no greater than `5e-3`;
 - peak and integrated source-flux relative error no greater than `1e-3`;
-- `diff_rms_over_casa_rms <= 1e-3` and
-  `diff_abs_max_over_casa_peak <= 5e-3` on the CASA-valid comparison domain;
+- source-centroid separation no greater than `0.01` synthesized beams;
+- restoring-beam equivalence through the normalized two-dimensional Gaussian
+  kernel, with kernel NRMSE and beam-area relative error each no greater than
+  `1e-3`; linked beam-bearing products must share the same beam within each
+  result tree, and the canonical beam comparison is bound through
+  `.image.tt0`;
 - finite/nonfinite and mask topology identical on valid science regions; and
-- no unexplained beam-scale or larger coherent structure in difference images.
+- RMS of coherent block means at scales containing at least 64 independent
+  beams no greater than `1e-4` of the CASA product RMS.
+
+Component ordering, raw floating-point beam parameters, and the legacy
+large-scale-power, low-order-fit, and block-decay classifications remain
+diagnostics. They cannot reject an otherwise passing result unless an
+explicitly bound scientific ceiling fails. This permits changes in reduction
+order, tiling, threading, FFT implementation, and GPU execution while still
+rejecting material flux, position, PSF, topology, metadata, or coherent-image
+errors. Clean runs must still record actual iterations, components, cycles,
+stop reason, complete CASA/casa-rs trajectory coverage, and explicit
+no-divergence evidence. Different component ordering or cycle counts are
+diagnostic when both trajectories remain stable and the stopping and product
+contracts pass.
 
 Final reductions must stream over the full arrays. Sampled comparisons are
 allowed for iteration and panels, but cannot provide the final numerical gate.
@@ -7579,7 +7600,7 @@ The candidate repaired exact dirty inventory and coordinate metadata:
 all 18 products, shapes, units, masks, coordinate topology, WCS operation
 grouping, and coordinate values match. Numerical RMS ratios range from
 sub-ppm through about `53.2 ppm`, and both model terms are exactly zero.
-Promotion still fails without any tolerance change:
+Under the then-active v1 contract, promotion stopped at this boundary:
 
 - five beam-bearing products inherit a restoring-beam mismatch from their
   slightly different PSFs; major-axis and position-angle differences are
@@ -7599,6 +7620,38 @@ The validator's offset-inclusive regression R-squared check was fixed after
 this receipt exposed that R-squared cannot be reconstructed from raw,
 non-centered RMS. The corrected validation leaves the scientific failure
 unchanged.
+
+Brian then explicitly approved the optimization-safe v2 scientific-equivalence
+contract described above. Re-evaluation reused the immutable CASA and casa-rs
+trees; it did not launch CASA, casa-rs, or another imaging workload. All 18
+products pass exact inventory, shape, coordinate, unit, mask, topology, and
+selection semantics plus every bound numerical gate. There are no failed or
+incomplete checks. Notable margins are:
+
+- `.image.tt0` NRMSE `3.8243114447519807e-5`, versus `1e-3`;
+- `.image.tt0` source integrated-flux relative error
+  `1.2287444501503239e-6`, centroid separation
+  `1.2874159490437483e-6` beams, and zero peak-relative error;
+- beam-kernel NRMSE `1.6982385191835777e-7` and beam-area relative error
+  `1.611733808637439e-7`, versus `1e-3`; and
+- worst coherent block-mean RMS ratio `1.524262302280491e-5`, versus `1e-4`.
+
+The raw heuristic review still says `investigate` for `.psf.tt1`, `.psf.tt2`,
+and `.weight.tt1`; these labels are retained as diagnostics. Their
+amplitude-bound coherent checks pass, so they no longer override the
+scientific contract. The contract SHA-256 is
+`daf1692d23a627d513285cd4c5fc5c81c8e5dd361e6bf2815c74c8897fbc0537`.
+The portable comparison receipt SHA-256 is
+`187dd20c3c7dc70cbb181c622e7330fdb0c0b09d43947c369e183504cc6af80d`;
+its request, raw output, and log SHA-256 values are
+`d8e7b8a28ca7e32a1e15e21220a9b16f26d596da3f750d3055ec1793a31701fd`,
+`213b20817cd906de039a715e55c69ec4e8250a6c3acb86ac5a5b14c3d6e18c82`,
+and
+`d4ecf5e79c3c2b06ebd060c3a6ea703aadf702d55b8eb780d266bb0d6816e84e`.
+Correctness is promoted for this reduced row. Its unchanged release timing is
+still only `541.352405 / 225.10 = 2.40494x`, below the final `10x`
+requirement, so it is a performance warning rather than final performance
+acceptance.
 
 For every subsequent new matched CASA/release-casa-rs pair, report
 `CASA wall / casa-rs wall` immediately, even when the pair fails correctness.

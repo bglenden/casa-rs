@@ -8,11 +8,16 @@ import json
 from pathlib import Path
 import unittest
 
+from perf_harness.tolerances import validate_tolerance_contract
+
 
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT_PATH = ROOT / "tools/perf/imager/vlass_recovery_contract.json"
 LEDGER_PATH = ROOT / "tools/perf/imager/vlass_recovery_launch_ledger.json"
 CATALOG_PATH = ROOT / "tools/perf/imager/vlass_recovery_salvage_catalog.json"
+SCIENTIFIC_EQUIVALENCE_PATH = (
+    ROOT / "tools/perf/imager/contracts/vlass-scientific-equivalence-v2.json"
+)
 
 
 def load_json(path: Path) -> dict[str, object]:
@@ -35,6 +40,50 @@ class RecoveryContractTests(unittest.TestCase):
         self.contract = load_json(CONTRACT_PATH)
         self.ledger = load_json(LEDGER_PATH)
         self.catalog = load_json(CATALOG_PATH)
+
+    def test_scientific_equivalence_contract_is_explicit_and_fail_closed(
+        self,
+    ) -> None:
+        tolerances = load_json(SCIENTIFIC_EQUIVALENCE_PATH)
+        acceptance = self.contract["acceptance"]
+        assert isinstance(acceptance, dict)
+
+        validate_tolerance_contract(tolerances, source=str(SCIENTIFIC_EQUIVALENCE_PATH))
+        self.assertEqual(
+            str(SCIENTIFIC_EQUIVALENCE_PATH.relative_to(ROOT)),
+            acceptance["scientific_equivalence_contract_path"],
+        )
+        self.assertEqual(
+            sha256(SCIENTIFIC_EQUIVALENCE_PATH),
+            acceptance["scientific_equivalence_contract_sha256"],
+        )
+        self.assertIs(
+            True,
+            acceptance["structured_difference_labels_are_diagnostic"],
+        )
+        self.assertEqual(2, tolerances["contract_version"])
+        self.assertIs(True, tolerances["require_full_array"])
+        self.assertEqual(
+            {
+                "coherent_block_rms_over_right_rms": 1.0e-4,
+                "diff_abs_max_over_right_peak": 5.0e-3,
+                "diff_rms_over_right_rms": 1.0e-3,
+                "require_topology_parity": True,
+            },
+            tolerances["default"],
+        )
+        products = tolerances["products"]
+        assert isinstance(products, dict)
+        self.assertEqual(
+            {
+                "beam_area_relative": 1.0e-3,
+                "beam_kernel_nrmse": 1.0e-3,
+                "centroid_beams": 1.0e-2,
+                "integrated_flux_relative": 1.0e-3,
+                "peak_relative": 1.0e-3,
+            },
+            products[".image.tt0"],
+        )
 
     def test_contract_binds_reference_manifests_and_cap20000_delta(self) -> None:
         self.assertEqual(1, self.contract["schema_version"])
@@ -232,7 +281,7 @@ class RecoveryContractTests(unittest.TestCase):
         self.assertEqual(pending["corrected_mask_blc"], source["blc"])
         self.assertEqual(pending["corrected_mask_trc"], source["trc"])
 
-    def test_reduced_ladder_records_matched_release_timing_and_failed_gate(
+    def test_reduced_ladder_records_matched_release_timing_and_promoted_correctness(
         self,
     ) -> None:
         entries = self.ledger["reduced_ladder_entries"]
@@ -243,7 +292,10 @@ class RecoveryContractTests(unittest.TestCase):
             "REDUCED-ALL63-DIRTY-4096-4SPW-001",
             pair["pair_id"],
         )
-        self.assertEqual("failed_promotion", pair["disposition"])
+        self.assertEqual(
+            "correctness_promoted_performance_below_target",
+            pair["disposition"],
+        )
 
         selection = pair["selection"]
         assert isinstance(selection, dict)
@@ -278,6 +330,23 @@ class RecoveryContractTests(unittest.TestCase):
             [".psf.tt1", ".psf.tt2", ".weight.tt1"],
             comparison["structured_difference_products"],
         )
+        scientific = pair["scientific_equivalence"]
+        assert isinstance(scientific, dict)
+        contract = ROOT / scientific["contract_path"]
+        self.assertEqual(scientific["contract_sha256"], sha256(contract))
+        self.assertEqual("passed", scientific["status"])
+        self.assertEqual(18, scientific["product_count"])
+        self.assertEqual([], scientific["failed_checks"])
+        self.assertEqual([], scientific["incomplete_checks"])
+        self.assertLessEqual(scientific["image_tt0_nrmse"], 1.0e-3)
+        self.assertLessEqual(scientific["beam_kernel_nrmse"], 1.0e-3)
+        self.assertLessEqual(scientific["beam_area_relative"], 1.0e-3)
+        self.assertLessEqual(
+            scientific["worst_coherent_block_rms_over_right_rms"],
+            1.0e-4,
+        )
+        self.assertEqual(64, len(scientific["receipt_sha256"]))
+        self.assertEqual(64, len(scientific["raw_output_sha256"]))
 
     def test_salvage_catalog_selects_at_most_primary_and_reserve(self) -> None:
         self.assertEqual(self.contract["id"], self.catalog["contract_id"])
@@ -346,9 +415,7 @@ class RecoveryContractTests(unittest.TestCase):
                 self.assertEqual(64, len(validation["scientific_floor_sha256"]))
             by_id = {entry["id"]: entry for entry in entries}
             self.assertEqual("retired", by_id["obsolete-9a14-source-seed"]["status"])
-            self.assertEqual(
-                "retired", by_id["db41-obsolete-seed-pr3-trim"]["status"]
-            )
+            self.assertEqual("retired", by_id["db41-obsolete-seed-pr3-trim"]["status"])
             if reserve is not None:
                 assert isinstance(reserve, dict)
                 self.assertEqual(

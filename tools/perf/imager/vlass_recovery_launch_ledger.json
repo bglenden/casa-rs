@@ -238,7 +238,7 @@
     {
       "pair_id": "REDUCED-ALL63-DIRTY-4096-4SPW-001",
       "row_id": "VLASS-ALL63-DIRTY-4096-4SPW",
-      "disposition": "failed_promotion",
+      "disposition": "correctness_promoted_performance_below_target",
       "selection": {
         "field_selection": "1107~1127,1512~1532,1542~1562",
         "field_count": 63,
@@ -297,7 +297,34 @@
           ".psf.tt2",
           ".weight.tt1"
         ],
-        "scope_note": "No tolerance or acceptance contract was changed. The ladder stops at this first failed boundary."
+        "scope_note": "Historical fail-closed result under contract v1. No tolerance or acceptance contract had yet been changed, so the ladder stopped at this boundary."
+      },
+      "scientific_equivalence": {
+        "contract_path": "tools/perf/imager/contracts/vlass-scientific-equivalence-v2.json",
+        "contract_sha256": "daf1692d23a627d513285cd4c5fc5c81c8e5dd361e6bf2815c74c8897fbc0537",
+        "receipt_path": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-candidates/8667b5760d88948548da3e06aa402cd10e11378b/comparisons/20260803T-vlass-all63-dirty-4096-four-spw-scientific-v2/comparison.receipt.json",
+        "receipt_sha256": "187dd20c3c7dc70cbb181c622e7330fdb0c0b09d43947c369e183504cc6af80d",
+        "input_sha256": "d8e7b8a28ca7e32a1e15e21220a9b16f26d596da3f750d3055ec1793a31701fd",
+        "raw_output_sha256": "213b20817cd906de039a715e55c69ec4e8250a6c3acb86ac5a5b14c3d6e18c82",
+        "log_sha256": "d4ecf5e79c3c2b06ebd060c3a6ea703aadf702d55b8eb780d266bb0d6816e84e",
+        "status": "passed",
+        "product_count": 18,
+        "failed_checks": [],
+        "incomplete_checks": [],
+        "image_tt0_nrmse": 3.8243114447519807e-05,
+        "image_tt0_peak_relative": 0.0,
+        "image_tt0_integrated_flux_relative": 1.2287444501503239e-06,
+        "image_tt0_centroid_beams": 1.2874159490437483e-06,
+        "beam_kernel_nrmse": 1.6982385191835777e-07,
+        "beam_area_relative": 1.611733808637439e-07,
+        "worst_coherent_block_rms_over_right_rms": 1.524262302280491e-05,
+        "diagnostic_structure_review": "investigate",
+        "diagnostic_structure_products": [
+          ".psf.tt1",
+          ".psf.tt2",
+          ".weight.tt1"
+        ],
+        "scope_note": "Brian explicitly approved contract v2 so optimization-safe numerical equivalence, not bitwise floating identity, governs promotion. Raw heuristic structure labels remain diagnostics and cannot override passed amplitude-bound coherent-error gates."
       }
     }
   ],

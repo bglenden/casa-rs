@@ -17,6 +17,10 @@ import numpy as np
 # is derived from this budget; exact full-plane intermediates live in the
 # request-owned disk workspace instead.
 STRUCTURE_WORKING_BYTES = 16 * 1024 * 1024
+SCIENTIFIC_BEAM_TOLERANCE_FIELDS = {
+    "beam_area_relative",
+    "beam_kernel_nrmse",
+}
 
 
 # Keep this module importable by the ordinary Python test runner.  The
@@ -62,6 +66,9 @@ def main():
     else:
         beam_info = estimate_beam_info(right_prefix + beam_suffix, max_elements)
     panel_displays = product_panel_displays(request, max_elements)
+    allow_scientific_beam_equivalence = has_scientific_beam_contract(
+        request.get("tolerances")
+    )
     try:
         for suffix in expected_products:
             left_path = left_prefix + suffix
@@ -77,6 +84,7 @@ def main():
                 mode=request["mode"],
                 full_chunk_elements=request["full_chunk_elements"],
                 require_metadata_parity=request["require_metadata_parity"],
+                allow_scientific_beam_equivalence=(allow_scientific_beam_equivalence),
                 source_regions=[
                     region
                     for region in request["source_regions"]
@@ -597,6 +605,7 @@ def compare_one(
     mode="sampled",
     full_chunk_elements=1_000_000,
     require_metadata_parity=False,
+    allow_scientific_beam_equivalence=False,
     source_regions=None,
     left_label="casa-rs",
     right_label="CASA",
@@ -725,7 +734,13 @@ def compare_one(
         if require_metadata_parity
         else {"status": "not_required", "parity": None}
     )
-    metadata_mismatch = require_metadata_parity and metadata["status"] != "matched"
+    metadata_mismatch = require_metadata_parity and not (
+        metadata["status"] == "matched"
+        or (
+            allow_scientific_beam_equivalence
+            and is_restoring_beam_only_metadata_mismatch(metadata)
+        )
+    )
     result = {
         "status": "metadata_mismatch" if metadata_mismatch else "compared",
         "comparison_mode": mode,
@@ -1203,6 +1218,45 @@ def compare_image_metadata(left_path, right_path, image_factory=None):
         "field_parity": parity,
         "left": left,
         "right": right,
+    }
+
+
+def has_scientific_beam_contract(contract):
+    if not isinstance(contract, dict) or contract.get("contract_version") != 2:
+        return False
+    default = contract.get("default")
+    products = contract.get("products")
+    if not isinstance(default, dict) or not isinstance(products, dict):
+        return False
+    for overrides in products.values():
+        if not isinstance(overrides, dict):
+            continue
+        thresholds = dict(default)
+        thresholds.update(overrides)
+        if SCIENTIFIC_BEAM_TOLERANCE_FIELDS <= set(thresholds):
+            return True
+    return False
+
+
+def is_restoring_beam_only_metadata_mismatch(metadata):
+    if not isinstance(metadata, dict) or metadata.get("status") != "mismatch":
+        return False
+    left = metadata.get("left")
+    right = metadata.get("right")
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return False
+    if left.get("status") != "complete" or right.get("status") != "complete":
+        return False
+    if not isinstance(left.get("restoring_beam"), dict) or not left["restoring_beam"]:
+        return False
+    if not isinstance(right.get("restoring_beam"), dict) or not right["restoring_beam"]:
+        return False
+    return metadata.get("field_parity") == {
+        "shape": True,
+        "unit": True,
+        "coordinates": True,
+        "restoring_beam": False,
+        "masks": True,
     }
 
 

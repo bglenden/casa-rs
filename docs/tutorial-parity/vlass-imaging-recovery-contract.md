@@ -2,7 +2,8 @@
 
 Truth class: approved execution contract
 
-Approved: 2026-08-02 by Brian Glendenning
+Approved: 2026-08-02 by Brian Glendenning; scientific-equivalence amendment
+approved 2026-08-03
 
 Verification: `just docs-check` plus the focused recovery-contract and imaging
 harness tests
@@ -266,7 +267,8 @@ about `38.2 ppm` for `.image.tt0`, `42.0 ppm` for `.psf.tt0`, `53.2 ppm`
 for `.residual.tt1`, `4.43 ppm` for `.alpha`, and `2.10 ppm` for
 `.weight.tt1`; both model terms are exactly zero.
 
-The row nevertheless fails promotion under the unchanged contract. Five
+The row initially failed promotion under the v1 exact-metadata/heuristic
+contract. Five
 beam-bearing products differ in restoring-beam metadata because the
 independently fitted PSFs differ slightly. The casa-rs and CASA major axes are
 respectively `2.9585349559783936` and `2.9585354328155518` arcsec; their
@@ -275,8 +277,8 @@ Feeding the frozen CASA and casa-rs PSFs separately through the shared beam
 fitter reproduces those values, localizing the remaining beam difference to
 the PSF arrays rather than the fitter. The structured-difference review also
 requires investigation for `.psf.tt1`, `.psf.tt2`, and `.weight.tt1`.
-No tolerance was relaxed and the ladder stops at this first failed semantic
-boundary.
+At that point no tolerance had been changed, so the ladder correctly stopped
+at the first unresolved semantic boundary.
 
 The comparison SHA-256 is
 `2cc4cb2636c84551c4bb30f5e81649f746f4dab819757549257416a799903bee`;
@@ -286,8 +288,32 @@ and
 `6eb766d65cf9c5f66262d14f3342859c2a9b157ac89098bad93584ff4ba94c09`.
 The comparison validator was corrected after this row exposed an invalid
 attempt to reconstruct offset-inclusive regression R-squared from raw RMS.
-The corrected validator accepts the receipt schema and leaves the scientific
-failure unchanged.
+That historical v1 failure and its artifacts remain recorded.
+
+Brian subsequently approved
+`tools/perf/imager/contracts/vlass-scientific-equivalence-v2.json`, SHA-256
+`daf1692d23a627d513285cd4c5fc5c81c8e5dd361e6bf2815c74c8897fbc0537`.
+It keeps selection, inventory, shape, coordinate, unit, mask, and topology
+semantics exact, while bounding full-array NRMSE at `1e-3`, peak-normalized
+maximum error at `5e-3`, source flux at `1e-3`, centroid separation at `0.01`
+beams, Gaussian restoring-beam kernel and area differences at `1e-3`, and
+large-scale coherent error at `1e-4` of CASA RMS. Raw beam parameters,
+structure classifications, component order, and cycle count are diagnostics
+when their bound scientific checks, stable convergence, stopping, and
+no-divergence requirements pass.
+
+A comparison-only re-evaluation reused the frozen product trees and launched
+no imaging. All 18 products passed with no failed or incomplete check.
+`.image.tt0` NRMSE is `3.8243114447519807e-5`; source flux error is
+`1.2287444501503239e-6`; centroid separation is
+`1.2874159490437483e-6` beams; beam-kernel NRMSE is
+`1.6982385191835777e-7`; beam-area error is
+`1.611733808637439e-7`; and the worst coherent block error is
+`1.524262302280491e-5`. The portable receipt SHA-256 is
+`187dd20c3c7dc70cbb181c622e7330fdb0c0b09d43947c369e183504cc6af80d`.
+Correctness is promoted for this row. The unchanged `2.405x` release ratio
+remains below the final `10x` requirement and is explicitly retained as a
+performance warning.
 
 ## Candidate budget and promotion
 
@@ -314,7 +340,9 @@ candidate; they cannot reopen an architecture tournament.
 
 CASA is the scientific reference, not an implementation transcript. Bitwise
 identity, identical component order, and identical major-cycle history remain
-diagnostics rather than gates. Promotion still requires:
+diagnostics rather than gates. The controlling numerical contract is
+`tools/perf/imager/contracts/vlass-scientific-equivalence-v2.json`.
+Promotion still requires:
 
 - the exact data, field, SPW, POINTING, AWProject, weighting, MT-MFS, mask,
   scale, and restoration semantics;

@@ -150,6 +150,7 @@ PROMOTION_GATES = (
     "product_inventory",
     "no_divergence",
 )
+TRAJECTORY_EVIDENCE_STATUSES = {"passed", "diagnostic_mismatch"}
 MEMORY_EXECUTION_GATES = (
     "memory_and_swap_receipt",
     "per_stage_memory_telemetry",
@@ -923,12 +924,6 @@ def validate_comparison_receipt(path: Path) -> dict[str, Any]:
         or tolerance_evaluation.get("status") != "passed"
     ):
         raise CampaignError(f"{path}: comparison tolerance evaluation did not pass")
-    structured_review = comparison.get("structured_difference_review")
-    if isinstance(structured_review, dict) and structured_review.get("label") in {
-        "bad",
-        "investigate",
-    }:
-        raise CampaignError(f"{path}: structured-difference review did not pass")
     return comparison
 
 
@@ -955,27 +950,49 @@ def validate_trajectory_receipt(
             )
     coverage = trajectory.get("coverage")
     if not isinstance(coverage, dict) or any(
-        coverage.get(field) is not True
-        for field in ("casa_complete", "rust_complete", "same_cycle_count")
+        coverage.get(field) is not True for field in ("casa_complete", "rust_complete")
     ):
-        raise CampaignError(f"{path}: trajectory coverage is not complete and aligned")
+        raise CampaignError(f"{path}: trajectory coverage is not complete")
+    same_cycle_count = coverage.get("same_cycle_count")
+    if not isinstance(same_cycle_count, bool):
+        raise CampaignError(f"{path}: same_cycle_count must be recorded")
     parity = trajectory.get("discrete_parity")
-    if not isinstance(parity, dict) or parity.get("status") != "passed":
-        raise CampaignError(f"{path}: discrete trajectory parity did not pass")
-    aligned = trajectory.get("aligned_cycles")
-    if not isinstance(aligned, int) or isinstance(aligned, bool) or aligned < 1:
-        raise CampaignError(f"{path}: aligned_cycles must be a positive integer")
     if (
-        trajectory.get("casa_cycles") != aligned
-        or trajectory.get("rust_cycles") != aligned
+        not isinstance(parity, dict)
+        or parity.get("status") not in TRAJECTORY_EVIDENCE_STATUSES
     ):
-        raise CampaignError(f"{path}: CASA and casa-rs cycle counts must be aligned")
+        raise CampaignError(
+            f"{path}: discrete trajectory evidence must pass or record a "
+            "diagnostic mismatch"
+        )
+    aligned = trajectory.get("aligned_cycles")
+    casa_cycles = trajectory.get("casa_cycles")
+    rust_cycles = trajectory.get("rust_cycles")
+    for name, value in (
+        ("aligned_cycles", aligned),
+        ("casa_cycles", casa_cycles),
+        ("rust_cycles", rust_cycles),
+    ):
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise CampaignError(f"{path}: {name} must be a positive integer")
+    if aligned > min(casa_cycles, rust_cycles):
+        raise CampaignError(f"{path}: aligned_cycles exceeds a recorded trajectory")
+    if same_cycle_count != (casa_cycles == rust_cycles):
+        raise CampaignError(
+            f"{path}: same_cycle_count is not derived from recorded cycle counts"
+        )
     if trajectory.get("no_divergence") is not True:
         raise CampaignError(f"{path}: trajectory must explicitly report no divergence")
     for field in ("component_selection", "major_cycle_residual"):
         evidence = trajectory.get(field)
-        if not isinstance(evidence, dict) or evidence.get("status") != "passed":
-            raise CampaignError(f"{path}: {field} trajectory evidence did not pass")
+        if (
+            not isinstance(evidence, dict)
+            or evidence.get("status") not in TRAJECTORY_EVIDENCE_STATUSES
+        ):
+            raise CampaignError(
+                f"{path}: {field} trajectory evidence must pass or record a "
+                "diagnostic mismatch"
+            )
     if (
         workload_result_sha256 is not None
         and trajectory.get("workload_result_sha256") != workload_result_sha256
@@ -2465,9 +2482,6 @@ def extract_execution_memory_evidence(
         and tolerance_evaluation.get("status") == "passed"
     )
     structured_review = comparison.get("structured_difference_review")
-    structured_review_passed = not isinstance(structured_review, dict) or (
-        structured_review.get("label") not in {"bad", "investigate"}
-    )
     requested_products = comparison.get("requested_products")
     if mode not in {"dirty", "clean"}:
         raise CampaignError(f"unsupported execution evidence mode: {mode}")
@@ -2728,8 +2742,7 @@ def extract_execution_memory_evidence(
         and product_inventory.get("status") == "matched"
         and product_rows_pass
         and numerical_topology_metadata_contract
-        and comparison_tolerance_passed
-        and structured_review_passed,
+        and comparison_tolerance_passed,
         "memory_and_swap_receipt": telemetry_complete
         and ledger.get("complete") is True
         and stage_memory_contract["complete"]
@@ -3020,7 +3033,7 @@ def validate_full_geometry_trajectory_receipt(
     workload_result_sha256: str,
     product_comparison_sha256: str,
 ) -> EvidenceRef:
-    """Validate full-size component selection and major-cycle parity evidence."""
+    """Validate full-size convergence and diagnostic trajectory evidence."""
 
     path = path.expanduser().resolve()
     validate_trajectory_receipt(

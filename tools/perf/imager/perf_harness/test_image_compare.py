@@ -905,6 +905,124 @@ class ImageComparisonProtocolTests(unittest.TestCase):
         json_ready = comparator.normalize_serializable(result)
         self.assertEqual(["mask0", "mask1"], json_ready["left"]["masks"])
 
+    def test_beam_only_metadata_mismatch_requires_v2_scientific_reference(
+        self,
+    ) -> None:
+        tolerances = {
+            "contract_version": 2,
+            "require_full_array": True,
+            "default": {
+                "diff_rms_over_right_rms": 0.001,
+                "require_topology_parity": True,
+            },
+            "products": {
+                ".image.tt0": {
+                    "beam_area_relative": 0.001,
+                    "beam_kernel_nrmse": 0.001,
+                }
+            },
+        }
+        request = normalize_comparison_request(
+            comparison_request(tolerances=tolerances)
+        )
+        output = comparison_output(request)
+        for suffix in (".image.tt0", ".residual.tt0"):
+            metadata = output["products"][suffix]["metadata"]
+            metadata["left"]["restoring_beam"]["major"]["value"] = 2.000001
+            metadata["status"] = "mismatch"
+            metadata["parity"] = False
+            metadata["field_parity"]["restoring_beam"] = False
+
+        validate_comparison_output(output, request)
+
+        unbound = copy.deepcopy(output)
+        unbound["products"][".residual.tt0"]["metadata"]["left"]["restoring_beam"][
+            "major"
+        ]["value"] = 2.000002
+        with self.assertRaisesRegex(ValueError, "no bound scientific-equivalence"):
+            validate_comparison_output(unbound, request)
+
+        structural = copy.deepcopy(output)
+        metadata = structural["products"][".residual.tt0"]["metadata"]
+        metadata["left"]["unit"] = "K"
+        metadata["field_parity"]["unit"] = False
+        with self.assertRaisesRegex(ValueError, "no bound scientific-equivalence"):
+            validate_comparison_output(structural, request)
+
+        legacy_request = normalize_comparison_request(
+            comparison_request(
+                tolerances={
+                    "contract_version": 1,
+                    "require_full_array": True,
+                    "default": {
+                        "diff_rms_over_right_rms": 0.001,
+                        "require_topology_parity": True,
+                    },
+                    "products": {},
+                }
+            )
+        )
+        legacy_output = comparison_output(legacy_request)
+        metadata = legacy_output["products"][".image.tt0"]["metadata"]
+        metadata["left"]["restoring_beam"]["major"]["value"] = 2.000001
+        metadata["status"] = "mismatch"
+        metadata["parity"] = False
+        metadata["field_parity"]["restoring_beam"] = False
+        with self.assertRaisesRegex(ValueError, "no bound scientific-equivalence"):
+            validate_comparison_output(legacy_output, legacy_request)
+
+    def test_linked_beam_products_match_canonical_beam_within_each_tree(
+        self,
+    ) -> None:
+        tolerances = {
+            "contract_version": 2,
+            "require_full_array": True,
+            "default": {
+                "diff_rms_over_right_rms": 0.001,
+                "require_topology_parity": True,
+            },
+            "products": {
+                ".image.tt0": {
+                    "beam_area_relative": 0.001,
+                    "beam_kernel_nrmse": 0.001,
+                }
+            },
+        }
+        request = normalize_comparison_request(
+            comparison_request(tolerances=tolerances)
+        )
+        output = comparison_output(request)
+        metadata = output["products"][".residual.tt0"]["metadata"]
+        for side in ("left", "right"):
+            metadata[side]["restoring_beam"]["major"]["value"] = 3.0
+
+        with self.assertRaisesRegex(ValueError, "linked restoring beam differs"):
+            validate_comparison_output(output, request)
+
+    def test_comparator_defers_only_beam_only_metadata_mismatch(self) -> None:
+        contract = {
+            "contract_version": 2,
+            "default": {},
+            "products": {
+                ".image.tt0": {
+                    "beam_area_relative": 0.001,
+                    "beam_kernel_nrmse": 0.001,
+                }
+            },
+        }
+        metadata = matched_metadata([1, 1])
+        metadata["left"]["restoring_beam"]["major"]["value"] = 2.000001
+        metadata["status"] = "mismatch"
+        metadata["parity"] = False
+        metadata["field_parity"]["restoring_beam"] = False
+
+        self.assertTrue(comparator.has_scientific_beam_contract(contract))
+        self.assertTrue(comparator.is_restoring_beam_only_metadata_mismatch(metadata))
+
+        metadata["left"]["unit"] = "K"
+        metadata["field_parity"]["unit"] = False
+        self.assertFalse(comparator.is_restoring_beam_only_metadata_mismatch(metadata))
+
     def test_source_region_metrics_are_bounded_and_not_full_image_sums(self) -> None:
         shape = (6, 5, 1, 1)
         left = np.zeros(shape, dtype=np.float64)
