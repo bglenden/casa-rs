@@ -121,6 +121,22 @@ class RecoveryContractTests(unittest.TestCase):
                 invalidations, schedule["shared_external_invalidation_retries"]
             )
 
+        casa_a = next(
+            entry
+            for entry in casa_entries
+            if entry["row_id"] == "CASA-A-SINGLE-CLEAN-N2000-v1"
+        )
+        self.assertEqual("running", casa_a["disposition"])
+        self.assertEqual(259200, casa_a["max_wall_seconds"])
+        self.assertEqual(
+            "5da8ce24c92b2d47e53784e8600976bf37708086309820cb1b61af6f8982bd9e",
+            casa_a["manifest_sha256"],
+        )
+        self.assertEqual(
+            "44e6741d093a5ca488d6099990cf4938e4dcf87119a4e7f32aa6ec3f51e7003c",
+            casa_a["dry_run_receipt_sha256"],
+        )
+
     def test_casa_b_v2_corrects_mask_and_records_accepted_reference(self) -> None:
         pending = self.ledger["pending_reference_amendment"]
         assert isinstance(pending, dict)
