@@ -139,6 +139,33 @@
         ],
         "scope_note": "This is an accepted CASA reference only. It does not by itself establish casa-rs correctness or performance."
       }
+    },
+    {
+      "launch_id": "CASA-A-001",
+      "executor": "casa",
+      "row_id": "CASA-A-SINGLE-CLEAN-N2000-v1",
+      "manifest_path": "tools/perf/imager/workloads/vlass-fragment-single-field-clean-casa.json",
+      "manifest_sha256": "5da8ce24c92b2d47e53784e8600976bf37708086309820cb1b61af6f8982bd9e",
+      "authorization": "Approved in the finite VLASS recovery contract by Brian Glendenning on 2026-08-02.",
+      "started_at": "2026-08-03T18:27:22Z",
+      "completed_at": null,
+      "disposition": "running",
+      "external_invalidation": false,
+      "max_wall_seconds": 259200,
+      "timeout_policy": "SIGTERM at 259200 seconds, then SIGKILL after a 300-second grace period",
+      "run_id": "20260803T182722Z-vlass-fragment-single-field-clean-casa-399f12d9",
+      "dataset_root": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-b-fragment63-clean-cap20000-v1/dataset-root/b80d5e87487ab8ab01faa064c4cd48db6d93446fd0add208c051dd574e0d353a",
+      "dataset_tree_sha256_at_launch": "037db124913cdf66de670698536f1bb38c9dbac3725a561fd79eee8bb055fd91",
+      "output_dir": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-a-single-clean-n2000/receipts",
+      "artifact_root": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-a-single-clean-n2000/artifacts",
+      "cf_cache_root": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache",
+      "cf_cache_plan_sha256": "8e5679681214158629c7eb6113bc3b062d6105fbae64471905aa73de50080a69",
+      "cf_cache_tree_sha256_at_launch": "fd473479f9b4b0a7a1e21f26a44c458eb1ecf4b785d8dbdd3fadf339fb675fa5",
+      "dry_run_receipt_path": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-a-single-clean-n2000/receipts/20260803T182627Z-vlass-fragment-single-field-clean-casa-6ec1a943.json",
+      "dry_run_receipt_sha256": "44e6741d093a5ca488d6099990cf4938e4dcf87119a4e7f32aa6ec3f51e7003c",
+      "partial_bundle_path": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-a-single-clean-n2000/artifacts/vlass-fragment-single-field-clean-casa/casa_deterministic_clean_fiducial/20260803T182722Z-vlass-fragment-single-field-clean-casa-399f12d9.partial",
+      "receipt_path": null,
+      "receipt_sha256": null
     }
   ],
   "pending_reference_amendment": {
