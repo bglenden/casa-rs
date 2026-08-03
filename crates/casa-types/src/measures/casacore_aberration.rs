@@ -355,6 +355,7 @@ const MUL_EARTH_ABER: [[i16; 3]; 17] = [
 ];
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 

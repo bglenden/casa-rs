@@ -7897,11 +7897,13 @@ struct AwProjectMetalGridStats {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(any(all(target_os = "macos", not(coverage)), test))]
 struct AwProjectMetalPlaneSegmentPlan {
     planes_per_segment: usize,
     fixed_grid_bytes: usize,
 }
 
+#[cfg(any(all(target_os = "macos", not(coverage)), test))]
 fn plan_awproject_metal_plane_segments(
     grid_width: usize,
     grid_height: usize,
@@ -7974,6 +7976,7 @@ fn awproject_metal_packed_sample_bytes(nterms: usize) -> Result<usize, ImagingEr
         })
 }
 
+#[cfg(any(all(target_os = "macos", not(coverage)), test))]
 fn awproject_metal_packed_batch_budget_bytes(
     grid_width: usize,
     grid_height: usize,
@@ -8331,6 +8334,7 @@ fn awproject_ready_compact_tap(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn awproject_compact_sample_tile_ids(
     sample: AwProjectCompactPlannedSample,
     bundles: &[AwProjectCompactMaterializedTap],
@@ -8462,6 +8466,7 @@ fn awproject_compact_sample_tile_ids(
     Ok(tap_pixel_updates)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn plan_awproject_compact_tiles(
     samples: &[AwProjectCompactPlannedSample],
     bundles: &[AwProjectCompactMaterializedTap],
@@ -8838,6 +8843,7 @@ impl AwProjectCompactTileReplayCounters {
 }
 
 #[inline(always)]
+#[allow(clippy::too_many_arguments)]
 fn awproject_compact_accumulate_role_scalar(
     role: AwProjectCompactTileFragmentRole,
     sample: AwProjectCompactPlannedSample,
@@ -9043,6 +9049,7 @@ unsafe fn awproject_compact_accumulate_y_pair_neon(
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
+#[allow(clippy::too_many_arguments)]
 unsafe fn awproject_compact_accumulate_role_2x2_neon(
     role: AwProjectCompactTileFragmentRole,
     sample: AwProjectCompactPlannedSample,
@@ -9382,6 +9389,7 @@ fn execute_awproject_compact_f64_tile_stripe(
     counters
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_awproject_compact_f64_tiles(
     grids: &mut MosaicMtmfsHostGrids,
     tile_plan: &AwProjectCompactTilePlan,
@@ -9568,6 +9576,7 @@ fn execute_awproject_compact_sparse_f64_tile_stripe(
     counters
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_awproject_compact_sparse_f64_tiles(
     grids: &mut MosaicMtmfsSparseHostGrids,
     tile_plan: &AwProjectCompactTilePlan,
@@ -9830,7 +9839,6 @@ fn execute_awproject_compact_sparse_f64_scheduled_tiles(
     let counters = thread::scope(|scope| {
         let mut handles = Vec::with_capacity(worker_count);
         for _worker_index in 0..worker_count {
-            let tasks = tasks;
             let slots = grids.slots.as_slice();
             let next_task = &next_task;
             let cancelled = &cancelled;
@@ -10448,6 +10456,7 @@ fn execute_awproject_compact_f64_plane_tasks(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn grid_awproject_compact_samples_host_f64(
     grids: &mut MosaicMtmfsHostGrids,
     samples: &[AwProjectCompactPlannedSample],
@@ -10585,6 +10594,7 @@ fn grid_awproject_compact_samples_host_f64(
     Ok(None)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn grid_awproject_compact_samples_sparse_host_f64(
     grids: &mut MosaicMtmfsSparseHostGrids,
     samples: &[AwProjectCompactPlannedSample],
@@ -12492,9 +12502,7 @@ fn awproject_compact_candidate_tap_bytes(
     let mut additional_tap_bytes = 0usize;
     for spec in specs {
         let key = spec.request.key;
-        let already_candidate = candidate_keys[..candidate_count]
-            .iter()
-            .any(|candidate| *candidate == Some(key));
+        let already_candidate = candidate_keys[..candidate_count].contains(&Some(key));
         if !existing.contains_key(&key) && !already_candidate {
             candidate_keys[candidate_count] = Some(key);
             candidate_count += 1;
@@ -13067,7 +13075,7 @@ fn pack_awproject_compact_metal_batch(
     Ok(batch)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::unnecessary_literal_unwrap)]
 fn accumulate_awproject_mtmfs_metadata_batch(
     request: &MtmfsRequest,
     mosaic: &MosaicGridderConfig,

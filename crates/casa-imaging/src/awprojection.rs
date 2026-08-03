@@ -483,7 +483,7 @@ pub(crate) struct ExperimentalMappedCfCell {
 pub(crate) enum AwConvolutionFunctionReplayCell {
     Owned(Arc<AwConvolutionFunctionCell>),
     #[cfg(unix)]
-    Mapped(ExperimentalMappedCfCell),
+    Mapped(Box<ExperimentalMappedCfCell>),
 }
 
 impl AwConvolutionFunctionReplayCell {
@@ -846,7 +846,7 @@ impl AwConvolutionFunctionResidentCache {
         })?;
         #[cfg(unix)]
         let loaded = if let Some(store) = self.cache.experimental_packed.as_ref() {
-            AwConvolutionFunctionReplayCell::Mapped(store.mapped_cell(stable, metadata)?)
+            AwConvolutionFunctionReplayCell::Mapped(Box::new(store.mapped_cell(stable, metadata)?))
         } else {
             AwConvolutionFunctionReplayCell::Owned(Arc::new(self.cache.load(key)?))
         };
