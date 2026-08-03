@@ -45,12 +45,13 @@ class RecoveryContractTests(unittest.TestCase):
         self.assertEqual(
             [
                 "CASA-B-FRAGMENT63-CLEAN-CAP20000-v1",
+                "CASA-B-FRAGMENT63-CLEAN-CAP20000-v2",
                 "CASA-A-SINGLE-CLEAN-N2000-v1",
             ],
             schedule["launch_order"],
         )
         by_id = {row["id"]: row for row in rows}
-        self.assertEqual(2, len(by_id))
+        self.assertEqual(3, len(by_id))
         for row in rows:
             manifest_path = ROOT / row["manifest_path"]
             self.assertEqual(row["manifest_sha256"], sha256(manifest_path))
@@ -120,14 +121,54 @@ class RecoveryContractTests(unittest.TestCase):
                 invalidations, schedule["shared_external_invalidation_retries"]
             )
 
-    def test_pending_casa_b_v2_corrects_mask_without_mutating_v1(self) -> None:
+    def test_casa_b_v2_corrects_mask_and_records_accepted_reference(self) -> None:
         pending = self.ledger["pending_reference_amendment"]
         assert isinstance(pending, dict)
-        self.assertEqual("awaits_explicit_user_approval", pending["status"])
+        self.assertEqual("approved", pending["status"])
+        self.assertEqual("Brian Glendenning", pending["approved_by"])
         base_path = ROOT / pending["base_manifest_path"]
         cap_path = ROOT / pending["manifest_path"]
         self.assertEqual(pending["base_manifest_sha256"], sha256(base_path))
         self.assertEqual(pending["manifest_sha256"], sha256(cap_path))
+
+        schedule = self.contract["casa_reference_schedule"]
+        assert isinstance(schedule, dict)
+        row = next(item for item in schedule["rows"] if item["id"] == pending["row_id"])
+        self.assertEqual(pending["manifest_path"], row["manifest_path"])
+        self.assertEqual(pending["manifest_sha256"], row["manifest_sha256"])
+        self.assertIn(pending["row_id"], schedule["launch_order"])
+
+        launch = next(
+            entry
+            for entry in self.ledger["entries"]
+            if entry["row_id"] == pending["row_id"]
+        )
+        self.assertEqual("accepted_reference", launch["disposition"])
+        self.assertEqual(
+            "20260802T191330Z-vlass-fragment-all-fields-clean-cap20000-casa-v2-5a0b3b07",
+            launch["run_id"],
+        )
+        self.assertEqual(pending["manifest_sha256"], launch["manifest_sha256"])
+        self.assertEqual(
+            "ab7b6c3fa142d0cb3d0f54236b142b08b0aa837f120ffbf4314742723be04b27",
+            launch["dry_run_receipt_sha256"],
+        )
+        self.assertEqual(
+            "30aaf60c4c29595eb9789bcfe1fdab5723bb761295d4e647e4632b8eb6c31be6",
+            launch["receipt_sha256"],
+        )
+        evidence = launch["evidence"]
+        assert isinstance(evidence, dict)
+        self.assertEqual(444, evidence["actual_minor_iterations"])
+        self.assertEqual("nsigma", evidence["stop_reason"])
+        self.assertEqual(63, evidence["field_count"])
+        self.assertEqual(16, evidence["spw_count"])
+        self.assertEqual([12150, 12150], evidence["imsize"])
+        self.assertEqual(19, evidence["product_count"])
+        product_hashes = evidence["product_tree_sha256_by_suffix"]
+        assert isinstance(product_hashes, dict)
+        self.assertEqual(19, len(product_hashes))
+        self.assertEqual(0, evidence["pages_throttled_max"])
 
         base = load_json(base_path)
         cap = load_json(cap_path)
