@@ -77,6 +77,7 @@ Two clean references are now required:
 | ID | Selection and cap | Manifest | Wall ceiling |
 | --- | --- | --- | ---: |
 | `CASA-B-FRAGMENT63-CLEAN-CAP20000-v1` | All 63 fields, SPWs 2–17, `niter=20000` | `vlass-fragment-all-fields-clean-cap20000-casa.json` | 7 days |
+| `CASA-B-FRAGMENT63-CLEAN-CAP20000-v2` | All 63 fields, SPWs 2–17, corrected source mask, `niter=20000` | `vlass-fragment-all-fields-clean-cap20000-casa-v2.json` | 7 days |
 | `CASA-A-SINGLE-CLEAN-N2000-v1` | Field 1525, SPWs 2–17, `niter=2000` | `vlass-fragment-single-field-clean-casa.json` | 72 hours |
 
 The 63-field CAP20000 row changes only the scientific `niter` ceiling from
@@ -131,6 +132,61 @@ launch required separate approval. Brian explicitly approved it on
 2026-08-02. Its fail-closed dry-run receipt is
 `ab7b6c3fa142d0cb3d0f54236b142b08b0aa837f120ffbf4314742723be04b27`;
 CASA-A has not been launched.
+
+### CASA-B v2 accepted clean reference
+
+The separately approved corrected run completed successfully on 2026-08-03.
+It is the frozen CASA-B clean reference. CASA selected 444 cumulative MT-MFS
+minor iterations across eight minor cycles and then stopped on the configured
+5-sigma criterion: the corrected-mask residual fell from `0.431878 Jy/beam`
+to `0.00105339 Jy/beam`, below the final `0.00106779 Jy/beam` n-sigma
+threshold. The final full-image peak was `0.0110944 Jy/beam`; it lies outside
+the deliberately bounded source mask and did not prevent the valid masked
+stopping condition.
+
+The measured `tclean` wall time is `82,351.832814 s` (22 h 52 m 31.833 s).
+The completed receipt is
+`30aaf60c4c29595eb9789bcfe1fdab5723bb761295d4e647e4632b8eb6c31be6`;
+the manifest is
+`63948fe140d5c06c00b924eea407e5afe8ccb2f99e2c927290d9de4644002053`.
+The retained request, result, combined output, CASA log, and host-telemetry
+SHA-256 values are respectively
+`dd0c86ce305e07e5d82431bdc69c1c26dd8937f25ea3ae2044220d5195968a01`,
+`8d2b5edb9835ed2f29b4e9e9591647838a45a30a824e0e362f1c2bb842d9a762`,
+`1132bff61802078b545fcbcf3e07273c3f473378232a6189911d72e7d99c94f4`,
+`810406c782347a742f4f88aa93b938e5da9c1f15ea27f4afe7fdc603fb57abe7`,
+and
+`7ceae0fc8641c08d275ff827e3ecfb08688219eea4221d2b599aebbef9f06bc3`.
+All retained hashes were independently re-read after bundle promotion.
+
+The receipt binds all 63 requested fields, all 16 SPWs, 655,200 selected MS
+rows, 12,150-square geometry, the corrected mask hash
+`fabf361e6609a4d66c251458c2ed31bc80978d936e78a39a8f449bd1a63dc322`,
+and the frozen AWProject, 32-W-plane, POINTING, A-term, WB A-projection,
+conjugate-beam, Briggs, MT-MFS `nterms=2`, and scales `[0,5,12]` controls.
+Bundle validation passed for the exact 19-product inventory. The product trees
+total 9,579,098,756 logical bytes; their individual stable hashes are recorded
+in the launch ledger.
+
+The CASA process peaked at 12,818,137,088 bytes RSS. Host telemetry recorded a
+minimum 33% free memory, zero throttled pages, 410,894,925,824 bytes of
+swap-in, and 462,597,226,496 bytes of swap-out. Despite the large cumulative
+swap traffic, field/SPW progress remained steady and no throttling or terminal
+memory-pressure stall occurred, so the observed swapping was expensive but
+not destructive. Process I/O was 556,159,590,400 bytes read and
+126,701,232,128 bytes written.
+
+Two log anomalies do not invalidate the reference. CASA emitted its known
+startup `measures_update` SEVERE because the local measures tree is not managed
+by `casaconfig`; the receipt binds the runtime and data trees actually used.
+One major-cycle diagnostic printed `1.84467e+17` seconds for “time to massage
+data”; surrounding timestamps and the independent stage receipt identify it
+as a timer overflow. No imaging exception, traceback, divergence, or failed
+product was present.
+
+This evidence accepts CASA-B as the matched reference to which the eventual
+casa-rs all-fields row will be compared. It makes no claim yet about casa-rs
+full-geometry correctness or speedup.
 
 ## Candidate budget and promotion
 
