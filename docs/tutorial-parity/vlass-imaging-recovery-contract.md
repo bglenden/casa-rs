@@ -315,6 +315,29 @@ Correctness is promoted for this row. The unchanged `2.405x` release ratio
 remains below the final `10x` requirement and is explicitly retained as a
 performance warning.
 
+### Reduced all-fields clean mask preflight
+
+The first all-63-field `4096`-square, four-SPW clean attempt stopped before
+minor-cycle iteration because its inherited two-dimensional CASA image mask
+had no Spectral coordinate. CASA run
+`20260803T221900Z-vlass-fragment-all-fields-clean-4096-four-spw-casa-186ce59e`
+took `286.262243 s` in `tclean` before rejecting that mask. It produced no
+matched casa-rs row and therefore no runtime ratio or correctness claim. The
+failure receipt SHA-256 is
+`095d214f5a8b453fd91cd26083b5c63575bf8ea088dffe09f358cfb520eaf0e5`.
+
+The correction reuses the existing deterministic source box while copying the
+full coordinate system from the accepted all-fields dirty `.image.tt0`. The
+new mask has shape `[4096,4096,1,1]`, Direction, Stokes, and Spectral
+coordinates, BLC `[575,2125]`, TRC `[638,2188]`, and exactly 4,096 selected
+pixels. Its portable tree SHA-256 is
+`8490acb911cbbba78f7a20ba4a1d379e227c3a42dfc7eefcc9b7fd5f4139572f`.
+The corrected manifest SHA-256 is
+`05994b8ed3566a8a333e8761aa4cc05b8d0534daccabc57f29100f4cd6f8534c`,
+and its dry-run preflight passed. The ledger retains the failed attempt as
+negative evidence; the corrected retry had not been launched at this
+checkpoint.
+
 ## Candidate budget and promotion
 
 The salvage audit receives at most eight engineer-hours. It may select one

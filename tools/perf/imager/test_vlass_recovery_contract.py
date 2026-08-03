@@ -23,11 +23,6 @@ REDUCED_ALL_FIELDS_CLEAN_PATH = (
     / "tools/perf/imager/workloads/"
     "vlass-fragment-all-fields-clean-4096-four-spw-casa.json"
 )
-REDUCED_SINGLE_FIELD_CLEAN_PATH = (
-    ROOT
-    / "tools/perf/imager/workloads/"
-    "vlass-fragment-single-field-clean-4096-full-16-spw.json"
-)
 
 
 def load_json(path: Path) -> dict[str, object]:
@@ -97,14 +92,11 @@ class RecoveryContractTests(unittest.TestCase):
 
     def test_reduced_all_fields_clean_manifest_binds_approved_contract(self) -> None:
         manifest = load_json(REDUCED_ALL_FIELDS_CLEAN_PATH)
-        single_field_manifest = load_json(REDUCED_SINGLE_FIELD_CLEAN_PATH)
         tolerances = load_json(SCIENTIFIC_EQUIVALENCE_PATH)
         imaging = manifest["imaging"]
-        single_field_imaging = single_field_manifest["imaging"]
         comparison = manifest["comparison"]
         run = manifest["run"]
         assert isinstance(imaging, dict)
-        assert isinstance(single_field_imaging, dict)
         assert isinstance(comparison, dict)
         assert isinstance(run, dict)
 
@@ -116,15 +108,13 @@ class RecoveryContractTests(unittest.TestCase):
         self.assertIs(True, imaging["usepointing"])
         self.assertEqual(
             "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/masks/"
-            "vlass-single-field-peak-box-4096.mask",
+            "vlass-source-box-4096-spectral.mask",
             imaging["mask_image"],
         )
         self.assertEqual(
-            "24607e668794b0aa9aaa402e1d9a1f52fa269ca46b78e36ca50c8481a61110bf",
+            "8490acb911cbbba78f7a20ba4a1d379e227c3a42dfc7eefcc9b7fd5f4139572f",
             imaging["mask_sha256"],
         )
-        self.assertEqual(single_field_imaging["mask_image"], imaging["mask_image"])
-        self.assertEqual(single_field_imaging["mask_sha256"], imaging["mask_sha256"])
         self.assertEqual(tolerances, comparison["tolerances"])
         self.assertEqual(19, len(comparison["products"]))
         self.assertEqual([575, 2125], comparison["source_regions"][0]["blc"])
@@ -334,7 +324,7 @@ class RecoveryContractTests(unittest.TestCase):
     ) -> None:
         entries = self.ledger["reduced_ladder_entries"]
         assert isinstance(entries, list)
-        self.assertEqual(1, len(entries))
+        self.assertEqual(2, len(entries))
         pair = entries[0]
         self.assertEqual(
             "REDUCED-ALL63-DIRTY-4096-4SPW-001",
@@ -344,6 +334,27 @@ class RecoveryContractTests(unittest.TestCase):
             "correctness_promoted_performance_below_target",
             pair["disposition"],
         )
+
+        failed_clean = entries[1]
+        self.assertEqual(
+            "REDUCED-ALL63-CLEAN-4096-4SPW-ATTEMPT-001",
+            failed_clean["pair_id"],
+        )
+        self.assertEqual(
+            "rejected_invalid_mask_coordinate_system",
+            failed_clean["disposition"],
+        )
+        correction = failed_clean["correction"]
+        assert isinstance(correction, dict)
+        self.assertEqual(
+            "8490acb911cbbba78f7a20ba4a1d379e227c3a42dfc7eefcc9b7fd5f4139572f",
+            correction["mask_sha256"],
+        )
+        self.assertEqual(
+            ["Direction", "Stokes", "Spectral"],
+            correction["coordinate_types"],
+        )
+        self.assertEqual("preflight_passed_not_launched", correction["retry_status"])
 
         selection = pair["selection"]
         assert isinstance(selection, dict)

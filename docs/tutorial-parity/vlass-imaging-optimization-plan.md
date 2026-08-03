@@ -7658,6 +7658,45 @@ For every subsequent new matched CASA/release-casa-rs pair, report
 Such a ratio is explicitly diagnostic until the corresponding promotion
 contract passes.
 
+### 2026-08-03 reduced all-fields clean mask boundary
+
+The next permitted row, all 63 fields at `4096` square with SPWs
+`2,7,12,17`, stopped at a harness boundary before any minor-cycle iteration.
+CASA run
+`20260803T221900Z-vlass-fragment-all-fields-clean-4096-four-spw-casa-186ce59e`
+reached `tclean`, but the inherited two-dimensional mask had only a Direction
+coordinate. CASA requires the user mask to carry the output Spectral
+coordinate, so it rejected the mask before selecting a clean component. This
+is negative harness evidence, not a scientific comparison and not a
+CASA/casa-rs timing pair. No speedup is claimed.
+
+The failed call took `286.262243 s` inside `tclean` and `303.602441 s` for the
+full protocol. Its immutable receipt SHA-256 is
+`095d214f5a8b453fd91cd26083b5c63575bf8ea088dffe09f358cfb520eaf0e5`;
+the request, result, stdout/stderr, CASA log, and host-telemetry SHA-256 values
+are respectively
+`9b7792147ae599b6d902d1d558a00fa87dc9291890f4f9e42cc2a9d2528115f3`,
+`6986565ce2777f782f7f2d9bfa953e4487a65d3f699e26162c6dbe48adf092c0`,
+`8fc145605caeba6fd8a59f3904cc7bbe5ac310f6f74e9b7f0114d07b6e8b92bb`,
+`834ee634f7f9a35de051960cbac481333e288080e2968f947b0d1a004675996c`,
+and
+`e6e7a557d37ce2b07c910709306371f96a10ee2a111ebb5d16ec1e3f0e373245`.
+Peak RSS was `5,636,046,848` bytes, minimum free memory was `82%`, no pages
+were throttled, and swap deltas were `39,272,448` bytes in and zero out.
+
+The exact semantic boundary is corrected without changing the science mask.
+`tools/perf/imager/create_vlass_clean_mask.py` copied the complete coordinate
+system from the frozen promoted all-fields dirty `.image.tt0` and wrote the
+same inclusive 64-by-64 source box, BLC `[575,2125]` through TRC
+`[638,2188]`. The resulting CASA image mask has shape `[4096,4096,1,1]`,
+Direction, Stokes, and Spectral coordinates, and exactly 4,096 selected
+pixels. Its portable tree SHA-256 is
+`8490acb911cbbba78f7a20ba4a1d379e227c3a42dfc7eefcc9b7fd5f4139572f`.
+The corrected workload manifest SHA-256 is
+`05994b8ed3566a8a333e8761aa4cc05b8d0534daccabc57f29100f4cd6f8534c`;
+its dry-run preflight passed. No replacement workload had been launched at
+this checkpoint.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.
