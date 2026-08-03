@@ -18,6 +18,16 @@ CATALOG_PATH = ROOT / "tools/perf/imager/vlass_recovery_salvage_catalog.json"
 SCIENTIFIC_EQUIVALENCE_PATH = (
     ROOT / "tools/perf/imager/contracts/vlass-scientific-equivalence-v2.json"
 )
+REDUCED_ALL_FIELDS_CLEAN_PATH = (
+    ROOT
+    / "tools/perf/imager/workloads/"
+    "vlass-fragment-all-fields-clean-4096-four-spw-casa.json"
+)
+REDUCED_SINGLE_FIELD_CLEAN_PATH = (
+    ROOT
+    / "tools/perf/imager/workloads/"
+    "vlass-fragment-single-field-clean-4096-full-16-spw.json"
+)
 
 
 def load_json(path: Path) -> dict[str, object]:
@@ -84,6 +94,44 @@ class RecoveryContractTests(unittest.TestCase):
             },
             products[".image.tt0"],
         )
+
+    def test_reduced_all_fields_clean_manifest_binds_approved_contract(self) -> None:
+        manifest = load_json(REDUCED_ALL_FIELDS_CLEAN_PATH)
+        single_field_manifest = load_json(REDUCED_SINGLE_FIELD_CLEAN_PATH)
+        tolerances = load_json(SCIENTIFIC_EQUIVALENCE_PATH)
+        imaging = manifest["imaging"]
+        single_field_imaging = single_field_manifest["imaging"]
+        comparison = manifest["comparison"]
+        run = manifest["run"]
+        assert isinstance(imaging, dict)
+        assert isinstance(single_field_imaging, dict)
+        assert isinstance(comparison, dict)
+        assert isinstance(run, dict)
+
+        self.assertEqual("clean", imaging["mode"])
+        self.assertEqual(4096, imaging["imsize"])
+        self.assertEqual("2,7,12,17", imaging["spw"])
+        self.assertEqual("1107~1127,1512~1532,1542~1562", imaging["field"])
+        self.assertEqual(2000, imaging["niter"])
+        self.assertIs(True, imaging["usepointing"])
+        self.assertEqual(
+            "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/masks/"
+            "vlass-single-field-peak-box-4096.mask",
+            imaging["mask_image"],
+        )
+        self.assertEqual(
+            "24607e668794b0aa9aaa402e1d9a1f52fa269ca46b78e36ca50c8481a61110bf",
+            imaging["mask_sha256"],
+        )
+        self.assertEqual(single_field_imaging["mask_image"], imaging["mask_image"])
+        self.assertEqual(single_field_imaging["mask_sha256"], imaging["mask_sha256"])
+        self.assertEqual(tolerances, comparison["tolerances"])
+        self.assertEqual(19, len(comparison["products"]))
+        self.assertEqual([575, 2125], comparison["source_regions"][0]["blc"])
+        self.assertEqual([638, 2188], comparison["source_regions"][0]["trc"])
+        self.assertEqual("warm", run["cf_cache_role"])
+        self.assertIs(True, run["preverified_warm_cache"])
+        self.assertEqual("1", run["skip_rust"])
 
     def test_contract_binds_reference_manifests_and_cap20000_delta(self) -> None:
         self.assertEqual(1, self.contract["schema_version"])
