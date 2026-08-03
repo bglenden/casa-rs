@@ -130,8 +130,7 @@ The original v1 manifests remain unchanged. Because this was an avoidable
 configuration defect rather than an external invalidation, the corrected v2
 launch required separate approval. Brian explicitly approved it on
 2026-08-02. Its fail-closed dry-run receipt is
-`ab7b6c3fa142d0cb3d0f54236b142b08b0aa837f120ffbf4314742723be04b27`;
-CASA-A has not been launched.
+`ab7b6c3fa142d0cb3d0f54236b142b08b0aa837f120ffbf4314742723be04b27`.
 
 ### CASA-B v2 accepted clean reference
 
@@ -187,6 +186,21 @@ product was present.
 This evidence accepts CASA-B as the matched reference to which the eventual
 casa-rs all-fields row will be compared. It makes no claim yet about casa-rs
 full-geometry correctness or speedup.
+
+### CASA-A launch
+
+After CASA-B v2 passed validation, the approved CASA-A single-field reference
+started at `2026-08-03T18:27:22Z` with run ID
+`20260803T182722Z-vlass-fragment-single-field-clean-casa-399f12d9`. Its
+one-time dry-run receipt is
+`44e6741d093a5ca488d6099990cf4938e4dcf87119a4e7f32aa6ec3f51e7003c`.
+The request binds field 1525, all 16 SPWs, 10,400 selected rows,
+12,150-square geometry, `niter=2000`, the same corrected mask hash, the exact
+19-product contract, and the preverified single-field warm CF-cache tree
+`fd473479f9b4b0a7a1e21f26a44c458eb1ecf4b785d8dbdd3fadf339fb675fa5`.
+The outer process is bounded to 259,200 seconds, with TERM followed by a
+300-second kill grace period. This section records a launch, not a result;
+timing, convergence, products, and telemetry remain pending.
 
 ## Candidate budget and promotion
 
