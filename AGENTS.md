@@ -118,19 +118,6 @@ stores only casa-rs-specific policy and domain guidance.
   moves it to `Done`. Draft/readiness and review state live on the pull request,
   not in another board field. A merge does not mean `Done` until the issue closes.
 
-## Escalation
-
-- A normal capability worker gets one bounded, evidence-producing retry.
-- Escalate after that bounded failure, when diagnosis remains ambiguous, before
-  a high-risk boundary change, or when required verification fails.
-- The handoff includes the reproduction, relevant logs and tests, observations,
-  and rejected hypotheses so the next worker starts from evidence rather than
-  repeating exploration.
-- In Codex, the dispatching coordinator requests the strongest available worker
-  model with max reasoning effort. If max is unavailable, fall back to x-high,
-  then high, and report the actual model and effort used. Runtime availability
-  may limit the actual model; this policy does not invent an unavailable one.
-
 ## Final Authority
 
 Implementation authority does not include final merge, branch/worktree cleanup,
