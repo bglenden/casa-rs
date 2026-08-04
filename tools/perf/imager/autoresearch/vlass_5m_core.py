@@ -103,6 +103,10 @@ def load_contract(path: pathlib.Path) -> dict[str, Any]:
         )
     if workload.get("products") is None or len(workload["products"]) != 19:
         raise ContractError("the VLASS autoresearch workload must emit 19 products")
+    if contract.get("comparison", {}).get("mode") != "full":
+        raise ContractError(
+            "the VLASS autoresearch proxy must prove full-array topology"
+        )
     return contract
 
 
@@ -380,20 +384,22 @@ def comparison_request(
 ) -> dict[str, Any]:
     comparison = contract["comparison"]
     ceiling = comparison["normalized_rms_ceiling"]
+    mode = comparison["mode"]
     return {
-        "mode": "sampled",
+        "mode": mode,
         "left_prefix": str(candidate_prefix),
         "right_prefix": str(baseline_prefix),
         "left_label": "casa-rs candidate",
         "right_label": "casa-rs frozen proxy baseline",
         "products": comparison["products"],
         "max_elements_per_product": comparison["max_elements_per_product"],
+        "full_chunk_elements": comparison["full_chunk_elements"],
         "require_exact_product_inventory": False,
         "require_metadata_parity": comparison["require_metadata_parity"],
         "source_regions": [],
         "tolerances": {
             "contract_version": 1,
-            "require_full_array": False,
+            "require_full_array": mode == "full",
             "default": {
                 "diff_rms_over_right_rms": ceiling,
                 "require_topology_parity": comparison["require_topology_parity"],
@@ -754,6 +760,7 @@ def evaluate_receipt(
         expect(
             isinstance(comparison, dict)
             and comparison.get("status") == "completed"
+            and comparison.get("comparison_mode") == contract["comparison"]["mode"]
             and comparison.get("tolerance_evaluation", {}).get("status") == "passed",
             "proxy output comparison failed",
         )

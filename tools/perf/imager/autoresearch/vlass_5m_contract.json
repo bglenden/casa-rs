@@ -38,7 +38,9 @@
   },
   "comparison": {
     "casa_python": "/Volumes/GLENDENNING/DeveloperTools/CASA/6.7.5.18-laptop/venv-py312/bin/python",
+    "full_chunk_elements": 500000,
     "max_elements_per_product": 500000,
+    "mode": "full",
     "normalized_rms_ceiling": 0.001,
     "products": [
       ".residual.tt0",

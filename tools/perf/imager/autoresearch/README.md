@@ -60,8 +60,9 @@ the residual-refresh metric was 86.729 seconds and the whole process was
 eviction/load ratio, all 2,204,617 samples were accepted, and the read-only
 guard passed.
 
-After the baseline is frozen, every measurement is sampled against it with a
-normalized RMS ceiling of `1e-3`, topology parity, and metadata parity. This
+After the baseline is frozen, every measurement is compared against it with a
+chunked full-array pass over the seven sensitive proxy products, a normalized
+RMS ceiling of `1e-3`, exact finite/mask topology, and metadata parity. This
 proxy comparison is an experiment guard; final promoted code still owes the
 approved CASA scientific and 19-product acceptance contract.
 
@@ -69,3 +70,12 @@ The guard writes nothing. It verifies the latest pointer and receipt hashes,
 source-state and release-binary binding, workload shape, cache pressure,
 sample acceptance, no fallback, memory/swap bounds, product inventory, and
 proxy numerical parity.
+
+The first unchanged repeat measured 77.400 seconds with the same release
+binary. Its initial sampled comparison measured normalized RMS `0.0` for all
+seven products but was correctly rejected because sampled mode could not prove
+topology. A bounded full-array diagnostic on those existing products passed
+all normalized-RMS, topology, and metadata checks in about 21 seconds; its
+comparison receipt SHA-256 is
+`59e8351924495d49ec47c758f6802045013d7fa27f5659bf17e487e461cbfcf6`.
+The production proxy guard therefore uses that chunked full-array mode.

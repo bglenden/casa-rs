@@ -184,7 +184,7 @@ class VlassFiveMinuteContractTests(unittest.TestCase):
             errors,
         )
 
-    def test_proxy_comparison_uses_one_per_thousand_normalized_rms(self) -> None:
+    def test_proxy_comparison_uses_full_topology_and_normalized_rms(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             request = comparison_request(
@@ -193,7 +193,8 @@ class VlassFiveMinuteContractTests(unittest.TestCase):
                 baseline_prefix=root / "baseline",
                 run_root=root,
             )
-        self.assertEqual("sampled", request["mode"])
+        self.assertEqual("full", request["mode"])
+        self.assertTrue(request["tolerances"]["require_full_array"])
         self.assertEqual(
             0.001,
             request["tolerances"]["default"]["diff_rms_over_right_rms"],
