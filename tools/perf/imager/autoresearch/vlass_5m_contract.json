@@ -19,7 +19,32 @@
     },
     "receipt": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/autoresearch/vlass-5m-v1/runs/20260804T184725Z-dd0356542bc0/receipt.json",
     "receipt_sha256": "965dc24a6e6fe5be7adb5b2b4c11fb3e66e4c755c5db054d206c75b5e4fe80fa",
-    "status": "frozen"
+    "status": "frozen",
+    "variance": {
+      "all_release_metrics_seconds": [
+        86.72896899999999,
+        77.400069,
+        75.85484600000001
+      ],
+      "cold_qualification_seconds": 86.72896899999999,
+      "minimum_experiment_improvement_fraction": 0.05,
+      "promotion_threshold_seconds": 72.79608462499999,
+      "repeat_1": {
+        "full_array_diagnostic_sha256": "59e8351924495d49ec47c758f6802045013d7fa27f5659bf17e487e461cbfcf6",
+        "guard_status": "rejected_sampled_topology_incomplete",
+        "receipt_sha256": "09be690c1aeda99344d0ca6a4d0a50f8ddc87a97c15750cafbbd382921eb9696",
+        "seconds": 77.400069
+      },
+      "repeat_2": {
+        "guard_status": "passed_full_array",
+        "receipt_sha256": "353abdf38f28547289cbaafac6bd5d0f2a8958917b3e8270cf50fd97da7420ac",
+        "seconds": 75.85484600000001
+      },
+      "warm_coefficient_of_variation": 0.0142590880265788,
+      "warm_mean_seconds": 76.62745749999999,
+      "warm_range_fraction": 0.020165395674259547,
+      "warm_sample_standard_deviation_seconds": 1.0926376617454256
+    }
   },
   "build": {
     "binary_relative_path": "release/casars-imager",
@@ -62,8 +87,8 @@
     "mask_tree_sha256": "8490acb911cbbba78f7a20ba4a1d379e227c3a42dfc7eefcc9b7fd5f4139572f",
     "measurement_set": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/data/frozen-clean-b80d5e87487a/VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms",
     "measurement_set_tree_sha256": "c018ac137ad76ed3fdb0a5ccc6290138fe8165186eccdb3bdc3b25cee8135497",
-    "selection_accounting": "tools/perf/imager/autoresearch/vlass_5m_selection_accounting.json",
-    "selection_accounting_sha256": "28e9a6f1a26efd1b7683fd751a78d42b740f90cb762864efdac30a859b3faa3b"
+    "selection_accounting": "tools/perf/imager/autoresearch/vlass_5m_selection_accounting_v2.json",
+    "selection_accounting_sha256": "2f81d69801d37c528ce7b3a747ef0676c6e57f870359d9661f43d2bf7f34438c"
   },
   "guard": {
     "application_cache": {

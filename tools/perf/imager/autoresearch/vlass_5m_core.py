@@ -755,6 +755,72 @@ def evaluate_receipt(
         == contract["dataset"]["selection_accounting_sha256"],
         "MS selection-accounting identity changed",
     )
+    by_spw = selection.get("by_spw")
+    expected_spw_keys = {str(spw) for spw in workload["spw_ids"]}
+    expected_field_keys = {str(field) for field in workload["field_ids"]}
+    expect(
+        isinstance(by_spw, dict) and set(by_spw) == expected_spw_keys,
+        "selection accounting does not cover exactly the four requested SPWs",
+    )
+    accounting_accepted_samples = 0
+    if isinstance(by_spw, dict) and set(by_spw) == expected_spw_keys:
+        for spw in sorted(expected_spw_keys, key=int):
+            accounting = by_spw[spw]
+            expect(
+                isinstance(accounting, dict) and accounting.get("schema_version") == 2,
+                f"SPW {spw} selection-accounting schema changed",
+            )
+            samples_by_spw = (
+                accounting.get("samples", {}) if isinstance(accounting, dict) else {}
+            )
+            attempted_by_field = samples_by_spw.get(
+                "by_field_attempted_stokes_i_samples"
+            )
+            accepted_by_field = samples_by_spw.get("by_field_accepted_stokes_i_samples")
+            valid_field_maps = (
+                isinstance(attempted_by_field, dict)
+                and isinstance(accepted_by_field, dict)
+                and set(attempted_by_field) == expected_field_keys
+                and set(accepted_by_field) == expected_field_keys
+                and all(
+                    isinstance(attempted_by_field[field], int)
+                    and not isinstance(attempted_by_field[field], bool)
+                    and attempted_by_field[field] > 0
+                    and isinstance(accepted_by_field[field], int)
+                    and not isinstance(accepted_by_field[field], bool)
+                    and 0 <= accepted_by_field[field] <= attempted_by_field[field]
+                    for field in expected_field_keys
+                )
+            )
+            expect(
+                valid_field_maps,
+                f"SPW {spw} sample accounting does not cover all 63 fields",
+            )
+            attempted_total = samples_by_spw.get("attempted_stokes_i_samples")
+            accepted_total = samples_by_spw.get("accepted_stokes_i_samples")
+            valid_totals = (
+                valid_field_maps
+                and isinstance(attempted_total, int)
+                and not isinstance(attempted_total, bool)
+                and isinstance(accepted_total, int)
+                and not isinstance(accepted_total, bool)
+                and sum(attempted_by_field.values()) == attempted_total
+                and sum(accepted_by_field.values()) == accepted_total
+            )
+            expect(valid_totals, f"SPW {spw} field sample totals are inconsistent")
+            if valid_totals:
+                accounting_accepted_samples += accepted_total
+    expected_accepted_samples = contract["baseline"]["qualification"][
+        "accepted_samples"
+    ]
+    expect(
+        accounting_accepted_samples == expected_accepted_samples,
+        "frozen per-field/SPW sample accounting changed",
+    )
+    expect(
+        replay.get("samples") == accounting_accepted_samples,
+        "runtime accepted-sample count differs from frozen per-field/SPW accounting",
+    )
     comparison = receipt.get("comparison")
     if contract["baseline"]["status"] == "frozen":
         expect(

@@ -448,7 +448,64 @@ def measure(contract_path: pathlib.Path) -> int:
         return 2
 
 
-def guard(contract_path: pathlib.Path, receipt_path: pathlib.Path | None) -> int:
+def autoresearch_retained_metric(contract: dict[str, Any]) -> float | None:
+    """Read the controller incumbent without changing its authoritative state."""
+
+    results_root = REPO_ROOT / "autoresearch-results"
+    run_path = results_root / "run.json"
+    events_path = results_root / "events.jsonl"
+    if not run_path.exists() and not events_path.exists():
+        return None
+    if not run_path.is_file() or not events_path.is_file():
+        raise ContractError(
+            "autoresearch minimum-improvement guard found incomplete controller state"
+        )
+    run = load_json_object(run_path, label="autoresearch run")
+    metric = run.get("metric", {})
+    if (
+        metric.get("name") != contract["metric"]["name"]
+        or metric.get("direction") != "lower"
+    ):
+        raise ContractError(
+            "autoresearch controller metric does not match the VLASS proxy"
+        )
+    retained: float | None = None
+    for line_number, line in enumerate(
+        events_path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise ContractError(
+                f"invalid autoresearch event at line {line_number}: {error}"
+            ) from error
+        if not isinstance(event, dict):
+            raise ContractError(
+                f"autoresearch event at line {line_number} is not an object"
+            )
+        value = None
+        if event.get("event") == "baseline":
+            value = event.get("metric")
+        elif event.get("event") == "iteration":
+            value = event.get("retained_metric")
+        if value is not None:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ContractError(
+                    f"autoresearch retained metric at line {line_number} is invalid"
+                )
+            retained = float(value)
+    if retained is None:
+        raise ContractError("autoresearch controller has no retained metric")
+    return retained
+
+
+def guard(
+    contract_path: pathlib.Path,
+    receipt_path: pathlib.Path | None,
+    minimum_improvement_fraction: float | None,
+) -> int:
     contract = load_contract(contract_path)
     if receipt_path is None:
         latest_path = pathlib.Path(contract["runs_root"]).parent / "latest.json"
@@ -477,9 +534,35 @@ def guard(contract_path: pathlib.Path, receipt_path: pathlib.Path | None) -> int
         errors.append("receipt-bound runtime log is missing")
     elif sha256_file(log_path) != receipt["process"]["log_sha256"]:
         errors.append("receipt-bound runtime log identity changed")
+    retained_metric = None
+    promotion_threshold = None
+    if minimum_improvement_fraction is not None:
+        if not 0.0 < minimum_improvement_fraction < 1.0:
+            raise ContractError(
+                "--minimum-improvement-fraction must be between zero and one"
+            )
+        retained_metric = autoresearch_retained_metric(contract)
+        if retained_metric is not None:
+            promotion_threshold = retained_metric * (1.0 - minimum_improvement_fraction)
+            candidate_metric = (
+                receipt.get("runtime", {}).get("metric", {}).get("seconds")
+            )
+            if (
+                isinstance(candidate_metric, bool)
+                or not isinstance(candidate_metric, (int, float))
+                or float(candidate_metric) > promotion_threshold
+            ):
+                errors.append(
+                    "candidate does not exceed the configured minimum improvement "
+                    f"over retained metric {retained_metric:.6f}s; requires "
+                    f"{promotion_threshold:.6f}s or lower"
+                )
     result = {
         "guard": not errors,
         "metric": receipt.get("runtime", {}).get("metric", {}).get("seconds"),
+        "retained_metric": retained_metric,
+        "minimum_improvement_fraction": minimum_improvement_fraction,
+        "promotion_threshold": promotion_threshold,
         "receipt": str(receipt_path),
         "receipt_sha256": actual_receipt_sha256,
         "release_binary_sha256": receipt.get("build", {}).get("binary_sha256"),
@@ -543,7 +626,7 @@ def freeze_selection(contract_path: pathlib.Path, output: pathlib.Path) -> int:
             "stderr": completed.stderr,
         }
     value = {
-        "schema_version": 1,
+        "schema_version": 2,
         "workload_id": contract["workload_id"],
         "measurement_set": contract["dataset"]["measurement_set"],
         "measurement_set_tree_sha256": contract["dataset"][
@@ -569,11 +652,12 @@ def parse_args() -> argparse.Namespace:
     subparsers.add_parser("measure")
     guard_parser = subparsers.add_parser("guard")
     guard_parser.add_argument("--receipt", type=pathlib.Path)
+    guard_parser.add_argument("--minimum-improvement-fraction", type=float)
     freeze_parser = subparsers.add_parser("freeze-selection")
     freeze_parser.add_argument(
         "--output",
         type=pathlib.Path,
-        default=SCRIPT_DIR / "vlass_5m_selection_accounting.json",
+        default=SCRIPT_DIR / "vlass_5m_selection_accounting_v2.json",
     )
     return parser.parse_args()
 
@@ -584,7 +668,11 @@ def main() -> int:
         if args.command == "measure":
             return measure(args.contract.resolve())
         if args.command == "guard":
-            return guard(args.contract.resolve(), args.receipt)
+            return guard(
+                args.contract.resolve(),
+                args.receipt,
+                args.minimum_improvement_fraction,
+            )
         if args.command == "freeze-selection":
             return freeze_selection(args.contract.resolve(), args.output.resolve())
     except (

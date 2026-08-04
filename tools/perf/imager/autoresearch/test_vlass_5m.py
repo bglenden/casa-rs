@@ -5,7 +5,9 @@ import json
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
 
+from autoresearch import vlass_5m
 from autoresearch.vlass_5m_core import (
     comparison_request,
     evaluate_receipt,
@@ -55,10 +57,10 @@ awproject_metal_resident_tile_chain built=true program_bytes=6000000000 build_ms
 awproject_metal_resident_tile_chain built=true program_bytes=6000000000 build_ms=11.0 dispatch_wait_ms=3.0 total_ms=15.0
 awproject_compact_source_order windows=30 largest_window_samples=100 peak_tap_bytes=268435000 routed_samples=500000 spatial_tile_side=0 plan_ms=10.0 materialize_ms=30.0 cache_load_worker_ms=20.0 tap_pack_ms=9.0 prepare_ms=1.0 grid_including_tile_plan_ms=5.0
 awproject_compact_source_order windows=30 largest_window_samples=101 peak_tap_bytes=268435000 routed_samples=500000 spatial_tile_side=0 plan_ms=11.0 materialize_ms=31.0 cache_load_worker_ms=21.0 tap_pack_ms=9.0 prepare_ms=1.0 grid_including_tile_plan_ms=5.0
-mosaic_mtmfs_stream_replay invocation=2 pass=ResidualRefresh load_visibility_values=true blocks=4 samples=1000000 elapsed_ms=300000.0
-awproject_metal_grid_summary pass=residual_refresh calls=100 samples=1000000 dispatch_wait_ms=5000.0 total_ms=6000.0
+mosaic_mtmfs_stream_replay invocation=2 pass=ResidualRefresh load_visibility_values=true blocks=4 samples=2204617 elapsed_ms=300000.0
+awproject_metal_grid_summary pass=residual_refresh calls=100 samples=2204617 dispatch_wait_ms=5000.0 total_ms=6000.0
 awproject_metal_compensated_residual_readback products=2 fft_precision=f64 resident_bytes=536870912 readback_ms=70.0
-awproject_cache residency_budget_bytes=268435456 resident_cells=59 resident_bytes=258975232 loads=100000 hits=1000 evictions=99941 attempted_samples=1000000 accepted_samples=1000000 rejected_not_gridable=0 rejected_invalid_input=0
+awproject_cache residency_budget_bytes=268435456 resident_cells=59 resident_bytes=258975232 loads=100000 hits=1000 evictions=99941 attempted_samples=2204617 accepted_samples=2204617 rejected_not_gridable=0 rejected_invalid_input=0
 awproject_plan implementation=test projection=SIN image_shape=4096x4096 wplanes=32 aterm=true psterm=false wbawp=true conjbeams=true usepointing=true cf_metadata_key=f9427a9611b99dc6 cf_mueller=[0, 15]
 awproject_frozen_model_refresh prefix=/frozen terms=2 image_shape=4096x4096
 awproject_frozen_model_support positions=193 source=imported-nonzero-union
@@ -66,8 +68,37 @@ mosaic_mtmfs_final_residual_refresh reported_iterations=2000 refreshed_peak=0.1 
 {product_lines}
 frontend stage=run_summary total_ms=400000.0 write_products_ms=1000.0
 core stage=run_summary total_ms=399000.0 residual_degrid_grid_ms=300000.0
-Wrote CASA-compatible products at prefix /tmp/rust (1000000 gridded samples, 1 major cycles, 2000 minor iterations, stop=Some(IterationLimitReached))
+Wrote CASA-compatible products at prefix /tmp/rust (2204617 gridded samples, 1 major cycles, 2000 minor iterations, stop=Some(IterationLimitReached))
 """
+
+
+def split_total(total: int, keys: list[str]) -> dict[str, int]:
+    quotient, remainder = divmod(total, len(keys))
+    return {key: quotient + int(index < remainder) for index, key in enumerate(keys)}
+
+
+def valid_selection_accounting(contract: dict) -> dict:
+    spw_keys = [str(spw) for spw in contract["workload"]["spw_ids"]]
+    field_keys = [str(field) for field in contract["workload"]["field_ids"]]
+    accepted_by_spw = split_total(
+        contract["baseline"]["qualification"]["accepted_samples"], spw_keys
+    )
+    return {
+        spw: {
+            "schema_version": 2,
+            "samples": {
+                "attempted_stokes_i_samples": accepted_by_spw[spw],
+                "accepted_stokes_i_samples": accepted_by_spw[spw],
+                "by_field_attempted_stokes_i_samples": split_total(
+                    accepted_by_spw[spw], field_keys
+                ),
+                "by_field_accepted_stokes_i_samples": split_total(
+                    accepted_by_spw[spw], field_keys
+                ),
+            },
+        }
+        for spw in spw_keys
+    }
 
 
 def valid_receipt(contract: dict) -> dict:
@@ -95,6 +126,7 @@ def valid_receipt(contract: dict) -> dict:
             "field_ids": contract["workload"]["field_ids"],
             "spw_ids": contract["workload"]["spw_ids"],
             "accounting_sha256": contract["dataset"]["selection_accounting_sha256"],
+            "by_spw": valid_selection_accounting(contract),
         },
         "comparison": None,
         "host_telemetry": {
@@ -183,6 +215,58 @@ class VlassFiveMinuteContractTests(unittest.TestCase):
             "application-cache hit rate no longer reproduces the miss-heavy regime",
             errors,
         )
+
+    def test_guard_rejects_missing_field_sample_accounting(self) -> None:
+        receipt = valid_receipt(self.contract)
+        del receipt["selection"]["by_spw"]["2"]["samples"][
+            "by_field_accepted_stokes_i_samples"
+        ]["1107"]
+        errors = evaluate_receipt(
+            self.contract,
+            receipt,
+            expected_receipt_sha256="receipt",
+            actual_receipt_sha256="receipt",
+            current_source_state_sha256="source",
+        )
+        self.assertIn(
+            "SPW 2 sample accounting does not cover all 63 fields",
+            errors,
+        )
+
+    def test_minimum_improvement_guard_reads_retained_controller_metric(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            results = root / "autoresearch-results"
+            results.mkdir()
+            (results / "run.json").write_text(
+                json.dumps(
+                    {
+                        "metric": {
+                            "name": self.contract["metric"]["name"],
+                            "direction": "lower",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (results / "events.jsonl").write_text(
+                "\n".join(
+                    [
+                        json.dumps({"event": "baseline", "metric": 76.5}),
+                        json.dumps(
+                            {
+                                "event": "iteration",
+                                "retained_metric": 70.25,
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(vlass_5m, "REPO_ROOT", root):
+                retained = vlass_5m.autoresearch_retained_metric(self.contract)
+        self.assertEqual(70.25, retained)
 
     def test_proxy_comparison_uses_full_topology_and_normalized_rms(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

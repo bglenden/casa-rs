@@ -26,6 +26,11 @@ compact program bytes/builds, source-order window timings, Metal dispatch,
 FFT readback, process/host memory, compression, swap and disk I/O, exact
 selection accounting, and output identities.
 
+The frozen selection-accounting v2 receipt has SHA-256
+`2f81d69801d37c528ce7b3a747ef0676c6e57f870359d9661f43d2bf7f34438c`.
+It proves 3,400,608 attempted and 2,204,617 accepted Stokes-I samples, with
+nonempty accounting for every one of the 63 fields in every selected SPW.
+
 ## Qualification sequence
 
 The contract was introduced with `baseline.status=qualification`. The guarded
@@ -34,11 +39,14 @@ qualification completed on 2026-08-04 and is now frozen in the contract.
 1. Generate the one-time read-only MS selection receipt:
 
    ```sh
-   python3 tools/perf/imager/autoresearch/vlass_5m.py freeze-selection
+   /path/to/casa-python \
+     tools/perf/imager/autoresearch/vlass_5m.py freeze-selection
    ```
 
 2. Record the printed SHA-256 in
-   `dataset.selection_accounting_sha256`.
+   `dataset.selection_accounting_sha256`. Selection schema v2 records exact
+   attempted and accepted Stokes-I sample counts for every field and SPW, as
+   well as the correlation basis and CASA parallel-hand pair.
 3. Run the first release qualification:
 
    ```sh
@@ -68,8 +76,8 @@ approved CASA scientific and 19-product acceptance contract.
 
 The guard writes nothing. It verifies the latest pointer and receipt hashes,
 source-state and release-binary binding, workload shape, cache pressure,
-sample acceptance, no fallback, memory/swap bounds, product inventory, and
-proxy numerical parity.
+the exact per-field/SPW sample census, no fallback, memory/swap bounds, product
+inventory, and proxy numerical parity.
 
 The first unchanged repeat measured 77.400 seconds with the same release
 binary. Its initial sampled comparison measured normalized RMS `0.0` for all
@@ -79,3 +87,24 @@ all normalized-RMS, topology, and metadata checks in about 21 seconds; its
 comparison receipt SHA-256 is
 `59e8351924495d49ec47c758f6802045013d7fa27f5659bf17e487e461cbfcf6`.
 The production proxy guard therefore uses that chunked full-array mode.
+
+The focused full-array repeat then passed end to end at 75.855 seconds; receipt
+SHA-256
+`353abdf38f28547289cbaafac6bd5d0f2a8958917b3e8270cf50fd97da7420ac`.
+The two warm release metrics, 77.400 and 75.855 seconds, have a 76.627-second
+mean and a 2.02% range. Autoresearch therefore needs at least a 5% improvement
+over the warm mean (72.796 seconds or lower) before a single trial can become a
+promotion candidate. Promoted trials still require an unchanged rerun to
+protect against timing noise.
+
+The controller guard enforces that minimum relative to its current retained
+metric:
+
+```sh
+python3 tools/perf/imager/autoresearch/vlass_5m.py \
+  guard --minimum-improvement-fraction 0.05
+```
+
+During controller initialization there is no incumbent state, so this option
+acts as the ordinary baseline guard. During an experiment it rejects and
+therefore reverts an apparent improvement smaller than 5%.
