@@ -27744,6 +27744,46 @@ fn awproject_gpu_residual_replay_is_admitted(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn validate_awproject_windowed_hybrid_clean(
+    requested: bool,
+    global_tile_replay: bool,
+    global_hybrid_clean: bool,
+    source_phase: bool,
+    raw_frame_taylor: bool,
+    nterms: usize,
+    model_grids_present: bool,
+    metal_grid_storage: bool,
+) -> Result<bool, ImagingError> {
+    if !requested {
+        return Ok(false);
+    }
+    if global_tile_replay || global_hybrid_clean {
+        return Err(ImagingError::InvalidRequest(
+            "windowed and global AWProject hybrid clean paths are mutually exclusive".to_string(),
+        ));
+    }
+    if !source_phase || !raw_frame_taylor {
+        return Err(ImagingError::InvalidRequest(
+            "windowed AWProject hybrid clean requires pre-division source phase and raw-frame \
+             Taylor ordering"
+                .to_string(),
+        ));
+    }
+    if nterms != 2 {
+        return Err(ImagingError::InvalidRequest(format!(
+            "windowed AWProject hybrid clean requires nterms=2, got {nterms}",
+        )));
+    }
+    if model_grids_present && !metal_grid_storage {
+        return Err(ImagingError::InvalidRequest(
+            "windowed AWProject hybrid clean requires Metal residual storage".to_string(),
+        ));
+    }
+    Ok(model_grids_present)
+}
+
+#[allow(clippy::too_many_arguments)]
 #[cfg_attr(any(not(target_os = "macos"), coverage), allow(unused_variables))]
 fn replay_awproject_compact_window(
     request: &MtmfsRequest,
@@ -27775,6 +27815,17 @@ fn replay_awproject_compact_window(
     let prepare_started = Instant::now();
     #[cfg(all(target_os = "macos", not(coverage)))]
     let mut persistent_metal_resident_program = persistent_metal_resident_program;
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    let windowed_hybrid_clean = validate_awproject_windowed_hybrid_clean(
+        env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_WINDOWED_HYBRID_CLEAN").is_some(),
+        env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GLOBAL_TILE_REPLAY").is_some(),
+        env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_CLEAN").is_some(),
+        env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDIVISION_SOURCE_PHASE").is_some(),
+        env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_RAW_FRAME_TAYLOR").is_some(),
+        request.nterms,
+        model_grids.is_some(),
+        accumulation.storage.is_metal_shared(),
+    )?;
     #[cfg(all(target_os = "macos", not(coverage)))]
     let gpu_residual_replay_requested = model_grids.is_some()
         && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GPU_RESIDUAL_REPLAY").is_some();
@@ -28117,7 +28168,8 @@ fn replay_awproject_compact_window(
                 && (env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_RESIDENT_TILE_CHAIN")
                     .is_some()
                     || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GPU_RESIDUAL_REPLAY")
-                        .is_some());
+                        .is_some()
+                    || windowed_hybrid_clean);
             if resident_chain {
                 let slot = match &mut persistent_metal_resident_program {
                     Some(slot) => &mut **slot,
@@ -28158,7 +28210,114 @@ fn replay_awproject_compact_window(
                     }
                     let executor = executor_slot.as_ref().expect("resident Metal executor");
                     let stats =
-                        if gpu_residual_replay {
+                        if windowed_hybrid_clean {
+                            let dispatch = executor.dispatch_prediction_probe(
+                                &program.prediction_batch,
+                                model_grids,
+                                None,
+                                Some(1),
+                            )?;
+                            let prediction_elapsed = dispatch.elapsed;
+                            let prediction_host_readback = dispatch.host_readback;
+                            let candidate = build_awproject_wide_division_candidate_two_lane(
+                                1,
+                                &program.prediction_batch,
+                                &dispatch,
+                            )?;
+                            let candidate_elapsed = candidate.elapsed;
+                            let (candidate_builder_mode, candidate_builder_split) = candidate
+                                .candidate_builder
+                                .as_ref()
+                                .map(|builder| (builder.mode, builder.split_ordinal))
+                                .ok_or_else(|| {
+                                    ImagingError::Normalization(
+                                        "windowed hybrid AW clean lost its two-lane builder receipt"
+                                            .to_string(),
+                                    )
+                                })?;
+                            let candidate_hash_started = Instant::now();
+                            let candidate_residual_hash =
+                                hash_awproject_prediction_residuals(&candidate.results);
+                            let candidate_hash_elapsed = candidate_hash_started.elapsed();
+                            let residuals = candidate.results;
+                            let tile_update_started = Instant::now();
+                            update_awproject_persistent_metal_prediction_results(
+                                &mut program.tile_batch,
+                                &residuals,
+                            )?;
+                            let tile_update_elapsed = tile_update_started.elapsed();
+                            let tile_ingress_hash_started = Instant::now();
+                            let tile_ingress_hash =
+                                hash_awproject_tile_ingress_residuals(&program.tile_batch);
+                            let tile_ingress_hash_elapsed = tile_ingress_hash_started.elapsed();
+                            if tile_ingress_hash != candidate_residual_hash {
+                                return Err(ImagingError::Normalization(format!(
+                                    "windowed hybrid AW clean tile ingress changed candidate bits: \
+                                     {tile_ingress_hash} != {candidate_residual_hash}",
+                                )));
+                            }
+                            let tile_stats = executor.dispatch_tile_grid_probe(
+                                grid,
+                                aw_compensation,
+                                &program.tile_batch,
+                                &program.tile_plan,
+                                request.nterms,
+                                Some(program.residual_scale_plan),
+                            )?;
+                            eprintln!(
+                                "awproject_windowed_hybrid_clean_refresh \
+                                 status=exact-candidate-tile-ready samples={} \
+                                 program_bytes={} candidate_residual_sha256={} \
+                                 tile_ingress_sha256={} candidate_builder={} \
+                                 candidate_workers=2 candidate_split={} \
+                                 metal_dispatch_ms={:.6} host_readback_ms={:.6} \
+                                 cpu_candidate_ms={:.6} candidate_hash_ms={:.6} \
+                                 tile_update_ms={:.6} tile_ingress_hash_ms={:.6} \
+                                 verified_prediction_to_tile_ready_ms={:.6} \
+                                 tile_grid_ms={:.6}",
+                                residuals.len(),
+                                program.resident_bytes(),
+                                candidate_residual_hash,
+                                tile_ingress_hash,
+                                candidate_builder_mode,
+                                candidate_builder_split,
+                                prediction_elapsed.as_secs_f64() * 1_000.0,
+                                prediction_host_readback.as_secs_f64() * 1_000.0,
+                                candidate_elapsed.as_secs_f64() * 1_000.0,
+                                candidate_hash_elapsed.as_secs_f64() * 1_000.0,
+                                tile_update_elapsed.as_secs_f64() * 1_000.0,
+                                tile_ingress_hash_elapsed.as_secs_f64() * 1_000.0,
+                                (prediction_elapsed
+                                    + prediction_host_readback
+                                    + candidate_elapsed
+                                    + candidate_hash_elapsed
+                                    + tile_update_elapsed
+                                    + tile_ingress_hash_elapsed)
+                                    .as_secs_f64()
+                                    * 1_000.0,
+                                tile_stats.total.as_secs_f64() * 1_000.0,
+                            );
+                            AwProjectMetalResidentChainStats {
+                                samples: program.prediction_batch.samples.len(),
+                                prediction_kernel_values: program.prediction_batch.kernels.len(),
+                                imaging_kernel_values: program.tile_batch.kernels.len(),
+                                active_tiles: tile_stats.active_tiles,
+                                fragments: tile_stats.fragments,
+                                buffer_alloc: tile_stats.buffer_alloc,
+                                dispatch_wait: prediction_elapsed + tile_stats.dispatch_wait,
+                                output_bytes: tile_stats.output_bytes,
+                                residual_bytes: residuals.len().saturating_mul(
+                                    std::mem::size_of::<AwProjectMetalPredictionResult>(),
+                                ),
+                                total: prediction_elapsed
+                                    + prediction_host_readback
+                                    + candidate_elapsed
+                                    + candidate_hash_elapsed
+                                    + tile_update_elapsed
+                                    + tile_ingress_hash_elapsed
+                                    + tile_stats.total,
+                            }
+                        } else if gpu_residual_replay {
                             let dispatch = executor.dispatch_prediction_probe(
                                 &program.prediction_batch,
                                 model_grids,
@@ -61565,6 +61724,64 @@ mod tests {
         }
     }
 
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn awproject_windowed_hybrid_clean_contract_fails_closed() {
+        assert!(
+            !super::validate_awproject_windowed_hybrid_clean(
+                false, true, true, false, false, 7, true, false,
+            )
+            .unwrap()
+        );
+        assert!(
+            !super::validate_awproject_windowed_hybrid_clean(
+                true, false, false, true, true, 2, false, false,
+            )
+            .unwrap()
+        );
+        assert!(
+            super::validate_awproject_windowed_hybrid_clean(
+                true, false, false, true, true, 2, true, true,
+            )
+            .unwrap()
+        );
+        for (inputs, expected) in [
+            (
+                (true, true, false, true, true, 2, true, true),
+                "mutually exclusive",
+            ),
+            (
+                (true, false, true, true, true, 2, true, true),
+                "mutually exclusive",
+            ),
+            (
+                (true, false, false, false, true, 2, true, true),
+                "pre-division source phase",
+            ),
+            (
+                (true, false, false, true, false, 2, true, true),
+                "pre-division source phase",
+            ),
+            (
+                (true, false, false, true, true, 3, true, true),
+                "requires nterms=2",
+            ),
+            (
+                (true, false, false, true, true, 2, true, false),
+                "requires Metal residual storage",
+            ),
+        ] {
+            let error = super::validate_awproject_windowed_hybrid_clean(
+                inputs.0, inputs.1, inputs.2, inputs.3, inputs.4, inputs.5, inputs.6, inputs.7,
+            )
+            .unwrap_err();
+            assert!(
+                error.to_string().contains(expected),
+                "{error} did not contain {expected}",
+            );
+        }
+    }
+
     #[test]
     fn compact_aw_replay_is_bit_identical_across_windows_and_preserves_source_order() {
         let bundles = vec![super::AwProjectCompactMaterializedTap::Ready(
@@ -72227,6 +72444,138 @@ mod tests {
         }
         assert_eq!(model_terms[0][candidate.position].to_bits(), 0xb912_72ae);
         assert_eq!(model_terms[1][candidate.position].to_bits(), 0xbaa4_1333);
+    }
+
+    #[test]
+    #[ignore = "requires an explicit frozen VLASS product prefix"]
+    fn vlass_image_domain_minor_cycle_reports_exact_component_trace() {
+        fn read_plane(path: &std::path::Path) -> Array2<f32> {
+            let image = casa_images::PagedImage::<f32>::open(path)
+                .unwrap_or_else(|error| panic!("open {}: {error}", path.display()));
+            let shape = image.shape();
+            assert!(
+                shape.len() == 2 || shape == [shape[0], shape[1], 1, 1],
+                "unexpected diagnostic image shape {shape:?}"
+            );
+            let pixels = image
+                .get()
+                .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+            Array2::from_shape_fn((shape[0], shape[1]), |(x, y)| {
+                if shape.len() == 2 {
+                    pixels[ndarray::IxDyn(&[x, y])]
+                } else {
+                    pixels[ndarray::IxDyn(&[x, y, 0, 0])]
+                }
+            })
+        }
+
+        fn bits(values: &[f32]) -> Vec<String> {
+            values
+                .iter()
+                .map(|value| format!("0x{:08x}", value.to_bits()))
+                .collect()
+        }
+
+        assert!(
+            super::fftw_local::configured_f32(),
+            "the image-domain diagnostic requires a configured f32 FFTW library"
+        );
+        let prefix = std::path::PathBuf::from(
+            std::env::var_os("CASA_RS_VLASS_MTMFS_DIAGNOSTIC_PREFIX")
+                .expect("set CASA_RS_VLASS_MTMFS_DIAGNOSTIC_PREFIX"),
+        );
+        let mask_path = std::env::var_os("CASA_RS_VLASS_MTMFS_DIAGNOSTIC_MASK")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(format!("{}.mask", prefix.display())));
+        let iterations = std::env::var("CASA_RS_VLASS_MTMFS_DIAGNOSTIC_ITERATIONS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(1);
+        let threads = std::env::var("CASA_RS_VLASS_MTMFS_DIAGNOSTIC_FFT_THREADS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(10);
+        let psf_terms = (0..3)
+            .map(|term| {
+                read_plane(std::path::Path::new(&format!(
+                    "{}.psf.tt{term}",
+                    prefix.display()
+                )))
+            })
+            .collect::<Vec<_>>();
+        let residual_terms = (0..2)
+            .map(|term| {
+                read_plane(std::path::Path::new(&format!(
+                    "{}.residual.tt{term}",
+                    prefix.display()
+                )))
+            })
+            .collect::<Vec<_>>();
+        let clean_mask = read_plane(&mask_path).mapv(|value| value > 0.0);
+        let scale_sizes = vec![0.0, 5.0, 12.0];
+        let compact_scale_kernels = scale_sizes
+            .iter()
+            .map(|scale| super::make_compact_multiscale_kernel(*scale))
+            .collect::<Vec<_>>();
+        let fft_backend = super::MtmfsScaleFftBackend::CasaFft0F32 { threads };
+        let scale_masks = super::build_mtmfs_scale_masks_with_backend(
+            &clean_mask,
+            &compact_scale_kernels,
+            &scale_sizes,
+            fft_backend,
+        );
+        let scale_search_positions =
+            super::mtmfs_scale_search_positions_from_masks(&scale_masks, clean_mask.len());
+        let peak = super::casa_mtmfs_psf_peak_position(&psf_terms[0], 12.0);
+        let support = super::casa_mtmfs_psf_patch_support(psf_terms[0].dim(), 12.0);
+        let basis = super::MtmfsMultiscaleBasis {
+            scale_sizes: scale_sizes.clone(),
+            compact_scale_kernels: compact_scale_kernels.clone(),
+            // The accepted VLASS rows set CASA smallscalebias=0.0.
+            scale_bias: vec![1.0; scale_sizes.len()],
+            scale_masks: None,
+            scale_search_positions,
+            psf_pair_patches: super::mtmfs_psf_pair_patches_casa_fft0(
+                &psf_terms,
+                &compact_scale_kernels,
+                peak,
+                support,
+                threads,
+            ),
+            sparse_rhs: true,
+            sparse_rhs_fft_seed: true,
+            scale_fft_backend: fft_backend,
+        };
+        let hessians =
+            super::mtmfs_scale_hessians_from_basis(&basis, 2).expect("exact FFT0 Hessians");
+        let mut rhs = basis.convolve_residual_terms(&residual_terms);
+
+        for iteration in 0..iterations {
+            let candidate = super::find_mtmfs_multiscale_component(&rhs, &basis, &hessians, None)
+                .expect("one image-domain component");
+            eprintln!(
+                "vlass_image_domain_component iteration={iteration} scale_index={} \
+                 scale_pixels={} x={} y={} rhs_bits={:?} coefficient_bits={:?} \
+                 signed_score_bits=0x{:08x} biased_signed_score_bits=0x{:08x}",
+                candidate.scale_index,
+                scale_sizes[candidate.scale_index],
+                candidate.position.0,
+                candidate.position.1,
+                bits(&candidate.rhs_values),
+                bits(&candidate.coefficients),
+                candidate.signed_score.to_bits(),
+                candidate.biased_signed_score.to_bits(),
+            );
+            basis.subtract_rhs_component(
+                &mut rhs,
+                candidate.scale_index,
+                candidate.position,
+                0.1,
+                &candidate.coefficients,
+            );
+        }
     }
 
     #[test]

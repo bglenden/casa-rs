@@ -606,7 +606,7 @@ void print_matrix_difference(const std::string &label,
 }
 
 void run_minor_cycle(const std::string &products, int iterations, float gain,
-                     float threshold) {
+                     float threshold, float small_scale_bias) {
   auto psfs = load_psfs(products);
   std::array<casacore::Matrix<casacore::Float>, 2> residuals = {
       load_image(products + "/casa.residual.tt0"),
@@ -624,7 +624,18 @@ void run_minor_cycle(const std::string &products, int iterations, float gain,
 
   const int image_size = static_cast<int>(psfs[0].nrow());
   casa::MultiTermMatrixCleaner cleaner;
-  configure_cleaner(cleaner, {0.0F, 5.0F, 12.0F}, image_size);
+  casacore::Vector<casacore::Float> scales(3);
+  scales[0] = 0.0F;
+  scales[1] = 5.0F;
+  scales[2] = 12.0F;
+  if (!cleaner.setscales(scales)) {
+    throw std::runtime_error("MultiTermMatrixCleaner::setscales failed");
+  }
+  cleaner.setSmallScaleBias(small_scale_bias);
+  if (!cleaner.setntaylorterms(2) ||
+      !cleaner.initialise(image_size, image_size)) {
+    throw std::runtime_error("MultiTermMatrixCleaner setup failed");
+  }
   set_psfs(cleaner, psfs);
   for (int order = 0; order < 2; ++order) {
     if (!cleaner.setresidual(order, residuals[order]) ||
@@ -662,6 +673,8 @@ void run_minor_cycle(const std::string &products, int iterations, float gain,
             << " completed_iterations=" << completed << " gain_bits=0x"
             << std::hex << std::setw(8) << std::setfill('0') << float_bits(gain)
             << " threshold_bits=0x" << std::setw(8) << float_bits(threshold)
+            << " small_scale_bias_bits=0x" << std::setw(8)
+            << float_bits(small_scale_bias)
             << std::dec << std::setfill(' ') << " peak_residual_bits=0x"
             << std::hex << std::setw(8) << std::setfill('0')
             << float_bits(cleaner.getpeakresidual()) << std::dec
@@ -755,7 +768,8 @@ int main(int argc, char **argv) {
                 << "       " << argv[0]
                 << " spectrum PRODUCT-DIRECTORY [scale-size ...]\n"
                 << "       " << argv[0]
-                << " minor PRODUCT-DIRECTORY [iterations [gain [threshold]]]\n";
+                << " minor PRODUCT-DIRECTORY [iterations [gain [threshold "
+                   "[small-scale-bias]]]]\n";
       return 2;
     }
 
@@ -809,17 +823,19 @@ int main(int argc, char **argv) {
     }
 
     if (mode == "minor") {
-      if (argc < 3 || argc > 6) {
+      if (argc < 3 || argc > 7) {
         throw std::invalid_argument(
             "minor mode requires PRODUCT-DIRECTORY and optionally "
-            "iterations, gain, and threshold");
+            "iterations, gain, threshold, and small-scale-bias");
       }
       const int iterations =
           argc >= 4 ? parse_positive_int(argv[3], "iterations") : 1;
       const float gain = argc >= 5 ? parse_float(argv[4], "gain") : 0.1F;
       const float threshold =
           argc >= 6 ? parse_float(argv[5], "threshold") : 0.0F;
-      run_minor_cycle(argv[2], iterations, gain, threshold);
+      const float small_scale_bias =
+          argc >= 7 ? parse_float(argv[6], "small-scale-bias") : 0.6F;
+      run_minor_cycle(argv[2], iterations, gain, threshold, small_scale_bias);
       return 0;
     }
 

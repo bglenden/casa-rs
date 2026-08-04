@@ -5,16 +5,54 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 root="${CASA_RS_VLASS_EXPERIMENT_ROOT:-/Volumes/GLENDENNING/casa-rs-vlass/issue-446}"
 binary="${CASA_RS_VLASS_EXPERIMENT_BINARY:?set CASA_RS_VLASS_EXPERIMENT_BINARY to the frozen release casars-imager}"
 measures_dir="${CASA_RS_VLASS_MEASURES_DIR:-$HOME/.casa/data}"
-fftw_dir="${CASA_RS_VLASS_FFTW_LIBRARY_DIR:-/opt/homebrew/opt/fftw/lib}"
+fftw_dir="${CASA_RS_VLASS_FFTW_LIBRARY_DIR:-/Volumes/GLENDENNING/DeveloperTools/CASA/6.7.5.18-laptop/venv-py312/lib/python3.12/site-packages/casatools/__casac__/lib}"
 cf_cache="${CASA_RS_VLASS_CF_CACHE:-$root/cf-cache/6.7.5.9/db96e297401b0f5c90f1494844fd9a1d49ad5023be44987ce7076afac513d856}"
 mask="${CASA_RS_VLASS_MASK:-$root/masks/vlass-source-box-4096-spectral.mask}"
 run_id="${CASA_RS_VLASS_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-vlass-all63-clean-4096-four-spw}"
 run_root="${CASA_RS_VLASS_RUN_ROOT:-$root/recovery-candidates/runs/$run_id}"
+selected_exact_hybrid="${CASA_RS_VLASS_SELECTED_EXACT_HYBRID:-0}"
+replay_retention_bytes="${CASA_RS_VLASS_REPLAY_RETENTION_BYTES:-0}"
 ms="$root/data/frozen-clean-b80d5e87487a/VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms"
 output="$run_root/rust"
 log="$run_root/casa-rs.log"
 provenance="$run_root/provenance.txt"
 expected_mask_sha256="8490acb911cbbba78f7a20ba4a1d379e227c3a42dfc7eefcc9b7fd5f4139572f"
+experimental_environment=(
+    CASA_RS_EXPERIMENTAL_MT_MFS_SPARSE_RHS=1
+    CASA_RS_EXPERIMENTAL_MT_MFS_CASA_FFT0=1
+)
+
+case "$selected_exact_hybrid" in
+    0)
+        ;;
+    1)
+        case "$replay_retention_bytes" in
+            ''|*[!0-9]*)
+                echo "CASA_RS_VLASS_REPLAY_RETENTION_BYTES must be a non-negative integer" >&2
+                exit 2
+                ;;
+        esac
+        experimental_environment+=(
+            CASA_RS_EXPERIMENTAL_AWPROJECT_WINDOWED_HYBRID_CLEAN=1
+            CASA_RS_EXPERIMENTAL_AWPROJECT_PREDIVISION_SOURCE_PHASE=1
+            CASA_RS_EXPERIMENTAL_AWPROJECT_RAW_FRAME_TAYLOR=1
+            CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_ONLY_REFRESH=1
+            CASA_RS_EXPERIMENTAL_AWPROJECT_REPLAY_RETENTION_BYTES="$replay_retention_bytes"
+            CASA_RS_EXPERIMENTAL_AWPROJECT_IMAGE_RESPONSE_CACHE=1
+            CASA_RS_EXPERIMENTAL_SPARSE_AWPROJECT_MODEL_PREP=1
+            CASA_RS_EXPERIMENTAL_SPARSE_MASK_PEAK_SEARCH=1
+            CASA_RS_EXPERIMENTAL_CACHE_REFRESHED_NSIGMA=1
+            CASA_RS_EXPERIMENTAL_RADIX_MADFM=1
+            CASA_RS_EXPERIMENTAL_PARALLEL_MODEL_TERM_FFT=1
+            CASA_RS_EXPERIMENTAL_PARALLEL_RESIDUAL_TERM_FFT=1
+            CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_LIVE_CFS_ONLY=1
+        )
+        ;;
+    *)
+        echo "CASA_RS_VLASS_SELECTED_EXACT_HYBRID must be 0 or 1" >&2
+        exit 2
+        ;;
+esac
 
 for required in "$binary" "$measures_dir" "$fftw_dir" "$cf_cache" "$mask" "$ms"; do
     if [[ ! -e "$required" ]]; then
@@ -29,6 +67,12 @@ mask_sha256="$(
 )"
 if [[ "$mask_sha256" != "$expected_mask_sha256" ]]; then
     echo "mask identity mismatch: expected $expected_mask_sha256, got $mask_sha256" >&2
+    exit 2
+fi
+if [[ "$selected_exact_hybrid" == "1" ]] &&
+    ! /usr/bin/strings "$binary" |
+        /usr/bin/grep -a 'CASA_RS_EXPERIMENTAL_AWPROJECT_WINDOWED_HYBRID_CLEAN' >/dev/null; then
+    echo "selected release binary does not contain the windowed hybrid clean path" >&2
     exit 2
 fi
 if [[ -e "$run_root" ]]; then
@@ -51,7 +95,15 @@ mkdir -p "$run_root"
     printf 'spw\t%s\n' '2,7,12,17'
     printf 'imsize\t%s\n' '4096'
     printf 'niter\t%s\n' '2000'
-    printf 'execution\t%s\n' 'release-metal-grid2-fftw-f64-t8-memory-auto-16GiB'
+    printf 'mtmfs_rhs\t%s\n' 'mask-sparse-full-fft-sampled'
+    printf 'mtmfs_basis\t%s\n' 'casa-fft0-f32'
+    printf 'selected_exact_hybrid\t%s\n' "$selected_exact_hybrid"
+    if [[ "$selected_exact_hybrid" == "1" ]]; then
+        printf 'prediction_arithmetic\t%s\n' 'casa-wide-division-source-phase-raw-frame-taylor'
+        printf 'replay_retention_bytes\t%s\n' "$replay_retention_bytes"
+        printf 'acceleration_stack\t%s\n' 'bounded-windowed-metal-hybrid-image-response-sparse-radix'
+    fi
+    printf 'execution\t%s\n' 'release-metal-grid2-casa-fftw310-f64-t8-memory-auto-16GiB'
 } >"$provenance"
 
 set +e
@@ -61,8 +113,10 @@ set +e
     CASA_RS_MEASURESPATH="$measures_dir" \
     CASA_RS_FFTW_LIBRARY_DIR="$fftw_dir" \
     DYLD_LIBRARY_PATH="$fftw_dir" \
+    CASA_RS_VLASS_EXPERIMENT_RUNNER=1 \
     CASA_RS_FFTW_THREADS=8 \
     CASA_RS_STANDARD_MFS_PROFILE_DETAIL=1 \
+    "${experimental_environment[@]}" \
     "$binary" \
     --ms "$ms" \
     --imagename "$output" \
