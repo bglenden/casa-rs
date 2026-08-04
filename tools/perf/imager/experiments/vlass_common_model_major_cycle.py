@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import shutil
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -21,7 +22,13 @@ import numpy as np
 from casatasks import casalog, tclean
 from casatools import image
 
-from vlass_reduced_casa_clean_4096_four_spw import TCLEAN_PARAMETERS
+IMAGER_TOOLS = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(IMAGER_TOOLS))
+
+from perf_harness.casa_tclean import (  # noqa: E402
+    normalize_archived_parameters,
+    parse_literal_assignment_recipe,
+)
 
 
 MODEL_SUFFIXES = (".model.tt0", ".model.tt1")
@@ -90,13 +97,41 @@ def image_content_sha256(path: Path) -> str:
 
 def prefixed_directories(prefix: Path) -> list[Path]:
     return sorted(
-        (
-            path
-            for path in prefix.parent.glob(f"{prefix.name}.*")
-            if path.is_dir()
-        ),
+        (path for path in prefix.parent.glob(f"{prefix.name}.*") if path.is_dir()),
         key=str,
     )
+
+
+def effective_parameters_from_request(request_path: Path) -> dict[str, Any]:
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    if (
+        not isinstance(request, dict)
+        or request.get("kind") != "casa_tclean_request"
+        or request.get("action") != "run"
+    ):
+        raise RuntimeError("request is not a retained CASA tclean run request")
+    recipe = request.get("recipe")
+    overrides = request.get("overrides")
+    if not isinstance(recipe, dict) or not isinstance(overrides, dict):
+        raise RuntimeError("request does not bind its recipe and overrides")
+    recipe_path = Path(str(recipe.get("path", ""))).expanduser()
+    if not recipe_path.is_file():
+        raise RuntimeError(f"retained CASA recipe is missing: {recipe_path}")
+    recipe_sha256 = hashlib.sha256(recipe_path.read_bytes()).hexdigest()
+    if recipe_sha256 != recipe.get("sha256"):
+        raise RuntimeError(
+            "retained CASA recipe hash differs: "
+            f"{recipe_sha256} != {recipe.get('sha256')}"
+        )
+    assignments = parse_literal_assignment_recipe(
+        recipe_path.read_text(encoding="utf-8"),
+        source=str(recipe_path),
+    )
+    archived = {
+        name: value for name, value in assignments.items() if name != "taskname"
+    }
+    effective, _, _ = normalize_archived_parameters(archived, overrides)
+    return effective
 
 
 def main() -> None:
@@ -104,7 +139,16 @@ def main() -> None:
     parser.add_argument("--zero-prefix", required=True, type=Path)
     parser.add_argument("--model-prefix", required=True, type=Path)
     parser.add_argument("--output-prefix", required=True, type=Path)
+    parser.add_argument(
+        "--request-json",
+        required=True,
+        type=Path,
+        help="retained request.json for the exact CASA row being diagnosed",
+    )
+    parser.add_argument("--casa-log", required=True, type=Path)
     args = parser.parse_args()
+    if args.casa_log.exists():
+        raise RuntimeError(f"refusing to overwrite CASA log: {args.casa_log}")
 
     zero_products = prefixed_directories(args.zero_prefix)
     if not zero_products:
@@ -143,7 +187,7 @@ def main() -> None:
         suffix: tree_sha256(Path(f"{args.output_prefix}{suffix}"))
         for suffix in protected_suffixes
     }
-    parameters = dict(TCLEAN_PARAMETERS)
+    parameters = effective_parameters_from_request(args.request_json)
     parameters.update(
         {
             "imagename": str(args.output_prefix),
@@ -159,6 +203,8 @@ def main() -> None:
         }
     )
     encoded = json.dumps(parameters, sort_keys=True, separators=(",", ":")).encode()
+    args.casa_log.parent.mkdir(parents=True, exist_ok=True)
+    casalog.setlogfile(str(args.casa_log))
     casalog.filter("INFO")
     started = time.monotonic()
     summary = tclean(**parameters)
@@ -188,9 +234,15 @@ def main() -> None:
         "elapsed_s": elapsed_s,
         "parameters_sha256": hashlib.sha256(encoded).hexdigest(),
         "parameters": parameters,
+        "request_json": str(args.request_json.resolve()),
+        "request_json_sha256": hashlib.sha256(
+            args.request_json.read_bytes()
+        ).hexdigest(),
         "zero_prefix": str(args.zero_prefix),
         "model_prefix": str(args.model_prefix),
         "output_prefix": str(args.output_prefix),
+        "casa_log": str(args.casa_log.resolve()),
+        "casa_log_sha256": hashlib.sha256(args.casa_log.read_bytes()).hexdigest(),
         "protected_content_hashes_before": content_hashes_before,
         "protected_content_hashes_after": content_hashes_after,
         "changed_protected_content": changed_protected_content,
