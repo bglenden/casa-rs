@@ -786,7 +786,7 @@
 <p>Truth class: current descriptive
 Last reality check: 2026-04-27
 Verification: <code>scripts/test-python-package.sh</code>; <code>casatestdata-preflight --tier tutorial-parity --require-registry-key alma/first-look/twhya/calibrated-ms</code>; release imager/CASA timing and parity commands below</p>
-<p>Wave issue: #140
+<p>Work issue: #140
 Child issue: #117</p>
 <p>This note records the CASA-to-casa-rs mapping for the first ALMA First Look /
 TW Hydra imaging segment. It does not add a new public imaging API; the
@@ -848,26 +848,26 @@ casatestdata preflight: tutorial root=/Users/brianglendenning/SoftwareProjects/c
 <p>The target field resolved from the real tutorial MS is <code>FIELD_ID=5</code>, name
 <code>TW Hya</code>, with <code>44772</code> selected rows, <code>SPW_ID=0</code>, and <code>384</code> channels.</p>
 <h2 id="executable-evidence">Executable Evidence<a class="headerlink" href="#executable-evidence" title="Permanent link">&para;</a></h2>
-<p>The real tutorial MS was staged under <code>target/wdad-wave3-117/twhya_calibrated.ms</code>
+<p>The real tutorial MS was staged under <code>target/issue-117/twhya_calibrated.ms</code>
 from the registry tarball. The following commands completed successfully:</p>
 <div class="codehilite"><pre><span></span><code>cargo<span class="w"> </span>run<span class="w"> </span>-q<span class="w"> </span>-p<span class="w"> </span>casa-ms<span class="w"> </span>--bin<span class="w"> </span>msexplore<span class="w"> </span>--<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--format<span class="w"> </span>json<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--field<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--output<span class="w"> </span>target/wdad-wave3-117/twhya-field5-listobs.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output<span class="w"> </span>target/issue-117/twhya-field5-listobs.json<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--overwrite<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>target/wdad-wave3-117/twhya_calibrated.ms
+<span class="w">  </span>target/issue-117/twhya_calibrated.ms
 
 cargo<span class="w"> </span>run<span class="w"> </span>-q<span class="w"> </span>-p<span class="w"> </span>casa-ms<span class="w"> </span>--bin<span class="w"> </span>msexplore<span class="w"> </span>--<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--preset<span class="w"> </span>amplitude_vs_uv_distance<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--field<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--plot-output<span class="w"> </span>target/wdad-wave3-117/twhya-field5-amp-uv.png<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--plot-output<span class="w"> </span>target/issue-117/twhya-field5-amp-uv.png<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--plot-width<span class="w"> </span><span class="m">1000</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--plot-height<span class="w"> </span><span class="m">700</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>target/wdad-wave3-117/twhya_calibrated.ms
+<span class="w">  </span>target/issue-117/twhya_calibrated.ms
 
 target/release/casars-imager<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--ms<span class="w"> </span>target/wdad-wave3-117/twhya_calibrated.ms<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--imagename<span class="w"> </span>target/wdad-wave3-117/release-twhya-field5-mfs<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--ms<span class="w"> </span>target/issue-117/twhya_calibrated.ms<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--imagename<span class="w"> </span>target/issue-117/release-twhya-field5-mfs<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--imsize<span class="w"> </span><span class="m">250</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--cell-arcsec<span class="w"> </span><span class="m">0</span>.1<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--field<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
@@ -891,8 +891,8 @@ machine.</p>
 <p>The visibility-inspection parity check rendered <code>msexplore</code> and CASA <code>plotms</code>
 from the same TW Hydra selection: <code>field=5</code>, <code>spw=0</code>, <code>scan=12</code>.</p>
 <div class="codehilite"><pre><span></span><code>scripts/render-msexplore-side-by-side.sh<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--ms<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/target/wdad-wave3-117/twhya_calibrated.ms&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--output<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/target/wdad-wave3-117/twhya-field5-scan12-amplitude-uvdist-side-by-side-readable.png&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--ms<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/target/issue-117/twhya_calibrated.ms&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/target/issue-117/twhya-field5-scan12-amplitude-uvdist-side-by-side-readable.png&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--plot-width<span class="w"> </span><span class="m">2400</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--plot-height<span class="w"> </span><span class="m">1350</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--rust-symbolsize<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
@@ -906,8 +906,8 @@ from the same TW Hydra selection: <code>field=5</code>, <code>spw=0</code>, <cod
 <span class="w">  </span>--<span class="w"> </span>--preset<span class="w"> </span>amplitude_vs_uv_distance<span class="w"> </span>--field<span class="w"> </span><span class="m">5</span><span class="w"> </span>--spw<span class="w"> </span><span class="m">0</span><span class="w"> </span>--scan<span class="w"> </span><span class="m">12</span>
 
 scripts/render-msexplore-page-side-by-side.sh<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--ms<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/target/wdad-wave3-117/twhya_calibrated.ms&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--output<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/target/wdad-wave3-117/twhya-field5-scan12-amplitude-phase-time-side-by-side-readable.png&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--ms<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/target/issue-117/twhya_calibrated.ms&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/target/issue-117/twhya-field5-scan12-amplitude-phase-time-side-by-side-readable.png&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--plot-width<span class="w"> </span><span class="m">2400</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--plot-height<span class="w"> </span><span class="m">1350</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--rust-symbolsize<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
@@ -923,7 +923,7 @@ scripts/render-msexplore-page-side-by-side.sh<span class="w"> </span><span class
 <p>The MFS dirty image parity check rendered the <code>casars-imager</code> <code>.image</code> product
 and a CASA <code>tclean</code> <code>.image</code> product with a shared display scale, plus a
 <code>casa-rs - CASA</code> difference panel:</p>
-<div class="codehilite"><pre><span></span><code>target/wdad-wave3-117/twhya-field5-mfs-image-casa-rs-vs-casa.png
+<div class="codehilite"><pre><span></span><code>target/issue-117/twhya-field5-mfs-image-casa-rs-vs-casa.png
 </code></pre></div>
 
 <p>Numerical image comparison for the 250x250 <code>.image</code> arrays:</p>
@@ -974,7 +974,7 @@ and a CASA <code>tclean</code> <code>.image</code> product with a shared display
 <span class="nv">IMAGER_BENCH_WEIGHTING</span><span class="o">=</span>briggs<span class="w"> </span><span class="se">\</span>
 <span class="nv">IMAGER_BENCH_ROBUST</span><span class="o">=</span><span class="m">0</span>.5<span class="w"> </span><span class="se">\</span>
 <span class="nv">IMAGER_BENCH_MODE</span><span class="o">=</span>dirty<span class="w"> </span><span class="se">\</span>
-scripts/bench-imager-vs-casa.sh<span class="w"> </span>target/wdad-wave3-117/twhya_calibrated.ms
+scripts/bench-imager-vs-casa.sh<span class="w"> </span>target/issue-117/twhya_calibrated.ms
 </code></pre></div>
 
 <p>Observed timing on 2026-04-27:</p>

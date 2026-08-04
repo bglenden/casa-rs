@@ -775,7 +775,7 @@
 <p>Truth class: current descriptive
 Last reality check: 2026-04-27
 Verification: focused <code>casars-imager</code> tests; VLASS and TW Hydra timing commands below; macOS <code>sample</code> against local CASA C++ run</p>
-<p>Wave issue: #140
+<p>Work issue: #140
 Child issue: #95</p>
 <p>Issue #95 adds an explicit CASA-style <code>usepointing</code> control to the
 <code>casars-imager</code> CLI, task contract, launcher schema, and Python wrapper. The
@@ -805,7 +805,7 @@ documented gridder default explicitly requests POINTING-based directions.</p>
 <p>Rust command shape:</p>
 <div class="codehilite"><pre><span></span><code>target/release/casars-imager<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--ms<span class="w"> </span>/Users/brianglendenning/SoftwareProjects/casatestdata/measurementset/vla/ref_vlass_wtsp_creation.ms<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--imagename<span class="w"> </span>target/wdad-wave3-95/rust-default-run-1<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--imagename<span class="w"> </span>target/issue-95/rust-default-run-1<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--imsize<span class="w"> </span><span class="m">128</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--cell-arcsec<span class="w"> </span><span class="m">2</span>.5<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--field<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
@@ -860,7 +860,7 @@ general imaging-throughput claim.</p>
 <h2 id="full-wave-3-tutorial-benchmark">Full Wave 3 Tutorial Benchmark<a class="headerlink" href="#full-wave-3-tutorial-benchmark" title="Permanent link">&para;</a></h2>
 <p>The Wave 3 #117-sized workload uses the ALMA First Look / TW Hydra calibrated
 MS staged at:</p>
-<div class="codehilite"><pre><span></span><code>target/wdad-wave3-117/twhya_calibrated.ms
+<div class="codehilite"><pre><span></span><code>target/issue-117/twhya_calibrated.ms
 </code></pre></div>
 
 <p>Shared command shape:</p>
@@ -968,26 +968,26 @@ dataset, but the parity-closing issue was the separate PSF and dirty-residual
 gridding passes. The combined dirty path keeps the same prepared data contract
 and avoids widening the change into a larger MeasurementSet streaming rewrite.</p>
 <p>Captured artifacts:</p>
-<div class="codehilite"><pre><span></span><code>target/wdad-wave3-95/vlass-default-profile.txt
-target/wdad-wave3-95/vlass-usepointing-profile.txt
-target/wdad-wave3-95/vlass-rust-default-wall.txt
-target/wdad-wave3-95/vlass-rust-usepointing-wall.txt
-target/wdad-wave3-95/vlass-casa-tclean.txt
-target/wdad-wave3-95/vlass-default-progress.stderr
-target/wdad-wave3-95/vlass-usepointing-progress.stderr
-target/wdad-wave3-95/twhya-field5-default-profile-final.txt
-target/wdad-wave3-95/twhya-field5-rust-default-wall-final.txt
-target/wdad-wave3-95/twhya-casa-tclean-usepointing-false.txt
-target/wdad-wave3-95/twhya-final-progress.stderr
-target/wdad-wave3-95/twhya-current-profile.txt
-target/wdad-wave3-95/twhya-current-progress.stderr
-target/wdad-wave3-95/twhya-combined-dirty-profile.txt
-target/wdad-wave3-95/twhya-combined-dirty-progress.stderr
-target/wdad-wave3-95/twhya-storage-current-profile.txt
-target/wdad-wave3-95/twhya-storage-current.stderr
-target/wdad-wave3-95/casa-sample.stdout
-target/wdad-wave3-95/casa-sample.stderr
-target/wdad-wave3-95/casa-sample-process.txt
+<div class="codehilite"><pre><span></span><code>target/issue-95/vlass-default-profile.txt
+target/issue-95/vlass-usepointing-profile.txt
+target/issue-95/vlass-rust-default-wall.txt
+target/issue-95/vlass-rust-usepointing-wall.txt
+target/issue-95/vlass-casa-tclean.txt
+target/issue-95/vlass-default-progress.stderr
+target/issue-95/vlass-usepointing-progress.stderr
+target/issue-95/twhya-field5-default-profile-final.txt
+target/issue-95/twhya-field5-rust-default-wall-final.txt
+target/issue-95/twhya-casa-tclean-usepointing-false.txt
+target/issue-95/twhya-final-progress.stderr
+target/issue-95/twhya-current-profile.txt
+target/issue-95/twhya-current-progress.stderr
+target/issue-95/twhya-combined-dirty-profile.txt
+target/issue-95/twhya-combined-dirty-progress.stderr
+target/issue-95/twhya-storage-current-profile.txt
+target/issue-95/twhya-storage-current.stderr
+target/issue-95/casa-sample.stdout
+target/issue-95/casa-sample.stderr
+target/issue-95/casa-sample-process.txt
 </code></pre></div>
 
 

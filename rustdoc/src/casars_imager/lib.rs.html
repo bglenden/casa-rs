@@ -53260,7 +53260,7 @@
 <a href=#53260 id=53260 data-nosnippet>53260</a>    </span><span class="kw">fn </span>twhya_second_image_natural_dirty_prepared_samples_match_casacore_gridder() {
 <a href=#53261 id=53261 data-nosnippet>53261</a>        <span class="kw">let </span>ms_path = env::var_os(<span class="string">"CASA_RS_WAVE3_118_MS"</span>)
 <a href=#53262 id=53262 data-nosnippet>53262</a>            .map(PathBuf::from)
-<a href=#53263 id=53263 data-nosnippet>53263</a>            .unwrap_or_else(|| PathBuf::from(<span class="string">"target/wdad-wave3-118/casa/twhya_selfcal.ms"</span>));
+<a href=#53263 id=53263 data-nosnippet>53263</a>            .unwrap_or_else(|| PathBuf::from(<span class="string">"target/issue-118/casa/twhya_selfcal.ms"</span>));
 <a href=#53264 id=53264 data-nosnippet>53264</a>        <span class="kw">if </span>!ms_path.exists() {
 <a href=#53265 id=53265 data-nosnippet>53265</a>            <span class="kw">return</span>;
 <a href=#53266 id=53266 data-nosnippet>53266</a>        }
@@ -53268,7 +53268,7 @@
 <a href=#53268 id=53268 data-nosnippet>53268</a>            OsString::from(<span class="string">"--ms"</span>),
 <a href=#53269 id=53269 data-nosnippet>53269</a>            ms_path.clone().into_os_string(),
 <a href=#53270 id=53270 data-nosnippet>53270</a>            OsString::from(<span class="string">"--imagename"</span>),
-<a href=#53271 id=53271 data-nosnippet>53271</a>            OsString::from(<span class="string">"target/wdad-wave3-118/rust/twhya_gridder_diagnostic"</span>),
+<a href=#53271 id=53271 data-nosnippet>53271</a>            OsString::from(<span class="string">"target/issue-118/rust/twhya_gridder_diagnostic"</span>),
 <a href=#53272 id=53272 data-nosnippet>53272</a>            OsString::from(<span class="string">"--imsize"</span>),
 <a href=#53273 id=53273 data-nosnippet>53273</a>            OsString::from(<span class="string">"250"</span>),
 <a href=#53274 id=53274 data-nosnippet>53274</a>            OsString::from(<span class="string">"--cell-arcsec"</span>),
@@ -53456,7 +53456,7 @@
 <a href=#53456 id=53456 data-nosnippet>53456</a>        </span>);
 <a href=#53457 id=53457 data-nosnippet>53457</a>
 <a href=#53458 id=53458 data-nosnippet>53458</a>        <span class="kw">let </span><span class="kw-2">mut </span>casa_residual_path =
-<a href=#53459 id=53459 data-nosnippet>53459</a>            PathBuf::from(<span class="string">"target/wdad-wave3-118/casa/dirty_natural_second.residual"</span>);
+<a href=#53459 id=53459 data-nosnippet>53459</a>            PathBuf::from(<span class="string">"target/issue-118/casa/dirty_natural_second.residual"</span>);
 <a href=#53460 id=53460 data-nosnippet>53460</a>        <span class="kw">if </span>!casa_residual_path.exists() {
 <a href=#53461 id=53461 data-nosnippet>53461</a>            casa_residual_path = PathBuf::from(<span class="macro">env!</span>(<span class="string">"CARGO_MANIFEST_DIR"</span>))
 <a href=#53462 id=53462 data-nosnippet>53462</a>                .join(<span class="string">"../.."</span>)
@@ -53498,7 +53498,7 @@
 <a href=#53498 id=53498 data-nosnippet>53498</a>    </span><span class="kw">fn </span>twhya_second_image_briggs_weighting_trace() {
 <a href=#53499 id=53499 data-nosnippet>53499</a>        <span class="kw">let </span>ms_path = env::var_os(<span class="string">"CASA_RS_WAVE3_118_MS"</span>)
 <a href=#53500 id=53500 data-nosnippet>53500</a>            .map(PathBuf::from)
-<a href=#53501 id=53501 data-nosnippet>53501</a>            .unwrap_or_else(|| PathBuf::from(<span class="string">"target/wdad-wave3-118/casa/twhya_selfcal.ms"</span>));
+<a href=#53501 id=53501 data-nosnippet>53501</a>            .unwrap_or_else(|| PathBuf::from(<span class="string">"target/issue-118/casa/twhya_selfcal.ms"</span>));
 <a href=#53502 id=53502 data-nosnippet>53502</a>        <span class="kw">if </span>!ms_path.exists() {
 <a href=#53503 id=53503 data-nosnippet>53503</a>            <span class="kw">return</span>;
 <a href=#53504 id=53504 data-nosnippet>53504</a>        }
@@ -53506,7 +53506,7 @@
 <a href=#53506 id=53506 data-nosnippet>53506</a>            OsString::from(<span class="string">"--ms"</span>),
 <a href=#53507 id=53507 data-nosnippet>53507</a>            ms_path.clone().into_os_string(),
 <a href=#53508 id=53508 data-nosnippet>53508</a>            OsString::from(<span class="string">"--imagename"</span>),
-<a href=#53509 id=53509 data-nosnippet>53509</a>            OsString::from(<span class="string">"target/wdad-wave3-118/rust/twhya_briggs_weighting_diagnostic"</span>),
+<a href=#53509 id=53509 data-nosnippet>53509</a>            OsString::from(<span class="string">"target/issue-118/rust/twhya_briggs_weighting_diagnostic"</span>),
 <a href=#53510 id=53510 data-nosnippet>53510</a>            OsString::from(<span class="string">"--spw"</span>),
 <a href=#53511 id=53511 data-nosnippet>53511</a>            OsString::from(<span class="string">"0"</span>),
 <a href=#53512 id=53512 data-nosnippet>53512</a>            OsString::from(<span class="string">"--imsize"</span>),
@@ -53637,19 +53637,19 @@
 <a href=#53637 id=53637 data-nosnippet>53637</a>    </span><span class="kw">fn </span>twhya_second_image_briggs_residual_refresh_trace() {
 <a href=#53638 id=53638 data-nosnippet>53638</a>        <span class="kw">let </span>ms_path = env::var_os(<span class="string">"CASA_RS_WAVE3_118_MS"</span>)
 <a href=#53639 id=53639 data-nosnippet>53639</a>            .map(PathBuf::from)
-<a href=#53640 id=53640 data-nosnippet>53640</a>            .unwrap_or_else(|| PathBuf::from(<span class="string">"target/wdad-wave3-118/casa/twhya_selfcal.ms"</span>));
+<a href=#53640 id=53640 data-nosnippet>53640</a>            .unwrap_or_else(|| PathBuf::from(<span class="string">"target/issue-118/casa/twhya_selfcal.ms"</span>));
 <a href=#53641 id=53641 data-nosnippet>53641</a>        <span class="kw">if </span>!ms_path.exists() {
 <a href=#53642 id=53642 data-nosnippet>53642</a>            <span class="kw">return</span>;
 <a href=#53643 id=53643 data-nosnippet>53643</a>        }
 <a href=#53644 id=53644 data-nosnippet>53644</a>        <span class="kw">let </span>model_path = env::var_os(<span class="string">"CASA_RS_WAVE3_118_MODEL"</span>)
 <a href=#53645 id=53645 data-nosnippet>53645</a>            .map(PathBuf::from)
 <a href=#53646 id=53646 data-nosnippet>53646</a>            .unwrap_or_else(|| {
-<a href=#53647 id=53647 data-nosnippet>53647</a>                PathBuf::from(<span class="string">"target/wdad-wave3-118/casa/second_image_current_n79.model"</span>)
+<a href=#53647 id=53647 data-nosnippet>53647</a>                PathBuf::from(<span class="string">"target/issue-118/casa/second_image_current_n79.model"</span>)
 <a href=#53648 id=53648 data-nosnippet>53648</a>            });
 <a href=#53649 id=53649 data-nosnippet>53649</a>        <span class="kw">let </span>residual_path = env::var_os(<span class="string">"CASA_RS_WAVE3_118_RESIDUAL"</span>)
 <a href=#53650 id=53650 data-nosnippet>53650</a>            .map(PathBuf::from)
 <a href=#53651 id=53651 data-nosnippet>53651</a>            .unwrap_or_else(|| {
-<a href=#53652 id=53652 data-nosnippet>53652</a>                PathBuf::from(<span class="string">"target/wdad-wave3-118/casa/second_image_current_n79.residual"</span>)
+<a href=#53652 id=53652 data-nosnippet>53652</a>                PathBuf::from(<span class="string">"target/issue-118/casa/second_image_current_n79.residual"</span>)
 <a href=#53653 id=53653 data-nosnippet>53653</a>            });
 <a href=#53654 id=53654 data-nosnippet>53654</a>        <span class="kw">if </span>!model_path.exists() || !residual_path.exists() {
 <a href=#53655 id=53655 data-nosnippet>53655</a>            <span class="kw">return</span>;
@@ -53658,7 +53658,7 @@
 <a href=#53658 id=53658 data-nosnippet>53658</a>            OsString::from(<span class="string">"--ms"</span>),
 <a href=#53659 id=53659 data-nosnippet>53659</a>            ms_path.clone().into_os_string(),
 <a href=#53660 id=53660 data-nosnippet>53660</a>            OsString::from(<span class="string">"--imagename"</span>),
-<a href=#53661 id=53661 data-nosnippet>53661</a>            OsString::from(<span class="string">"target/wdad-wave3-118/rust/twhya_briggs_residual_diagnostic"</span>),
+<a href=#53661 id=53661 data-nosnippet>53661</a>            OsString::from(<span class="string">"target/issue-118/rust/twhya_briggs_residual_diagnostic"</span>),
 <a href=#53662 id=53662 data-nosnippet>53662</a>            OsString::from(<span class="string">"--spw"</span>),
 <a href=#53663 id=53663 data-nosnippet>53663</a>            OsString::from(<span class="string">"0"</span>),
 <a href=#53664 id=53664 data-nosnippet>53664</a>            OsString::from(<span class="string">"--imsize"</span>),

@@ -794,7 +794,7 @@ image products from the self-calibrated tutorial MeasurementSet.</p>
 <ul>
 <li>key: <code>alma/first-look/twhya/selfcal-ms</code></li>
 <li>source artifact: <code>twhya_selfcal.ms.tgz</code></li>
-<li>staged test path: <code>target/wdad-wave3-119/twhya_selfcal.ms</code></li>
+<li>staged test path: <code>target/issue-119/twhya_selfcal.ms</code></li>
 </ul>
 <h2 id="casa-mapping">CASA Mapping<a class="headerlink" href="#casa-mapping" title="Permanent link">&para;</a></h2>
 <table>
@@ -833,23 +833,23 @@ the older CASA guide text says the output may be relabeled to <code>0</code>. Th
 commands below therefore use <code>field=5</code> for both CASA and casa-rs.</p>
 <h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link">&para;</a></h2>
 <div class="codehilite"><pre><span></span><code>cargo<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>-q<span class="w"> </span>-p<span class="w"> </span>casa-calibration<span class="w"> </span>--bin<span class="w"> </span>calibrate
-rm<span class="w"> </span>-rf<span class="w"> </span>target/wdad-wave3-119/twhya_selfcal.ms.contsub
+rm<span class="w"> </span>-rf<span class="w"> </span>target/issue-119/twhya_selfcal.ms.contsub
 /usr/bin/time<span class="w"> </span>-p<span class="w"> </span>target/release/calibrate<span class="w"> </span>uvcontsub<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--ms<span class="w"> </span>target/wdad-wave3-119/twhya_selfcal.ms<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--out<span class="w"> </span>target/wdad-wave3-119/twhya_selfcal.ms.contsub<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--ms<span class="w"> </span>target/issue-119/twhya_selfcal.ms<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--out<span class="w"> </span>target/issue-119/twhya_selfcal.ms.contsub<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--field<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--fitspw<span class="w"> </span><span class="s1">&#39;0:0~239;281~383&#39;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--fitorder<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--datacolumn<span class="w"> </span>DATA<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--format<span class="w"> </span>json<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-o<span class="w"> </span>target/wdad-wave3-119/casars-uvcontsub-release.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-o<span class="w"> </span>target/issue-119/casars-uvcontsub-release.json<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--overwrite
 </code></pre></div>
 
 <div class="codehilite"><pre><span></span><code>cargo<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>-q<span class="w"> </span>-p<span class="w"> </span>casars-imager<span class="w"> </span>--bin<span class="w"> </span>casars-imager
 target/release/casars-imager<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--ms<span class="w"> </span>target/wdad-wave3-119/twhya_selfcal.ms.contsub<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--imagename<span class="w"> </span>target/wdad-wave3-119/casars-natural-twhya-n2hp<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--ms<span class="w"> </span>target/issue-119/twhya_selfcal.ms.contsub<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--imagename<span class="w"> </span>target/issue-119/casars-natural-twhya-n2hp<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--field<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--spw<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--specmode<span class="w"> </span>cube<span class="w"> </span><span class="se">\</span>
@@ -958,8 +958,8 @@ signed cube-weightor density-cell convention, and routes dirty cubes with
 per-plane density through the same cube weighting path as cleaned cubes.</p>
 <p>Fresh CASA 6.7.5-9 reference command:</p>
 <div class="codehilite"><pre><span></span><code><span class="n">tclean</span><span class="p">(</span>
-    <span class="n">vis</span><span class="o">=</span><span class="s2">&quot;target/wdad-wave3-119/twhya_selfcal.ms.contsub&quot;</span><span class="p">,</span>
-    <span class="n">imagename</span><span class="o">=</span><span class="s2">&quot;target/wdad-wave3-119/casa-briggsbwtaper-refresh-twhya-n2hp&quot;</span><span class="p">,</span>
+    <span class="n">vis</span><span class="o">=</span><span class="s2">&quot;target/issue-119/twhya_selfcal.ms.contsub&quot;</span><span class="p">,</span>
+    <span class="n">imagename</span><span class="o">=</span><span class="s2">&quot;target/issue-119/casa-briggsbwtaper-refresh-twhya-n2hp&quot;</span><span class="p">,</span>
     <span class="n">field</span><span class="o">=</span><span class="s2">&quot;5&quot;</span><span class="p">,</span>
     <span class="n">spw</span><span class="o">=</span><span class="s2">&quot;0&quot;</span><span class="p">,</span>
     <span class="n">specmode</span><span class="o">=</span><span class="s2">&quot;cube&quot;</span><span class="p">,</span>
@@ -985,8 +985,8 @@ per-plane density through the same cube weighting path as cleaned cubes.</p>
 
 <p>casa-rs command:</p>
 <div class="codehilite"><pre><span></span><code>target/release/casars-imager<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--ms<span class="w"> </span>target/wdad-wave3-119/twhya_selfcal.ms.contsub<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--imagename<span class="w"> </span>target/wdad-wave3-119/casars-briggsbwtaper-centered-twhya-n2hp-rerun2<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--ms<span class="w"> </span>target/issue-119/twhya_selfcal.ms.contsub<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--imagename<span class="w"> </span>target/issue-119/casars-briggsbwtaper-centered-twhya-n2hp-rerun2<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--field<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--spw<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--specmode<span class="w"> </span>cube<span class="w"> </span><span class="se">\</span>

@@ -775,7 +775,7 @@
 <p>Truth class: current descriptive
 Last reality check: 2026-04-30
 Verification: <code>cargo test -p casa-ms --test msexplore_cli cli_flag_selected_applies_to_selected_rows_without_plot_region</code>; <code>cargo check -p casa-calibration</code>; <code>scripts/run-vla-irc10216-issue121.sh</code></p>
-<p>Wave issue: #141
+<p>Work issue: #141
 Child issue: #121</p>
 <p>This note records the CASA-to-casa-rs mapping for the first VLA IRC+10216
 tutorial segment. It stays inside the existing <code>casa-ms</code> / <code>msexplore</code> and
@@ -838,7 +838,7 @@ family.</p>
 <code>1=IRC+10216</code>, <code>2=J1229+0203</code>, and <code>3=1331+305=3C286</code>, with two spectral
 windows.</p>
 <h2 id="executable-evidence">Executable Evidence<a class="headerlink" href="#executable-evidence" title="Permanent link">&para;</a></h2>
-<p>The wave script stages the registry tarball under <code>target/wdad-wave4-121</code>
+<p>The wave script stages the registry tarball under <code>target/issue-121</code>
 by default, renders visible CASA-vs-casa-rs plot artifacts, and applies the two
 tutorial flagging ranges. Pass an output directory as the first argument to keep
 a fresh evidence run separate from earlier mutated MS copies.</p>
@@ -847,16 +847,16 @@ a fresh evidence run separate from earlier mutated MS copies.</p>
 
 <p>Expected visible artifacts and machine-readable evidence:</p>
 <ul>
-<li><code>target/wdad-wave4-121/irc10216-target-scan6-amplitude-time-side-by-side.png</code></li>
-<li><code>target/wdad-wave4-121/irc10216-bandpass-scan56-amplitude-channel-side-by-side.png</code></li>
-<li><code>target/wdad-wave4-121/irc10216-priorcal-fparam-casa-vs-rust.png</code></li>
-<li><code>target/wdad-wave4-121/priorcal-comparison.json</code></li>
-<li><code>target/wdad-wave4-121/priorcal-casa-cli-timing.json</code></li>
-<li><code>target/wdad-wave4-121/priorcal-rust-cli-timing.json</code></li>
-<li><code>target/wdad-wave4-121/priorcal-casa-timing.json</code></li>
-<li><code>target/wdad-wave4-121/priorcal-rust-timing.json</code></li>
-<li><code>target/wdad-wave4-121/flag-j1229-selection-summary.json</code></li>
-<li><code>target/wdad-wave4-121/flag-3c286-selection-summary.json</code></li>
+<li><code>target/issue-121/irc10216-target-scan6-amplitude-time-side-by-side.png</code></li>
+<li><code>target/issue-121/irc10216-bandpass-scan56-amplitude-channel-side-by-side.png</code></li>
+<li><code>target/issue-121/irc10216-priorcal-fparam-casa-vs-rust.png</code></li>
+<li><code>target/issue-121/priorcal-comparison.json</code></li>
+<li><code>target/issue-121/priorcal-casa-cli-timing.json</code></li>
+<li><code>target/issue-121/priorcal-rust-cli-timing.json</code></li>
+<li><code>target/issue-121/priorcal-casa-timing.json</code></li>
+<li><code>target/issue-121/priorcal-rust-timing.json</code></li>
+<li><code>target/issue-121/flag-j1229-selection-summary.json</code></li>
+<li><code>target/issue-121/flag-3c286-selection-summary.json</code></li>
 </ul>
 <h2 id="implemented-prior-cal-surface">Implemented Prior-Cal Surface<a class="headerlink" href="#implemented-prior-cal-surface" title="Permanent link">&para;</a></h2>
 <p>The native <code>gencal</code> surface is deliberately narrow and tutorial-bound:</p>
