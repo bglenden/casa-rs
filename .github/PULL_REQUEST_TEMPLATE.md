@@ -1,35 +1,34 @@
 ## Summary
 
-Review status on the WDAD board assumes this PR exists and carries the current verification record.
+What changed and why?
 
-## WDAD linkage
+## Work linkage
 
-- Wave issue: #
-- Wave source:
-- Additional issue closures:
+Work issue: #
+Work source:
+- Issues closed by merge:
   Closes #
 
-## Review checks
+## Scope and acceptance
 
-- Acceptance checks covered:
-- Architecture concerns:
-- Doc or policy drift:
-- Known weaknesses:
-- Approved-scope deferrals:
-- User signoff for approved-scope deferrals:
-- Human decisions still needed:
+- Approved outcome and included issues covered:
+- Non-goals preserved:
+- Acceptance evidence:
+- Stop conditions encountered:
+- Scope changes or deferrals and explicit user signoff:
 
 ## Verification
 
 - `just quick`:
 - Native macOS UI gate (`just gui-test` or not applicable):
 - `just verify`:
-- Release/scheduled checks:
+- PR-only targeted checks:
+- Release/tag-only checks (normally not applicable):
 
-## Closeout
+## Independent final review
 
-- [ ] issue closeout updated
-- [ ] any approved-scope deferral records explicit user signoff
-- [ ] branch cleanup done or explicitly deferred
-- [ ] worktree cleanup done or explicitly deferred
-- [ ] follow-up issues created where needed
+- Reviewer:
+- Scope, diff, tests, and evidence reviewed:
+- Merge authorized:
+- Branch/worktree cleanup authorized:
+- Release authorized or not applicable:

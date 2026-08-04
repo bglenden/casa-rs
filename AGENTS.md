@@ -1,7 +1,7 @@
 # Agent Operating Contract
 
 Truth class: normative
-Last reality check: 2026-07-18
+Last reality check: 2026-08-04
 Verification: just docs-check
 
 ## Purpose
@@ -19,7 +19,8 @@ repo-wide behavior here. Use the closest authoritative source for details:
 - `docs/agent-reference.md`: situational workstation, CASA, data, release, and
   TUI evidence recipes
 - `apps/casars-mac/AGENTS.md`: native macOS workbench rules
-- `.agents/skills/`: repeatable WDAD procedures
+- `.agents/skills/`: repository-specific domain procedures; generic development
+  procedures come from user-level skills and are not vendored here
 - accepted ADRs: durable design decisions
 
 ## Truth Order
@@ -50,7 +51,7 @@ the smallest local patch, even when that means changing more in-repo code now.
 - Reduce and consolidate public API surface when it improves the design.
   Remove weak APIs, duplicate paths, compatibility shims, and awkward
   abstractions instead of preserving them solely because they exist. Update
-  call sites, tests, docs, and examples in the same wave.
+  call sites, tests, docs, and examples in the same change.
 - Private crates and substantial dependencies are allowed when they create a
   cleaner ownership boundary or materially improve the implementation. Assess
   license, build, distribution, and maintenance effects rather than rejecting
@@ -90,40 +91,68 @@ needs only a proportionate plan; do not add ceremony for its own sake.
   Redistribute responsibility along real domain or ownership boundaries.
 - After correctness, perform a bounded anti-slop pass over touched and directly
   exposed code. Simplify findings inside the approved scope and report larger
-  adjacent erosion instead of silently expanding the wave.
+  adjacent erosion instead of silently expanding the approved work.
 
-## WDAD
+## Work Record And State
 
-This repo uses Scaled WDAD v0.4.
+GitHub issues and pull requests are the authoritative work record. Generic
+shaping, research, TDD, diagnosis, design, review, and conflict-resolution
+procedures belong to the globally installed Matt Pocock skills; this repository
+stores only casa-rs-specific policy and domain guidance.
 
-- Use `wdad-backlog-to-ready`, `wdad-wave-implementation`, and
-  `wdad-pr-merge` for board transitions. Use the sidecar review skills when
-  risk justifies them.
-- Approved outcome, included issues, acceptance checks, and stop conditions
-  are the scope contract. Do not defer or descope them without explicit user
-  signoff recorded in the issue closeout and PR.
-- Before Review, code waves record a bounded `refactor` pass over touched or
-  directly exposed code. No-code waves record why it is not applicable.
-- Issue-driven wave PRs include `Wave issue: #N`. Gate or automation repairs
-  without a real issue include `Wave source: automation <name>`. Use
+- Before implementation, the issue or an equivalent user-approved record states
+  the outcome, included issues, non-goals, acceptance evidence, and stop
+  conditions.
+- Approved outcome, included issues, and acceptance checks must not be reduced,
+  deferred, or moved out of scope without explicit user signoff recorded in the
+  issue and pull request. Newly discovered adjacent work may use a follow-up.
+- Issue-driven pull requests include `Work issue: #N`. Automation or gate
+  repairs without a real issue include `Work source: automation <name>`. Use
   `Closes #N` only when merge should close that issue.
+- The GitHub Project `Status` field is the only board state: `Todo` means queued
+  but not active, `In Progress` means implementation or review is active, and
+  `Done` means the authoritative issue is closed with its evidence recorded.
+  Opening or reopening an issue moves it to `Todo`; a linked open pull request
+  moves it to `In Progress`; closing the issue moves it to `Done`. Draft/readiness
+  and review state live on the pull request, not in another board field. A merge
+  does not mean `Done` until the issue closes.
+
+## Escalation
+
+- A normal capability worker gets one bounded, evidence-producing retry.
+- Escalate after that bounded failure, when diagnosis remains ambiguous, before
+  a high-risk boundary change, or when required verification fails.
+- The handoff includes the reproduction, relevant logs and tests, observations,
+  and rejected hypotheses so the next worker starts from evidence rather than
+  repeating exploration.
+- In Codex, the dispatching coordinator requests the strongest available worker
+  model with high reasoning effort. Runtime availability may limit the actual
+  model; this policy does not invent an unavailable one.
+
+## Final Authority
+
+Implementation authority does not include final merge, branch/worktree cleanup,
+or release. Those actions require an independent final review of scope, diff,
+acceptance evidence, and current checks, plus explicit user authorization for
+the action. The final reviewer must be independent of the implementation pass.
 
 ## Stop And Ask Before
 
 - adding a new top-level app or product family
 - adding or expanding public APIs, persisted formats, provider-contract
   bundles, or other external contracts; scoped API removal and consolidation
-  inside an approved wave do not require separate permission
+  inside an approved work item do not require separate permission
 - changing dependency direction, runtime model, concurrency guarantees, or a
   major performance algorithm
 - moving approved outcome, included issues, or acceptance checks into a
   follow-up, deferral, non-goal, or out-of-scope bucket
-- expanding a pre-review refactor beyond touched or directly exposed code
+- expanding implementation beyond the approved outcome or directly exposed
+  supporting work
 - weakening or deleting tests without replacement
 - editing accepted ADRs except for explicitly requested supersession metadata
 - committing directly to `main`
-- merging, pruning branches, or deleting worktrees unless the user invoked
-  `wdad-pr-merge` or asked directly
+- merging, pruning branches, deleting worktrees, or publishing a release without
+  explicit user authorization and an independent final review
 
 ## Project Boundaries
 
@@ -140,20 +169,20 @@ This repo uses Scaled WDAD v0.4.
 ## Verification
 
 - `just quick` is the normal iteration gate; `just verify` is the default full
-  wave gate.
+  pre-review gate.
 - One current green run in a documented equivalent local or hosted environment
   is sufficient. Do not duplicate a green gate solely for assurance.
 - Reuse recent green evidence when no code, test, build, dependency, or runtime
   configuration change could affect it. Documentation-only or review-only
   changes require only the affected checks.
 - Release/tag-only smoke, install, coverage, interoperability, and performance
-  gates are not routine merge requirements unless requested or required by the
-  wave. `TESTING.md` owns the exact matrix.
+  gates are not routine pull-request requirements unless requested or required
+  by the approved work. `TESTING.md` owns the exact matrix.
 
 ## Done
 
-A wave is done only after relevant tests pass; one current `just verify` result
-or recorded exclusion exists; refactor evidence is recorded or not applicable;
-issue closeout records the actual result; docs and ADRs match reality; any
-approved-scope deferral records explicit user signoff; and medium/high-risk
-work receives the needed sidecar review.
+Work is complete only after relevant tests pass; one current `just verify`
+result or recorded exclusion exists; the issue and pull request record the
+actual acceptance evidence; docs and ADRs match reality; and every
+approved-scope deferral records explicit user signoff. Merge, cleanup, and
+release remain separate independently reviewed actions.

@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-07-18
+Last reality check: 2026-08-04
 Verification: just verify
 
 ## Test categories
@@ -18,7 +18,7 @@ Verification: just verify
 
 ## Required discipline
 
-- Every wave defines falsifiable acceptance checks and ships verification evidence.
+- Every approved work item defines falsifiable acceptance checks and ships verification evidence.
 - Bug fixes need regression tests.
 - Cross-crate and boundary changes need integration or contract coverage.
 - On-disk metadata or byte changes need the applicable 2x2 interop matrix: RR, RC, CR, CC.
@@ -58,7 +58,7 @@ Verification: just verify
 ## Default commands
 
 - Fast local gate: `just quick`
-- Full default wave gate: `just verify`
+- Full default pre-review gate: `just verify`
 - Smoke/release gate: `just smoke`
 - Blocking C++ interop release gate: `just release-cpp-interop`
 - Informational release performance suite: `just release-perf`
@@ -293,20 +293,20 @@ The executable GUI layer follows these rules:
   artifact or a verified false positive. They may not blanket-exclude an audit
   category or newly introduced actionable controls.
 
-## Wave expectations
+## Notebook program expectations
 
-For each wave:
+For each notebook program phase:
 
-- scientific-notebook waves first pass the ADR-0007 prototype gate: the live
+- scientific-notebook changes first pass the ADR-0007 prototype gate: the live
   fixture-backed app covers primary, failure, cancellation, retry, and restart
   states; meaningful controls have accessibility IDs; debug JSON and visual
   evidence are recorded; and explicit interaction approval precedes real
   adapter integration
 - user-visible native macOS GUI changes identify critical XCUITest workflows
   during shaping and record a green local or hosted `just gui-test` result
-  before Review; for
+  before independent review; for
   Wave 1, #368 must be implemented and green before Phase B begins and lands
-  with the completed wave
+  with the completed work item
 - after prototype approval, real adapters must match the accepted interaction
   and state contract; deterministic fixture adapters remain available for
   regression tests and may not be treated as evidence that persistence,
@@ -450,28 +450,27 @@ For each wave:
   acceptance is not part of CI or the deterministic `just gui-test` contract.
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
-- medium/high-risk work gets architecture review and test-adversary review
-- code waves record a bounded `refactor` pass on the involved code before
-  review, or a not-applicable rationale for no-code waves
-- reality-sync happens when docs, interfaces, or boundaries changed
+- medium/high-risk work gets independent architecture and test-quality review
+- docs, interfaces, and boundary descriptions are reconciled with implementation
+  before review
 - approved outcome, included issues, and acceptance checks are not deferred or
   descoped without explicit user signoff recorded in the issue or PR
 - release work also runs the smoke gate, the blocking C++ interop gate, and the suite-install gate; CI-like coverage remains a version-tag CI gate and is run locally only for `scripts/release.sh --full` or explicit coverage reproduction
 - ordinary non-release merges stay on `just verify` plus targeted tests unless the user explicitly asks to exercise release/tag-only heavy gates
 - release performance evidence is informational by default and becomes blocking only when `CASA_RS_ENFORCE_PERF=1`
-- slow CASA parity checks run when the wave touches those concerns
+- slow CASA parity checks run when the approved work touches those concerns
 
 ## Done gate
 
-A wave is not done until:
+Work is not complete until:
 
 - `just verify` passes or any intentional exclusion is called out explicitly
 - tests cover the claimed behavior
-- native macOS GUI waves pass `just gui-test` locally or in hosted CI for
+- native macOS GUI changes pass `just gui-test` locally or in hosted CI for
   changed critical interactions
   once the #368 test target is present
-- code-wave refactor evidence is recorded, or a no-code not-applicable
-  rationale exists
 - reviewers checked for shallow or tautological tests on medium/high-risk work
 - docs or ADRs were updated if reality changed
 - any approved-scope deferral records explicit user signoff
+- final merge, cleanup, and release actions receive an independent review and
+  explicit authorization

@@ -4,7 +4,7 @@ Truth class: current descriptive
 Last reality check: 2026-05-05
 Verification: `CASA_RS_TUTORIAL_DATA_ROOT=/Volumes/GLENDENNING/casa-rs/tutorial-data scripts/run-wave6-issue163-m100-combine.sh`; `CASA_RS_TUTORIAL_DATA_ROOT=/Volumes/GLENDENNING/casa-rs/tutorial-data scripts/run-wave6-issue163-m100-raw-preflight.sh`; `CASA_RS_TUTORIAL_DATA_ROOT=/Volumes/GLENDENNING/casa-rs/tutorial-data scripts/run-wave6-issue163-m100-split-parity.sh /Volumes/GLENDENNING/casa-rs/tutorial-data/tutorial-parity/alma/m100/band3-combine/work/split-parity-20260504T132927Z`; `cargo test -p casa-ms --test transform`; `cargo test -p casa-images --lib -- image_analysis_schema_and_ui_surfaces_advertise_task_contracts`; `cargo test -p casa-imaging alma_aca_airy_voltage_uses_wide_casa_support`; `cargo test -p casa-imaging hetarray_screen_size_follows_casa_support_scale`; `cargo test -p casa-imaging mosaic`; `cargo build --release -p casars-imager --bin casars-imager`; `MPLCONFIGDIR=target/wave6-issue163-combine-70chan-floatround-compare-20260505T153447Z/matplotlib /Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python scripts/compare-wave6-issue163-raw-dirty.py target/wave6-issue163-combine-70chan-floatround-compare-20260505T153447Z --prefix M100_combine_CO_cube_dirty_70chan --panel-channels 0,1,10,26,35,61`
 
-Wave issue: #143
+Work issue: #143
 Child issue: #163
 
 This slice covers the image-domain products from the M100 Band 3 data

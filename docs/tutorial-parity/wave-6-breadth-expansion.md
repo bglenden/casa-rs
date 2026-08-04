@@ -4,7 +4,7 @@ Truth class: current descriptive
 Last reality check: 2026-05-01
 Verification: just docs-check
 
-Wave issue: #143
+Work issue: #143
 Child issues: #127, #128, #129
 
 Wave 6 turns the current tutorial inventory into concrete ready implementation

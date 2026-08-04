@@ -4,7 +4,7 @@ Truth class: current evidence
 Last reality check: 2026-05-05
 Verification: `bash -n scripts/run-wave7-ticket-closeout.sh`; `WAVE7_TICKET_OUTDIR=target/wave7-ticket-closeout/current WAVE7_RUN_ISSUE197=1 WAVE7_RUN_ISSUE198=0 WAVE7_RUN_ISSUE199=0 WAVE7_TICKET_REPEATS=1 scripts/run-wave7-ticket-closeout.sh`; `WAVE7_TICKET_OUTDIR=target/wave7-ticket-closeout/current WAVE7_RUN_TARGETED_BENCHES=1 WAVE7_TICKET_REPEATS=1 scripts/run-wave7-ticket-closeout.sh`; `just quick`; `just verify`
 
-Wave issue: #144
+Work issue: #144
 Wave child: #130
 Ticket closeouts: #197, #198, #199
 Follow-up implementation tickets: #204, #205

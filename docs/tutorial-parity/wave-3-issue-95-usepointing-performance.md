@@ -4,7 +4,7 @@ Truth class: current descriptive
 Last reality check: 2026-04-27
 Verification: focused `casars-imager` tests; VLASS and TW Hydra timing commands below; macOS `sample` against local CASA C++ run
 
-Wave issue: #140
+Work issue: #140
 Child issue: #95
 
 Issue #95 adds an explicit CASA-style `usepointing` control to the
@@ -44,7 +44,7 @@ Rust command shape:
 ```bash
 target/release/casars-imager \
   --ms /Users/brianglendenning/SoftwareProjects/casatestdata/measurementset/vla/ref_vlass_wtsp_creation.ms \
-  --imagename target/wdad-wave3-95/rust-default-run-1 \
+  --imagename target/issue-95/rust-default-run-1 \
   --imsize 128 \
   --cell-arcsec 2.5 \
   --field 0 \
@@ -80,7 +80,7 @@ The Wave 3 #117-sized workload uses the ALMA First Look / TW Hydra calibrated
 MS staged at:
 
 ```text
-target/wdad-wave3-117/twhya_calibrated.ms
+target/issue-117/twhya_calibrated.ms
 ```
 
 Shared command shape:
@@ -171,24 +171,24 @@ and avoids widening the change into a larger MeasurementSet streaming rewrite.
 Captured artifacts:
 
 ```text
-target/wdad-wave3-95/vlass-default-profile.txt
-target/wdad-wave3-95/vlass-usepointing-profile.txt
-target/wdad-wave3-95/vlass-rust-default-wall.txt
-target/wdad-wave3-95/vlass-rust-usepointing-wall.txt
-target/wdad-wave3-95/vlass-casa-tclean.txt
-target/wdad-wave3-95/vlass-default-progress.stderr
-target/wdad-wave3-95/vlass-usepointing-progress.stderr
-target/wdad-wave3-95/twhya-field5-default-profile-final.txt
-target/wdad-wave3-95/twhya-field5-rust-default-wall-final.txt
-target/wdad-wave3-95/twhya-casa-tclean-usepointing-false.txt
-target/wdad-wave3-95/twhya-final-progress.stderr
-target/wdad-wave3-95/twhya-current-profile.txt
-target/wdad-wave3-95/twhya-current-progress.stderr
-target/wdad-wave3-95/twhya-combined-dirty-profile.txt
-target/wdad-wave3-95/twhya-combined-dirty-progress.stderr
-target/wdad-wave3-95/twhya-storage-current-profile.txt
-target/wdad-wave3-95/twhya-storage-current.stderr
-target/wdad-wave3-95/casa-sample.stdout
-target/wdad-wave3-95/casa-sample.stderr
-target/wdad-wave3-95/casa-sample-process.txt
+target/issue-95/vlass-default-profile.txt
+target/issue-95/vlass-usepointing-profile.txt
+target/issue-95/vlass-rust-default-wall.txt
+target/issue-95/vlass-rust-usepointing-wall.txt
+target/issue-95/vlass-casa-tclean.txt
+target/issue-95/vlass-default-progress.stderr
+target/issue-95/vlass-usepointing-progress.stderr
+target/issue-95/twhya-field5-default-profile-final.txt
+target/issue-95/twhya-field5-rust-default-wall-final.txt
+target/issue-95/twhya-casa-tclean-usepointing-false.txt
+target/issue-95/twhya-final-progress.stderr
+target/issue-95/twhya-current-profile.txt
+target/issue-95/twhya-current-progress.stderr
+target/issue-95/twhya-combined-dirty-profile.txt
+target/issue-95/twhya-combined-dirty-progress.stderr
+target/issue-95/twhya-storage-current-profile.txt
+target/issue-95/twhya-storage-current.stderr
+target/issue-95/casa-sample.stdout
+target/issue-95/casa-sample.stderr
+target/issue-95/casa-sample-process.txt
 ```

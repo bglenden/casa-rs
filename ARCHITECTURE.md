@@ -463,10 +463,9 @@ compatibility block facade or normal-path host full-grid upload is retained.
 - On-disk interoperability with casacore-compatible formats is more important than mirroring C++ APIs directly.
 - Heavy CASA parity suites must stay opt-in rather than in the default `cargo test --workspace` path.
 - Some cross-language and parity tests must skip cleanly when `pkg-config casacore` or measures data are unavailable.
-- WDAD uses the scaled v0.4 layer in this repo, including the bounded
-  refactor-pass gate before code waves move to review; some architecture checks
-  are still lightweight/document-oriented rather than full mechanical boundary
-  enforcement.
+- GitHub issues and pull requests are the authoritative work record; some
+  architecture checks are still lightweight/document-oriented rather than full
+  mechanical boundary enforcement.
 
 ## Known current gaps / debt
 

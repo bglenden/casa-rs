@@ -4,7 +4,7 @@ Truth class: historical evidence snapshot
 Last reality check: 2026-05-25
 Verification: `cargo check -p casa-imaging -p casars-imager`; `cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager task_contract --lib`; `just docs-check`; `git diff --check`
 
-Wave issue: #263
+Work issue: #263
 
 This document is the consolidated closeout record for ImPerformance Wave 2
 standard-MFS acceleration. It replaces the long acceleration ledger and the

@@ -4,7 +4,7 @@ Truth class: current descriptive
 Last reality check: 2026-04-30
 Verification: `cargo test -p casa-ms --test msexplore_cli cli_flag_selected_applies_to_selected_rows_without_plot_region`; `cargo check -p casa-calibration`; `scripts/run-vla-irc10216-issue121.sh`
 
-Wave issue: #141
+Work issue: #141
 Child issue: #121
 
 This note records the CASA-to-casa-rs mapping for the first VLA IRC+10216
@@ -45,7 +45,7 @@ windows.
 
 ## Executable Evidence
 
-The wave script stages the registry tarball under `target/wdad-wave4-121`
+The wave script stages the registry tarball under `target/issue-121`
 by default, renders visible CASA-vs-casa-rs plot artifacts, and applies the two
 tutorial flagging ranges. Pass an output directory as the first argument to keep
 a fresh evidence run separate from earlier mutated MS copies.
@@ -56,16 +56,16 @@ scripts/run-vla-irc10216-issue121.sh
 
 Expected visible artifacts and machine-readable evidence:
 
-- `target/wdad-wave4-121/irc10216-target-scan6-amplitude-time-side-by-side.png`
-- `target/wdad-wave4-121/irc10216-bandpass-scan56-amplitude-channel-side-by-side.png`
-- `target/wdad-wave4-121/irc10216-priorcal-fparam-casa-vs-rust.png`
-- `target/wdad-wave4-121/priorcal-comparison.json`
-- `target/wdad-wave4-121/priorcal-casa-cli-timing.json`
-- `target/wdad-wave4-121/priorcal-rust-cli-timing.json`
-- `target/wdad-wave4-121/priorcal-casa-timing.json`
-- `target/wdad-wave4-121/priorcal-rust-timing.json`
-- `target/wdad-wave4-121/flag-j1229-selection-summary.json`
-- `target/wdad-wave4-121/flag-3c286-selection-summary.json`
+- `target/issue-121/irc10216-target-scan6-amplitude-time-side-by-side.png`
+- `target/issue-121/irc10216-bandpass-scan56-amplitude-channel-side-by-side.png`
+- `target/issue-121/irc10216-priorcal-fparam-casa-vs-rust.png`
+- `target/issue-121/priorcal-comparison.json`
+- `target/issue-121/priorcal-casa-cli-timing.json`
+- `target/issue-121/priorcal-rust-cli-timing.json`
+- `target/issue-121/priorcal-casa-timing.json`
+- `target/issue-121/priorcal-rust-timing.json`
+- `target/issue-121/flag-j1229-selection-summary.json`
+- `target/issue-121/flag-3c286-selection-summary.json`
 
 ## Implemented Prior-Cal Surface
 

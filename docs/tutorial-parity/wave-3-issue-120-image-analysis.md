@@ -72,10 +72,10 @@ cards.
 ```sh
 target/debug/exportfits \
   /Users/brianglendenning/SoftwareProjects/casa-tutorial-data/tutorial-parity/alma/first-look/twhya/twhya_cont.image \
-  target/wdad-wave3-120/rust_twhya_cont.fits \
+  target/issue-120/rust_twhya_cont.fits \
   --overwrite
 
-file target/wdad-wave3-120/rust_twhya_cont.fits
+file target/issue-120/rust_twhya_cont.fits
 # FITS image data, 32-bit, floating point, single precision
 ```
 
@@ -120,7 +120,7 @@ target/debug/imexplore imstat \
 
 target/debug/immoments \
   /Users/brianglendenning/SoftwareProjects/casa-tutorial-data/tutorial-parity/alma/first-look/twhya/twhya_n2hp.image \
-  --outfile target/wdad-wave3-120/rust_n2hp.mom0 \
+  --outfile target/issue-120/rust_n2hp.mom0 \
   --moments 0 \
   --chans 4~12 \
   --includepix 0.03,100 \
@@ -128,7 +128,7 @@ target/debug/immoments \
 
 target/debug/immoments \
   /Users/brianglendenning/SoftwareProjects/casa-tutorial-data/tutorial-parity/alma/first-look/twhya/twhya_n2hp.image \
-  --outfile target/wdad-wave3-120/rust_n2hp.mom1 \
+  --outfile target/issue-120/rust_n2hp.mom1 \
   --moments 1 \
   --chans 4~12 \
   --includepix 0.06,100 \
@@ -136,12 +136,12 @@ target/debug/immoments \
 
 target/debug/exportfits \
   /Users/brianglendenning/SoftwareProjects/casa-tutorial-data/tutorial-parity/alma/first-look/twhya/twhya_cont.image \
-  target/wdad-wave3-120/rust_twhya_cont.fits \
+  target/issue-120/rust_twhya_cont.fits \
   --overwrite
 
 target/debug/importfits \
-  target/wdad-wave3-120/rust_twhya_cont.fits \
-  target/wdad-wave3-120/rust_twhya_cont_imported.image \
+  target/issue-120/rust_twhya_cont.fits \
+  target/issue-120/rust_twhya_cont_imported.image \
   --overwrite
 ```
 
