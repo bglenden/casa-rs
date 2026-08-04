@@ -18113,7 +18113,7 @@ fn awproject_compact_pack_workers() -> usize {
         .filter(|&value| value > 0)
         .unwrap_or_else(|| {
             thread::available_parallelism()
-                .map(|workers| workers.get().min(2))
+                .map(|workers| workers.get().min(3))
                 .unwrap_or(1)
         })
 }
