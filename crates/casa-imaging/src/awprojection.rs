@@ -508,7 +508,6 @@ impl ExperimentalPackedCfStore {
         path: PathBuf,
         entries: &BTreeMap<StableKey, AwConvolutionFunctionEntryMetadata>,
         identity: &AwConvolutionFunctionCacheIdentity,
-        trust_payload: bool,
     ) -> Result<Self, ImagingError> {
         if !cfg!(target_endian = "little") {
             return Err(cache_error(
@@ -591,7 +590,7 @@ impl ExperimentalPackedCfStore {
         let map = Arc::new(map);
         let payload_value_count = (actual_bytes - EXPERIMENTAL_PACKED_CF_HEADER_BYTES) as usize
             / std::mem::size_of::<Complex32>();
-        let validate_values = !trust_payload;
+        let validate_values = env::var_os("CASA_RS_AWPROJECT_TRUST_PACKED_CF_EXPERIMENT").is_none();
         if validate_values {
             let payload = experimental_packed_complex_slice(
                 map.as_ref(),
@@ -1011,30 +1010,11 @@ impl AwConvolutionFunctionCache {
         let inventory = inventory_from_entries(&entries);
         let identity = identity_from_entries(root, &entries, &inventory);
         #[cfg(unix)]
-        let experimental_packed = if let Some(path) =
-            env::var_os("CASA_RS_AWPROJECT_PACKED_CF_EXPERIMENT").map(PathBuf::from)
-        {
-            Some(Arc::new(ExperimentalPackedCfStore::open(
-                path,
-                &entries,
-                &identity,
-                env::var_os("CASA_RS_AWPROJECT_TRUST_PACKED_CF_EXPERIMENT").is_some(),
-            )?))
-        } else {
-            root.ancestors()
-                .nth(3)
-                .map(|issue_root| {
-                    issue_root.join("cf-cache-packed").join(format!(
-                        "{:016x}-x-contiguous-v2.awcf",
-                        identity.metadata_fingerprint
-                    ))
-                })
-                .filter(|path| path.is_file())
-                .map(|path| {
-                    ExperimentalPackedCfStore::open(path, &entries, &identity, true).map(Arc::new)
-                })
-                .transpose()?
-        };
+        let experimental_packed = env::var_os("CASA_RS_AWPROJECT_PACKED_CF_EXPERIMENT")
+            .map(PathBuf::from)
+            .map(|path| ExperimentalPackedCfStore::open(path, &entries, &identity))
+            .transpose()?
+            .map(Arc::new);
         #[cfg(unix)]
         let experimental_direct_sample_select = !matches!(
             env::var("CASA_RS_AWPROJECT_DIRECT_CF_SELECT_EXPERIMENT"),
@@ -2353,13 +2333,9 @@ mod tests {
         packed.sync_all().unwrap();
         drop(packed);
 
-        let store = ExperimentalPackedCfStore::open(
-            packed_path,
-            cache.entries.as_ref(),
-            cache.identity(),
-            false,
-        )
-        .unwrap();
+        let store =
+            ExperimentalPackedCfStore::open(packed_path, cache.entries.as_ref(), cache.identity())
+                .unwrap();
         for (&stable, metadata) in cache.entries.iter() {
             let direct = cache.load(stable.into()).unwrap();
             let (imaging, weight) = store.load(stable, metadata).unwrap();
