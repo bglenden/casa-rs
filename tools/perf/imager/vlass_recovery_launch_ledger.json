@@ -373,9 +373,91 @@
         "trc": [638, 2188],
         "selected_pixels": 4096,
         "corrected_manifest_sha256": "05994b8ed3566a8a333e8761aa4cc05b8d0534daccabc57f29100f4cd6f8534c",
-        "retry_status": "preflight_passed_not_launched"
+        "retry_status": "completed_and_frozen",
+        "retry_pair_id": "REDUCED-ALL63-CLEAN-4096-4SPW-001"
       },
       "scope_note": "This failed run produced no CASA/casa-rs pair and therefore no runtime ratio. It is retained as negative harness evidence and does not consume correctness promotion."
+    },
+    {
+      "pair_id": "REDUCED-ALL63-CLEAN-4096-4SPW-001",
+      "row_id": "VLASS-ALL63-CLEAN-4096-4SPW",
+      "disposition": "correctness_failed_performance_below_target",
+      "selection": {
+        "field_selection": "1107~1127,1512~1532,1542~1562",
+        "field_count": 63,
+        "spw_selection": "2,7,12,17",
+        "spw_count": 4,
+        "selected_rows": 163800,
+        "imsize": [4096, 4096],
+        "niter": 2000,
+        "product_count": 19,
+        "mask_sha256": "8490acb911cbbba78f7a20ba4a1d379e227c3a42dfc7eefcc9b7fd5f4139572f"
+      },
+      "casa": {
+        "run_id": "20260803T223749Z-vlass-fragment-all-fields-clean-4096-four-spw-casa-9b96c6ad",
+        "manifest_path": "tools/perf/imager/workloads/vlass-fragment-all-fields-clean-4096-four-spw-casa.json",
+        "manifest_sha256": "05994b8ed3566a8a333e8761aa4cc05b8d0534daccabc57f29100f4cd6f8534c",
+        "receipt_path": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-d-all63-clean-4096-four-spw-retry1/receipts/20260803T223749Z-vlass-fragment-all-fields-clean-4096-four-spw-casa-9b96c6ad.json",
+        "receipt_sha256": "9ff187a87357424cc1509e2f79d6e5c929472d23780f536d589c7289bb076beb",
+        "tclean_wall_seconds": 3470.1970449999208,
+        "protocol_total_seconds": 3483.3232570419786,
+        "peak_rss_bytes": 7793131520,
+        "major_cycles": 11,
+        "minor_iterations": 193,
+        "stop_reason": "nsigma_threshold_reached"
+      },
+      "casa_rs": {
+        "source_commit": "388161fd29cf4474100458dc2fa7c4f4768378a3",
+        "binary_path": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-candidates/388161fd29cf4474100458dc2fa7c4f4768378a3/casars-imager",
+        "binary_sha256": "2f67dd816714c4c674742f45313df9aa65d7f6d592cfc73edb7cfb9ca3e2bbbe",
+        "run_path": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-candidates/388161fd29cf4474100458dc2fa7c4f4768378a3/runs/20260804T102357Z-vlass-all63-clean-4096-four-spw-windowed-hybrid-v1",
+        "run_log_sha256": "b2c27ad9ee6ea65aaaec0df106a951dd1e6f25a208c8bebc33cd9d8aa9a9a412",
+        "provenance_sha256": "0c61a675c6b304bed48f36d47747cfbe8519d4bf5d90ed656a8e68cb363d5c2b",
+        "wall_seconds": 2674.88,
+        "frontend_seconds": 2674.291,
+        "core_seconds": 2669.927,
+        "residual_degrid_grid_seconds": 2430.742,
+        "major_cycle_refresh_seconds": 2440.092,
+        "minor_cycle_seconds": 8.661,
+        "peak_rss_bytes": 12230852608,
+        "peak_memory_footprint_bytes": 14089727880,
+        "swaps": 0,
+        "major_cycles": 11,
+        "minor_iterations": 187,
+        "stop_reason": "nsigma_threshold_reached"
+      },
+      "performance": {
+        "speedup_casa_over_casa_rs": 1.297328121261485,
+        "required_speedup": 10.0,
+        "status": "below_target"
+      },
+      "scientific_equivalence": {
+        "contract_path": "tools/perf/imager/contracts/vlass-scientific-equivalence-v2.json",
+        "contract_sha256": "daf1692d23a627d513285cd4c5fc5c81c8e5dd361e6bf2815c74c8897fbc0537",
+        "comparison_input_path": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-candidates/388161fd29cf4474100458dc2fa7c4f4768378a3/comparisons/20260804T-vlass-all63-clean-4096-four-spw-windowed-hybrid-v1/comparison.comparison-input.json",
+        "comparison_input_sha256": "9a8771cca77c19307a48c33f6127737cc8e910da98a50cd903939ed3f2ca0d77",
+        "raw_output_path": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-candidates/388161fd29cf4474100458dc2fa7c4f4768378a3/comparisons/20260804T-vlass-all63-clean-4096-four-spw-windowed-hybrid-v1/comparison.comparison.json",
+        "raw_output_sha256": "da18a998ae09699bb8e0ffd1ca98e8542c10fd9c88626ef35f12b472bf22119f",
+        "log_sha256": "f154ec4b8a4f7f08314097e81613111a8b3121211da5e24fc94b5bbd6264706e",
+        "status": "failed",
+        "product_count": 19,
+        "inventory": "matched",
+        "image_tt0_nrmse": 0.009829251173747224,
+        "image_tt0_coherent_block_rms_over_right_rms": 0.0008983316199237095,
+        "image_tt0_integrated_flux_relative": 0.0012204711162131273,
+        "image_tt0_peak_relative": 0.00003773262790355018,
+        "image_tt0_centroid_beams": 0.0016158774555894507,
+        "image_tt1_nrmse": 0.011331429289893504,
+        "model_tt0_nrmse": 0.0015957814729723621,
+        "model_tt1_nrmse": 0.02606742458511186,
+        "residual_tt0_nrmse": 0.010812455213497683,
+        "residual_tt1_nrmse": 0.010900338173212322,
+        "beam_kernel_nrmse": 1.6982385191835777e-07,
+        "beam_area_relative": 1.611733808637439e-07,
+        "alpha_status": "topology_mismatch",
+        "alpha_error_status": "topology_mismatch",
+        "scope_note": "The bounded exact-source-order windowed production path completed without swap or divergence and preserved the exact 19-product inventory, but it did not improve the incumbent clean science boundary. Image and residual NRMSE remain near one percent, above the approved 1e-3 ceiling. The ladder stops here; no full-16-SPW or full-geometry casa-rs clean row is authorized until this exact semantic boundary is fixed."
+      }
     }
   ],
   "pending_reference_amendment": {

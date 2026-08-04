@@ -335,8 +335,55 @@ pixels. Its portable tree SHA-256 is
 The corrected manifest SHA-256 is
 `05994b8ed3566a8a333e8761aa4cc05b8d0534daccabc57f29100f4cd6f8534c`,
 and its dry-run preflight passed. The ledger retains the failed attempt as
-negative evidence; the corrected retry had not been launched at this
-checkpoint.
+negative evidence.
+
+### Reduced all-fields clean pair
+
+The corrected CASA retry and one matching release casa-rs candidate are
+complete and frozen. Both use all 63 fields and POINTING, SPWs `2,7,12,17`,
+`4096`-square geometry, the corrected mask, AWProject with 32 W planes,
+A/WB/conjugate beams, Briggs weighting, MT-MFS `nterms=2`, scales
+`[0,5,12]`, `niter=2000`, and the exact 19-product contract.
+
+CASA run
+`20260803T223749Z-vlass-fragment-all-fields-clean-4096-four-spw-casa-9b96c6ad`
+took `3470.197045 s` in `tclean`, selected 193 cumulative components across
+11 major cycles, and stopped below its n-sigma threshold. Its receipt SHA-256
+is
+`9ff187a87357424cc1509e2f79d6e5c929472d23780f536d589c7289bb076beb`.
+This is the one frozen reduced clean oracle; it is not rerun.
+
+The matching bounded exact-source-order windowed candidate is commit
+`388161fd29cf4474100458dc2fa7c4f4768378a3`. Its frozen release executable
+SHA-256 is
+`2f67dd816714c4c674742f45313df9aa65d7f6d592cfc73edb7cfb9ca3e2bbbe`.
+It took `2674.88 s`, producing an exact matched CASA/casa-rs ratio of
+`1.29733x`. This is below the required `10x`. Peak RSS was
+`12,230,852,608` bytes, peak physical footprint was `14,089,727,880` bytes,
+and the process recorded zero swaps. The run completed 187 minor iterations
+across 11 major cycles and stopped on the n-sigma criterion without
+divergence. Residual degridding and gridding dominated at `2430.742 s`;
+minor cycles took only `8.661 s`.
+
+The candidate matches the exact inventory and passes the mask, PB, PSF,
+sum-weight, weight, coordinate, restoring-beam kernel, and restoring-beam area
+checks, but it fails the v2 clean science floor. `.image.tt0` and
+`.image.tt1` NRMSE are `0.00982925` and `0.0113314`; `.residual.tt0` and
+`.residual.tt1` NRMSE are `0.0108125` and `0.0109003`; and `.model.tt1`
+NRMSE is `0.0260674`. These exceed the `1e-3` ceiling. Alpha and alpha-error
+also retain topology mismatches. The comparison input, raw output, and log
+SHA-256 values are
+`9a8771cca77c19307a48c33f6127737cc8e910da98a50cd903939ed3f2ca0d77`,
+`da18a998ae09699bb8e0ffd1ca98e8542c10fd9c88626ef35f12b472bf22119f`,
+and
+`f154ec4b8a4f7f08314097e81613111a8b3121211da5e24fc94b5bbd6264706e`.
+
+This is the current finite-recovery stop boundary. No full-16-SPW or
+full-geometry casa-rs clean row is launched until the reduced clean
+model/residual semantic defect is fixed and this row passes. The windowed
+architecture's bounded-memory result is retained as positive evidence; its
+unchanged scientific failure and `1.29733x` ratio are retained as negative
+evidence.
 
 ## Candidate budget and promotion
 

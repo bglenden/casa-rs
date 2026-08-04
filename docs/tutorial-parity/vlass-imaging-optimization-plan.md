@@ -7697,6 +7697,69 @@ The corrected workload manifest SHA-256 is
 its dry-run preflight passed. No replacement workload had been launched at
 this checkpoint.
 
+### 2026-08-04 reduced all-fields clean semantic boundary
+
+The corrected CASA reference completed once and is frozen. Run
+`20260803T223749Z-vlass-fragment-all-fields-clean-4096-four-spw-casa-9b96c6ad`
+used all 63 fields and POINTING, SPWs `2,7,12,17`, `4096`-square geometry,
+AWProject with 32 W planes, A/WB/conjugate beams, Briggs weighting, MT-MFS
+`nterms=2`, scales `[0,5,12]`, the corrected mask, `niter=2000`, and the
+exact 19-product contract. CASA selected 193 cumulative components across 11
+major cycles and stopped below its n-sigma threshold. `tclean` took
+`3470.197045 s`; the immutable receipt SHA-256 is
+`9ff187a87357424cc1509e2f79d6e5c929472d23780f536d589c7289bb076beb`.
+No unchanged CASA call was rerun.
+
+The bounded exact-source-order windowed casa-rs production candidate is commit
+`388161fd29cf4474100458dc2fa7c4f4768378a3`. Its frozen release executable
+SHA-256 is
+`2f67dd816714c4c674742f45313df9aa65d7f6d592cfc73edb7cfb9ca3e2bbbe`.
+Run
+`20260804T102357Z-vlass-all63-clean-4096-four-spw-windowed-hybrid-v1`
+completed normally in `2674.88 s`, so the exact matched diagnostic ratio is
+only `3470.197045 / 2674.88 = 1.29733x`. This misses the independent `10x`
+requirement and is not promoted performance evidence.
+
+The memory result is positive but insufficient for promotion. Peak RSS was
+`12,230,852,608` bytes, peak physical footprint was `14,089,727,880` bytes,
+and the process recorded zero swaps. All transient replay windows passed their
+exact candidate-to-tile ingress hash check. The candidate emitted all 19
+products, performed 187 minor iterations across 11 major cycles, stopped on
+the n-sigma criterion without divergence, and retained run-log and provenance
+SHA-256 values
+`b2c27ad9ee6ea65aaaec0df106a951dd1e6f25a208c8bebc33cd9d8aa9a9a412`
+and
+`0c61a675c6b304bed48f36d47747cfbe8519d4bf5d90ed656a8e68cb363d5c2b`.
+Residual degridding and gridding took `2430.742 s`, while all minor cycles
+took only `8.661 s`; exact residual refresh is the performance boundary for
+this architecture.
+
+Correctness still fails the approved optimization-safe v2 contract. The
+operator and dirty-product evidence remains strong: the mask is exact, PB
+NRMSE is `1.11e-7`, PSF NRMSE is between `4.20e-5` and `5.29e-5`, weights
+are at or below `2.10e-6`, and the restoring-beam kernel and area differences
+are about `1.70e-7` and `1.61e-7`. The deconvolved products do not pass:
+
+- `.image.tt0` NRMSE is `0.00982925`, coherent block RMS is
+  `0.000898332`, and source integrated-flux error is `0.00122047`;
+- `.image.tt1` NRMSE is `0.0113314`;
+- `.model.tt0` and `.model.tt1` NRMSE are `0.00159578` and `0.0260674`;
+- `.residual.tt0` and `.residual.tt1` NRMSE are `0.0108125` and
+  `0.0109003`; and
+- alpha and alpha-error still have topology mismatches.
+
+The comparison input, raw output, and log SHA-256 values are respectively
+`9a8771cca77c19307a48c33f6127737cc8e910da98a50cd903939ed3f2ca0d77`,
+`da18a998ae09699bb8e0ffd1ca98e8542c10fd9c88626ef35f12b472bf22119f`,
+and
+`f154ec4b8a4f7f08314097e81613111a8b3121211da5e24fc94b5bbd6264706e`.
+The windowed architecture therefore solves the prior global-residency
+problem, but it neither fixes the clean numerical boundary nor provides
+acceptable performance. Per the recovery contract, execution stops at this
+first scientific failure. No full-16-SPW or `12,150`-square casa-rs clean row
+is permitted until the clean model/residual semantic boundary is fixed and
+this same reduced row passes.
+
 ## Iteration Rules
 
 - Correctness regression stops performance iteration immediately.

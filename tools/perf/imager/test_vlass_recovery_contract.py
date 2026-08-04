@@ -324,7 +324,7 @@ class RecoveryContractTests(unittest.TestCase):
     ) -> None:
         entries = self.ledger["reduced_ladder_entries"]
         assert isinstance(entries, list)
-        self.assertEqual(2, len(entries))
+        self.assertEqual(3, len(entries))
         pair = entries[0]
         self.assertEqual(
             "REDUCED-ALL63-DIRTY-4096-4SPW-001",
@@ -354,7 +354,11 @@ class RecoveryContractTests(unittest.TestCase):
             ["Direction", "Stokes", "Spectral"],
             correction["coordinate_types"],
         )
-        self.assertEqual("preflight_passed_not_launched", correction["retry_status"])
+        self.assertEqual("completed_and_frozen", correction["retry_status"])
+        self.assertEqual(
+            "REDUCED-ALL63-CLEAN-4096-4SPW-001",
+            correction["retry_pair_id"],
+        )
 
         selection = pair["selection"]
         assert isinstance(selection, dict)
@@ -406,6 +410,50 @@ class RecoveryContractTests(unittest.TestCase):
         )
         self.assertEqual(64, len(scientific["receipt_sha256"]))
         self.assertEqual(64, len(scientific["raw_output_sha256"]))
+
+        clean = entries[2]
+        self.assertEqual(
+            "REDUCED-ALL63-CLEAN-4096-4SPW-001",
+            clean["pair_id"],
+        )
+        self.assertEqual(
+            "correctness_failed_performance_below_target",
+            clean["disposition"],
+        )
+        clean_casa = clean["casa"]
+        clean_rust = clean["casa_rs"]
+        clean_performance = clean["performance"]
+        clean_scientific = clean["scientific_equivalence"]
+        for value in (
+            clean_casa,
+            clean_rust,
+            clean_performance,
+            clean_scientific,
+        ):
+            assert isinstance(value, dict)
+        self.assertEqual(19, clean["selection"]["product_count"])
+        self.assertEqual(193, clean_casa["minor_iterations"])
+        self.assertEqual(187, clean_rust["minor_iterations"])
+        self.assertEqual(0, clean_rust["swaps"])
+        self.assertAlmostEqual(
+            clean_casa["tclean_wall_seconds"] / clean_rust["wall_seconds"],
+            clean_performance["speedup_casa_over_casa_rs"],
+        )
+        self.assertEqual("below_target", clean_performance["status"])
+        self.assertEqual("failed", clean_scientific["status"])
+        self.assertEqual("matched", clean_scientific["inventory"])
+        self.assertGreater(clean_scientific["image_tt0_nrmse"], 1.0e-3)
+        self.assertGreater(clean_scientific["residual_tt0_nrmse"], 1.0e-3)
+        self.assertEqual(
+            clean_scientific["contract_sha256"],
+            sha256(ROOT / clean_scientific["contract_path"]),
+        )
+        for field in (
+            "comparison_input_sha256",
+            "raw_output_sha256",
+            "log_sha256",
+        ):
+            self.assertEqual(64, len(clean_scientific[field]))
 
     def test_salvage_catalog_selects_at_most_primary_and_reserve(self) -> None:
         self.assertEqual(self.contract["id"], self.catalog["contract_id"])
