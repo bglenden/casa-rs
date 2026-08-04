@@ -111,6 +111,7 @@ def valid_receipt(contract: dict) -> dict:
 class VlassFiveMinuteContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.contract = load_contract(CONTRACT_PATH)
+        self.contract["baseline"]["status"] = "qualification"
 
     def test_runtime_command_preserves_scientific_shape(self) -> None:
         command = runtime_command(

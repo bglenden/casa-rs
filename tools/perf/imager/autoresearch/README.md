@@ -28,7 +28,8 @@ selection accounting, and output identities.
 
 ## Qualification sequence
 
-The contract intentionally begins with `baseline.status=qualification`.
+The contract was introduced with `baseline.status=qualification`. The guarded
+qualification completed on 2026-08-04 and is now frozen in the contract.
 
 1. Generate the one-time read-only MS selection receipt:
 
@@ -48,6 +49,16 @@ The contract intentionally begins with `baseline.status=qualification`.
 4. Inspect fidelity, duration, cache pressure, memory, and products. Freeze the
    accepted receipt and output prefix in `baseline`, then measure enough
    unchanged release runs to establish variance.
+
+The frozen qualification receipt is
+`20260804T184725Z-dd0356542bc0/receipt.json`, SHA-256
+`965dc24a6e6fe5be7adb5b2b4c11fb3e66e4c755c5db054d206c75b5e4fe80fa`.
+It used release executable SHA-256
+`96b867fff8f7232eea43cab4ee539a5bf1fcb770ef1332805beb759c6d4f191d`;
+the residual-refresh metric was 86.729 seconds and the whole process was
+182.997 seconds. The application cache reported a 9.09% hit rate and 99.59%
+eviction/load ratio, all 2,204,617 samples were accepted, and the read-only
+guard passed.
 
 After the baseline is frozen, every measurement is sampled against it with a
 normalized RMS ceiling of `1e-3`, topology parity, and metadata parity. This

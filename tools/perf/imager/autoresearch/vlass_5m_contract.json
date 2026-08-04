@@ -1,9 +1,25 @@
 {
   "baseline": {
-    "output_prefix": null,
-    "receipt": null,
-    "receipt_sha256": null,
-    "status": "qualification"
+    "output_prefix": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/autoresearch/vlass-5m-v1/runs/20260804T184725Z-dd0356542bc0/rust",
+    "qualification": {
+      "accepted_samples": 2204617,
+      "application_cache_eviction_load_ratio": 0.9958883796171475,
+      "application_cache_hit_rate": 0.0909313725490196,
+      "application_cache_loads": 14836,
+      "compact_program_builds": 106,
+      "guard_passed": true,
+      "logical_program_bytes": 41251118136,
+      "process_physical_footprint_bytes_peak": 12356774544,
+      "process_wall_seconds": 182.99689900001977,
+      "rejected_samples": 0,
+      "release_binary_sha256": "96b867fff8f7232eea43cab4ee539a5bf1fcb770ef1332805beb759c6d4f191d",
+      "residual_refresh_seconds": 86.72896899999999,
+      "swapin_bytes_delta": 65536,
+      "swapout_bytes_delta": 0
+    },
+    "receipt": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/autoresearch/vlass-5m-v1/runs/20260804T184725Z-dd0356542bc0/receipt.json",
+    "receipt_sha256": "965dc24a6e6fe5be7adb5b2b4c11fb3e66e4c755c5db054d206c75b5e4fe80fa",
+    "status": "frozen"
   },
   "build": {
     "binary_relative_path": "release/casars-imager",
