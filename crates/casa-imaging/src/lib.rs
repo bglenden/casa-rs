@@ -19831,38 +19831,52 @@ fn build_awproject_metal_resident_program(
     phase_tables: Option<&AwProjectPhaseTables>,
     metadata: AwProjectMetalResidentMetadata,
 ) -> Result<AwProjectMetalResidentProgram, ImagingError> {
-    let prediction_batch = pack_awproject_metal_prediction_probe_batch(
-        request,
-        parallel_hands,
-        sample_frequencies_hz,
-        source_samples,
-        planned_samples,
-        tap_requests,
-        bundles,
-        phase_tables,
-    )?;
-    let tile_batch = pack_awproject_compact_metal_batch(
-        planned_samples,
-        bundles,
-        phase_tables,
-        request.reffreq_hz,
-        request.nterms,
-        0,
-    )?;
+    let (prediction_batch, tile_batch) = thread::scope(|scope| {
+        let prediction = scope.spawn(|| {
+            pack_awproject_metal_prediction_probe_batch(
+                request,
+                parallel_hands,
+                sample_frequencies_hz,
+                source_samples,
+                planned_samples,
+                tap_requests,
+                bundles,
+                phase_tables,
+            )
+        });
+        let tile = pack_awproject_compact_metal_batch(
+            planned_samples,
+            bundles,
+            phase_tables,
+            request.reffreq_hz,
+            request.nterms,
+            0,
+        );
+        let prediction = prediction.join().map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject Metal prediction-pack worker panicked".to_string(),
+            )
+        })?;
+        Ok::<_, ImagingError>((prediction?, tile?))
+    })?;
     let [grid_width, grid_height] = request.geometry.image_shape;
-    let tile_plan = plan_awproject_metal_tiles(
-        &tile_batch.samples,
-        grid_width,
-        grid_height,
-        awproject_metal_tile_probe_side()?,
-    )?;
-    let residual_scale_plan = plan_awproject_metal_residual_scales(
-        &tile_batch.samples,
-        &tile_batch.kernels,
-        &tile_batch.phases,
-        grid_width,
-        grid_height,
-    )?;
+    let tile_side = awproject_metal_tile_probe_side()?;
+    let (tile_plan, residual_scale_plan) = thread::scope(|scope| {
+        let tile_plan = scope.spawn(|| {
+            plan_awproject_metal_tiles(&tile_batch.samples, grid_width, grid_height, tile_side)
+        });
+        let residual_scale_plan = plan_awproject_metal_residual_scales(
+            &tile_batch.samples,
+            &tile_batch.kernels,
+            &tile_batch.phases,
+            grid_width,
+            grid_height,
+        );
+        let tile_plan = tile_plan.join().map_err(|_| {
+            ImagingError::InvalidRequest("AWProject Metal tile-plan worker panicked".to_string())
+        })?;
+        Ok::<_, ImagingError>((tile_plan?, residual_scale_plan?))
+    })?;
     Ok(AwProjectMetalResidentProgram {
         prediction_batch,
         tile_batch,
