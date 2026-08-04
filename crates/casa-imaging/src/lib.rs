@@ -19041,6 +19041,170 @@ fn awproject_compact_tap_rejection(
     }
 }
 
+enum AwProjectCompactResidualPreparation {
+    Rejected(AwProjectCompactSourceRejection),
+    InvalidNormalization,
+    Ready {
+        sample: AwProjectCompactPlannedSample,
+        normalization_sumwt: f64,
+    },
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_awproject_compact_residual_samples_parallel(
+    request: &MtmfsRequest,
+    batch: &VisibilityBatch,
+    parallel_hands: &AwParallelHandVisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    source_samples: &[AwProjectCompactSourceSample],
+    tap_requests: &[AwProjectCompactTapRequest],
+    bundles: &[AwProjectCompactMaterializedTap],
+    phase_tables: Option<&AwProjectPhaseTables>,
+    model_grids: Option<&[Array2<Complex32>]>,
+    accumulation: &mut MosaicMtmfsStreamGridAccumulation,
+    taylor_weights: &mut Vec<f32>,
+) -> Result<Vec<AwProjectCompactPlannedSample>, ImagingError> {
+    let prepared = source_samples
+        .par_iter()
+        .map(|sample| {
+            for (role, plan) in [
+                sample.first_imaging_plan,
+                sample.second_imaging_plan,
+                sample.first_prediction_plan,
+                sample.second_prediction_plan,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if let Some(reason) = awproject_compact_tap_rejection(bundles, plan) {
+                    let rejection = match role {
+                        0 => AwProjectCompactSourceRejection::FirstImaging(reason),
+                        1 => AwProjectCompactSourceRejection::SecondImaging(reason),
+                        2 => AwProjectCompactSourceRejection::FirstPrediction(reason),
+                        3 => AwProjectCompactSourceRejection::SecondPrediction(reason),
+                        _ => unreachable!("compact residual preparation has four plans"),
+                    };
+                    return Ok(AwProjectCompactResidualPreparation::Rejected(rejection));
+                }
+            }
+
+            let sample_index = sample.sample_index;
+            let frequency_hz = sample_frequencies_hz[sample_index];
+            let weight = batch.weight[sample_index];
+            let direct_first_visibility = parallel_hands.first_visibility[sample_index];
+            let direct_second_visibility = parallel_hands.second_visibility[sample_index];
+            let first_imaging_mueller = tap_requests[sample.first_imaging_plan.tap_bundle]
+                .cell_key
+                .mueller_element;
+            let second_imaging_mueller = tap_requests[sample.second_imaging_plan.tap_bundle]
+                .cell_key
+                .mueller_element;
+            let first_imaging =
+                awproject_ready_compact_tap(bundles, sample.first_imaging_plan.tap_bundle);
+            let second_imaging =
+                awproject_ready_compact_tap(bundles, sample.second_imaging_plan.tap_bundle);
+            let residual_norm_sum =
+                first_imaging.grid_normalization.norm() + second_imaging.grid_normalization.norm();
+            if !(residual_norm_sum.is_finite() && residual_norm_sum > 0.0) {
+                return Ok(AwProjectCompactResidualPreparation::InvalidNormalization);
+            }
+
+            let mut local_taylor_weights = Vec::with_capacity(2 * request.nterms - 1);
+            fill_mtmfs_taylor_weights(
+                &mut local_taylor_weights,
+                frequency_hz,
+                request.reffreq_hz,
+                2 * request.nterms - 1,
+            );
+            let first_prediction_tap =
+                awproject_ready_compact_tap(bundles, sample.first_prediction_plan.tap_bundle);
+            let second_prediction_tap =
+                awproject_ready_compact_tap(bundles, sample.second_prediction_plan.tap_bundle);
+            let mut first_prediction = Complex32::new(0.0, 0.0);
+            let mut second_prediction = Complex32::new(0.0, 0.0);
+            if let Some(model_grids) = model_grids {
+                for (model_order, model_grid) in model_grids.iter().enumerate().take(request.nterms)
+                {
+                    let taylor_weight = local_taylor_weights[model_order];
+                    first_prediction += awproject_compact_degrid_sample(
+                        model_grid,
+                        sample.first_prediction_plan,
+                        first_prediction_tap,
+                        sample.group_index,
+                        phase_tables,
+                    ) * taylor_weight;
+                    second_prediction += awproject_compact_degrid_sample(
+                        model_grid,
+                        sample.second_prediction_plan,
+                        second_prediction_tap,
+                        sample.group_index,
+                        phase_tables,
+                    ) * taylor_weight;
+                }
+            }
+            let first_residual = aw_stokes_i_residual_for_mueller(
+                first_imaging_mueller,
+                direct_first_visibility,
+                direct_second_visibility,
+                first_prediction,
+                second_prediction,
+            )?;
+            let second_residual = aw_stokes_i_residual_for_mueller(
+                second_imaging_mueller,
+                direct_first_visibility,
+                direct_second_visibility,
+                first_prediction,
+                second_prediction,
+            )?;
+            Ok(AwProjectCompactResidualPreparation::Ready {
+                sample: AwProjectCompactPlannedSample {
+                    group_index: sample.group_index,
+                    first_imaging_plan: sample.first_imaging_plan,
+                    second_imaging_plan: sample.second_imaging_plan,
+                    first_psf_plan: sample.first_psf_plan,
+                    second_psf_plan: sample.second_psf_plan,
+                    first_weight_plan: sample.first_weight_plan,
+                    second_weight_plan: sample.second_weight_plan,
+                    frequency_hz,
+                    weight,
+                    first_residual,
+                    second_residual,
+                },
+                normalization_sumwt: f64::from(weight) * residual_norm_sum,
+            })
+        })
+        .collect::<Result<Vec<_>, ImagingError>>()?;
+
+    let mut planned_samples = Vec::with_capacity(source_samples.len());
+    for outcome in prepared {
+        match outcome {
+            AwProjectCompactResidualPreparation::Rejected(rejection) => {
+                observe_awproject_compact_source_rejection(rejection, accumulation);
+            }
+            AwProjectCompactResidualPreparation::InvalidNormalization => {
+                accumulation.skipped_samples += 1;
+                accumulation.aw_sample_census.rejected_invalid_input += 1;
+            }
+            AwProjectCompactResidualPreparation::Ready {
+                sample,
+                normalization_sumwt,
+            } => {
+                fill_mtmfs_taylor_weights(
+                    taylor_weights,
+                    sample.frequency_hz,
+                    request.reffreq_hz,
+                    2 * request.nterms - 1,
+                );
+                planned_samples.push(sample);
+                accumulation.normalization_sumwt += normalization_sumwt;
+                accumulation.gridded_samples += 1;
+                accumulation.aw_sample_census.accepted_samples += 1;
+            }
+        }
+    }
+    Ok(planned_samples)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn prepare_awproject_compact_planned_samples(
     request: &MtmfsRequest,
@@ -19057,6 +19221,21 @@ fn prepare_awproject_compact_planned_samples(
 ) -> Result<Vec<AwProjectCompactPlannedSample>, ImagingError> {
     let residual_only = accumulation.storage.is_residual_only()
         && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_LIVE_CFS_ONLY").is_some();
+    if residual_only && awproject_prediction_trace_limit() == 0 {
+        return prepare_awproject_compact_residual_samples_parallel(
+            request,
+            batch,
+            parallel_hands,
+            sample_frequencies_hz,
+            source_samples,
+            tap_requests,
+            bundles,
+            phase_tables,
+            model_grids,
+            accumulation,
+            taylor_weights,
+        );
+    }
     let mut planned_samples = Vec::with_capacity(source_samples.len());
     for sample in source_samples {
         let mut rejected = None;
@@ -19831,38 +20010,52 @@ fn build_awproject_metal_resident_program(
     phase_tables: Option<&AwProjectPhaseTables>,
     metadata: AwProjectMetalResidentMetadata,
 ) -> Result<AwProjectMetalResidentProgram, ImagingError> {
-    let prediction_batch = pack_awproject_metal_prediction_probe_batch(
-        request,
-        parallel_hands,
-        sample_frequencies_hz,
-        source_samples,
-        planned_samples,
-        tap_requests,
-        bundles,
-        phase_tables,
-    )?;
-    let tile_batch = pack_awproject_compact_metal_batch(
-        planned_samples,
-        bundles,
-        phase_tables,
-        request.reffreq_hz,
-        request.nterms,
-        0,
-    )?;
+    let (prediction_batch, tile_batch) = thread::scope(|scope| {
+        let prediction = scope.spawn(|| {
+            pack_awproject_metal_prediction_probe_batch(
+                request,
+                parallel_hands,
+                sample_frequencies_hz,
+                source_samples,
+                planned_samples,
+                tap_requests,
+                bundles,
+                phase_tables,
+            )
+        });
+        let tile = pack_awproject_compact_metal_batch(
+            planned_samples,
+            bundles,
+            phase_tables,
+            request.reffreq_hz,
+            request.nterms,
+            0,
+        );
+        let prediction = prediction.join().map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject Metal prediction-pack worker panicked".to_string(),
+            )
+        })?;
+        Ok::<_, ImagingError>((prediction?, tile?))
+    })?;
     let [grid_width, grid_height] = request.geometry.image_shape;
-    let tile_plan = plan_awproject_metal_tiles(
-        &tile_batch.samples,
-        grid_width,
-        grid_height,
-        awproject_metal_tile_probe_side()?,
-    )?;
-    let residual_scale_plan = plan_awproject_metal_residual_scales(
-        &tile_batch.samples,
-        &tile_batch.kernels,
-        &tile_batch.phases,
-        grid_width,
-        grid_height,
-    )?;
+    let tile_side = awproject_metal_tile_probe_side()?;
+    let (tile_plan, residual_scale_plan) = thread::scope(|scope| {
+        let tile_plan = scope.spawn(|| {
+            plan_awproject_metal_tiles(&tile_batch.samples, grid_width, grid_height, tile_side)
+        });
+        let residual_scale_plan = plan_awproject_metal_residual_scales(
+            &tile_batch.samples,
+            &tile_batch.kernels,
+            &tile_batch.phases,
+            grid_width,
+            grid_height,
+        );
+        let tile_plan = tile_plan.join().map_err(|_| {
+            ImagingError::InvalidRequest("AWProject Metal tile-plan worker panicked".to_string())
+        })?;
+        Ok::<_, ImagingError>((tile_plan?, residual_scale_plan?))
+    })?;
     Ok(AwProjectMetalResidentProgram {
         prediction_batch,
         tile_batch,
