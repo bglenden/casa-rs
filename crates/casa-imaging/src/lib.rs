@@ -18111,7 +18111,10 @@ fn awproject_compact_pack_workers() -> usize {
 }
 
 fn awproject_compact_prefetch_cf_cell() -> bool {
-    env::var_os("CASA_RS_AWPROJECT_PREFETCH_CF_CELL").is_some()
+    !matches!(
+        env::var("CASA_RS_AWPROJECT_PREFETCH_CF_CELL"),
+        Ok(value) if value == "0" || value.eq_ignore_ascii_case("false")
+    )
 }
 
 fn awproject_compact_tapless_phase() -> bool {
