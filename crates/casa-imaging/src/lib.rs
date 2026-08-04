@@ -18111,11 +18111,7 @@ fn awproject_compact_pack_workers() -> usize {
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|&value| value > 0)
-        .unwrap_or_else(|| {
-            thread::available_parallelism()
-                .map(|workers| workers.get().min(2))
-                .unwrap_or(1)
-        })
+        .unwrap_or(1)
 }
 
 fn awproject_compact_prefetch_cf_cell() -> bool {
