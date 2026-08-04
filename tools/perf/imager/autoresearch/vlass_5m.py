@@ -44,6 +44,7 @@ from perf_harness.tree_identity import tree_identity  # noqa: E402
 DEFAULT_CONTRACT = SCRIPT_DIR / "vlass_5m_contract.json"
 CASA_SITE_CONFIG = IMAGER_TOOLS_ROOT / "experiments" / "casasiteconfig_vlass.py"
 SELECTION_PROBE = IMAGER_TOOLS_ROOT / "ms_selection_accounting.py"
+CONTROLLER_RESULTS_DIR = "autoresearch-results"
 
 
 def run_git(*args: str, check: bool = True) -> subprocess.CompletedProcess[bytes]:
@@ -55,6 +56,13 @@ def run_git(*args: str, check: bool = True) -> subprocess.CompletedProcess[bytes
     )
 
 
+def is_controller_artifact(path: str) -> bool:
+    normalized = path.replace("\\", "/").removeprefix("./")
+    return normalized == CONTROLLER_RESULTS_DIR or normalized.startswith(
+        f"{CONTROLLER_RESULTS_DIR}/"
+    )
+
+
 def source_state() -> dict[str, Any]:
     head = run_git("rev-parse", "HEAD").stdout.decode().strip()
     diff = run_git("diff", "--binary", "HEAD", "--").stdout
@@ -63,7 +71,9 @@ def source_state() -> dict[str, Any]:
         .stdout.decode()
         .split("\0")
     )
-    untracked = sorted(path for path in untracked if path)
+    untracked = sorted(
+        path for path in untracked if path and not is_controller_artifact(path)
+    )
     untracked_identity = []
     for relative in untracked:
         path = REPO_ROOT / relative
@@ -80,6 +90,7 @@ def source_state() -> dict[str, Any]:
         "head": head,
         "tracked_diff_sha256": hashlib.sha256(diff).hexdigest(),
         "untracked": untracked_identity,
+        "excluded_controller_artifacts": CONTROLLER_RESULTS_DIR,
     }
     value["state_sha256"] = canonical_sha256(value)
     value["status"] = run_git(

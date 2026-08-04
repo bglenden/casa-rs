@@ -268,6 +268,18 @@ class VlassFiveMinuteContractTests(unittest.TestCase):
                 retained = vlass_5m.autoresearch_retained_metric(self.contract)
         self.assertEqual(70.25, retained)
 
+    def test_source_state_excludes_only_controller_owned_artifacts(self) -> None:
+        self.assertTrue(vlass_5m.is_controller_artifact("autoresearch-results"))
+        self.assertTrue(
+            vlass_5m.is_controller_artifact(
+                "autoresearch-results/logs/0000-baseline-guard.json"
+            )
+        )
+        self.assertFalse(
+            vlass_5m.is_controller_artifact("crates/casa-imaging/src/lib.rs")
+        )
+        self.assertFalse(vlass_5m.is_controller_artifact("autoresearch-result"))
+
     def test_proxy_comparison_uses_full_topology_and_normalized_rms(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
