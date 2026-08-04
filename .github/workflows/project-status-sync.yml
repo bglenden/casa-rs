@@ -168,7 +168,24 @@ jobs:
                 return;
               }
               if (pr.state !== "open" && !pr.merged_at) {
-                console.log(`PR #${pr.number} closed without merge; leaving Status unchanged`);
+                const openPulls = await github.paginate(github.rest.pulls.list, {
+                  owner,
+                  repo,
+                  state: "open",
+                  per_page: 100,
+                });
+                const anotherOpenPull = openPulls.some((candidate) => {
+                  if (candidate.number === pr.number) return false;
+                  return extractWorkLinkage(candidate.body || "").issueNumber === linkage.issueNumber;
+                });
+                await setIssueStatus(
+                  linkage.issueNumber,
+                  anotherOpenPull ? status.inProgress : status.todo,
+                  anotherOpenPull ? "In Progress" : "Todo",
+                  anotherOpenPull
+                    ? `${reason}: PR #${pr.number} closed without merge; another linked PR remains open`
+                    : `${reason}: PR #${pr.number} closed without merge`
+                );
                 return;
               }
               await setIssueStatus(

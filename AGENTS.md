@@ -113,9 +113,10 @@ stores only casa-rs-specific policy and domain guidance.
   but not active, `In Progress` means implementation or review is active, and
   `Done` means the authoritative issue is closed with its evidence recorded.
   Opening or reopening an issue moves it to `Todo`; a linked open pull request
-  moves it to `In Progress`; closing the issue moves it to `Done`. Draft/readiness
-  and review state live on the pull request, not in another board field. A merge
-  does not mean `Done` until the issue closes.
+  moves it to `In Progress`; closing that pull request without merge returns it
+  to `Todo` unless another linked pull request remains open; closing the issue
+  moves it to `Done`. Draft/readiness and review state live on the pull request,
+  not in another board field. A merge does not mean `Done` until the issue closes.
 
 ## Escalation
 
@@ -175,6 +176,10 @@ the action. The final reviewer must be independent of the implementation pass.
 - Reuse recent green evidence when no code, test, build, dependency, or runtime
   configuration change could affect it. Documentation-only or review-only
   changes require only the affected checks.
+- Before long gates, confirm required data and disk headroom. Unavailable data
+  and disk pressure, including `No space left on device`, are environmental
+  evidence rather than source regressions unless the failure reproduces with
+  those prerequisites available.
 - Release/tag-only smoke, install, coverage, interoperability, and performance
   gates are not routine pull-request requirements unless requested or required
   by the approved work. `TESTING.md` owns the exact matrix.
