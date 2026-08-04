@@ -423,9 +423,9 @@ Python, and network approvals remain owned by Codex App Server. **Add to
 notebook** is itself the explicit CASA action and appends once without another
 confirmation; other typed CASA mutations retain their canonical confirmation.
 
-## Prototype-first wave gate
+## Prototype-first delivery gate
 
-Every wave begins with a real, launchable `casars-mac` view backed by
+Each interaction area begins with a real, launchable `casars-mac` view backed by
 deterministic fixture adapters. All meaningful controls are live. The prototype
 must cover the primary flow plus failure, cancellation, retry, and restart
 states, publish accessibility identifiers and debug JSON, and produce visual
@@ -657,8 +657,8 @@ implementation target. Timings for startup, indexing, retrieval, recording, and
 execution are recorded without imposing a hard performance budget in these
 waves.
 
-Each code wave runs `just quick`, `just verify`, the bounded `refactor` pass,
-and risk-appropriate architecture, test-adversary, and reality-sync reviews.
+Code-bearing work uses the gates in `TESTING.md` plus risk-appropriate
+independent architecture, test-quality, and documentation-reality reviews.
 Accepted outcomes or checks cannot move to follow-ups without explicit user
 signoff.
 

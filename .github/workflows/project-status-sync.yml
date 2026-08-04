@@ -1,0 +1,251 @@
+name: Project Status Sync
+
+on:
+  issues:
+    types: [opened, reopened, closed]
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited, ready_for_review, converted_to_draft, closed]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+  repository-projects: write
+
+jobs:
+  project_status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reconcile the single project Status field
+        uses: actions/github-script@v7
+        env:
+          PROJECT_ID: PVT_kwHOAP83_84BVGAw
+          STATUS_FIELD_ID: PVTSSF_lAHOAP83_84BVGAwzhQkIE8
+          STATUS_TODO_ID: f75ad846
+          STATUS_IN_PROGRESS_ID: 47fc9ee4
+          STATUS_DONE_ID: 98236657
+        with:
+          script: |
+            const projectId = process.env.PROJECT_ID;
+            const statusFieldId = process.env.STATUS_FIELD_ID;
+            const status = {
+              todo: process.env.STATUS_TODO_ID,
+              inProgress: process.env.STATUS_IN_PROGRESS_ID,
+              done: process.env.STATUS_DONE_ID,
+            };
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            function extractWorkLinkage(text) {
+              if (!text) return { issueNumber: null, source: null };
+              const issue = text.match(/^Work issue:\s*#(\d+)\s*$/im);
+              if (issue) return { issueNumber: Number(issue[1]), source: null };
+              const source = text.match(/^Work source:\s*(.+\S)\s*$/im);
+              return { issueNumber: null, source: source ? source[1] : null };
+            }
+
+            async function getIssueProjectItem(issueNumber) {
+              const result = await github.graphql(
+                `
+                  query($owner: String!, $repo: String!, $number: Int!) {
+                    repository(owner: $owner, name: $repo) {
+                      issue(number: $number) {
+                        state
+                        projectItems(first: 50) {
+                          nodes {
+                            id
+                            project { id }
+                          }
+                        }
+                      }
+                    }
+                  }
+                `,
+                { owner, repo, number: issueNumber }
+              );
+
+              const issue = result.repository.issue;
+              if (!issue) return null;
+              const item = issue.projectItems.nodes.find((node) => node.project.id === projectId);
+              return { state: issue.state, itemId: item ? item.id : null };
+            }
+
+            async function updateStatus(itemId, optionId) {
+              await github.graphql(
+                `
+                  mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                    updateProjectV2ItemFieldValue(
+                      input: {
+                        projectId: $projectId
+                        itemId: $itemId
+                        fieldId: $fieldId
+                        value: { singleSelectOptionId: $optionId }
+                      }
+                    ) {
+                      projectV2Item { id }
+                    }
+                  }
+                `,
+                { projectId, itemId, fieldId: statusFieldId, optionId }
+              );
+            }
+
+            async function setIssueStatus(issueNumber, optionId, label, reason) {
+              const info = await getIssueProjectItem(issueNumber);
+              if (!info || !info.itemId) {
+                console.log(`Issue #${issueNumber} is not on the project; skipping (${reason})`);
+                return;
+              }
+              if (info.state === "CLOSED" && optionId !== status.done) {
+                console.log(`Issue #${issueNumber} is closed; refusing to move it out of Done (${reason})`);
+                return;
+              }
+              await updateStatus(info.itemId, optionId);
+              console.log(`Synced issue #${issueNumber}: Status=${label} (${reason})`);
+            }
+
+            async function reconcileProjectIssues() {
+              const result = await github.graphql(
+                `
+                  query($projectId: ID!) {
+                    node(id: $projectId) {
+                      ... on ProjectV2 {
+                        items(first: 100) {
+                          nodes {
+                            id
+                            content {
+                              __typename
+                              ... on Issue { number state }
+                            }
+                            fieldValues(first: 30) {
+                              nodes {
+                                ... on ProjectV2ItemFieldSingleSelectValue {
+                                  optionId
+                                  field {
+                                    ... on ProjectV2SingleSelectField { id }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                `,
+                { projectId }
+              );
+
+              for (const item of result.node?.items?.nodes ?? []) {
+                const issue = item.content;
+                if (!issue || issue.__typename !== "Issue") continue;
+                const current = (item.fieldValues?.nodes ?? []).find(
+                  (value) => value.field?.id === statusFieldId
+                )?.optionId;
+                if (issue.state === "CLOSED" && current !== status.done) {
+                  await updateStatus(item.id, status.done);
+                  console.log(`Synced issue #${issue.number}: Status=Done (scheduled reconciliation)`);
+                } else if (issue.state === "OPEN" && !current) {
+                  await updateStatus(item.id, status.todo);
+                  console.log(`Synced issue #${issue.number}: Status=Todo (missing status)`);
+                }
+              }
+            }
+
+            async function reconcilePullRequest(pr, reason) {
+              const linkage = extractWorkLinkage(pr.body || "");
+              if (!linkage.issueNumber) {
+                const detail = linkage.source
+                  ? `declares work source "${linkage.source}"`
+                  : "has no Work issue or Work source marker";
+                console.log(`PR #${pr.number} ${detail}; skipping (${reason})`);
+                return;
+              }
+              if (pr.state !== "open" && !pr.merged_at) {
+                const openPulls = await github.paginate(github.rest.pulls.list, {
+                  owner,
+                  repo,
+                  state: "open",
+                  per_page: 100,
+                });
+                const anotherOpenPull = openPulls.some((candidate) => {
+                  if (candidate.number === pr.number) return false;
+                  return extractWorkLinkage(candidate.body || "").issueNumber === linkage.issueNumber;
+                });
+                await setIssueStatus(
+                  linkage.issueNumber,
+                  anotherOpenPull ? status.inProgress : status.todo,
+                  anotherOpenPull ? "In Progress" : "Todo",
+                  anotherOpenPull
+                    ? `${reason}: PR #${pr.number} closed without merge; another linked PR remains open`
+                    : `${reason}: PR #${pr.number} closed without merge`
+                );
+                return;
+              }
+              await setIssueStatus(
+                linkage.issueNumber,
+                status.inProgress,
+                "In Progress",
+                pr.merged_at
+                  ? `${reason}: merged PR #${pr.number} awaiting issue closure`
+                  : `${reason}: open PR #${pr.number}`
+              );
+            }
+
+            async function reconcilePullRequests() {
+              const open = await github.paginate(github.rest.pulls.list, {
+                owner,
+                repo,
+                state: "open",
+                per_page: 100,
+              });
+              for (const pr of open) {
+                await reconcilePullRequest(pr, "scheduled open-PR reconciliation");
+              }
+
+              const closed = await github.paginate(github.rest.pulls.list, {
+                owner,
+                repo,
+                state: "closed",
+                sort: "updated",
+                direction: "desc",
+                per_page: 100,
+              });
+              const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
+              for (const pr of closed) {
+                if (!pr.merged_at || Date.parse(pr.merged_at) < cutoff) continue;
+                await reconcilePullRequest(pr, "scheduled merged-PR reconciliation");
+              }
+            }
+
+            if (context.eventName === "issues") {
+              const issueNumber = context.payload.issue.number;
+              if (context.payload.action === "closed") {
+                await setIssueStatus(issueNumber, status.done, "Done", "issue closed");
+              } else {
+                await setIssueStatus(issueNumber, status.todo, "Todo", `issue ${context.payload.action}`);
+              }
+              return;
+            }
+
+            if (context.eventName === "pull_request_target") {
+              await reconcilePullRequest(
+                context.payload.pull_request,
+                `pull_request_target:${context.payload.action}`
+              );
+              return;
+            }
+
+            if (context.eventName === "workflow_dispatch" || context.eventName === "schedule") {
+              await reconcileProjectIssues();
+              await reconcilePullRequests();
+              return;
+            }
+
+            console.log(`No handler for ${context.eventName}`);

@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let out_dir = PathBuf::from(
         std::env::args()
             .nth(3)
-            .unwrap_or_else(|| "target/wdad-wave3-120/inprocess-timing".to_string()),
+            .unwrap_or_else(|| "target/issue-120/inprocess-timing".to_string()),
     );
     fs::create_dir_all(&out_dir)?;
 

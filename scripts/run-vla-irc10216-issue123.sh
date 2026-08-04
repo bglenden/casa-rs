@@ -8,7 +8,7 @@ if [[ -z "${CASA_RS_CASA_PYTHON:-}" && -x "$HOME/SoftwareProjects/casa-build/ven
   export CASA_RS_CASA_PYTHON="$HOME/SoftwareProjects/casa-build/venv/bin/python"
 fi
 
-outdir="${1:-target/wdad-wave4-123}"
+outdir="${1:-target/issue-123}"
 mkdir -p "$outdir"
 outdir="$(cd "$outdir" && pwd)"
 export MPLCONFIGDIR="${MPLCONFIGDIR:-$outdir/matplotlib}"
@@ -39,7 +39,7 @@ if [[ -z "${CASA_RS_CASA_PYTHON:-}" || ! -x "$CASA_RS_CASA_PYTHON" ]]; then
   exit 2
 fi
 
-issue122_dir="${CASA_RS_ISSUE122_ARTIFACTS:-target/wdad-wave4-122-middlefreq}"
+issue122_dir="${CASA_RS_ISSUE122_ARTIFACTS:-target/issue-122-middlefreq}"
 if [[ ! -d "$issue122_dir/TDRW0001_10s.ms" || ! -d "$issue122_dir/casa-priorcal" || ! -d "$issue122_dir/rust-priorcal" ]]; then
   scripts/run-vla-irc10216-issue122.sh "$issue122_dir"
 fi

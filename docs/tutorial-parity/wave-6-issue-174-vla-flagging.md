@@ -4,7 +4,7 @@ Truth class: current descriptive
 Last reality check: 2026-05-06
 Verification: cargo test -p casa-ms --test flagging; cargo build --release -p casa-ms --bin flagdata; cargo check -p casa-ms --bins; just quick; just verify Rust/clippy/test/doctest stages plus rerun ./scripts/test-python-package.sh with network; just docs-check; gzip -t SNR_G55_10s.clean.tar.gz; CASA/casa-rs tutorial-MS spot checks
 
-Wave issue: #174
+Work issue: #174
 Parent issue: #128
 Registry key: `vla/flagging`
 

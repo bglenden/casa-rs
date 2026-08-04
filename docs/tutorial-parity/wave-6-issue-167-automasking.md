@@ -4,7 +4,7 @@ Truth class: current descriptive
 Last reality check: 2026-05-07
 Verification: `cargo test -p casa-imaging --lib`; `cargo test -p casars-imager --lib`; `just quick`; `just verify`; `CASA_RS_TUTORIAL_DATA_ROOT=/Volumes/GLENDENNING/casa-rs/tutorial-data scripts/run-wave6-issue167-automasking.sh target/wave6-issue167-automasking`
 
-Wave issue: #167
+Work issue: #167
 Parent wave: #143 / #127
 Registry key: `alma/automasking`
 

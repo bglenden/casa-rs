@@ -7,7 +7,7 @@ Verification:
 - `cargo test -p casa-test-support tutorial_dataset_registry_contains_first_wave_candidates`
 - `scripts/run-wave6-issue169-3c391.sh target/wave6-issue169-3c391`
 
-Wave issue: #143
+Work issue: #143
 Child issue: #169
 
 ## Purpose

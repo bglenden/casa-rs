@@ -4,7 +4,7 @@ Truth class: current descriptive
 Last reality check: 2026-07-09
 Verification: just docs-check
 
-Wave issue: #137
+Work issue: #137
 Child issue: #116
 
 This matrix maps the extracted CASA task/tool surface from current CASA Guide

@@ -4,7 +4,7 @@ Truth class: current descriptive
 Last reality check: 2026-04-27
 Verification: `scripts/test-python-package.sh`; `casatestdata-preflight --tier tutorial-parity --require-registry-key alma/first-look/twhya/calibrated-ms`; release imager/CASA timing and parity commands below
 
-Wave issue: #140
+Work issue: #140
 Child issue: #117
 
 This note records the CASA-to-casa-rs mapping for the first ALMA First Look /
@@ -52,28 +52,28 @@ The target field resolved from the real tutorial MS is `FIELD_ID=5`, name
 
 ## Executable Evidence
 
-The real tutorial MS was staged under `target/wdad-wave3-117/twhya_calibrated.ms`
+The real tutorial MS was staged under `target/issue-117/twhya_calibrated.ms`
 from the registry tarball. The following commands completed successfully:
 
 ```bash
 cargo run -q -p casa-ms --bin msexplore -- \
   --format json \
   --field 5 \
-  --output target/wdad-wave3-117/twhya-field5-listobs.json \
+  --output target/issue-117/twhya-field5-listobs.json \
   --overwrite \
-  target/wdad-wave3-117/twhya_calibrated.ms
+  target/issue-117/twhya_calibrated.ms
 
 cargo run -q -p casa-ms --bin msexplore -- \
   --preset amplitude_vs_uv_distance \
   --field 5 \
-  --plot-output target/wdad-wave3-117/twhya-field5-amp-uv.png \
+  --plot-output target/issue-117/twhya-field5-amp-uv.png \
   --plot-width 1000 \
   --plot-height 700 \
-  target/wdad-wave3-117/twhya_calibrated.ms
+  target/issue-117/twhya_calibrated.ms
 
 target/release/casars-imager \
-  --ms target/wdad-wave3-117/twhya_calibrated.ms \
-  --imagename target/wdad-wave3-117/release-twhya-field5-mfs \
+  --ms target/issue-117/twhya_calibrated.ms \
+  --imagename target/issue-117/release-twhya-field5-mfs \
   --imsize 250 \
   --cell-arcsec 0.1 \
   --field 5 \
@@ -101,8 +101,8 @@ from the same TW Hydra selection: `field=5`, `spw=0`, `scan=12`.
 
 ```bash
 scripts/render-msexplore-side-by-side.sh \
-  --ms "$PWD/target/wdad-wave3-117/twhya_calibrated.ms" \
-  --output "$PWD/target/wdad-wave3-117/twhya-field5-scan12-amplitude-uvdist-side-by-side-readable.png" \
+  --ms "$PWD/target/issue-117/twhya_calibrated.ms" \
+  --output "$PWD/target/issue-117/twhya-field5-scan12-amplitude-uvdist-side-by-side-readable.png" \
   --plot-width 2400 \
   --plot-height 1350 \
   --rust-symbolsize 1 \
@@ -116,8 +116,8 @@ scripts/render-msexplore-side-by-side.sh \
   -- --preset amplitude_vs_uv_distance --field 5 --spw 0 --scan 12
 
 scripts/render-msexplore-page-side-by-side.sh \
-  --ms "$PWD/target/wdad-wave3-117/twhya_calibrated.ms" \
-  --output "$PWD/target/wdad-wave3-117/twhya-field5-scan12-amplitude-phase-time-side-by-side-readable.png" \
+  --ms "$PWD/target/issue-117/twhya_calibrated.ms" \
+  --output "$PWD/target/issue-117/twhya-field5-scan12-amplitude-phase-time-side-by-side-readable.png" \
   --plot-width 2400 \
   --plot-height 1350 \
   --rust-symbolsize 1 \
@@ -136,7 +136,7 @@ and a CASA `tclean` `.image` product with a shared display scale, plus a
 `casa-rs - CASA` difference panel:
 
 ```text
-target/wdad-wave3-117/twhya-field5-mfs-image-casa-rs-vs-casa.png
+target/issue-117/twhya-field5-mfs-image-casa-rs-vs-casa.png
 ```
 
 Numerical image comparison for the 250x250 `.image` arrays:
@@ -168,7 +168,7 @@ IMAGER_BENCH_CELL_ARCSEC=0.1 \
 IMAGER_BENCH_WEIGHTING=briggs \
 IMAGER_BENCH_ROBUST=0.5 \
 IMAGER_BENCH_MODE=dirty \
-scripts/bench-imager-vs-casa.sh target/wdad-wave3-117/twhya_calibrated.ms
+scripts/bench-imager-vs-casa.sh target/issue-117/twhya_calibrated.ms
 ```
 
 Observed timing on 2026-04-27:
