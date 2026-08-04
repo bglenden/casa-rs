@@ -18125,6 +18125,18 @@ fn awproject_compact_prefetch_cf_cell() -> bool {
     )
 }
 
+fn awproject_compact_prefetch_cf_depth() -> usize {
+    env::var("CASA_RS_AWPROJECT_PREFETCH_CF_DEPTH")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&value| value > 0)
+        .unwrap_or_else(|| {
+            thread::available_parallelism()
+                .map(|workers| workers.get().min(2))
+                .unwrap_or(1)
+        })
+}
+
 fn awproject_compact_tapless_phase() -> bool {
     env::var_os("CASA_RS_AWPROJECT_TAPLESS_PHASE_EXPERIMENT").is_some()
 }
@@ -18905,23 +18917,56 @@ fn materialize_awproject_compact_taps(
     }
     if !cell_groups.is_empty() {
         thread::scope(|scope| {
-            let first_request = requests[cell_groups[0][0]];
-            let cache_load_started = Instant::now();
-            let mut cell = cache.get_replay(first_request.cell_key)?;
-            *cache_load_elapsed += cache_load_started.elapsed();
+            let prefetch_depth = if prefetch_cf_cell {
+                awproject_compact_prefetch_cf_depth()
+            } else {
+                1
+            };
+            let mut pending_loads = VecDeque::with_capacity(prefetch_depth);
+            let mut next_group_to_spawn = 0usize;
+            while next_group_to_spawn < cell_groups.len() && pending_loads.len() < prefetch_depth {
+                let group_index = next_group_to_spawn;
+                let key = requests[cell_groups[group_index][0]].cell_key;
+                pending_loads.push_back((
+                    group_index,
+                    scope.spawn(move || {
+                        let started = Instant::now();
+                        let loaded = cache.get_replay(key);
+                        (loaded, started.elapsed())
+                    }),
+                ));
+                next_group_to_spawn += 1;
+            }
+
             for (cell_group_index, bundle_indices) in cell_groups.iter().enumerate() {
-                let next_load = if prefetch_cf_cell {
-                    cell_groups.get(cell_group_index + 1).map(|next_indices| {
-                        let next_key = requests[next_indices[0]].cell_key;
+                let (loaded_group_index, loaded) = pending_loads
+                    .pop_front()
+                    .expect("every compact AWProject cell group has a pending load");
+                debug_assert_eq!(loaded_group_index, cell_group_index);
+                let (cell, load_elapsed) = loaded.join().map_err(|_| {
+                    ImagingError::InvalidRequest(
+                        "compact AWProject CF prefetch worker panicked".to_string(),
+                    )
+                })?;
+                *cache_load_elapsed += load_elapsed;
+                let cell = cell?;
+
+                while next_group_to_spawn < cell_groups.len()
+                    && pending_loads.len() < prefetch_depth
+                {
+                    let group_index = next_group_to_spawn;
+                    let key = requests[cell_groups[group_index][0]].cell_key;
+                    pending_loads.push_back((
+                        group_index,
                         scope.spawn(move || {
                             let started = Instant::now();
-                            let loaded = cache.get_replay(next_key);
+                            let loaded = cache.get_replay(key);
                             (loaded, started.elapsed())
-                        })
-                    })
-                } else {
-                    None
-                };
+                        }),
+                    ));
+                    next_group_to_spawn += 1;
+                }
+
                 let tap_pack_started = Instant::now();
                 let materialized = if let Some(pool) = pack_pool {
                     pool.install(|| {
@@ -18968,23 +19013,6 @@ fn materialize_awproject_compact_taps(
                     bundles[bundle_index] = Some(planned);
                 }
                 *tap_pack_elapsed += tap_pack_started.elapsed();
-
-                if let Some(next_indices) = cell_groups.get(cell_group_index + 1) {
-                    if let Some(next_load) = next_load {
-                        let (loaded, load_elapsed) = next_load.join().map_err(|_| {
-                            ImagingError::InvalidRequest(
-                                "compact AWProject CF prefetch worker panicked".to_string(),
-                            )
-                        })?;
-                        *cache_load_elapsed += load_elapsed;
-                        cell = loaded?;
-                    } else {
-                        let next_request = requests[next_indices[0]];
-                        let cache_load_started = Instant::now();
-                        cell = cache.get_replay(next_request.cell_key)?;
-                        *cache_load_elapsed += cache_load_started.elapsed();
-                    }
-                }
             }
             Ok::<(), ImagingError>(())
         })?;
