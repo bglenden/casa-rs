@@ -18091,7 +18091,11 @@ fn awproject_compact_plan_workers() -> usize {
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|&value| value > 0)
-        .unwrap_or(1)
+        .unwrap_or_else(|| {
+            thread::available_parallelism()
+                .map(|workers| workers.get().min(8))
+                .unwrap_or(1)
+        })
 }
 
 fn awproject_compact_plan_chunk_samples() -> usize {
