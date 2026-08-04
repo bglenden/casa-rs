@@ -127,8 +127,9 @@ stores only casa-rs-specific policy and domain guidance.
   and rejected hypotheses so the next worker starts from evidence rather than
   repeating exploration.
 - In Codex, the dispatching coordinator requests the strongest available worker
-  model with high reasoning effort. Runtime availability may limit the actual
-  model; this policy does not invent an unavailable one.
+  model with max reasoning effort. If max is unavailable, fall back to x-high,
+  then high, and report the actual model and effort used. Runtime availability
+  may limit the actual model; this policy does not invent an unavailable one.
 
 ## Final Authority
 
