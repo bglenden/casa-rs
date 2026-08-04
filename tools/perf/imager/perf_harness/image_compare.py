@@ -126,6 +126,13 @@ FULL_ARRAY_TOPOLOGY_FIELDS = {
     "left_nonfinite",
     "right_nonfinite",
 }
+FULL_ARRAY_MASK_MISMATCH_SAMPLE_FIELDS = {
+    "location",
+    "left_mask",
+    "right_mask",
+    "left_value",
+    "right_value",
+}
 FULL_ARRAY_NONFINITE_FIELDS = {
     "nan",
     "positive_infinity",
@@ -933,7 +940,10 @@ def _validate_full_array_evidence(
 def _validate_full_array_topology(
     value: Any, *, total_elements: int, count: int, label: str
 ) -> bool:
-    if not isinstance(value, dict) or set(value) != FULL_ARRAY_TOPOLOGY_FIELDS:
+    if not isinstance(value, dict) or not (
+        set(value) == FULL_ARRAY_TOPOLOGY_FIELDS
+        or set(value) == FULL_ARRAY_TOPOLOGY_FIELDS | {"mask_mismatch_samples"}
+    ):
         raise ValueError(f"{label} full_array topology fields do not match protocol")
     count_fields = (
         "mask_mismatch_count",
@@ -965,6 +975,45 @@ def _validate_full_array_topology(
     left_masked = counts["left_masked_count"]
     right_masked = counts["right_masked_count"]
     mask_mismatch = counts["mask_mismatch_count"]
+    samples = value.get("mask_mismatch_samples", [])
+    if not isinstance(samples, list) or len(samples) > mask_mismatch:
+        raise ValueError(f"{label} full_array mask mismatch samples are invalid")
+    seen_locations: set[tuple[int, ...]] = set()
+    for sample_index, sample in enumerate(samples):
+        sample_label = f"{label} mask mismatch sample {sample_index}"
+        if (
+            not isinstance(sample, dict)
+            or set(sample) != FULL_ARRAY_MASK_MISMATCH_SAMPLE_FIELDS
+        ):
+            raise ValueError(f"{sample_label} fields do not match protocol")
+        location = sample.get("location")
+        if (
+            not isinstance(location, list)
+            or len(location) == 0
+            or any(
+                not isinstance(coordinate, int) or isinstance(coordinate, bool)
+                for coordinate in location
+            )
+        ):
+            raise ValueError(f"{sample_label} location is invalid")
+        location_tuple = tuple(location)
+        if location_tuple in seen_locations:
+            raise ValueError(f"{sample_label} location is duplicated")
+        seen_locations.add(location_tuple)
+        if (
+            not isinstance(sample.get("left_mask"), bool)
+            or not isinstance(sample.get("right_mask"), bool)
+            or sample["left_mask"] is sample["right_mask"]
+        ):
+            raise ValueError(f"{sample_label} masks do not demonstrate a mismatch")
+        for operand in ("left_value", "right_value"):
+            operand_value = sample.get(operand)
+            if operand_value is not None and (
+                not isinstance(operand_value, (int, float))
+                or isinstance(operand_value, bool)
+                or not math.isfinite(float(operand_value))
+            ):
+                raise ValueError(f"{sample_label} {operand} is invalid")
     if (left_masked + right_masked - mask_mismatch) % 2:
         raise ValueError(f"{label} full_array mask topology has fractional regions")
     both_masked = (left_masked + right_masked - mask_mismatch) // 2

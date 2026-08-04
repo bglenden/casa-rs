@@ -16,10 +16,21 @@ diff --git a/casatools/src/code/synthesis/TransformMachines2/AWVisResampler.cc b
  #include <cfenv>
  //#include <synthesis/TransformMachines2/FortranizedLoops.h>
  //#include <synthesis/TransformMachines2/hpg.hpp>
+@@ -418,6 +421,10 @@
+   //
+   void AWVisResampler::GridToData(VBStore& vbs, const Array<Complex>& grid)
+   {
++    static std::uint64_t vlassDegridTraceCallCounter = 0;
++    const std::uint64_t vlassDegridTraceCall =
++        vlassDegridTraceCallCounter++;
++
+     Int nDataChan, nDataPol, nGridPol, nGridChan, nx, ny,nw;//, nCFFreq;
+     Int achan, apol, rbeg, rend;//, PolnPlane, ConjPlane;
+     Vector<Float> sampling(2);//scaledSampling(2);
 diff --git a/casatools/src/code/synthesis/TransformMachines2/accumulateFromGrid.inc b/casatools/src/code/synthesis/TransformMachines2/accumulateFromGrid.inc
 --- a/casatools/src/code/synthesis/TransformMachines2/accumulateFromGrid.inc
 +++ b/casatools/src/code/synthesis/TransformMachines2/accumulateFromGrid.inc
-@@ -5,6 +5,28 @@
+@@ -5,6 +5,35 @@
  //
  //--------------------------------------------------------------------------------
  {
@@ -31,6 +42,7 @@ diff --git a/casatools/src/code/synthesis/TransformMachines2/accumulateFromGrid.
 +  const char* vlassDegridTraceChannelText = std::getenv("CASA_VLASS_DEGRID_TRACE_CHANNEL");
 +  const char* vlassDegridTracePolText = std::getenv("CASA_VLASS_DEGRID_TRACE_POL");
 +  const char* vlassDegridTraceMColText = std::getenv("CASA_VLASS_DEGRID_TRACE_MCOL");
++  const char* vlassDegridTraceCallText = std::getenv("CASA_VLASS_DEGRID_TRACE_CALL");
 +  const Int vlassDegridTraceRow =
 +      vlassDegridTraceRowText == nullptr ? 0 : std::atoi(vlassDegridTraceRowText);
 +  const Int vlassDegridTraceChannel =
@@ -39,8 +51,14 @@ diff --git a/casatools/src/code/synthesis/TransformMachines2/accumulateFromGrid.
 +      vlassDegridTracePolText == nullptr ? 0 : std::atoi(vlassDegridTracePolText);
 +  const Int vlassDegridTraceMCol =
 +      vlassDegridTraceMColText == nullptr ? 0 : std::atoi(vlassDegridTraceMColText);
++  const std::uint64_t vlassDegridTraceTargetCall =
++      vlassDegridTraceCallText == nullptr
++          ? 0
++          : static_cast<std::uint64_t>(std::strtoull(
++                vlassDegridTraceCallText, nullptr, 10));
 +  const bool vlassDegridTraceThis =
 +      !vlassDegridTraceDone && vlassDegridTracePath != nullptr &&
++      vlassDegridTraceCall == vlassDegridTraceTargetCall &&
 +      irow == vlassDegridTraceRow && ichan == vlassDegridTraceChannel &&
 +      ipol == vlassDegridTracePol && static_cast<Int>(mCol) == vlassDegridTraceMCol;
 +  std::ofstream vlassDegridTrace;
@@ -48,7 +66,7 @@ diff --git a/casatools/src/code/synthesis/TransformMachines2/accumulateFromGrid.
    Vector<Int> iCFPos(4,0);
    Int iLoc[2];
    Bool Dummy;
-@@ -26,6 +48,42 @@
+@@ -26,6 +55,43 @@
    phaseGradOrigin_l[0] = cached_phaseGrad_p.shape()(0)/2 ;
    phaseGradOrigin_l[1] = cached_phaseGrad_p.shape()(1)/2;
     
@@ -72,6 +90,7 @@ diff --git a/casatools/src/code/synthesis/TransformMachines2/accumulateFromGrid.
 +    }
 +    vlassDegridTrace
 +        << "meta"
++        << " call=" << vlassDegridTraceCall
 +        << " row=" << irow
 +        << " channel=" << ichan
 +        << " pol=" << ipol

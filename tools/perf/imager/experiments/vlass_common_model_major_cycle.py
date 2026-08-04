@@ -40,6 +40,8 @@ IMMUTABLE_SUFFIXES = (
     ".sumwt.tt1",
     ".sumwt.tt2",
 )
+MODEL_RELATIVE_L2_CEILING = 5.0e-7
+SUMWT_RELATIVE_L2_CEILING = 5.0e-6
 
 
 def json_value(value: Any) -> Any:
@@ -78,6 +80,17 @@ def tree_sha256(path: Path) -> str:
 
 
 def image_content_sha256(path: Path) -> str:
+    pixels, mask = image_pixels_and_mask(path)
+    digest = hashlib.sha256()
+    for array in (pixels, mask):
+        shape = np.asarray(array.shape, dtype=np.int64)
+        digest.update(array.dtype.str.encode("ascii"))
+        digest.update(shape.tobytes())
+        digest.update(array.tobytes())
+    return digest.hexdigest()
+
+
+def image_pixels_and_mask(path: Path) -> tuple[np.ndarray, np.ndarray]:
     tool = image()
     try:
         if not tool.open(str(path)):
@@ -86,13 +99,97 @@ def image_content_sha256(path: Path) -> str:
         mask = np.ascontiguousarray(tool.getchunk(getmask=True))
     finally:
         tool.close()
-    digest = hashlib.sha256()
-    for array in (pixels, mask):
-        shape = np.asarray(array.shape, dtype=np.int64)
-        digest.update(array.dtype.str.encode("ascii"))
-        digest.update(shape.tobytes())
-        digest.update(array.tobytes())
-    return digest.hexdigest()
+    return pixels, mask
+
+
+def preservation_comparison(
+    source: Path,
+    candidate: Path,
+    *,
+    relative_l2_ceiling: float,
+) -> dict[str, Any]:
+    expected_pixels, expected_mask = image_pixels_and_mask(source)
+    actual_pixels, actual_mask = image_pixels_and_mask(candidate)
+    shape_exact = expected_pixels.shape == actual_pixels.shape
+    dtype_exact = expected_pixels.dtype == actual_pixels.dtype
+    mask_shape_exact = expected_mask.shape == actual_mask.shape
+    mask_exact = mask_shape_exact and np.array_equal(expected_mask, actual_mask)
+    if shape_exact:
+        difference = np.asarray(actual_pixels, dtype=np.float64) - np.asarray(
+            expected_pixels,
+            dtype=np.float64,
+        )
+        difference_l2 = float(np.linalg.norm(difference.reshape(-1)))
+        reference_l2 = float(
+            np.linalg.norm(np.asarray(expected_pixels, dtype=np.float64).reshape(-1))
+        )
+        relative_l2 = (
+            difference_l2 / reference_l2
+            if reference_l2 > 0.0
+            else (0.0 if difference_l2 == 0.0 else float("inf"))
+        )
+        max_abs = float(np.max(np.abs(difference), initial=0.0))
+    else:
+        difference_l2 = float("inf")
+        reference_l2 = float("nan")
+        relative_l2 = float("inf")
+        max_abs = float("inf")
+    passed = (
+        shape_exact
+        and dtype_exact
+        and mask_exact
+        and np.isfinite(relative_l2)
+        and relative_l2 <= relative_l2_ceiling
+    )
+    return {
+        "source": str(source),
+        "candidate": str(candidate),
+        "shape_exact": shape_exact,
+        "dtype_exact": dtype_exact,
+        "mask_shape_exact": mask_shape_exact,
+        "mask_exact": mask_exact,
+        "reference_l2": reference_l2,
+        "difference_l2": difference_l2,
+        "relative_l2": relative_l2,
+        "max_abs": max_abs,
+        "relative_l2_ceiling": relative_l2_ceiling,
+        "passed": passed,
+    }
+
+
+def protected_product_preservation(
+    *,
+    zero_prefix: Path,
+    model_prefix: Path,
+    output_prefix: Path,
+) -> dict[str, Any]:
+    products: dict[str, Any] = {}
+    for suffix in MODEL_SUFFIXES:
+        products[suffix] = preservation_comparison(
+            Path(f"{model_prefix}{suffix}"),
+            Path(f"{output_prefix}{suffix}"),
+            relative_l2_ceiling=MODEL_RELATIVE_L2_CEILING,
+        )
+    for suffix in IMMUTABLE_SUFFIXES:
+        products[suffix] = preservation_comparison(
+            Path(f"{zero_prefix}{suffix}"),
+            Path(f"{output_prefix}{suffix}"),
+            relative_l2_ceiling=(
+                SUMWT_RELATIVE_L2_CEILING if ".sumwt." in suffix else 0.0
+            ),
+        )
+    return {
+        "contract": {
+            "shape": "exact",
+            "dtype": "exact",
+            "mask_topology": "exact",
+            "psf_relative_l2_ceiling": 0.0,
+            "model_relative_l2_ceiling": MODEL_RELATIVE_L2_CEILING,
+            "sumwt_relative_l2_ceiling": SUMWT_RELATIVE_L2_CEILING,
+        },
+        "products": products,
+        "passed": all(product["passed"] for product in products.values()),
+    }
 
 
 def prefixed_directories(prefix: Path) -> list[Path]:
@@ -227,6 +324,11 @@ def main() -> None:
         for suffix in protected_suffixes
         if tree_hashes_after[suffix] != tree_hashes_before[suffix]
     )
+    preservation = protected_product_preservation(
+        zero_prefix=args.zero_prefix,
+        model_prefix=args.model_prefix,
+        output_prefix=args.output_prefix,
+    )
     result = {
         "kind": "vlass_common_model_major_cycle",
         "role": "bounded_correctness_trace_not_performance_evidence",
@@ -249,6 +351,7 @@ def main() -> None:
         "protected_tree_hashes_before": tree_hashes_before,
         "protected_tree_hashes_after": tree_hashes_after,
         "changed_protected_trees": changed_protected_trees,
+        "protected_product_preservation": preservation,
         "summary": json_value(summary),
         "products": [str(path) for path in prefixed_directories(args.output_prefix)],
     }
@@ -258,10 +361,16 @@ def main() -> None:
         encoding="utf-8",
     )
     print(json.dumps(result, sort_keys=True), flush=True)
-    if changed_protected_content:
+    if not preservation["passed"]:
+        failed = sorted(
+            suffix
+            for suffix, product in preservation["products"].items()
+            if not product["passed"]
+        )
         raise RuntimeError(
-            "CASA changed protected common-model/PSF/sumwt image content: "
-            + ", ".join(changed_protected_content)
+            "CASA changed protected common-model/PSF/sumwt products beyond the "
+            "numerical-preservation contract: "
+            + ", ".join(failed)
         )
 
 

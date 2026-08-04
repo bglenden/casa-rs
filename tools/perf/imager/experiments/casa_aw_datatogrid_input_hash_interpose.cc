@@ -33,6 +33,7 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -137,6 +138,9 @@ class Fnv1a64 {
 
 struct Config {
   std::string output;
+  std::string values_output;
+  std::string metadata_output;
+  std::string prediction_metadata_output;
   std::uint64_t max_sources = 0;
   std::uint64_t checkpoint_interval = 1024;
   Int expected_nxy = 0;
@@ -145,6 +149,7 @@ struct Config {
 struct Checkpoint {
   std::uint64_t sources;
   std::uint64_t portable_hash;
+  std::uint64_t value_hash;
 };
 
 struct Hashes {
@@ -166,6 +171,7 @@ struct Role {
   Float weight = 0.0F;
   Float taylor_x = 0.0F;
   Float term_weight = 0.0F;
+  Complex raw_residual = Complex(0.0F);
   Complex residual = Complex(0.0F);
   Complex value = Complex(0.0F);
   Double cell_frequency_hz = 0.0;
@@ -181,6 +187,8 @@ struct Role {
   DComplex normalization64 = DComplex(0.0);
   std::uint64_t tap_count = 0;
   std::uint64_t tap_hash = kFnvOffset;
+  std::uint32_t support_x = 0;
+  std::uint32_t support_y = 0;
 };
 
 [[noreturn]] void raw_exit(int code) {
@@ -278,6 +286,74 @@ void atomic_receipt(const std::string& path, std::string_view payload) {
   }
 }
 
+void append_u32_le(std::vector<unsigned char>& output, std::uint32_t value) {
+  for (std::size_t index = 0; index < sizeof(value); ++index) {
+    output.push_back(static_cast<unsigned char>((value >> (index * 8U)) & 0xffU));
+  }
+}
+
+void append_u64_le(std::vector<unsigned char>& output, std::uint64_t value) {
+  for (std::size_t index = 0; index < sizeof(value); ++index) {
+    output.push_back(static_cast<unsigned char>((value >> (index * 8U)) & 0xffU));
+  }
+}
+
+void append_i32_le(std::vector<unsigned char>& output, std::int32_t value) {
+  append_u32_le(output, static_cast<std::uint32_t>(value));
+}
+
+void append_i64_le(std::vector<unsigned char>& output, std::int64_t value) {
+  append_u64_le(output, static_cast<std::uint64_t>(value));
+}
+
+void append_f32_le(std::vector<unsigned char>& output, Float value) {
+  std::uint32_t bits = 0;
+  std::memcpy(&bits, &value, sizeof(bits));
+  append_u32_le(output, bits);
+}
+
+void append_f64_le(std::vector<unsigned char>& output, Double value) {
+  std::uint64_t bits = 0;
+  std::memcpy(&bits, &value, sizeof(bits));
+  append_u64_le(output, bits);
+}
+
+void append_complex32(std::vector<unsigned char>& output, const Complex& value) {
+  static_assert(sizeof(Float) == sizeof(std::uint32_t));
+  std::uint32_t real_bits = 0;
+  std::uint32_t imaginary_bits = 0;
+  const Float real = value.real();
+  const Float imaginary = value.imag();
+  std::memcpy(&real_bits, &real, sizeof(real_bits));
+  std::memcpy(&imaginary_bits, &imaginary, sizeof(imaginary_bits));
+  append_u32_le(output, real_bits);
+  append_u32_le(output, imaginary_bits);
+}
+
+void append_role_metadata(std::vector<unsigned char>& output,
+                          std::uint32_t source_ordinal, const Role& role) {
+  append_u32_le(output, source_ordinal);
+  append_u32_le(output, static_cast<std::uint32_t>(role.ordinal));
+  append_f64_le(output, role.cell_frequency_hz);
+  append_f64_le(output, role.cell_w_lambda);
+  append_i32_le(output, static_cast<std::int32_t>(role.mueller));
+  append_f64_le(output, role.cell_pa_deg);
+  append_i64_le(output, role.loc_x);
+  append_i64_le(output, role.loc_y);
+  append_i64_le(output, role.off_x);
+  append_i64_le(output, role.off_y);
+  append_u32_le(output, role.conjugate_for_grid ? 1U : 0U);
+  append_u32_le(output, role.support_x);
+  append_u32_le(output, role.support_y);
+  append_f32_le(output, role.normalization32.real());
+  append_f32_le(output, role.normalization32.imag());
+}
+
+void atomic_bytes(const std::string& path, const std::vector<unsigned char>& payload) {
+  const std::string_view bytes(reinterpret_cast<const char*>(payload.data()), payload.size());
+  atomic_receipt(path, bytes);
+}
+
 [[noreturn]] void reject(std::string_view reason) {
   const char* configured = std::getenv("CASA_AW_INPUT_HASH_OUTPUT");
   const std::string output = configured == nullptr ? std::string() : std::string(configured);
@@ -331,6 +407,44 @@ Config read_config() {
   config.output = output;
   if (config.output.front() != '/') {
     reject("CASA_AW_INPUT_HASH_OUTPUT must be absolute");
+  }
+  const char* values_output = std::getenv("CASA_AW_INPUT_VALUES_OUTPUT");
+  if (values_output == nullptr || *values_output == '\0') {
+    reject("CASA_AW_INPUT_VALUES_OUTPUT is required");
+  }
+  config.values_output = values_output;
+  if (config.values_output.front() != '/') {
+    reject("CASA_AW_INPUT_VALUES_OUTPUT must be absolute");
+  }
+  if (config.values_output == config.output) {
+    reject("CASA_AW_INPUT_VALUES_OUTPUT must differ from the receipt path");
+  }
+  const char* metadata_output = std::getenv("CASA_AW_INPUT_METADATA_OUTPUT");
+  if (metadata_output == nullptr || *metadata_output == '\0') {
+    reject("CASA_AW_INPUT_METADATA_OUTPUT is required");
+  }
+  config.metadata_output = metadata_output;
+  if (config.metadata_output.front() != '/') {
+    reject("CASA_AW_INPUT_METADATA_OUTPUT must be absolute");
+  }
+  if (config.metadata_output == config.output ||
+      config.metadata_output == config.values_output) {
+    reject("CASA output paths must be distinct");
+  }
+  const char* prediction_metadata_output =
+      std::getenv("CASA_AW_PREDICTION_METADATA_OUTPUT");
+  if (prediction_metadata_output == nullptr ||
+      *prediction_metadata_output == '\0') {
+    reject("CASA_AW_PREDICTION_METADATA_OUTPUT is required");
+  }
+  config.prediction_metadata_output = prediction_metadata_output;
+  if (config.prediction_metadata_output.front() != '/') {
+    reject("CASA_AW_PREDICTION_METADATA_OUTPUT must be absolute");
+  }
+  if (config.prediction_metadata_output == config.output ||
+      config.prediction_metadata_output == config.values_output ||
+      config.prediction_metadata_output == config.metadata_output) {
+    reject("CASA output paths must be distinct");
   }
   config.expected_nxy =
       static_cast<Int>(parse_u64("CASA_AW_INPUT_HASH_EXPECT_NXY", true));
@@ -456,7 +570,10 @@ std::string completed_receipt(const Config& config, const Array<DComplex>& grid,
                               const VBStore& vbs, const Hashes& hashes,
                               const std::vector<Checkpoint>& checkpoints,
                               std::uint64_t sources, std::uint64_t roles,
-                              std::uint64_t taps, std::string_view stop_reason) {
+                              std::uint64_t taps, std::size_t value_stream_bytes,
+                              std::size_t metadata_stream_bytes,
+                              std::size_t prediction_metadata_stream_bytes,
+                              std::string_view stop_reason) {
   const auto shape = grid.shape();
   std::ostringstream output;
   output << "{\n"
@@ -481,6 +598,35 @@ std::string completed_receipt(const Config& config, const Array<DComplex>& grid,
          << "  \"role_count\": " << roles << ",\n"
          << "  \"phased_tap_count\": " << taps << ",\n"
          << "  \"source_order\": \"row-channel-RR-LL-y-x\",\n"
+         << "  \"value_stream\": {\n"
+         << "    \"path\": \"" << json_escape(config.values_output) << "\",\n"
+         << "    \"contract\": "
+            "\"source-order-identity4u32-source-phase-complex32-RR-then-LL-"
+            "raw-residual-complex32-grid-residual-complex32-"
+            "term-weight-times-grid-residual-complex32-little-endian\",\n"
+         << "    \"record_size\": 72,\n"
+         << "    \"allocated_bytes\": " << value_stream_bytes << "\n"
+         << "  },\n"
+         << "  \"cf_metadata_stream\": {\n"
+         << "    \"path\": \"" << json_escape(config.metadata_output) << "\",\n"
+         << "    \"contract\": "
+            "\"source-role-cell-frequency-w-mueller-pa-placement-conjugation-"
+            "support-normalization-complex32-little-endian\",\n"
+         << "    \"record_size\": 88,\n"
+         << "    \"record_count\": " << roles << ",\n"
+         << "    \"allocated_bytes\": " << metadata_stream_bytes << "\n"
+         << "  },\n"
+         << "  \"prediction_cf_metadata_stream\": {\n"
+         << "    \"path\": \"" << json_escape(config.prediction_metadata_output)
+         << "\",\n"
+         << "    \"contract\": "
+            "\"source-role-cell-frequency-w-mueller-pa-placement-conjugation-"
+            "support-normalization-complex32-little-endian\",\n"
+         << "    \"record_size\": 88,\n"
+         << "    \"record_count\": " << roles << ",\n"
+         << "    \"allocated_bytes\": " << prediction_metadata_stream_bytes
+         << "\n"
+         << "  },\n"
          << "  \"portable_contract\": "
             "\"fnv1a64-source-role-frequency-uvw-weight-taylor-tt0-residual-value-"
             "cfkey-placement-conjugation-normalization-tapcount-nestedtap\",\n"
@@ -500,7 +646,8 @@ std::string completed_receipt(const Config& config, const Array<DComplex>& grid,
       output << ", ";
     }
     output << "{\"sources\":" << checkpoints[index].sources
-           << ",\"portable\":" << checkpoints[index].portable_hash << "}";
+           << ",\"portable\":" << checkpoints[index].portable_hash
+           << ",\"value\":" << checkpoints[index].value_hash << "}";
   }
   output << "]\n}\n";
   return output.str();
@@ -565,6 +712,9 @@ std::string completed_receipt(const Config& config, const Array<DComplex>& grid,
   std::uint64_t source_count = 0;
   std::uint64_t role_count = 0;
   std::uint64_t tap_count = 0;
+  std::vector<unsigned char> value_stream;
+  std::vector<unsigned char> metadata_stream;
+  std::vector<unsigned char> prediction_metadata_stream;
 
   for (Int row = vbs.beginRow_p; row < vbs.endRow_p; ++row) {
     if (vbs.rowFlag_p[row]) {
@@ -615,6 +765,10 @@ std::string completed_receipt(const Config& config, const Array<DComplex>& grid,
       }
       const Double frequency_hz = vbs.freq_p[channel];
       const Double data_w_m = vbs.uvw_p(2, row);
+      const std::array<Complex, 2> raw_residual_before_probe = {
+          vbs.visCube_p(0, channel, row),
+          vbs.visCube_p(3, channel, row),
+      };
       const Double w_lambda = data_w_m * frequency_hz / casacore::C::c;
       const Int w_index = buffer->nearestWNdx(w_lambda);
       const Int frequency_index =
@@ -736,7 +890,11 @@ std::string completed_receipt(const Config& config, const Array<DComplex>& grid,
           role.weight = weight;
           role.taylor_x = casa_taylor_x(frequency_hz, vbs.imRefFreq_p);
           role.term_weight = weight;
-          role.residual = vbs.visCube_p(visibility_element, channel, row) * phasor;
+          role.raw_residual = vbs.visCube_p(visibility_element, channel, row);
+          if (role.raw_residual != raw_residual_before_probe[ordinal]) {
+            reject("probe traversal changed the raw RR or LL residual");
+          }
+          role.residual = role.raw_residual * phasor;
           role.value = Complex(weight) * role.residual;
           role.cell_frequency_hz = cell->freqValue_p;
           role.cell_w_lambda = cell->wValue_p;
@@ -751,6 +909,8 @@ std::string completed_receipt(const Config& config, const Array<DComplex>& grid,
           role.normalization64 = normalization64;
           role.tap_count = role_taps;
           role.tap_hash = nested_taps.value();
+          role.support_x = static_cast<std::uint32_t>(role_support[0]);
+          role.support_y = static_cast<std::uint32_t>(role_support[1]);
           roles[ordinal] = role;
           present[ordinal] = true;
         }
@@ -761,21 +921,178 @@ std::string completed_receipt(const Config& config, const Array<DComplex>& grid,
       if (!present[0]) {
         continue;
       }
+
+      // Re-evaluate CASA's GridToData CF selection over the same accepted
+      // source. GridToData reverses the direct/conjugate Mueller maps and
+      // conjugates for non-positive W. Its grid location comes from the
+      // phase-center-rotated vbs.uvw_p coordinates, but its W-cell selection
+      // and conjugation use the original visibility-buffer UVW. Recording this
+      // separately avoids both the invalid assumption that an RR output must
+      // select Mueller element 0 and the equally invalid assumption that
+      // DataToGrid and GridToData select W cells in the same UVW frame.
+      std::array<Role, 2> prediction_roles{};
+      std::array<bool, 2> prediction_present{false, false};
+      const Double prediction_data_w_m = vbs.vb_p->uvw()(2, row);
+      const Int prediction_w_index =
+          buffer->nearestWNdx(std::abs(prediction_data_w_m) * frequency_hz /
+                              casacore::C::c);
+      const Int prediction_frequency_index =
+          buffer->nearestFreqNdx(vb_spw, channel);
+      Double prediction_reference_frequency = 0.0;
+      Float prediction_raw_sampling = 0.0F;
+      Vector<Int> prediction_support(2);
+      buffer->getParams(prediction_reference_frequency, prediction_raw_sampling,
+                        prediction_support[0], prediction_support[1],
+                        prediction_frequency_index, prediction_w_index, 0);
+      (void)prediction_reference_frequency;
+      Vector<Float> prediction_sampling(2);
+      prediction_sampling[0] = prediction_sampling[1] = static_cast<Float>(
+          std::nearbyint(static_cast<Double>(prediction_raw_sampling)));
+      Vector<Double> prediction_position(3);
+      Vector<Int> prediction_location(3);
+      Vector<Double> prediction_offset(3);
+      Complex prediction_phasor;
+      probe.source_geometry(prediction_position, prediction_location,
+                            prediction_offset, prediction_phasor, row, vbs.uvw_p,
+                            probe.dphase()[row], frequency_hz,
+                            prediction_sampling);
+      for (const Int polarization : {0, 3}) {
+        if (vbs.flagCube_p(polarization, channel, row)) {
+          continue;
+        }
+        const Int target_polarization = probe.polarization_map()[polarization];
+        if (target_polarization < 0 || target_polarization >= n_grid_pol) {
+          continue;
+        }
+        const Vector<Int> conjugate_row =
+            conjugate_mueller_indices[polarization];
+        for (uInt mueller_column = 0;
+             mueller_column < conjugate_row.nelements(); ++mueller_column) {
+          Int mueller = -1;
+          Vector<Int> cell_shape;
+          Vector<Int> role_support = prediction_support.copy();
+          Complex* pixels = probe.convolution(
+              vb_pa, cell_shape, role_support, mueller, buffer,
+              prediction_data_w_m,
+              prediction_frequency_index, prediction_w_index,
+              conjugate_mueller_indices, mueller_indices, polarization,
+              mueller_column);
+          if (pixels == nullptr || cell_shape.nelements() < 2) {
+            reject("CASA prediction returned invalid convolution storage");
+          }
+          const Int visibility_element = mueller % n_data_pol;
+          if (visibility_element < 0 || visibility_element >= n_data_pol) {
+            reject("prediction Mueller element mapped outside the visibility vector");
+          }
+          if (vbs.flagCube_p(visibility_element, channel, row)) {
+            break;
+          }
+          if (!is_on_grid(nx, ny, nw, prediction_location, role_support)) {
+            break;
+          }
+          const Int polarization_index =
+              prediction_data_w_m > 0.0
+                  ? conjugate_mueller_indices[polarization][mueller_column]
+                  : mueller_indices[polarization][mueller_column];
+          casacore::CountedPtr<CFCell>& cell = buffer->getCFCellPtr(
+              prediction_frequency_index, prediction_w_index,
+              polarization_index);
+          if (cell.null()) {
+            reject("selected CASA prediction CF cell is null");
+          }
+          const Vector<Int> convolution_origin =
+              cell_shape[0] % 2 == 0 && cell_shape[1] % 2 == 0
+                  ? cell_shape / 2
+                  : cell_shape / 2 + 1;
+          Complex normalization32(0.0F);
+          DComplex normalization64(0.0);
+          for (Int iy = -role_support[1]; iy <= role_support[1]; ++iy) {
+            const Int local_y = static_cast<Int>(
+                prediction_sampling[1] * static_cast<Float>(iy) +
+                prediction_offset[1]);
+            const Int cell_y = local_y + convolution_origin[1];
+            for (Int ix = -role_support[0]; ix <= role_support[0]; ++ix) {
+              const Int local_x = static_cast<Int>(
+                  prediction_sampling[0] * static_cast<Float>(ix) +
+                  prediction_offset[0]);
+              const Int cell_x = local_x + convolution_origin[0];
+              if (cell_x < 0 || cell_y < 0 || cell_x >= cell_shape[0] ||
+                  cell_y >= cell_shape[1]) {
+                reject("prediction tap traversal left the selected CF cell");
+              }
+              Complex tap = pixels[cell_x + cell_y * cell_shape[0]];
+              if (prediction_data_w_m <= 0.0) {
+                tap = std::conj(tap);
+              }
+              normalization32 += tap;
+              normalization64 +=
+                  DComplex(static_cast<Double>(tap.real()),
+                           static_cast<Double>(tap.imag()));
+            }
+          }
+          const std::uint64_t ordinal = polarization == 0 ? 0 : 1;
+          if (prediction_present[ordinal]) {
+            reject("duplicate CASA prediction RR or LL role in one source");
+          }
+          Role role;
+          role.ordinal = ordinal;
+          role.cell_frequency_hz = cell->freqValue_p;
+          role.cell_w_lambda = cell->wValue_p;
+          role.mueller = static_cast<std::uint32_t>(mueller);
+          role.cell_pa_deg = cell->pa_p.getValue("deg");
+          role.loc_x = prediction_location[0];
+          role.loc_y = prediction_location[1];
+          role.off_x = static_cast<std::int64_t>(prediction_offset[0]);
+          role.off_y = static_cast<std::int64_t>(prediction_offset[1]);
+          role.conjugate_for_grid = prediction_data_w_m <= 0.0;
+          role.support_x = static_cast<std::uint32_t>(role_support[0]);
+          role.support_y = static_cast<std::uint32_t>(role_support[1]);
+          role.normalization32 = normalization32;
+          role.normalization64 = normalization64;
+          prediction_roles[ordinal] = role;
+          prediction_present[ordinal] = true;
+        }
+      }
+      if (!prediction_present[0] || !prediction_present[1]) {
+        reject("CASA prediction source did not select both RR and LL CF roles");
+      }
+      append_u32_le(value_stream, static_cast<std::uint32_t>(row));
+      append_u32_le(value_stream, static_cast<std::uint32_t>(channel));
+      append_u32_le(value_stream, static_cast<std::uint32_t>(vb_spw));
+      append_u32_le(value_stream, 0);
+      append_complex32(value_stream, phasor);
       for (const Role& role : roles) {
         hash_role(source_count, role, hashes);
+        append_complex32(value_stream, role.raw_residual);
+        append_complex32(value_stream, role.residual);
+        append_complex32(value_stream, role.value);
+        append_role_metadata(metadata_stream,
+                             static_cast<std::uint32_t>(source_count), role);
         ++role_count;
         tap_count += role.tap_count;
+      }
+      for (const Role& role : prediction_roles) {
+        append_role_metadata(prediction_metadata_stream,
+                             static_cast<std::uint32_t>(source_count), role);
       }
       ++source_count;
       if (source_count == 1 || source_count % config.checkpoint_interval == 0 ||
           (config.max_sources != 0 && source_count == config.max_sources)) {
-        checkpoints.push_back(Checkpoint{source_count, hashes.portable.value()});
+        checkpoints.push_back(
+            Checkpoint{source_count, hashes.portable.value(), hashes.value.value()});
       }
       if (config.max_sources != 0 && source_count >= config.max_sources) {
         const std::string receipt =
             completed_receipt(config, grid, vbs, hashes, checkpoints, source_count,
-                              role_count, tap_count, "configured-source-limit");
+                              role_count, tap_count, value_stream.size(),
+                              metadata_stream.size(),
+                              prediction_metadata_stream.size(),
+                              "configured-source-limit");
         try {
+          atomic_bytes(config.values_output, value_stream);
+          atomic_bytes(config.metadata_output, metadata_stream);
+          atomic_bytes(config.prediction_metadata_output,
+                       prediction_metadata_stream);
           atomic_receipt(config.output, receipt);
         } catch (const std::exception& error) {
           reject(std::string("could not write completed receipt: ") + error.what());
@@ -788,13 +1105,22 @@ std::string completed_receipt(const Config& config, const Array<DComplex>& grid,
   if (source_count == 0) {
     reject("first DataToGrid block contained no accepted RR/LL sources");
   }
+  if (prediction_metadata_stream.size() != role_count * 88U) {
+    reject("CASA prediction CF metadata stream has an unexpected byte count");
+  }
   if (checkpoints.empty() || checkpoints.back().sources != source_count) {
-    checkpoints.push_back(Checkpoint{source_count, hashes.portable.value()});
+    checkpoints.push_back(
+        Checkpoint{source_count, hashes.portable.value(), hashes.value.value()});
   }
   const std::string receipt =
       completed_receipt(config, grid, vbs, hashes, checkpoints, source_count, role_count,
-                        tap_count, "end-of-first-datagrid-block");
+                        tap_count, value_stream.size(), metadata_stream.size(),
+                        prediction_metadata_stream.size(),
+                        "end-of-first-datagrid-block");
   try {
+    atomic_bytes(config.values_output, value_stream);
+    atomic_bytes(config.metadata_output, metadata_stream);
+    atomic_bytes(config.prediction_metadata_output, prediction_metadata_stream);
     atomic_receipt(config.output, receipt);
   } catch (const std::exception& error) {
     reject(std::string("could not write completed receipt: ") + error.what());
@@ -816,12 +1142,12 @@ std::string completed_receipt(const Config& config, const Array<DComplex>& grid,
 
 extern "C" void casa_aw_datatogrid_dcomplex(
     AWVisResampler*, Array<DComplex>&, VBStore&, Matrix<Double>&, const Bool&, Bool)
-    asm("_ZN4casa5refim14AWVisResampler16DataToGridImpl_pINSt3__17complexIdEEEEvRN8"
+    asm("__ZN4casa5refim14AWVisResampler16DataToGridImpl_pINSt3__17complexIdEEEEvRN8"
         "casacore5ArrayIT_EERNS0_7VBStoreERNS6_6MatrixIdEERKbb");
 
 extern "C" void casa_aw_datatogrid_complex(
     AWVisResampler*, Array<Complex>&, VBStore&, Matrix<Double>&, const Bool&, Bool)
-    asm("_ZN4casa5refim14AWVisResampler16DataToGridImpl_pINSt3__17complexIfEEEEvRN8"
+    asm("__ZN4casa5refim14AWVisResampler16DataToGridImpl_pINSt3__17complexIfEEEEvRN8"
         "casacore5ArrayIT_EERNS0_7VBStoreERNS6_6MatrixIdEERKbb");
 
 #define CASA_DYLD_INTERPOSE(replacement, replacee)                                  \

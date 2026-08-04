@@ -10368,6 +10368,10 @@ struct AwProjectMetalTileParams {
 #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 struct AwProjectMetalPredictionBatch {
     samples: Vec<AwProjectMetalPredictionSample>,
+    /// Original visibility-batch sample indices retained only by fail-closed
+    /// prediction diagnostics.
+    source_sample_indices: Vec<u32>,
+    cf_metadata: Vec<AwProjectPredictionCfMetadataSample>,
     kernels: Vec<WProjectMetalComplex>,
     phases: Vec<WProjectMetalComplex>,
 }
@@ -10377,6 +10381,16 @@ impl AwProjectMetalPredictionBatch {
         self.samples
             .capacity()
             .saturating_mul(std::mem::size_of::<AwProjectMetalPredictionSample>())
+            .saturating_add(
+                self.source_sample_indices
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<u32>()),
+            )
+            .saturating_add(
+                self.cf_metadata
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<AwProjectPredictionCfMetadataSample>()),
+            )
             .saturating_add(
                 self.kernels
                     .capacity()
@@ -10388,6 +10402,26 @@ impl AwProjectMetalPredictionBatch {
                     .saturating_mul(std::mem::size_of::<WProjectMetalComplex>()),
             )
     }
+}
+
+#[derive(Clone, Copy)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+struct AwProjectPredictionCfMetadataRole {
+    cell_key: AwConvolutionFunctionKey,
+    loc_x: isize,
+    loc_y: isize,
+    off_x: isize,
+    off_y: isize,
+    conjugate_for_grid: bool,
+    x_support: usize,
+    y_support: usize,
+    normalization: Complex32,
+}
+
+#[derive(Clone, Copy)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+struct AwProjectPredictionCfMetadataSample {
+    roles: [AwProjectPredictionCfMetadataRole; 2],
 }
 
 #[derive(Default)]
@@ -17736,6 +17770,18 @@ fn awproject_compact_tap_spec(
     })
 }
 
+fn awproject_prediction_uvw_lambda(
+    batch: &VisibilityBatch,
+    parallel_hands: &AwParallelHandVisibilityBatch,
+    sample_index: usize,
+) -> [f64; 3] {
+    [
+        batch.u_lambda[sample_index],
+        batch.v_lambda[sample_index],
+        parallel_hands.prediction_w_lambda[sample_index],
+    ]
+}
+
 #[allow(clippy::too_many_arguments)]
 fn classify_awproject_compact_source_sample(
     request: &MtmfsRequest,
@@ -17775,6 +17821,8 @@ fn classify_awproject_compact_source_sample(
         batch.v_lambda[sample_index],
         batch.w_lambda[sample_index],
     ];
+    let prediction_uvw_lambda =
+        awproject_prediction_uvw_lambda(batch, parallel_hands, sample_index);
     let select_key = |w_lambda, mueller_element, label: &str| {
         cache
             .cache()
@@ -17844,14 +17892,14 @@ fn classify_awproject_compact_source_sample(
             .cache()
             .select_key_for_prediction_sample(
                 frequency_hz,
-                uvw_lambda[2],
+                prediction_uvw_lambda[2],
                 mueller_element,
                 pa_deg,
             )
             .ok_or_else(|| {
                 ImagingError::ConvolutionFunctionCache(format!(
                     "no {label} AWProject prediction CF cell for frequency {frequency_hz} Hz, W {} lambda",
-                    uvw_lambda[2],
+                    prediction_uvw_lambda[2],
                 ))
             })
     };
@@ -17893,7 +17941,7 @@ fn classify_awproject_compact_source_sample(
             group_index,
             key,
             AwProjectCompactKernelKind::Imaging,
-            uvw_lambda,
+            prediction_uvw_lambda,
         ) {
             Ok(spec) => spec,
             Err(reason) => {
@@ -17913,7 +17961,7 @@ fn classify_awproject_compact_source_sample(
             group_index,
             key,
             AwProjectCompactKernelKind::Imaging,
-            uvw_lambda,
+            prediction_uvw_lambda,
         ) {
             Ok(spec) => spec,
             Err(reason) => {
@@ -19380,6 +19428,40 @@ fn awproject_compact_metal_prediction_plan(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_prediction_cf_metadata_role(
+    plan: AwProjectCompactSamplePlan,
+    tap_requests: &[AwProjectCompactTapRequest],
+    bundles: &[AwProjectCompactMaterializedTap],
+) -> Result<AwProjectPredictionCfMetadataRole, ImagingError> {
+    let request = tap_requests.get(plan.tap_bundle).ok_or_else(|| {
+        ImagingError::Normalization(
+            "AWProject prediction metadata tap request is missing".to_string(),
+        )
+    })?;
+    let bundle = bundles.get(plan.tap_bundle).ok_or_else(|| {
+        ImagingError::Normalization(
+            "AWProject prediction metadata tap bundle is missing".to_string(),
+        )
+    })?;
+    let AwProjectCompactMaterializedTap::Ready(bundle) = bundle else {
+        return Err(ImagingError::Normalization(
+            "AWProject prediction metadata reached a rejected tap bundle".to_string(),
+        ));
+    };
+    Ok(AwProjectPredictionCfMetadataRole {
+        cell_key: request.cell_key,
+        loc_x: plan.loc_x,
+        loc_y: plan.loc_y,
+        off_x: request.representative_geometry.off_x,
+        off_y: request.representative_geometry.off_y,
+        conjugate_for_grid: request.representative_geometry.conjugate_for_grid,
+        x_support: bundle.x_support,
+        y_support: bundle.y_support,
+        normalization: bundle.normalization,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[allow(clippy::too_many_arguments)]
 fn pack_awproject_metal_prediction_probe_batch(
     request: &MtmfsRequest,
@@ -19428,6 +19510,13 @@ fn pack_awproject_metal_prediction_probe_batch(
         kernel_bases[bundle_index] = Some(base);
     }
     packed.samples.reserve(source_samples.len());
+    let retain_source_sample_indices =
+        env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDICTION_PREFIX_TRACE").is_some()
+            || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDICTION_SIDECAR_PREFIX").is_some();
+    if retain_source_sample_indices {
+        packed.source_sample_indices.reserve(source_samples.len());
+        packed.cf_metadata.reserve(source_samples.len());
+    }
     let mut phase_atlas = AwProjectMetalPhaseAtlasBuilder::default();
     for (source, planned) in source_samples.iter().zip(planned_samples) {
         if source.group_index != planned.group_index {
@@ -19452,23 +19541,54 @@ fn pack_awproject_metal_prediction_probe_batch(
         let first_observed = parallel_hands.first_visibility[sample_index];
         let second_observed = parallel_hands.second_visibility[sample_index];
         let source_phase = parallel_hands.source_phase[sample_index];
-        packed.samples.push(AwProjectMetalPredictionSample {
-            first_prediction: awproject_compact_metal_prediction_plan(
+        if retain_source_sample_indices {
+            packed
+                .source_sample_indices
+                .push(u32::try_from(sample_index).map_err(|_| {
+                    ImagingError::InvalidRequest(
+                        "AWProject prediction-prefix source sample index exceeds u32".to_string(),
+                    )
+                })?);
+        }
+        let first_prediction = awproject_compact_metal_prediction_plan(
+            source.first_prediction_plan,
+            bundles,
+            &kernel_bases,
+            source.group_index,
+            phase_tables,
+            &mut phase_atlas,
+        )?;
+        let second_prediction = awproject_compact_metal_prediction_plan(
+            source.second_prediction_plan,
+            bundles,
+            &kernel_bases,
+            source.group_index,
+            phase_tables,
+            &mut phase_atlas,
+        )?;
+        if retain_source_sample_indices {
+            let first_metadata = awproject_prediction_cf_metadata_role(
                 source.first_prediction_plan,
+                tap_requests,
                 bundles,
-                &kernel_bases,
-                source.group_index,
-                phase_tables,
-                &mut phase_atlas,
-            )?,
-            second_prediction: awproject_compact_metal_prediction_plan(
+            )?;
+            let second_metadata = awproject_prediction_cf_metadata_role(
                 source.second_prediction_plan,
+                tap_requests,
                 bundles,
-                &kernel_bases,
-                source.group_index,
-                phase_tables,
-                &mut phase_atlas,
-            )?,
+            )?;
+            let roles = if first_imaging_mueller == 0 {
+                [first_metadata, second_metadata]
+            } else {
+                [second_metadata, first_metadata]
+            };
+            packed
+                .cf_metadata
+                .push(AwProjectPredictionCfMetadataSample { roles });
+        }
+        packed.samples.push(AwProjectMetalPredictionSample {
+            first_prediction,
+            second_prediction,
             first_observed_re: first_observed.re,
             first_observed_im: first_observed.im,
             second_observed_re: second_observed.re,
@@ -19802,6 +19922,18 @@ fn merge_awproject_metal_resident_programs(
     }
     let mut prediction_batch = AwProjectMetalPredictionBatch {
         samples: Vec::with_capacity(prediction_samples),
+        source_sample_indices: Vec::with_capacity(
+            programs
+                .iter()
+                .map(|program| program.prediction_batch.source_sample_indices.len())
+                .sum(),
+        ),
+        cf_metadata: Vec::with_capacity(
+            programs
+                .iter()
+                .map(|program| program.prediction_batch.cf_metadata.len())
+                .sum(),
+        ),
         kernels: Vec::with_capacity(prediction_kernels),
         phases: Vec::with_capacity(prediction_phases),
     };
@@ -19851,6 +19983,12 @@ fn merge_awproject_metal_resident_programs(
         prediction_batch
             .samples
             .append(&mut program.prediction_batch.samples);
+        prediction_batch
+            .source_sample_indices
+            .append(&mut program.prediction_batch.source_sample_indices);
+        prediction_batch
+            .cf_metadata
+            .append(&mut program.prediction_batch.cf_metadata);
         prediction_batch
             .kernels
             .append(&mut program.prediction_batch.kernels);
@@ -21223,6 +21361,17 @@ fn write_awproject_metal_prediction_prefix_trace(
             batch.samples.len(),
         ))
     })?;
+    let source_sample_index = batch
+        .source_sample_indices
+        .get(source_ordinal)
+        .copied()
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(format!(
+                "AWProject prediction-prefix source-sample identity is absent for source ordinal \
+                 {source_ordinal}; retained identities={}",
+                batch.source_sample_indices.len(),
+            ))
+        })?;
     if sample.first_imaging_mueller != 0 {
         return Err(ImagingError::Normalization(format!(
             "AWProject prediction-prefix source {source_ordinal} first role is Mueller {}, \
@@ -21287,7 +21436,8 @@ fn write_awproject_metal_prediction_prefix_trace(
     }
 
     let bits = |value: Complex32| serde_json::json!([value.re.to_bits(), value.im.to_bits()]);
-    let mut accumulator = Complex32::new(0.0, 0.0);
+    let mut accumulator_tt0 = Complex32::new(0.0, 0.0);
+    let mut accumulator_tt1 = Complex32::new(0.0, 0.0);
     let mut taps = Vec::with_capacity(tap_count);
     let mut tap_ordinal = 0usize;
     for iy in -y_support..=y_support {
@@ -21310,11 +21460,18 @@ fn write_awproject_metal_prediction_prefix_trace(
                         "AWProject prediction-prefix grid Y is outside the model".to_string(),
                     )
                 })?;
-            let model_value = *model_tt0.get((grid_x, grid_y)).ok_or_else(|| {
+            let model_value_tt0 = *model_tt0.get((grid_x, grid_y)).ok_or_else(|| {
                 ImagingError::Normalization(format!(
                     "AWProject prediction-prefix tap {tap_ordinal} selected model cell \
                      ({grid_x},{grid_y}) outside {:?}",
                     model_tt0.dim(),
+                ))
+            })?;
+            let model_value_tt1 = *model_tt1.get((grid_x, grid_y)).ok_or_else(|| {
+                ImagingError::Normalization(format!(
+                    "AWProject prediction-prefix tap {tap_ordinal} selected TT1 model cell \
+                     ({grid_x},{grid_y}) outside {:?}",
+                    model_tt1.dim(),
                 ))
             })?;
             let packed = batch.kernels[kernel_base + tap_ordinal];
@@ -21328,10 +21485,14 @@ fn write_awproject_metal_prediction_prefix_trace(
             let phased_kernel =
                 gridder::casa_aw_literal_complex_multiply(packed_kernel, pointing_phase);
             let degrid_coefficient = phased_kernel.conj();
-            let product =
-                gridder::casa_aw_literal_complex_multiply(degrid_coefficient, model_value);
-            accumulator.re += product.re;
-            accumulator.im += product.im;
+            let product_tt0 =
+                gridder::casa_aw_literal_complex_multiply(degrid_coefficient, model_value_tt0);
+            let product_tt1 =
+                gridder::casa_aw_literal_complex_multiply(degrid_coefficient, model_value_tt1);
+            accumulator_tt0.re += product_tt0.re;
+            accumulator_tt0.im += product_tt0.im;
+            accumulator_tt1.re += product_tt1.re;
+            accumulator_tt1.im += product_tt1.im;
             taps.push(serde_json::json!({
                 "tap_ordinal": tap_ordinal,
                 "iy": iy,
@@ -21344,9 +21505,12 @@ fn write_awproject_metal_prediction_prefix_trace(
                 "pointing_phase_bits": bits(pointing_phase),
                 "phased_kernel_bits": bits(phased_kernel),
                 "degrid_coefficient_bits": bits(degrid_coefficient),
-                "model_tt0_bits": bits(model_value),
-                "product_bits": bits(product),
-                "accumulator_bits": bits(accumulator),
+                "model_tt0_bits": bits(model_value_tt0),
+                "model_tt1_bits": bits(model_value_tt1),
+                "product_bits": bits(product_tt0),
+                "product_tt1_bits": bits(product_tt1),
+                "accumulator_bits": bits(accumulator_tt0),
+                "accumulator_tt1_bits": bits(accumulator_tt1),
             }));
             tap_ordinal += 1;
         }
@@ -21357,13 +21521,63 @@ fn write_awproject_metal_prediction_prefix_trace(
         )));
     }
     let normalizer = Complex32::new(plan.normalization_re, plan.normalization_im);
+    let source_phase = Complex32::new(sample.source_phase_re, sample.source_phase_im);
+    let packed_normalizer = AwProjectMetalWideDivisionComplex {
+        re: normalizer.re,
+        im: normalizer.im,
+    };
+    let divide_raw_frame = |numerator: Complex32| {
+        let prephased = awproject_predivision_source_phase(
+            AwProjectMetalWideDivisionComplex {
+                re: numerator.re,
+                im: numerator.im,
+            },
+            source_phase,
+        )?;
+        casa_67518_wide_complex_division(prephased, packed_normalizer)
+    };
+    let raw_frame_tt0 = divide_raw_frame(accumulator_tt0)?;
+    let raw_frame_tt1 = divide_raw_frame(accumulator_tt1)?;
+    let aligned_prediction = awproject_raw_frame_taylor_prediction(
+        raw_frame_tt0,
+        raw_frame_tt1,
+        sample.taylor_x,
+        source_phase,
+    )?;
+    let observed = Complex32::new(sample.first_observed_re, sample.first_observed_im);
+    let aligned_residual = Complex32::new(
+        observed.re - aligned_prediction.re,
+        observed.im - aligned_prediction.im,
+    );
+    let casa_frame_prediction = gridder::casa_aw_literal_complex_multiply(
+        Complex32::new(aligned_prediction.re, aligned_prediction.im),
+        source_phase.conj(),
+    );
+    let casa_frame_residual =
+        gridder::casa_aw_literal_complex_multiply(aligned_residual, source_phase.conj());
     let receipt = serde_json::json!({
-        "schema": "casa-rs-vlass-aw-prediction-prefix-trace-v1",
+        "schema": "casa-rs-vlass-aw-prediction-prefix-trace-v2",
         "role": "bounded_single_source_compact_replay_diagnostic_not_promotion_evidence",
         "producer": "casa-rs",
         "source_ordinal": source_ordinal,
+        "source_sample_index": source_sample_index,
         "logical_role": "rr",
         "model_term": 0,
+        "source_sample": {
+            "source_phase_bits": bits(Complex32::new(
+                sample.source_phase_re,
+                sample.source_phase_im,
+            )),
+            "taylor_x_bits": sample.taylor_x.to_bits(),
+            "first_observed_bits": bits(Complex32::new(
+                sample.first_observed_re,
+                sample.first_observed_im,
+            )),
+            "second_observed_bits": bits(Complex32::new(
+                sample.second_observed_re,
+                sample.second_observed_im,
+            )),
+        },
         "program": {
             "sample_count": batch.samples.len(),
             "kernel_value_count": batch.kernels.len(),
@@ -21396,8 +21610,18 @@ fn write_awproject_metal_prediction_prefix_trace(
         "taps": taps,
         "result": {
             "tap_count": tap_count,
-            "numerator_bits": bits(accumulator),
+            "numerator_bits": bits(accumulator_tt0),
+            "numerator_tt1_bits": bits(accumulator_tt1),
             "normalizer_bits": bits(normalizer),
+            "raw_frame_tt0_bits": bits(Complex32::new(raw_frame_tt0.re, raw_frame_tt0.im)),
+            "raw_frame_tt1_bits": bits(Complex32::new(raw_frame_tt1.re, raw_frame_tt1.im)),
+            "aligned_prediction_bits": bits(Complex32::new(
+                aligned_prediction.re,
+                aligned_prediction.im,
+            )),
+            "aligned_residual_bits": bits(aligned_residual),
+            "casa_frame_prediction_bits": bits(casa_frame_prediction),
+            "casa_frame_residual_bits": bits(casa_frame_residual),
         },
         "run_prerequisites_already_completed": [
             "initial_dirty_grid_and_transform",
@@ -21442,10 +21666,37 @@ fn write_awproject_metal_prediction_prefix_trace(
         path.display(),
         source_ordinal,
         tap_count,
-        accumulator.re.to_bits(),
-        accumulator.im.to_bits(),
+        accumulator_tt0.re.to_bits(),
+        accumulator_tt0.im.to_bits(),
     );
     Ok(())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn maybe_write_awproject_metal_prediction_prefix_trace(
+    batch: &AwProjectMetalPredictionBatch,
+    model_grids: &[Array2<Complex32>],
+) -> Result<Option<PathBuf>, ImagingError> {
+    let Some(path) =
+        env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDICTION_PREFIX_TRACE").map(PathBuf::from)
+    else {
+        return Ok(None);
+    };
+    let source_ordinal =
+        env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDICTION_PREFIX_SOURCE_ORDINAL")
+            .map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "the AWProject prediction-prefix trace requires a source ordinal".to_string(),
+                )
+            })?
+            .parse::<usize>()
+            .map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "invalid AWProject prediction-prefix source ordinal: {error}"
+                ))
+            })?;
+    write_awproject_metal_prediction_prefix_trace(&path, source_ordinal, batch, model_grids)?;
+    Ok(Some(path))
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -22109,34 +22360,137 @@ fn build_awproject_wide_division_candidate_two_lane(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+fn append_awproject_prediction_cf_metadata_record(
+    output: &mut Vec<u8>,
+    source_ordinal: usize,
+    role_ordinal: usize,
+    role: AwProjectPredictionCfMetadataRole,
+) -> Result<(), ImagingError> {
+    let source_ordinal = u32::try_from(source_ordinal).map_err(|_| {
+        ImagingError::InvalidRequest(
+            "AWProject prediction metadata source ordinal exceeds u32".to_string(),
+        )
+    })?;
+    let role_ordinal = u32::try_from(role_ordinal).map_err(|_| {
+        ImagingError::InvalidRequest(
+            "AWProject prediction metadata role ordinal exceeds u32".to_string(),
+        )
+    })?;
+    let loc_x = i64::try_from(role.loc_x).map_err(|_| {
+        ImagingError::InvalidRequest(
+            "AWProject prediction metadata X location exceeds i64".to_string(),
+        )
+    })?;
+    let loc_y = i64::try_from(role.loc_y).map_err(|_| {
+        ImagingError::InvalidRequest(
+            "AWProject prediction metadata Y location exceeds i64".to_string(),
+        )
+    })?;
+    let off_x = i64::try_from(role.off_x).map_err(|_| {
+        ImagingError::InvalidRequest(
+            "AWProject prediction metadata X offset exceeds i64".to_string(),
+        )
+    })?;
+    let off_y = i64::try_from(role.off_y).map_err(|_| {
+        ImagingError::InvalidRequest(
+            "AWProject prediction metadata Y offset exceeds i64".to_string(),
+        )
+    })?;
+    let x_support = u32::try_from(role.x_support).map_err(|_| {
+        ImagingError::InvalidRequest(
+            "AWProject prediction metadata X support exceeds u32".to_string(),
+        )
+    })?;
+    let y_support = u32::try_from(role.y_support).map_err(|_| {
+        ImagingError::InvalidRequest(
+            "AWProject prediction metadata Y support exceeds u32".to_string(),
+        )
+    })?;
+    output.extend_from_slice(&source_ordinal.to_le_bytes());
+    output.extend_from_slice(&role_ordinal.to_le_bytes());
+    output.extend_from_slice(&role.cell_key.frequency_hz.to_bits().to_le_bytes());
+    output.extend_from_slice(&role.cell_key.w_value_lambda.to_bits().to_le_bytes());
+    output.extend_from_slice(&role.cell_key.mueller_element.to_le_bytes());
+    output.extend_from_slice(&role.cell_key.parallactic_angle_deg.to_bits().to_le_bytes());
+    for value in [loc_x, loc_y, off_x, off_y] {
+        output.extend_from_slice(&value.to_le_bytes());
+    }
+    output.extend_from_slice(&u32::from(role.conjugate_for_grid).to_le_bytes());
+    output.extend_from_slice(&x_support.to_le_bytes());
+    output.extend_from_slice(&y_support.to_le_bytes());
+    output.extend_from_slice(&role.normalization.re.to_bits().to_le_bytes());
+    output.extend_from_slice(&role.normalization.im.to_bits().to_le_bytes());
+    Ok(())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn write_awproject_prediction_sidecar(
     prefix: &Path,
     generation: u32,
     batch: &AwProjectMetalPredictionBatch,
+    tile_batch: &AwProjectMetalBatch,
     dispatch: &AwProjectMetalPredictionDispatch,
+    production_results: Option<&[AwProjectMetalPredictionResult]>,
 ) -> Result<PathBuf, ImagingError> {
-    let audit = dispatch.audit.as_ref().ok_or_else(|| {
+    let full_audit = dispatch.audit.as_ref().ok_or_else(|| {
         ImagingError::Normalization(
             "prediction-sidecar dispatch did not return its diagnostic buffer".to_string(),
         )
     })?;
+    let source_limit =
+        match env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDICTION_SIDECAR_SOURCE_LIMIT") {
+            Ok(value) => value.parse::<usize>().map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "invalid AWProject prediction-sidecar source limit: {error}"
+                ))
+            })?,
+            Err(env::VarError::NotPresent) => batch.samples.len(),
+            Err(error) => {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "read AWProject prediction-sidecar source limit: {error}"
+                )));
+            }
+        };
+    let boundary_results = production_results.unwrap_or(&dispatch.results);
     if generation == 0
-        || audit.len() != batch.samples.len()
+        || full_audit.len() != batch.samples.len()
         || dispatch.results.len() != batch.samples.len()
+        || boundary_results.len() != batch.samples.len()
+        || tile_batch.samples.len() != batch.samples.len()
+        || batch.source_sample_indices.len() != batch.samples.len()
+        || batch.cf_metadata.len() != batch.samples.len()
+        || tile_batch.term_weights.len() < batch.samples.len().saturating_mul(2)
+        || source_limit == 0
+        || source_limit > batch.samples.len()
     {
         return Err(ImagingError::Normalization(format!(
-            "prediction-sidecar topology differs: generation={generation}, audit={}, results={}, samples={}",
-            audit.len(),
+            "prediction-sidecar topology differs: generation={generation}, audit={}, results={}, boundary_results={}, tile_samples={}, source_identities={}, cf_metadata={}, term_weights={}, source_limit={source_limit}, samples={}",
+            full_audit.len(),
             dispatch.results.len(),
+            boundary_results.len(),
+            tile_batch.samples.len(),
+            batch.source_sample_indices.len(),
+            batch.cf_metadata.len(),
+            tile_batch.term_weights.len(),
             batch.samples.len(),
         )));
     }
+    let audit = &full_audit[..source_limit];
+    let results = &boundary_results[..source_limit];
 
     let prefix_text = prefix.to_string_lossy();
     let audit_path = PathBuf::from(format!("{prefix_text}.audit.bin"));
     let result_path = PathBuf::from(format!("{prefix_text}.results.bin"));
+    let casa_value_path = PathBuf::from(format!("{prefix_text}.casa-values.bin"));
+    let cf_metadata_path = PathBuf::from(format!("{prefix_text}.cf-metadata.bin"));
     let receipt_path = PathBuf::from(format!("{prefix_text}.host.json"));
-    for path in [&audit_path, &result_path, &receipt_path] {
+    for path in [
+        &audit_path,
+        &result_path,
+        &casa_value_path,
+        &cf_metadata_path,
+        &receipt_path,
+    ] {
         if path.exists() {
             return Err(ImagingError::InvalidRequest(format!(
                 "refusing to overwrite prediction-sidecar artifact {}",
@@ -22159,14 +22513,17 @@ fn write_awproject_prediction_sidecar(
             .saturating_mul(std::mem::size_of::<AwProjectMetalPredictionAuditSample>()),
     );
     let mut result_bytes = Vec::with_capacity(
-        dispatch
-            .results
+        results
             .len()
             .saturating_mul(std::mem::size_of::<AwProjectMetalPredictionResult>()),
     );
+    let mut casa_value_bytes = Vec::with_capacity(audit.len().saturating_mul(72));
+    let mut cf_metadata_bytes = Vec::with_capacity(audit.len().saturating_mul(2 * 88));
     let mut combined_hash = Sha256::new();
     let mut literal_combined_hash = Sha256::new();
     let mut returned_residual_hash = Sha256::new();
+    let mut casa_datatogrid_value_hash = AwProjectResidualPrefixHash::new();
+    let mut casa_datatogrid_value_checkpoints = Vec::with_capacity(audit.len());
     let mut unexpected_generation_count = 0usize;
     let mut unexpected_ordinal_count = 0usize;
     let mut nonfinite_count = 0usize;
@@ -22186,12 +22543,8 @@ fn write_awproject_prediction_sidecar(
         append_complex(output, role.observed);
         append_complex(output, role.local_residual);
     };
-    for (ordinal, ((sample, record), result)) in batch
-        .samples
-        .iter()
-        .zip(audit)
-        .zip(&dispatch.results)
-        .enumerate()
+    for (ordinal, ((sample, record), result)) in
+        batch.samples.iter().zip(audit).zip(results).enumerate()
     {
         let ordinal_u32 = u32::try_from(ordinal).map_err(|_| {
             ImagingError::InvalidRequest(
@@ -22203,6 +22556,20 @@ fn write_awproject_prediction_sidecar(
         }
         if record.sample_ordinal != ordinal_u32 {
             unexpected_ordinal_count += 1;
+        }
+        for (role_ordinal, role) in batch.cf_metadata[ordinal].roles.into_iter().enumerate() {
+            if !matches!(role.cell_key.mueller_element, 0 | 15) {
+                return Err(ImagingError::Normalization(format!(
+                    "prediction-sidecar CF metadata role {role_ordinal} at source {ordinal} has unsupported Mueller {}",
+                    role.cell_key.mueller_element,
+                )));
+            }
+            append_awproject_prediction_cf_metadata_record(
+                &mut cf_metadata_bytes,
+                ordinal,
+                role_ordinal,
+                role,
+            )?;
         }
         for value in [
             record.taylor_power0,
@@ -22280,6 +22647,55 @@ fn write_awproject_prediction_sidecar(
         ] {
             returned_residual_hash.update(value.to_bits().to_le_bytes());
         }
+        let term_weight = tile_batch.term_weights[ordinal.saturating_mul(2)];
+        let source_phase = Complex32::new(sample.source_phase_re, sample.source_phase_im);
+        let returned = [
+            AwProjectMetalPredictionAuditComplex {
+                re: result.first_residual_re,
+                im: result.first_residual_im,
+            },
+            AwProjectMetalPredictionAuditComplex {
+                re: result.second_residual_re,
+                im: result.second_residual_im,
+            },
+        ];
+        let canonical_rr = if record.first_imaging_mueller == 0 {
+            returned[0]
+        } else {
+            returned[1]
+        };
+        let canonical_ll = if record.first_imaging_mueller == 15 {
+            returned[0]
+        } else {
+            returned[1]
+        };
+        casa_value_bytes.extend_from_slice(&batch.source_sample_indices[ordinal].to_le_bytes());
+        casa_value_bytes.extend_from_slice(&u32::MAX.to_le_bytes());
+        casa_value_bytes.extend_from_slice(&u32::MAX.to_le_bytes());
+        casa_value_bytes.extend_from_slice(&0u32.to_le_bytes());
+        casa_value_bytes.extend_from_slice(&source_phase.re.to_bits().to_le_bytes());
+        casa_value_bytes.extend_from_slice(&source_phase.im.to_bits().to_le_bytes());
+        for residual in [canonical_rr, canonical_ll] {
+            let residual = Complex32::new(residual.re, residual.im);
+            let raw_residual =
+                gridder::casa_aw_literal_complex_multiply(residual, source_phase.conj());
+            let value = gridder::casa_aw_literal_complex_multiply(
+                Complex32::new(term_weight, 0.0),
+                residual,
+            );
+            casa_datatogrid_value_hash.complex32(residual);
+            casa_datatogrid_value_hash.complex32(value);
+            casa_value_bytes.extend_from_slice(&raw_residual.re.to_bits().to_le_bytes());
+            casa_value_bytes.extend_from_slice(&raw_residual.im.to_bits().to_le_bytes());
+            casa_value_bytes.extend_from_slice(&residual.re.to_bits().to_le_bytes());
+            casa_value_bytes.extend_from_slice(&residual.im.to_bits().to_le_bytes());
+            casa_value_bytes.extend_from_slice(&value.re.to_bits().to_le_bytes());
+            casa_value_bytes.extend_from_slice(&value.im.to_bits().to_le_bytes());
+        }
+        casa_datatogrid_value_checkpoints.push(serde_json::json!({
+            "sources": ordinal + 1,
+            "value": casa_datatogrid_value_hash.0,
+        }));
 
         if record.taylor_power0.to_bits() != 1.0f32.to_bits()
             || record.taylor_power1.to_bits() != sample.taylor_x.to_bits()
@@ -22304,19 +22720,20 @@ fn write_awproject_prediction_sidecar(
         } else {
             record.second.local_residual
         };
+        let raw_result = dispatch.results[ordinal];
         for (role_index, (local, returned)) in [
             (
                 first_local,
                 AwProjectMetalPredictionAuditComplex {
-                    re: result.first_residual_re,
-                    im: result.first_residual_im,
+                    re: raw_result.first_residual_re,
+                    im: raw_result.first_residual_im,
                 },
             ),
             (
                 second_local,
                 AwProjectMetalPredictionAuditComplex {
-                    re: result.second_residual_re,
-                    im: result.second_residual_im,
+                    re: raw_result.second_residual_re,
+                    im: raw_result.second_residual_im,
                 },
             ),
         ]
@@ -22336,10 +22753,11 @@ fn write_awproject_prediction_sidecar(
             .len()
             .saturating_mul(std::mem::size_of::<AwProjectMetalPredictionAuditSample>())
         || result_bytes.len()
-            != dispatch
-                .results
+            != results
                 .len()
                 .saturating_mul(std::mem::size_of::<AwProjectMetalPredictionResult>())
+        || casa_value_bytes.len() != audit.len().saturating_mul(72)
+        || cf_metadata_bytes.len() != audit.len().saturating_mul(2 * 88)
     {
         return Err(ImagingError::Normalization(
             "prediction-sidecar encoded byte length differs from its ABI stride".to_string(),
@@ -22357,6 +22775,8 @@ fn write_awproject_prediction_sidecar(
 
     let audit_sha256 = format!("{:x}", Sha256::digest(&audit_bytes));
     let result_sha256 = format!("{:x}", Sha256::digest(&result_bytes));
+    let casa_value_sha256 = format!("{:x}", Sha256::digest(&casa_value_bytes));
+    let cf_metadata_sha256 = format!("{:x}", Sha256::digest(&cf_metadata_bytes));
     let combined_sha256 = format!("{:x}", combined_hash.finalize());
     let literal_combined_sha256 = format!("{:x}", literal_combined_hash.finalize());
     let returned_residual_sha256 = format!("{:x}", returned_residual_hash.finalize());
@@ -22404,11 +22824,64 @@ fn write_awproject_prediction_sidecar(
             result_path.display(),
         ))
     })?;
+    let mut casa_value_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&casa_value_path)
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "create prediction-sidecar CASA value stream {}: {error}",
+                casa_value_path.display(),
+            ))
+        })?;
+    casa_value_file
+        .write_all(&casa_value_bytes)
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "write prediction-sidecar CASA value stream {}: {error}",
+                casa_value_path.display(),
+            ))
+        })?;
+    casa_value_file.sync_all().map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "sync prediction-sidecar CASA value stream {}: {error}",
+            casa_value_path.display(),
+        ))
+    })?;
+    let mut cf_metadata_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&cf_metadata_path)
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "create prediction-sidecar CF metadata stream {}: {error}",
+                cf_metadata_path.display(),
+            ))
+        })?;
+    cf_metadata_file
+        .write_all(&cf_metadata_bytes)
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "write prediction-sidecar CF metadata stream {}: {error}",
+                cf_metadata_path.display(),
+            ))
+        })?;
+    cf_metadata_file.sync_all().map_err(|error| {
+        ImagingError::InvalidRequest(format!(
+            "sync prediction-sidecar CF metadata stream {}: {error}",
+            cf_metadata_path.display(),
+        ))
+    })?;
 
     let receipt = serde_json::json!({
         "schema": "casa-rs-vlass-frozen-model-prediction-sidecar-host-v1",
         "role": "bounded_prediction_only_correctness_diagnostic_not_performance_evidence",
         "generation": generation,
+        "boundary_results": if production_results.is_some() {
+            "production-wide-division-candidate-before-tile-ingress"
+        } else {
+            "raw-prediction-dispatch"
+        },
         "sample_count": audit.len(),
         "audit": {
             "path": audit_path,
@@ -22431,6 +22904,29 @@ fn write_awproject_prediction_sidecar(
             "production_combined_prediction_sha256": combined_sha256,
             "literal_combined_prediction_sha256": literal_combined_sha256,
             "returned_residual_sha256": returned_residual_sha256,
+        },
+        "casa_datatogrid_tt0_value_boundary": {
+            "contract": "fnv1a64-source-order-RR-then-LL-production-tile-ingress-residual-complex32-then-term-weight-times-residual-complex32",
+            "source_count": audit.len(),
+            "role_count": audit.len().saturating_mul(2),
+            "source_sample_indices": &batch.source_sample_indices[..source_limit],
+            "value_hash": casa_datatogrid_value_hash.0,
+            "checkpoints": casa_datatogrid_value_checkpoints,
+            "value_stream": {
+                "path": casa_value_path,
+                "sha256": casa_value_sha256,
+                "contract": "source-order-identity4u32-source-phase-complex32-RR-then-LL-raw-residual-complex32-grid-residual-complex32-term-weight-times-grid-residual-complex32-little-endian",
+                "record_size": 72,
+                "allocated_bytes": casa_value_bytes.len(),
+            },
+            "prediction_cf_metadata_stream": {
+                "path": cf_metadata_path,
+                "sha256": cf_metadata_sha256,
+                "contract": "source-role-cell-frequency-w-mueller-pa-placement-conjugation-support-normalization-complex32-little-endian",
+                "record_size": 88,
+                "record_count": audit.len().saturating_mul(2),
+                "allocated_bytes": cf_metadata_bytes.len(),
+            },
         },
         "integrity": {
             "literal_combination_mismatch_count": literal_combination_mismatch_count,
@@ -22481,6 +22977,8 @@ fn write_awproject_prediction_sidecar(
     eprintln!(
         "awproject_prediction_sidecar status=complete samples={} generation={} \
          audit_path={} audit_sha256={} result_path={} result_sha256={} \
+         casa_value_path={} casa_value_sha256={} \
+         cf_metadata_path={} cf_metadata_sha256={} \
          combined_sha256={} literal_combined_sha256={} returned_residual_sha256={} \
          literal_combination_mismatches={} local_result_mismatches={} \
          prohibited_post_prediction_stages_entered=false receipt={}",
@@ -22490,6 +22988,10 @@ fn write_awproject_prediction_sidecar(
         audit_sha256,
         result_path.display(),
         result_sha256,
+        casa_value_path.display(),
+        casa_value_sha256,
+        cf_metadata_path.display(),
+        cf_metadata_sha256,
         combined_sha256,
         literal_combined_sha256,
         returned_residual_sha256,
@@ -22505,6 +23007,7 @@ fn write_awproject_wide_division_sidecar(
     prefix: &Path,
     generation: u32,
     batch: &AwProjectMetalPredictionBatch,
+    tile_batch: &AwProjectMetalBatch,
     current: &AwProjectMetalPredictionDispatch,
 ) -> Result<PathBuf, ImagingError> {
     let raw = current.wide_division.as_ref().ok_or_else(|| {
@@ -22600,10 +23103,22 @@ fn write_awproject_wide_division_sidecar(
         ))
     })?;
 
-    let current_receipt =
-        write_awproject_prediction_sidecar(&current_prefix, generation, batch, current)?;
-    let wide_receipt =
-        write_awproject_prediction_sidecar(&wide_prefix, generation, batch, &candidate)?;
+    let current_receipt = write_awproject_prediction_sidecar(
+        &current_prefix,
+        generation,
+        batch,
+        tile_batch,
+        current,
+        None,
+    )?;
+    let wide_receipt = write_awproject_prediction_sidecar(
+        &wide_prefix,
+        generation,
+        batch,
+        tile_batch,
+        &candidate,
+        None,
+    )?;
     let receipt_hash = |path: &Path| -> Result<String, ImagingError> {
         let bytes = std::fs::read(path).map_err(|error| {
             ImagingError::InvalidRequest(format!(
@@ -27165,28 +27680,8 @@ fn replay_awproject_metal_global_program(
         ));
     };
     if let Some(path) =
-        env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDICTION_PREFIX_TRACE").map(PathBuf::from)
+        maybe_write_awproject_metal_prediction_prefix_trace(&program.prediction_batch, model_grids)?
     {
-        let source_ordinal =
-            env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDICTION_PREFIX_SOURCE_ORDINAL")
-                .map_err(|_| {
-                    ImagingError::InvalidRequest(
-                        "the AWProject prediction-prefix trace requires a source ordinal"
-                            .to_string(),
-                    )
-                })?
-                .parse::<usize>()
-                .map_err(|error| {
-                    ImagingError::InvalidRequest(format!(
-                        "invalid AWProject prediction-prefix source ordinal: {error}"
-                    ))
-                })?;
-        write_awproject_metal_prediction_prefix_trace(
-            &path,
-            source_ordinal,
-            &program.prediction_batch,
-            model_grids,
-        )?;
         return Err(ImagingError::InvalidRequest(format!(
             "AWProject prediction-prefix trace completed before Metal prediction or residual \
              gridding; receipt={}",
@@ -27288,7 +27783,9 @@ fn replay_awproject_metal_global_program(
                 prefix,
                 sidecar_generation.expect("prediction sidecar generation"),
                 &program.prediction_batch,
+                &program.tile_batch,
                 &dispatch,
+                None,
             )?;
             return Err(ImagingError::InvalidRequest(format!(
                 "AWProject frozen-model prediction sidecar completed before residual gridding; receipt={}",
@@ -27300,6 +27797,7 @@ fn replay_awproject_metal_global_program(
                 prefix,
                 wide_division_generation.expect("wide-division sidecar generation"),
                 &program.prediction_batch,
+                &program.tile_batch,
                 &dispatch,
             )?;
             return Err(ImagingError::InvalidRequest(format!(
@@ -28200,6 +28698,16 @@ fn replay_awproject_compact_window(
                     .as_mut()
                     .expect("resident Metal tile program initialized");
                 let model_grids = model_grids.expect("resident chain model grids");
+                if let Some(path) = maybe_write_awproject_metal_prediction_prefix_trace(
+                    &program.prediction_batch,
+                    model_grids,
+                )? {
+                    return Err(ImagingError::InvalidRequest(format!(
+                        "AWProject prediction-prefix trace completed before Metal prediction or \
+                         residual gridding; receipt={}",
+                        path.display(),
+                    )));
+                }
                 let (stats, executor_setup) = AWPROJECT_METAL_EXECUTOR.with(|executor_slot| {
                     let mut executor_slot = executor_slot.borrow_mut();
                     let mut executor_setup = Duration::ZERO;
@@ -28209,63 +28717,81 @@ fn replay_awproject_compact_window(
                         executor_setup = setup_started.elapsed();
                     }
                     let executor = executor_slot.as_ref().expect("resident Metal executor");
-                    let stats =
-                        if windowed_hybrid_clean {
-                            let dispatch = executor.dispatch_prediction_probe(
-                                &program.prediction_batch,
-                                model_grids,
-                                None,
-                                Some(1),
-                            )?;
-                            let prediction_elapsed = dispatch.elapsed;
-                            let prediction_host_readback = dispatch.host_readback;
-                            let candidate = build_awproject_wide_division_candidate_two_lane(
+                    let stats = if windowed_hybrid_clean {
+                        let dispatch = executor.dispatch_prediction_probe(
+                            &program.prediction_batch,
+                            model_grids,
+                            env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDICTION_SIDECAR_PREFIX")
+                                .map(|_| 1),
+                            Some(1),
+                        )?;
+                        let prediction_elapsed = dispatch.elapsed;
+                        let prediction_host_readback = dispatch.host_readback;
+                        let candidate = build_awproject_wide_division_candidate_two_lane(
+                            1,
+                            &program.prediction_batch,
+                            &dispatch,
+                        )?;
+                        let candidate_elapsed = candidate.elapsed;
+                        let (candidate_builder_mode, candidate_builder_split) = candidate
+                            .candidate_builder
+                            .as_ref()
+                            .map(|builder| (builder.mode, builder.split_ordinal))
+                            .ok_or_else(|| {
+                                ImagingError::Normalization(
+                                    "windowed hybrid AW clean lost its two-lane builder receipt"
+                                        .to_string(),
+                                )
+                            })?;
+                        let candidate_hash_started = Instant::now();
+                        let candidate_residual_hash =
+                            hash_awproject_prediction_residuals(&candidate.results);
+                        let candidate_hash_elapsed = candidate_hash_started.elapsed();
+                        if let Some(prefix) =
+                            env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDICTION_SIDECAR_PREFIX")
+                                .map(PathBuf::from)
+                        {
+                            let receipt = write_awproject_prediction_sidecar(
+                                &prefix,
                                 1,
                                 &program.prediction_batch,
-                                &dispatch,
-                            )?;
-                            let candidate_elapsed = candidate.elapsed;
-                            let (candidate_builder_mode, candidate_builder_split) = candidate
-                                .candidate_builder
-                                .as_ref()
-                                .map(|builder| (builder.mode, builder.split_ordinal))
-                                .ok_or_else(|| {
-                                    ImagingError::Normalization(
-                                        "windowed hybrid AW clean lost its two-lane builder receipt"
-                                            .to_string(),
-                                    )
-                                })?;
-                            let candidate_hash_started = Instant::now();
-                            let candidate_residual_hash =
-                                hash_awproject_prediction_residuals(&candidate.results);
-                            let candidate_hash_elapsed = candidate_hash_started.elapsed();
-                            let residuals = candidate.results;
-                            let tile_update_started = Instant::now();
-                            update_awproject_persistent_metal_prediction_results(
-                                &mut program.tile_batch,
-                                &residuals,
-                            )?;
-                            let tile_update_elapsed = tile_update_started.elapsed();
-                            let tile_ingress_hash_started = Instant::now();
-                            let tile_ingress_hash =
-                                hash_awproject_tile_ingress_residuals(&program.tile_batch);
-                            let tile_ingress_hash_elapsed = tile_ingress_hash_started.elapsed();
-                            if tile_ingress_hash != candidate_residual_hash {
-                                return Err(ImagingError::Normalization(format!(
-                                    "windowed hybrid AW clean tile ingress changed candidate bits: \
-                                     {tile_ingress_hash} != {candidate_residual_hash}",
-                                )));
-                            }
-                            let tile_stats = executor.dispatch_tile_grid_probe(
-                                grid,
-                                aw_compensation,
                                 &program.tile_batch,
-                                &program.tile_plan,
-                                request.nterms,
-                                Some(program.residual_scale_plan),
+                                &dispatch,
+                                Some(&candidate.results),
                             )?;
-                            eprintln!(
-                                "awproject_windowed_hybrid_clean_refresh \
+                            return Err(ImagingError::InvalidRequest(format!(
+                                "windowed AWProject prediction sidecar completed after production \
+                                 candidate construction and before residual gridding; receipt={}",
+                                receipt.display(),
+                            )));
+                        }
+                        let residuals = candidate.results;
+                        let tile_update_started = Instant::now();
+                        update_awproject_persistent_metal_prediction_results(
+                            &mut program.tile_batch,
+                            &residuals,
+                        )?;
+                        let tile_update_elapsed = tile_update_started.elapsed();
+                        let tile_ingress_hash_started = Instant::now();
+                        let tile_ingress_hash =
+                            hash_awproject_tile_ingress_residuals(&program.tile_batch);
+                        let tile_ingress_hash_elapsed = tile_ingress_hash_started.elapsed();
+                        if tile_ingress_hash != candidate_residual_hash {
+                            return Err(ImagingError::Normalization(format!(
+                                "windowed hybrid AW clean tile ingress changed candidate bits: \
+                                     {tile_ingress_hash} != {candidate_residual_hash}",
+                            )));
+                        }
+                        let tile_stats = executor.dispatch_tile_grid_probe(
+                            grid,
+                            aw_compensation,
+                            &program.tile_batch,
+                            &program.tile_plan,
+                            request.nterms,
+                            Some(program.residual_scale_plan),
+                        )?;
+                        eprintln!(
+                            "awproject_windowed_hybrid_clean_refresh \
                                  status=exact-candidate-tile-ready samples={} \
                                  program_bytes={} candidate_residual_sha256={} \
                                  tile_ingress_sha256={} candidate_builder={} \
@@ -28275,98 +28801,102 @@ fn replay_awproject_compact_window(
                                  tile_update_ms={:.6} tile_ingress_hash_ms={:.6} \
                                  verified_prediction_to_tile_ready_ms={:.6} \
                                  tile_grid_ms={:.6}",
-                                residuals.len(),
-                                program.resident_bytes(),
-                                candidate_residual_hash,
-                                tile_ingress_hash,
-                                candidate_builder_mode,
-                                candidate_builder_split,
-                                prediction_elapsed.as_secs_f64() * 1_000.0,
-                                prediction_host_readback.as_secs_f64() * 1_000.0,
-                                candidate_elapsed.as_secs_f64() * 1_000.0,
-                                candidate_hash_elapsed.as_secs_f64() * 1_000.0,
-                                tile_update_elapsed.as_secs_f64() * 1_000.0,
-                                tile_ingress_hash_elapsed.as_secs_f64() * 1_000.0,
-                                (prediction_elapsed
-                                    + prediction_host_readback
-                                    + candidate_elapsed
-                                    + candidate_hash_elapsed
-                                    + tile_update_elapsed
-                                    + tile_ingress_hash_elapsed)
-                                    .as_secs_f64()
-                                    * 1_000.0,
-                                tile_stats.total.as_secs_f64() * 1_000.0,
-                            );
-                            AwProjectMetalResidentChainStats {
-                                samples: program.prediction_batch.samples.len(),
-                                prediction_kernel_values: program.prediction_batch.kernels.len(),
-                                imaging_kernel_values: program.tile_batch.kernels.len(),
-                                active_tiles: tile_stats.active_tiles,
-                                fragments: tile_stats.fragments,
-                                buffer_alloc: tile_stats.buffer_alloc,
-                                dispatch_wait: prediction_elapsed + tile_stats.dispatch_wait,
-                                output_bytes: tile_stats.output_bytes,
-                                residual_bytes: residuals.len().saturating_mul(
+                            residuals.len(),
+                            program.resident_bytes(),
+                            candidate_residual_hash,
+                            tile_ingress_hash,
+                            candidate_builder_mode,
+                            candidate_builder_split,
+                            prediction_elapsed.as_secs_f64() * 1_000.0,
+                            prediction_host_readback.as_secs_f64() * 1_000.0,
+                            candidate_elapsed.as_secs_f64() * 1_000.0,
+                            candidate_hash_elapsed.as_secs_f64() * 1_000.0,
+                            tile_update_elapsed.as_secs_f64() * 1_000.0,
+                            tile_ingress_hash_elapsed.as_secs_f64() * 1_000.0,
+                            (prediction_elapsed
+                                + prediction_host_readback
+                                + candidate_elapsed
+                                + candidate_hash_elapsed
+                                + tile_update_elapsed
+                                + tile_ingress_hash_elapsed)
+                                .as_secs_f64()
+                                * 1_000.0,
+                            tile_stats.total.as_secs_f64() * 1_000.0,
+                        );
+                        AwProjectMetalResidentChainStats {
+                            samples: program.prediction_batch.samples.len(),
+                            prediction_kernel_values: program.prediction_batch.kernels.len(),
+                            imaging_kernel_values: program.tile_batch.kernels.len(),
+                            active_tiles: tile_stats.active_tiles,
+                            fragments: tile_stats.fragments,
+                            buffer_alloc: tile_stats.buffer_alloc,
+                            dispatch_wait: prediction_elapsed + tile_stats.dispatch_wait,
+                            output_bytes: tile_stats.output_bytes,
+                            residual_bytes: residuals
+                                .len()
+                                .saturating_mul(
                                     std::mem::size_of::<AwProjectMetalPredictionResult>(),
                                 ),
-                                total: prediction_elapsed
-                                    + prediction_host_readback
-                                    + candidate_elapsed
-                                    + candidate_hash_elapsed
-                                    + tile_update_elapsed
-                                    + tile_ingress_hash_elapsed
-                                    + tile_stats.total,
-                            }
-                        } else if gpu_residual_replay {
-                            let dispatch = executor.dispatch_prediction_probe(
-                                &program.prediction_batch,
-                                model_grids,
-                                None,
-                                None,
-                            )?;
-                            let prediction_elapsed = dispatch.elapsed;
-                            let residuals = dispatch.results;
-                            update_awproject_persistent_metal_prediction_results(
-                                &mut program.tile_batch,
-                                &residuals,
-                            )?;
-                            let tile_stats = executor.dispatch_tile_grid_probe(
-                                grid,
-                                aw_compensation,
-                                &program.tile_batch,
-                                &program.tile_plan,
-                                request.nterms,
-                                Some(program.residual_scale_plan),
-                            )?;
-                            AwProjectMetalResidentChainStats {
-                                samples: program.prediction_batch.samples.len(),
-                                prediction_kernel_values: program.prediction_batch.kernels.len(),
-                                imaging_kernel_values: program.tile_batch.kernels.len(),
-                                active_tiles: tile_stats.active_tiles,
-                                fragments: tile_stats.fragments,
-                                buffer_alloc: tile_stats.buffer_alloc,
-                                dispatch_wait: prediction_elapsed + tile_stats.dispatch_wait,
-                                output_bytes: tile_stats.output_bytes,
-                                residual_bytes: residuals.len().saturating_mul(
+                            total: prediction_elapsed
+                                + prediction_host_readback
+                                + candidate_elapsed
+                                + candidate_hash_elapsed
+                                + tile_update_elapsed
+                                + tile_ingress_hash_elapsed
+                                + tile_stats.total,
+                        }
+                    } else if gpu_residual_replay {
+                        let dispatch = executor.dispatch_prediction_probe(
+                            &program.prediction_batch,
+                            model_grids,
+                            None,
+                            None,
+                        )?;
+                        let prediction_elapsed = dispatch.elapsed;
+                        let residuals = dispatch.results;
+                        update_awproject_persistent_metal_prediction_results(
+                            &mut program.tile_batch,
+                            &residuals,
+                        )?;
+                        let tile_stats = executor.dispatch_tile_grid_probe(
+                            grid,
+                            aw_compensation,
+                            &program.tile_batch,
+                            &program.tile_plan,
+                            request.nterms,
+                            Some(program.residual_scale_plan),
+                        )?;
+                        AwProjectMetalResidentChainStats {
+                            samples: program.prediction_batch.samples.len(),
+                            prediction_kernel_values: program.prediction_batch.kernels.len(),
+                            imaging_kernel_values: program.tile_batch.kernels.len(),
+                            active_tiles: tile_stats.active_tiles,
+                            fragments: tile_stats.fragments,
+                            buffer_alloc: tile_stats.buffer_alloc,
+                            dispatch_wait: prediction_elapsed + tile_stats.dispatch_wait,
+                            output_bytes: tile_stats.output_bytes,
+                            residual_bytes: residuals
+                                .len()
+                                .saturating_mul(
                                     std::mem::size_of::<AwProjectMetalPredictionResult>(),
                                 ),
-                                total: prediction_elapsed + tile_stats.total,
-                            }
-                        } else {
-                            update_awproject_persistent_metal_residuals(
-                                &mut program.tile_batch,
-                                &planned_samples,
-                            )?;
-                            executor.dispatch_prediction_tile_chain_probe(
-                                grid,
-                                aw_compensation,
-                                &program.prediction_batch,
-                                &program.tile_batch,
-                                &program.tile_plan,
-                                model_grids,
-                                request.nterms,
-                            )?
-                        };
+                            total: prediction_elapsed + tile_stats.total,
+                        }
+                    } else {
+                        update_awproject_persistent_metal_residuals(
+                            &mut program.tile_batch,
+                            &planned_samples,
+                        )?;
+                        executor.dispatch_prediction_tile_chain_probe(
+                            grid,
+                            aw_compensation,
+                            &program.prediction_batch,
+                            &program.tile_batch,
+                            &program.tile_plan,
+                            model_grids,
+                            request.nterms,
+                        )?
+                    };
                     Ok::<_, ImagingError>((stats, executor_setup))
                 })?;
                 if profile::standard_mfs_profile_detail_enabled() {
@@ -60776,6 +61306,31 @@ mod tests {
     };
 
     #[test]
+    fn awproject_prediction_uses_original_w_with_rotated_grid_placement() {
+        let batch = VisibilityBatch {
+            u_lambda: vec![12.5],
+            v_lambda: vec![-7.25],
+            w_lambda: vec![15_113.923_107_769_377],
+            weight: vec![1.0],
+            sumwt_factor: vec![2.0],
+            gridable: vec![true],
+            visibility: vec![Complex32::new(0.0, 0.0)],
+        };
+        let parallel_hands = super::AwParallelHandVisibilityBatch {
+            first_visibility: vec![Complex32::new(0.0, 0.0)],
+            second_visibility: vec![Complex32::new(0.0, 0.0)],
+            source_phase: vec![Complex32::new(1.0, 0.0)],
+            prediction_w_lambda: vec![17_528.573_545_105_31],
+        };
+
+        let prediction = super::awproject_prediction_uvw_lambda(&batch, &parallel_hands, 0);
+        assert_eq!(prediction[0], batch.u_lambda[0]);
+        assert_eq!(prediction[1], batch.v_lambda[0]);
+        assert_eq!(prediction[2], parallel_hands.prediction_w_lambda[0]);
+        assert_ne!(prediction[2], batch.w_lambda[0]);
+    }
+
+    #[test]
     fn frozen_restoring_beam_parser_preserves_casa_units() {
         let beam = parse_experimental_frozen_restoring_beam(
             "3.2029497623443604,2.157604455947876,70.55349731445312",
@@ -64391,6 +64946,8 @@ mod tests {
                 second_imaging_mueller: 15,
                 _pad0: 0,
             }],
+            source_sample_indices: vec![11],
+            cf_metadata: Vec::new(),
             kernels: vec![super::WProjectMetalComplex { re: 0.5, im: -0.25 }],
             phases: vec![super::WProjectMetalComplex { re: 0.25, im: 0.75 }],
         };
@@ -64412,9 +64969,10 @@ mod tests {
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(
             receipt["schema"],
-            "casa-rs-vlass-aw-prediction-prefix-trace-v1"
+            "casa-rs-vlass-aw-prediction-prefix-trace-v2"
         );
         assert_eq!(receipt["source_ordinal"], 0);
+        assert_eq!(receipt["source_sample_index"], 11);
         assert_eq!(receipt["plan"]["loc"], serde_json::json!([1, 2]));
         assert_eq!(receipt["result"]["tap_count"], 1);
         let tap = &receipt["taps"][0];
@@ -64443,6 +65001,14 @@ mod tests {
             serde_json::json!([0.3125_f32.to_bits(), (-0.9375_f32).to_bits()])
         );
         assert_eq!(tap["accumulator_bits"], tap["product_bits"]);
+        assert_eq!(
+            tap["model_tt1_bits"],
+            serde_json::json!([0.0_f32.to_bits(), 0.0_f32.to_bits()])
+        );
+        assert_eq!(
+            receipt["result"]["numerator_tt1_bits"],
+            tap["model_tt1_bits"]
+        );
         assert!(
             super::write_awproject_metal_prediction_prefix_trace(
                 &path,
@@ -64864,6 +65430,8 @@ mod tests {
                 second_imaging_mueller: 15,
                 _pad0: 0,
             }],
+            source_sample_indices: Vec::new(),
+            cf_metadata: Vec::new(),
             kernels: tile_batch.kernels.clone(),
             phases: tile_batch.phases.clone(),
         };

@@ -12,7 +12,7 @@ expected_commit="418bb1a26df7c4aba663ff123b038b75a6fa0295"
 exact_casatools="${exact_checkout}/casatools"
 official_synthesis="${official_lib_dir}/libcasacpp_synthesis.6.dylib"
 
-if [[ ! -d "${exact_checkout}/.git" ]]; then
+if ! git -C "${exact_checkout}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "missing exact CASA 6.7.5.18 checkout: ${exact_checkout}" >&2
   echo "create it with: git clone --depth 1 --branch 6.7.5.18 https://open-bitbucket.nrao.edu/scm/casa/casa6.git ${exact_checkout}" >&2
   exit 1
@@ -53,8 +53,8 @@ clang++ \
   -Wall \
   -Wextra \
   -Werror \
-  -Wno-error=deprecated-declarations \
-  -Wno-error=inconsistent-missing-override \
+  -Wno-deprecated-declarations \
+  -Wno-inconsistent-missing-override \
   -fvisibility=hidden \
   -dynamiclib \
   -Wl,-undefined,dynamic_lookup \
@@ -64,8 +64,14 @@ clang++ \
   -I"${local_casatools}/src/code" \
   -I"${dependency_include}" \
   "${experiment_dir}/casa_aw_datatogrid_input_hash_interpose.cc" \
+  "${official_synthesis}" \
+  -Wl,-rpath,"${official_lib_dir}" \
   -o "${output}"
 
+install_name_tool \
+  -change "libcasacpp_synthesis.6.dylib" \
+  "@rpath/libcasacpp_synthesis.6.dylib" \
+  "${output}" 2>/dev/null || true
 codesign --force --sign - "${output}" >/dev/null
 
 file "${output}"

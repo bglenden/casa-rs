@@ -114,7 +114,9 @@ class VlassScientificFloorReviewTest(unittest.TestCase):
                         {
                             "beam_width_multiplier": multiplier,
                             "block_side_pixels": int(2 * multiplier),
+                            "approx_independent_beams_per_block": multiplier**2,
                             "block_mean_rms": 0.0,
+                            "normalized_block_mean_rms": 0.0,
                         }
                         for multiplier in (1.0, 2.0, 4.0, 8.0, 16.0)
                     ],

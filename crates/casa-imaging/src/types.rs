@@ -1419,6 +1419,14 @@ pub struct AwParallelHandVisibilityBatch {
     /// before convolution-function normalization, then restores the observed
     /// visibility frame after normalization.
     pub source_phase: Vec<Complex32>,
+    /// Original visibility-buffer `w` coordinate in wavelengths.
+    ///
+    /// CASA AWProject uses phase-center-rotated `u`/`v` for grid placement,
+    /// but `GridToData` selects and conjugates the prediction convolution
+    /// function from the original visibility-buffer `w`. Keeping this aligned
+    /// sidecar prevents the prediction path from accidentally using the
+    /// rotated gridding `w`.
+    pub prediction_w_lambda: Vec<f64>,
 }
 
 impl AwParallelHandVisibilityBatch {
@@ -1436,12 +1444,14 @@ impl AwParallelHandVisibilityBatch {
         if self.first_visibility.len() != expected
             || self.second_visibility.len() != expected
             || self.source_phase.len() != expected
+            || self.prediction_w_lambda.len() != expected
         {
             return Err(ImagingError::InvalidRequest(format!(
-                "AW parallel-hand length mismatch: visibility={expected}, first={}, second={}, source_phase={}",
+                "AW parallel-hand length mismatch: visibility={expected}, first={}, second={}, source_phase={}, prediction_w={}",
                 self.first_visibility.len(),
                 self.second_visibility.len(),
-                self.source_phase.len()
+                self.source_phase.len(),
+                self.prediction_w_lambda.len()
             )));
         }
         if self
@@ -1454,6 +1464,15 @@ impl AwParallelHandVisibilityBatch {
             return Err(ImagingError::InvalidRequest(
                 "AW parallel-hand visibility or source phase contains a non-finite value"
                     .to_string(),
+            ));
+        }
+        if self
+            .prediction_w_lambda
+            .iter()
+            .any(|w_lambda| !w_lambda.is_finite())
+        {
+            return Err(ImagingError::InvalidRequest(
+                "AW prediction W coordinate contains a non-finite value".to_string(),
             ));
         }
         Ok(())

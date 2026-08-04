@@ -312,6 +312,7 @@ def comparison_output(request: dict[str, object]) -> dict[str, object]:
         "topology": {
             "mask_equal": True,
             "mask_mismatch_count": 0,
+            "mask_mismatch_samples": [],
             "left_masked_count": 0,
             "right_masked_count": 0,
             "finite_equal": True,

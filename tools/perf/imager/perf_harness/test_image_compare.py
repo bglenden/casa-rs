@@ -545,6 +545,18 @@ class ImageComparisonProtocolTests(unittest.TestCase):
         for visits in factory.visits.values():
             np.testing.assert_array_equal(np.ones(shape, dtype=np.int64), visits)
         self.assertEqual(1, result["topology"]["mask_mismatch_count"])
+        self.assertEqual(
+            [
+                {
+                    "location": [1, 1, 1],
+                    "left_mask": False,
+                    "right_mask": True,
+                    "left_value": 17.0,
+                    "right_value": 16.0,
+                }
+            ],
+            result["topology"]["mask_mismatch_samples"],
+        )
         self.assertEqual(1, result["topology"]["finite_topology_mismatch_count"])
         self.assertEqual(1.0, result["diff_rms"])
         self.assertEqual(1.0, result["diff_abs_max"])

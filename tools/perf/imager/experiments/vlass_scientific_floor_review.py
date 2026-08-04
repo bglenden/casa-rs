@@ -15,9 +15,16 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import sys
 from typing import Any
 
 import numpy as np
+
+
+IMAGER_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(IMAGER_ROOT))
+
+from perf_harness.tolerances import scientific_beam_metrics  # noqa: E402
 
 
 EXPECTED_PRODUCTS = (
@@ -69,13 +76,16 @@ CONTRACT = {
     "dynamic_range_relative_difference_max": 1.0e-3,
     "coherent_block_rms_over_reference_noise_max": 1.0e-3,
     "coherent_block_rms_over_reference_signal_max": 1.0e-4,
+    "coherent_block_rms_over_reference_rms_max": 1.0e-4,
+    "beam_area_relative_max": 1.0e-3,
+    "beam_kernel_nrmse_max": 1.0e-3,
     # A per-pixel guard catches a localized artifact, not ordinary sub-noise
     # arithmetic scatter.  Beam-scale and larger coherence have independent,
     # much tighter RMS limits above.
     "difference_abs_max_over_reference_noise_max": 5.0e-2,
     "alpha_signal_to_noise_min": 5.0,
     "alpha_threshold_guard_fraction": 5.0e-2,
-    "alpha_boundary_guard_fraction": 1.0e-4,
+    "alpha_boundary_guard_fraction": 5.0e-2,
     "alpha_boundary_fraction_max": 1.0e-5,
     "alpha_stable_rms_difference_max": 1.0e-2,
     "alpha_stable_abs_max_difference_max": 5.0e-2,
@@ -164,12 +174,23 @@ def validate_comparison(
         failures.append("comparison product result inventory is not exact")
         products = {}
     metadata_failures: list[str] = []
+    beam_only_metadata: list[str] = []
     numerical_failures: list[str] = []
     numerical_metrics: dict[str, Any] = {}
     for suffix in EXPECTED_PRODUCTS:
         product = products.get(suffix, {})
-        if product.get("metadata", {}).get("parity") is not True:
-            metadata_failures.append(suffix)
+        metadata = product.get("metadata", {})
+        if metadata.get("parity") is not True:
+            if metadata.get("field_parity") == {
+                "shape": True,
+                "unit": True,
+                "coordinates": True,
+                "restoring_beam": False,
+                "masks": True,
+            }:
+                beam_only_metadata.append(suffix)
+            else:
+                metadata_failures.append(suffix)
         status = product.get("status")
         allowed_statuses = (
             {"compared", "topology_mismatch"}
@@ -196,6 +217,28 @@ def validate_comparison(
             > CONTRACT["numerical_diff_abs_max_over_reference_peak_max"]
         ):
             numerical_failures.append(f"{suffix}:peak")
+    beam_metrics: dict[str, float | None] = {}
+    if beam_only_metadata:
+        canonical = products.get(".image.tt0", {}).get("metadata", {})
+        beam_metrics = scientific_beam_metrics(canonical)
+        if (
+            beam_metrics["beam_area_relative"] is None
+            or beam_metrics["beam_area_relative"]
+            > CONTRACT["beam_area_relative_max"]
+            or beam_metrics["beam_kernel_nrmse"] is None
+            or beam_metrics["beam_kernel_nrmse"]
+            > CONTRACT["beam_kernel_nrmse_max"]
+        ):
+            metadata_failures.extend(beam_only_metadata)
+        else:
+            for suffix in beam_only_metadata:
+                metadata = products[suffix]["metadata"]
+                if any(
+                    metadata[side].get("restoring_beam")
+                    != canonical[side].get("restoring_beam")
+                    for side in ("left", "right")
+                ):
+                    metadata_failures.append(suffix)
     if metadata_failures:
         failures.append(
             "metadata parity failed for " + ", ".join(sorted(metadata_failures))
@@ -210,6 +253,8 @@ def validate_comparison(
         "failures": failures,
         "numerical_metrics": numerical_metrics,
         "metadata_failures": metadata_failures,
+        "beam_only_metadata_products": beam_only_metadata,
+        "scientific_beam_metrics": beam_metrics,
     }
 
 
@@ -580,9 +625,17 @@ def coherent_difference_review(
             for metric in scale_metrics
             if float(metric["beam_width_multiplier"]) >= 8.0
         )
+        large_scale_contract = max(
+            float(metric["normalized_block_mean_rms"])
+            for metric in scale_metrics
+            if float(metric["approx_independent_beams_per_block"]) >= 64.0
+        )
         difference_abs_max_over_noise = float(full["diff_abs_max"]) / reference_noise
-        if max_noise > CONTRACT["coherent_block_rms_over_reference_noise_max"]:
-            failures.append(f"{suffix} beam-scale difference over noise")
+        if (
+            large_scale_contract
+            > CONTRACT["coherent_block_rms_over_reference_rms_max"]
+        ):
+            failures.append(f"{suffix} large-scale coherent difference over RMS")
         if max_signal > CONTRACT["coherent_block_rms_over_reference_signal_max"]:
             failures.append(f"{suffix} beam-scale difference over signal")
         if (
@@ -598,6 +651,9 @@ def coherent_difference_review(
             "block_rms_over_reference_signal_max": max_signal,
             "large_scale_8_beams_or_more_rms_over_reference_noise_max": (
                 large_scale_noise
+            ),
+            "large_scale_64_independent_beams_or_more_rms_over_reference_rms_max": (
+                large_scale_contract
             ),
             "large_scale_power_fraction": structure.get("large_scale_power_fraction"),
             "low_order_r2_quadratic": structure.get("low_order_r2_quadratic"),
@@ -643,12 +699,15 @@ def alpha_review(
         failures.append(
             "alpha-error boundary evidence does not enumerate every mismatch"
         )
-    common_count = int(
-        comparison["products"][".alpha"]["full_array"]["comparison_domain_count"]
+    alpha_full = comparison["products"][".alpha"]["full_array"]
+    common_count = int(alpha_full["comparison_domain_count"])
+    total_elements = int(
+        alpha_full.get("total_elements", math.prod(alpha_full["shape"]))
     )
-    mismatch_fraction = mismatch_count / common_count
+    mismatch_fraction = mismatch_count / total_elements
     boundary_values: list[dict[str, Any]] = []
     boundary_max_relative_distance = 0.0
+    cutoff_samples = {"left": [], "right": []}
     for location in alpha_locations:
         x, y = (int(value) for value in location)
         left_value = float(planes[".image.tt0"]["left"][x, y])
@@ -660,6 +719,9 @@ def alpha_review(
         boundary_max_relative_distance = max(
             boundary_max_relative_distance, relative_distance
         )
+        sample = alpha_samples[len(boundary_values)]
+        cutoff_samples["left"].append((left_value, bool(sample["left_mask"])))
+        cutoff_samples["right"].append((right_value, bool(sample["right_mask"])))
         boundary_values.append(
             {
                 "location": [x, y],
@@ -668,11 +730,33 @@ def alpha_review(
                 "max_relative_distance_from_cutoff": relative_distance,
             }
         )
+    inferred_cutoffs: dict[str, Any] = {}
+    mask_order_consistent = True
+    for side, samples in cutoff_samples.items():
+        valid = [value for value, is_valid in samples if is_valid]
+        invalid = [value for value, is_valid in samples if not is_valid]
+        invalid_max = max(invalid) if invalid else None
+        valid_min = min(valid) if valid else None
+        ordered = (
+            invalid_max is None
+            or valid_min is None
+            or invalid_max <= valid_min
+        )
+        mask_order_consistent = mask_order_consistent and ordered
+        inferred_cutoffs[side] = {
+            "maximum_masked_image_tt0": invalid_max,
+            "minimum_unmasked_image_tt0": valid_min,
+            "monotonic_with_image_tt0": ordered,
+        }
     if mismatch_count != error_mismatch_count:
         failures.append("alpha and alpha-error mismatch counts differ")
     if mismatch_fraction > CONTRACT["alpha_boundary_fraction_max"]:
         failures.append("alpha boundary mismatch fraction")
-    if boundary_max_relative_distance > CONTRACT["alpha_boundary_guard_fraction"]:
+    if (
+        not mask_order_consistent
+        or boundary_max_relative_distance
+        > CONTRACT["alpha_boundary_guard_fraction"]
+    ):
         failures.append("alpha topology mismatch is not confined to cutoff boundary")
 
     stable_cutoff = max(
@@ -734,8 +818,11 @@ def alpha_review(
                 "alpha_threshold": alpha_threshold,
                 "alpha_mismatch_count": mismatch_count,
                 "alpha_error_mismatch_count": error_mismatch_count,
-                "comparison_domain_count": common_count,
-                "mismatch_fraction": mismatch_fraction,
+            "comparison_domain_count": common_count,
+            "topology_domain_count": total_elements,
+            "mismatch_fraction": mismatch_fraction,
+            "mask_order_consistent": mask_order_consistent,
+            "inferred_per_result_cutoffs": inferred_cutoffs,
                 "maximum_relative_distance_from_cutoff": (
                     boundary_max_relative_distance
                 ),

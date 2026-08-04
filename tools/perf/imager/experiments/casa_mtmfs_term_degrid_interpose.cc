@@ -163,6 +163,7 @@ void atomic_file(const std::string &path, const void *data, std::size_t bytes) {
 struct Config {
   std::string binary;
   std::string receipt;
+  std::uint64_t max_get_calls;
 };
 
 Config read_config() {
@@ -173,7 +174,7 @@ Config read_config() {
     throw std::runtime_error("CASA_MTMFS_TERM_DEGRID_BINARY and "
                              "CASA_MTMFS_TERM_DEGRID_RECEIPT are required");
   }
-  Config config{binary, receipt};
+  Config config{binary, receipt, 0};
   if (config.binary.front() != '/' || config.receipt.front() != '/') {
     throw std::runtime_error("term-degrid artifact paths must be absolute");
   }
@@ -181,6 +182,21 @@ Config read_config() {
       ::access(config.receipt.c_str(), F_OK) == 0) {
     throw std::runtime_error(
         "refusing to overwrite a term-degrid oracle artifact");
+  }
+  const char *max_get_calls_text =
+      std::getenv("CASA_MTMFS_TERM_DEGRID_MAX_GET_CALLS");
+  config.max_get_calls = 0;
+  if (max_get_calls_text != nullptr && *max_get_calls_text != '\0') {
+    char *end = nullptr;
+    errno = 0;
+    const unsigned long long parsed =
+        std::strtoull(max_get_calls_text, &end, 10);
+    if (errno != 0 || end == max_get_calls_text || *end != '\0' ||
+        parsed == 0) {
+      throw std::runtime_error(
+          "CASA_MTMFS_TERM_DEGRID_MAX_GET_CALLS must be a positive integer");
+    }
+    config.max_get_calls = static_cast<std::uint64_t>(parsed);
   }
   return config;
 }
@@ -328,7 +344,12 @@ public:
     }
   }
 
-  [[noreturn]] void complete() {
+  bool should_complete_after_get() const {
+    return config_.max_get_calls != 0 &&
+           call_count_ >= config_.max_get_calls;
+  }
+
+  [[noreturn]] void complete(std::string_view terminal_boundary) {
     if (call_count_ == 0 || record_count_ == 0) {
       reject(
           "refim::MultiTermFTNew::finalizeToVis arrived without captured get "
@@ -341,7 +362,11 @@ public:
       receipt << "{\n"
               << "  \"schema\": "
                  "\"casa-vlass-frozen-model-term-degrid-oracle-v1\",\n"
-              << "  \"status\": \"completed-before-finalize-to-vis\",\n"
+              << "  \"status\": \""
+              << (terminal_boundary == "finalize-to-vis"
+                      ? "completed-before-finalize-to-vis"
+                      : "completed-before-residual-gridding")
+              << "\",\n"
               << "  \"role\": "
                  "\"bounded-correctness-oracle-not-performance-evidence\",\n"
               << "  \"casa_version\": \"6.7.5.18\",\n"
@@ -356,10 +381,18 @@ public:
               << "  \"binary_bytes\": " << bytes_.size() << ",\n"
               << "  \"binary_fnv1a64\": " << binary_fnv << ",\n"
               << "  \"get_calls\": " << call_count_ << ",\n"
+              << "  \"configured_max_get_calls\": " << config_.max_get_calls
+              << ",\n"
+              << "  \"terminal_boundary\": \""
+              << json_escape(terminal_boundary) << "\",\n"
               << "  \"term_count\": 2,\n"
               << "  \"formed_residual\": false,\n"
               << "  \"residual_grid_dispatch\": false,\n"
-              << "  \"finalize_to_vis\": \"intercepted-before-original\",\n"
+              << "  \"finalize_to_vis\": \""
+              << (terminal_boundary == "finalize-to-vis"
+                      ? "intercepted-before-original"
+                      : "not-entered")
+              << "\",\n"
               << "  \"fft\": \"not-entered\",\n"
               << "  \"image_formation\": \"not-entered\",\n"
               << "  \"products\": \"not-entered\",\n"
@@ -370,10 +403,12 @@ public:
       std::fprintf(stderr,
                    "casa_mtmfs_term_degrid_oracle status=complete calls=%llu "
                    "records=%llu binary=%s receipt=%s "
-                   "stopped_before_finalize_to_vis=true\n",
+                   "terminal_boundary=%.*s\n",
                    static_cast<unsigned long long>(call_count_),
                    static_cast<unsigned long long>(record_count_),
-                   config_.binary.c_str(), config_.receipt.c_str());
+                   config_.binary.c_str(), config_.receipt.c_str(),
+                   static_cast<int>(terminal_boundary.size()),
+                   terminal_boundary.data());
       raw_exit(kCompletedExit);
     } catch (const std::exception &error) {
       reject(error.what());
@@ -469,6 +504,9 @@ void term_degrid_get(MultiTermFTNew *object, VisBuffer2 &vb, Int row) {
     oracle.capture_call(
         vb, tt0, tt1_raw, tt1_scaled, combined,
         MultiTermNewProbeAccess::reference_frequency_hz(*object));
+    if (oracle.should_complete_after_get()) {
+      oracle.complete("bounded-get");
+    }
   } catch (const std::exception &error) {
     oracle.reject(error.what());
   } catch (...) {
@@ -476,7 +514,9 @@ void term_degrid_get(MultiTermFTNew *object, VisBuffer2 &vb, Int row) {
   }
 }
 
-[[noreturn]] void term_degrid_finalize(MultiTermFTNew *) { state().complete(); }
+[[noreturn]] void term_degrid_finalize(MultiTermFTNew *) {
+  state().complete("finalize-to-vis");
+}
 
 #define CASA_DYLD_INTERPOSE(replacement, replacee)                             \
   __attribute__((used)) static const struct {                                  \

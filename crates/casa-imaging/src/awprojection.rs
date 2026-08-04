@@ -2708,6 +2708,7 @@ mod tests {
                 Complex32::new(1.2, 0.05),
             ],
             source_phase: vec![Complex32::new(1.0, 0.0); 6],
+            prediction_w_lambda: visibility.w_lambda.clone(),
         };
         let primary_beam_model = PrimaryBeamModel::EvlaLBandCommon;
         let grouped_metadata = GroupedVisibilityMetadataBatch {

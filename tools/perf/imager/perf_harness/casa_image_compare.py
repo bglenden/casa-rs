@@ -1507,6 +1507,8 @@ class FullSpatialStructureReducer:
 
 
 class FullArrayReducer:
+    MASK_MISMATCH_SAMPLE_LIMIT = 16_384
+
     def __init__(
         self,
         shape,
@@ -1525,6 +1527,7 @@ class FullArrayReducer:
         self.left_masked = 0
         self.right_masked = 0
         self.mask_mismatch = 0
+        self.mask_mismatch_samples = []
         self.left_finite = 0
         self.right_finite = 0
         self.finite_topology_mismatch = 0
@@ -1584,7 +1587,29 @@ class FullArrayReducer:
         )
         self.left_masked += int(left.size - np.count_nonzero(left_mask))
         self.right_masked += int(right.size - np.count_nonzero(right_mask))
-        self.mask_mismatch += int(np.count_nonzero(left_mask != right_mask))
+        mask_mismatch = left_mask != right_mask
+        self.mask_mismatch += int(np.count_nonzero(mask_mismatch))
+        remaining_sample_capacity = (
+            self.MASK_MISMATCH_SAMPLE_LIMIT - len(self.mask_mismatch_samples)
+        )
+        if remaining_sample_capacity > 0 and np.any(mask_mismatch):
+            for local_location in np.argwhere(mask_mismatch)[
+                :remaining_sample_capacity
+            ]:
+                local_location = tuple(int(value) for value in local_location)
+                location = [
+                    int(origin) + int(offset)
+                    for origin, offset in zip(blc, local_location, strict=True)
+                ]
+                self.mask_mismatch_samples.append(
+                    {
+                        "location": location,
+                        "left_mask": bool(left_mask[local_location]),
+                        "right_mask": bool(right_mask[local_location]),
+                        "left_value": finite_float(float(left[local_location])),
+                        "right_value": finite_float(float(right[local_location])),
+                    }
+                )
 
         left_finite = np.isfinite(left)
         right_finite = np.isfinite(right)
@@ -1685,6 +1710,7 @@ class FullArrayReducer:
             "topology": {
                 "mask_equal": self.mask_mismatch == 0,
                 "mask_mismatch_count": self.mask_mismatch,
+                "mask_mismatch_samples": self.mask_mismatch_samples,
                 "left_masked_count": self.left_masked,
                 "right_masked_count": self.right_masked,
                 "finite_equal": self.finite_topology_mismatch == 0,

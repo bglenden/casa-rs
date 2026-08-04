@@ -600,6 +600,15 @@ def _beam_area_relative(metadata: Any) -> float | None:
     return abs(left_area / right_area - 1.0) if right_area > 0.0 else None
 
 
+def scientific_beam_metrics(metadata: Any) -> dict[str, float | None]:
+    """Return the contract-v2 restoring-beam equivalence metrics."""
+
+    return {
+        "beam_area_relative": _beam_area_relative(metadata),
+        "beam_kernel_nrmse": _beam_kernel_nrmse(metadata),
+    }
+
+
 def _beam_kernel_nrmse(metadata: Any) -> float | None:
     left = _beam_parameters(metadata, "left")
     right = _beam_parameters(metadata, "right")

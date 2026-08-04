@@ -28983,12 +28983,14 @@ fn align_optional_aw_parallel_hand_batches(
         if parallel_hands.len() != visibility.len()
             || parallel_hands.second_visibility.len() != visibility.len()
             || parallel_hands.source_phase.len() != visibility.len()
+            || parallel_hands.prediction_w_lambda.len() != visibility.len()
         {
             return Err(ImagingError::InvalidRequest(format!(
-                "prepared AW parallel-hand batch {index} has first/second/source-phase lengths {}/{}/{} for {} visibility samples",
+                "prepared AW parallel-hand batch {index} has first/second/source-phase/prediction-W lengths {}/{}/{}/{} for {} visibility samples",
                 parallel_hands.len(),
                 parallel_hands.second_visibility.len(),
                 parallel_hands.source_phase.len(),
+                parallel_hands.prediction_w_lambda.len(),
                 visibility.len()
             )));
         }
@@ -44855,6 +44857,7 @@ impl PreparedSelection {
                     parallel_hands.first_visibility.reserve(sample_capacity);
                     parallel_hands.second_visibility.reserve(sample_capacity);
                     parallel_hands.source_phase.reserve(sample_capacity);
+                    parallel_hands.prediction_w_lambda.reserve(sample_capacity);
                 }
                 if let Some(density_batch) = density_batch {
                     reserve_visibility_batch(density_batch, sample_capacity);
@@ -45280,6 +45283,7 @@ impl PreparedSelection {
                                     first_visibility: Vec::with_capacity(max_samples),
                                     second_visibility: Vec::with_capacity(max_samples),
                                     source_phase: Vec::with_capacity(max_samples),
+                                    prediction_w_lambda: Vec::with_capacity(max_samples),
                                 }
                             }),
                             density_batch: (trace_free_mfs_mosaic && use_density_batches)
@@ -45349,6 +45353,7 @@ impl PreparedSelection {
                                 first_visibility: Vec::with_capacity(max_samples),
                                 second_visibility: Vec::with_capacity(max_samples),
                                 source_phase: Vec::with_capacity(max_samples),
+                                prediction_w_lambda: Vec::with_capacity(max_samples),
                             }
                         }),
                         density_batch: (trace_free_mfs_mosaic && use_density_batches)
@@ -45800,6 +45805,9 @@ impl PreparedSelection {
                                         transform.phase_shift_m,
                                         imaging_frequency_hz,
                                     ));
+                                    parallel_hands
+                                        .prediction_w_lambda
+                                        .push(raw_uvw_m[2] * lambda_scale);
                                 }
                                 sample_frequency_hz.push(imaging_frequency_hz);
                                 if let Some(density_batch) = density_batch.as_mut() {
@@ -45870,6 +45878,9 @@ impl PreparedSelection {
                                 transform.phase_shift_m,
                                 imaging_frequency_hz,
                             ));
+                            parallel_hands
+                                .prediction_w_lambda
+                                .push(raw_uvw_m[2] * lambda_scale);
                         }
                         sample_frequency_hz.push(imaging_frequency_hz);
                         if let Some(density_batch) = density_batch.as_mut() {
@@ -46918,6 +46929,9 @@ impl PreparedSelection {
                                         transform.phase_shift_m,
                                         imaging_frequency_hz,
                                     ));
+                                    parallel_hands
+                                        .prediction_w_lambda
+                                        .push(raw_uvw_m[2] * lambda_scale);
                                 }
                                 sample_frequency_hz.push(imaging_frequency_hz);
                                 if let Some(density_batch) = density_batch.as_mut() {
@@ -47008,6 +47022,9 @@ impl PreparedSelection {
                                 transform.phase_shift_m,
                                 imaging_frequency_hz,
                             ));
+                            parallel_hands
+                                .prediction_w_lambda
+                                .push(raw_uvw_m[2] * lambda_scale);
                         }
                         sample_frequency_hz.push(imaging_frequency_hz);
                         if let Some(density_batch) = density_batch.as_mut() {
