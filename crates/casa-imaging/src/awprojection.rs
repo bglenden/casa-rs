@@ -1016,8 +1016,10 @@ impl AwConvolutionFunctionCache {
             .transpose()?
             .map(Arc::new);
         #[cfg(unix)]
-        let experimental_direct_sample_select =
-            env::var_os("CASA_RS_AWPROJECT_DIRECT_CF_SELECT_EXPERIMENT").is_some();
+        let experimental_direct_sample_select = !matches!(
+            env::var("CASA_RS_AWPROJECT_DIRECT_CF_SELECT_EXPERIMENT"),
+            Ok(value) if value == "0" || value.eq_ignore_ascii_case("false")
+        );
         #[cfg(unix)]
         if experimental_direct_sample_select {
             eprintln!(
