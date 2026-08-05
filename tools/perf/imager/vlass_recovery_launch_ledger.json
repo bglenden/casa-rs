@@ -458,6 +458,108 @@
         "alpha_error_status": "topology_mismatch",
         "scope_note": "The bounded exact-source-order windowed production path completed without swap or divergence and preserved the exact 19-product inventory, but it did not improve the incumbent clean science boundary. Image and residual NRMSE remain near one percent, above the approved 1e-3 ceiling. The ladder stops here; no full-16-SPW or full-geometry casa-rs clean row is authorized until this exact semantic boundary is fixed."
       }
+    },
+    {
+      "pair_id": "REDUCED-ALL63-CLEAN-4096-4SPW-SEPARABLE-001",
+      "row_id": "VLASS-ALL63-CLEAN-4096-4SPW",
+      "disposition": "passed_reduced_correctness_and_performance",
+      "selection": {
+        "field_selection": "1107~1127,1512~1532,1542~1562",
+        "field_count": 63,
+        "spw_selection": "2,7,12,17",
+        "spw_count": 4,
+        "selected_rows": 163800,
+        "imsize": [4096, 4096],
+        "niter": 2000,
+        "product_count": 19,
+        "mask_sha256": "8490acb911cbbba78f7a20ba4a1d379e227c3a42dfc7eefcc9b7fd5f4139572f"
+      },
+      "casa": {
+        "run_id": "20260803T223749Z-vlass-fragment-all-fields-clean-4096-four-spw-casa-9b96c6ad",
+        "manifest_path": "tools/perf/imager/workloads/vlass-fragment-all-fields-clean-4096-four-spw-casa.json",
+        "manifest_sha256_at_run": "05994b8ed3566a8a333e8761aa4cc05b8d0534daccabc57f29100f4cd6f8534c",
+        "receipt_path": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-d-all63-clean-4096-four-spw-retry1/receipts/20260803T223749Z-vlass-fragment-all-fields-clean-4096-four-spw-casa-9b96c6ad.json",
+        "receipt_sha256": "9ff187a87357424cc1509e2f79d6e5c929472d23780f536d589c7289bb076beb",
+        "tclean_wall_seconds": 3470.1970449999208,
+        "protocol_total_seconds": 3483.3232570419786,
+        "peak_rss_bytes": 7793131520,
+        "component_cycles": 11,
+        "minor_iterations": 193,
+        "stop_reason": "nsigma_threshold_reached"
+      },
+      "casa_rs": {
+        "production_checkpoint_commit": "4d787cb1fb8047d5e3087307db8f03bd37b8b6a4",
+        "measured_source_base_commit": "f2abbb98bd6d70c8fcd7f2b64925cd20b62b2419",
+        "source_note": "The checkpoint makes the already-measured separable phase-axis code path the production Metal default; it does not change that path's kernel arithmetic.",
+        "binary_path_at_run": "/private/tmp/casa-rs-vlass-autoresearch/target/release/casars-imager",
+        "binary_sha256": "82b01c3950eac4187c9e88e5282d606fc0743a5398f2da4b22872ad70c95c16b",
+        "run_path": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-candidates/runs/20260805T-vlass-all63-clean-4096-four-spw-separable-phase-f2abbb98b-v24",
+        "run_log_sha256": "9ad2cad7bf4a38585417a2cd0e287b5b9c528f45f8ab48869c1f902a43c3054d",
+        "provenance_sha256": "7e86fa53d39300a95eb71b67f98911cb2d41f2874f2cbf4b399f1a93878aa562",
+        "wall_seconds": 257.40,
+        "frontend_seconds": 256.823,
+        "core_seconds": 250.098886,
+        "psf_grid_seconds": 119.656444,
+        "residual_degrid_grid_seconds": 104.818201,
+        "major_cycle_refresh_seconds": 113.964881,
+        "minor_cycle_seconds": 9.358538,
+        "global_replay_program_bytes": 5224778300,
+        "global_replay_builder_bytes": 6560435928,
+        "peak_global_absorb_bytes": 7528750264,
+        "peak_rss_bytes": 12634636288,
+        "peak_memory_footprint_bytes": 11765475792,
+        "process_swaps": 0,
+        "major_cycles": 12,
+        "minor_iterations": 193,
+        "stop_reason": "nsigma_threshold_reached"
+      },
+      "performance": {
+        "speedup_casa_over_casa_rs": 13.481729002330695,
+        "required_speedup": 10.0,
+        "status": "passed"
+      },
+      "scientific_equivalence": {
+        "contract_path": "tools/perf/imager/contracts/vlass-scientific-equivalence-v2-mask-topology.json",
+        "contract_sha256": "58cece2f388f6098058598e19e00d4998a8c321f238d062ca8d567cafd29143a",
+        "comparison_input_sha256": "ad3bbc65083e04b770f204591c173cd50d875827d85e99aaca928ba217ff383b",
+        "raw_output_sha256": "35d1defac1e026025bdca32a12db61d1a9776b4cc8927382ea42185d72d69c42",
+        "log_sha256": "436e99b029ee9489d9bd3873e71fe7d05c9997e7a7624a52df10eaeabcf2d279",
+        "comparison_receipt_sha256": "726dc5859a08ce4580c356bf0f39ad49e8ef17101807b1c3efe17937670a23c1",
+        "reassessment_receipt_sha256": "5defc479822415b1c7cec24ac955a442b0015228f76a5a12b718414156bd8918",
+        "status": "passed",
+        "product_count": 19,
+        "inventory": "matched",
+        "image_tt0_nrmse": 0.00007376540899887278,
+        "image_tt1_nrmse": 0.000097405388651004,
+        "model_tt0_nrmse": 0.0000059708598282689264,
+        "model_tt1_nrmse": 0.00015982875493810055,
+        "residual_tt0_nrmse": 0.00008967606128494718,
+        "residual_tt1_nrmse": 0.00010158059766742233,
+        "beam_kernel_nrmse": 1.6982385191835777e-7,
+        "beam_area_relative": 1.611733808637439e-7,
+        "alpha_nrmse": 0.0000690414118213657,
+        "alpha_coherent_block_rms_over_right_rms": 0.00046001652173537094,
+        "alpha_mask_mismatch_fraction": 0.000002205371856689453,
+        "scope_note": "The immutable full-array reassessment passes every numerical, topology, metadata, source, beam, finite-kind, and product gate. This promotes only the reduced four-SPW row; full-16-SPW and 12150-square acceptance remain required."
+      },
+      "negative_discriminators": [
+        {
+          "name": "phase-pruning",
+          "wall_seconds": 332.06,
+          "speedup_casa_over_casa_rs": 10.450521592483286,
+          "disposition": "retired_no_material_working_set_or_runtime_improvement"
+        },
+        {
+          "name": "fused-kernel-phase",
+          "source_programs_before_rejection": 41,
+          "required_resident_bytes": 34397503776,
+          "transient_peak_bytes": 35458945892,
+          "budget_bytes": 25769803776,
+          "log_sha256": "a82bbb0358ce3b4414785856b27a54e750d35b82c834e99807bfd713d624878e",
+          "provenance_sha256": "87a0a61bb2d34c3fcd85669a97ff86010ca4008207fc61c24bcbbb8da2c7d7fe",
+          "disposition": "retired_failed_memory_admission_before_scientific_execution"
+        }
+      ]
     }
   ],
   "pending_reference_amendment": {

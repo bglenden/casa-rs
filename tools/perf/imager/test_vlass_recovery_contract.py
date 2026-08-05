@@ -379,7 +379,7 @@ class RecoveryContractTests(unittest.TestCase):
     ) -> None:
         entries = self.ledger["reduced_ladder_entries"]
         assert isinstance(entries, list)
-        self.assertEqual(3, len(entries))
+        self.assertEqual(4, len(entries))
         pair = entries[0]
         self.assertEqual(
             "REDUCED-ALL63-DIRTY-4096-4SPW-001",
@@ -509,6 +509,74 @@ class RecoveryContractTests(unittest.TestCase):
             "log_sha256",
         ):
             self.assertEqual(64, len(clean_scientific[field]))
+
+        promoted = entries[3]
+        self.assertEqual(
+            "REDUCED-ALL63-CLEAN-4096-4SPW-SEPARABLE-001",
+            promoted["pair_id"],
+        )
+        self.assertEqual(
+            "passed_reduced_correctness_and_performance",
+            promoted["disposition"],
+        )
+        promoted_casa = promoted["casa"]
+        promoted_rust = promoted["casa_rs"]
+        promoted_performance = promoted["performance"]
+        promoted_scientific = promoted["scientific_equivalence"]
+        for value in (
+            promoted_casa,
+            promoted_rust,
+            promoted_performance,
+            promoted_scientific,
+        ):
+            assert isinstance(value, dict)
+        self.assertEqual(193, promoted_casa["minor_iterations"])
+        self.assertEqual(193, promoted_rust["minor_iterations"])
+        self.assertEqual(12, promoted_rust["major_cycles"])
+        self.assertEqual(0, promoted_rust["process_swaps"])
+        self.assertAlmostEqual(
+            promoted_casa["tclean_wall_seconds"] / promoted_rust["wall_seconds"],
+            promoted_performance["speedup_casa_over_casa_rs"],
+        )
+        self.assertGreaterEqual(
+            promoted_performance["speedup_casa_over_casa_rs"],
+            promoted_performance["required_speedup"],
+        )
+        self.assertEqual("passed", promoted_performance["status"])
+        self.assertEqual("passed", promoted_scientific["status"])
+        self.assertEqual("matched", promoted_scientific["inventory"])
+        self.assertEqual(19, promoted_scientific["product_count"])
+        self.assertLessEqual(promoted_scientific["image_tt0_nrmse"], 1.0e-3)
+        self.assertLessEqual(promoted_scientific["image_tt1_nrmse"], 1.0e-3)
+        self.assertLessEqual(promoted_scientific["alpha_nrmse"], 1.0e-3)
+        self.assertLessEqual(
+            promoted_scientific[
+                "alpha_coherent_block_rms_over_right_rms"
+            ],
+            1.0e-3,
+        )
+        self.assertLessEqual(
+            promoted_scientific["alpha_mask_mismatch_fraction"],
+            1.0e-5,
+        )
+        self.assertEqual(
+            promoted_scientific["contract_sha256"],
+            sha256(ROOT / promoted_scientific["contract_path"]),
+        )
+        for field in (
+            "binary_sha256",
+            "run_log_sha256",
+            "provenance_sha256",
+        ):
+            self.assertEqual(64, len(promoted_rust[field]))
+        for field in (
+            "comparison_input_sha256",
+            "raw_output_sha256",
+            "log_sha256",
+            "comparison_receipt_sha256",
+            "reassessment_receipt_sha256",
+        ):
+            self.assertEqual(64, len(promoted_scientific[field]))
 
     def test_salvage_catalog_selects_at_most_primary_and_reserve(self) -> None:
         self.assertEqual(self.contract["id"], self.catalog["contract_id"])

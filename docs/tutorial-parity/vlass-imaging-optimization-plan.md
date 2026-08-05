@@ -7905,6 +7905,8 @@ reassessment receipt SHA-256 values are, respectively:
 
 The scientific-equivalence contract SHA-256 is
 `58cece2f388f6098058598e19e00d4998a8c321f238d062ca8d567cafd29143a`.
+The production checkpoint is commit
+`4d787cb1fb8047d5e3087307db8f03bd37b8b6a4`.
 This is promoted reduced-row correctness and performance evidence, not final
 `12,150`-square acceptance. The architectural tournament stops here because
 the row passes correctness and exceeds the independent `10x` gate. The next

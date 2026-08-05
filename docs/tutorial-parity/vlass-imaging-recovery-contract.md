@@ -557,6 +557,8 @@ The immutable reassessment receipt SHA-256 is
 `5defc479822415b1c7cec24ac955a442b0015228f76a5a12b718414156bd8918`;
 the source comparison output SHA-256 is
 `35d1defac1e026025bdca32a12db61d1a9776b4cc8927382ea42185d72d69c42`.
+The production checkpoint is commit
+`4d787cb1fb8047d5e3087307db8f03bd37b8b6a4`.
 This supersedes the previous reduced-row correctness and performance stop
 boundary. It does not satisfy or weaken the required full-16-SPW and
 `12,150`-square acceptance rows. No unchanged CASA reference was rerun.
