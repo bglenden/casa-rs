@@ -16,7 +16,9 @@ CONTRACT_PATH = ROOT / "tools/perf/imager/vlass_recovery_contract.json"
 LEDGER_PATH = ROOT / "tools/perf/imager/vlass_recovery_launch_ledger.json"
 CATALOG_PATH = ROOT / "tools/perf/imager/vlass_recovery_salvage_catalog.json"
 SCIENTIFIC_EQUIVALENCE_PATH = (
-    ROOT / "tools/perf/imager/contracts/vlass-scientific-equivalence-v2.json"
+    ROOT
+    / "tools/perf/imager/contracts/"
+    "vlass-scientific-equivalence-v2-mask-topology.json"
 )
 REDUCED_ALL_FIELDS_CLEAN_PATH = (
     ROOT
@@ -88,6 +90,20 @@ class RecoveryContractTests(unittest.TestCase):
                 "peak_relative": 1.0e-3,
             },
             products[".image.tt0"],
+        )
+        self.assertEqual(
+            {
+                "coherent_block_rms_over_right_rms": 1.0e-3,
+                "mask_mismatch_fraction": 1.0e-5,
+            },
+            products[".alpha"],
+        )
+        self.assertEqual(
+            {
+                "coherent_block_rms_over_right_rms": 1.0e-3,
+                "mask_mismatch_fraction": 1.0e-5,
+            },
+            products[".alpha.error"],
         )
 
     def test_reduced_all_fields_clean_manifest_binds_approved_contract(self) -> None:
@@ -179,6 +195,45 @@ class RecoveryContractTests(unittest.TestCase):
         self.assertEqual(8, budget["salvage_audit_engineer_hours"])
         self.assertEqual(48, budget["total_engineer_hours"])
         self.assertEqual(72, budget["active_window_hours"])
+
+    def test_landmark_performance_cannot_be_silently_replaced_by_proxy(self) -> None:
+        preservation = self.contract["performance_preservation"]
+        assert isinstance(preservation, dict)
+        landmarks = preservation["landmark_rows"]
+        assert isinstance(landmarks, list)
+        self.assertEqual(
+            [
+                "VLASS-LANDMARK-SINGLE-4096-4SPW-CLEAN-N2000-v1",
+                "VLASS-LANDMARK-SINGLE-4096-16SPW-CLEAN-N2000-v1",
+            ],
+            [row["id"] for row in landmarks],
+        )
+        four_spw = landmarks[0]
+        self.assertAlmostEqual(126.76473748691099, four_spw["historical_ratio"])
+        self.assertEqual(28.65, four_spw["historical_casa_rs_wall_seconds"])
+        self.assertEqual(
+            "f07d3b8721de81ef4aa152f3a3e0747ac597e4b3f25ec609fef279cbec2d0989",
+            four_spw["evidence"]["run_log_sha256"],
+        )
+        activity = four_spw["required_activity"]
+        self.assertIs(False, activity["frozen_model_allowed"])
+        self.assertEqual(2000, activity["actual_minor_iterations"])
+        self.assertGreaterEqual(activity["minimum_image_response_syntheses"], 1)
+        self.assertEqual(1, activity["exact_final_refreshes"])
+
+        proxy = preservation["proxy_policy"]
+        self.assertIs(
+            False,
+            proxy["diagnostic_proxies_may_satisfy_end_to_end_clean_gates"],
+        )
+        self.assertIs(
+            False,
+            proxy["frozen_model_runs_may_satisfy_end_to_end_clean_gates"],
+        )
+        self.assertIs(False, proxy["stage_metrics_may_replace_total_wall_time"])
+        retirement = preservation["retirement_policy"]
+        self.assertIs(False, retirement["silent_retirement_allowed"])
+        self.assertTrue(retirement["landmark_capabilities_remain_in_candidate_lineage"])
 
     def test_launch_ledger_cannot_exceed_the_contract(self) -> None:
         self.assertEqual(self.contract["id"], self.ledger["contract_id"])

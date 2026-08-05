@@ -38447,6 +38447,15 @@ fn standard_mfs_memory_allocation_lifetimes(
                         NoFurtherUse,
                     )]
                 }
+                "AWProject initial-dirty replay-priming tap extension" => {
+                    vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        InitialGrid,
+                        InitialGrid,
+                        NoFurtherUse,
+                    )]
+                }
                 "AWProject safety margin" => vec![standard_mfs_memory_residency(
                     host,
                     bytes,
@@ -38973,6 +38982,21 @@ fn standard_mfs_plane_state_requirements(
     }
 }
 
+fn awproject_initial_dirty_replay_priming_tap_extension_bytes(
+    logical_tap_budget_bytes: usize,
+) -> Result<usize, String> {
+    let materialized_tap_budget_bytes = checked_imaging_product(
+        [logical_tap_budget_bytes, 8],
+        "AWProject initial-dirty replay-priming tap budget",
+    )?
+    .div_ceil(6);
+    materialized_tap_budget_bytes
+        .checked_sub(logical_tap_budget_bytes)
+        .ok_or_else(|| {
+            "AWProject initial-dirty replay-priming tap extension underflowed".to_string()
+        })
+}
+
 fn plan_standard_mfs_execution_shape(
     config: &CliConfig,
     selected_channel_count: usize,
@@ -39341,6 +39365,13 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         .filter(|&value| value > 0)
         .and_then(|mib| mib.checked_mul(1024 * 1024))
         .unwrap_or(aw_cf_resident_bytes);
+    let aw_initial_dirty_replay_priming_tap_extension_bytes = if awproject_mtmfs
+        && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PRIME_REPLAY_INITIAL_DIRTY").is_some()
+    {
+        awproject_initial_dirty_replay_priming_tap_extension_bytes(aw_source_order_tap_bytes)?
+    } else {
+        0
+    };
     let pointing_index_bytes = if awproject_mtmfs && config.use_pointing {
         awproject_pointing_index_estimate_bytes(active_row_count, pointing_table_row_count)?
     } else {
@@ -39425,6 +39456,11 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
                 component: "AWProject source-order tap scratch",
                 stage: "run",
                 bytes: aw_source_order_tap_bytes,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject initial-dirty replay-priming tap extension",
+                stage: "initial-grid",
+                bytes: aw_initial_dirty_replay_priming_tap_extension_bytes,
             },
             ImagingMemoryAllocation {
                 component: "AWProject CF index",
@@ -39721,6 +39757,13 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
                 "independently charged compact phase-applied tap ceiling derived from the AWProject byte control"
                     .to_string()
             },
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_initial_dirty_replay_priming_tap_extension_bytes",
+            value: aw_initial_dirty_replay_priming_tap_extension_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "two prediction tap roles are materialized only while the six-role initial-grid segmentation remains authoritative"
+                .to_string(),
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_cf_index_bytes",
@@ -61145,6 +61188,11 @@ mod tests {
             config.aw_project.as_ref().unwrap().cf_resident_bytes,
             "compact taps coexist with and are charged independently from full-cell residency"
         );
+        assert_eq!(
+            plan.allocation_bytes("AWProject initial-dirty replay-priming tap extension"),
+            0,
+            "safe automatic execution does not prime replay during the initial grid"
+        );
         assert!(plan.allocation_bytes("AWProject CF index") > 0);
         assert!(plan.allocation_bytes("POINTING index") > 0);
         assert_eq!(
@@ -61282,6 +61330,22 @@ mod tests {
                 ImagingMemoryNextUse::NoFurtherUse
             );
         }
+    }
+
+    #[test]
+    fn awproject_initial_dirty_replay_priming_tap_ledger_is_incremental_and_checked() {
+        assert_eq!(
+            awproject_initial_dirty_replay_priming_tap_extension_bytes(256 * 1024 * 1024).unwrap(),
+            85 * 1024 * 1024 + 349_526
+        );
+        assert_eq!(
+            awproject_initial_dirty_replay_priming_tap_extension_bytes(6).unwrap(),
+            2
+        );
+        assert!(
+            awproject_initial_dirty_replay_priming_tap_extension_bytes(usize::MAX).is_err(),
+            "planner overflow must fail closed"
+        );
     }
 
     #[test]

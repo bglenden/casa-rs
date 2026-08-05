@@ -104,6 +104,11 @@ class ImagingToleranceTests(unittest.TestCase):
         with self.assertRaisesRegex(ToleranceContractError, "known-label list"):
             validate_tolerance_contract(contract)
 
+        contract = make_v2_contract()
+        contract["products"][".image.tt0"]["mask_mismatch_fraction"] = 1.000001
+        with self.assertRaisesRegex(ToleranceContractError, "must be <= 1"):
+            validate_tolerance_contract(contract)
+
         contract = make_contract()
         contract["default"]["beam_kernel_nrmse"] = 0.001
         with self.assertRaisesRegex(ToleranceContractError, "contract-v2"):
@@ -158,6 +163,61 @@ class ImagingToleranceTests(unittest.TestCase):
                     "failed",
                     evaluate_comparison_tolerances(changed, contract)["status"],
                 )
+
+    def test_v2_bounds_only_mask_topology_for_derived_products(self) -> None:
+        contract = {
+            "contract_version": 2,
+            "require_full_array": True,
+            "default": {
+                "diff_abs_max_over_right_peak": 0.005,
+                "diff_rms_over_right_rms": 0.001,
+                "require_topology_parity": True,
+            },
+            "products": {
+                ".image.tt0": {
+                    "mask_mismatch_fraction": 1.0e-6,
+                }
+            },
+        }
+        comparison = make_comparison()
+        product = comparison["products"][".image.tt0"]
+        product["topology_parity"] = False
+        product["full_array"] = {
+            "total_elements": 10_000_000,
+            "topology": {
+                "mask_mismatch_count": 10,
+                "finite_equal": True,
+                "nonfinite_kind_equal": True,
+            },
+        }
+
+        result = evaluate_comparison_tolerances(comparison, contract)
+
+        self.assertEqual("passed", result["status"])
+        boundary = next(
+            check
+            for check in result["checks"]
+            if check["name"] == ".image.tt0.mask_mismatch_fraction"
+        )
+        self.assertEqual(1.0e-6, boundary["actual"])
+
+        too_many = copy.deepcopy(comparison)
+        too_many["products"][".image.tt0"]["full_array"]["topology"][
+            "mask_mismatch_count"
+        ] = 11
+        self.assertEqual(
+            "failed",
+            evaluate_comparison_tolerances(too_many, contract)["status"],
+        )
+
+        finite_mismatch = copy.deepcopy(comparison)
+        finite_mismatch["products"][".image.tt0"]["full_array"]["topology"][
+            "finite_equal"
+        ] = False
+        self.assertEqual(
+            "failed",
+            evaluate_comparison_tolerances(finite_mismatch, contract)["status"],
+        )
 
     def test_beam_kernel_metric_does_not_overweight_circular_beam_pa(self) -> None:
         contract = make_v2_contract()

@@ -79,6 +79,18 @@ def load_contract(path: pathlib.Path) -> dict[str, Any]:
         )
     if contract.get("workload_id") != "vlass-aw-residual-refresh-5m-v1":
         raise ContractError("unexpected VLASS autoresearch workload_id")
+    evidence_role = contract.get("evidence_role", {})
+    if evidence_role != {
+        "executes_clean_from_zero": False,
+        "executes_minor_cycles": False,
+        "executes_model_updates": False,
+        "id": "diagnostic_operator_proxy",
+        "may_satisfy_end_to_end_clean_promotion": False,
+    }:
+        raise ContractError(
+            "the VLASS residual-refresh workload must remain an explicitly "
+            "non-promotable diagnostic operator proxy"
+        )
     if contract.get("build", {}).get("profile") != "release":
         raise ContractError("the VLASS autoresearch build profile must be release")
     command = contract.get("build", {}).get("command")

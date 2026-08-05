@@ -389,6 +389,7 @@ def measure(contract_path: pathlib.Path) -> int:
         receipt = {
             "schema_version": 1,
             "workload_id": contract["workload_id"],
+            "evidence_role": contract["evidence_role"],
             "run_id": run_root.name,
             "recorded_at": dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z"),
             "contract": {

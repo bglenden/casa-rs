@@ -7762,6 +7762,35 @@ this same reduced row passes.
 
 ## Iteration Rules
 
+### 2026-08-04 performance-lineage correction and preservation gate
+
+The original performance loss predated autoresearch. The response-cache
+candidate completed the `4,096`-square four-SPW single-field row in `28.65`
+seconds on 2026-07-29; the corrected v59 row retained essentially the same
+performance at `29.43` seconds, and its full-16-SPW single-field row completed
+in `101.646` seconds. The first collapse was the all-63-field four-SPW clean
+row: `2,674.88` seconds versus CASA `3,470.197045` seconds, with `2,430.742`
+seconds in exact residual degridding/gridding. The single-position
+frozen-base response cache had never been admitted for the multi-position
+all-field trajectory.
+
+The finite recovery then selected the conservative exact all-field path and
+treated the response cache as an unpromoted experiment. That was a
+mergeability decision, not evidence that the response architecture had been
+superseded. The subsequent five-minute autoresearch proxy retained the code
+but loaded a frozen model, skipped real minor-cycle/model-update work, and
+therefore could not exercise or measure the response synthesis. Autoresearch
+exposed the missing end-to-end gate; it did not cause the earlier transition.
+
+The authoritative recovery contract now freezes the `28.65` and `101.646`
+second rows as release-mode performance landmarks, requires activity evidence
+for every fast-path mechanism, forbids proxies from satisfying end-to-end
+CLEAN promotion, and forbids silent capability retirement. Work resumes from
+the preserved implementation: revalidate the landmarks, census the real
+all-field delta support, generalize response admission to a bounded
+deterministic position set with exact shadow/fallback, then resume the
+all-field and full-geometry ladder. No already-frozen CASA oracle is rerun.
+
 - Correctness regression stops performance iteration immediately.
 - If a large run is opaque for more than three minutes, stop it and add stage
   or pass progress before retrying.
@@ -7799,3 +7828,85 @@ Stop and request direction rather than changing the contract if:
 
 Reduced workloads, accepted correctness differences, target changes, or scope
 deferrals require explicit Brian signoff. They are not implicit closeout paths.
+
+### 2026-08-05 separable phase-axis promotion
+
+The `125x` result was not lost by autoresearch. It remains the frozen
+single-field `4096`-square four-SPW landmark: CASA `3631.809729 s` versus
+casa-rs `28.65 s`, or `126.7647x`. The all-63-field row is a different
+operator working set: it contains 6,416,526 replay samples and many POINTING
+positions. The incumbent compact exact-source-order candidate took `333.27 s`
+on that row, or `10.41257x` against the frozen CASA `3470.197045 s`
+reference. It selected the same 193 components and recorded the same 12
+major-cycle entries, but its global replay program occupied
+`17,687,615,952` bytes.
+
+Two bounded architecture discriminators were then retired:
+
+- Pruning did not change the replay working set materially and took `332.06
+  s` (`10.4505x`).
+- Fusing the per-sample phase into the kernels exceeded the planner boundary
+  after 41 sources. It required `34,397,503,776` bytes resident and
+  `35,458,945,892` bytes including the compile transient, above the
+  `25,769,803,776`-byte budget. No scientific or performance claim is made
+  for that incomplete run. Its log and provenance SHA-256 values are
+  `a82bbb0358ce3b4414785856b27a54e750d35b82c834e99807bfd713d624878e`
+  and
+  `87a0a61bb2d34c3fcd85669a97ff86010ca4008207fc61c24bcbbb8da2c7d7fe`.
+
+The promoted architecture retains exact source order and exact A/W kernels,
+but represents the two-dimensional phase screen as separable X and Y complex
+axes. The Metal executor reconstructs each phase sample on demand. The axes
+are interned independently from the kernels, so POINTING-dependent phase
+reuse no longer forces a duplicate two-dimensional phase atlas. The original
+expanded path remains available for exact comparison. Separable encoding is
+the production Metal replay representation rather than a hidden environment
+switch; it is an internal lossless storage choice, not a new science or UI
+parameter.
+
+Release run
+`20260805T-vlass-all63-clean-4096-four-spw-separable-phase-f2abbb98b-v24`
+completed the exact all-63-field, POINTING, four-SPW, `4096`-square,
+`niter=2000` workload in `257.40 s`. The frozen executable SHA-256 is
+`82b01c3950eac4187c9e88e5282d606fc0743a5398f2da4b22872ad70c95c16b`.
+The exact matched ratio is therefore
+`3470.197045 / 257.40 = 13.481729x`. It selected 193 components, recorded 12
+major cycles, stopped on the n-sigma threshold without divergence, and
+emitted all 19 products.
+
+The compact program fell to `5,224,778,300` bytes, builder materialization to
+`6,560,435,928` bytes, and peak absorb storage to `7,528,750,264` bytes.
+Peak RSS was `12,634,636,288` bytes and peak process footprint was
+`11,765,475,792` bytes. Runtime swap deltas were effectively zero. Core time
+was `250.099 s`: PSF `119.656 s`, residual degrid/grid `104.818 s`, major
+refresh `113.965 s`, and minor cycles `9.359 s`. The run log and provenance
+SHA-256 values are
+`9ad2cad7bf4a38585417a2cd0e287b5b9c528f45f8ab48869c1f902a43c3054d`
+and
+`7e86fa53d39300a95eb71b67f98911cb2d41f2874f2cbf4b399f1a93878aa562`.
+
+The immutable 19-product comparison passes the approved optimization-safe
+contract. Image tt0 and tt1 NRMSE are `7.37654e-5` and `9.74054e-5`;
+residual tt0 and tt1 NRMSE are `8.96761e-5` and `1.01581e-4`; restoring-beam
+kernel NRMSE and area error are `1.69824e-7` and `1.61173e-7`. Alpha and
+alpha-error differ at 37 cutoff-edge pixels, or `2.20537 ppm`, with coherent
+block RMS `4.60017e-4`; these pass the approved `1e-3` coherent and `10 ppm`
+cutoff-mask bounds. Finite/non-finite kinds agree.
+
+The comparison request, raw output, log, comparison receipt, and immutable
+reassessment receipt SHA-256 values are, respectively:
+
+- `ad3bbc65083e04b770f204591c173cd50d875827d85e99aaca928ba217ff383b`;
+- `35d1defac1e026025bdca32a12db61d1a9776b4cc8927382ea42185d72d69c42`;
+- `436e99b029ee9489d9bd3873e71fe7d05c9997e7a7624a52df10eaeabcf2d279`;
+- `726dc5859a08ce4580c356bf0f39ad49e8ef17101807b1c3efe17937670a23c1`;
+  and
+- `5defc479822415b1c7cec24ac955a442b0015228f76a5a12b718414156bd8918`.
+
+The scientific-equivalence contract SHA-256 is
+`58cece2f388f6098058598e19e00d4998a8c321f238d062ca8d567cafd29143a`.
+This is promoted reduced-row correctness and performance evidence, not final
+`12,150`-square acceptance. The architectural tournament stops here because
+the row passes correctness and exceeds the independent `10x` gate. The next
+work is stabilization and the existing full-16-SPW/full-geometry promotion
+ladder, not another speculative optimization family.

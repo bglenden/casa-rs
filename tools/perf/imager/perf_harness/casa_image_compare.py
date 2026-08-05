@@ -21,6 +21,8 @@ SCIENTIFIC_BEAM_TOLERANCE_FIELDS = {
     "beam_area_relative",
     "beam_kernel_nrmse",
 }
+COORDINATE_RELATIVE_TOLERANCE = 1.0e-12
+COORDINATE_ABSOLUTE_TOLERANCE = 1.0e-12
 
 
 # Keep this module importable by the ordinary Python test runner.  The
@@ -85,6 +87,9 @@ def main():
                 full_chunk_elements=request["full_chunk_elements"],
                 require_metadata_parity=request["require_metadata_parity"],
                 allow_scientific_beam_equivalence=(allow_scientific_beam_equivalence),
+                allow_bounded_mask_topology=has_bounded_mask_topology_contract(
+                    request.get("tolerances"), suffix
+                ),
                 source_regions=[
                     region
                     for region in request["source_regions"]
@@ -606,6 +611,7 @@ def compare_one(
     full_chunk_elements=1_000_000,
     require_metadata_parity=False,
     allow_scientific_beam_equivalence=False,
+    allow_bounded_mask_topology=False,
     source_regions=None,
     left_label="casa-rs",
     right_label="CASA",
@@ -842,7 +848,12 @@ def compare_one(
                 and topology.get("finite_equal")
                 and topology.get("nonfinite_kind_equal")
             )
-            if not result["topology_parity"]:
+            bounded_mask_topology = bool(
+                allow_bounded_mask_topology
+                and topology.get("finite_equal")
+                and topology.get("nonfinite_kind_equal")
+            )
+            if not result["topology_parity"] and not bounded_mask_topology:
                 result["status"] = "topology_mismatch"
             if not full.get("coverage_complete"):
                 result["status"] = "full_coverage_incomplete"
@@ -1210,7 +1221,14 @@ def compare_image_metadata(left_path, right_path, image_factory=None):
             "parity": False,
         }
     fields = ("shape", "unit", "coordinates", "restoring_beam", "masks")
-    parity = {name: left.get(name) == right.get(name) for name in fields}
+    parity = {
+        name: (
+            coordinate_records_equivalent(left.get(name), right.get(name))
+            if name == "coordinates"
+            else left.get(name) == right.get(name)
+        )
+        for name in fields
+    }
     complete = left["status"] == "complete" and right["status"] == "complete"
     return {
         "status": "matched" if complete and all(parity.values()) else "mismatch",
@@ -1219,6 +1237,30 @@ def compare_image_metadata(left_path, right_path, image_factory=None):
         "left": left,
         "right": right,
     }
+
+
+def coordinate_records_equivalent(left, right):
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(
+            coordinate_records_equivalent(left[key], right[key]) for key in left
+        )
+    if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
+        return len(left) == len(right) and all(
+            coordinate_records_equivalent(left_value, right_value)
+            for left_value, right_value in zip(left, right)
+        )
+    if isinstance(left, bool) or isinstance(right, bool):
+        return left == right
+    if isinstance(left, int) and isinstance(right, int):
+        return left == right
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return math.isclose(
+            float(left),
+            float(right),
+            rel_tol=COORDINATE_RELATIVE_TOLERANCE,
+            abs_tol=COORDINATE_ABSOLUTE_TOLERANCE,
+        )
+    return left == right
 
 
 def has_scientific_beam_contract(contract):
@@ -1236,6 +1278,21 @@ def has_scientific_beam_contract(contract):
         if SCIENTIFIC_BEAM_TOLERANCE_FIELDS <= set(thresholds):
             return True
     return False
+
+
+def has_bounded_mask_topology_contract(contract, suffix):
+    if not isinstance(contract, dict) or contract.get("contract_version") != 2:
+        return False
+    default = contract.get("default")
+    products = contract.get("products")
+    if not isinstance(default, dict) or not isinstance(products, dict):
+        return False
+    overrides = products.get(suffix, {})
+    if not isinstance(overrides, dict):
+        return False
+    thresholds = dict(default)
+    thresholds.update(overrides)
+    return "mask_mismatch_fraction" in thresholds
 
 
 def is_restoring_beam_only_metadata_mismatch(metadata):

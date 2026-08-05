@@ -160,6 +160,29 @@ class VlassFiveMinuteContractTests(unittest.TestCase):
         self.assertIn("--wprojplanes 32", joined)
         self.assertIn("--nterms 2", joined)
 
+    def test_proxy_is_explicitly_ineligible_for_clean_promotion(self) -> None:
+        self.assertEqual(
+            {
+                "executes_clean_from_zero": False,
+                "executes_minor_cycles": False,
+                "executes_model_updates": False,
+                "id": "diagnostic_operator_proxy",
+                "may_satisfy_end_to_end_clean_promotion": False,
+            },
+            self.contract["evidence_role"],
+        )
+
+        invalid = copy.deepcopy(self.contract)
+        invalid["evidence_role"]["may_satisfy_end_to_end_clean_promotion"] = True
+        with tempfile.TemporaryDirectory() as temporary:
+            path = pathlib.Path(temporary) / "contract.json"
+            path.write_text(json.dumps(invalid), encoding="utf-8")
+            with self.assertRaisesRegex(
+                ValueError,
+                "non-promotable diagnostic operator proxy",
+            ):
+                load_contract(path)
+
     def test_parser_captures_timed_refresh_and_miss_pressure(self) -> None:
         parsed = parse_runtime_log(synthetic_log())
         self.assertEqual(300.0, parsed["metric"]["seconds"])

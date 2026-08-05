@@ -1,4 +1,11 @@
 {
+  "evidence_role": {
+    "executes_clean_from_zero": false,
+    "executes_minor_cycles": false,
+    "executes_model_updates": false,
+    "id": "diagnostic_operator_proxy",
+    "may_satisfy_end_to_end_clean_promotion": false
+  },
   "baseline": {
     "output_prefix": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/autoresearch/vlass-5m-v1/runs/20260804T184725Z-dd0356542bc0/rust",
     "qualification": {

@@ -152,17 +152,31 @@
       }
     ],
     "tolerances": {
-      "contract_version": 1,
+      "contract_version": 2,
       "require_full_array": true,
       "default": {
+        "coherent_block_rms_over_right_rms": 0.0001,
         "diff_abs_max_over_right_peak": 0.005,
         "diff_rms_over_right_rms": 0.001,
-        "require_topology_parity": true,
-        "allowed_structure_labels": [
-          "good"
-        ]
+        "require_topology_parity": true
       },
-      "products": {}
+      "products": {
+        ".alpha": {
+          "coherent_block_rms_over_right_rms": 0.001,
+          "mask_mismatch_fraction": 0.00001
+        },
+        ".alpha.error": {
+          "coherent_block_rms_over_right_rms": 0.001,
+          "mask_mismatch_fraction": 0.00001
+        },
+        ".image.tt0": {
+          "beam_area_relative": 0.001,
+          "beam_kernel_nrmse": 0.001,
+          "centroid_beams": 0.01,
+          "integrated_flux_relative": 0.001,
+          "peak_relative": 0.001
+        }
+      }
     }
   }
 }

@@ -76,7 +76,7 @@
     "imaging_fft_precision": "f64",
     "imaging_fft_backend": "fftw",
     "imaging_memory_target_mb": 32768,
-    "cfcache": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache/6.7.5.9/f6f947c5104f8da579f9411dd7087dd331c9e59034073a9fd68b5d6132cd281d",
+    "cfcache": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache/6.7.5.9/db96e297401b0f5c90f1494844fd9a1d49ad5023be44987ce7076afac513d856",
     "cf_resident_mb": 256
   },
   "run": {
@@ -91,21 +91,11 @@
     "skip_profile": "1",
     "cf_cache_role": "warm",
     "env": {
-      "CASA_RS_AWPROJECT_ALTERNATE_CF_LOAD_ORDER": "1",
-      "CASA_RS_AWPROJECT_DIRECT_CF_SELECT_EXPERIMENT": "1",
       "CASA_RS_AWPROJECT_DYNAMIC_SPARSE_TILE_TASKS_EXPERIMENT": "1",
-      "CASA_RS_AWPROJECT_PACK_THREADS": "4",
-      "CASA_RS_AWPROJECT_PACKED_CF_EXPERIMENT": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache-packed/f24a584cbe2dd782.awcf",
-      "CASA_RS_AWPROJECT_PHASE_TABLE_EXPERIMENT": "1",
       "CASA_RS_AWPROJECT_NEON_2X2_EXPERIMENT": "1",
-      "CASA_RS_AWPROJECT_PLAN_CHUNK_SAMPLES": "16384",
-      "CASA_RS_AWPROJECT_PLAN_THREADS": "4",
-      "CASA_RS_AWPROJECT_PREFETCH_CF_CELL": "1",
       "CASA_RS_AWPROJECT_SPATIAL_TILE_SIDE_EXPERIMENT": "192",
       "CASA_RS_AWPROJECT_SPARSE_TILES_EXPERIMENT": "1",
-      "CASA_RS_AWPROJECT_TAP_BUDGET_MB_EXPERIMENT": "1792",
       "CASA_RS_AWPROJECT_TAPLESS_PHASE_EXPERIMENT": "1",
-      "CASA_RS_AWPROJECT_TRUST_PACKED_CF_EXPERIMENT": "1",
       "CASA_RS_STANDARD_MFS_WORKER_PLANNER_EXPERIMENT": "1",
       "CASA_RS_FFTW_LIBRARY_DIR": "/Users/brianglendenning/SoftwareProjects/casa-build/venv/lib/python3.14/site-packages/casaplotms/__bin__/casaplotms.app/Contents/Frameworks",
       "CASA_RS_STANDARD_MFS_PROFILE_DETAIL": "1"
@@ -147,40 +137,36 @@
     "require_metadata_parity": true,
     "source_regions": [
       {
-        "id": "bright-source-field-1525",
-        "products": [".image.tt0"],
-        "blc": [6243, 6003],
-        "trc": [6306, 6066]
+        "id": "bright-source-field-1525-centered-crop",
+        "products": [".image.tt0", ".residual.tt0"],
+        "blc": [575, 2125],
+        "trc": [638, 2188]
       }
     ],
     "tolerances": {
-      "contract_version": 1,
+      "contract_version": 2,
       "require_full_array": true,
       "default": {
+        "coherent_block_rms_over_right_rms": 0.0001,
         "diff_abs_max_over_right_peak": 0.005,
         "diff_rms_over_right_rms": 0.001,
-        "require_topology_parity": true,
-        "allowed_structure_labels": ["good"]
+        "require_topology_parity": true
       },
       "products": {
+        ".alpha": {
+          "coherent_block_rms_over_right_rms": 0.001,
+          "mask_mismatch_fraction": 0.00001
+        },
+        ".alpha.error": {
+          "coherent_block_rms_over_right_rms": 0.001,
+          "mask_mismatch_fraction": 0.00001
+        },
         ".image.tt0": {
-          "beam_major_relative": 0.001,
-          "beam_minor_relative": 0.001,
-          "beam_pa_degrees": 0.1,
-          "centroid_pixels": 0.05,
+          "beam_area_relative": 0.001,
+          "beam_kernel_nrmse": 0.001,
+          "centroid_beams": 0.01,
           "integrated_flux_relative": 0.001,
           "peak_relative": 0.001
-        },
-        ".image.tt1": {
-          "beam_major_relative": 0.001,
-          "beam_minor_relative": 0.001,
-          "beam_pa_degrees": 0.1
-        },
-        ".model.tt0": {
-          "allowed_structure_labels": ["good", "not_applicable_exact_zero"]
-        },
-        ".model.tt1": {
-          "allowed_structure_labels": ["good", "not_applicable_exact_zero"]
         }
       }
     }

@@ -85,6 +85,85 @@
     ],
     "reduced_rows_are_final_evidence": false
   },
+  "performance_preservation": {
+    "policy_version": 1,
+    "approved_by": "Brian Glendenning",
+    "approved_date": "2026-08-04",
+    "landmark_rows": [
+      {
+        "id": "VLASS-LANDMARK-SINGLE-4096-4SPW-CLEAN-N2000-v1",
+        "scope": "Single field 1525, SPWs 2,7,12,17, 4096-square, real CLEAN from zero, niter=2000, AWProject, POINTING, MT-MFS nterms=2, scales 0,5,12, and 19 products.",
+        "historical_casa_wall_seconds": 3631.809729,
+        "historical_casa_rs_wall_seconds": 28.65,
+        "historical_ratio": 126.76473748691099,
+        "release_only": true,
+        "maximum_regression_fraction_without_user_approval": 0.1,
+        "required_runtime": {
+          "fftw_threads": 8,
+          "fftw_f64_wisdom_sha256": "f6fd873a068b68611eabdd598d3628d7fa75af20f451eef29b87b1562629462e",
+          "image_response_storage": "raw",
+          "image_response_bytes": 536870912,
+          "global_metal_program_required": true
+        },
+        "required_activity": {
+          "frozen_model_allowed": false,
+          "actual_minor_iterations": 2000,
+          "minimum_major_cycles": 1,
+          "minimum_minor_cycle_records": 1,
+          "minimum_image_response_calibrations": 1,
+          "minimum_image_response_syntheses": 1,
+          "exact_final_refreshes": 1,
+          "sparse_rhs_required": true,
+          "radix_madfm_required": true
+        },
+        "evidence": {
+          "run_log": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-clean4096-4spw-n2000-image-response-radix-madfm-v4.log",
+          "run_log_sha256": "f07d3b8721de81ef4aa152f3a3e0747ac597e4b3f25ec609fef279cbec2d0989",
+          "trace_comparison_sha256": "01a403119013875db93c7f8b1679a9a5b8ffb671ee91e98b643cb391303db780",
+          "product_comparison_sha256": "0df5ec1401e2aaa18998feb96b654b922e0a793050f28e86c27e53227fc4fb01"
+        }
+      },
+      {
+        "id": "VLASS-LANDMARK-SINGLE-4096-16SPW-CLEAN-N2000-v1",
+        "scope": "Single field 1525, all 16 SPWs, 4096-square, real CLEAN from zero, niter=2000, AWProject, POINTING, MT-MFS nterms=2, scales 0,5,12, and 19 products.",
+        "historical_casa_rs_wall_seconds": 101.646,
+        "release_only": true,
+        "maximum_regression_fraction_without_user_approval": 0.1,
+        "required_activity": {
+          "frozen_model_allowed": false,
+          "minimum_actual_minor_iterations": 1,
+          "minimum_major_cycles": 1,
+          "minimum_minor_cycle_records": 1,
+          "minimum_image_response_calibrations": 1,
+          "minimum_image_response_syntheses": 1,
+          "exact_final_refreshes": 1,
+          "sparse_rhs_required": true,
+          "radix_madfm_required": true
+        },
+        "evidence": {
+          "scientific_floor_receipt": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260731-vlass-4096-full16-scientific-floor-v1.json",
+          "scientific_floor_receipt_sha256": "f06859c9215a26b15dd32731345b9fdb1aaf1ab0fc267938638dd016b99518a1",
+          "run_log_sha256": "1133ccc666de490b74a905e1dd9d99ab99c1e6a8056cb7f2e892464e08d2c893"
+        }
+      }
+    ],
+    "proxy_policy": {
+      "diagnostic_proxies_may_satisfy_end_to_end_clean_gates": false,
+      "frozen_model_runs_may_satisfy_end_to_end_clean_gates": false,
+      "stage_metrics_may_replace_total_wall_time": false,
+      "debug_builds_may_supply_performance_evidence": false,
+      "required_proxy_label": "diagnostic_operator_proxy"
+    },
+    "retirement_policy": {
+      "landmark_capabilities_remain_in_candidate_lineage": true,
+      "silent_retirement_allowed": false,
+      "allowed_retirement_reasons": [
+        "generalized into the selected production implementation",
+        "superseded by a demonstrably faster implementation on the same landmark",
+        "retired with explicit Brian Glendenning approval"
+      ]
+    }
+  },
   "acceptance": {
     "minimum_independent_speedup": 10.0,
     "strict_100x_target": false,
@@ -92,8 +171,8 @@
     "require_exact_product_inventory": true,
     "require_metadata_and_coordinate_parity": true,
     "require_scientific_floor": true,
-    "scientific_equivalence_contract_path": "tools/perf/imager/contracts/vlass-scientific-equivalence-v2.json",
-    "scientific_equivalence_contract_sha256": "daf1692d23a627d513285cd4c5fc5c81c8e5dd361e6bf2815c74c8897fbc0537",
+    "scientific_equivalence_contract_path": "tools/perf/imager/contracts/vlass-scientific-equivalence-v2-mask-topology.json",
+    "scientific_equivalence_contract_sha256": "58cece2f388f6098058598e19e00d4998a8c321f238d062ca8d567cafd29143a",
     "structured_difference_labels_are_diagnostic": true,
     "require_bounded_laptop_memory": true,
     "exact_component_order_required": false,
