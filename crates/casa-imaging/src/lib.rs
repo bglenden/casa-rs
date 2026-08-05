@@ -10673,6 +10673,7 @@ struct AwProjectMetalPhasePlan {
     y_base: u32,
 }
 
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 impl AwProjectMetalPhasePlan {
     const NONE: Self = Self {
         base: u32::MAX,
@@ -14741,6 +14742,7 @@ fn plan_awproject_metal_residual_scales(
     })
 }
 
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 fn awproject_metal_phase_value(
     phase: AwProjectMetalPhasePlan,
     phases: &[WProjectMetalComplex],
@@ -21083,6 +21085,7 @@ fn remap_awproject_metal_imaging_plan(
     Ok(())
 }
 
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 fn awproject_metal_complex_multiply_f32(
     left: WProjectMetalComplex,
     right: WProjectMetalComplex,
@@ -29899,6 +29902,7 @@ fn awproject_gpu_residual_replay_is_admitted(
     model_grids_present && requested && resident_program_present && metal_grid_storage
 }
 
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 fn awproject_initial_dirty_replay_prime_is_admitted(
     model_grids_present: bool,
     requested: bool,
