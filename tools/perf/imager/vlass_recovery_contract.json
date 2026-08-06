@@ -85,6 +85,22 @@
     ],
     "reduced_rows_are_final_evidence": false
   },
+  "casa_first_performance_baseline": {
+    "required_before_casa_rs_performance_changes": true,
+    "generate_missing_baseline_once": true,
+    "freeze_valid_baseline": true,
+    "required_matching_dimensions": [
+      "dataset",
+      "selection",
+      "image_geometry",
+      "required_products",
+      "timed_boundary"
+    ],
+    "end_to_end_timing_may_anchor_component_target": false,
+    "component_timing_may_anchor_end_to_end_target": false,
+    "unexposed_boundary_policy": "Record the closest measurable CASA envelope and obtain explicit user approval before optimizing against an internally chosen target.",
+    "rerun_when_only_casa_rs_changes": false
+  },
   "acceptance": {
     "minimum_independent_speedup": 10.0,
     "strict_100x_target": false,

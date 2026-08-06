@@ -180,6 +180,30 @@ class RecoveryContractTests(unittest.TestCase):
         self.assertEqual(48, budget["total_engineer_hours"])
         self.assertEqual(72, budget["active_window_hours"])
 
+    def test_performance_work_requires_a_frozen_matched_casa_baseline(self) -> None:
+        baseline = self.contract["casa_first_performance_baseline"]
+        assert isinstance(baseline, dict)
+        self.assertTrue(baseline["required_before_casa_rs_performance_changes"])
+        self.assertTrue(baseline["generate_missing_baseline_once"])
+        self.assertTrue(baseline["freeze_valid_baseline"])
+        self.assertEqual(
+            [
+                "dataset",
+                "selection",
+                "image_geometry",
+                "required_products",
+                "timed_boundary",
+            ],
+            baseline["required_matching_dimensions"],
+        )
+        self.assertFalse(baseline["end_to_end_timing_may_anchor_component_target"])
+        self.assertFalse(baseline["component_timing_may_anchor_end_to_end_target"])
+        self.assertFalse(baseline["rerun_when_only_casa_rs_changes"])
+        self.assertIn(
+            "explicit user approval",
+            baseline["unexposed_boundary_policy"],
+        )
+
     def test_launch_ledger_cannot_exceed_the_contract(self) -> None:
         self.assertEqual(self.contract["id"], self.ledger["contract_id"])
         entries = self.ledger["entries"]
