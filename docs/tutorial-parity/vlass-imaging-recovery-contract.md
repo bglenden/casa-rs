@@ -41,6 +41,91 @@ scientific floor and 10x requirement make the train merge-ready, stop and ask
 Brian whether to merge or spend a separately agreed budget pursuing more
 performance.
 
+## CASA-first performance baseline
+
+No casa-rs performance implementation or tuning may begin for a workload or
+component until a corresponding CASA timing has been generated once and frozen.
+The baseline must match the dataset, selection, image geometry, required
+products, and timed boundary. An end-to-end `tclean` wall time does not anchor a
+residual-refresh, degridding, FFT, or minor-cycle microbenchmark; each optimized
+boundary needs a matched CASA measurement.
+
+If CASA cannot expose the intended boundary directly, record the closest
+measurable CASA envelope and obtain Brian's explicit approval before using an
+internally chosen target. Once a valid matched CASA baseline exists, do not
+rerun it merely because casa-rs changes.
+
+### Frozen 4096-square full-16-SPW residual-refresh envelope
+
+The first CASA-first baseline generated under this rule is the real VLASS
+4096-square, all-63-field, full-16-SPW MT-MFS residual refresh. CASA 6.7.5.9
+used the frozen MS, fields `1107~1127,1512~1532,1542~1562`, SPWs `2~17`,
+POINTING, AWProject with 32 W planes, A/WB/conjugate beams, Briggs robust 1,
+two Taylor terms, and the frozen full-16-SPW CF cache. The timed call used the
+casa-rs Taylor model with `restart=True`, `calcres=True`, `calcpsf=False`,
+`niter=0`, and no restoration.
+
+The one-time cold setup/reference receipt SHA-256 is
+`0885a1bfbed0f9b4fed23a6fd083b8f30627f9659d587119508e4f3c782520cd`.
+Its CF-cache receipt SHA-256 is
+`9f9f679fe462055b06f98c56238d058dbf73480b4a95e95c8fc7f84a90ebfe21`,
+and the frozen cache tree SHA-256 is
+`5c4416819d0dc95856dd46fd2b7ec604ce6e21fbc137ede16927beda31aa0525`.
+
+CASA's measured `tclean` envelope was `1265.700682709 s`. Its receipt SHA-256
+is `7ffe65735525335562bb59cc168af14a568ae0404bda06fca7dcd70390e4b9ab`;
+the CASA log SHA-256 is
+`3b8505facdfd65274acdb245f84f261d8b46cf0b1a48704c1be697d8dcfce9f7`.
+The protected-product check passed: PSF and sum-weight pixels were unchanged,
+while model writeback differed by relative L2 `4.68135e-10` for tt0 and
+`9.86295e-10` for tt1.
+
+The corresponding release casa-rs exact tile-ready replay took
+`132.340522834 s`, from binary SHA-256
+`8e1e6792a72b5dbae2164ebbb1eebbde8028dac69dd45703d37d129041af5255`
+and receipt SHA-256
+`1642102ecacb5998d50d745f1d61f8f389c11b02cd5986ae10af89d2f5f8c6e1`.
+The numerical CASA/casa-rs ratio is `9.563969188x`.
+
+This ratio is a conservative diagnostic envelope, not a matched final speedup:
+CASA exposes prediction, degridding, gridding, FFT/normalization, and residual
+product update together, while this casa-rs measurement stops at its exact
+tile-ready replay boundary. It therefore cannot satisfy the final independent
+10x row by itself or be reported as an exact component speedup. The receipts
+are frozen and must not be rerun merely because casa-rs changes.
+
+### Post-baseline CF-generation discriminator
+
+After the exact matched CASA timing is frozen, investigate whether the large
+persistent CASA convolution-function cache should remain casa-rs's production
+runtime representation. This is one bounded architectural discriminator, not
+permission to reopen an unbounded architecture tournament.
+
+First instrument the matched casa-rs workload to separate CF table
+loading/bookkeeping and cold-start I/O from packed-cache setup, replay,
+gridding/degridding, and memory traffic. Then compare:
+
+1. the promoted packed precomputed-CF path;
+2. GPU generation of each distinct scientific CF key once into a packed
+   GPU-resident atlas, including generation in cold end-to-end wall time; and
+3. warm reuse of the generated atlas, reported separately from the cold result.
+
+Do not regenerate a CF for every visibility. A generation key must preserve the
+required frequency, W-plane, Mueller/polarization, parallactic-angle, support,
+oversampling, conjugate-beam, normalization, and precision semantics.
+Generated kernels must first pass direct numerical comparison against the
+frozen CASA-cache kernels and then the existing scientific and 19-product
+correctness contract.
+
+Record CF generation time, bytes read, page faults, cache
+loads/hits/evictions, CPU and GPU memory, GPU stalls, residual-refresh time, and
+total wall time. Preserve CASA-cache import as the correctness/interoperability
+oracle and automatic fallback. Promote GPU generation only if the cold
+end-to-end result materially improves runtime or resource behavior without
+weakening correctness; otherwise retain the packed-cache path and record the
+negative result. Do not perform this investigation before the matched CASA
+timing exists.
+
 ## Preservation boundary
 
 The unique dirty worktree was preserved before cleanup or formatting:
