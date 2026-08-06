@@ -55,6 +55,13 @@ When an estimated performance run will take many tens of minutes or more, create
 
 ## Timing rules
 
+- Before changing casa-rs performance code, obtain and freeze a corresponding
+  CASA timing for the exact workload or component boundary being optimized.
+  Match the dataset, selection, geometry, products, and timed stage. Do not use
+  an end-to-end CASA time to anchor a component microbenchmark, or vice versa.
+  Generate a missing matched CASA timing once, before optimization. If CASA
+  cannot expose the boundary, document the closest measurable envelope and get
+  explicit user approval before optimizing against an internally chosen target.
 - Do not rerun CASA when dataset and CASA parameters are unchanged; treat the existing CASA timing as fixed unless CASA-side instrumentation, parameters, or data selection changed.
 - For large runs, require progress lines per bounded pass so stalls can be attributed to density, prepare, gridding, residual refresh, PB/weight generation, or product writing.
 - Report total wall time first, then stage timing. Tables that mix rows/columns from unrelated concerns are not useful.
@@ -66,6 +73,8 @@ When an estimated performance run will take many tens of minutes or more, create
 - Multi-hour opaque runs without pass/stage progress.
 - Tiny-dataset performance claims.
 - Speculating about bottlenecks instead of instrumenting.
+- Optimizing against an internally chosen target before obtaining a matched
+  CASA baseline.
 - Rerunning CASA just because casa-rs changed.
 - Mistaking a small subset of a large MS for full-dataset performance.
 - Assuming multi-worker or Metal is faster without measured total runtime.
