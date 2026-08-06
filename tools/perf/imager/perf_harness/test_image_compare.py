@@ -917,6 +917,61 @@ class ImageComparisonProtocolTests(unittest.TestCase):
         json_ready = comparator.normalize_serializable(result)
         self.assertEqual(["mask0", "mask1"], json_ready["left"]["masks"])
 
+    def test_coordinate_metadata_tolerates_only_float_roundoff(self) -> None:
+        common = {
+            "shape": [4, 4, 1, 2],
+            "unit": "Jy/beam",
+            "restoring_beam": {"major": {"value": 1.2, "unit": "arcsec"}},
+            "masks": ["mask0"],
+        }
+        records = {
+            "left": {
+                **common,
+                "coordinates": {
+                    "direction0": {
+                        "crval": [0.017453292519943295, -0.25],
+                        "pixelmap": [0, 1],
+                    }
+                },
+            },
+            "right": {
+                **common,
+                "coordinates": {
+                    "direction0": {
+                        "crval": [0.0174532925199437, -0.25],
+                        "pixelmap": [0, 1],
+                    }
+                },
+            },
+        }
+
+        result = comparator.compare_image_metadata(
+            "left", "right", image_factory=FakeMetadataFactory(records)
+        )
+
+        self.assertEqual("matched", result["status"])
+        self.assertTrue(result["field_parity"]["coordinates"])
+
+        records["right"]["coordinates"]["direction0"]["crval"][0] += 1.0e-6
+        result = comparator.compare_image_metadata(
+            "left", "right", image_factory=FakeMetadataFactory(records)
+        )
+
+        self.assertEqual("mismatch", result["status"])
+        self.assertFalse(result["field_parity"]["coordinates"])
+
+    def test_metadata_validator_uses_coordinate_roundoff_policy(self) -> None:
+        request = normalize_comparison_request(comparison_request())
+        output = comparison_output(request)
+        metadata = output["products"][".image.tt0"]["metadata"]
+        metadata["right"]["coordinates"]["direction0"]["cdelt"][0] += 4.0e-16
+
+        validate_comparison_output(output, request)
+
+        metadata["right"]["coordinates"]["direction0"]["cdelt"][0] += 1.0e-6
+        with self.assertRaisesRegex(ValueError, "metadata parity is not derived"):
+            validate_comparison_output(output, request)
+
     def test_beam_only_metadata_mismatch_requires_v2_scientific_reference(
         self,
     ) -> None:
@@ -1034,6 +1089,27 @@ class ImageComparisonProtocolTests(unittest.TestCase):
         metadata["left"]["unit"] = "K"
         metadata["field_parity"]["unit"] = False
         self.assertFalse(comparator.is_restoring_beam_only_metadata_mismatch(metadata))
+
+    def test_comparator_defers_mask_topology_only_for_named_v2_products(self) -> None:
+        contract = {
+            "contract_version": 2,
+            "default": {"require_topology_parity": True},
+            "products": {
+                ".alpha": {"mask_mismatch_fraction": 1.0e-6},
+            },
+        }
+
+        self.assertTrue(
+            comparator.has_bounded_mask_topology_contract(contract, ".alpha")
+        )
+        self.assertFalse(
+            comparator.has_bounded_mask_topology_contract(contract, ".image.tt0")
+        )
+        self.assertFalse(
+            comparator.has_bounded_mask_topology_contract(
+                {**contract, "contract_version": 1}, ".alpha"
+            )
+        )
 
     def test_source_region_metrics_are_bounded_and_not_full_image_sums(self) -> None:
         shape = (6, 5, 1, 1)

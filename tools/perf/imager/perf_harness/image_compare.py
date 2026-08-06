@@ -20,6 +20,8 @@ from .tree_identity import sha256_file
 
 CASA_IMAGE_COMPARATOR = pathlib.Path(__file__).with_name("casa_image_compare.py")
 COMPARISON_SCHEMA_VERSION = 4
+COORDINATE_RELATIVE_TOLERANCE = 1.0e-12
+COORDINATE_ABSOLUTE_TOLERANCE = 1.0e-12
 FULL_STRUCTURE_EVIDENCE_SCOPE = "full_native_central_spatial_plane_disk_backed"
 FULL_STRUCTURE_EVIDENCE_FIELDS = {
     "method",
@@ -420,6 +422,7 @@ def validate_comparison_output(
                 suffix=suffix,
                 requested_chunk_elements=request["full_chunk_elements"],
                 legacy_operand_aliases=request["legacy_operand_aliases"],
+                tolerance_contract=request["tolerances"],
             )
             _validate_full_structure_evidence(
                 product,
@@ -563,7 +566,14 @@ def _validate_product_metadata(
             raise ValueError(f"{label} {side} metadata capture is incomplete")
         if value.get("shape") != product.get("shape"):
             raise ValueError(f"{label} {side} metadata shape does not match product")
-    expected_parity = {field: left.get(field) == right.get(field) for field in fields}
+    expected_parity = {
+        field: (
+            _coordinate_records_equivalent(left.get(field), right.get(field))
+            if field == "coordinates"
+            else left.get(field) == right.get(field)
+        )
+        for field in fields
+    }
     exact = all(expected_parity.values())
     expected_status = "matched" if exact else "mismatch"
     if (
@@ -595,6 +605,30 @@ def _validate_product_metadata(
             f"{label} required metadata parity is not matched and the restoring "
             "beam mismatch has no bound scientific-equivalence reference"
         )
+
+
+def _coordinate_records_equivalent(left: Any, right: Any) -> bool:
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(
+            _coordinate_records_equivalent(left[key], right[key]) for key in left
+        )
+    if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
+        return len(left) == len(right) and all(
+            _coordinate_records_equivalent(left_value, right_value)
+            for left_value, right_value in zip(left, right)
+        )
+    if isinstance(left, bool) or isinstance(right, bool):
+        return left == right
+    if isinstance(left, int) and isinstance(right, int):
+        return left == right
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return math.isclose(
+            float(left),
+            float(right),
+            rel_tol=COORDINATE_RELATIVE_TOLERANCE,
+            abs_tol=COORDINATE_ABSOLUTE_TOLERANCE,
+        )
+    return left == right
 
 
 def _scientific_beam_reference(
@@ -835,6 +869,7 @@ def _validate_full_array_evidence(
     suffix: str,
     requested_chunk_elements: int,
     legacy_operand_aliases: bool,
+    tolerance_contract: dict[str, Any] | None,
 ) -> None:
     """Rebind every passing full-mode scalar to its streamed evidence source."""
 
@@ -932,6 +967,11 @@ def _validate_full_array_evidence(
         product,
         full=full,
         topology_parity=topology_parity,
+        allow_bounded_mask_topology=(
+            _has_bounded_mask_topology_contract(tolerance_contract, suffix)
+            and full["topology"]["finite_equal"]
+            and full["topology"]["nonfinite_kind_equal"]
+        ),
         legacy_operand_aliases=legacy_operand_aliases,
         label=label,
     )
@@ -1283,6 +1323,7 @@ def _validate_full_array_product_mirrors(
     *,
     full: dict[str, Any],
     topology_parity: bool,
+    allow_bounded_mask_topology: bool,
     legacy_operand_aliases: bool,
     label: str,
 ) -> None:
@@ -1310,7 +1351,7 @@ def _validate_full_array_product_mirrors(
             raise ValueError(
                 f"{label} {field} is not the authoritative full_array value"
             )
-    if not topology_parity:
+    if not topology_parity and not allow_bounded_mask_topology:
         raise ValueError(f"{label} cannot be compared without topology parity")
 
     present_aliases = set(product) & set(LEGACY_FULL_ARRAY_MIRRORS)
@@ -1322,6 +1363,23 @@ def _validate_full_array_product_mirrors(
     for alias, canonical in LEGACY_FULL_ARRAY_MIRRORS.items():
         if alias in product and product[alias] != product[canonical]:
             raise ValueError(f"{label} legacy alias {alias} is not derived")
+
+
+def _has_bounded_mask_topology_contract(
+    contract: dict[str, Any] | None,
+    suffix: str,
+) -> bool:
+    if not isinstance(contract, dict) or contract.get("contract_version") != 2:
+        return False
+    default = contract.get("default")
+    products = contract.get("products")
+    if not isinstance(default, dict) or not isinstance(products, dict):
+        return False
+    overrides = products.get(suffix, {})
+    if not isinstance(overrides, dict):
+        return False
+    thresholds = {**default, **overrides}
+    return "mask_mismatch_fraction" in thresholds
 
 
 def _nonnegative_integer(value: Any, *, label: str) -> int:

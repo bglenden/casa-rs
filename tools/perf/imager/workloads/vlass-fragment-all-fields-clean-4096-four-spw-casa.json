@@ -157,6 +157,14 @@
         "require_topology_parity": true
       },
       "products": {
+        ".alpha": {
+          "coherent_block_rms_over_right_rms": 0.001,
+          "mask_mismatch_fraction": 0.00001
+        },
+        ".alpha.error": {
+          "coherent_block_rms_over_right_rms": 0.001,
+          "mask_mismatch_fraction": 0.00001
+        },
         ".image.tt0": {
           "beam_area_relative": 0.001,
           "beam_kernel_nrmse": 0.001,

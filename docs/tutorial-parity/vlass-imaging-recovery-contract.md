@@ -520,6 +520,63 @@ correctness pair still reports the ratio as diagnostic evidence, clearly
 labelled non-promotable. This early-warning rule does not turn unmatched or
 debug-build timings into performance evidence.
 
+## Performance-preservation amendment
+
+Brian approved this amendment on 2026-08-04 after review showed that the
+headline performance had not been lost through a same-workload regression.
+The `28.65`--`29.43` second four-SPW result and the `101.646` second full-16-SPW
+result survived through the single-field ladder. Performance collapsed only
+when execution moved to the connected 63-field clean row, where the
+single-position image-response cache was not admitted and `2,430.742` of
+`2,674.88` seconds was spent repeating exact residual degridding/gridding.
+
+The later five-minute autoresearch row did not cause that loss. It is an
+explicit frozen-model residual-operator proxy. It executes no clean-from-zero
+minor cycle or model update and can never satisfy an end-to-end CLEAN
+performance gate.
+
+The machine-readable preservation contract is the
+`performance_preservation` member of
+`tools/perf/imager/vlass_recovery_contract.json`. It freezes two release-mode
+single-field landmarks:
+
+1. `4,096` square, SPWs `2,7,12,17`, `niter=2000`: historical casa-rs
+   `28.65` seconds against CASA `3,631.809729` seconds, nominally
+   `126.7647x`.
+2. `4,096` square, all 16 SPWs, `niter=2000`: historical casa-rs
+   `101.646` seconds.
+
+Every selected production candidate must preserve those workloads before
+all-field promotion. The receipt must bind one release executable and prove
+real CLEAN from zero, real minor-cycle records and model changes, response
+calibration and synthesis, sparse MT-MFS state, radix statistics, and the
+exact final residual refresh. A frozen model, zero-work minor cycle, debug
+binary, isolated stage metric, or proxy wall time cannot substitute.
+
+A regression of more than ten percent on either landmark blocks silent
+promotion and requires diagnosis plus Brian's direction. A demonstrated
+landmark capability remains in the candidate lineage until it is generalized,
+superseded by a faster same-landmark implementation, or explicitly retired by
+Brian. Branch restructuring, recovery selection, and experimental cleanup are
+not retirement decisions.
+
+The finite implementation sequence is:
+
+1. revalidate the two landmark rows with one frozen release executable;
+2. run the already-available model-delta census on the real `4,096`-square,
+   four-SPW, all-63-field CLEAN trajectory;
+3. generalize the existing frozen-base response cache from one position to a
+   bounded deterministic position set, retaining exact shadow checks,
+   decision-margin admission, invalidation, and exact fallback;
+4. promote the matched all-field four-SPW and full-16-SPW rows; and
+5. return to the required `12,150`-square single-field and 63-field acceptance
+   rows.
+
+This is not a reopened architecture tournament. It integrates and generalizes
+the already-demonstrated response mechanism while preserving the selected
+exact AW operator, sparse RHS, radix statistics, scientific-equivalence
+contract, memory contract, and finite merge decision.
+
 ## Finite delivery train
 
 The merge train has four review boundaries:
@@ -544,3 +601,49 @@ cannot affect it.
 No PR is merged automatically. When the train is merge-ready—or when the
 bounded attempts end in a blocker—the agent presents the evidence and waits
 for Brian’s decision.
+
+## 2026-08-05 promoted reduced all-field candidate
+
+The selected exact-source-order candidate now represents replay phase screens
+as separable X and Y complex axes and reconstructs their product in the Metal
+kernel. A fully fused kernel/phase experiment was rejected before execution
+because its projected `35.459 GB` compile peak exceeded the bounded
+`25.770 GB` budget. The separable design preserves exact A/W kernels, source
+order, POINTING semantics, and the expanded fallback while reducing the
+resident global replay program from `17.688 GB` to `5.225 GB`.
+It is now the production Metal replay representation; no hidden environment
+flag or new scientific/UI control is required.
+
+The exact matched reduced row is complete:
+
+- CASA: `3470.197045 s`;
+- release casa-rs: `257.40 s`;
+- CASA/casa-rs: `13.481729x`;
+- release executable SHA-256:
+  `82b01c3950eac4187c9e88e5282d606fc0743a5398f2da4b22872ad70c95c16b`;
+- all 63 fields and POINTING, SPWs `2,7,12,17`, `4096` square,
+  AWProject/32 W planes, Briggs, MT-MFS `nterms=2`, scales `[0,5,12]`,
+  deterministic mask, and `niter=2000`;
+- 193 minor components, 12 recorded major cycles, stable n-sigma stop;
+- peak RSS `12,634,636,288` bytes, peak process footprint
+  `11,765,475,792` bytes, and no destructive runtime swapping; and
+- exact 19-product inventory and complete numerical, topology, metadata,
+  source, and restoring-beam contract pass.
+
+Image tt0 and tt1 NRMSE are `7.37654e-5` and `9.74054e-5`. Alpha and
+alpha-error retain only 37 cutoff-edge pixels (`2.20537 ppm`) and
+`4.60017e-4` coherent block RMS. Brian's approved optimization-safe contract
+uses `1e-3` normalized/coherent error and a `10 ppm` cutoff-mask bound for
+these derived products; it does not require implementation-identity at a
+threshold edge. The contract SHA-256 is
+`58cece2f388f6098058598e19e00d4998a8c321f238d062ca8d567cafd29143a`.
+
+The immutable reassessment receipt SHA-256 is
+`5defc479822415b1c7cec24ac955a442b0015228f76a5a12b718414156bd8918`;
+the source comparison output SHA-256 is
+`35d1defac1e026025bdca32a12db61d1a9776b4cc8927382ea42185d72d69c42`.
+The production checkpoint is commit
+`4d787cb1fb8047d5e3087307db8f03bd37b8b6a4`.
+This supersedes the previous reduced-row correctness and performance stop
+boundary. It does not satisfy or weaken the required full-16-SPW and
+`12,150`-square acceptance rows. No unchanged CASA reference was rerun.

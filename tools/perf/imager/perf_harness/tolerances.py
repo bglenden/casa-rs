@@ -21,6 +21,7 @@ NUMERICAL_CEILINGS = {
     "diff_abs_max_over_right_peak",
     "diff_rms_over_right_rms",
     "integrated_flux_relative",
+    "mask_mismatch_fraction",
     "peak_relative",
 }
 V2_NUMERICAL_CEILINGS = {
@@ -28,6 +29,7 @@ V2_NUMERICAL_CEILINGS = {
     "beam_kernel_nrmse",
     "centroid_beams",
     "coherent_block_rms_over_right_rms",
+    "mask_mismatch_fraction",
 }
 BOOLEAN_REQUIREMENTS = {"require_topology_parity"}
 TOLERANCE_FIELDS = (
@@ -186,6 +188,10 @@ def _validate_thresholds(value: Any, *, source: str, contract_version: int) -> N
             or float(number) < 0.0
         ):
             raise ToleranceContractError(f"{source}.{name} must be finite and >= 0")
+        if name == "mask_mismatch_fraction" and float(number) > 1.0:
+            raise ToleranceContractError(
+                f"{source}.mask_mismatch_fraction must be <= 1"
+            )
     for name in BOOLEAN_REQUIREMENTS & set(value):
         if not isinstance(value[name], bool):
             raise ToleranceContractError(f"{source}.{name} must be a boolean")
@@ -231,22 +237,31 @@ def _evaluate_product(
             )
         )
     if thresholds.get("require_topology_parity"):
-        topology = product.get("topology_parity")
-        checks.append(
-            _check(
-                f"{suffix}.topology_parity",
-                actual=topology,
-                ceiling=True,
-                status="passed"
-                if topology is True
-                else "failed"
-                if topology is False
-                else "incomplete",
-                reason=None
-                if topology is True
-                else "finite/mask topology is not proven identical",
+        if "mask_mismatch_fraction" in thresholds:
+            checks.extend(
+                _bounded_mask_topology_checks(
+                    suffix,
+                    product,
+                    thresholds["mask_mismatch_fraction"],
+                )
             )
-        )
+        else:
+            topology = product.get("topology_parity")
+            checks.append(
+                _check(
+                    f"{suffix}.topology_parity",
+                    actual=topology,
+                    ceiling=True,
+                    status="passed"
+                    if topology is True
+                    else "failed"
+                    if topology is False
+                    else "incomplete",
+                    reason=None
+                    if topology is True
+                    else "finite/mask topology is not proven identical",
+                )
+            )
     checks.extend(_beam_checks(suffix, product, thresholds))
     checks.extend(
         _source_region_checks(
@@ -297,6 +312,58 @@ def _evaluate_product(
                     if accepted
                     else "structured-difference status, classification, and review "
                     "must agree on an accepted result"
+                ),
+            )
+        )
+    return checks
+
+
+def _bounded_mask_topology_checks(
+    suffix: str,
+    product: dict[str, Any],
+    ceiling: float,
+) -> list[dict[str, Any]]:
+    full = product.get("full_array")
+    topology = full.get("topology") if isinstance(full, dict) else None
+    total_elements = full.get("total_elements") if isinstance(full, dict) else None
+    mismatch_count = (
+        topology.get("mask_mismatch_count") if isinstance(topology, dict) else None
+    )
+    mismatch_fraction = None
+    if (
+        isinstance(total_elements, int)
+        and not isinstance(total_elements, bool)
+        and total_elements > 0
+        and isinstance(mismatch_count, int)
+        and not isinstance(mismatch_count, bool)
+        and mismatch_count >= 0
+    ):
+        mismatch_fraction = mismatch_count / total_elements
+    checks = [
+        _ceiling_check(
+            f"{suffix}.mask_mismatch_fraction",
+            mismatch_fraction,
+            ceiling,
+        )
+    ]
+    for field in ("finite_equal", "nonfinite_kind_equal"):
+        actual = topology.get(field) if isinstance(topology, dict) else None
+        checks.append(
+            _check(
+                f"{suffix}.{field}",
+                actual=actual,
+                ceiling=True,
+                status=(
+                    "passed"
+                    if actual is True
+                    else "failed"
+                    if actual is False
+                    else "incomplete"
+                ),
+                reason=(
+                    None
+                    if actual is True
+                    else "non-mask topology is not proven identical"
                 ),
             )
         )
