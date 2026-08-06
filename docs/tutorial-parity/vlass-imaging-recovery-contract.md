@@ -86,9 +86,16 @@ The corresponding release casa-rs exact tile-ready replay took
 `8e1e6792a72b5dbae2164ebbb1eebbde8028dac69dd45703d37d129041af5255`
 and receipt SHA-256
 `1642102ecacb5998d50d745f1d61f8f389c11b02cd5986ae10af89d2f5f8c6e1`.
-The numerical CASA/casa-rs ratio is `9.563969188x`.
+The numerical full-envelope CASA/casa-rs ratio is `9.563969188x`.
 
-This ratio is a conservative diagnostic envelope, not a matched final speedup:
+CASA's terminal log separately reported degridding timers of `266.73 s` and
+`265.79 s` and gridding timers of `331.54 s` and `332.44 s`. Their
+`1196.50 s` sum gives a closer-boundary diagnostic ratio of `9.041070523x`.
+These are CASA-reported internal stage timers, not an independently measured
+wall-clock boundary, so the outer `tclean` envelope remains the authoritative
+CASA receipt.
+
+The `9.563969188x` ratio is a favorable upper bound, not a matched final speedup:
 CASA exposes prediction, degridding, gridding, FFT/normalization, and residual
 product update together, while this casa-rs measurement stops at its exact
 tile-ready replay boundary. It therefore cannot satisfy the final independent
