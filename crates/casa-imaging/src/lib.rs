@@ -10982,6 +10982,7 @@ const AWPROJECT_METAL_RAW_LAYOUT_MASK: u32 = AWPROJECT_METAL_RAW_ROW_STRIDE_MASK
     | AWPROJECT_METAL_RAW_SAMPLING_MASK
     | AWPROJECT_METAL_RAW_CONJUGATE;
 
+#[repr(C)]
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg(all(target_os = "macos", not(coverage)))]
 struct AwProjectMetalEffectiveSupportStencil {
@@ -11089,10 +11090,11 @@ fn awproject_metal_effective_support_raw_index(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
-fn awproject_metal_effective_support_crop(
+fn awproject_metal_effective_support_crop_with_scratch(
     kernels: &[WProjectMetalComplex],
     stencil: AwProjectMetalEffectiveSupportStencil,
     omitted_energy_fraction: f64,
+    prefix: &mut Vec<f64>,
 ) -> AwProjectMetalEffectiveSupportDecision {
     let Some(original_taps) =
         awproject_metal_effective_support_tap_count(stencil.x_support, stencil.y_support)
@@ -11129,7 +11131,8 @@ fn awproject_metal_effective_support_crop(
             AwProjectMetalEffectiveSupportFallback::ShapeOverflow,
         );
     };
-    let mut prefix = vec![0.0f64; prefix_len];
+    prefix.clear();
+    prefix.resize(prefix_len, 0.0);
     for tap_y in 0..height {
         let mut row_energy = 0.0f64;
         for tap_x in 0..width {
@@ -11225,6 +11228,20 @@ fn awproject_metal_effective_support_crop(
         retained_taps,
         omitted_energy_fraction: ((total_energy - retained_energy).max(0.0) / total_energy),
     })
+}
+
+#[cfg(all(test, target_os = "macos", not(coverage)))]
+fn awproject_metal_effective_support_crop(
+    kernels: &[WProjectMetalComplex],
+    stencil: AwProjectMetalEffectiveSupportStencil,
+    omitted_energy_fraction: f64,
+) -> AwProjectMetalEffectiveSupportDecision {
+    awproject_metal_effective_support_crop_with_scratch(
+        kernels,
+        stencil,
+        omitted_energy_fraction,
+        &mut Vec::new(),
+    )
 }
 
 #[repr(C)]
@@ -11846,6 +11863,11 @@ struct AwProjectMetalEffectiveSupportRoleStats {
 struct AwProjectMetalEffectiveSupportStats {
     omitted_energy_fraction: f64,
     unique_stencils: usize,
+    stencil_lookups: usize,
+    crop_evaluations: usize,
+    index_peak_entries: usize,
+    index_estimated_bytes: usize,
+    prefix_scratch_peak_bytes: usize,
     prediction: AwProjectMetalEffectiveSupportRoleStats,
     tile: AwProjectMetalEffectiveSupportRoleStats,
     max_omitted_energy_fraction: f64,
@@ -11929,7 +11951,9 @@ impl AwProjectMetalEffectiveSupportStats {
             .join(",");
         eprintln!(
             "awproject_effective_support segment={} source_programs={} omitted_energy_fraction={} \
-             unique_stencils={} prediction_unique_stencils={} tile_unique_stencils={} \
+             unique_stencils={} stencil_lookups={} crop_evaluations={} \
+             index_peak_entries={} index_estimated_bytes={} \
+             prefix_scratch_peak_bytes={} prediction_unique_stencils={} tile_unique_stencils={} \
              prediction_plans={} prediction_cropped_plans={} \
              prediction_original_tap_visits={} prediction_retained_tap_visits={} \
              tile_plans={} tile_cropped_plans={} tile_original_tap_visits={} \
@@ -11940,6 +11964,11 @@ impl AwProjectMetalEffectiveSupportStats {
             source_programs,
             self.omitted_energy_fraction,
             self.unique_stencils,
+            self.stencil_lookups,
+            self.crop_evaluations,
+            self.index_peak_entries,
+            self.index_estimated_bytes,
+            self.prefix_scratch_peak_bytes,
             self.prediction.unique_stencils,
             self.tile.unique_stencils,
             self.prediction.plan_count,
@@ -12046,33 +12075,16 @@ fn awproject_metal_effective_support_phase(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
-fn awproject_metal_effective_support_fields(
+fn apply_awproject_metal_effective_support_decision(
     kernel_base: &mut u32,
-    kernel_layout: u32,
     x_support: &mut u32,
     y_support: &mut u32,
     phase: &mut AwProjectMetalPhasePlan,
     phase_count: usize,
-    decisions: &BTreeMap<
-        AwProjectMetalEffectiveSupportStencil,
-        AwProjectMetalEffectiveSupportDecision,
-    >,
+    decision: AwProjectMetalEffectiveSupportDecision,
 ) -> AwProjectMetalEffectiveSupportPlanOutcome {
     let original_taps =
         awproject_metal_effective_support_tap_count(*x_support, *y_support).unwrap_or(0);
-    let stencil = awproject_metal_effective_support_stencil(
-        *kernel_base,
-        kernel_layout,
-        *x_support,
-        *y_support,
-    );
-    let decision =
-        decisions
-            .get(&stencil)
-            .copied()
-            .unwrap_or(AwProjectMetalEffectiveSupportDecision::Dense(
-                AwProjectMetalEffectiveSupportFallback::UnsupportedRawLayout,
-            ));
     let AwProjectMetalEffectiveSupportDecision::Crop(crop) = decision else {
         let AwProjectMetalEffectiveSupportDecision::Dense(reason) = decision else {
             unreachable!()
@@ -12104,6 +12116,163 @@ fn awproject_metal_effective_support_fields(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Clone, Copy)]
+enum AwProjectMetalEffectiveSupportRole {
+    Prediction,
+    Tile,
+}
+
+#[derive(Clone, Copy)]
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectMetalEffectiveSupportIndexEntry {
+    decision: AwProjectMetalEffectiveSupportDecision,
+    prediction_seen: bool,
+    tile_seen: bool,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct EffectiveSupportCompiler<'a> {
+    kernels: &'a [WProjectMetalComplex],
+    omitted_energy_fraction: f64,
+    index: HashMap<AwProjectMetalEffectiveSupportStencil, AwProjectMetalEffectiveSupportIndexEntry>,
+    prefix_scratch: Vec<f64>,
+    stats: AwProjectMetalEffectiveSupportStats,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl<'a> EffectiveSupportCompiler<'a> {
+    fn new(
+        kernels: &'a [WProjectMetalComplex],
+        omitted_energy_fraction: f64,
+        resident_kernel_bytes: usize,
+    ) -> Self {
+        Self {
+            kernels,
+            omitted_energy_fraction,
+            index: HashMap::new(),
+            prefix_scratch: Vec::new(),
+            stats: AwProjectMetalEffectiveSupportStats {
+                omitted_energy_fraction,
+                resident_kernel_bytes_before: resident_kernel_bytes,
+                ..AwProjectMetalEffectiveSupportStats::default()
+            },
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn compile_plan(
+        &mut self,
+        role: AwProjectMetalEffectiveSupportRole,
+        kernel_base: &mut u32,
+        kernel_layout: u32,
+        x_support: &mut u32,
+        y_support: &mut u32,
+        phase: &mut AwProjectMetalPhasePlan,
+        phase_count: usize,
+    ) {
+        use std::collections::hash_map::Entry;
+
+        self.stats.stencil_lookups = self.stats.stencil_lookups.saturating_add(1);
+        let stencil = awproject_metal_effective_support_stencil(
+            *kernel_base,
+            kernel_layout,
+            *x_support,
+            *y_support,
+        );
+        let (decision, new_stencil, new_role) = match self.index.entry(stencil) {
+            Entry::Occupied(mut occupied) => {
+                let entry = occupied.get_mut();
+                let seen = match role {
+                    AwProjectMetalEffectiveSupportRole::Prediction => &mut entry.prediction_seen,
+                    AwProjectMetalEffectiveSupportRole::Tile => &mut entry.tile_seen,
+                };
+                let new_role = !*seen;
+                *seen = true;
+                (entry.decision, false, new_role)
+            }
+            Entry::Vacant(vacant) => {
+                let decision = awproject_metal_effective_support_crop_with_scratch(
+                    self.kernels,
+                    stencil,
+                    self.omitted_energy_fraction,
+                    &mut self.prefix_scratch,
+                );
+                let (prediction_seen, tile_seen) = match role {
+                    AwProjectMetalEffectiveSupportRole::Prediction => (true, false),
+                    AwProjectMetalEffectiveSupportRole::Tile => (false, true),
+                };
+                vacant.insert(AwProjectMetalEffectiveSupportIndexEntry {
+                    decision,
+                    prediction_seen,
+                    tile_seen,
+                });
+                (decision, true, true)
+            }
+        };
+        if new_stencil {
+            self.stats.crop_evaluations = self.stats.crop_evaluations.saturating_add(1);
+            self.stats.unique_stencils = self.stats.unique_stencils.saturating_add(1);
+            self.stats.index_peak_entries = self.stats.index_peak_entries.max(self.index.len());
+            let entry_bytes = std::mem::size_of::<AwProjectMetalEffectiveSupportStencil>()
+                .saturating_add(std::mem::size_of::<AwProjectMetalEffectiveSupportIndexEntry>())
+                .saturating_add(1);
+            self.stats.index_estimated_bytes = self
+                .stats
+                .index_estimated_bytes
+                .max(self.index.capacity().saturating_mul(entry_bytes));
+            self.stats.prefix_scratch_peak_bytes = self.stats.prefix_scratch_peak_bytes.max(
+                self.prefix_scratch
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<f64>()),
+            );
+        }
+        if new_role {
+            match role {
+                AwProjectMetalEffectiveSupportRole::Prediction => {
+                    self.stats.prediction.unique_stencils =
+                        self.stats.prediction.unique_stencils.saturating_add(1);
+                }
+                AwProjectMetalEffectiveSupportRole::Tile => {
+                    self.stats.tile.unique_stencils =
+                        self.stats.tile.unique_stencils.saturating_add(1);
+                }
+            }
+        }
+        let outcome = apply_awproject_metal_effective_support_decision(
+            kernel_base,
+            x_support,
+            y_support,
+            phase,
+            phase_count,
+            decision,
+        );
+        match role {
+            AwProjectMetalEffectiveSupportRole::Prediction => {
+                self.stats.prediction.observe(outcome);
+            }
+            AwProjectMetalEffectiveSupportRole::Tile => self.stats.tile.observe(outcome),
+        }
+        self.stats.observe_fallback(outcome);
+    }
+
+    fn finish(
+        mut self,
+        resident_kernel_bytes_after: usize,
+        elapsed: Duration,
+    ) -> Result<AwProjectMetalEffectiveSupportStats, ImagingError> {
+        self.stats.resident_kernel_bytes_after = resident_kernel_bytes_after;
+        if self.stats.resident_kernel_bytes_after != self.stats.resident_kernel_bytes_before {
+            return Err(ImagingError::Normalization(format!(
+                "AWProject effective-support compilation changed resident kernel bytes from {} to {}",
+                self.stats.resident_kernel_bytes_before, self.stats.resident_kernel_bytes_after,
+            )));
+        }
+        self.stats.compile_elapsed = elapsed;
+        Ok(self.stats)
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn compile_awproject_metal_effective_support(
     program: &mut AwProjectMetalResidentProgram,
     config: AwProjectMetalEffectiveSupportConfig,
@@ -12119,6 +12288,53 @@ fn compile_awproject_metal_effective_support(
             config.omitted_energy_fraction,
         )));
     }
+    let started = Instant::now();
+    let kernel_bytes = program
+        .prediction_batch
+        .kernels
+        .capacity()
+        .saturating_mul(std::mem::size_of::<WProjectMetalComplex>());
+    let mut compiler = EffectiveSupportCompiler::new(
+        &program.prediction_batch.kernels,
+        config.omitted_energy_fraction,
+        kernel_bytes,
+    );
+    let prediction_phase_count = program.prediction_batch.phases.len();
+    for sample in &mut program.prediction_batch.samples {
+        for plan in [&mut sample.first_prediction, &mut sample.second_prediction] {
+            compiler.compile_plan(
+                AwProjectMetalEffectiveSupportRole::Prediction,
+                &mut plan.kernel_base,
+                plan._pad0,
+                &mut plan.x_support,
+                &mut plan.y_support,
+                &mut plan.phase,
+                prediction_phase_count,
+            );
+        }
+    }
+    let tile_phase_count = program.tile_batch.phases.len();
+    for sample in &mut program.tile_batch.samples {
+        for plan in [&mut sample.first_imaging, &mut sample.second_imaging] {
+            compiler.compile_plan(
+                AwProjectMetalEffectiveSupportRole::Tile,
+                &mut plan.kernel_base,
+                plan._pad0,
+                &mut plan.x_support,
+                &mut plan.y_support,
+                &mut plan.phase,
+                tile_phase_count,
+            );
+        }
+    }
+    compiler.finish(kernel_bytes, started.elapsed())
+}
+
+#[cfg(all(test, target_os = "macos", not(coverage)))]
+fn compile_awproject_metal_effective_support_btree_reference(
+    program: &mut AwProjectMetalResidentProgram,
+    config: AwProjectMetalEffectiveSupportConfig,
+) -> Result<AwProjectMetalEffectiveSupportStats, ImagingError> {
     let started = Instant::now();
     let prediction_stencils = program
         .prediction_batch
@@ -12152,7 +12368,7 @@ fn compile_awproject_metal_effective_support(
         .union(&tile_stencils)
         .copied()
         .collect::<BTreeSet<_>>();
-    let kernel_bytes_before = program
+    let kernel_bytes = program
         .prediction_batch
         .kernels
         .capacity()
@@ -12182,20 +12398,30 @@ fn compile_awproject_metal_effective_support(
             unique_stencils: tile_stencils.len(),
             ..AwProjectMetalEffectiveSupportRoleStats::default()
         },
-        resident_kernel_bytes_before: kernel_bytes_before,
+        resident_kernel_bytes_before: kernel_bytes,
         ..AwProjectMetalEffectiveSupportStats::default()
     };
     let prediction_phase_count = program.prediction_batch.phases.len();
     for sample in &mut program.prediction_batch.samples {
         for plan in [&mut sample.first_prediction, &mut sample.second_prediction] {
-            let outcome = awproject_metal_effective_support_fields(
-                &mut plan.kernel_base,
+            let stencil = awproject_metal_effective_support_stencil(
+                plan.kernel_base,
                 plan._pad0,
+                plan.x_support,
+                plan.y_support,
+            );
+            let decision = decisions.get(&stencil).copied().unwrap_or(
+                AwProjectMetalEffectiveSupportDecision::Dense(
+                    AwProjectMetalEffectiveSupportFallback::UnsupportedRawLayout,
+                ),
+            );
+            let outcome = apply_awproject_metal_effective_support_decision(
+                &mut plan.kernel_base,
                 &mut plan.x_support,
                 &mut plan.y_support,
                 &mut plan.phase,
                 prediction_phase_count,
-                &decisions,
+                decision,
             );
             stats.prediction.observe(outcome);
             stats.observe_fallback(outcome);
@@ -12204,30 +12430,30 @@ fn compile_awproject_metal_effective_support(
     let tile_phase_count = program.tile_batch.phases.len();
     for sample in &mut program.tile_batch.samples {
         for plan in [&mut sample.first_imaging, &mut sample.second_imaging] {
-            let outcome = awproject_metal_effective_support_fields(
-                &mut plan.kernel_base,
+            let stencil = awproject_metal_effective_support_stencil(
+                plan.kernel_base,
                 plan._pad0,
+                plan.x_support,
+                plan.y_support,
+            );
+            let decision = decisions.get(&stencil).copied().unwrap_or(
+                AwProjectMetalEffectiveSupportDecision::Dense(
+                    AwProjectMetalEffectiveSupportFallback::UnsupportedRawLayout,
+                ),
+            );
+            let outcome = apply_awproject_metal_effective_support_decision(
+                &mut plan.kernel_base,
                 &mut plan.x_support,
                 &mut plan.y_support,
                 &mut plan.phase,
                 tile_phase_count,
-                &decisions,
+                decision,
             );
             stats.tile.observe(outcome);
             stats.observe_fallback(outcome);
         }
     }
-    stats.resident_kernel_bytes_after = program
-        .prediction_batch
-        .kernels
-        .capacity()
-        .saturating_mul(std::mem::size_of::<WProjectMetalComplex>());
-    if stats.resident_kernel_bytes_after != stats.resident_kernel_bytes_before {
-        return Err(ImagingError::Normalization(format!(
-            "AWProject effective-support compilation changed resident kernel bytes from {} to {}",
-            stats.resident_kernel_bytes_before, stats.resident_kernel_bytes_after,
-        )));
-    }
+    stats.resident_kernel_bytes_after = kernel_bytes;
     stats.compile_elapsed = started.elapsed();
     Ok(stats)
 }
@@ -70503,6 +70729,167 @@ mod tests {
         }
     }
 
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn awproject_effective_support_differential_program() -> super::AwProjectMetalResidentProgram {
+        let mut program = awproject_effective_support_test_program();
+        let tie_kernel_base = program.prediction_batch.kernels.len() as u32;
+        let edge = (2.0e-5f32).sqrt();
+        program.prediction_batch.kernels.extend([
+            super::WProjectMetalComplex { re: 0.0, im: 0.0 },
+            super::WProjectMetalComplex { re: edge, im: 0.0 },
+            super::WProjectMetalComplex { re: 0.0, im: 0.0 },
+            super::WProjectMetalComplex { re: edge, im: 0.0 },
+            super::WProjectMetalComplex { re: 1.0, im: 0.0 },
+            super::WProjectMetalComplex { re: edge, im: 0.0 },
+            super::WProjectMetalComplex { re: 0.0, im: 0.0 },
+            super::WProjectMetalComplex { re: edge, im: 0.0 },
+            super::WProjectMetalComplex { re: 0.0, im: 0.0 },
+        ]);
+        let zero_kernel_base = program.prediction_batch.kernels.len() as u32;
+        program
+            .prediction_batch
+            .kernels
+            .extend([super::WProjectMetalComplex { re: 0.0, im: 0.0 }; 9]);
+        let raw_layout = super::awproject_metal_raw_kernel_layout(8, 1, false).expect("raw layout");
+        let tie_layout = super::awproject_metal_raw_kernel_layout(3, 1, false).expect("tie layout");
+        let base_prediction = program.prediction_batch.samples[0].first_prediction;
+        let base_tile = program.tile_batch.samples[0].first_imaging;
+        let prediction = |kernel_base, kernel_layout, phase| super::AwProjectMetalPredictionPlan {
+            x_support: 1,
+            y_support: 1,
+            kernel_base,
+            _pad0: kernel_layout,
+            phase,
+            ..base_prediction
+        };
+        let tile = |kernel_base, kernel_layout, phase| super::AwProjectMetalPlan {
+            x_support: 1,
+            y_support: 1,
+            kernel_base,
+            _pad0: kernel_layout,
+            phase,
+            ..base_tile
+        };
+        let mut add = |first_prediction, second_prediction, first_imaging, second_imaging| {
+            let mut prediction_sample = program.prediction_batch.samples[0];
+            prediction_sample.first_prediction = first_prediction;
+            prediction_sample.second_prediction = second_prediction;
+            program.prediction_batch.samples.push(prediction_sample);
+            let mut tile_sample = program.tile_batch.samples[0];
+            tile_sample.first_imaging = first_imaging;
+            tile_sample.second_imaging = second_imaging;
+            program.tile_batch.samples.push(tile_sample);
+        };
+        add(
+            prediction(
+                tie_kernel_base,
+                tie_layout,
+                super::AwProjectMetalPhasePlan::NONE,
+            ),
+            prediction(0, 0, super::AwProjectMetalPhasePlan::NONE),
+            tile(
+                tie_kernel_base,
+                tie_layout,
+                super::AwProjectMetalPhasePlan::NONE,
+            ),
+            tile(0, 0, super::AwProjectMetalPhasePlan::NONE),
+        );
+        add(
+            prediction(0, raw_layout, super::AwProjectMetalPhasePlan::expanded(0)),
+            prediction(
+                0,
+                raw_layout,
+                super::AwProjectMetalPhasePlan::separable(10_000, 10_000),
+            ),
+            tile(0, raw_layout, super::AwProjectMetalPhasePlan::expanded(0)),
+            tile(
+                0,
+                raw_layout,
+                super::AwProjectMetalPhasePlan::separable(10_000, 10_000),
+            ),
+        );
+        add(
+            prediction(
+                0,
+                raw_layout | 0x8000_0000,
+                super::AwProjectMetalPhasePlan::NONE,
+            ),
+            prediction(
+                zero_kernel_base,
+                tie_layout,
+                super::AwProjectMetalPhasePlan::NONE,
+            ),
+            tile(
+                0,
+                raw_layout | 0x8000_0000,
+                super::AwProjectMetalPhasePlan::NONE,
+            ),
+            tile(
+                zero_kernel_base,
+                tie_layout,
+                super::AwProjectMetalPhasePlan::NONE,
+            ),
+        );
+        program
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn awproject_effective_support_plan_words(
+        program: &super::AwProjectMetalResidentProgram,
+    ) -> (Vec<[u32; 10]>, Vec<[u32; 8]>) {
+        (
+            program
+                .prediction_batch
+                .samples
+                .iter()
+                .flat_map(|sample| [sample.first_prediction, sample.second_prediction])
+                .map(|plan| super::AwProjectMetalPredictionPlanKey::from(plan).0)
+                .collect(),
+            program
+                .tile_batch
+                .samples
+                .iter()
+                .flat_map(|sample| [sample.first_imaging, sample.second_imaging])
+                .map(|plan| super::AwProjectMetalPlanKey::from(plan).0)
+                .collect(),
+        )
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn assert_awproject_effective_support_semantic_stats_equal(
+        actual: &super::AwProjectMetalEffectiveSupportStats,
+        expected: &super::AwProjectMetalEffectiveSupportStats,
+    ) {
+        assert_eq!(
+            actual.omitted_energy_fraction.to_bits(),
+            expected.omitted_energy_fraction.to_bits()
+        );
+        assert_eq!(actual.unique_stencils, expected.unique_stencils);
+        for (actual, expected) in [
+            (&actual.prediction, &expected.prediction),
+            (&actual.tile, &expected.tile),
+        ] {
+            assert_eq!(actual.plan_count, expected.plan_count);
+            assert_eq!(actual.unique_stencils, expected.unique_stencils);
+            assert_eq!(actual.original_tap_visits, expected.original_tap_visits);
+            assert_eq!(actual.retained_tap_visits, expected.retained_tap_visits);
+            assert_eq!(actual.cropped_plans, expected.cropped_plans);
+        }
+        assert_eq!(
+            actual.max_omitted_energy_fraction.to_bits(),
+            expected.max_omitted_energy_fraction.to_bits()
+        );
+        assert_eq!(actual.fallback_counts, expected.fallback_counts);
+        assert_eq!(
+            actual.resident_kernel_bytes_before,
+            expected.resident_kernel_bytes_before
+        );
+        assert_eq!(
+            actual.resident_kernel_bytes_after,
+            expected.resident_kernel_bytes_after
+        );
+    }
+
     #[test]
     #[cfg(all(target_os = "macos", not(coverage)))]
     fn awproject_effective_support_environment_is_numeric_and_fail_closed() {
@@ -70545,6 +70932,79 @@ mod tests {
             .is_err(),
             "values above the approved 1e-4 ceiling must fail closed"
         );
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn awproject_effective_support_one_pass_matches_btree_reference_and_repeats() {
+        assert_eq!(
+            std::mem::size_of::<super::AwProjectMetalEffectiveSupportStencil>(),
+            16
+        );
+        let config = super::AwProjectMetalEffectiveSupportConfig {
+            omitted_energy_fraction: 1.0e-4,
+        };
+        let mut first = awproject_effective_support_differential_program();
+        let mut repeated = awproject_effective_support_differential_program();
+        let mut reference = awproject_effective_support_differential_program();
+
+        let first_stats =
+            super::compile_awproject_metal_effective_support(&mut first, config).unwrap();
+        let repeated_stats =
+            super::compile_awproject_metal_effective_support(&mut repeated, config).unwrap();
+        let reference_stats = super::compile_awproject_metal_effective_support_btree_reference(
+            &mut reference,
+            config,
+        )
+        .unwrap();
+
+        assert_eq!(
+            awproject_effective_support_plan_words(&first),
+            awproject_effective_support_plan_words(&reference),
+            "one-pass and BTree compilers must produce bit-identical plan words"
+        );
+        assert_eq!(
+            awproject_effective_support_plan_words(&first),
+            awproject_effective_support_plan_words(&repeated),
+            "one-pass compilation must be deterministic"
+        );
+        assert_awproject_effective_support_semantic_stats_equal(&first_stats, &reference_stats);
+        assert_awproject_effective_support_semantic_stats_equal(&first_stats, &repeated_stats);
+        assert_eq!(
+            first_stats.stencil_lookups,
+            first_stats.prediction.plan_count + first_stats.tile.plan_count
+        );
+        assert_eq!(first_stats.crop_evaluations, first_stats.unique_stencils);
+        assert_eq!(first_stats.index_peak_entries, first_stats.unique_stencils);
+        assert!(first_stats.index_estimated_bytes > 0);
+        assert!(first_stats.prefix_scratch_peak_bytes > 0);
+        assert_eq!(
+            (
+                first_stats.stencil_lookups,
+                first_stats.crop_evaluations,
+                first_stats.index_peak_entries,
+                first_stats.index_estimated_bytes,
+                first_stats.prefix_scratch_peak_bytes,
+            ),
+            (
+                repeated_stats.stencil_lookups,
+                repeated_stats.crop_evaluations,
+                repeated_stats.index_peak_entries,
+                repeated_stats.index_estimated_bytes,
+                repeated_stats.prefix_scratch_peak_bytes,
+            )
+        );
+        assert_eq!(
+            first_stats.fallback_counts.get("dense_kernel_layout"),
+            Some(&2)
+        );
+        assert_eq!(first_stats.fallback_counts.get("expanded_phase"), Some(&2));
+        assert_eq!(first_stats.fallback_counts.get("invalid_phase"), Some(&2));
+        assert_eq!(
+            first_stats.fallback_counts.get("unsupported_raw_layout"),
+            Some(&2)
+        );
+        assert_eq!(first_stats.fallback_counts.get("zero_energy"), Some(&2));
     }
 
     #[test]

@@ -570,6 +570,35 @@ fn model_grid_from_fixture(
 }
 
 #[cfg(test)]
+fn effective_support_stats_json(stats: &super::AwProjectMetalEffectiveSupportStats) -> Value {
+    let role = |role: &super::AwProjectMetalEffectiveSupportRoleStats| {
+        json!({
+            "plan_count": role.plan_count,
+            "unique_stencils": role.unique_stencils,
+            "original_tap_visits": role.original_tap_visits,
+            "retained_tap_visits": role.retained_tap_visits,
+            "cropped_plans": role.cropped_plans,
+        })
+    };
+    json!({
+        "omitted_energy_fraction": stats.omitted_energy_fraction,
+        "unique_stencils": stats.unique_stencils,
+        "stencil_lookups": stats.stencil_lookups,
+        "crop_evaluations": stats.crop_evaluations,
+        "index_peak_entries": stats.index_peak_entries,
+        "index_estimated_bytes": stats.index_estimated_bytes,
+        "prefix_scratch_peak_bytes": stats.prefix_scratch_peak_bytes,
+        "prediction": role(&stats.prediction),
+        "tile": role(&stats.tile),
+        "max_omitted_energy_fraction": stats.max_omitted_energy_fraction,
+        "fallback_counts": stats.fallback_counts,
+        "compile_seconds": stats.compile_elapsed.as_secs_f64(),
+        "resident_kernel_bytes_before": stats.resident_kernel_bytes_before,
+        "resident_kernel_bytes_after": stats.resident_kernel_bytes_after,
+    })
+}
+
+#[cfg(test)]
 fn benchmark(prefix: &Path) -> Result<Value, ImagingError> {
     let (manifest, payload_path) = load_manifest(prefix)?;
     let programs = manifest
@@ -688,6 +717,10 @@ fn benchmark(prefix: &Path) -> Result<Value, ImagingError> {
         |segment, descriptor, loaded| {
             let reload_seconds = loaded.reload_elapsed.as_secs_f64();
             let reload_bytes = loaded.bytes_read;
+            let effective_support_receipt = loaded
+                .effective_support
+                .as_ref()
+                .map(effective_support_stats_json);
             if let Some(effective_support) = loaded.effective_support.as_ref() {
                 if effective_support.log(segment, descriptor.source_programs) {
                     effective_support_telemetry_markers =
@@ -713,6 +746,7 @@ fn benchmark(prefix: &Path) -> Result<Value, ImagingError> {
                 "reload_seconds": reload_seconds,
                 "metal_replay_seconds": metal_replay_seconds,
                 "total_seconds": reload_seconds + metal_replay_seconds,
+                "effective_support": effective_support_receipt,
             }));
             Ok(())
         },
@@ -807,6 +841,96 @@ mod tests {
             .is_some()
     }
 
+    fn assert_effective_support_segment_receipts(result: &Value, compiled: bool) {
+        let segment_receipts = result["segment_receipts"]
+            .as_array()
+            .expect("per-segment receipts");
+        for (segment, segment_receipt) in segment_receipts.iter().enumerate() {
+            let support = &segment_receipt["effective_support"];
+            if !compiled {
+                assert!(
+                    support.is_null(),
+                    "segment {segment} unexpectedly compiled effective support"
+                );
+                continue;
+            }
+
+            let support = support
+                .as_object()
+                .unwrap_or_else(|| panic!("segment {segment} effective-support receipt"));
+            let integer = |key: &str| {
+                support[key]
+                    .as_u64()
+                    .unwrap_or_else(|| panic!("segment {segment} effective-support {key}"))
+            };
+            let number = |key: &str| {
+                support[key]
+                    .as_f64()
+                    .unwrap_or_else(|| panic!("segment {segment} effective-support {key}"))
+            };
+            let threshold = number("omitted_energy_fraction");
+            let max_omitted = number("max_omitted_energy_fraction");
+            assert!(threshold.is_finite() && threshold > 0.0 && threshold <= 1.0e-4);
+            assert!(max_omitted.is_finite() && max_omitted >= 0.0);
+            assert!(max_omitted <= threshold);
+
+            let unique_stencils = integer("unique_stencils");
+            let crop_evaluations = integer("crop_evaluations");
+            let index_peak_entries = integer("index_peak_entries");
+            assert!(unique_stencils > 0);
+            assert_eq!(crop_evaluations, unique_stencils);
+            assert_eq!(index_peak_entries, unique_stencils);
+            assert!(integer("index_estimated_bytes") > 0);
+            assert!(integer("prefix_scratch_peak_bytes") > 0);
+
+            let role = |key: &str| {
+                support[key]
+                    .as_object()
+                    .unwrap_or_else(|| panic!("segment {segment} effective-support {key}"))
+            };
+            let prediction = role("prediction");
+            let tile = role("tile");
+            let role_integer = |role: &serde_json::Map<String, Value>, key: &str| {
+                role[key]
+                    .as_u64()
+                    .unwrap_or_else(|| panic!("segment {segment} effective-support role {key}"))
+            };
+            for role in [prediction, tile] {
+                let plan_count = role_integer(role, "plan_count");
+                let role_unique = role_integer(role, "unique_stencils");
+                let original_taps = role_integer(role, "original_tap_visits");
+                let retained_taps = role_integer(role, "retained_tap_visits");
+                let cropped_plans = role_integer(role, "cropped_plans");
+                assert!(role_unique <= unique_stencils);
+                assert!(retained_taps <= original_taps);
+                assert!(cropped_plans <= plan_count);
+            }
+            assert_eq!(
+                integer("stencil_lookups"),
+                role_integer(prediction, "plan_count") + role_integer(tile, "plan_count")
+            );
+
+            let fallback_counts = support["fallback_counts"]
+                .as_object()
+                .unwrap_or_else(|| panic!("segment {segment} effective-support fallback counts"));
+            let fallback_plans = fallback_counts.values().try_fold(0u64, |total, value| {
+                value.as_u64().and_then(|count| total.checked_add(count))
+            });
+            assert!(
+                fallback_plans.is_some_and(|count| {
+                    count
+                        <= role_integer(prediction, "plan_count") + role_integer(tile, "plan_count")
+                }),
+                "segment {segment} effective-support fallback count"
+            );
+            assert!(number("compile_seconds").is_finite() && number("compile_seconds") >= 0.0);
+            assert_eq!(
+                integer("resident_kernel_bytes_before"),
+                integer("resident_kernel_bytes_after")
+            );
+        }
+    }
+
     fn assert_effective_support_admission(
         result: &Value,
         requested: bool,
@@ -845,6 +969,14 @@ mod tests {
             result["effective_support_telemetry_markers"],
             telemetry_markers
         );
+        assert!(
+            compiled_segment_count == 0
+                || compiled_segment_count
+                    == result["segments"]
+                        .as_u64()
+                        .expect("effective-support segment count") as usize
+        );
+        assert_effective_support_segment_receipts(result, compiled_segment_count > 0);
     }
 
     #[test]

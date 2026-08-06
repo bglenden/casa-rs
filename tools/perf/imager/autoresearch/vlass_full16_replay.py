@@ -826,6 +826,98 @@ def parse_benchmark_result(output: str) -> dict[str, Any]:
     return candidates[0]
 
 
+def effective_support_segment_receipt_is_valid(receipt: Any) -> bool:
+    if not isinstance(receipt, dict):
+        return False
+
+    def integer(key: str) -> int | None:
+        value = receipt.get(key)
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    def number(key: str) -> float | None:
+        value = receipt.get(key)
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return None
+        value = float(value)
+        return value if math.isfinite(value) else None
+
+    threshold = number("omitted_energy_fraction")
+    max_omitted = number("max_omitted_energy_fraction")
+    unique_stencils = integer("unique_stencils")
+    stencil_lookups = integer("stencil_lookups")
+    crop_evaluations = integer("crop_evaluations")
+    index_peak_entries = integer("index_peak_entries")
+    index_estimated_bytes = integer("index_estimated_bytes")
+    prefix_scratch_peak_bytes = integer("prefix_scratch_peak_bytes")
+    compile_seconds = number("compile_seconds")
+    resident_before = integer("resident_kernel_bytes_before")
+    resident_after = integer("resident_kernel_bytes_after")
+    if (
+        threshold is None
+        or not 0.0 < threshold <= 1.0e-4
+        or max_omitted is None
+        or not 0.0 <= max_omitted <= threshold
+        or unique_stencils is None
+        or unique_stencils <= 0
+        or crop_evaluations != unique_stencils
+        or index_peak_entries != unique_stencils
+        or index_estimated_bytes is None
+        or index_estimated_bytes <= 0
+        or prefix_scratch_peak_bytes is None
+        or prefix_scratch_peak_bytes <= 0
+        or compile_seconds is None
+        or compile_seconds < 0.0
+        or resident_before is None
+        or resident_before <= 0
+        or resident_after != resident_before
+    ):
+        return False
+
+    roles: list[dict[str, Any]] = []
+    for key in ("prediction", "tile"):
+        role = receipt.get(key)
+        if not isinstance(role, dict):
+            return False
+        role_values = [role.get(name) for name in (
+            "plan_count",
+            "unique_stencils",
+            "original_tap_visits",
+            "retained_tap_visits",
+            "cropped_plans",
+        )]
+        if any(
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or value < 0
+            for value in role_values
+        ):
+            return False
+        if (
+            role["plan_count"] <= 0
+            or role["unique_stencils"] > unique_stencils
+            or role["retained_tap_visits"] > role["original_tap_visits"]
+            or role["cropped_plans"] > role["plan_count"]
+        ):
+            return False
+        roles.append(role)
+    total_plans = sum(role["plan_count"] for role in roles)
+    if stencil_lookups != total_plans:
+        return False
+
+    fallback_counts = receipt.get("fallback_counts")
+    if not isinstance(fallback_counts, dict):
+        return False
+    if any(
+        not isinstance(reason, str)
+        or not isinstance(count, int)
+        or isinstance(count, bool)
+        or count < 0
+        for reason, count in fallback_counts.items()
+    ):
+        return False
+    return sum(fallback_counts.values()) <= total_plans
+
+
 def result_errors(
     result: dict[str, Any],
     telemetry: dict[str, Any],
@@ -902,6 +994,22 @@ def result_errors(
             errors.append(f"{key} effective-support compiled segment count changed")
         if value.get("effective_support_telemetry_markers") != expected_markers:
             errors.append(f"{key} effective-support telemetry marker count changed")
+        if isinstance(segments, list) and len(segments) == expected_segments:
+            receipts_valid = True
+            for segment in segments:
+                segment_support = (
+                    segment.get("effective_support")
+                    if isinstance(segment, dict)
+                    else None
+                )
+                if expected_compiled_segments > 0:
+                    receipts_valid &= effective_support_segment_receipt_is_valid(
+                        segment_support
+                    )
+                else:
+                    receipts_valid &= segment_support is None
+            if not receipts_valid:
+                errors.append(f"{key} effective-support segment receipt changed")
         total_compile_seconds = support.get("total_compile_seconds")
         if (
             not isinstance(total_compile_seconds, (int, float))

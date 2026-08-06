@@ -22,6 +22,36 @@ from autoresearch.vlass_full16_replay import (
 
 
 def replay_result(*, effective_support_requested: bool = True) -> dict:
+    def effective_support_receipt() -> dict:
+        return {
+            "omitted_energy_fraction": 1e-4,
+            "unique_stencils": 2,
+            "stencil_lookups": 4,
+            "crop_evaluations": 2,
+            "index_peak_entries": 2,
+            "index_estimated_bytes": 256,
+            "prefix_scratch_peak_bytes": 288,
+            "prediction": {
+                "plan_count": 2,
+                "unique_stencils": 2,
+                "original_tap_visits": 50,
+                "retained_tap_visits": 18,
+                "cropped_plans": 2,
+            },
+            "tile": {
+                "plan_count": 2,
+                "unique_stencils": 2,
+                "original_tap_visits": 50,
+                "retained_tap_visits": 18,
+                "cropped_plans": 2,
+            },
+            "max_omitted_energy_fraction": 1e-5,
+            "fallback_counts": {},
+            "compile_seconds": 0.001,
+            "resident_kernel_bytes_before": 640,
+            "resident_kernel_bytes_after": 640,
+        }
+
     def variant(samples: int, segments: int, spws: list[int], seconds: float) -> dict:
         if effective_support_requested and segments >= 2:
             decision = "enabled"
@@ -72,7 +102,16 @@ def replay_result(*, effective_support_requested: bool = True) -> dict:
                 "initial_prepare_seconds": 0.01,
                 "prefetch_wait_seconds": 0.001 if segments >= 2 else 0.0,
             },
-            "segment_receipts": [{} for _ in range(segments)],
+            "segment_receipts": [
+                {
+                    "effective_support": (
+                        effective_support_receipt()
+                        if compiled_segments > 0
+                        else None
+                    )
+                }
+                for _ in range(segments)
+            ],
         }
 
     return {
@@ -153,6 +192,27 @@ class ReplayContractTests(unittest.TestCase):
         self.assertIn(
             "four_spw effective-support telemetry marker count changed", errors
         )
+
+    def test_result_guard_rejects_wrong_effective_support_compiler_receipt(
+        self,
+    ) -> None:
+        result = replay_result()
+        receipts = result["full16"]["segment_receipts"]
+        receipts[0]["effective_support"]["crop_evaluations"] = 1
+        receipts[1]["effective_support"]["prediction"]["retained_tap_visits"] = 51
+        receipts[2]["effective_support"]["resident_kernel_bytes_after"] = 639
+        telemetry = {
+            "summary": {"process_physical_footprint_bytes_peak": 12 * 1024**3}
+        }
+
+        errors = result_errors(
+            result,
+            telemetry,
+            four_spw_baseline_seconds=8.0,
+            effective_support_requested=True,
+        )
+
+        self.assertIn("full16 effective-support segment receipt changed", errors)
 
     def test_result_guard_rejects_science_memory_and_scale_regressions(self) -> None:
         result = replay_result()
