@@ -29,7 +29,7 @@ def landmark() -> dict:
             "image_response_storage": "raw",
             "image_response_bytes": 536870912,
             "grouped_resident_replay_required": True,
-            "grouped_omitted_squared_l2_energy": 1e-6,
+            "grouped_omitted_squared_l2_energy": 0.0,
             "grouped_tile_side": 16,
         },
         "required_activity": {
@@ -60,13 +60,20 @@ def valid_log() -> str:
             "awproject_image_response_synthesize position=(1, 2)",
             "awproject_image_response_final_refresh algorithm=exact-production",
             "awproject_grouped_replay_plan architecture=source-order-grouped-tile-v1 "
-            "omitted_squared_l2_energy=1.000000000e-6 tile_side=16",
+            "omitted_squared_l2_energy=0.000000000e0 tile_side=16",
             "awproject_aot_grouped_tile_receipt segment=0 "
-            "omitted_energy_fraction_bits=4517329193108106637 "
+            "omitted_energy_fraction_bits=0 "
             "grouped_plans_hash_prefix=abc "
             "legacy_grouped_plans_hash_prefix=abc "
             "grouped_route_hash_prefix=def "
             "legacy_grouped_route_hash_prefix=def",
+            "awproject_effective_support segment=0 omitted_energy_fraction=0 "
+            "prediction_plans=2 tile_plans=2 "
+            "prediction_cropped_plans=0 tile_cropped_plans=0 "
+            "prediction_original_tap_visits=10 prediction_retained_tap_visits=10 "
+            "tile_original_tap_visits=20 tile_retained_tap_visits=20 "
+            "max_omitted_energy_fraction=0 "
+            "resident_kernel_bytes_before=100 resident_kernel_bytes_after=100",
             "awproject_metal_grouped_replay_retention "
             "decision=resident-complete segments=1 program_bytes=1024",
             "awproject_compact_replay_cache rejected_blocks=0 "
@@ -154,13 +161,14 @@ class VlassLandmarkGuardTests(unittest.TestCase):
             valid_log()
             .replace("core_sha256=core-hash", "core_sha256=other")
             .replace(
-                "omitted_squared_l2_energy=1.000000000e-6",
+                "omitted_squared_l2_energy=0.000000000e0",
                 "omitted_squared_l2_energy=1.000000000e-4",
             )
             .replace(
-                "omitted_energy_fraction_bits=4517329193108106637",
+                "omitted_energy_fraction_bits=0",
                 "omitted_energy_fraction_bits=4547007122018943789",
             )
+            .replace("prediction_cropped_plans=0", "prediction_cropped_plans=1")
             .replace(
                 "legacy_grouped_route_hash_prefix=def",
                 "legacy_grouped_route_hash_prefix=bad",
@@ -214,11 +222,15 @@ class VlassLandmarkGuardTests(unittest.TestCase):
             errors,
         )
         self.assertIn(
-            "grouped replay approximation differs from the production contract",
+            "grouped replay support policy differs from the production contract",
             errors,
         )
         self.assertIn(
             "AOT grouped-tile support threshold differs from the production contract",
+            errors,
+        )
+        self.assertIn(
+            "exact-support receipts are not unique and contiguous with AOT segments",
             errors,
         )
         self.assertIn(
@@ -233,6 +245,24 @@ class VlassLandmarkGuardTests(unittest.TestCase):
             "grouped replay fell back to per-refresh spill loading",
             errors,
         )
+
+    def test_grouped_support_cropping_is_rejected(self) -> None:
+        runtime = parse_log(
+            valid_log().replace(
+                "prediction_cropped_plans=0", "prediction_cropped_plans=1"
+            )
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary) / "release/casars-imager"
+            binary.parent.mkdir()
+            binary.write_bytes(b"release")
+            errors = evaluate(
+                landmark(),
+                runtime,
+                binary=binary,
+                wall_seconds=29.0,
+            )
+        self.assertIn("grouped replay did not preserve exact CF support", errors)
 
     def test_unknown_landmark_and_duplicate_completion_fail(self) -> None:
         with self.assertRaisesRegex(ValueError, "unknown or duplicate"):

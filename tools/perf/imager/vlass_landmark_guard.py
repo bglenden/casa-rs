@@ -59,6 +59,7 @@ def parse_log(text: str) -> dict[str, Any]:
     image_response_bytes = []
     grouped_replay_plans = []
     aot_grouped_tile_receipts = []
+    effective_support_receipts = []
     grouped_replay_cache_reports = []
     resident_grouped_retention_reports = []
     resident_grouped_replay_summaries = []
@@ -80,6 +81,13 @@ def parse_log(text: str) -> dict[str, Any]:
                 image_response_bytes.append(int(values["response_bytes"]))
         if line.startswith("awproject_aot_grouped_tile_receipt "):
             aot_grouped_tile_receipts.append(
+                {
+                    match.group("key"): match.group("value")
+                    for match in KEY_VALUE_RE.finditer(line)
+                }
+            )
+        if line.startswith("awproject_effective_support "):
+            effective_support_receipts.append(
                 {
                     match.group("key"): match.group("value")
                     for match in KEY_VALUE_RE.finditer(line)
@@ -160,6 +168,7 @@ def parse_log(text: str) -> dict[str, Any]:
         ),
         "grouped_replay_plans": grouped_replay_plans,
         "aot_grouped_tile_receipts": aot_grouped_tile_receipts,
+        "effective_support_receipts": effective_support_receipts,
         "resident_grouped_retention_reports": resident_grouped_retention_reports,
         "grouped_replay_cache_reports": grouped_replay_cache_reports,
         "resident_grouped_replay_summaries": resident_grouped_replay_summaries,
@@ -314,7 +323,7 @@ def evaluate(
             or int(plans[0].get("tile_side", "0")) != expected_tile_side
         ):
             errors.append(
-                "grouped replay approximation differs from the production contract"
+                "grouped replay support policy differs from the production contract"
             )
         receipts = runtime["aot_grouped_tile_receipts"]
         if not receipts:
@@ -340,6 +349,33 @@ def evaluate(
         receipt_segments = sorted(
             int(receipt.get("segment", "-1")) for receipt in receipts
         )
+        support_receipts = runtime["effective_support_receipts"]
+        support_segments = sorted(
+            int(receipt.get("segment", "-1")) for receipt in support_receipts
+        )
+        if support_segments != list(range(len(receipts))):
+            errors.append(
+                "exact-support receipts are not unique and contiguous with AOT segments"
+            )
+        elif any(
+            float(receipt.get("omitted_energy_fraction", "nan")) != 0.0
+            or float(receipt.get("max_omitted_energy_fraction", "nan")) != 0.0
+            or int(receipt.get("prediction_plans", "0")) <= 0
+            or int(receipt.get("tile_plans", "0")) <= 0
+            or int(receipt.get("prediction_cropped_plans", "-1")) != 0
+            or int(receipt.get("tile_cropped_plans", "-1")) != 0
+            or int(receipt.get("prediction_original_tap_visits", "0")) <= 0
+            or int(receipt.get("tile_original_tap_visits", "0")) <= 0
+            or int(receipt.get("prediction_original_tap_visits", "-1"))
+            != int(receipt.get("prediction_retained_tap_visits", "-2"))
+            or int(receipt.get("tile_original_tap_visits", "-1"))
+            != int(receipt.get("tile_retained_tap_visits", "-2"))
+            or int(receipt.get("resident_kernel_bytes_before", "0")) <= 0
+            or int(receipt.get("resident_kernel_bytes_before", "-1"))
+            != int(receipt.get("resident_kernel_bytes_after", "-2"))
+            for receipt in support_receipts
+        ):
+            errors.append("grouped replay did not preserve exact CF support")
         if receipt_segments != list(range(len(receipts))):
             errors.append(
                 "AOT grouped-tile segment receipts are not unique and contiguous"

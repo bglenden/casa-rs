@@ -41457,7 +41457,7 @@ fn standard_mfs_execution_config_with_plan(
                 name: "awproject_replay_architecture",
                 value: "source-order-grouped-tile-v1".to_string(),
                 origin: casa_imaging::ImagingPlanOrigin::Workload,
-                reason: "compile effective CF support, source-role group mapping, and grouped tile route once before residual replay; runtime preserves source-order f64 accumulation and rebuilds no grouping, sort, or route"
+                reason: "retain exact CF support and compile the source-role group mapping and grouped tile route once before residual replay; runtime preserves source-order f64 accumulation and rebuilds no grouping, sort, or route"
                     .to_string(),
             },
             casa_imaging::ImagingPlanDecision {
@@ -41480,7 +41480,7 @@ fn standard_mfs_execution_config_with_plan(
                 name: "awproject_grouped_replay_omitted_squared_l2_energy",
                 value: format!("{:.9e}", grouped.omitted_energy_fraction()),
                 origin: casa_imaging::ImagingPlanOrigin::Workload,
-                reason: "accepted bounded CF support specialization; exact source order, group identity, and route topology remain invariant"
+                reason: "production grouped replay omits no CF support; exact source order, group identity, and route topology remain invariant"
                     .to_string(),
             },
             casa_imaging::ImagingPlanDecision {
@@ -41541,7 +41541,7 @@ fn awproject_grouped_replay_plan(
             spill_directory,
             segment_target_bytes,
             compile_admission_bytes,
-            1.0e-6,
+            0.0,
             16,
         )
         .expect("resource-derived AWProject grouped replay plan is valid"),
@@ -61839,7 +61839,7 @@ mod tests {
             grouped.spill_directory(),
             config.imagename.parent().unwrap()
         );
-        assert_eq!(grouped.omitted_energy_fraction(), 1.0e-6);
+        assert_eq!(grouped.omitted_energy_fraction(), 0.0);
         assert_eq!(grouped.tile_side(), 16);
         assert!(execution.resolved.decisions.iter().any(|decision| {
             decision.name == "awproject_replay_architecture"

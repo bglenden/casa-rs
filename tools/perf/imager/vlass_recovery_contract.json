@@ -126,7 +126,7 @@
           "image_response_storage": "raw",
           "image_response_bytes": 536870912,
           "grouped_resident_replay_required": true,
-          "grouped_omitted_squared_l2_energy": 1e-6,
+          "grouped_omitted_squared_l2_energy": 0.0,
           "grouped_tile_side": 16
         },
         "required_activity": {

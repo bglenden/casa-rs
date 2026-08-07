@@ -8127,3 +8127,32 @@ exact declination equality with an explicit one-ULP bound while retaining
 bit-exact right ascension and the CASA reference value. Focused grouped replay,
 planner, Python contract, formatting, lint, and documentation gates remained
 green.
+
+The subsequently approved immutable 19-product comparison found that the
+`38.500 s` grouped run is not scientifically promotable. PSF, PB, weight, and
+sum-weight products remained exact or within approximately `1e-7`, and the
+mask was exact, but normalized RMS differences reached `0.053` to `0.064` for
+residual/restored images and `0.104` to `0.149` for model terms. The divergence
+began at the first model-dependent refresh: grouped replay reported
+`0.013050746` versus `0.013047279` for the previously near-CASA exact-support
+run. The `1e-6` per-stencil squared-L2 omission had cropped `152,370` of
+`153,728` prediction plans and every tile plan in the first segment; that
+local energy bound does not bound nonlinear MT-MFS component selection or the
+final CLEAN trajectory. The comparison input, output, and log SHA-256 values
+are respectively
+`7544119055722b5943eff7f3f2630fa034c2c2e98ec3d9dec5b2ad8a1092fa34`,
+`32dae61260d004b0a481de57ea1ee44234b38e7d43239864abfe7c899e795311`,
+and
+`69cf3e5d18baf75e7195538a90d90dc910572c389886a508b1945c75bcd807cf`.
+No all-fields row was launched after this failed gate.
+
+Production grouped replay therefore uses exact CF support with zero omitted
+energy. Threshold zero is a dedicated no-mutation compiler path rather than a
+zero-valued invocation of the approximate cropper, because floating-point
+prefix sums could otherwise select a smaller rectangle. The AOT compiler
+fails closed unless prediction and imaging plan-state hashes remain unchanged;
+its grouped plans and route must match the dense precompile byte for byte.
+Runtime receipts additionally require zero cropped plans, equal original and
+retained tap visits, unchanged kernel residency, and one exact-support receipt
+per AOT segment. The approximate support compiler remains experimental
+evidence only and is not a production scientific default.

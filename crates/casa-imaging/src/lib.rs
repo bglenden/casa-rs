@@ -12636,6 +12636,65 @@ fn compile_awproject_metal_effective_support(
     compiler.finish(kernel_bytes, started.elapsed())
 }
 
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn retain_awproject_metal_exact_support(
+    program: &AwProjectMetalResidentProgram,
+) -> Result<AwProjectMetalEffectiveSupportStats, ImagingError> {
+    let started = Instant::now();
+    let kernel_bytes = program
+        .prediction_batch
+        .kernels
+        .capacity()
+        .saturating_mul(std::mem::size_of::<WProjectMetalComplex>());
+    let mut stats = AwProjectMetalEffectiveSupportStats {
+        omitted_energy_fraction: 0.0,
+        resident_kernel_bytes_before: kernel_bytes,
+        resident_kernel_bytes_after: kernel_bytes,
+        ..AwProjectMetalEffectiveSupportStats::default()
+    };
+    let mut observe = |role: AwProjectMetalEffectiveSupportRole,
+                       x_support: u32,
+                       y_support: u32|
+     -> Result<(), ImagingError> {
+        let taps =
+            awproject_metal_effective_support_tap_count(x_support, y_support).ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject exact-support grouped replay tap count overflowed".to_string(),
+                )
+            })?;
+        let outcome = AwProjectMetalEffectiveSupportPlanOutcome::Retained {
+            original_taps: taps,
+            retained_taps: taps,
+            omitted_energy_fraction: 0.0,
+        };
+        match role {
+            AwProjectMetalEffectiveSupportRole::Prediction => stats.prediction.observe(outcome),
+            AwProjectMetalEffectiveSupportRole::Tile => stats.tile.observe(outcome),
+        }
+        Ok(())
+    };
+    for sample in &program.prediction_batch.samples {
+        for plan in [sample.first_prediction, sample.second_prediction] {
+            observe(
+                AwProjectMetalEffectiveSupportRole::Prediction,
+                plan.x_support,
+                plan.y_support,
+            )?;
+        }
+    }
+    for sample in &program.tile_batch.samples {
+        for plan in [sample.first_imaging, sample.second_imaging] {
+            observe(
+                AwProjectMetalEffectiveSupportRole::Tile,
+                plan.x_support,
+                plan.y_support,
+            )?;
+        }
+    }
+    stats.compile_elapsed = started.elapsed();
+    Ok(stats)
+}
+
 #[cfg(all(test, target_os = "macos", not(coverage)))]
 fn compile_awproject_metal_effective_support_btree_reference(
     program: &mut AwProjectMetalResidentProgram,
@@ -24147,8 +24206,18 @@ fn compile_awproject_metal_aot_grouped_tile(
     let raw_tile_sample_bytes = std::mem::size_of_val(program.tile_batch.samples.as_slice());
     let raw_route_bytes = program.tile_plan.resident_bytes();
     let before_crop = hash_awproject_effective_support_plan_state(program);
-    let effective_support = compile_awproject_metal_effective_support(program, config)?;
+    let effective_support = if config.omitted_energy_fraction == 0.0 {
+        retain_awproject_metal_exact_support(program)?
+    } else {
+        compile_awproject_metal_effective_support(program, config)?
+    };
     let after_crop = hash_awproject_effective_support_plan_state(program);
+    if config.omitted_energy_fraction == 0.0 && after_crop != before_crop {
+        return Err(ImagingError::Normalization(
+            "AWProject exact-support grouped replay changed prediction or imaging plans"
+                .to_string(),
+        ));
+    }
     let mut crop_digest = Sha256::new();
     crop_digest.update(config.omitted_energy_fraction.to_bits().to_le_bytes());
     crop_digest.update(before_crop);
@@ -73009,6 +73078,75 @@ mod tests {
             super::hash_awproject_copy_slice(&incumbent_grouped.groups),
             "source-order AOT refresh must reproduce the incumbent grouped residual bytes"
         );
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn awproject_aot_grouped_tile_exact_support_preserves_dense_plans() {
+        let mut program = awproject_effective_support_test_program();
+        let prediction_hash = super::hash_awproject_copy_slice(&program.prediction_batch.samples);
+        let dense_grouped =
+            super::group_awproject_metal_tile_plans(&program.tile_batch, 16, 16, 8).unwrap();
+        let dense_group_hash = super::hash_awproject_copy_slice(&dense_grouped.groups);
+        let dense_route_hash = super::hash_awproject_grouped_route(&dense_grouped.tile_plan);
+        let prediction_plan_count = program.prediction_batch.samples.len() * 2;
+        let tile_plan_count = program.tile_batch.samples.len() * 2;
+
+        let stats = super::compile_awproject_metal_aot_grouped_tile(
+            &mut program,
+            super::AwProjectMetalEffectiveSupportConfig {
+                omitted_energy_fraction: 0.0,
+            },
+            16,
+            16,
+            usize::MAX,
+        )
+        .unwrap();
+
+        assert_eq!(stats.omitted_energy_fraction.to_bits(), 0.0f64.to_bits());
+        assert_eq!(
+            stats.max_omitted_energy_fraction.to_bits(),
+            0.0f64.to_bits()
+        );
+        assert_eq!(stats.prediction.plan_count, prediction_plan_count);
+        assert_eq!(stats.tile.plan_count, tile_plan_count);
+        assert_eq!(stats.prediction.cropped_plans, 0);
+        assert_eq!(stats.tile.cropped_plans, 0);
+        assert_eq!(
+            stats.prediction.original_tap_visits,
+            stats.prediction.retained_tap_visits
+        );
+        assert_eq!(
+            stats.tile.original_tap_visits,
+            stats.tile.retained_tap_visits
+        );
+        assert_eq!(stats.index_estimated_bytes, 0);
+        assert_eq!(stats.prefix_scratch_peak_bytes, 0);
+        assert_eq!(
+            super::hash_awproject_copy_slice(&program.prediction_batch.samples),
+            prediction_hash,
+            "exact-support AOT compilation must not mutate prediction plans"
+        );
+        let aot = program
+            .aot_grouped_tile
+            .as_ref()
+            .expect("exact-support AOT artifact");
+        assert_eq!(aot.receipt.omitted_energy_fraction_bits, 0);
+        assert_eq!(
+            super::hash_awproject_copy_slice(&aot.grouped.groups),
+            dense_group_hash,
+            "exact-support AOT grouping must match dense source plans"
+        );
+        assert_eq!(
+            super::hash_awproject_grouped_route(&aot.grouped.tile_plan),
+            dense_route_hash,
+            "exact-support AOT route must match the dense grouped route"
+        );
+        assert_eq!(
+            aot.receipt.ledger.effective_support_hashmap_estimated_bytes,
+            0
+        );
+        assert_eq!(aot.receipt.ledger.effective_support_prefix_scratch_bytes, 0);
     }
 
     #[test]
