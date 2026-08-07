@@ -11004,11 +11004,16 @@ struct AwProjectMetalPredictionPlan {
     phase: AwProjectMetalPhasePlan,
 }
 
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 const AWPROJECT_METAL_RAW_ROW_STRIDE_MASK: u32 = 0x0000_ffff;
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 const AWPROJECT_METAL_RAW_SAMPLING_SHIFT: u32 = 16;
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 const AWPROJECT_METAL_RAW_SAMPLING_MASK: u32 = 0x00ff_0000;
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 const AWPROJECT_METAL_RAW_CONJUGATE: u32 = 0x0100_0000;
 
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 fn awproject_metal_raw_kernel_layout(
     row_stride: usize,
     sampling: usize,
@@ -11034,6 +11039,7 @@ fn awproject_metal_raw_kernel_layout(
 }
 
 #[inline]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 fn awproject_metal_kernel_index(
     kernel_base: u32,
     kernel_layout: u32,
@@ -11062,6 +11068,7 @@ fn awproject_metal_kernel_index(
 }
 
 #[inline]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 fn awproject_metal_kernel_value(
     kernels: &[WProjectMetalComplex],
     kernel_base: u32,
@@ -11437,6 +11444,7 @@ struct AwProjectMetalUniquePredictionProgram {
     plan_indices: Vec<AwProjectMetalPredictionPlanIndices>,
 }
 
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 fn deduplicate_awproject_metal_prediction_plans(
     samples: &[AwProjectMetalPredictionSample],
     thread_width: usize,
@@ -12043,6 +12051,7 @@ struct AwProjectMetalResidentProgram {
 }
 
 impl AwProjectMetalResidentProgram {
+    #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
     fn imaging_kernels(&self) -> &[WProjectMetalComplex] {
         if self.tile_batch.kernels.is_empty() {
             &self.prediction_batch.kernels
