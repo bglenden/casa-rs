@@ -8071,3 +8071,31 @@ rerun unchanged. The canary does not by itself close the larger single-field
 case where the complete legacy resident set exceeds retention; production
 closeout must make that boundary transition atomically to grouped replay
 without a partial or LRU cache.
+
+The single authorized canary at commit
+`31b7ead66a1d91f59c98a6ae3538c40674545d7c` completed in `38.730 s`, so the
+finite discriminator is rejected against the unchanged `31.515 s` ceiling
+and will not be rerun unchanged. Against the frozen exactly matched CASA
+runtime of `3631.809729 s`, the release result is `93.772521x`. The release
+executable SHA-256 is
+`450eec1828cc856a630822cd4476856f0a14917979dfde90de5da9a036d18998`.
+The run did exercise the intended architecture: four source blocks filled
+seven resident programs totaling `2,852,422,740` bytes; the final cache
+reported four misses and 40 hits across 11 residual stream replays; all 70
+post-fill program executions were resident; grouped compilation, AOT
+specialization, and spill replay were absent; and all 11 residual transforms
+selected planner-admitted term parallelism of two. The cache was explicitly
+released before product materialization.
+
+The timing model was nevertheless false. The first residual refresh spent
+`3057.481 ms` building the resident programs, and the subsequent ten resident
+refreshes totaled `1953.050 ms`. The instrumented residual FFT stages with
+parallelism two still took approximately `0.53` to `0.59 s` each rather than
+recovering the historical modeled saving. Total casa-rs processing was
+`38.055808 s`, including `34.328509 s` in imaging and `1.564875 s` writing
+products. Because the performance guard failed before the immutable
+19-product comparison, this receipt makes no correctness-promotion claim.
+The immutable landmark receipt and log SHA-256 values are respectively
+`f6c4011c2e9ffd2b34dc74d61ac6bcafc2723f9e72ee3f0506f45b164d3a88d7`
+and
+`c36680a65c9ee2394928eb4b6ac0950ce8e2a6635a484ecf31451a3f17d7783c`.
