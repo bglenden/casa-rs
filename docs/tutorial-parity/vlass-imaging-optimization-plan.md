@@ -7986,3 +7986,44 @@ No new `12,150`-square clean development workload or unchanged CASA reference
 was run. Full-geometry single-field and all-63-field acceptance remains
 outstanding and retains the existing correctness, product, memory, and matched
 `10x` requirements.
+
+The first end-to-end grouped landmark exposed a distinct production lifetime
+defect and stopped the ladder. Release executable
+`d207e508d4cc3390b0b99eb9c8fc7743a1f7b1555505e4cf44b60a9515b097fb`
+completed the single-field, four-SPW, `4096`-square, `niter=2000` row in
+`58.510 s`, versus frozen CASA `3631.809729 s` (`62.0716x`). It wrote all 19
+products and completed 172 major cycles and 2,000 minor iterations, but no
+correctness promotion is claimed because the performance guard stopped before
+the frozen-product comparison. The run log SHA-256 is
+`9b374c42b6edfab5b95a4d375b34399a940f0809a258a2821b8f1f86ae06a83e`.
+
+The grouped compiler itself was active and passed its internal topology
+receipts. It produced two exact-source-order AOT segments totaling
+`1,192,466,296` payload bytes. The defect was forced eviction: production
+retained only `1,152` bytes and reread the complete payload at every exact
+refresh. Twelve replay summaries recorded `14,309,595,552` aggregate spill
+bytes and approximately `26.442 s` of segmented replay, making the result
+`2.042x` slower than the preserved `28.65 s` casa-rs landmark.
+
+The bounded repair is all-or-nothing, next-use-aware retention after the
+initial-grid peak. Production computes the exact reloaded resident size from
+the sealed segment inventory and AOT ledger, pins every segment in source
+order only when the complete set fits the planner's replay allowance, and
+otherwise keeps the existing spill/prefetch path. Partial and LRU retention
+remain forbidden because every segment is visited cyclically. The landmark
+guard now requires the grouped planner, AOT hash parity, complete resident
+retention, zero runtime grouping/sort/route rebuilds, and zero per-refresh
+spill reads instead of the obsolete monolithic-global flag. It also requires
+an explicit release at residual-grid end, before restoration and 19-product
+materialization. The landmark wrapper no longer exports inert experimental
+replay-retention, residual-only, or global-tile selectors; grouped replay is
+selected solely by the production resource plan. The `31.515 s` ceiling is
+unchanged.
+
+The exact 5,073-byte FFTW wisdom artifact is now durably preserved at
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/fftw-wisdom/vlass-4096-fftw-measure-f6fd873a.wisdom`,
+SHA-256
+`f6fd873a068b68611eabdd598d3628d7fa75af20f451eef29b87b1562629462e`.
+It is a later reproducibility pin rather than an activity claim earned by the
+original 28.65-second log. If it is lost, a new wisdom file requires deliberate
+rebaselining; timed FFTW MEASURE output is not assumed byte-reconstructible.

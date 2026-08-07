@@ -6897,6 +6897,18 @@ where
             );
         }
     }
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    if profile::standard_mfs_profile_detail_enabled()
+        && let Some(cache) = aw_replay_cache.as_ref()
+    {
+        eprintln!(
+            "awproject_compact_replay_release stage=residual-grid-end resident_bytes={} \
+             resident_global_segments={} next_use=none",
+            cache.resident_bytes,
+            cache.resident_metal_global_programs.len(),
+        );
+    }
+    drop(aw_replay_cache);
     let accounted = stage_timings
         .minor_cycle_solve
         .saturating_add(stage_timings.major_cycle_refresh);
@@ -10273,6 +10285,8 @@ struct AwProjectCompactReplayCache {
     #[cfg(all(target_os = "macos", not(coverage)))]
     spilled_metal_global_programs: Vec<AwProjectMetalSpilledProgram>,
     #[cfg(all(target_os = "macos", not(coverage)))]
+    resident_metal_global_programs: Vec<AwProjectMetalResidentProgram>,
+    #[cfg(all(target_os = "macos", not(coverage)))]
     metal_global_spill_store: Option<AwProjectMetalSpillStore>,
     #[cfg(all(target_os = "macos", not(coverage)))]
     segmented_metal_global_replay_ready: bool,
@@ -10306,6 +10320,8 @@ impl AwProjectCompactReplayCache {
             persistent_metal_global_program: None,
             #[cfg(all(target_os = "macos", not(coverage)))]
             spilled_metal_global_programs: Vec::new(),
+            #[cfg(all(target_os = "macos", not(coverage)))]
+            resident_metal_global_programs: Vec::new(),
             #[cfg(all(target_os = "macos", not(coverage)))]
             metal_global_spill_store: None,
             #[cfg(all(target_os = "macos", not(coverage)))]
@@ -10498,6 +10514,8 @@ impl AwProjectCompactReplayCache {
                 spilled_global_payload_bytes,
                 spilled_global_file_bytes,
                 spilled_global_read_bytes,
+                resident_global_segments,
+                resident_global_program_bytes,
                 segmented_global_ready,
             ) = (
                 self.spilled_metal_global_programs.len(),
@@ -10510,6 +10528,11 @@ impl AwProjectCompactReplayCache {
                     .as_ref()
                     .map(|store| store.bytes_read)
                     .unwrap_or(0),
+                self.resident_metal_global_programs.len(),
+                self.resident_metal_global_programs
+                    .iter()
+                    .map(AwProjectMetalResidentProgram::resident_bytes)
+                    .sum::<usize>(),
                 self.segmented_metal_global_replay_ready,
             );
             #[cfg(any(not(target_os = "macos"), coverage))]
@@ -10518,10 +10541,12 @@ impl AwProjectCompactReplayCache {
                 spilled_global_payload_bytes,
                 spilled_global_file_bytes,
                 spilled_global_read_bytes,
+                resident_global_segments,
+                resident_global_program_bytes,
                 segmented_global_ready,
-            ) = (0usize, 0usize, 0u64, 0u64, false);
+            ) = (0usize, 0usize, 0u64, 0u64, 0usize, 0usize, false);
             eprintln!(
-                "awproject_compact_replay_cache budget_bytes={} resident_bytes={} compiled_total_bytes={} compiled_total_bytes_complete={} resident_blocks={} partial_blocks={} rejected_blocks={} global_metal_builder={} global_metal_builder_bytes={} global_metal_builder_source_programs={} global_metal_builder_prediction_kernel_values={} global_metal_builder_imaging_kernel_values={} peak_global_metal_absorb_bytes={} global_metal_program={} global_metal_program_bytes={} spilled_global_segments={} spilled_global_payload_bytes={} spilled_global_file_bytes={} spilled_global_read_bytes={} segmented_global_ready={} hits={} misses={}",
+                "awproject_compact_replay_cache budget_bytes={} resident_bytes={} compiled_total_bytes={} compiled_total_bytes_complete={} resident_blocks={} partial_blocks={} rejected_blocks={} global_metal_builder={} global_metal_builder_bytes={} global_metal_builder_source_programs={} global_metal_builder_prediction_kernel_values={} global_metal_builder_imaging_kernel_values={} peak_global_metal_absorb_bytes={} global_metal_program={} global_metal_program_bytes={} spilled_global_segments={} spilled_global_payload_bytes={} spilled_global_file_bytes={} spilled_global_read_bytes={} resident_global_segments={} resident_global_program_bytes={} segmented_global_ready={} hits={} misses={}",
                 self.budget_bytes,
                 self.resident_bytes,
                 self.compiled_total_bytes,
@@ -10544,6 +10569,8 @@ impl AwProjectCompactReplayCache {
                 spilled_global_payload_bytes,
                 spilled_global_file_bytes,
                 spilled_global_read_bytes,
+                resident_global_segments,
+                resident_global_program_bytes,
                 segmented_global_ready,
                 self.hits,
                 self.misses,
@@ -12798,6 +12825,33 @@ struct AwProjectMetalSpilledProgram {
     metadata: AwProjectMetalResidentMetadata,
     source_programs: usize,
     payload_bytes: usize,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl AwProjectMetalSpilledProgram {
+    fn expected_resident_bytes(&self) -> Result<usize, ImagingError> {
+        let mut bytes = self
+            .payload_bytes
+            .checked_add(std::mem::size_of::<AwProjectMetalResidentProgram>())
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "segmented AWProject resident-program byte accounting overflowed".to_string(),
+                )
+            })?;
+        if let Some(receipt) = self.aot_receipt.as_ref() {
+            bytes = bytes
+                .checked_add(std::mem::size_of::<AwProjectMetalAotGroupedTileProgram>())
+                .and_then(|value| value.checked_add(receipt.ledger.aot_group_sum_bytes))
+                .and_then(|value| value.checked_add(receipt.ledger.fixed_scale_bytes))
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "segmented AWProject AOT resident-program byte accounting overflowed"
+                            .to_string(),
+                    )
+                })?;
+        }
+        Ok(bytes)
+    }
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -25913,6 +25967,123 @@ impl AwProjectCompactReplayCache {
         }
         Ok(())
     }
+
+    fn retain_complete_spilled_metal_global_programs(&mut self) -> Result<bool, ImagingError> {
+        if !self.resident_metal_global_programs.is_empty() {
+            return Ok(true);
+        }
+        let descriptors = self.spilled_metal_global_programs.clone();
+        if descriptors.is_empty() {
+            return Ok(false);
+        }
+        let grouped_replay = self.grouped_replay_plan().ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "segmented AWProject resident retention lost its grouped replay plan".to_string(),
+            )
+        })?;
+        let threshold_bits = grouped_replay.omitted_energy_fraction().to_bits();
+        if descriptors.iter().any(|descriptor| {
+            descriptor
+                .aot_receipt
+                .as_ref()
+                .is_none_or(|receipt| receipt.omitted_energy_fraction_bits != threshold_bits)
+        }) {
+            return Err(ImagingError::Normalization(
+                "segmented AWProject resident retention requires one threshold-matched AOT \
+                 grouped-tile artifact per segment"
+                    .to_string(),
+            ));
+        }
+        let expected_program_bytes = descriptors.iter().try_fold(0usize, |total, descriptor| {
+            total
+                .checked_add(descriptor.expected_resident_bytes()?)
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "segmented AWProject resident-program total overflowed".to_string(),
+                    )
+                })
+        })?;
+        let expected_resident_bytes = self
+            .resident_bytes
+            .checked_add(expected_program_bytes)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "segmented AWProject resident retention budget accounting overflowed"
+                        .to_string(),
+                )
+            })?;
+        if expected_resident_bytes > self.budget_bytes {
+            if profile::standard_mfs_profile_detail_enabled() {
+                eprintln!(
+                    "awproject_metal_grouped_replay_retention decision=spill-prefetch \
+                     segments={} program_bytes={} resident_bytes_before={} \
+                     projected_resident_bytes={} budget_bytes={} reason=complete-working-set-exceeds-budget",
+                    descriptors.len(),
+                    expected_program_bytes,
+                    self.resident_bytes,
+                    expected_resident_bytes,
+                    self.budget_bytes,
+                );
+            }
+            return Ok(false);
+        }
+
+        let store = self.metal_global_spill_store.as_mut().ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "segmented AWProject resident retention lost its spill store".to_string(),
+            )
+        })?;
+        let started = Instant::now();
+        let mut programs = Vec::with_capacity(descriptors.len());
+        let mut read_bytes = 0u64;
+        let mut actual_program_bytes = 0usize;
+        for (segment, descriptor) in descriptors.iter().enumerate() {
+            let loaded = store.reload_prefetched(descriptor)?;
+            let actual_bytes = loaded.program.resident_bytes();
+            let expected_bytes = descriptor.expected_resident_bytes()?;
+            if actual_bytes != expected_bytes {
+                return Err(ImagingError::Normalization(format!(
+                    "segmented AWProject resident segment {segment} materialized {actual_bytes} \
+                     bytes, expected {expected_bytes}"
+                )));
+            }
+            actual_program_bytes =
+                actual_program_bytes
+                    .checked_add(actual_bytes)
+                    .ok_or_else(|| {
+                        ImagingError::InvalidRequest(
+                            "segmented AWProject materialized resident-program total overflowed"
+                                .to_string(),
+                        )
+                    })?;
+            read_bytes = read_bytes.saturating_add(loaded.bytes_read);
+            programs.push(loaded.program);
+        }
+        if actual_program_bytes != expected_program_bytes {
+            return Err(ImagingError::Normalization(format!(
+                "segmented AWProject resident working set materialized {actual_program_bytes} \
+                 bytes, expected {expected_program_bytes}"
+            )));
+        }
+        store.bytes_read = store.bytes_read.saturating_add(read_bytes);
+        self.resident_bytes = expected_resident_bytes;
+        self.resident_metal_global_programs = programs;
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "awproject_metal_grouped_replay_retention decision=resident-complete \
+                 segments={} program_bytes={} resident_bytes_before={} resident_bytes_after={} \
+                 budget_bytes={} initial_read_bytes={} load_ms={:.3} order=source-segment",
+                self.resident_metal_global_programs.len(),
+                actual_program_bytes,
+                self.resident_bytes.saturating_sub(actual_program_bytes),
+                self.resident_bytes,
+                self.budget_bytes,
+                read_bytes,
+                profile::millis(started.elapsed()),
+            );
+        }
+        Ok(true)
+    }
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -26267,11 +26438,13 @@ fn build_awproject_metal_global_replay_program(
             .spilled_metal_global_payload_bytes
             .saturating_add(cache.resident_bytes);
         cache.compiled_total_bytes_complete = true;
+        let resident_retained = cache.retain_complete_spilled_metal_global_programs()?;
         cache.segmented_metal_global_replay_ready = true;
         if profile::standard_mfs_profile_detail_enabled() {
             eprintln!(
                 "awproject_metal_segmented_global_replay_build segments={} \
                  source_programs={} payload_bytes={} file_bytes={} resident_bytes={} \
+                 retained_complete={} retained_program_bytes={} \
                  max_kernel_norm={:.9e} residual_overlap={} build_ms={:.3}",
                 cache.spilled_metal_global_programs.len(),
                 cache
@@ -26286,6 +26459,12 @@ fn build_awproject_metal_global_replay_program(
                     .map(|store| store.bytes_written)
                     .unwrap_or(0),
                 cache.resident_bytes,
+                resident_retained,
+                cache
+                    .resident_metal_global_programs
+                    .iter()
+                    .map(AwProjectMetalResidentProgram::resident_bytes)
+                    .sum::<usize>(),
                 global_scale.max_kernel_norm,
                 global_scale.residual_overlap,
                 profile::millis(started.elapsed()),
@@ -34643,6 +34822,83 @@ fn replay_awproject_metal_spilled_global_programs(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+fn replay_awproject_metal_resident_global_programs(
+    request: &MtmfsRequest,
+    model_grids: &[Array2<Complex32>],
+    accumulation: &mut MosaicMtmfsStreamGridAccumulation,
+    replay_stats: &mut AwProjectCompactReplayStats,
+    cache: &mut AwProjectCompactReplayCache,
+) -> Result<(usize, usize), ImagingError> {
+    if !cache.segmented_metal_global_replay_ready || cache.resident_metal_global_programs.is_empty()
+    {
+        return Err(ImagingError::InvalidRequest(
+            "resident segmented AWProject global replay was not retained".to_string(),
+        ));
+    }
+    cache.metal_global_metadata.clone().apply(accumulation);
+    let started = Instant::now();
+    let runtime_builds_before = awproject_metal_runtime_build_counter_snapshot();
+    let mut largest_samples = 0usize;
+    let segment_count = cache.resident_metal_global_programs.len();
+    for (segment, program) in cache.resident_metal_global_programs.iter_mut().enumerate() {
+        largest_samples = largest_samples.max(program.prediction_batch.samples.len());
+        let segment_started = Instant::now();
+        replay_awproject_metal_global_program(
+            request.nterms,
+            model_grids,
+            accumulation,
+            replay_stats,
+            program,
+        )?;
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "awproject_metal_resident_grouped_replay segment={} segments={} samples={} \
+                program_bytes={} total_ms={:.3}",
+                segment,
+                segment_count,
+                program.prediction_batch.samples.len(),
+                program.resident_bytes(),
+                profile::millis(segment_started.elapsed()),
+            );
+        }
+    }
+    let runtime_builds_after = awproject_metal_runtime_build_counter_snapshot();
+    let grouping_builds = runtime_builds_after
+        .grouping
+        .saturating_sub(runtime_builds_before.grouping);
+    let sort_builds = runtime_builds_after
+        .sorting
+        .saturating_sub(runtime_builds_before.sorting);
+    let route_builds = runtime_builds_after
+        .routing
+        .saturating_sub(runtime_builds_before.routing);
+    if grouping_builds != 0 || sort_builds != 0 || route_builds != 0 {
+        return Err(ImagingError::Normalization(format!(
+            "resident AOT grouped replay rebuilt runtime topology: grouping={grouping_builds}, \
+             sorting={sort_builds}, routing={route_builds}"
+        )));
+    }
+    if profile::standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "awproject_metal_resident_grouped_replay_summary segments={} program_bytes={} \
+             spill_read_bytes=0 runtime_grouping_builds={} runtime_sort_builds={} \
+             runtime_route_builds={} total_ms={:.3}",
+            segment_count,
+            cache
+                .resident_metal_global_programs
+                .iter()
+                .map(AwProjectMetalResidentProgram::resident_bytes)
+                .sum::<usize>(),
+            grouping_builds,
+            sort_builds,
+            route_builds,
+            profile::millis(started.elapsed()),
+        );
+    }
+    Ok((segment_count, largest_samples))
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn awproject_gpu_residual_replay_is_admitted(
     model_grids_present: bool,
     requested: bool,
@@ -35625,13 +35881,23 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                         model_grids.expect("global AWProject Metal replay model grids");
                     if cache.segmented_metal_global_replay_ready {
                         let (segments, largest_samples) =
-                            replay_awproject_metal_spilled_global_programs(
-                                request,
-                                model_grids,
-                                accumulation,
-                                &mut replay_stats,
-                                cache,
-                            )?;
+                            if cache.resident_metal_global_programs.is_empty() {
+                                replay_awproject_metal_spilled_global_programs(
+                                    request,
+                                    model_grids,
+                                    accumulation,
+                                    &mut replay_stats,
+                                    cache,
+                                )?
+                            } else {
+                                replay_awproject_metal_resident_global_programs(
+                                    request,
+                                    model_grids,
+                                    accumulation,
+                                    &mut replay_stats,
+                                    cache,
+                                )?
+                            };
                         replay_stats.windows = segments;
                         replay_stats.largest_window_samples = largest_samples;
                     } else {
@@ -72854,6 +73120,92 @@ mod tests {
         )
         .expect_err("a corrupt persisted grouped section must fail closed");
         assert!(error.to_string().contains("SHA-256 verification"));
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn awproject_aot_grouped_tile_retention_is_exact_and_all_or_nothing() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = super::AwProjectMetalSpillStore::create_in(directory.path()).unwrap();
+        let descriptors = (0..2)
+            .map(|_| {
+                let mut program = awproject_effective_support_test_program();
+                super::compile_awproject_metal_aot_grouped_tile(
+                    &mut program,
+                    super::AwProjectMetalEffectiveSupportConfig {
+                        omitted_energy_fraction:
+                            super::AWPROJECT_METAL_EFFECTIVE_SUPPORT_FOCUSED_OMITTED_ENERGY_FRACTION,
+                    },
+                    16,
+                    16,
+                    usize::MAX,
+                )
+                .unwrap();
+                store.spill(program, 1).unwrap()
+            })
+            .collect::<Vec<_>>();
+        let expected_program_bytes = descriptors
+            .iter()
+            .map(|descriptor| descriptor.expected_resident_bytes().unwrap())
+            .sum::<usize>();
+        for descriptor in &descriptors {
+            let loaded = store.reload_prefetched(descriptor).unwrap();
+            assert_eq!(
+                loaded.program.resident_bytes(),
+                descriptor.expected_resident_bytes().unwrap()
+            );
+        }
+        store.bytes_read = 0;
+        let grouped = super::AwProjectGroupedReplayPlan::new(
+            directory.path().to_path_buf(),
+            512 * 1024 * 1024,
+            usize::MAX,
+            super::AWPROJECT_METAL_EFFECTIVE_SUPPORT_FOCUSED_OMITTED_ENERGY_FRACTION,
+            16,
+        )
+        .unwrap();
+        let mut admitted =
+            super::AwProjectCompactReplayCache::new(expected_program_bytes, Some(grouped.clone()));
+        admitted.spilled_metal_global_programs = descriptors.clone();
+        admitted.spilled_metal_global_payload_bytes = descriptors
+            .iter()
+            .map(|descriptor| descriptor.payload_bytes)
+            .sum();
+        admitted.metal_global_spill_store = Some(store);
+        assert!(
+            admitted
+                .retain_complete_spilled_metal_global_programs()
+                .unwrap()
+        );
+        assert_eq!(admitted.resident_bytes, expected_program_bytes);
+        assert_eq!(admitted.resident_metal_global_programs.len(), 2);
+        assert_eq!(
+            admitted
+                .metal_global_spill_store
+                .as_ref()
+                .unwrap()
+                .bytes_read,
+            admitted.spilled_metal_global_payload_bytes as u64
+        );
+        assert!(
+            admitted
+                .retain_complete_spilled_metal_global_programs()
+                .unwrap(),
+            "a second admission check must reuse the complete resident set"
+        );
+
+        let mut rejected = super::AwProjectCompactReplayCache::new(
+            expected_program_bytes.saturating_sub(1),
+            Some(grouped),
+        );
+        rejected.spilled_metal_global_programs = descriptors;
+        assert!(
+            !rejected
+                .retain_complete_spilled_metal_global_programs()
+                .unwrap()
+        );
+        assert!(rejected.resident_metal_global_programs.is_empty());
+        assert_eq!(rejected.resident_bytes, 0);
     }
 
     #[test]

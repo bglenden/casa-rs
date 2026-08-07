@@ -24,7 +24,9 @@ def landmark() -> dict:
             "fftw_f64_wisdom_sha256": "wisdom-hash",
             "image_response_storage": "raw",
             "image_response_bytes": 536870912,
-            "global_metal_program_required": True,
+            "grouped_resident_replay_required": True,
+            "grouped_omitted_squared_l2_energy": 1e-6,
+            "grouped_tile_side": 16,
         },
         "required_activity": {
             "frozen_model_allowed": False,
@@ -52,7 +54,25 @@ def valid_log() -> str:
             "response_bytes=536870912",
             "awproject_image_response_synthesize position=(1, 2)",
             "awproject_image_response_final_refresh algorithm=exact-production",
-            "awproject_compact_replay_cache global_metal_program=true",
+            "awproject_grouped_replay_plan architecture=source-order-grouped-tile-v1 "
+            "omitted_squared_l2_energy=1.000000000e-6 tile_side=16",
+            "awproject_aot_grouped_tile_receipt segment=0 "
+            "omitted_energy_fraction_bits=4517329193108106637 "
+            "grouped_plans_hash_prefix=abc "
+            "legacy_grouped_plans_hash_prefix=abc "
+            "grouped_route_hash_prefix=def "
+            "legacy_grouped_route_hash_prefix=def",
+            "awproject_metal_grouped_replay_retention "
+            "decision=resident-complete segments=1 program_bytes=1024",
+            "awproject_compact_replay_cache rejected_blocks=0 "
+            "resident_global_segments=1 resident_global_program_bytes=1024 "
+            "segmented_global_ready=true",
+            "awproject_metal_resident_grouped_replay_summary segments=1 "
+            "program_bytes=1024 spill_read_bytes=0 runtime_grouping_builds=0 "
+            "runtime_sort_builds=0 runtime_route_builds=0",
+            "mosaic_mtmfs_stream_replay invocation=0 pass=ResidualRefresh",
+            "awproject_compact_replay_release stage=residual-grid-end "
+            "resident_bytes=1024 resident_global_segments=1 next_use=none",
             "Wrote CASA-compatible products at prefix /tmp/rust "
             "(100 gridded samples, 2 major cycles, 2000 minor iterations, "
             "stop=Some(IterationLimitReached))",
@@ -105,14 +125,56 @@ class VlassLandmarkGuardTests(unittest.TestCase):
         self.assertIn("image-response synthesis was not exercised", errors)
         self.assertIn("sparse MT-MFS RHS was not exercised", errors)
         self.assertIn("exact radix statistics were not exercised", errors)
-        self.assertIn("global Metal replay program was not exercised", errors)
+        self.assertIn(
+            "source-order grouped-tile planner receipt is missing or duplicated",
+            errors,
+        )
+        self.assertIn("AOT grouped-tile compiler receipts are missing", errors)
+        self.assertIn(
+            "complete grouped replay working set was not retained exactly once",
+            errors,
+        )
+        self.assertIn(
+            "resident grouped replay did not cover every residual stream replay",
+            errors,
+        )
+        self.assertIn(
+            "grouped replay lifetime was not released at residual-grid end",
+            errors,
+        )
         self.assertTrue(any("no-signoff ceiling" in error for error in errors))
 
-    def test_changed_wisdom_and_dyadic_storage_fail(self) -> None:
+    def test_changed_wisdom_dyadic_storage_and_grouped_topology_fail(self) -> None:
         runtime = parse_log(
             valid_log()
             .replace("wisdom_sha256=wisdom-hash", "wisdom_sha256=other")
-            .replace("global_metal_program=true", "global_metal_program=false")
+            .replace(
+                "omitted_squared_l2_energy=1.000000000e-6",
+                "omitted_squared_l2_energy=1.000000000e-4",
+            )
+            .replace(
+                "omitted_energy_fraction_bits=4517329193108106637",
+                "omitted_energy_fraction_bits=4547007122018943789",
+            )
+            .replace(
+                "legacy_grouped_route_hash_prefix=def",
+                "legacy_grouped_route_hash_prefix=bad",
+            )
+            .replace(
+                "awproject_metal_grouped_replay_retention",
+                "awproject_aot_grouped_tile_receipt segment=0 "
+                "grouped_plans_hash_prefix=abc "
+                "legacy_grouped_plans_hash_prefix=abc "
+                "grouped_route_hash_prefix=def "
+                "legacy_grouped_route_hash_prefix=bad\n"
+                "awproject_metal_grouped_replay_retention",
+            )
+            .replace("spill_read_bytes=0", "spill_read_bytes=1")
+            .replace(
+                "Wrote CASA-compatible products",
+                "awproject_metal_segmented_global_replay_summary segments=1\n"
+                "Wrote CASA-compatible products",
+            )
             .replace(
                 "awproject_image_response_calibrated",
                 "awproject_image_response_dyadic_encode response_bytes=1\n"
@@ -142,7 +204,30 @@ class VlassLandmarkGuardTests(unittest.TestCase):
             "image-response byte count differs from the raw landmark",
             errors,
         )
-        self.assertIn("global Metal replay program was not exercised", errors)
+        self.assertIn(
+            "AOT grouped-tile topology differs from the incumbent construction",
+            errors,
+        )
+        self.assertIn(
+            "grouped replay approximation differs from the production contract",
+            errors,
+        )
+        self.assertIn(
+            "AOT grouped-tile support threshold differs from the production contract",
+            errors,
+        )
+        self.assertIn(
+            "AOT grouped-tile segment receipts are not unique and contiguous",
+            errors,
+        )
+        self.assertIn(
+            "resident grouped replay performed spill I/O or rebuilt runtime topology",
+            errors,
+        )
+        self.assertIn(
+            "grouped replay fell back to per-refresh spill loading",
+            errors,
+        )
 
     def test_unknown_landmark_and_duplicate_completion_fail(self) -> None:
         with self.assertRaisesRegex(ValueError, "unknown or duplicate"):
@@ -154,7 +239,9 @@ class VlassLandmarkGuardTests(unittest.TestCase):
             parse_log(valid_log() + "\n" + valid_log().splitlines()[-1])
 
     def test_exact_iteration_contract_is_not_a_minimum(self) -> None:
-        runtime = parse_log(valid_log().replace("2000 minor iterations", "1999 minor iterations"))
+        runtime = parse_log(
+            valid_log().replace("2000 minor iterations", "1999 minor iterations")
+        )
         with tempfile.TemporaryDirectory() as temporary:
             binary = Path(temporary) / "release/casars-imager"
             binary.parent.mkdir()

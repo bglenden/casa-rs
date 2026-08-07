@@ -119,7 +119,9 @@
           "fftw_f64_wisdom_sha256": "f6fd873a068b68611eabdd598d3628d7fa75af20f451eef29b87b1562629462e",
           "image_response_storage": "raw",
           "image_response_bytes": 536870912,
-          "global_metal_program_required": true
+          "grouped_resident_replay_required": true,
+          "grouped_omitted_squared_l2_energy": 1e-6,
+          "grouped_tile_side": 16
         },
         "required_activity": {
           "frozen_model_allowed": false,
