@@ -8027,3 +8027,47 @@ SHA-256
 It is a later reproducibility pin rather than an activity claim earned by the
 original 28.65-second log. If it is lost, a new wisdom file requires deliberate
 rebaselining; timed FFTW MEASURE output is not assumed byte-reconstructible.
+
+The first complete grouped-resident repair at commit `f3bac6cbb` reduced the
+same landmark from `58.510 s` to `38.500 s`. Against the frozen, exactly
+matched CASA `3631.809729 s` reference this is `94.332720x`. The run completed
+2,000 real minor iterations and all 19 products, and the grouped artifact was
+resident with zero replay spill reads or runtime topology rebuilds. It did not
+pass promotion because `38.500 s` exceeds the unchanged `31.515 s` ceiling;
+no correctness claim is inferred from a performance guard that stopped before
+the immutable product comparison. The receipt and log SHA-256 values are
+`d63471d5e41409a03e35ddfa4339f306d811db1ae03b6e6a846f298bc5c1ae39`
+and
+`ac6c85d673790a5fc355ceeb0ddf462706c71c7c017234f9ca4f3992c99cb83f`.
+
+Stage comparison found two bounded architectural mismatches with the preserved
+`28.65 s` row. The grouped compiler displaced the already-proven single-field
+resident tile chains, and compensated Metal residual readback had made the
+two MT-MFS f64 transforms sequential. Historical residual FFT time was
+`2.338 s`; the grouped-resident run recorded `5.778 s`. Requiring the later
+FFTW wisdom also changed the historical-equivalence row: the original log does
+not establish that artifact, so this landmark instead freezes current FFTW
+3.3.11 library hashes and uses the historical `estimate` planner.
+
+The finite discriminator is therefore resource-adaptive rather than a new
+open-ended tournament:
+
+- count distinct FIELD_ID values in the resolved active row selection;
+- for one field, retain the exact resident Metal tile-chain working set in
+  source order when it fits the planner's replay allowance;
+- for multiple fields, retain the promoted grouped source-order architecture;
+  and
+- admit parallel f64 residual-term transforms only when the
+  ResidualTransform lifetime peak plus the additional f64 plane fits usable
+  memory.
+
+The single-field `4096`-square four-SPW canary must use a clean commit-bound
+release build, FFTW f64 estimate with eight threads and the audited library
+hashes, four resident source blocks with stable post-fill reuse, planner
+residual-term parallelism of two, no grouped compiler or spill replay, the
+unchanged scientific/product contract, and wall time at or below `31.515 s`.
+Exactly one run is allowed. A miss is retained as negative evidence and is not
+rerun unchanged. The canary does not by itself close the larger single-field
+case where the complete legacy resident set exceeds retention; production
+closeout must make that boundary transition atomically to grouped replay
+without a partial or LRU cache.

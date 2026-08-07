@@ -5772,6 +5772,8 @@ where
     )
     .filter(|bytes| *bytes > 0);
     let execution_config = execution.standard_mfs;
+    let aw_replay_architecture =
+        AwProjectReplayArchitecture::from_execution_plan(&execution_config);
     let planned_aw_replay_retention_bytes = execution_config
         .resolved
         .allocation_bytes("AWProject compact replay retention");
@@ -5780,9 +5782,10 @@ where
         && request.clean.niter > 0
         && matches!(request.gridder_mode, GridderMode::AwProject(_)))
     .then(|| {
-        AwProjectCompactReplayCache::new(
+        AwProjectCompactReplayCache::new_with_architecture(
             planned_aw_replay_retention_bytes,
             grouped_replay_plan.clone(),
+            aw_replay_architecture,
         )
     });
     let total_started = Instant::now();
@@ -5846,6 +5849,11 @@ where
     } else {
         (None, None)
     };
+    let residual_f64_term_parallelism = planned_awproject_residual_f64_term_parallelism(
+        &execution_config,
+        request.nterms,
+        aw_cache.is_some(),
+    );
     let [nx, ny] = request.geometry.image_shape;
     let conv_sampling = match aw_cache.as_ref() {
         Some(cache) => {
@@ -5998,9 +6006,10 @@ where
                 && request.clean.niter > 0
                 && matches!(request.gridder_mode, GridderMode::AwProject(_)))
             .then(|| {
-                AwProjectCompactReplayCache::new(
+                AwProjectCompactReplayCache::new_with_architecture(
                     planned_aw_replay_retention_bytes,
                     grouped_replay_plan.clone(),
+                    aw_replay_architecture,
                 )
             });
         }
@@ -6661,6 +6670,7 @@ where
                 &mut replay_unweighted_blocks,
                 &mut stage_timings,
                 dirty_product_fft_policy,
+                residual_f64_term_parallelism,
                 standard_mfs_grid_threads(&execution_config),
                 execution_config.parallel_worker_calibration.as_ref(),
                 direct_metal_scratch_bytes,
@@ -6724,6 +6734,7 @@ where
                     &mut replay_unweighted_blocks,
                     &mut stage_timings,
                     dirty_product_fft_policy,
+                    residual_f64_term_parallelism,
                     standard_mfs_grid_threads(&execution_config),
                     execution_config.parallel_worker_calibration.as_ref(),
                     direct_metal_scratch_bytes,
@@ -6749,6 +6760,7 @@ where
                     &mut replay_unweighted_blocks,
                     &mut stage_timings,
                     dirty_product_fft_policy,
+                    residual_f64_term_parallelism,
                     standard_mfs_grid_threads(&execution_config),
                     execution_config.parallel_worker_calibration.as_ref(),
                     direct_metal_scratch_bytes,
@@ -6857,6 +6869,7 @@ where
                 &mut replay_unweighted_blocks,
                 &mut stage_timings,
                 dirty_product_fft_policy,
+                residual_f64_term_parallelism,
                 standard_mfs_grid_threads(&execution_config),
                 execution_config.parallel_worker_calibration.as_ref(),
                 direct_metal_scratch_bytes,
@@ -6901,10 +6914,27 @@ where
     if profile::standard_mfs_profile_detail_enabled()
         && let Some(cache) = aw_replay_cache.as_ref()
     {
+        let resident_blocks = cache
+            .blocks
+            .iter()
+            .filter(|slot| matches!(slot, Some(AwProjectCompactReplayBlockSlot::Resident(_))))
+            .count();
+        let resident_programs = cache
+            .blocks
+            .iter()
+            .filter_map(|slot| match slot {
+                Some(AwProjectCompactReplayBlockSlot::Resident(block)) => Some(block),
+                _ => None,
+            })
+            .flat_map(|block| &block.windows)
+            .filter(|window| window.persistent_metal_resident_program.is_some())
+            .count();
         eprintln!(
             "awproject_compact_replay_release stage=residual-grid-end resident_bytes={} \
-             resident_global_segments={} next_use=none",
+             resident_blocks={} resident_programs={} resident_global_segments={} next_use=none",
             cache.resident_bytes,
+            resident_blocks,
+            resident_programs,
             cache.resident_metal_global_programs.len(),
         );
     }
@@ -8330,6 +8360,25 @@ struct MosaicMtmfsResidualFinish<'a> {
     pb_limit: f32,
     dirty_product_fft_policy: DirtyProductFftPolicy,
     bounded_sequential_host_fft: bool,
+    residual_f64_term_parallelism: usize,
+}
+
+fn planned_awproject_residual_f64_term_parallelism(
+    execution: &StandardMfsExecutionPlan,
+    nterms: usize,
+    awproject: bool,
+) -> usize {
+    if !awproject || nterms <= 1 {
+        return 1;
+    }
+    execution
+        .resolved
+        .decisions
+        .iter()
+        .find(|decision| decision.name == "awproject_residual_f64_term_parallelism")
+        .and_then(|decision| decision.value.parse::<usize>().ok())
+        .unwrap_or(1)
+        .clamp(1, nterms)
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -8611,6 +8660,7 @@ fn finish_mosaic_mtmfs_residual_images(
         pb_limit,
         dirty_product_fft_policy,
         bounded_sequential_host_fft,
+        residual_f64_term_parallelism,
     } = finish;
     #[cfg(any(not(target_os = "macos"), coverage))]
     let _ = nterms;
@@ -8736,34 +8786,73 @@ fn finish_mosaic_mtmfs_residual_images(
                     .saturating_mul(grid.shape()[0])
                     .saturating_mul(grid.shape()[1])
                     .saturating_mul(std::mem::size_of::<f32>());
-                let mut readback = Duration::ZERO;
-                let mut corrected = Vec::with_capacity(residual_term_count);
-                for order in 0..residual_term_count {
-                    let plane_started = Instant::now();
-                    let plane = copy_awproject_metal_centered_f64_plane(
-                        &grid,
-                        compensation,
-                        psf_term_count + order,
-                    )?;
-                    readback += plane_started.elapsed();
+                let transform = |plane| {
                     let raw = execute_dirty_product_host_f64_owned_single(
                         plane,
                         dirty_product_fft_policy,
                     )?;
-                    corrected
-                        .push(gridder.corrected_mosaic_image_from_grid_f64(&raw, conv_sampling));
-                }
-                drop(aw_compensation);
-                drop(grid);
+                    Ok(gridder.corrected_mosaic_image_from_grid_f64(&raw, conv_sampling))
+                };
+                let (corrected, readback) = if residual_f64_term_parallelism > 1 {
+                    let readback_started = Instant::now();
+                    let planes = (0..residual_term_count)
+                        .map(|order| {
+                            copy_awproject_metal_centered_f64_plane(
+                                &grid,
+                                compensation,
+                                psf_term_count + order,
+                            )
+                        })
+                        .collect::<Result<Vec<_>, ImagingError>>()?;
+                    let readback = readback_started.elapsed();
+                    drop(aw_compensation);
+                    drop(grid);
+                    if profile::standard_mfs_profile_detail_enabled() {
+                        eprintln!(
+                            "awproject_residual_term_fft_plan term_parallelism={} source=planner-residual-transform-headroom",
+                            residual_f64_term_parallelism.min(planes.len()),
+                        );
+                    }
+                    (
+                        planes
+                            .into_par_iter()
+                            .map(transform)
+                            .collect::<Result<Vec<_>, ImagingError>>()?,
+                        readback,
+                    )
+                } else {
+                    let mut readback = Duration::ZERO;
+                    let mut corrected = Vec::with_capacity(residual_term_count);
+                    for order in 0..residual_term_count {
+                        let readback_started = Instant::now();
+                        let plane = copy_awproject_metal_centered_f64_plane(
+                            &grid,
+                            compensation,
+                            psf_term_count + order,
+                        )?;
+                        readback += readback_started.elapsed();
+                        corrected.push(transform(plane)?);
+                    }
+                    drop(aw_compensation);
+                    drop(grid);
+                    (corrected, readback)
+                };
                 if profile::standard_mfs_profile_detail_enabled() {
                     eprintln!(
-                        "awproject_metal_compensated_residual_readback products={} residency=metal-shared-two-float-grid fft_precision=f64 readback_strategy=sequential-plane resident_bytes={} host_f64_transient_bytes={} materialized_f32_output_bytes={} modeled_overlap_bytes={} readback_ms={:.3}",
+                        "awproject_metal_compensated_residual_readback products={} residency=metal-shared-two-float-grid fft_precision=f64 readback_strategy={} resident_bytes={} host_f64_transient_bytes={} materialized_f32_output_bytes={} modeled_overlap_bytes={} readback_ms={:.3}",
                         residual_term_count,
+                        if residual_f64_term_parallelism > 1 {
+                            "planner-parallel-terms"
+                        } else {
+                            "sequential-plane"
+                        },
                         resident_bytes,
-                        one_f64_plane_bytes,
+                        one_f64_plane_bytes.saturating_mul(residual_f64_term_parallelism),
                         materialized_f32_output_bytes,
                         resident_bytes
-                            .saturating_add(one_f64_plane_bytes)
+                            .saturating_add(
+                                one_f64_plane_bytes.saturating_mul(residual_f64_term_parallelism),
+                            )
                             .saturating_add(materialized_f32_output_bytes),
                         profile::millis(readback),
                     );
@@ -9815,9 +9904,12 @@ where
     let grouped_replay = aw_replay_cache
         .as_deref()
         .is_some_and(AwProjectCompactReplayCache::grouped_replay_enabled);
+    let replay_enabled = aw_replay_cache
+        .as_deref()
+        .is_some_and(AwProjectCompactReplayCache::replay_enabled);
     let residual_only = pass == SinglePlaneStreamPass::ResidualRefresh
         && aw_cache.is_some()
-        && (grouped_replay
+        && (replay_enabled
             || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_ONLY_REFRESH").is_some());
     let global_metal_replay = residual_only && model_grids.is_some() && grouped_replay;
     let direct_metal_mode =
@@ -10272,8 +10364,31 @@ enum AwProjectCompactReplayBlockSlot {
     ExceedsBudget,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AwProjectReplayArchitecture {
+    Disabled,
+    ResidentTileChain,
+    GroupedSourceOrder,
+}
+
+impl AwProjectReplayArchitecture {
+    fn from_execution_plan(plan: &StandardMfsExecutionPlan) -> Self {
+        plan.resolved
+            .decisions
+            .iter()
+            .find(|decision| decision.name == "awproject_replay_architecture")
+            .map(|decision| decision.value.as_str())
+            .map_or(Self::Disabled, |value| match value {
+                "resident-tile-chain-v1" => Self::ResidentTileChain,
+                "source-order-grouped-tile-v1" => Self::GroupedSourceOrder,
+                _ => Self::Disabled,
+            })
+    }
+}
+
 struct AwProjectCompactReplayCache {
     budget_bytes: usize,
+    architecture: AwProjectReplayArchitecture,
     grouped_replay: Option<AwProjectGroupedReplayPlan>,
     resident_bytes: usize,
     compiled_total_bytes: usize,
@@ -10307,9 +10422,24 @@ struct AwProjectCompactReplayCache {
 }
 
 impl AwProjectCompactReplayCache {
+    #[cfg(test)]
     fn new(budget_bytes: usize, grouped_replay: Option<AwProjectGroupedReplayPlan>) -> Self {
+        let architecture = if grouped_replay.is_some() {
+            AwProjectReplayArchitecture::GroupedSourceOrder
+        } else {
+            AwProjectReplayArchitecture::Disabled
+        };
+        Self::new_with_architecture(budget_bytes, grouped_replay, architecture)
+    }
+
+    fn new_with_architecture(
+        budget_bytes: usize,
+        grouped_replay: Option<AwProjectGroupedReplayPlan>,
+        architecture: AwProjectReplayArchitecture,
+    ) -> Self {
         Self {
             budget_bytes,
+            architecture,
             grouped_replay,
             resident_bytes: 0,
             compiled_total_bytes: 0,
@@ -10353,7 +10483,11 @@ impl AwProjectCompactReplayCache {
     }
 
     fn grouped_replay_enabled(&self) -> bool {
-        self.grouped_replay.is_some()
+        self.architecture == AwProjectReplayArchitecture::GroupedSourceOrder
+    }
+
+    fn replay_enabled(&self) -> bool {
+        self.architecture != AwProjectReplayArchitecture::Disabled
     }
 
     fn block(&self, ordinal: usize) -> Option<&AwProjectCompactReplayBlock> {
@@ -10461,6 +10595,16 @@ impl AwProjectCompactReplayCache {
                 .iter()
                 .filter(|slot| matches!(slot, Some(AwProjectCompactReplayBlockSlot::Resident(_))))
                 .count();
+            let resident_programs = self
+                .blocks
+                .iter()
+                .filter_map(|slot| match slot {
+                    Some(AwProjectCompactReplayBlockSlot::Resident(block)) => Some(block),
+                    _ => None,
+                })
+                .flat_map(|block| &block.windows)
+                .filter(|window| window.persistent_metal_resident_program.is_some())
+                .count();
             let partial_blocks = self
                 .blocks
                 .iter()
@@ -10546,12 +10690,13 @@ impl AwProjectCompactReplayCache {
                 segmented_global_ready,
             ) = (0usize, 0usize, 0u64, 0u64, 0usize, 0usize, false);
             eprintln!(
-                "awproject_compact_replay_cache budget_bytes={} resident_bytes={} compiled_total_bytes={} compiled_total_bytes_complete={} resident_blocks={} partial_blocks={} rejected_blocks={} global_metal_builder={} global_metal_builder_bytes={} global_metal_builder_source_programs={} global_metal_builder_prediction_kernel_values={} global_metal_builder_imaging_kernel_values={} peak_global_metal_absorb_bytes={} global_metal_program={} global_metal_program_bytes={} spilled_global_segments={} spilled_global_payload_bytes={} spilled_global_file_bytes={} spilled_global_read_bytes={} resident_global_segments={} resident_global_program_bytes={} segmented_global_ready={} hits={} misses={}",
+                "awproject_compact_replay_cache budget_bytes={} resident_bytes={} compiled_total_bytes={} compiled_total_bytes_complete={} resident_blocks={} resident_programs={} partial_blocks={} rejected_blocks={} global_metal_builder={} global_metal_builder_bytes={} global_metal_builder_source_programs={} global_metal_builder_prediction_kernel_values={} global_metal_builder_imaging_kernel_values={} peak_global_metal_absorb_bytes={} global_metal_program={} global_metal_program_bytes={} spilled_global_segments={} spilled_global_payload_bytes={} spilled_global_file_bytes={} spilled_global_read_bytes={} resident_global_segments={} resident_global_program_bytes={} segmented_global_ready={} hits={} misses={}",
                 self.budget_bytes,
                 self.resident_bytes,
                 self.compiled_total_bytes,
                 self.compiled_total_bytes_complete,
                 resident_blocks,
+                resident_programs,
                 partial_blocks,
                 rejected_blocks,
                 global_metal_builder,
@@ -22924,10 +23069,10 @@ fn prepare_awproject_compact_planned_samples(
     model_grids: Option<&[Array2<Complex32>]>,
     accumulation: &mut MosaicMtmfsStreamGridAccumulation,
     taylor_weights: &mut Vec<f32>,
-    grouped_replay: bool,
+    replay_enabled: bool,
 ) -> Result<Vec<AwProjectCompactPlannedSample>, ImagingError> {
     let residual_only = accumulation.storage.is_residual_only()
-        && (grouped_replay
+        && (replay_enabled
             || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_LIVE_CFS_ONLY").is_some());
     if residual_only && awproject_prediction_trace_limit() == 0 {
         return prepare_awproject_compact_residual_samples_parallel(
@@ -34984,6 +35129,7 @@ fn replay_awproject_compact_window(
     replay_stats: &mut AwProjectCompactReplayStats,
     _persistent_metal_batch: Option<&mut Option<AwProjectMetalBatch>>,
     persistent_metal_resident_program: Option<&mut Option<AwProjectMetalResidentProgram>>,
+    replay_enabled: bool,
     grouped_replay: bool,
     grouped_tile_side: Option<usize>,
 ) -> Result<(), ImagingError> {
@@ -35003,7 +35149,7 @@ fn replay_awproject_compact_window(
     )?;
     #[cfg(all(target_os = "macos", not(coverage)))]
     let gpu_residual_replay_requested = model_grids.is_some()
-        && (grouped_replay
+        && (replay_enabled
             || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GPU_RESIDUAL_REPLAY").is_some());
     #[cfg(all(target_os = "macos", not(coverage)))]
     let resident_metal_program_present = persistent_metal_resident_program
@@ -35063,7 +35209,7 @@ fn replay_awproject_compact_window(
             model_grids,
             accumulation,
             taylor_weights,
-            grouped_replay,
+            replay_enabled,
         )?
     };
     let _prepared_metadata = AwProjectMetalResidentMetadata {
@@ -35340,7 +35486,7 @@ fn replay_awproject_compact_window(
             }
             let resident_chain = *psf_term_count == 0
                 && model_grids.is_some()
-                && (grouped_replay
+                && (replay_enabled
                     || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_RESIDENT_TILE_CHAIN")
                         .is_some()
                     || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GPU_RESIDUAL_REPLAY")
@@ -35725,6 +35871,9 @@ fn accumulate_awproject_mtmfs_metadata_batch(
     let grouped_replay = replay_cache
         .as_deref()
         .is_some_and(AwProjectCompactReplayCache::grouped_replay_enabled);
+    let replay_enabled = replay_cache
+        .as_deref()
+        .is_some_and(AwProjectCompactReplayCache::replay_enabled);
     #[cfg(all(target_os = "macos", not(coverage)))]
     let grouped_replay_tile_side = replay_cache
         .as_deref()
@@ -35763,7 +35912,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
         .transpose()?
         .unwrap_or(0);
     let residual_only = accumulation.storage.is_residual_only()
-        && (grouped_replay
+        && (replay_enabled
             || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_LIVE_CFS_ONLY").is_some());
     let active_tap_role_count = if residual_only { 4 } else { 8 };
     #[cfg(all(target_os = "macos", not(coverage)))]
@@ -35779,7 +35928,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
     let plan_workers = awproject_compact_plan_workers();
     let plan_chunk_samples = awproject_compact_plan_chunk_samples();
     let pack_workers = awproject_compact_pack_workers();
-    let tapless_phase = grouped_replay || awproject_compact_tapless_phase();
+    let tapless_phase = replay_enabled || awproject_compact_tapless_phase();
     // The legacy tap ceiling describes the logical phase-applied working set
     // and therefore owns numerical segmentation. A primed Metal program may
     // retain prediction-only compact taps at an initial-dirty boundary;
@@ -35971,6 +36120,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                     &mut replay_stats,
                     Some(&mut window.persistent_metal_batch),
                     Some(&mut window.persistent_metal_resident_program),
+                    replay_enabled,
                     grouped_replay,
                     grouped_replay_tile_side,
                 )?;
@@ -36311,6 +36461,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
             &mut replay_stats,
             Some(&mut persistent_metal_batch),
             Some(&mut persistent_metal_resident_program),
+            replay_enabled,
             grouped_replay,
             grouped_replay_tile_side,
         )?;
@@ -36856,6 +37007,7 @@ fn compute_mosaic_mtmfs_residual_terms_streaming<F>(
     replay_unweighted_blocks: &mut F,
     stage_timings: &mut ImagingStageTimings,
     dirty_product_fft_policy: DirtyProductFftPolicy,
+    residual_f64_term_parallelism: usize,
     requested_threads: usize,
     parallel_worker_calibration: Option<&ParallelWorkerCalibrationControl>,
     direct_metal_scratch_bytes: Option<usize>,
@@ -37125,6 +37277,7 @@ where
         pb_limit: config.pb_limit,
         dirty_product_fft_policy,
         bounded_sequential_host_fft: aw_cache.is_some(),
+        residual_f64_term_parallelism,
     };
     let mut residual_terms =
         finish_mosaic_mtmfs_residual_images(gridder, accumulation.storage, finish);
@@ -68313,6 +68466,32 @@ mod tests {
     }
 
     #[test]
+    fn awproject_residual_term_parallelism_uses_planner_decision() {
+        let mut execution = StandardMfsExecutionPlan::default();
+        execution
+            .resolved
+            .decisions
+            .push(super::ImagingPlanDecision {
+                name: "awproject_residual_f64_term_parallelism",
+                value: "2".to_string(),
+                origin: super::ImagingPlanOrigin::Resources,
+                reason: "test".to_string(),
+            });
+        assert_eq!(
+            super::planned_awproject_residual_f64_term_parallelism(&execution, 2, true,),
+            2
+        );
+        assert_eq!(
+            super::planned_awproject_residual_f64_term_parallelism(&execution, 1, true,),
+            1
+        );
+        assert_eq!(
+            super::planned_awproject_residual_f64_term_parallelism(&execution, 2, false,),
+            1
+        );
+    }
+
+    #[test]
     fn compact_replay_cache_marks_unmeasured_budget_rejection_incomplete() {
         let mut cache = super::AwProjectCompactReplayCache::new(0, None);
         cache.mark_exceeds_budget(0);
@@ -68343,6 +68522,28 @@ mod tests {
         assert_eq!(block.resident_bytes, 0);
         assert_eq!(cache.resident_bytes, 0);
         assert!(cache.compiled_total_bytes_complete);
+    }
+
+    #[test]
+    fn awproject_replay_architecture_is_derived_from_canonical_plan_decision() {
+        let mut execution = StandardMfsExecutionPlan::default();
+        assert_eq!(
+            super::AwProjectReplayArchitecture::from_execution_plan(&execution),
+            super::AwProjectReplayArchitecture::Disabled
+        );
+        execution
+            .resolved
+            .decisions
+            .push(super::ImagingPlanDecision {
+                name: "awproject_replay_architecture",
+                value: "resident-tile-chain-v1".to_string(),
+                origin: super::ImagingPlanOrigin::Workload,
+                reason: "test".to_string(),
+            });
+        assert_eq!(
+            super::AwProjectReplayArchitecture::from_execution_plan(&execution),
+            super::AwProjectReplayArchitecture::ResidentTileChain
+        );
     }
 
     #[cfg(all(target_os = "macos", not(coverage)))]
