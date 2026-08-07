@@ -724,8 +724,8 @@ same two reproducible exclusions already outside this diff:
 
 - `awproject_global_replay_requires_metal_storage_without_generic_scratch`
   could not acquire a default MPSGraph Metal device; and
-- `image_coordinate_system_normalizes_vlass_ra_like_casa` retained the
-  pre-existing one-ULP Dec expectation difference
+- `image_coordinate_system_normalizes_vlass_ra_like_casa` retained inconsistent
+  pre-existing Dec expectations
   (`0.2754960264910762` versus `0.2754960264910763`).
 
 The full `casars-imager` library run recorded 364 passed, 14 ignored, and one

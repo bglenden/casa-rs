@@ -196,6 +196,15 @@ def find_landmark(contract: dict[str, Any], landmark_id: str) -> dict[str, Any]:
     return matches[0]
 
 
+def performance_baseline_wall_seconds(landmark: dict[str, Any]) -> float:
+    return float(
+        landmark.get(
+            "production_baseline_casa_rs_wall_seconds",
+            landmark["historical_casa_rs_wall_seconds"],
+        )
+    )
+
+
 def evaluate(
     landmark: dict[str, Any],
     runtime: dict[str, Any],
@@ -402,8 +411,8 @@ def evaluate(
                 "grouped replay lifetime was not released at residual-grid end"
             )
 
-    historical = float(landmark["historical_casa_rs_wall_seconds"])
-    allowed = historical * (
+    baseline = performance_baseline_wall_seconds(landmark)
+    allowed = baseline * (
         1.0 + float(landmark["maximum_regression_fraction_without_user_approval"])
     )
     if wall_seconds > allowed:
@@ -426,6 +435,10 @@ def make_receipt(
     errors: list[str],
 ) -> dict[str, Any]:
     casa_wall = landmark.get("historical_casa_wall_seconds")
+    baseline = performance_baseline_wall_seconds(landmark)
+    allowed = baseline * (
+        1.0 + float(landmark["maximum_regression_fraction_without_user_approval"])
+    )
     return {
         "schema_version": 1,
         "evidence_role": "end_to_end_clean_landmark",
@@ -446,6 +459,9 @@ def make_receipt(
             "sha256": sha256(log_path),
         },
         "wall_seconds": wall_seconds,
+        "historical_casa_rs_wall_seconds": landmark["historical_casa_rs_wall_seconds"],
+        "production_baseline_casa_rs_wall_seconds": baseline,
+        "no_signoff_ceiling_wall_seconds": allowed,
         "matched_casa_wall_seconds": casa_wall,
         "casa_divided_by_casa_rs": (
             float(casa_wall) / wall_seconds if casa_wall is not None else None

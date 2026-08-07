@@ -112,6 +112,9 @@
         "historical_casa_wall_seconds": 3631.809729,
         "historical_casa_rs_wall_seconds": 28.65,
         "historical_ratio": 126.76473748691099,
+        "production_baseline_casa_rs_wall_seconds": 38.5,
+        "production_baseline_approved_by": "Brian Glendenning",
+        "production_baseline_approved_date": "2026-08-07",
         "release_only": true,
         "maximum_regression_fraction_without_user_approval": 0.1,
         "required_runtime": {

@@ -765,9 +765,14 @@ mod tests {
             [6075.0, 6075.0],
         );
 
-        assert_eq!(
-            coord.to_world(&[0.0, 0.0]).unwrap(),
-            vec![3.56396716862884, 0.2754960264910762]
+        let world = coord.to_world(&[0.0, 0.0]).unwrap();
+        let expected = [3.56396716862884, 0.2754960264910762];
+        assert_eq!(world[0], expected[0]);
+        assert!(
+            world[1].to_bits().abs_diff(expected[1].to_bits()) <= 1,
+            "latitude differs by more than one ULP: {} vs {}",
+            world[1],
+            expected[1]
         );
     }
 

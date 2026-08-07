@@ -8110,14 +8110,20 @@ single-field resident replay is deferred by explicit signoff until the
 `12,150`-square workload provides the full-geometry memory and stage picture;
 this is not authorization for another reduced-row experiment.
 
-This architecture decision does not silently rebaseline the historical
-performance guard. The `28.65 s` landmark and `31.515 s` no-signoff ceiling
-remain recorded; adopting `38.500 s` as a new reduced-row production baseline
-requires a separate explicit decision. The cleanup verification reached
+Brian explicitly approved the separate production rebaseline on 2026-08-07.
+The `28.650 s` result remains immutable historical evidence, while the grouped
+production architecture now uses `38.500 s` as its reduced-row baseline and
+`42.350 s` as its ten-percent no-signoff ceiling. This accepts the measured
+cost of the scalable grouped architecture without rewriting the earlier
+resident-tile-chain evidence. The cleanup verification reached
 warning-free workspace Clippy and then stopped in the workspace test phase on
 the same two previously documented, untouched exclusions:
 `awproject_global_replay_requires_metal_storage_without_generic_scratch`
-reported `mpsgraph_no_default_metal_device`, and
-`image_coordinate_system_normalizes_vlass_ra_like_casa` retained its
-one-ULP declination expectation difference. Focused grouped replay, planner,
-Python contract, formatting, lint, and documentation gates remained green.
+reported `mpsgraph_no_default_metal_device`, while the two cross-platform
+VLASS WCS regression assertions differed from their CASA declination references
+by at most one `f64` ULP after the imaging-layer test's stale second reference
+was aligned with the canonical CASA WCSLIB value. Brian approved replacing
+exact declination equality with an explicit one-ULP bound while retaining
+bit-exact right ascension and the CASA reference value. Focused grouped replay,
+planner, Python contract, formatting, lint, and documentation gates remained
+green.

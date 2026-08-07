@@ -18,6 +18,7 @@ def landmark() -> dict:
     return {
         "id": LANDMARK_ID,
         "historical_casa_rs_wall_seconds": 28.65,
+        "production_baseline_casa_rs_wall_seconds": 38.5,
         "maximum_regression_fraction_without_user_approval": 0.1,
         "required_runtime": {
             "fftw_threads": 8,
@@ -259,6 +260,29 @@ class VlassLandmarkGuardTests(unittest.TestCase):
         self.assertIn(
             "minor-iteration count differs from the landmark contract",
             errors,
+        )
+
+    def test_approved_production_baseline_sets_no_signoff_ceiling(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary) / "release/casars-imager"
+            binary.parent.mkdir()
+            binary.write_bytes(b"release")
+            accepted = evaluate(
+                landmark(),
+                parse_log(valid_log()),
+                binary=binary,
+                wall_seconds=42.35,
+            )
+            rejected = evaluate(
+                landmark(),
+                parse_log(valid_log()),
+                binary=binary,
+                wall_seconds=42.350001,
+            )
+        self.assertEqual([], accepted)
+        self.assertIn(
+            "wall time 42.350001s exceeds the no-signoff ceiling 42.350000s",
+            rejected,
         )
 
 
