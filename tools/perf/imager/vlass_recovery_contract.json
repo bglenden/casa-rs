@@ -122,10 +122,9 @@
           "fftw_version": "fftw-3.3.11",
           "image_response_storage": "raw",
           "image_response_bytes": 536870912,
-          "resident_tile_chain_required": true,
-          "selected_field_count": 1,
-          "resident_tile_chain_blocks": 4,
-          "residual_f64_term_parallelism": 2
+          "grouped_resident_replay_required": true,
+          "grouped_omitted_squared_l2_energy": 1e-6,
+          "grouped_tile_side": 16
         },
         "required_activity": {
           "frozen_model_allowed": false,

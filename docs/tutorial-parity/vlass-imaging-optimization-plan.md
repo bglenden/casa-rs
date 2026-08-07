@@ -8027,7 +8027,6 @@ SHA-256
 It is a later reproducibility pin rather than an activity claim earned by the
 original 28.65-second log. If it is lost, a new wisdom file requires deliberate
 rebaselining; timed FFTW MEASURE output is not assumed byte-reconstructible.
-
 The first complete grouped-resident repair at commit `f3bac6cbb` reduced the
 same landmark from `58.510 s` to `38.500 s`. Against the frozen, exactly
 matched CASA `3631.809729 s` reference this is `94.332720x`. The run completed
@@ -8099,3 +8098,26 @@ The immutable landmark receipt and log SHA-256 values are respectively
 `f6c4011c2e9ffd2b34dc74d61ac6bcafc2723f9e72ee3f0506f45b164d3a88d7`
 and
 `c36680a65c9ee2394928eb4b6ac0950ce8e2a6635a484ecf31451a3f17d7783c`.
+
+Brian accepted the recommendation to reject this single-field production
+override after the failed discriminator. Production returns to the single
+grouped source-order architecture; it does not retain the field-count branch,
+the incomplete resident-to-grouped transition, or the ineffective parallel
+residual-FFT experiment. The exact selected-field telemetry, plan-propagation
+repair, explicit replay-cache release, hermetic commit-bound landmark runner,
+and negative receipt remain useful independent evidence. Reconsidering
+single-field resident replay is deferred by explicit signoff until the
+`12,150`-square workload provides the full-geometry memory and stage picture;
+this is not authorization for another reduced-row experiment.
+
+This architecture decision does not silently rebaseline the historical
+performance guard. The `28.65 s` landmark and `31.515 s` no-signoff ceiling
+remain recorded; adopting `38.500 s` as a new reduced-row production baseline
+requires a separate explicit decision. The cleanup verification reached
+warning-free workspace Clippy and then stopped in the workspace test phase on
+the same two previously documented, untouched exclusions:
+`awproject_global_replay_requires_metal_storage_without_generic_scratch`
+reported `mpsgraph_no_default_metal_device`, and
+`image_coordinate_system_normalizes_vlass_ra_like_casa` retained its
+one-ULP declination expectation difference. Focused grouped replay, planner,
+Python contract, formatting, lint, and documentation gates remained green.

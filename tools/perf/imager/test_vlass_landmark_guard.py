@@ -27,10 +27,9 @@ def landmark() -> dict:
             "fftw_version": "fftw-3.3.11",
             "image_response_storage": "raw",
             "image_response_bytes": 536870912,
-            "resident_tile_chain_required": True,
-            "selected_field_count": 1,
-            "resident_tile_chain_blocks": 4,
-            "residual_f64_term_parallelism": 2,
+            "grouped_resident_replay_required": True,
+            "grouped_omitted_squared_l2_energy": 1e-6,
+            "grouped_tile_side": 16,
         },
         "required_activity": {
             "frozen_model_allowed": False,
@@ -59,35 +58,25 @@ def valid_log() -> str:
             "response_bytes=536870912",
             "awproject_image_response_synthesize position=(1, 2)",
             "awproject_image_response_final_refresh algorithm=exact-production",
-            "awproject_replay_plan architecture=resident-tile-chain-v1 "
-            "selected_fields=1 retention_bytes=4096",
-            "awproject_metal_resident_tile_chain built=true "
-            "gpu_residual_replay=false program_bytes=256",
-            "awproject_metal_resident_tile_chain built=true "
-            "gpu_residual_replay=false program_bytes=256",
-            "awproject_metal_resident_tile_chain built=true "
-            "gpu_residual_replay=false program_bytes=256",
-            "awproject_metal_resident_tile_chain built=true "
-            "gpu_residual_replay=false program_bytes=256",
-            "awproject_metal_resident_tile_chain built=false "
-            "gpu_residual_replay=true program_bytes=256",
-            "awproject_metal_resident_tile_chain built=false "
-            "gpu_residual_replay=true program_bytes=256",
-            "awproject_metal_resident_tile_chain built=false "
-            "gpu_residual_replay=true program_bytes=256",
-            "awproject_metal_resident_tile_chain built=false "
-            "gpu_residual_replay=true program_bytes=256",
-            "awproject_compact_replay_cache rejected_blocks=0 resident_blocks=4 resident_programs=4 "
-            "resident_global_segments=0 global_metal_program=false hits=4 misses=4",
-            "awproject_residual_term_fft_plan term_parallelism=2 "
-            "source=planner-residual-transform-headroom",
-            "awproject_residual_term_fft_plan term_parallelism=2 "
-            "source=planner-residual-transform-headroom",
+            "awproject_grouped_replay_plan architecture=source-order-grouped-tile-v1 "
+            "omitted_squared_l2_energy=1.000000000e-6 tile_side=16",
+            "awproject_aot_grouped_tile_receipt segment=0 "
+            "omitted_energy_fraction_bits=4517329193108106637 "
+            "grouped_plans_hash_prefix=abc "
+            "legacy_grouped_plans_hash_prefix=abc "
+            "grouped_route_hash_prefix=def "
+            "legacy_grouped_route_hash_prefix=def",
+            "awproject_metal_grouped_replay_retention "
+            "decision=resident-complete segments=1 program_bytes=1024",
+            "awproject_compact_replay_cache rejected_blocks=0 "
+            "resident_global_segments=1 resident_global_program_bytes=1024 "
+            "segmented_global_ready=true",
+            "awproject_metal_resident_grouped_replay_summary segments=1 "
+            "program_bytes=1024 spill_read_bytes=0 runtime_grouping_builds=0 "
+            "runtime_sort_builds=0 runtime_route_builds=0",
             "mosaic_mtmfs_stream_replay invocation=0 pass=ResidualRefresh",
-            "mosaic_mtmfs_stream_replay invocation=1 pass=ResidualRefresh",
             "awproject_compact_replay_release stage=residual-grid-end "
-            "resident_bytes=1024 resident_blocks=4 resident_programs=4 resident_global_segments=0 "
-            "next_use=none",
+            "resident_bytes=1024 resident_global_segments=1 next_use=none",
             "Wrote CASA-compatible products at prefix /tmp/rust "
             "(100 gridded samples, 2 major cycles, 2000 minor iterations, "
             "stop=Some(IterationLimitReached))",
@@ -96,29 +85,29 @@ def valid_log() -> str:
 
 
 class VlassLandmarkGuardTests(unittest.TestCase):
-    def evaluate_log(self, text: str, *, wall_seconds: float = 29.0) -> list[str]:
+    def test_valid_clean_activity_passes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             binary = Path(temporary) / "release/casars-imager"
             binary.parent.mkdir()
             binary.write_bytes(b"release")
-            return evaluate(
+            errors = evaluate(
                 landmark(),
-                parse_log(text),
+                parse_log(valid_log()),
                 binary=binary,
-                wall_seconds=wall_seconds,
+                wall_seconds=29.0,
             )
-
-    def test_valid_clean_activity_passes(self) -> None:
-        self.assertEqual([], self.evaluate_log(valid_log()))
+        self.assertEqual([], errors)
 
     def test_frozen_proxy_and_missing_fast_paths_fail(self) -> None:
-        text = "\n".join(
-            [
-                "awproject_frozen_model_refresh prefix=/tmp/frozen",
-                "Wrote CASA-compatible products at prefix /tmp/rust "
-                "(100 gridded samples, 1 major cycles, 2000 minor iterations, "
-                "stop=Some(IterationLimitReached))",
-            ]
+        runtime = parse_log(
+            "\n".join(
+                [
+                    "awproject_frozen_model_refresh prefix=/tmp/frozen",
+                    "Wrote CASA-compatible products at prefix /tmp/rust "
+                    "(100 gridded samples, 1 major cycles, 2000 minor iterations, "
+                    "stop=Some(IterationLimitReached))",
+                ]
+            )
         )
         with tempfile.TemporaryDirectory() as temporary:
             binary = Path(temporary) / "debug/casars-imager"
@@ -126,43 +115,67 @@ class VlassLandmarkGuardTests(unittest.TestCase):
             binary.write_bytes(b"debug")
             errors = evaluate(
                 landmark(),
-                parse_log(text),
+                runtime,
                 binary=binary,
                 wall_seconds=100.0,
             )
-        for expected in [
-            "timed executable is not from a release directory",
+        self.assertIn("timed executable is not from a release directory", errors)
+        self.assertIn(
             "frozen-model execution cannot satisfy a CLEAN landmark",
-            "real minor-cycle records are missing",
-            "image-response calibration was not exercised",
-            "image-response synthesis was not exercised",
-            "sparse MT-MFS RHS was not exercised",
-            "exact radix statistics were not exercised",
-            "single-field resident tile-chain planner receipt is missing or duplicated",
-            "resident tile-chain cache did not retain the complete source-block working set",
-            "resident tile-chain programs were not built once and reused for residual replay",
-            "residual-term FFT was not admitted by planner transform headroom",
-            "resident tile-chain lifetime was not released at residual-grid end",
-        ]:
-            self.assertIn(expected, errors)
+            errors,
+        )
+        self.assertIn("real minor-cycle records are missing", errors)
+        self.assertIn("image-response calibration was not exercised", errors)
+        self.assertIn("image-response synthesis was not exercised", errors)
+        self.assertIn("sparse MT-MFS RHS was not exercised", errors)
+        self.assertIn("exact radix statistics were not exercised", errors)
+        self.assertIn(
+            "source-order grouped-tile planner receipt is missing or duplicated",
+            errors,
+        )
+        self.assertIn("AOT grouped-tile compiler receipts are missing", errors)
+        self.assertIn(
+            "complete grouped replay working set was not retained exactly once",
+            errors,
+        )
+        self.assertIn(
+            "resident grouped replay did not cover every residual stream replay",
+            errors,
+        )
+        self.assertIn(
+            "grouped replay lifetime was not released at residual-grid end",
+            errors,
+        )
         self.assertTrue(any("no-signoff ceiling" in error for error in errors))
 
-    def test_changed_fftw_architecture_storage_and_fft_plan_fail(self) -> None:
-        text = (
+    def test_changed_fftw_dyadic_storage_and_grouped_topology_fail(self) -> None:
+        runtime = parse_log(
             valid_log()
-            .replace("planner_flags=estimate", "planner_flags=wisdom-only")
+            .replace("core_sha256=core-hash", "core_sha256=other")
             .replace(
-                "architecture=resident-tile-chain-v1",
-                "architecture=source-order-grouped-tile-v1",
+                "omitted_squared_l2_energy=1.000000000e-6",
+                "omitted_squared_l2_energy=1.000000000e-4",
             )
             .replace(
-                "source=planner-residual-transform-headroom",
-                "source=experiment",
+                "omitted_energy_fraction_bits=4517329193108106637",
+                "omitted_energy_fraction_bits=4547007122018943789",
             )
+            .replace(
+                "legacy_grouped_route_hash_prefix=def",
+                "legacy_grouped_route_hash_prefix=bad",
+            )
+            .replace(
+                "awproject_metal_grouped_replay_retention",
+                "awproject_aot_grouped_tile_receipt segment=0 "
+                "grouped_plans_hash_prefix=abc "
+                "legacy_grouped_plans_hash_prefix=abc "
+                "grouped_route_hash_prefix=def "
+                "legacy_grouped_route_hash_prefix=bad\n"
+                "awproject_metal_grouped_replay_retention",
+            )
+            .replace("spill_read_bytes=0", "spill_read_bytes=1")
             .replace(
                 "Wrote CASA-compatible products",
-                "awproject_grouped_replay_plan "
-                "architecture=source-order-grouped-tile-v1\n"
                 "awproject_metal_segmented_global_replay_summary segments=1\n"
                 "Wrote CASA-compatible products",
             )
@@ -173,37 +186,51 @@ class VlassLandmarkGuardTests(unittest.TestCase):
             )
             .replace("response_bytes=536870912", "response_bytes=339941888")
         )
-        errors = self.evaluate_log(text)
-        for expected in [
-            "f64 FFTW planner, threads, version, or library hashes differ from the landmark contract",
-            "dyadic response storage cannot reproduce the raw landmark",
-            "image-response byte count differs from the raw landmark",
-            "single-field resident tile-chain planner receipt is missing or duplicated",
-            "single-field resident landmark exercised grouped replay",
-            "residual-term FFT was not admitted by planner transform headroom",
-            "resident tile-chain landmark used grouped spill replay",
-        ]:
-            self.assertIn(expected, errors)
-
-    def test_unreceipted_extra_resident_program_fails(self) -> None:
-        first_reuse = (
-            "awproject_metal_resident_tile_chain built=false "
-            "gpu_residual_replay=true program_bytes=256"
-        )
-        text = valid_log().replace(
-            first_reuse,
-            "awproject_metal_resident_tile_chain built=true "
-            "gpu_residual_replay=false program_bytes=256\n" + first_reuse,
-            1,
-        )
-        text = text.replace(
-            "awproject_compact_replay_cache ",
-            first_reuse + "\nawproject_compact_replay_cache ",
-            1,
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary) / "release/casars-imager"
+            binary.parent.mkdir()
+            binary.write_bytes(b"release")
+            errors = evaluate(
+                landmark(),
+                runtime,
+                binary=binary,
+                wall_seconds=29.0,
+            )
+        self.assertIn(
+            "f64 FFTW threads, planner, library hashes, or version differ from the landmark contract",
+            errors,
         )
         self.assertIn(
-            "resident tile-chain programs were not built once and reused for residual replay",
-            self.evaluate_log(text),
+            "dyadic response storage cannot reproduce the raw landmark",
+            errors,
+        )
+        self.assertIn(
+            "image-response byte count differs from the raw landmark",
+            errors,
+        )
+        self.assertIn(
+            "AOT grouped-tile topology differs from the incumbent construction",
+            errors,
+        )
+        self.assertIn(
+            "grouped replay approximation differs from the production contract",
+            errors,
+        )
+        self.assertIn(
+            "AOT grouped-tile support threshold differs from the production contract",
+            errors,
+        )
+        self.assertIn(
+            "AOT grouped-tile segment receipts are not unique and contiguous",
+            errors,
+        )
+        self.assertIn(
+            "resident grouped replay performed spill I/O or rebuilt runtime topology",
+            errors,
+        )
+        self.assertIn(
+            "grouped replay fell back to per-refresh spill loading",
+            errors,
         )
 
     def test_unknown_landmark_and_duplicate_completion_fail(self) -> None:

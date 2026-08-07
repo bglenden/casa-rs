@@ -11189,8 +11189,28 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
     let run_started_at = Instant::now();
     let mut replay_invocation = 0usize;
     let weight_density_mode = standard_mfs_streaming_weight_density_mode(config);
-    let execution_config =
-        imaging_execution_config_with_plan(config, &strategy, selected_field_count);
+    let mut execution_config = imaging_execution_config_with_plan(config, &strategy);
+    if execution_config
+        .standard_mfs
+        .awproject_grouped_replay
+        .is_some()
+    {
+        execution_config
+            .standard_mfs
+            .resolved
+            .decisions
+            .push(casa_imaging::ImagingPlanDecision {
+                name: "awproject_selected_field_count",
+                value: selected_field_count.to_string(),
+                origin: casa_imaging::ImagingPlanOrigin::Workload,
+                reason: "count distinct FIELD_ID values in the resolved active row selection"
+                    .to_string(),
+            });
+        eprintln!(
+            "awproject_selected_field_count selected_fields={selected_field_count} \
+             selection=resolved-active-field-ids"
+        );
+    }
     let result = run_mosaic_mtmfs_from_single_plane_stream(
         request,
         execution_config,
@@ -11563,11 +11583,6 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
     if active_selected_rows.is_empty() {
         return Err("selection resolved to no active MFS mosaic rows".to_string());
     }
-    let selected_field_count = active_selected_rows
-        .iter()
-        .map(|row| row.field_id)
-        .collect::<BTreeSet<_>>()
-        .len();
     let selected_spw_id = ddid_info
         .get(selection.selected_ddid)
         .copied()
@@ -11718,8 +11733,7 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
     let run_started_at = Instant::now();
     let mut replay_invocation = 0usize;
     let weight_density_mode = standard_mfs_streaming_weight_density_mode(read_config);
-    let execution_config =
-        imaging_execution_config_with_plan(read_config, &strategy, selected_field_count);
+    let execution_config = imaging_execution_config_with_plan(read_config, &strategy);
     let result = run_mosaic_mfs_from_single_plane_stream(
         request,
         execution_config,
@@ -13519,11 +13533,6 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
     if active_selected_rows.is_empty() {
         return Err("selection resolved to no active mosaic cube rows".to_string());
     }
-    let selected_field_count = active_selected_rows
-        .iter()
-        .map(|row| row.field_id)
-        .collect::<BTreeSet<_>>()
-        .len();
     let setup_step_started = Instant::now();
     let selected_spw_id = ddid_info
         .get(selection.selected_ddid)
@@ -13935,8 +13944,7 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
     let mut replay_invocation = 0usize;
     let weight_density_mode = standard_mfs_streaming_weight_density_mode(config);
     let mut replay_probe_stop = None::<(SinglePlaneStreamPass, usize, usize, usize, usize)>;
-    let execution_config =
-        imaging_execution_config_with_plan(config, &strategy, selected_field_count);
+    let execution_config = imaging_execution_config_with_plan(config, &strategy);
     let result = run_mosaic_mfs_from_single_plane_stream(
         request,
         execution_config,
@@ -14501,13 +14509,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
         standard_mfs_streaming_weight_density_mode(config),
     )
     .map_err(|error| error.to_string())?;
-    let selected_field_count = active_selected_rows
-        .iter()
-        .map(|row| row.field_id)
-        .collect::<BTreeSet<_>>()
-        .len();
-    let mut execution_config =
-        standard_mfs_execution_config_with_selected_fields(config, &strategy, selected_field_count);
+    let mut execution_config = standard_mfs_execution_config_with_plan(config, &strategy);
     let w_project_max_abs_w_lambda = estimate_standard_mfs_max_abs_w_lambda_from_geometry(
         ms,
         config,
@@ -15902,17 +15904,8 @@ fn run_standard_spectral_cube_slab_from_open_ms(
         &execution_plan,
         execution_plan.spectral.active_planes(),
     );
-    let selected_field_count = selection
-        .selected_rows
-        .iter()
-        .map(|row| row.field_id)
-        .collect::<BTreeSet<_>>()
-        .len();
-    let mut plane_execution_config = standard_mfs_execution_config_with_selected_fields(
-        config,
-        &execution_plan,
-        selected_field_count,
-    );
+    let mut plane_execution_config =
+        standard_mfs_execution_config_with_plan(config, &execution_plan);
     plane_execution_config
         .resolved
         .caches
@@ -22687,11 +22680,6 @@ fn run_mtmfs_from_bounded_stream_open_ms(
     if active_selected_rows.is_empty() {
         return Err("selection resolved to no active rows".to_string());
     }
-    let selected_field_count = active_selected_rows
-        .iter()
-        .map(|row| row.field_id)
-        .collect::<BTreeSet<_>>()
-        .len();
     maybe_log_frontend_progress(
         "prepare_plane_input/load_flag_row_column",
         Duration::ZERO,
@@ -22902,8 +22890,7 @@ fn run_mtmfs_from_bounded_stream_open_ms(
     );
 
     let run_started_at = Instant::now();
-    let execution_config =
-        imaging_execution_config_with_plan(config, &strategy, selected_field_count);
+    let execution_config = imaging_execution_config_with_plan(config, &strategy);
     let result = run_mtmfs(
         &casa_imaging::MtmfsRequest {
             geometry,
@@ -38556,15 +38543,6 @@ fn standard_mfs_memory_allocation_lifetimes(
                         NoFurtherUse,
                     )]
                 }
-                "AWProject residual FFT additional f64 planes" => {
-                    vec![standard_mfs_memory_residency(
-                        host,
-                        bytes,
-                        ResidualTransform,
-                        ResidualTransform,
-                        NoFurtherUse,
-                    )]
-                }
                 // These non-AW caches are currently kept resident across both
                 // gridding passes.
                 "materialized sample plan"
@@ -38678,46 +38656,13 @@ fn admit_awproject_compact_replay_retention(
     let headroom_bytes = plan
         .usable_memory_bytes
         .saturating_sub(replay_stage_peak_bytes);
-    let additional_residual_fft_bytes = plan
-        .workload
-        .grid_width
-        .saturating_mul(plan.workload.grid_height)
-        .saturating_mul(std::mem::size_of::<Complex64>())
-        .saturating_mul(plan.workload.taylor_terms.saturating_sub(1));
-    let residual_f64_term_parallelism =
-        if additional_residual_fft_bytes > 0 && additional_residual_fft_bytes <= headroom_bytes {
-            plan.workload.taylor_terms
-        } else {
-            1
-        };
-    let reserved_residual_fft_bytes = if residual_f64_term_parallelism > 1 {
-        additional_residual_fft_bytes
-    } else {
-        0
-    };
     // This is a reservation ceiling, not an estimate of replay size.
     // AwProjectCompactReplayCache charges the actual capacities of compact
     // source samples, tap requests/values, packed Metal batches, and resident
     // programs as each block is compiled. Let exact resident bytes consume
     // only the stage-overlap headroom already assigned to this process; do not
     // impose a machine-size fraction or a per-sample proxy.
-    let admitted_bytes = headroom_bytes.saturating_sub(reserved_residual_fft_bytes);
-    plan.decisions.push(casa_imaging::ImagingPlanDecision {
-        name: "awproject_residual_f64_term_parallelism",
-        value: residual_f64_term_parallelism.to_string(),
-        origin: casa_imaging::ImagingPlanOrigin::Resources,
-        reason: format!(
-            "admit simultaneous f64 residual-term transforms only when the residual-transform base peak plus all additional term planes fits usable memory; additional_plane_bytes={additional_residual_fft_bytes}, reserved_bytes={reserved_residual_fft_bytes}, prior_headroom_bytes={headroom_bytes}"
-        ),
-    });
-    if reserved_residual_fft_bytes > 0 {
-        plan.memory_allocations
-            .push(casa_imaging::ImagingMemoryAllocation {
-                component: "AWProject residual FFT additional f64 planes",
-                stage: "residual-transform",
-                bytes: reserved_residual_fft_bytes,
-            });
-    }
+    let admitted_bytes = headroom_bytes;
     if admitted_bytes == 0 {
         plan.decisions.push(casa_imaging::ImagingPlanDecision {
             name: "awproject_compact_replay_retention_bytes",
@@ -38741,7 +38686,7 @@ fn admit_awproject_compact_replay_retention(
         value: admitted_bytes.to_string(),
         origin: casa_imaging::ImagingPlanOrigin::Resources,
         reason: format!(
-            "reserve residual-grid/transform overlap headroom for exact source-order AW replay after the planner reserves admitted f64 residual-term concurrency; runtime charges actual compact resident-program capacities and pins the full {stream_block_count}-block cyclic working set when it fits; prior_replay_stage_peak_bytes={replay_stage_peak_bytes}, prior_headroom_bytes={headroom_bytes}, residual_fft_reserved_bytes={reserved_residual_fft_bytes}, artificial_fraction_cap=none, per_sample_proxy=none"
+            "reserve residual-grid/transform overlap headroom for exact source-order AW replay; runtime charges actual compact resident-program capacities, pins the full {stream_block_count}-block cyclic working set when it fits, and otherwise retains a pinned no-eviction subset admitted in source order; prior_replay_stage_peak_bytes={replay_stage_peak_bytes}, prior_headroom_bytes={headroom_bytes}, artificial_fraction_cap=none, per_sample_proxy=none"
         ),
     });
     plan.decisions.push(casa_imaging::ImagingPlanDecision {
@@ -41466,21 +41411,9 @@ fn imaging_execution_config(
     )
 }
 
-#[cfg(test)]
 fn standard_mfs_execution_config_with_plan(
     config: &CliConfig,
     strategy: &ImagingResolvedPlan,
-) -> StandardMfsExecutionPlan {
-    let selected_field_count = config.field_ids.as_ref().map_or(1, |field_ids| {
-        field_ids.iter().copied().collect::<BTreeSet<_>>().len()
-    });
-    standard_mfs_execution_config_with_selected_fields(config, strategy, selected_field_count)
-}
-
-fn standard_mfs_execution_config_with_selected_fields(
-    config: &CliConfig,
-    strategy: &ImagingResolvedPlan,
-    selected_field_count: usize,
 ) -> StandardMfsExecutionPlan {
     let mut execution = standard_mfs_execution_config(config, strategy);
     if config.standard_mfs_backend.is_none() {
@@ -41508,50 +41441,11 @@ fn standard_mfs_execution_config_with_selected_fields(
         }
     }
     execution.force_tiled_one_worker = execution.grid_backend == StandardMfsBackend::FixedTile;
-    let grouped_replay = awproject_grouped_replay_plan(config, strategy);
-    let replay_architecture = grouped_replay.as_ref().map(|_| {
-        if selected_field_count == 1 {
-            "resident-tile-chain-v1"
-        } else {
-            "source-order-grouped-tile-v1"
-        }
-    });
-    execution.awproject_grouped_replay = (selected_field_count > 1)
-        .then_some(grouped_replay)
-        .flatten();
+    execution.awproject_grouped_replay = awproject_grouped_replay_plan(config, strategy);
     execution.resolved = strategy.clone();
-    if let Some(architecture) = replay_architecture {
-        let origin = casa_imaging::ImagingPlanOrigin::Workload;
-        execution.resolved.decisions.extend([
-            casa_imaging::ImagingPlanDecision {
-                name: "awproject_selected_field_count",
-                value: selected_field_count.to_string(),
-                origin,
-                reason: "count distinct FIELD_ID values in the resolved active row selection"
-                    .to_string(),
-            },
-            casa_imaging::ImagingPlanDecision {
-                name: "awproject_replay_architecture",
-                value: architecture.to_string(),
-                origin,
-                reason: if selected_field_count == 1 {
-                    "retain the exact resident Metal tile-chain working set when it fits the stage-aware replay allowance; multi-field selections use grouped source-order replay"
-                        .to_string()
-                } else {
-                    "compile effective CF support, source-role group mapping, and grouped tile route once before residual replay; runtime preserves source-order f64 accumulation and rebuilds no grouping, sort, or route"
-                        .to_string()
-                },
-            },
-        ]);
-        eprintln!(
-            "awproject_replay_plan architecture={architecture} selected_fields={selected_field_count} retention_bytes={} selection=resolved-active-field-ids",
-            strategy.allocation_bytes("AWProject compact replay retention"),
-        );
-    }
     if let Some(grouped) = execution.awproject_grouped_replay.as_ref() {
         eprintln!(
-            "awproject_grouped_replay_plan architecture=source-order-grouped-tile-v1 selected_fields={} segment_target_bytes={} compile_admission_bytes={} omitted_squared_l2_energy={:.9e} tile_side={} spill_directory={}",
-            selected_field_count,
+            "awproject_grouped_replay_plan architecture=source-order-grouped-tile-v1 segment_target_bytes={} compile_admission_bytes={} omitted_squared_l2_energy={:.9e} tile_side={} spill_directory={}",
             grouped.segment_target_bytes(),
             grouped.compile_admission_bytes(),
             grouped.omitted_energy_fraction(),
@@ -41559,6 +41453,13 @@ fn standard_mfs_execution_config_with_selected_fields(
             grouped.spill_directory().display(),
         );
         execution.resolved.decisions.extend([
+            casa_imaging::ImagingPlanDecision {
+                name: "awproject_replay_architecture",
+                value: "source-order-grouped-tile-v1".to_string(),
+                origin: casa_imaging::ImagingPlanOrigin::Workload,
+                reason: "compile effective CF support, source-role group mapping, and grouped tile route once before residual replay; runtime preserves source-order f64 accumulation and rebuilds no grouping, sort, or route"
+                    .to_string(),
+            },
             casa_imaging::ImagingPlanDecision {
                 name: "awproject_grouped_replay_segment_bytes",
                 value: grouped.segment_target_bytes().to_string(),
@@ -41685,10 +41586,8 @@ fn standard_mfs_backend_for_config(config: &CliConfig) -> StandardMfsBackend {
 fn imaging_execution_config_with_plan(
     config: &CliConfig,
     strategy: &ImagingResolvedPlan,
-    selected_field_count: usize,
 ) -> ImagingExecutionPlan {
-    let standard_mfs =
-        standard_mfs_execution_config_with_selected_fields(config, strategy, selected_field_count);
+    let standard_mfs = standard_mfs_execution_config_with_plan(config, strategy);
     ImagingExecutionPlan::new(
         dirty_product_fft_policy(config),
         standard_mfs.resolved.clone(),
@@ -61860,49 +61759,23 @@ mod tests {
         let admitted =
             admit_awproject_compact_replay_retention(base.clone(), 4).expect("replay admission");
         let retention = admitted.allocation_bytes("AWProject compact replay retention");
-        let additional_residual_fft_bytes =
-            config.imsize * config.imsize * std::mem::size_of::<Complex64>() * (config.nterms - 1);
         assert!(retention > 0);
+        assert_eq!(retention, admitted.usable_memory_bytes - replay_stage_peak);
         assert_eq!(
-            retention,
-            admitted.usable_memory_bytes - replay_stage_peak - additional_residual_fft_bytes
+            admitted.maximum_planned_resident_bytes,
+            admitted.usable_memory_bytes
         );
-        assert_eq!(
-            admitted.allocation_bytes("AWProject residual FFT additional f64 planes"),
-            additional_residual_fft_bytes
-        );
-        let admitted_residual_transform_peak = admitted
-            .memory_lifetime_ledger
-            .stage_peak(ImagingMemoryStage::ResidualTransform)
-            .expect("admitted residual-transform peak")
-            .resident_bytes;
-        let base_residual_transform_peak = base
-            .memory_lifetime_ledger
-            .stage_peak(ImagingMemoryStage::ResidualTransform)
-            .expect("base residual-transform peak")
-            .resident_bytes;
-        assert_eq!(
-            admitted_residual_transform_peak,
-            base_residual_transform_peak + retention + additional_residual_fft_bytes
-        );
-        assert!(admitted_residual_transform_peak <= admitted.usable_memory_bytes);
         assert!(admitted.maximum_planned_resident_bytes >= base_peak);
         assert!(admitted.maximum_planned_resident_bytes <= admitted.usable_memory_bytes);
         assert!(admitted.decisions.iter().any(|decision| {
             decision.name == "awproject_compact_replay_retention_bytes"
                 && decision.value == retention.to_string()
                 && decision.reason.contains("full 4-block cyclic working set")
+                && decision.reason.contains("pinned no-eviction subset")
                 && decision.reason.contains(&format!(
                     "prior_replay_stage_peak_bytes={replay_stage_peak}"
                 ))
-                && decision.reason.contains(&format!(
-                    "residual_fft_reserved_bytes={additional_residual_fft_bytes}"
-                ))
                 && decision.reason.contains("artificial_fraction_cap=none")
-        }));
-        assert!(admitted.decisions.iter().any(|decision| {
-            decision.name == "awproject_residual_f64_term_parallelism"
-                && decision.value == config.nterms.to_string()
         }));
         assert!(admitted.decisions.iter().any(|decision| {
             decision.name == "awproject_compact_replay_resident_accounting"
@@ -61938,21 +61811,10 @@ mod tests {
         let plan = admit_awproject_compact_replay_retention(base_plan, 4)
             .expect("grouped replay retention");
 
-        let single_field = standard_mfs_execution_config_with_selected_fields(&config, &plan, 1);
-        assert!(single_field.awproject_grouped_replay.is_none());
-        assert!(single_field.resolved.decisions.iter().any(|decision| {
-            decision.name == "awproject_replay_architecture"
-                && decision.value == "resident-tile-chain-v1"
-        }));
-
-        let execution = standard_mfs_execution_config_with_selected_fields(&config, &plan, 63);
+        let execution = standard_mfs_execution_config_with_plan(&config, &plan);
         let grouped = execution
             .awproject_grouped_replay
-            .expect("multi-field AWProject clean selects grouped replay");
-        assert!(execution.resolved.decisions.iter().any(|decision| {
-            decision.name == "awproject_replay_architecture"
-                && decision.value == "source-order-grouped-tile-v1"
-        }));
+            .expect("eligible AWProject clean selects grouped replay");
         let replay_bytes = plan.allocation_bytes("AWProject compact replay retention");
         let initial_peak_bytes = plan
             .memory_lifetime_ledger
@@ -61983,17 +61845,7 @@ mod tests {
             decision.name == "awproject_replay_architecture"
                 && decision.value == "source-order-grouped-tile-v1"
         }));
-        let root_execution = imaging_execution_config_with_plan(&config, &plan, 63);
-        assert!(
-            root_execution
-                .standard_mfs
-                .resolved
-                .decisions
-                .iter()
-                .any(|decision| {
-                    decision.name == "awproject_selected_field_count" && decision.value == "63"
-                })
-        );
+        let root_execution = imaging_execution_config_with_plan(&config, &plan);
         assert!(
             root_execution
                 .standard_mfs

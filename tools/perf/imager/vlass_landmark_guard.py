@@ -63,9 +63,6 @@ def parse_log(text: str) -> dict[str, Any]:
     resident_grouped_retention_reports = []
     resident_grouped_replay_summaries = []
     grouped_replay_release_reports = []
-    replay_plans = []
-    resident_tile_chain_reports = []
-    residual_term_fft_plans = []
     for line in lines:
         if line.startswith("fftw_runtime_provenance precision=f64 "):
             fftw_f64_provenance.append(
@@ -90,27 +87,6 @@ def parse_log(text: str) -> dict[str, Any]:
             )
         if line.startswith("awproject_grouped_replay_plan "):
             grouped_replay_plans.append(
-                {
-                    match.group("key"): match.group("value")
-                    for match in KEY_VALUE_RE.finditer(line)
-                }
-            )
-        if line.startswith("awproject_replay_plan "):
-            replay_plans.append(
-                {
-                    match.group("key"): match.group("value")
-                    for match in KEY_VALUE_RE.finditer(line)
-                }
-            )
-        if line.startswith("awproject_metal_resident_tile_chain "):
-            resident_tile_chain_reports.append(
-                {
-                    match.group("key"): match.group("value")
-                    for match in KEY_VALUE_RE.finditer(line)
-                }
-            )
-        if line.startswith("awproject_residual_term_fft_plan "):
-            residual_term_fft_plans.append(
                 {
                     match.group("key"): match.group("value")
                     for match in KEY_VALUE_RE.finditer(line)
@@ -183,9 +159,6 @@ def parse_log(text: str) -> dict[str, Any]:
             for line in lines
         ),
         "grouped_replay_plans": grouped_replay_plans,
-        "replay_plans": replay_plans,
-        "resident_tile_chain_reports": resident_tile_chain_reports,
-        "residual_term_fft_plans": residual_term_fft_plans,
         "aot_grouped_tile_receipts": aot_grouped_tile_receipts,
         "resident_grouped_retention_reports": resident_grouped_retention_reports,
         "grouped_replay_cache_reports": grouped_replay_cache_reports,
@@ -295,7 +268,7 @@ def evaluate(
         ]
         if not matching_provenance:
             errors.append(
-                "f64 FFTW planner, threads, version, or library hashes differ from the landmark contract"
+                "f64 FFTW threads, planner, library hashes, or version differ from the landmark contract"
             )
     if required_runtime.get("image_response_storage") == "raw":
         if runtime["image_response_dyadic_encodes"] != 0:
@@ -427,109 +400,6 @@ def evaluate(
         ):
             errors.append(
                 "grouped replay lifetime was not released at residual-grid end"
-            )
-    if required_runtime.get("resident_tile_chain_required"):
-        expected_fields = int(required_runtime["selected_field_count"])
-        expected_blocks = int(required_runtime["resident_tile_chain_blocks"])
-        plans = runtime["replay_plans"]
-        if (
-            len(plans) != 1
-            or plans[0].get("architecture") != "resident-tile-chain-v1"
-            or int(plans[0].get("selected_fields", "0")) != expected_fields
-        ):
-            errors.append(
-                "single-field resident tile-chain planner receipt is missing or duplicated"
-            )
-        if runtime["grouped_replay_plans"] or runtime["aot_grouped_tile_receipts"]:
-            errors.append("single-field resident landmark exercised grouped replay")
-        cache_reports = runtime["grouped_replay_cache_reports"]
-        complete_cache_reports = [
-            report
-            for report in cache_reports
-            if int(report.get("resident_blocks", "0")) == expected_blocks
-            and int(report.get("rejected_blocks", "-1")) == 0
-            and report.get("global_metal_program") == "false"
-            and int(report.get("resident_global_segments", "0")) == 0
-        ]
-        if not complete_cache_reports:
-            errors.append(
-                "resident tile-chain cache did not retain the complete source-block working set"
-            )
-        elif (
-            int(complete_cache_reports[-1].get("misses", "-1")) != expected_blocks
-            or int(complete_cache_reports[-1].get("hits", "0")) <= 0
-        ):
-            errors.append(
-                "resident tile-chain cache did not reach stable post-fill reuse"
-            )
-        resident_programs = (
-            int(complete_cache_reports[-1].get("resident_programs", "0"))
-            if complete_cache_reports
-            else 0
-        )
-        chain_reports = runtime["resident_tile_chain_reports"]
-        built = [report for report in chain_reports if report.get("built") == "true"]
-        replayed = [
-            report
-            for report in chain_reports
-            if report.get("built") == "false"
-            and report.get("gpu_residual_replay") == "true"
-        ]
-        residual_replays = runtime["residual_stream_replays"]
-        reuse_started = False
-        build_after_reuse = False
-        for report in chain_reports:
-            if report.get("built") == "false":
-                reuse_started = True
-            elif report.get("built") == "true" and reuse_started:
-                build_after_reuse = True
-        if (
-            residual_replays < 2
-            or resident_programs <= 0
-            or len(built) != resident_programs
-            or any(int(report.get("program_bytes", "0")) <= 0 for report in built)
-            or build_after_reuse
-            or len(replayed) != resident_programs * (residual_replays - 1)
-        ):
-            errors.append(
-                "resident tile-chain programs were not built once and reused for residual replay"
-            )
-        if complete_cache_reports and (
-            int(complete_cache_reports[-1].get("hits", "-1"))
-            != expected_blocks * (residual_replays - 1)
-        ):
-            errors.append(
-                "resident tile-chain cache did not cover every post-fill residual replay"
-            )
-        fft_plans = runtime["residual_term_fft_plans"]
-        if (
-            residual_replays < 2
-            or len(fft_plans) != residual_replays
-            or any(
-                plan.get("term_parallelism")
-                != str(required_runtime["residual_f64_term_parallelism"])
-                or plan.get("source") != "planner-residual-transform-headroom"
-                for plan in fft_plans
-            )
-        ):
-            errors.append(
-                "residual-term FFT was not admitted by planner transform headroom"
-            )
-        if runtime["spilled_grouped_replay_summaries"] != 0:
-            errors.append("resident tile-chain landmark used grouped spill replay")
-        release_reports = runtime["grouped_replay_release_reports"]
-        if (
-            len(release_reports) != 1
-            or release_reports[0].get("stage") != "residual-grid-end"
-            or release_reports[0].get("next_use") != "none"
-            or int(release_reports[0].get("resident_blocks", "0")) != expected_blocks
-            or int(release_reports[0].get("resident_programs", "0"))
-            != resident_programs
-            or int(release_reports[0].get("resident_global_segments", "-1")) != 0
-            or int(release_reports[0].get("resident_bytes", "0")) <= 0
-        ):
-            errors.append(
-                "resident tile-chain lifetime was not released at residual-grid end"
             )
 
     historical = float(landmark["historical_casa_rs_wall_seconds"])
