@@ -34,19 +34,19 @@ use casa_imaging::fft_backend::{
 };
 use casa_imaging::{
     AwConvolutionFunctionEntryMetadata, AwParallelHandVisibilityBatch, AwProjectControls,
-    AwProjectGridderConfig, AwProjectNormalization, AxisKind, BeamFit, BeamFitDebugSummary,
-    CleanConfig, CleanMaskProductRequest, CleanStopReason, CompatibilityMetadata,
-    CompatibilityMode, CubeAutoMultiThresholdConfig, CubeImagingDiagnostics, CubeImagingResult,
-    CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, DirtyImagingResult,
-    DirtyProductFftPolicy, GaussianUvTaper, GridderMode, GroupedVisibilityMetadata,
-    GroupedVisibilityMetadataBatch, HogbomIterationMode, HogbomPlaneMinorCycleControl,
-    ImageGeometry, ImageProduct, ImageProductMetadata, ImageProductRole, ImageProductSet,
-    ImagingDetectedResources, ImagingDiagnostics, ImagingError, ImagingExecutionPlan,
-    ImagingExecutionPolicy, ImagingMemoryAllocation, ImagingMemoryAllocationLifecycle,
-    ImagingMemoryBacking, ImagingMemoryLifetimeLedger, ImagingMemoryNextUse,
-    ImagingMemoryPressurePolicy as CoreImagingMemoryPressurePolicy, ImagingMemoryResidency,
-    ImagingMemoryStage, ImagingPlanAdmission, ImagingPlanningContext, ImagingRequest,
-    ImagingResolvedPlan, ImagingResources, ImagingResult, ImagingSpectralSchedule,
+    AwProjectGridderConfig, AwProjectGroupedReplayPlan, AwProjectNormalization, AxisKind, BeamFit,
+    BeamFitDebugSummary, CleanConfig, CleanMaskProductRequest, CleanStopReason,
+    CompatibilityMetadata, CompatibilityMode, CubeAutoMultiThresholdConfig, CubeImagingDiagnostics,
+    CubeImagingResult, CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver,
+    DirtyImagingResult, DirtyProductFftPolicy, GaussianUvTaper, GridderMode,
+    GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch, HogbomIterationMode,
+    HogbomPlaneMinorCycleControl, ImageGeometry, ImageProduct, ImageProductMetadata,
+    ImageProductRole, ImageProductSet, ImagingDetectedResources, ImagingDiagnostics, ImagingError,
+    ImagingExecutionPlan, ImagingExecutionPolicy, ImagingMemoryAllocation,
+    ImagingMemoryAllocationLifecycle, ImagingMemoryBacking, ImagingMemoryLifetimeLedger,
+    ImagingMemoryNextUse, ImagingMemoryPressurePolicy as CoreImagingMemoryPressurePolicy,
+    ImagingMemoryResidency, ImagingMemoryStage, ImagingPlanAdmission, ImagingPlanningContext,
+    ImagingRequest, ImagingResolvedPlan, ImagingResources, ImagingResult, ImagingSpectralSchedule,
     ImagingStageTimings, ImagingTileAnchor, ImagingWorkloadShape, MinorCycleTrace,
     MosaicGridderConfig, ParallelHandBatch, ParallelWorkerCalibrationRequest, PlaneStokes,
     PrimaryBeamModel, PrimaryBeamProductRequest, PrimaryBeamWeightSample,
@@ -39323,10 +39323,12 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         .and_then(parse_standard_mfs_grid_threads)
         .or(config.imaging_prepare_workers);
     let repeated_refresh = !clean_is_dirty(config);
-    let routed_replay_useful = repeated_refresh
+    let grouped_awproject_replay_useful = awproject_mtmfs && repeated_refresh && prefer_metal;
+    let routed_replay_useful = !grouped_awproject_replay_useful
+        && repeated_refresh
         && (explicit_workers.unwrap_or(1) > 1
             || standard_mfs_fixed_tile_backend_enabled_for_frontend(config));
-    let metal_cache_useful = repeated_refresh && prefer_metal;
+    let metal_cache_useful = !grouped_awproject_replay_useful && repeated_refresh && prefer_metal;
 
     let tile_anchor = match config.standard_mfs_tile_anchor.as_deref() {
         Some("zero") => ImagingTileAnchor::Zero,
@@ -39377,8 +39379,14 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     } else {
         0
     };
+    let grouped_compiler_minimum_uncertainty_reserve_bytes = if grouped_awproject_replay_useful {
+        64 * 1024 * 1024
+    } else {
+        0
+    };
     let aw_safety_margin_bytes = if awproject_mtmfs {
-        memory_target.target_bytes / 20
+        (memory_target.target_bytes / 20)
+            .saturating_sub(grouped_compiler_minimum_uncertainty_reserve_bytes)
     } else {
         0
     };
@@ -39650,6 +39658,18 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
                 "standard gridder uses CASA composite padding".to_string()
             },
         },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_grouped_replay_replaced_generic_caches",
+            value: grouped_awproject_replay_useful.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: if grouped_awproject_replay_useful {
+                "source-order grouped replay owns the residual input grouping and tile route, so the generic Metal grouped-input and routed-replay caches are neither admitted nor retained"
+                    .to_string()
+            } else {
+                "the selected workload does not use the Metal AWProject grouped-replay architecture"
+                    .to_string()
+            },
+        },
     ]);
 
     if !awproject_mtmfs {
@@ -39798,8 +39818,9 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             name: "awproject_safety_margin_bytes",
             value: aw_safety_margin_bytes.to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Resources,
-            reason: "five percent of the assigned process budget is reserved for allocator and unmodeled metadata overhead"
-                .to_string(),
+            reason: format!(
+                "five percent of the assigned process budget is reserved for allocator and unmodeled metadata overhead, less the grouped compiler's independently admitted minimum allocator-uncertainty reserve of {grouped_compiler_minimum_uncertainty_reserve_bytes} bytes"
+            ),
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_fft_residency",
@@ -41393,8 +41414,111 @@ fn standard_mfs_execution_config_with_plan(
         }
     }
     execution.force_tiled_one_worker = execution.grid_backend == StandardMfsBackend::FixedTile;
+    execution.awproject_grouped_replay = awproject_grouped_replay_plan(config, strategy);
     execution.resolved = strategy.clone();
+    if let Some(grouped) = execution.awproject_grouped_replay.as_ref() {
+        eprintln!(
+            "awproject_grouped_replay_plan architecture=source-order-grouped-tile-v1 segment_target_bytes={} compile_admission_bytes={} omitted_squared_l2_energy={:.9e} tile_side={} spill_directory={}",
+            grouped.segment_target_bytes(),
+            grouped.compile_admission_bytes(),
+            grouped.omitted_energy_fraction(),
+            grouped.tile_side(),
+            grouped.spill_directory().display(),
+        );
+        execution.resolved.decisions.extend([
+            casa_imaging::ImagingPlanDecision {
+                name: "awproject_replay_architecture",
+                value: "source-order-grouped-tile-v1".to_string(),
+                origin: casa_imaging::ImagingPlanOrigin::Workload,
+                reason: "compile effective CF support, source-role group mapping, and grouped tile route once before residual replay; runtime preserves source-order f64 accumulation and rebuilds no grouping, sort, or route"
+                    .to_string(),
+            },
+            casa_imaging::ImagingPlanDecision {
+                name: "awproject_grouped_replay_segment_bytes",
+                value: grouped.segment_target_bytes().to_string(),
+                origin: casa_imaging::ImagingPlanOrigin::Resources,
+                reason: format!(
+                    "use stage-aware transient compile headroom minus persistent replay retention, clamped to 512 MiB..8 GiB; admitted_replay_bytes={}",
+                    strategy.allocation_bytes("AWProject compact replay retention"),
+                ),
+            },
+            casa_imaging::ImagingPlanDecision {
+                name: "awproject_grouped_replay_compile_admission_bytes",
+                value: grouped.compile_admission_bytes().to_string(),
+                origin: casa_imaging::ImagingPlanOrigin::Resources,
+                reason: "the grouped compiler must fit inside initial-grid headroom after subtracting fixed overlap and replacing consumed source-row/direct-Metal buffers, including its explicit allocator-uncertainty reserve"
+                    .to_string(),
+            },
+            casa_imaging::ImagingPlanDecision {
+                name: "awproject_grouped_replay_omitted_squared_l2_energy",
+                value: format!("{:.9e}", grouped.omitted_energy_fraction()),
+                origin: casa_imaging::ImagingPlanOrigin::Workload,
+                reason: "accepted bounded CF support specialization; exact source order, group identity, and route topology remain invariant"
+                    .to_string(),
+            },
+            casa_imaging::ImagingPlanDecision {
+                name: "awproject_grouped_replay_spill_directory",
+                value: grouped.spill_directory().display().to_string(),
+                origin: casa_imaging::ImagingPlanOrigin::UserPolicy,
+                reason: "place the private unlinked replay spill beside the requested image products so task output-volume selection also selects spill storage"
+                    .to_string(),
+            },
+        ]);
+    }
     execution
+}
+
+fn awproject_grouped_replay_plan(
+    config: &CliConfig,
+    strategy: &ImagingResolvedPlan,
+) -> Option<AwProjectGroupedReplayPlan> {
+    if config.aw_project.is_none()
+        || clean_is_dirty(config)
+        || config.nterms != 2
+        || !strategy.metal.eligible
+    {
+        return None;
+    }
+    let replay_bytes = strategy.allocation_bytes("AWProject compact replay retention");
+    if replay_bytes < 512 * 1024 * 1024 {
+        return None;
+    }
+    let initial_grid_peak_bytes = strategy
+        .memory_lifetime_ledger
+        .stage_peak(ImagingMemoryStage::InitialGrid)
+        .map_or(strategy.maximum_planned_resident_bytes, |peak| {
+            peak.resident_bytes
+        });
+    let compile_replaced_bytes = strategy
+        .allocation_bytes("source row blocks")
+        .saturating_add(strategy.allocation_bytes("direct Metal host scratch"));
+    let compile_fixed_overlap_bytes =
+        initial_grid_peak_bytes.saturating_sub(compile_replaced_bytes);
+    let compile_admission_bytes = strategy
+        .usable_memory_bytes
+        .saturating_sub(compile_fixed_overlap_bytes);
+    if compile_admission_bytes <= replay_bytes {
+        return None;
+    }
+    let segment_target_bytes = compile_admission_bytes
+        .saturating_sub(replay_bytes)
+        .clamp(512 * 1024 * 1024, 8 * 1024 * 1024 * 1024);
+    let spill_directory = config
+        .imagename
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    Some(
+        AwProjectGroupedReplayPlan::new(
+            spill_directory,
+            segment_target_bytes,
+            compile_admission_bytes,
+            1.0e-6,
+            16,
+        )
+        .expect("resource-derived AWProject grouped replay plan is valid"),
+    )
 }
 
 fn parse_standard_mfs_backend_for_plan(value: &str) -> Option<StandardMfsBackend> {
@@ -61628,6 +61752,78 @@ mod tests {
             decision.name == "awproject_compact_replay_resident_accounting"
                 && decision.value == "runtime-exact-capacities"
         }));
+    }
+
+    #[test]
+    fn awproject_grouped_replay_plan_uses_admitted_memory_and_output_volume() {
+        if !casa_imaging::standard_mfs_metal_device_available() {
+            return;
+        }
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("planner-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
+        config.imagename = tmp.path().join("products").join("vlass");
+        fs::create_dir_all(config.imagename.parent().unwrap()).unwrap();
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
+        let base_plan = standard_mfs_memory_plan(&config, 64, 1024);
+        assert_eq!(base_plan.allocation_bytes("Metal grouped input cache"), 0);
+        assert_eq!(base_plan.allocation_bytes("routed replay cache"), 0);
+        assert!(base_plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_grouped_replay_replaced_generic_caches"
+                && decision.value == "true"
+        }));
+        assert!(base_plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_safety_margin_bytes"
+                && decision
+                    .reason
+                    .contains("minimum allocator-uncertainty reserve of 67108864 bytes")
+        }));
+        let plan = admit_awproject_compact_replay_retention(base_plan, 4)
+            .expect("grouped replay retention");
+
+        let execution = standard_mfs_execution_config_with_plan(&config, &plan);
+        let grouped = execution
+            .awproject_grouped_replay
+            .expect("eligible AWProject clean selects grouped replay");
+        let replay_bytes = plan.allocation_bytes("AWProject compact replay retention");
+        let initial_peak_bytes = plan
+            .memory_lifetime_ledger
+            .stage_peak(ImagingMemoryStage::InitialGrid)
+            .unwrap()
+            .resident_bytes;
+        let replaced_bytes = plan
+            .allocation_bytes("source row blocks")
+            .saturating_add(plan.allocation_bytes("direct Metal host scratch"));
+        let compile_admission_bytes = plan
+            .usable_memory_bytes
+            .saturating_sub(initial_peak_bytes.saturating_sub(replaced_bytes));
+        assert_eq!(grouped.compile_admission_bytes(), compile_admission_bytes);
+        assert!(grouped.compile_admission_bytes() > replay_bytes);
+        assert_eq!(
+            grouped.segment_target_bytes(),
+            compile_admission_bytes
+                .saturating_sub(replay_bytes)
+                .clamp(512 * 1024 * 1024, 8 * 1024 * 1024 * 1024)
+        );
+        assert_eq!(
+            grouped.spill_directory(),
+            config.imagename.parent().unwrap()
+        );
+        assert_eq!(grouped.omitted_energy_fraction(), 1.0e-6);
+        assert_eq!(grouped.tile_side(), 16);
+        assert!(execution.resolved.decisions.iter().any(|decision| {
+            decision.name == "awproject_replay_architecture"
+                && decision.value == "source-order-grouped-tile-v1"
+        }));
+
+        config.dirty_only = true;
+        assert!(
+            standard_mfs_execution_config_with_plan(&config, &plan)
+                .awproject_grouped_replay
+                .is_none(),
+            "dirty imaging has no residual replay to compile"
+        );
     }
 
     #[test]

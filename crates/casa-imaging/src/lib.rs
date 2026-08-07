@@ -30,9 +30,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::cell::{Cell, RefCell};
 #[cfg(all(target_os = "macos", not(coverage)))]
 use std::fs::File;
+#[cfg(all(test, target_os = "macos", not(coverage)))]
+use std::io::Read;
 #[cfg(all(target_os = "macos", not(coverage)))]
-use std::io::{Read, Seek, SeekFrom};
-#[cfg(all(target_os = "macos", not(coverage)))]
+use std::io::{Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -53,8 +54,6 @@ mod profile;
 mod single_plane_plan;
 mod trace;
 mod types;
-#[cfg(all(target_os = "macos", not(coverage)))]
-mod vlass_replay_fixture;
 mod weighting;
 
 pub use awprojection::{
@@ -1362,6 +1361,12 @@ pub struct StandardMfsExecutionPlan {
     pub initial_dirty_backend: Option<StandardMfsBackend>,
     /// Minor-cycle backend selected by the frontend planner.
     pub minor_cycle_backend: StandardMfsMinorCycleBackend,
+    /// Resource-admitted grouped-tile replay for Metal AWProject MT-MFS.
+    ///
+    /// The frontend resolves this from the workload, memory ledger, Metal
+    /// availability, and output volume. `None` keeps the reference replay
+    /// implementation.
+    pub awproject_grouped_replay: Option<AwProjectGroupedReplayPlan>,
     /// Keep the fixed-tile path when the resolved worker count is one.
     pub force_tiled_one_worker: bool,
     /// Route fixed-tile sample replay through planned run blocks.
@@ -1406,6 +1411,7 @@ impl StandardMfsExecutionPlan {
             residual_backend: None,
             initial_dirty_backend: None,
             minor_cycle_backend: StandardMfsMinorCycleBackend::default(),
+            awproject_grouped_replay: None,
             force_tiled_one_worker: false,
             fixed_tile_use_planned_run_blocks: false,
             w_project_max_abs_w_lambda: None,
@@ -1449,6 +1455,7 @@ impl fmt::Debug for StandardMfsExecutionPlan {
             .field("residual_backend", &self.residual_backend)
             .field("initial_dirty_backend", &self.initial_dirty_backend)
             .field("minor_cycle_backend", &self.minor_cycle_backend)
+            .field("awproject_grouped_replay", &self.awproject_grouped_replay)
             .field("force_tiled_one_worker", &self.force_tiled_one_worker)
             .field(
                 "fixed_tile_use_planned_run_blocks",
@@ -1468,6 +1475,88 @@ impl fmt::Debug for StandardMfsExecutionPlan {
                 &self.parallel_worker_calibration.is_some(),
             )
             .finish()
+    }
+}
+
+/// Resource-admitted production plan for AWProject grouped-tile replay.
+///
+/// The grouped representation is compiled once in exact source order, spilled
+/// to a private same-process file, and replayed without rebuilding grouping,
+/// sorting, or tile routes during each major cycle.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AwProjectGroupedReplayPlan {
+    spill_directory: PathBuf,
+    segment_target_bytes: usize,
+    compile_admission_bytes: usize,
+    omitted_energy_fraction: f64,
+    tile_side: usize,
+}
+
+impl AwProjectGroupedReplayPlan {
+    /// Construct a grouped replay plan resolved by an application planner.
+    pub fn new(
+        spill_directory: PathBuf,
+        segment_target_bytes: usize,
+        compile_admission_bytes: usize,
+        omitted_energy_fraction: f64,
+        tile_side: usize,
+    ) -> Result<Self, ImagingError> {
+        if segment_target_bytes < 512 * 1024 * 1024 {
+            return Err(ImagingError::InvalidRequest(
+                "AWProject grouped replay requires at least 512 MiB per segment".to_string(),
+            ));
+        }
+        if compile_admission_bytes == 0 {
+            return Err(ImagingError::InvalidRequest(
+                "AWProject grouped replay requires a positive compile-memory admission".to_string(),
+            ));
+        }
+        if !(omitted_energy_fraction.is_finite()
+            && (0.0..=AWPROJECT_METAL_EFFECTIVE_SUPPORT_MAX_OMITTED_ENERGY_FRACTION)
+                .contains(&omitted_energy_fraction))
+        {
+            return Err(ImagingError::InvalidRequest(format!(
+                "AWProject grouped replay omitted squared-L2 energy must be finite and in [0, {}]",
+                AWPROJECT_METAL_EFFECTIVE_SUPPORT_MAX_OMITTED_ENERGY_FRACTION
+            )));
+        }
+        if !matches!(tile_side, 8 | 16 | 32) {
+            return Err(ImagingError::InvalidRequest(format!(
+                "AWProject grouped replay tile side must be 8, 16, or 32, got {tile_side}"
+            )));
+        }
+        Ok(Self {
+            spill_directory,
+            segment_target_bytes,
+            compile_admission_bytes,
+            omitted_energy_fraction,
+            tile_side,
+        })
+    }
+
+    /// Directory hosting the unlinked same-process spill file.
+    pub fn spill_directory(&self) -> &Path {
+        &self.spill_directory
+    }
+
+    /// Target resident bytes accumulated before one segment is compiled.
+    pub fn segment_target_bytes(&self) -> usize {
+        self.segment_target_bytes
+    }
+
+    /// Maximum compiler residency admitted above the active stage ledger.
+    pub fn compile_admission_bytes(&self) -> usize {
+        self.compile_admission_bytes
+    }
+
+    /// Maximum squared-L2 stencil energy that the support compiler may omit.
+    pub fn omitted_energy_fraction(&self) -> f64 {
+        self.omitted_energy_fraction
+    }
+
+    /// Spatial tile side used by the grouped replay route.
+    pub fn tile_side(&self) -> usize {
+        self.tile_side
     }
 }
 
@@ -5686,33 +5775,16 @@ where
     let planned_aw_replay_retention_bytes = execution_config
         .resolved
         .allocation_bytes("AWProject compact replay retention");
-    let aw_replay_retention_bytes = if env::var_os("CASA_RS_VLASS_EXPERIMENT_RUNNER").is_some() {
-        env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_REPLAY_RETENTION_BYTES")
-                .ok()
-                .map(|value| {
-                    value.parse::<usize>().map_err(|_| {
-                        ImagingError::InvalidRequest(format!(
-                            "CASA_RS_EXPERIMENTAL_AWPROJECT_REPLAY_RETENTION_BYTES must be a non-negative integer, got {value}"
-                        ))
-                    })
-                })
-                .transpose()?
-                .unwrap_or(planned_aw_replay_retention_bytes)
-    } else {
-        planned_aw_replay_retention_bytes
-    };
-    if aw_replay_retention_bytes != planned_aw_replay_retention_bytes
-        && profile::standard_mfs_profile_detail_enabled()
-    {
-        eprintln!(
-            "awproject_compact_replay_retention_experiment planned_bytes={} overridden_bytes={}",
-            planned_aw_replay_retention_bytes, aw_replay_retention_bytes
-        );
-    }
-    let mut aw_replay_cache = (aw_replay_retention_bytes > 0
+    let grouped_replay_plan = execution_config.awproject_grouped_replay.clone();
+    let mut aw_replay_cache = (planned_aw_replay_retention_bytes > 0
         && request.clean.niter > 0
         && matches!(request.gridder_mode, GridderMode::AwProject(_)))
-    .then(|| AwProjectCompactReplayCache::new(aw_replay_retention_bytes));
+    .then(|| {
+        AwProjectCompactReplayCache::new(
+            planned_aw_replay_retention_bytes,
+            grouped_replay_plan.clone(),
+        )
+    });
     let total_started = Instant::now();
     request.geometry.validate()?;
     request.weighting.validate()?;
@@ -5830,8 +5902,9 @@ where
     }
     stage_timings.weighting += weighting_started.elapsed();
 
-    let prime_aw_replay_during_initial_dirty =
-        env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PRIME_REPLAY_INITIAL_DIRTY").is_some();
+    let prime_aw_replay_during_initial_dirty = aw_replay_cache
+        .as_ref()
+        .is_some_and(AwProjectCompactReplayCache::grouped_replay_enabled);
     let allow_initial_direct_metal = standard_mfs_backend_allows_direct_metal(
         execution_config.initial_dirty_backend,
         aw_cache.is_none() || direct_metal_scratch_bytes.is_some(),
@@ -5921,10 +5994,15 @@ where
         )
     {
         if prime_aw_replay_during_initial_dirty {
-            aw_replay_cache = (aw_replay_retention_bytes > 0
+            aw_replay_cache = (planned_aw_replay_retention_bytes > 0
                 && request.clean.niter > 0
                 && matches!(request.gridder_mode, GridderMode::AwProject(_)))
-            .then(|| AwProjectCompactReplayCache::new(aw_replay_retention_bytes));
+            .then(|| {
+                AwProjectCompactReplayCache::new(
+                    planned_aw_replay_retention_bytes,
+                    grouped_replay_plan.clone(),
+                )
+            });
         }
         #[cfg(all(target_os = "macos", not(coverage)))]
         emit_dirty_product_gpu_resident_fallback(&format!(
@@ -9722,12 +9800,14 @@ where
 {
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let psf_term_count = 2 * request.nterms - 1;
+    let grouped_replay = aw_replay_cache
+        .as_deref()
+        .is_some_and(AwProjectCompactReplayCache::grouped_replay_enabled);
     let residual_only = pass == SinglePlaneStreamPass::ResidualRefresh
         && aw_cache.is_some()
-        && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_ONLY_REFRESH").is_some();
-    let global_metal_replay = residual_only
-        && model_grids.is_some()
-        && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GLOBAL_TILE_REPLAY").is_some();
+        && (grouped_replay
+            || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_ONLY_REFRESH").is_some());
+    let global_metal_replay = residual_only && model_grids.is_some() && grouped_replay;
     let direct_metal_mode =
         mosaic_direct_metal_mode(allow_direct_metal, aw_cache.is_some(), global_metal_replay);
     if residual_only && profile::standard_mfs_profile_detail_enabled() {
@@ -10182,6 +10262,7 @@ enum AwProjectCompactReplayBlockSlot {
 
 struct AwProjectCompactReplayCache {
     budget_bytes: usize,
+    grouped_replay: Option<AwProjectGroupedReplayPlan>,
     resident_bytes: usize,
     compiled_total_bytes: usize,
     compiled_total_bytes_complete: bool,
@@ -10212,9 +10293,10 @@ struct AwProjectCompactReplayCache {
 }
 
 impl AwProjectCompactReplayCache {
-    fn new(budget_bytes: usize) -> Self {
+    fn new(budget_bytes: usize, grouped_replay: Option<AwProjectGroupedReplayPlan>) -> Self {
         Self {
             budget_bytes,
+            grouped_replay,
             resident_bytes: 0,
             compiled_total_bytes: 0,
             compiled_total_bytes_complete: true,
@@ -10250,6 +10332,14 @@ impl AwProjectCompactReplayCache {
         }
     }
 
+    fn grouped_replay_plan(&self) -> Option<&AwProjectGroupedReplayPlan> {
+        self.grouped_replay.as_ref()
+    }
+
+    fn grouped_replay_enabled(&self) -> bool {
+        self.grouped_replay.is_some()
+    }
+
     fn block(&self, ordinal: usize) -> Option<&AwProjectCompactReplayBlock> {
         match self.blocks.get(ordinal).and_then(Option::as_ref) {
             Some(AwProjectCompactReplayBlockSlot::Resident(block)) => Some(block),
@@ -10272,6 +10362,13 @@ impl AwProjectCompactReplayCache {
         self.budget_bytes.saturating_sub(self.resident_bytes)
     }
 
+    fn fill_budget_bytes(&self) -> usize {
+        self.grouped_replay_plan().map_or_else(
+            || self.remaining_bytes(),
+            AwProjectGroupedReplayPlan::compile_admission_bytes,
+        )
+    }
+
     fn store(
         &mut self,
         ordinal: usize,
@@ -10290,6 +10387,15 @@ impl AwProjectCompactReplayCache {
                 "compact AWProject replay block {ordinal} retained an invalid source prefix ending at {} of {} samples",
                 block.cached_cursor_end, block.shape.samples,
             )));
+        }
+        if self.grouped_replay_enabled() {
+            if block.cached_cursor_end < block.shape.samples {
+                self.compiled_total_bytes_complete = false;
+            }
+            block.windows = Vec::new();
+            block.resident_bytes = 0;
+            self.blocks[ordinal] = Some(AwProjectCompactReplayBlockSlot::Resident(Box::new(block)));
+            return Ok(true);
         }
         block.windows.shrink_to_fit();
         block.resident_bytes = block
@@ -10978,11 +11084,7 @@ fn awproject_metal_kernel_value(
 #[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_METAL_EFFECTIVE_SUPPORT_FOCUSED_OMITTED_ENERGY_FRACTION: f64 = 1.0e-6;
 
-#[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_METAL_EFFECTIVE_SUPPORT_MAX_OMITTED_ENERGY_FRACTION: f64 = 1.0e-4;
-
-#[cfg(all(target_os = "macos", not(coverage)))]
-const AWPROJECT_METAL_AOT_COMPILE_ADMISSION_LIMIT_BYTES: usize = 32 * 1024 * 1024 * 1024;
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_METAL_AOT_HASHMAP_MINIMUM_RESERVE_BYTES: usize = 64 * 1024 * 1024;
@@ -10995,9 +11097,6 @@ const AWPROJECT_METAL_EFFECTIVE_SUPPORT_ENV: &str =
     "CASA_RS_EXPERIMENTAL_AWPROJECT_EFFECTIVE_SUPPORT";
 
 #[cfg(all(target_os = "macos", not(coverage)))]
-const AWPROJECT_METAL_AOT_GROUPED_TILE_ENV: &str =
-    "CASA_RS_EXPERIMENTAL_AWPROJECT_AOT_GROUPED_TILE_REPLAY";
-
 #[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_METAL_RAW_LAYOUT_MASK: u32 = AWPROJECT_METAL_RAW_ROW_STRIDE_MASK
     | AWPROJECT_METAL_RAW_SAMPLING_MASK
@@ -11771,6 +11870,53 @@ struct AwProjectMetalAotGroupedTileReceipt {
     legacy_grouped_plans_sha256: [u8; 32],
     legacy_grouped_route_sha256: [u8; 32],
     ledger: AwProjectMetalAotGroupedTileLedger,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl AwProjectMetalAotGroupedTileReceipt {
+    fn log(&self, segment: usize) {
+        let ledger = &self.ledger;
+        let hash_prefix = |hash: &[u8; 32]| {
+            u64::from_be_bytes(hash[..8].try_into().expect("SHA-256 prefix is eight bytes"))
+        };
+        eprintln!(
+            "awproject_aot_grouped_tile_receipt segment={} omitted_energy_fraction_bits={} samples={} groups={} crop_hash_prefix={:016x} grouped_plans_hash_prefix={:016x} sample_role_groups_hash_prefix={:016x} grouped_route_hash_prefix={:016x} legacy_grouped_plans_hash_prefix={:016x} legacy_grouped_route_hash_prefix={:016x} raw_resident_bytes_before_compile={} raw_prediction_sample_bytes_replaced={} cropped_prediction_sample_bytes={} raw_tile_sample_bytes_released={} raw_route_bytes_released={} grouped_plan_bytes={} sample_role_group_bytes={} grouped_route_bytes={} canonical_group_plan_capacity_bytes={} canonical_group_sum_capacity_bytes={} canonical_hashmap_estimated_bytes={} tile_planner_known_peak_bytes={} sample_role_group_capacity_bytes={} final_hashmap_estimated_bytes={} aot_group_sum_bytes={} fixed_scale_bytes={} effective_support_hashmap_estimated_bytes={} effective_support_prefix_scratch_bytes={} effective_support_scratch_estimated_bytes={} compile_transient_bytes_peak_estimated={} hashmap_uncertainty_reserve_bytes={} compile_admission_bytes={} compile_admission_limit_bytes={} persisted_tile_bytes={}",
+            segment,
+            self.omitted_energy_fraction_bits,
+            self.sample_count,
+            self.group_count,
+            hash_prefix(&self.crop_decisions_sha256),
+            hash_prefix(&self.grouped_plans_sha256),
+            hash_prefix(&self.sample_role_groups_sha256),
+            hash_prefix(&self.grouped_route_sha256),
+            hash_prefix(&self.legacy_grouped_plans_sha256),
+            hash_prefix(&self.legacy_grouped_route_sha256),
+            ledger.raw_resident_bytes_before_compile,
+            ledger.raw_prediction_sample_bytes_replaced,
+            ledger.cropped_prediction_sample_bytes,
+            ledger.raw_tile_sample_bytes_released,
+            ledger.raw_route_bytes_released,
+            ledger.grouped_plan_bytes,
+            ledger.sample_role_group_bytes,
+            ledger.grouped_route_bytes,
+            ledger.canonical_group_plan_capacity_bytes,
+            ledger.canonical_group_sum_capacity_bytes,
+            ledger.canonical_hashmap_estimated_bytes,
+            ledger.tile_planner_known_peak_bytes,
+            ledger.sample_role_group_capacity_bytes,
+            ledger.final_hashmap_estimated_bytes,
+            ledger.aot_group_sum_bytes,
+            ledger.fixed_scale_bytes,
+            ledger.effective_support_hashmap_estimated_bytes,
+            ledger.effective_support_prefix_scratch_bytes,
+            ledger.effective_support_scratch_estimated_bytes,
+            ledger.compile_transient_bytes_peak_estimated,
+            ledger.hashmap_uncertainty_reserve_bytes,
+            ledger.compile_admission_bytes,
+            ledger.compile_admission_limit_bytes,
+            ledger.persisted_tile_bytes,
+        );
+    }
 }
 
 #[derive(Clone)]
@@ -12599,12 +12745,24 @@ struct AwProjectMetalTileDispatch<'a> {
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct AwProjectMetalSpillSection {
     offset: u64,
     len: usize,
     byte_len: usize,
     sha256: [u8; 32],
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl Default for AwProjectMetalSpillSection {
+    fn default() -> Self {
+        Self {
+            offset: 0,
+            len: 0,
+            byte_len: 0,
+            sha256: Sha256::digest([]).into(),
+        }
+    }
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -12639,7 +12797,6 @@ struct AwProjectMetalSpillStore {
     file: File,
     bytes_written: u64,
     bytes_read: u64,
-    fixture_paths: Option<vlass_replay_fixture::FixturePaths>,
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -12760,22 +12917,8 @@ impl AwProjectMetalPrefetchSequenceStats {
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 impl AwProjectMetalSpillStore {
-    fn create() -> Result<Self, ImagingError> {
-        if let Some(prefix) =
-            env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_REPLAY_FIXTURE_CAPTURE_PREFIX")
-        {
-            return Self::create_fixture(&PathBuf::from(prefix));
-        }
-        let root = env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_GLOBAL_REPLAY_SPILL_DIR")
-            .map(PathBuf::from)
-            .ok_or_else(|| {
-                ImagingError::InvalidRequest(
-                    "segmented AWProject global replay requires \
-                     CASA_RS_EXPERIMENTAL_AWPROJECT_GLOBAL_REPLAY_SPILL_DIR"
-                        .to_string(),
-                )
-            })?;
-        Self::create_in(&root)
+    fn create(root: &Path) -> Result<Self, ImagingError> {
+        Self::create_in(root)
     }
 
     fn create_in(root: &Path) -> Result<Self, ImagingError> {
@@ -12812,28 +12955,6 @@ impl AwProjectMetalSpillStore {
             file,
             bytes_written: 0,
             bytes_read: 0,
-            fixture_paths: None,
-        })
-    }
-
-    fn create_fixture(prefix: &Path) -> Result<Self, ImagingError> {
-        let paths = vlass_replay_fixture::FixturePaths::new(prefix)?;
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(&paths.partial_payload)
-            .map_err(|error| {
-                ImagingError::InvalidRequest(format!(
-                    "create AWProject replay fixture payload {}: {error}",
-                    paths.partial_payload.display()
-                ))
-            })?;
-        Ok(Self {
-            file,
-            bytes_written: 0,
-            bytes_read: 0,
-            fixture_paths: Some(paths),
         })
     }
 
@@ -12865,15 +12986,9 @@ impl AwProjectMetalSpillStore {
                     "segmented AWProject {label} spill length overflowed"
                 ))
             })?;
-        // SAFETY: the exact bytes of these private, same-process replay arrays
-        // are already the spill contract below. Hash the same initialized
-        // bytes so a frozen fixture can fail closed before timed replay.
         let value_bytes =
             unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), byte_len) };
-        let sha256 = self
-            .fixture_paths
-            .as_ref()
-            .map_or([0; 32], |_| Sha256::digest(value_bytes).into());
+        let sha256 = Sha256::digest(value_bytes).into();
         self.file
             .seek(SeekFrom::Start(self.bytes_written))
             .and_then(|_| self.file.write_all(&vec![0u8; padding]))
@@ -12905,6 +13020,7 @@ impl AwProjectMetalSpillStore {
         })
     }
 
+    #[cfg(test)]
     fn read_vec<T: Copy>(
         &mut self,
         section: AwProjectMetalSpillSection,
@@ -12988,6 +13104,12 @@ impl AwProjectMetalSpillStore {
                     "positionally reload segmented AWProject {label} spill: {error}"
                 ))
             })?;
+        let observed_sha256: [u8; 32] = Sha256::digest(&*bytes).into();
+        if observed_sha256 != section.sha256 {
+            return Err(ImagingError::Normalization(format!(
+                "segmented AWProject {label} spill section failed SHA-256 verification"
+            )));
+        }
         let pointer = values.as_mut_ptr().cast::<T>();
         let len = values.len();
         let capacity = values.capacity();
@@ -13144,6 +13266,7 @@ impl AwProjectMetalSpillStore {
         })
     }
 
+    #[cfg(test)]
     fn reload(
         &mut self,
         program: &AwProjectMetalSpilledProgram,
@@ -22183,8 +22306,11 @@ fn awproject_compact_plan(
 }
 
 #[inline]
-fn awproject_compact_tap_identity_key(mut key: AwProjectCompactTapKey) -> AwProjectCompactTapKey {
-    if awproject_compact_tapless_phase() {
+fn awproject_compact_tap_identity_key(
+    mut key: AwProjectCompactTapKey,
+    tapless_phase: bool,
+) -> AwProjectCompactTapKey {
+    if tapless_phase {
         key.group_index = 0;
     }
     key
@@ -22193,20 +22319,22 @@ fn awproject_compact_tap_identity_key(mut key: AwProjectCompactTapKey) -> AwProj
 fn awproject_compact_candidate_tap_bytes(
     specs: &[AwProjectCompactTapSpec],
     existing: &AwProjectCompactTapIndex,
+    tapless_phase: bool,
 ) -> Result<usize, ImagingError> {
-    awproject_compact_candidate_tap_bytes_with_identity(specs, existing, true)
+    awproject_compact_candidate_tap_bytes_with_identity(specs, existing, tapless_phase, true)
 }
 
 fn awproject_compact_candidate_logical_tap_bytes(
     specs: &[AwProjectCompactTapSpec],
     existing: &AwProjectCompactTapIndex,
 ) -> Result<usize, ImagingError> {
-    awproject_compact_candidate_tap_bytes_with_identity(specs, existing, false)
+    awproject_compact_candidate_tap_bytes_with_identity(specs, existing, false, false)
 }
 
 fn awproject_compact_candidate_tap_bytes_with_identity(
     specs: &[AwProjectCompactTapSpec],
     existing: &AwProjectCompactTapIndex,
+    tapless_phase: bool,
     compact_phase_identity: bool,
 ) -> Result<usize, ImagingError> {
     let mut candidate_keys = [None; 8];
@@ -22214,7 +22342,7 @@ fn awproject_compact_candidate_tap_bytes_with_identity(
     let mut additional_tap_bytes = 0usize;
     for spec in specs {
         let key = if compact_phase_identity {
-            awproject_compact_tap_identity_key(spec.request.key)
+            awproject_compact_tap_identity_key(spec.request.key, tapless_phase)
         } else {
             spec.request.key
         };
@@ -22257,6 +22385,7 @@ fn materialize_awproject_compact_tap(
     phase_tables: Option<&AwProjectPhaseTables>,
     requests: &[AwProjectCompactTapRequest],
     bundle_index: usize,
+    tapless_phase: bool,
 ) -> Result<(usize, AwProjectCompactMaterializedTap, usize), ImagingError> {
     let bundle_request = requests[bundle_index];
     debug_assert_eq!(
@@ -22279,6 +22408,7 @@ fn materialize_awproject_compact_tap(
                 phase_tables,
                 requests,
                 bundle_index,
+                tapless_phase,
             )
         }
         #[cfg(unix)]
@@ -22297,6 +22427,7 @@ fn materialize_awproject_compact_tap(
                 phase_tables,
                 requests,
                 bundle_index,
+                tapless_phase,
             )
         }
     }
@@ -22313,9 +22444,9 @@ fn materialize_awproject_compact_tap_from_kernel<K: AwProjectKernelPixels + ?Siz
     phase_tables: Option<&AwProjectPhaseTables>,
     requests: &[AwProjectCompactTapRequest],
     bundle_index: usize,
+    tapless_phase: bool,
 ) -> Result<(usize, AwProjectCompactMaterializedTap, usize), ImagingError> {
     let bundle_request = requests[bundle_index];
-    let tapless_phase = awproject_compact_tapless_phase();
     let phase_gradient = if tapless_phase {
         [0.0, 0.0]
     } else {
@@ -22403,6 +22534,7 @@ fn materialize_awproject_compact_taps(
     cache: &AwConvolutionFunctionResidentCache,
     requests: &[AwProjectCompactTapRequest],
     phase_tables: Option<&AwProjectPhaseTables>,
+    tapless_phase: bool,
     tap_budget_bytes: usize,
     reverse_cell_load_order: bool,
     prefetch_cf_cell: bool,
@@ -22492,6 +22624,7 @@ fn materialize_awproject_compact_taps(
                                     phase_tables,
                                     requests,
                                     bundle_index,
+                                    tapless_phase,
                                 )
                             })
                             .collect::<Result<Vec<_>, ImagingError>>()
@@ -22509,6 +22642,7 @@ fn materialize_awproject_compact_taps(
                                 phase_tables,
                                 requests,
                                 bundle_index,
+                                tapless_phase,
                             )
                         })
                         .collect::<Result<Vec<_>, ImagingError>>()?
@@ -22728,9 +22862,11 @@ fn prepare_awproject_compact_planned_samples(
     model_grids: Option<&[Array2<Complex32>]>,
     accumulation: &mut MosaicMtmfsStreamGridAccumulation,
     taylor_weights: &mut Vec<f32>,
+    grouped_replay: bool,
 ) -> Result<Vec<AwProjectCompactPlannedSample>, ImagingError> {
     let residual_only = accumulation.storage.is_residual_only()
-        && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_LIVE_CFS_ONLY").is_some();
+        && (grouped_replay
+            || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_LIVE_CFS_ONLY").is_some());
     if residual_only && awproject_prediction_trace_limit() == 0 {
         return prepare_awproject_compact_residual_samples_parallel(
             request,
@@ -23924,6 +24060,7 @@ fn compile_awproject_metal_aot_grouped_tile(
     config: AwProjectMetalEffectiveSupportConfig,
     grid_width: usize,
     grid_height: usize,
+    compile_admission_limit_bytes: usize,
 ) -> Result<AwProjectMetalEffectiveSupportStats, ImagingError> {
     if program.aot_grouped_tile.is_some() {
         return Err(ImagingError::InvalidRequest(
@@ -24093,11 +24230,11 @@ fn compile_awproject_metal_aot_grouped_tile(
         .saturating_add(hashmap_estimated_bytes);
     let compile_admission_bytes =
         compile_transient_bytes_peak_estimated.saturating_add(hashmap_uncertainty_reserve_bytes);
-    if compile_admission_bytes > AWPROJECT_METAL_AOT_COMPILE_ADMISSION_LIMIT_BYTES {
+    if compile_admission_bytes > compile_admission_limit_bytes {
         return Err(ImagingError::InvalidRequest(format!(
             "AWProject AOT grouped-tile compile admission requires {compile_admission_bytes} \
              bytes including HashMap uncertainty reserve, above the {}-byte limit",
-            AWPROJECT_METAL_AOT_COMPILE_ADMISSION_LIMIT_BYTES,
+            compile_admission_limit_bytes,
         )));
     }
     let receipt = AwProjectMetalAotGroupedTileReceipt {
@@ -24133,7 +24270,7 @@ fn compile_awproject_metal_aot_grouped_tile(
             compile_transient_bytes_peak_estimated,
             hashmap_uncertainty_reserve_bytes,
             compile_admission_bytes,
-            compile_admission_limit_bytes: AWPROJECT_METAL_AOT_COMPILE_ADMISSION_LIMIT_BYTES,
+            compile_admission_limit_bytes,
             persisted_tile_bytes: grouped_plan_bytes
                 .saturating_add(sample_role_group_bytes)
                 .saturating_add(grouped_route_bytes),
@@ -24257,6 +24394,7 @@ fn build_awproject_metal_resident_program(
     bundles: &[AwProjectCompactMaterializedTap],
     phase_tables: Option<&AwProjectPhaseTables>,
     metadata: AwProjectMetalResidentMetadata,
+    tile_side: usize,
 ) -> Result<AwProjectMetalResidentProgram, ImagingError> {
     let (prediction_batch, tile_batch) = thread::scope(|scope| {
         let prediction = scope.spawn(|| {
@@ -24287,7 +24425,6 @@ fn build_awproject_metal_resident_program(
         Ok::<_, ImagingError>((prediction?, tile?))
     })?;
     let [grid_width, grid_height] = request.geometry.image_shape;
-    let tile_side = awproject_metal_tile_probe_side()?;
     let (tile_plan, residual_scale_plan) = thread::scope(|scope| {
         let tile_plan = scope.spawn(|| {
             plan_awproject_metal_tiles(&tile_batch.samples, grid_width, grid_height, tile_side)
@@ -25497,11 +25634,22 @@ impl AwProjectCompactReplayCache {
                 "cannot extend a finalized raw-CF AWProject replay program".to_string(),
             ));
         }
-        let segment_target = awproject_metal_global_replay_segment_bytes()?.ok_or_else(|| {
-            ImagingError::InvalidRequest(
-                "raw-CF AWProject global replay requires bounded spill segmentation".to_string(),
-            )
-        })?;
+        let segment_target = self
+            .grouped_replay_plan()
+            .map(AwProjectGroupedReplayPlan::segment_target_bytes)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "raw-CF AWProject global replay requires a grouped replay plan".to_string(),
+                )
+            })?;
+        let compile_admission_bytes = self
+            .grouped_replay_plan()
+            .map(AwProjectGroupedReplayPlan::compile_admission_bytes)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "raw-CF AWProject global replay requires a grouped replay plan".to_string(),
+                )
+            })?;
         if let Some(builder) = self.persistent_metal_global_builder.as_ref() {
             if !builder.raw_mode {
                 return Err(ImagingError::InvalidRequest(
@@ -25548,11 +25696,10 @@ impl AwProjectCompactReplayCache {
         let absorb_peak_bytes = resident_bytes_after.saturating_add(transient_program_bytes);
         self.peak_metal_global_absorb_bytes =
             self.peak_metal_global_absorb_bytes.max(absorb_peak_bytes);
-        if resident_bytes_after > self.budget_bytes {
+        if absorb_peak_bytes > compile_admission_bytes {
             self.compiled_total_bytes_complete = false;
             return Err(ImagingError::InvalidRequest(format!(
-                "raw-CF AWProject replay needs {resident_bytes_after} resident bytes above its {}-byte experiment budget after absorbing {} source programs and {} raw planes",
-                self.budget_bytes,
+                "raw-CF AWProject replay compile peak {absorb_peak_bytes} bytes exceeds its {compile_admission_bytes}-byte stage-aware admission after absorbing {} source programs and {} raw planes",
                 builder.source_programs,
                 builder.raw_planes.len(),
             )));
@@ -25638,7 +25785,7 @@ impl AwProjectCompactReplayCache {
         if resident_bytes_after > self.budget_bytes {
             self.compiled_total_bytes_complete = false;
             return Err(ImagingError::InvalidRequest(format!(
-                "progressive AWProject Metal global replay needs {resident_bytes_after} resident bytes above its {}-byte experiment budget after absorbing {} source programs with {} shared kernel values in capacity {} (transient peak ledger {absorb_peak_bytes} bytes)",
+                "progressive AWProject Metal global replay needs {resident_bytes_after} resident bytes above its {}-byte replay budget after absorbing {} source programs with {} shared kernel values in capacity {} (transient peak ledger {absorb_peak_bytes} bytes)",
                 self.budget_bytes,
                 builder.source_programs,
                 builder.prediction_batch.kernels.len(),
@@ -25675,7 +25822,9 @@ impl AwProjectCompactReplayCache {
                 self.peak_metal_global_absorb_bytes,
             );
         }
-        let segment_target = awproject_metal_global_replay_segment_bytes()?;
+        let segment_target = self
+            .grouped_replay_plan()
+            .map(AwProjectGroupedReplayPlan::segment_target_bytes);
         if segment_target.is_some_and(|target| builder_bytes_after >= target) {
             self.spill_metal_global_builder_segment(grid_width, grid_height, tile_side)?;
         }
@@ -25694,26 +25843,37 @@ impl AwProjectCompactReplayCache {
         let source_programs = builder.source_programs;
         let builder_bytes = builder.resident_bytes();
         let mut program = builder.finish(grid_width, grid_height, tile_side)?;
-        if env::var_os(AWPROJECT_METAL_AOT_GROUPED_TILE_ENV).is_some() {
-            let support = compile_awproject_metal_aot_grouped_tile(
-                &mut program,
-                AwProjectMetalEffectiveSupportConfig {
-                    omitted_energy_fraction:
-                        AWPROJECT_METAL_EFFECTIVE_SUPPORT_FOCUSED_OMITTED_ENERGY_FRACTION,
-                },
-                grid_width,
-                grid_height,
-            )?;
-            if profile::standard_mfs_profile_detail_enabled() {
-                support.log(self.spilled_metal_global_programs.len(), source_programs);
-            }
+        let grouped_replay = self.grouped_replay_plan().cloned().ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "segmented AWProject replay requires an admitted grouped replay plan".to_string(),
+            )
+        })?;
+        let support = compile_awproject_metal_aot_grouped_tile(
+            &mut program,
+            AwProjectMetalEffectiveSupportConfig {
+                omitted_energy_fraction: grouped_replay.omitted_energy_fraction(),
+            },
+            grid_width,
+            grid_height,
+            grouped_replay.compile_admission_bytes(),
+        )?;
+        if profile::standard_mfs_profile_detail_enabled() {
+            support.log(self.spilled_metal_global_programs.len(), source_programs);
+            program
+                .aot_grouped_tile
+                .as_ref()
+                .expect("grouped compiler populated the AOT replay artifact")
+                .receipt
+                .log(self.spilled_metal_global_programs.len());
         }
         let program_bytes = program.resident_bytes();
         let spill_store = match self.metal_global_spill_store.as_mut() {
             Some(store) => store,
             None => self
                 .metal_global_spill_store
-                .insert(AwProjectMetalSpillStore::create()?),
+                .insert(AwProjectMetalSpillStore::create(
+                    grouped_replay.spill_directory(),
+                )?),
         };
         let spilled = spill_store.spill(program, source_programs)?;
         self.spilled_metal_global_payload_bytes = self
@@ -25758,27 +25918,6 @@ fn merge_awproject_metal_resident_programs(
         builder.absorb(program)?;
     }
     builder.finish(grid_width, grid_height, tile_side)
-}
-
-#[cfg(all(target_os = "macos", not(coverage)))]
-fn awproject_metal_global_replay_segment_bytes() -> Result<Option<usize>, ImagingError> {
-    let Some(value) = env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_GLOBAL_REPLAY_SEGMENT_BYTES")
-    else {
-        return Ok(None);
-    };
-    let value = value.to_string_lossy();
-    let bytes = value.parse::<usize>().map_err(|error| {
-        ImagingError::InvalidRequest(format!(
-            "CASA_RS_EXPERIMENTAL_AWPROJECT_GLOBAL_REPLAY_SEGMENT_BYTES must be a byte count: \
-             {error}"
-        ))
-    })?;
-    if bytes < 512 * 1024 * 1024 {
-        return Err(ImagingError::InvalidRequest(
-            "segmented AWProject global replay requires at least 512 MiB per segment".to_string(),
-        ));
-    }
-    Ok(Some(bytes))
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -26064,9 +26203,7 @@ fn build_awproject_metal_global_replay_program(
         ));
     }
     let started = Instant::now();
-    if awproject_metal_global_replay_segment_bytes()?.is_some()
-        || !cache.spilled_metal_global_programs.is_empty()
-    {
+    if cache.grouped_replay_enabled() || !cache.spilled_metal_global_programs.is_empty() {
         cache.spill_metal_global_builder_segment(grid_width, grid_height, tile_side)?;
         if cache.spilled_metal_global_programs.is_empty() {
             return Err(ImagingError::InvalidRequest(
@@ -26275,7 +26412,7 @@ fn build_awproject_metal_global_replay_program(
     cache.compiled_total_bytes_complete = true;
     if cache.resident_bytes > cache.budget_bytes {
         return Err(ImagingError::InvalidRequest(format!(
-            "merged AWProject Metal replay needs {} resident bytes above its {}-byte experiment budget",
+            "merged AWProject Metal replay needs {} resident bytes above its {}-byte replay budget",
             cache.resident_bytes, cache.budget_bytes
         )));
     }
@@ -33855,8 +33992,9 @@ fn replay_awproject_metal_global_program(
         let hybrid_prefix =
             env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_RESIDUAL_PREFIX")
                 .map(PathBuf::from);
-        let hybrid_clean =
-            env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_CLEAN").is_some();
+        let grouped_replay = program.aot_grouped_tile.is_some();
+        let hybrid_clean = grouped_replay
+            || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_CLEAN").is_some();
         let hybrid_enabled = hybrid_prefix.is_some() || hybrid_clean;
         if [
             sidecar_prefix.is_some(),
@@ -33892,6 +34030,7 @@ fn replay_awproject_metal_global_program(
             ));
         }
         if hybrid_enabled
+            && !grouped_replay
             && (env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDIVISION_SOURCE_PHASE").is_none()
                 || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_RAW_FRAME_TAYLOR").is_none())
         {
@@ -33997,11 +34136,25 @@ fn replay_awproject_metal_global_program(
                         }
                     }
                 }
-                let candidate = build_awproject_wide_division_candidate_two_lane(
-                    hybrid_generation.expect("hybrid generation"),
-                    &program.prediction_batch,
-                    &dispatch,
-                )?;
+                let candidate = if grouped_replay {
+                    build_awproject_wide_division_candidate_two_lane_with_config(
+                        hybrid_generation.expect("hybrid generation"),
+                        &program.prediction_batch,
+                        &dispatch,
+                        AwProjectWideDivisionCandidateConfig {
+                            source_phase_enabled: true,
+                            raw_frame_taylor_enabled: true,
+                        },
+                        true,
+                        [Duration::ZERO; 2],
+                    )?
+                } else {
+                    build_awproject_wide_division_candidate_two_lane(
+                        hybrid_generation.expect("hybrid generation"),
+                        &program.prediction_batch,
+                        &dispatch,
+                    )?
+                };
                 let candidate_hash_started = Instant::now();
                 let candidate_residual_hash = if hybrid_prefix.is_some() {
                     let candidate_hashes = hash_awproject_prediction_visibilities(
@@ -34477,7 +34630,6 @@ fn replay_awproject_metal_spilled_global_programs(
             profile::millis(prefetch_stats.prefetch_wait),
         );
     }
-    vlass_replay_fixture::capture_if_requested(cache, model_grids, &accumulation.storage)?;
     Ok((programs.len(), largest_samples))
 }
 
@@ -34567,6 +34719,8 @@ fn replay_awproject_compact_window(
     replay_stats: &mut AwProjectCompactReplayStats,
     _persistent_metal_batch: Option<&mut Option<AwProjectMetalBatch>>,
     persistent_metal_resident_program: Option<&mut Option<AwProjectMetalResidentProgram>>,
+    grouped_replay: bool,
+    grouped_tile_side: Option<usize>,
 ) -> Result<(), ImagingError> {
     let prepare_started = Instant::now();
     #[cfg(all(target_os = "macos", not(coverage)))]
@@ -34584,7 +34738,8 @@ fn replay_awproject_compact_window(
     )?;
     #[cfg(all(target_os = "macos", not(coverage)))]
     let gpu_residual_replay_requested = model_grids.is_some()
-        && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GPU_RESIDUAL_REPLAY").is_some();
+        && (grouped_replay
+            || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GPU_RESIDUAL_REPLAY").is_some());
     #[cfg(all(target_os = "macos", not(coverage)))]
     let resident_metal_program_present = persistent_metal_resident_program
         .as_ref()
@@ -34643,6 +34798,7 @@ fn replay_awproject_compact_window(
             model_grids,
             accumulation,
             taylor_weights,
+            grouped_replay,
         )?
     };
     let _prepared_metadata = AwProjectMetalResidentMetadata {
@@ -34771,7 +34927,9 @@ fn replay_awproject_compact_window(
     if !gpu_residual_replay
         && awproject_initial_dirty_replay_prime_is_admitted(
             model_grids.is_some(),
-            env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PRIME_REPLAY_INITIAL_DIRTY").is_some(),
+            grouped_replay
+                || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PRIME_REPLAY_INITIAL_DIRTY")
+                    .is_some(),
         )
     {
         let slot = persistent_metal_resident_program
@@ -34793,6 +34951,7 @@ fn replay_awproject_compact_window(
                 bundles,
                 phase_tables,
                 _prepared_metadata.clone(),
+                grouped_tile_side.unwrap_or(awproject_metal_tile_probe_side()?),
             )?);
             if profile::standard_mfs_profile_detail_enabled() {
                 eprintln!(
@@ -34916,8 +35075,9 @@ fn replay_awproject_compact_window(
             }
             let resident_chain = *psf_term_count == 0
                 && model_grids.is_some()
-                && (env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_RESIDENT_TILE_CHAIN")
-                    .is_some()
+                && (grouped_replay
+                    || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_RESIDENT_TILE_CHAIN")
+                        .is_some()
                     || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GPU_RESIDUAL_REPLAY")
                         .is_some()
                     || windowed_hybrid_clean);
@@ -34944,6 +35104,7 @@ fn replay_awproject_compact_window(
                         bundles,
                         phase_tables,
                         _prepared_metadata.clone(),
+                        grouped_tile_side.unwrap_or(awproject_metal_tile_probe_side()?),
                     )?);
                 }
                 let build_elapsed = build_started.elapsed();
@@ -35296,6 +35457,14 @@ fn accumulate_awproject_mtmfs_metadata_batch(
         })?;
     let aw_cf_cache = cache;
     let mut replay_cache = replay_cache;
+    let grouped_replay = replay_cache
+        .as_deref()
+        .is_some_and(AwProjectCompactReplayCache::grouped_replay_enabled);
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    let grouped_replay_tile_side = replay_cache
+        .as_deref()
+        .and_then(AwProjectCompactReplayCache::grouped_replay_plan)
+        .map(AwProjectGroupedReplayPlan::tile_side);
     #[cfg(all(target_os = "macos", not(coverage)))]
     let (metal_packed_batch_budget_bytes, metal_psf_term_count) = match &accumulation.storage {
         MosaicMtmfsStreamGridStorage::MetalSharedF32 {
@@ -35327,7 +35496,8 @@ fn accumulate_awproject_mtmfs_metadata_batch(
         .transpose()?
         .unwrap_or(0);
     let residual_only = accumulation.storage.is_residual_only()
-        && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_LIVE_CFS_ONLY").is_some();
+        && (grouped_replay
+            || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_LIVE_CFS_ONLY").is_some());
     let active_tap_role_count = if residual_only { 4 } else { 8 };
     #[cfg(all(target_os = "macos", not(coverage)))]
     let metal_packed_batch_ceiling_bytes = metal_packed_batch_budget_bytes.unwrap_or(usize::MAX);
@@ -35342,14 +35512,15 @@ fn accumulate_awproject_mtmfs_metadata_batch(
     let plan_workers = awproject_compact_plan_workers();
     let plan_chunk_samples = awproject_compact_plan_chunk_samples();
     let pack_workers = awproject_compact_pack_workers();
-    let tapless_phase = awproject_compact_tapless_phase();
+    let tapless_phase = grouped_replay || awproject_compact_tapless_phase();
     // The legacy tap ceiling describes the logical phase-applied working set
     // and therefore owns numerical segmentation. A primed Metal program may
     // retain prediction-only compact taps at an initial-dirty boundary;
     // its real admission constraint is the already-accounted combined packed
     // batch ceiling, not the legacy per-arena cap.
     let priming_prediction_taps = model_grids.is_none()
-        && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PRIME_REPLAY_INITIAL_DIRTY").is_some();
+        && (grouped_replay
+            || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PRIME_REPLAY_INITIAL_DIRTY").is_some());
     let compact_tap_materialization_budget_bytes =
         awproject_compact_tap_materialization_budget_bytes(
             tap_budget_bytes,
@@ -35387,24 +35558,15 @@ fn accumulate_awproject_mtmfs_metadata_batch(
     let source_group_route = grouped_visibility_source_group_route(batch.len(), groups)?;
     let mut cursor = 0usize;
     #[cfg(all(target_os = "macos", not(coverage)))]
-    let global_metal_replay = model_grids.is_some()
-        && residual_only
-        && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GLOBAL_TILE_REPLAY").is_some();
+    let global_metal_replay = model_grids.is_some() && residual_only && grouped_replay;
     #[cfg(any(not(target_os = "macos"), coverage))]
     let global_metal_replay = false;
     #[cfg(all(target_os = "macos", not(coverage)))]
-    let progressive_global_metal_builder =
-        env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GLOBAL_TILE_REPLAY").is_some()
-            && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_RESIDENT_PROGRAM_COMPACTION")
-                .is_some()
-            && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GPU_RESIDUAL_REPLAY").is_some();
+    let progressive_global_metal_builder = grouped_replay;
     #[cfg(all(target_os = "macos", not(coverage)))]
-    let raw_global_metal_builder = progressive_global_metal_builder
-        && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_RAW_CF_GLOBAL_REPLAY").is_some();
+    let raw_global_metal_builder = progressive_global_metal_builder;
     #[cfg(all(target_os = "macos", not(coverage)))]
-    if raw_global_metal_builder
-        && (!tapless_phase || awproject_metal_global_replay_segment_bytes()?.is_none())
-    {
+    if raw_global_metal_builder && (!tapless_phase || grouped_replay_tile_side.is_none()) {
         return Err(ImagingError::InvalidRequest(
             "raw-CF AWProject global replay requires tapless pointing phases and bounded spill segmentation"
                 .to_string(),
@@ -35420,7 +35582,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                 cache,
                 request.geometry.image_shape[0],
                 request.geometry.image_shape[1],
-                awproject_metal_tile_probe_side()?,
+                grouped_replay_tile_side.unwrap_or(awproject_metal_tile_probe_side()?),
             )?;
             let (classification_stats, classification_skipped_samples, cached_cursor_end) = {
                 let block = cache
@@ -35522,6 +35684,8 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                     &mut replay_stats,
                     Some(&mut window.persistent_metal_batch),
                     Some(&mut window.persistent_metal_resident_program),
+                    grouped_replay,
+                    grouped_replay_tile_side,
                 )?;
                 replay_stats.windows += 1;
                 replay_stats.largest_window_samples = replay_stats
@@ -35562,7 +35726,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
         .is_some_and(|cache| cache.should_attempt_fill(replay_block_ordinal));
     let replay_fill_budget = replay_cache
         .as_deref()
-        .map(AwProjectCompactReplayCache::remaining_bytes)
+        .map(AwProjectCompactReplayCache::fill_budget_bytes)
         .unwrap_or(0);
     let mut replay_fill_enabled = attempt_replay_fill;
     let mut replay_windows = Vec::<AwProjectCompactReplayWindow>::new();
@@ -35612,6 +35776,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                     plan_end,
                     plan_workers,
                     model_grids.is_some()
+                        || grouped_replay
                         || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PRIME_REPLAY_INITIAL_DIRTY")
                             .is_some(),
                     residual_only,
@@ -35632,6 +35797,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
             let additional_tap_bytes = awproject_compact_candidate_tap_bytes(
                 &specs[..active_tap_role_count],
                 &tap_indices,
+                tapless_phase,
             )?;
             // Priming may classify distinct prediction CFs during the initial
             // dirty pass, but those CFs are not consumed until a later major
@@ -35687,7 +35853,8 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                 .take(active_tap_role_count)
                 .enumerate()
             {
-                let identity_key = awproject_compact_tap_identity_key(spec.request.key);
+                let identity_key =
+                    awproject_compact_tap_identity_key(spec.request.key, tapless_phase);
                 let bundle_index = if let Some(&index) = tap_indices.get(&identity_key) {
                     index
                 } else {
@@ -35764,6 +35931,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
             aw_cf_cache,
             &tap_requests,
             phase_tables.as_ref(),
+            tapless_phase,
             window_materialization_budget_bytes,
             env::var_os("CASA_RS_AWPROJECT_ALTERNATE_CF_LOAD_ORDER").is_some()
                 && replay_stats.windows % 2 == 1,
@@ -35856,6 +36024,8 @@ fn accumulate_awproject_mtmfs_metadata_batch(
             &mut replay_stats,
             Some(&mut persistent_metal_batch),
             Some(&mut persistent_metal_resident_program),
+            grouped_replay,
+            grouped_replay_tile_side,
         )?;
         replay_stats.windows += 1;
         replay_stats.largest_window_samples = replay_stats
@@ -35873,10 +36043,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                 persistent_metal_batch,
                 persistent_metal_resident_program,
             };
-            if env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_RESIDENT_PROGRAM_COMPACTION")
-                .is_some()
-                && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GPU_RESIDUAL_REPLAY").is_some()
-            {
+            if grouped_replay {
                 #[cfg(all(target_os = "macos", not(coverage)))]
                 let raw_program_bytes = window
                     .persistent_metal_resident_program
@@ -35884,33 +36051,34 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                     .map(AwProjectMetalResidentProgram::resident_bytes)
                     .unwrap_or(0);
                 #[cfg(all(target_os = "macos", not(coverage)))]
-                let resident_bytes_released =
-                    if progressive_global_metal_builder && raw_global_metal_builder {
-                        let program =
-                            window
-                                .persistent_metal_resident_program
-                                .take()
-                                .ok_or_else(|| {
-                                    ImagingError::InvalidRequest(
+                let resident_bytes_released = if progressive_global_metal_builder
+                    && raw_global_metal_builder
+                {
+                    let program =
+                        window
+                            .persistent_metal_resident_program
+                            .take()
+                            .ok_or_else(|| {
+                                ImagingError::InvalidRequest(
                                 "raw-CF global AWProject replay expected a primed resident program"
                                     .to_string(),
                             )
-                                })?;
-                        replay_cache
-                            .as_deref_mut()
-                            .expect("replay fill is enabled only with a replay cache")
-                            .absorb_metal_raw_global_program(
-                                program,
-                                &window.source_samples,
-                                &window.tap_requests,
-                                &window.bundles,
-                                request.geometry.image_shape,
-                                awproject_metal_tile_probe_side()?,
-                            )?;
-                        window.release_source_materialization()
-                    } else {
-                        window.compact_to_resident_metal_program()
-                    };
+                            })?;
+                    replay_cache
+                        .as_deref_mut()
+                        .expect("replay fill is enabled only with a replay cache")
+                        .absorb_metal_raw_global_program(
+                            program,
+                            &window.source_samples,
+                            &window.tap_requests,
+                            &window.bundles,
+                            request.geometry.image_shape,
+                            grouped_replay_tile_side.unwrap_or(awproject_metal_tile_probe_side()?),
+                        )?;
+                    window.release_source_materialization()
+                } else {
+                    window.compact_to_resident_metal_program()
+                };
                 #[cfg(any(not(target_os = "macos"), coverage))]
                 let resident_bytes_released = window.compact_to_resident_metal_program();
                 if resident_bytes_released > 0 && profile::standard_mfs_profile_detail_enabled() {
@@ -67627,6 +67795,7 @@ mod tests {
     #[cfg(all(target_os = "macos", not(coverage)))]
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
+    use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -67771,8 +67940,62 @@ mod tests {
     }
 
     #[test]
+    fn grouped_replay_plan_rejects_unbounded_resource_and_support_choices() {
+        let root = PathBuf::from("/tmp/grouped-replay");
+        let valid = super::AwProjectGroupedReplayPlan::new(
+            root.clone(),
+            512 * 1024 * 1024,
+            1024,
+            1.0e-6,
+            16,
+        )
+        .expect("valid grouped replay plan");
+        assert_eq!(valid.spill_directory(), root);
+        assert!(
+            super::AwProjectGroupedReplayPlan::new(
+                PathBuf::from("/tmp"),
+                512 * 1024 * 1024 - 1,
+                1024,
+                1.0e-6,
+                16,
+            )
+            .is_err()
+        );
+        assert!(
+            super::AwProjectGroupedReplayPlan::new(
+                PathBuf::from("/tmp"),
+                512 * 1024 * 1024,
+                0,
+                1.0e-6,
+                16,
+            )
+            .is_err()
+        );
+        assert!(
+            super::AwProjectGroupedReplayPlan::new(
+                PathBuf::from("/tmp"),
+                512 * 1024 * 1024,
+                1024,
+                1.0e-4 + f64::EPSILON,
+                16,
+            )
+            .is_err()
+        );
+        assert!(
+            super::AwProjectGroupedReplayPlan::new(
+                PathBuf::from("/tmp"),
+                512 * 1024 * 1024,
+                1024,
+                1.0e-6,
+                7,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn compact_replay_cache_accounts_compiled_bytes_and_prefix_completeness() {
-        let mut cache = super::AwProjectCompactReplayCache::new(usize::MAX);
+        let mut cache = super::AwProjectCompactReplayCache::new(usize::MAX, None);
         assert!(
             cache
                 .store(0, compact_replay_test_block(8, 8))
@@ -67804,11 +68027,37 @@ mod tests {
 
     #[test]
     fn compact_replay_cache_marks_unmeasured_budget_rejection_incomplete() {
-        let mut cache = super::AwProjectCompactReplayCache::new(0);
+        let mut cache = super::AwProjectCompactReplayCache::new(0, None);
         cache.mark_exceeds_budget(0);
         assert_eq!(cache.compiled_total_bytes, 0);
         assert!(!cache.compiled_total_bytes_complete);
     }
+
+    #[test]
+    fn grouped_replay_cache_keeps_only_source_block_topology() {
+        let grouped = super::AwProjectGroupedReplayPlan::new(
+            PathBuf::from("/tmp"),
+            512 * 1024 * 1024,
+            1024 * 1024 * 1024,
+            1.0e-6,
+            16,
+        )
+        .expect("grouped replay plan");
+        let mut cache = super::AwProjectCompactReplayCache::new(0, Some(grouped));
+        assert_eq!(cache.fill_budget_bytes(), 1024 * 1024 * 1024);
+        assert!(
+            cache
+                .store(0, compact_replay_test_block(8, 8))
+                .expect("store grouped source-block topology")
+        );
+        let block = cache.block(0).expect("grouped source-block placeholder");
+        assert_eq!(block.cached_cursor_end, block.shape.samples);
+        assert!(block.windows.is_empty());
+        assert_eq!(block.resident_bytes, 0);
+        assert_eq!(cache.resident_bytes, 0);
+        assert!(cache.compiled_total_bytes_complete);
+    }
+
     #[cfg(all(target_os = "macos", not(coverage)))]
     use super::{
         FftUseCase, StandardMfsDirtyAccumulation, StandardMfsDirtyGridStorage,
@@ -68680,7 +68929,7 @@ mod tests {
         let mut current_samples = 0usize;
         for specs in candidates {
             let additional =
-                super::awproject_compact_candidate_tap_bytes(&specs, &indices).unwrap();
+                super::awproject_compact_candidate_tap_bytes(&specs, &indices, false).unwrap();
             let next =
                 super::awproject_compact_window_tap_bytes(current_bytes, additional).unwrap();
             if next > budget && current_samples > 0 {
@@ -68690,7 +68939,7 @@ mod tests {
                 current_samples = 0;
             }
             let additional =
-                super::awproject_compact_candidate_tap_bytes(&specs, &indices).unwrap();
+                super::awproject_compact_candidate_tap_bytes(&specs, &indices, false).unwrap();
             current_bytes =
                 super::awproject_compact_window_tap_bytes(current_bytes, additional).unwrap();
             assert!(current_bytes <= budget);
@@ -72340,9 +72589,14 @@ mod tests {
         .unwrap();
 
         let mut specialized = awproject_effective_support_test_program();
-        let specialized_stats =
-            super::compile_awproject_metal_aot_grouped_tile(&mut specialized, config, 16, 16)
-                .unwrap();
+        let specialized_stats = super::compile_awproject_metal_aot_grouped_tile(
+            &mut specialized,
+            config,
+            16,
+            16,
+            usize::MAX,
+        )
+        .unwrap();
         assert_awproject_effective_support_semantic_stats_equal(
             &specialized_stats,
             &incumbent_stats,
@@ -72477,6 +72731,7 @@ mod tests {
             },
             16,
             16,
+            usize::MAX,
         )
         .unwrap();
         let expected = program
@@ -72560,6 +72815,24 @@ mod tests {
         )
         .expect_err("a mismatched loader threshold must fail closed");
         assert!(error.to_string().contains("threshold differs"));
+
+        let mut corrupt_descriptor = descriptor.clone();
+        corrupt_descriptor
+            .aot_grouped_plans
+            .as_mut()
+            .expect("grouped plan section")
+            .sha256[0] ^= 1;
+        let error = super::replay_awproject_metal_prefetched_sequence(
+            &store,
+            std::slice::from_ref(&corrupt_descriptor),
+            Some(super::AwProjectMetalEffectiveSupportConfig {
+                omitted_energy_fraction:
+                    super::AWPROJECT_METAL_EFFECTIVE_SUPPORT_FOCUSED_OMITTED_ENERGY_FRACTION,
+            }),
+            |_, _, _| Ok(()),
+        )
+        .expect_err("a corrupt persisted grouped section must fail closed");
+        assert!(error.to_string().contains("SHA-256 verification"));
     }
 
     #[test]

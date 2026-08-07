@@ -7912,3 +7912,77 @@ This is promoted reduced-row correctness and performance evidence, not final
 the row passes correctness and exceeds the independent `10x` gate. The next
 work is stabilization and the existing full-16-SPW/full-geometry promotion
 ladder, not another speculative optimization family.
+
+### 2026-08-07 grouped-tile production recovery
+
+Brian approved recovering the best retained grouped-tile candidate and making
+it the production architecture for eligible Metal AWProject MT-MFS clean
+workloads. The recovered lineage is intentionally narrow:
+
+- `b0cbb6f73`: bounded effective-support compiler;
+- `46fc37c72`: one-pass exact support compiler; and
+- `c5c31cc66`: source-order grouped-tile artifact and replay.
+
+Rejected trials and their reverts were not imported. The production integration
+replaces fixture-side activation with an explicit resource-admitted execution
+plan. The frontend derives capture-time compiler admission from the
+initial-grid lifetime ledger, derives persistent replay retention from the
+residual stage, chooses 512 MiB to 8 GiB segments from their non-overlapping
+headroom, and places an unlinked integrity-checked spill beside `imagename`.
+The existing `imaging_memory_target_mb`, `imaging_memory_pressure_policy`, and
+`imagename` task/UI parameters therefore govern memory and storage placement.
+There is no new scientific parameter or hidden activation environment variable.
+
+The frozen Full16 residual-replay discriminator improved from
+`70.165468583 s` to `65.167962583 s`, a `7.12%` reduction. FourSPW grouped
+replay took `7.1950275 s`. Full16 image NRMSE was `3.7105927e-4` and
+`4.5706914e-4`, with zero rejected products. Process footprint fell from
+approximately `19.8203 GB` to `17.8247 GB`, resident memory from approximately
+`15.1615 GB` to `9.2865 GB`, and swap-out remained zero. The final measurement
+receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/autoresearch/vlass-full16-replay-v1/runs/20260807T044023Z-measure-a34e1bd410d7/receipt.json`,
+SHA-256
+`ba720f5a0c588787b8825535c2de3bcbb50a07f9dd564b68aa039ab6ab919cfb`.
+The prior retained receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/autoresearch/vlass-full16-replay-v1/runs/20260806T235717Z-measure-2cc30f7402cf/receipt.json`.
+
+The available CASA `1265.700682709 s` figure is only a favorable comparison
+envelope for this residual-replay discriminator; it is not an identical
+end-to-end processing boundary. Dividing it by `65.167962583 s` gives
+`19.422x`, but that number is not promoted as a matched CASA/casa-rs clean
+speedup. No CASA reference was rerun.
+
+Production canary
+`20260807T123908Z-grouped-tile-production-canary-four-spw` proved that the
+shared planner compiled and spilled one grouped segment containing 112 source
+programs and 6,416,526 ordered samples, with zero rejected blocks. The measured
+builder peak was `5,660,679,272` bytes and the payload was `2,532,787,040`
+bytes. The supplemental validator independently rehashed every raw and grouped
+section and passed source/program/sample cardinality, the `1e-6` support bound,
+the compile ledger, and absence of experimental activation flags:
+
+- wrapper receipt SHA-256:
+  `1e0fb32a9aac72f859f85c01a4ad7aa482cba39a2028c3b1d90d44009404a490`;
+- grouped validation SHA-256:
+  `52b77bcccd4e23306c686ce74bacbae451d5682b1022d70817756275beb5e4b9`.
+
+The wrapper reports failure only because its retired raw-fixture schema did not
+count grouped sections. The supplemental production-artifact validation is the
+earned canary result; no end-to-end grouped canary runtime is claimed.
+
+Negative integration evidence is retained rather than hidden:
+
+- a `587 MB` replay allowance and then a `1.642 GB` allowance were both below
+  the `1.654 GB` raw-builder requirement;
+- a `0.5 GB` segment policy produced 63 segments and approximately `20.9 GB`
+  of spill, so it was retired;
+- a `274.304 s` full FourSPW run completed all 63 fields, 2,000 iterations, and
+  products, but legacy compact-block retention prevented grouped finalization,
+  so it is fallback-path negative evidence, not grouped performance; and
+- two subsequent canaries exposed topology-placeholder and fill-budget
+  integration defects before the successful production canary.
+
+No new `12,150`-square clean development workload or unchanged CASA reference
+was run. Full-geometry single-field and all-63-field acceptance remains
+outstanding and retains the existing correctness, product, memory, and matched
+`10x` requirements.
