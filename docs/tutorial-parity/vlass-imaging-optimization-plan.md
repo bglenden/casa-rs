@@ -8195,3 +8195,99 @@ single-field boundary, but not performance promotion under the current
 ceiling. No all-fields row was launched. Advancing to full-16-SPW or
 all-63-field acceptance requires Brian's explicit decision to accept this
 measured baseline or authorize another bounded performance investigation.
+
+Brian authorized continuing the finite promotion ladder from that measured
+baseline. Release executable
+`9b398cd9f1c7c376fed369cf13fce387f1c8fa6ab28457f270fcbcdd470f07f0`
+at commit `761a2d8b577245c2583970cd8848bf5aed313f14` then completed the
+single-field, `4096`-square, full-16-SPW clean row in `86.580 s`. The exactly
+matched frozen CASA row took `1690.1155176250031 s`, so the measured release
+speedup is `19.520854x`. The run completed six major cycles and 641 minor
+iterations, stopped on the nsigma threshold, released its
+`9,927,247,204`-byte resident replay program before product materialization,
+and recorded no swap-in or swap-out.
+
+The full-16-SPW 19-product comparison passed after the established scientific
+floor review classified six alpha-cutoff mask cells as boundary-only
+differences. Image and residual normalized RMS differences were approximately
+`1.3e-6`; model differences were approximately `3.7e-7` to `4.4e-7`; and all
+numerical, topology, metadata, beam, source, and flux gates passed. Five CASA
+and five casa-rs major-cycle boundaries aligned with zero discrete mismatches.
+The run log, comparison input, comparison output, trace comparison, and
+scientific-floor receipt SHA-256 values are respectively:
+
+- `a2dd421b5ab2f605ae277d0a7ceedcb8673b40c0de35d814e8b761577c7c58b4`;
+- `19545182ada8d17721bba9390b68e1e9defa061a2e70bdf26102c6ccf02f307f`;
+- `491ad25aadb364a73fa7c8d1f51cac5c17cbbc5ccf48ade576bf2db0a0ef0bd3`;
+- `445446bca33213bbd7cc95e6793386e94a329b1588c8f444e78cd0030f885339`;
+  and
+- `aa5707756312e8215ee67292c108fe25933ee3d7a2dcfa4bbfc3867029236565`.
+
+The next genuinely missing row was the all-63-field, POINTING,
+`4096`-square, four-SPW clean workload. It used all 63 selected fields and SPWs
+`2,7,12,17`, exact CF support, AWProject with 32 W planes, MT-MFS `nterms=2`,
+scales `[0,5,12]`, the frozen deterministic mask, and `niter=2000`. It
+completed in `515.290 s` versus the exactly matched frozen CASA
+`3470.1970449999208 s`, a release speedup of `6.734454x`. The run completed
+12 major cycles and 193 minor iterations, stopped on the nsigma threshold,
+wrote all 19 products, rejected no replay blocks, recorded zero process swaps,
+and peaked at `11,273,830,400` bytes RSS.
+
+This row passes the complete correctness contract. All 19 product gates pass;
+restored-image normalized RMS differences are `7.38e-5` and `9.74e-5`, model
+differences are `5.97e-6` and `1.60e-4`, and the beam-kernel NRMSE is
+`1.70e-7`. Eleven CASA and eleven casa-rs major-cycle boundaries align with
+zero discrete mismatches; the maximum start-peak relative difference is
+`9.79e-5` and the maximum model-flux relative difference is `7.15e-6`.
+The exact-support receipt reports one segment containing 240 source programs,
+zero cropped plans, equal original and retained tap visits, and unchanged
+kernel residency.
+
+Performance is not promoted: `6.734454x` is below the independent `10x`
+requirement. The measured stage boundary is specific rather than speculative:
+`341.943 s` of the `515.290 s` total is initial PSF/dirty gridding, while
+residual degrid/grid contributes `128.358 s`. The initial replay reports
+`155.091 s` of source preparation and `136.187 s` of Metal gridding. The
+larger all-field full-16-SPW row is therefore paused while this exact scaling
+boundary receives one bounded diagnosis; no CASA reference is rerun and no
+larger workload is launched merely to reconfirm the reduced-row miss.
+
+The immutable all-field run log, comparison input, comparison output,
+comparison log, and trace comparison SHA-256 values are respectively:
+
+- `ffdb48967463a88868a358b1d4e61a2be19cf374af730fb8b6fd7ecfb3921c37`;
+- `f08e66556dab4807972ad2924af29174a2ad7b02a442711922bbcd381daa06a7`;
+- `5496053e35b95515a8672af7f77916a3ecc713f4e99e1c4954409939e6744a71`;
+- `f0d6837cada76a45cb666889eb5fccfe9e3782043d7a081e64a57297dd0f59c7`;
+  and
+- `fd0bd4ae8f1596a2455097f853b3131de5591fcf0cdc6dffa6b78dcb27a54519`.
+
+The escalated max-reasoning diagnosis identifies this as an initial-grid
+planner regression, not a general grouped-replay or science failure. The
+current plan selected Metal initial gridding with only `256 MiB` each for CF
+residency and logical tap scratch. That produced 240 source windows, 29,220 CF
+loads, zero hits, 29,170 evictions, and `136.187 s` of Metal initial-grid work.
+The already-correct retained all-field v24 row used the existing exact
+192-pixel dynamic sparse CPU initial-grid path, seven workers on this host,
+AArch64 NEON 2x2 updates, and a `512 MiB` logical tap arena. It required 112
+windows and completed the same initial stage in `119.656 s`.
+
+One bounded production correction is therefore authorized before the
+all-field full-16-SPW row. Exact-support grouped AOT/resident Metal residual
+replay remains unchanged. The resource planner selects the existing sparse CPU
+initial-grid path for resolved multi-field AWProject MT-MFS workloads when its
+lifetime ledger fits, admits the `512 MiB` tap arena independently of the
+`256 MiB` CF-residency ceiling, respects an explicit worker setting, and
+otherwise derives workers from the existing resource calibration. Tile size,
+dynamic scheduling, NEON eligibility, and tap capacity must be plan-owned
+rather than hidden environment activation.
+
+The same-row release falsifier is finite: initial grid must be no more than
+`173.673 s`, total wall no more than `347.0197 s`, exact-support grouped replay
+must remain active with zero replay spill reads, all 19 products and the
+major-cycle trajectory must pass, and memory must remain bounded without
+process swapping. Substituting only the previously measured initial stage
+models `293.003 s`, or `11.844x` CASA. A miss is retained as negative evidence
+and is not rerun unchanged. Increasing CF residency alone is not the selected
+experiment because even removing all measured CF-load-worker time would model
+approximately `421.8 s`.

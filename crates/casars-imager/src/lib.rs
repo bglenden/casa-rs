@@ -6267,6 +6267,9 @@ fn run_standard_mfs_plan_probe_from_config(config: &CliConfig) -> Result<RunSumm
             ms_paths.len()
         ));
     }
+    let standard_mfs_initial_dirty_backend_explicit =
+        config.standard_mfs_initial_dirty_backend.is_some();
+    let standard_mfs_grid_threads_explicit = !standard_mfs_grid_workers_requested_auto(config);
     let planned_runtime = apply_standard_mfs_runtime_plan(config, false, ms_paths.len());
     let planned_config = planned_runtime.applied(config);
     let config = &planned_config;
@@ -6320,6 +6323,11 @@ fn run_standard_mfs_plan_probe_from_config(config: &CliConfig) -> Result<RunSumm
     if active_selected_rows.is_empty() {
         return Err("selection resolved to no active mosaic MT-MFS rows".to_string());
     }
+    let selected_field_count = active_selected_rows
+        .iter()
+        .map(|row| row.field_id)
+        .collect::<BTreeSet<_>>()
+        .len();
 
     let requires_frequency_engine =
         selection
@@ -6379,7 +6387,14 @@ fn run_standard_mfs_plan_probe_from_config(config: &CliConfig) -> Result<RunSumm
         .map(|plan| plan.active_selected_rows.len().div_ceil(row_block_rows))
         .sum::<usize>();
     let strategy = if !clean_is_dirty(config) && config.aw_project.is_some() {
-        admit_awproject_compact_replay_retention(base_strategy, stream_block_count)?
+        let initial_grid_strategy = admit_awproject_multifield_initial_grid(
+            base_strategy,
+            config,
+            selected_field_count,
+            standard_mfs_initial_dirty_backend_explicit,
+            standard_mfs_grid_threads_explicit,
+        )?;
+        admit_awproject_compact_replay_retention(initial_grid_strategy, stream_block_count)?
     } else {
         base_strategy
     };
@@ -9319,6 +9334,9 @@ fn run_single_image_from_config_with_gridder_override(
     };
     let awproject_core_config = normalize_awproject_core_projection(config)?;
     let config = awproject_core_config.as_ref();
+    let standard_mfs_initial_dirty_backend_explicit =
+        config.standard_mfs_initial_dirty_backend.is_some();
+    let standard_mfs_grid_threads_explicit = !standard_mfs_grid_workers_requested_auto(config);
     validate_save_model_request(config)?;
     validate_start_model_request(config)?;
     validate_auto_mask_config(config.use_mask, &config.auto_mask)?;
@@ -9383,6 +9401,8 @@ fn run_single_image_from_config_with_gridder_override(
             data_column,
             open_measurement_set,
             total_start,
+            standard_mfs_initial_dirty_backend_explicit,
+            standard_mfs_grid_threads_explicit,
         );
     }
     if can_run_mtmfs_from_bounded_stream(config, force_standard_gridder, ms_paths.len()) {
@@ -10906,6 +10926,8 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
     data_column: VisibilityDataColumn,
     open_measurement_set: Duration,
     total_start: Instant,
+    standard_mfs_initial_dirty_backend_explicit: bool,
+    standard_mfs_grid_threads_explicit: bool,
 ) -> Result<RunSummary, String> {
     let geometry = ImageGeometry {
         image_shape: [config.imsize, config.imsize],
@@ -11043,7 +11065,14 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         .map(|plan| plan.active_selected_rows.len().div_ceil(row_block_rows))
         .sum::<usize>();
     let strategy = if !clean_is_dirty(config) && config.aw_project.is_some() {
-        admit_awproject_compact_replay_retention(base_strategy, stream_block_count)?
+        let initial_grid_strategy = admit_awproject_multifield_initial_grid(
+            base_strategy,
+            config,
+            selected_field_count,
+            standard_mfs_initial_dirty_backend_explicit,
+            standard_mfs_grid_threads_explicit,
+        )?;
+        admit_awproject_compact_replay_retention(initial_grid_strategy, stream_block_count)?
     } else {
         base_strategy
     };
@@ -11189,23 +11218,12 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
     let run_started_at = Instant::now();
     let mut replay_invocation = 0usize;
     let weight_density_mode = standard_mfs_streaming_weight_density_mode(config);
-    let mut execution_config = imaging_execution_config_with_plan(config, &strategy);
+    let execution_config = imaging_execution_config_with_plan(config, &strategy);
     if execution_config
         .standard_mfs
         .awproject_grouped_replay
         .is_some()
     {
-        execution_config
-            .standard_mfs
-            .resolved
-            .decisions
-            .push(casa_imaging::ImagingPlanDecision {
-                name: "awproject_selected_field_count",
-                value: selected_field_count.to_string(),
-                origin: casa_imaging::ImagingPlanOrigin::Workload,
-                reason: "count distinct FIELD_ID values in the resolved active row selection"
-                    .to_string(),
-            });
         eprintln!(
             "awproject_selected_field_count selected_fields={selected_field_count} \
              selection=resolved-active-field-ids"
@@ -24973,6 +24991,15 @@ fn plan_standard_mfs_runtime_with_metal_device(
         {
             Some(mosaic_mfs_cpu_grid_threads(auto_threads).to_string())
         }
+        StandardMfsAccelerationPolicy::Metal
+            if mosaic_mfs_eligible
+                && config
+                    .field_ids
+                    .as_ref()
+                    .is_some_and(|field_ids| field_ids.len() > 1) =>
+        {
+            Some(mosaic_mfs_cpu_grid_threads(auto_threads).to_string())
+        }
         StandardMfsAccelerationPolicy::Metal if mosaic_mfs_eligible => Some("1".to_string()),
         StandardMfsAccelerationPolicy::MultiCpu | StandardMfsAccelerationPolicy::Metal => {
             Some(auto_threads.max(2).to_string())
@@ -38270,6 +38297,15 @@ fn standard_mfs_memory_allocation_lifetimes(
                     let initial_plane_count = plan.workload.grid_planes.max(1);
                     let residual_plane_count =
                         plan.workload.taylor_terms.max(1).min(initial_plane_count);
+                    let initial_grid_backing = if standard_mfs_plan_decision_is(
+                        plan,
+                        "awproject_initial_grid_backend",
+                        "cpu-dynamic-sparse-f64",
+                    ) {
+                        host
+                    } else {
+                        backing
+                    };
                     if bytes % initial_plane_count != 0 {
                         return Err(format!(
                             "standard-MFS grid allocation {bytes} is not divisible by its \
@@ -38287,7 +38323,7 @@ fn standard_mfs_memory_allocation_lifetimes(
                         NoFurtherUse
                     };
                     let mut residencies = vec![standard_mfs_memory_residency(
-                        backing,
+                        initial_grid_backing,
                         bytes,
                         InitialGrid,
                         DirtyTransform,
@@ -38399,10 +38435,39 @@ fn standard_mfs_memory_allocation_lifetimes(
                     }
                     residencies
                 }
-                "worker scratch"
-                | "resident tiles"
-                | "tile queue"
-                | "direct Metal host scratch" => {
+                "direct Metal host scratch" => {
+                    let cpu_sparse_initial = standard_mfs_plan_decision_is(
+                        plan,
+                        "awproject_initial_grid_backend",
+                        "cpu-dynamic-sparse-f64",
+                    );
+                    let mut residencies = if cpu_sparse_initial {
+                        Vec::new()
+                    } else {
+                        vec![standard_mfs_memory_residency(
+                            backing,
+                            bytes,
+                            InitialGrid,
+                            InitialGrid,
+                            if has_clean_cycles {
+                                AtStage(ResidualGrid)
+                            } else {
+                                NoFurtherUse
+                            },
+                        )]
+                    };
+                    if has_clean_cycles {
+                        residencies.push(standard_mfs_memory_residency(
+                            backing,
+                            bytes,
+                            ResidualGrid,
+                            ResidualGrid,
+                            NoFurtherUse,
+                        ));
+                    }
+                    residencies
+                }
+                "worker scratch" | "resident tiles" | "tile queue" => {
                     let mut residencies = vec![standard_mfs_memory_residency(
                         backing,
                         bytes,
@@ -38698,6 +38763,256 @@ fn admit_awproject_compact_replay_retention(
     });
     rebuild_standard_mfs_memory_lifetime_ledger(&mut plan, true)?;
     Ok(plan)
+}
+
+const AWPROJECT_MULTIFIELD_INITIAL_GRID_TILE_SIDE: usize = 192;
+const AWPROJECT_MULTIFIELD_INITIAL_GRID_TAP_BYTES: usize = 512 * 1024 * 1024;
+const AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES: usize = 512 * 1024 * 1024;
+
+fn replace_standard_mfs_memory_allocation(
+    plan: &mut ImagingResolvedPlan,
+    component: &str,
+    bytes: usize,
+) -> bool {
+    let mut replaced = false;
+    for allocation in &mut plan.memory_allocations {
+        if allocation.component == component {
+            allocation.bytes = bytes;
+            replaced = true;
+        }
+    }
+    for allocation in &mut plan.workload.fixed_allocations {
+        if allocation.component == component {
+            allocation.bytes = bytes;
+        }
+    }
+    replaced
+}
+
+fn replace_standard_mfs_plan_decision(
+    plan: &mut ImagingResolvedPlan,
+    decision: casa_imaging::ImagingPlanDecision,
+) {
+    plan.decisions
+        .retain(|existing| existing.name != decision.name);
+    plan.decisions.push(decision);
+}
+
+fn standard_mfs_plan_decision_is(plan: &ImagingResolvedPlan, name: &str, expected: &str) -> bool {
+    plan.decisions
+        .iter()
+        .rev()
+        .find(|decision| decision.name == name)
+        .is_some_and(|decision| decision.value == expected)
+}
+
+fn reject_awproject_multifield_initial_grid(
+    mut plan: ImagingResolvedPlan,
+    selected_field_count: usize,
+    reason: String,
+) -> ImagingResolvedPlan {
+    replace_standard_mfs_plan_decision(
+        &mut plan,
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_selected_field_count",
+            value: selected_field_count.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "count distinct FIELD_ID values in the resolved active row selection"
+                .to_string(),
+        },
+    );
+    replace_standard_mfs_plan_decision(
+        &mut plan,
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_multifield_initial_grid_admission",
+            value: "rejected".to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason,
+        },
+    );
+    plan
+}
+
+fn admit_awproject_multifield_initial_grid(
+    plan: ImagingResolvedPlan,
+    config: &CliConfig,
+    selected_field_count: usize,
+    initial_dirty_backend_explicit: bool,
+    grid_threads_explicit: bool,
+) -> Result<ImagingResolvedPlan, String> {
+    let explicit_initial_backend = config
+        .standard_mfs_initial_dirty_backend
+        .as_deref()
+        .and_then(parse_standard_mfs_backend_for_plan);
+    let eligible = selected_field_count > 1
+        && config.aw_project.is_some()
+        && config.deconvolver == Deconvolver::Mtmfs
+        && config.nterms == 2
+        && !clean_is_dirty(config)
+        && plan.metal.eligible
+        && standard_mfs_plan_decision_is(
+            &plan,
+            "awproject_grouped_replay_replaced_generic_caches",
+            "true",
+        )
+        && (!initial_dirty_backend_explicit
+            || explicit_initial_backend == Some(StandardMfsBackend::Cpu));
+    if !eligible {
+        return Ok(plan);
+    }
+
+    let priming_extension_bytes = awproject_initial_dirty_replay_priming_tap_extension_bytes(
+        AWPROJECT_MULTIFIELD_INITIAL_GRID_TAP_BYTES,
+    )?;
+    let mut candidate = plan.clone();
+    let replaced_taps = replace_standard_mfs_memory_allocation(
+        &mut candidate,
+        "AWProject source-order tap scratch",
+        AWPROJECT_MULTIFIELD_INITIAL_GRID_TAP_BYTES,
+    );
+    let replaced_extension = replace_standard_mfs_memory_allocation(
+        &mut candidate,
+        "AWProject initial-dirty replay-priming tap extension",
+        priming_extension_bytes,
+    );
+    if !replaced_taps || !replaced_extension {
+        return Ok(reject_awproject_multifield_initial_grid(
+            plan,
+            selected_field_count,
+            "the AWProject MT-MFS lifetime ledger omitted the required tap allocations".to_string(),
+        ));
+    }
+
+    let workers = candidate.workers.max(1);
+    for decision in [
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_selected_field_count",
+            value: selected_field_count.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "count distinct FIELD_ID values in the resolved active row selection"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_source_order_tap_bytes",
+            value: AWPROJECT_MULTIFIELD_INITIAL_GRID_TAP_BYTES.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "admit a 512 MiB logical compact-tap arena independently of the full-cell CF residency for the resolved multi-field CPU initial grid"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_initial_dirty_replay_priming_tap_extension_bytes",
+            value: priming_extension_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "charge the two prediction roles materialized while the six-role initial-grid segmentation remains authoritative"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_initial_grid_backend",
+            value: "cpu-dynamic-sparse-f64".to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "the resolved multi-field AWProject MT-MFS topology and exact lifetime ledger admit the existing exact-support sparse CPU initial grid while residual replay remains grouped Metal"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_initial_grid_sparse_tile_side",
+            value: AWPROJECT_MULTIFIELD_INITIAL_GRID_TILE_SIDE.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "use the measured support-aware sparse tile geometry without changing source order or CF support"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_initial_grid_dynamic_scheduler",
+            value: "true".to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "schedule disjoint active sparse tiles dynamically across the admitted CPU workers"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_initial_grid_neon_2x2",
+            value: cfg!(target_arch = "aarch64").to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: if cfg!(target_arch = "aarch64") {
+                "the selected host supports the existing AArch64 NEON 2x2 update kernel"
+                    .to_string()
+            } else {
+                "the selected host is not AArch64; retain the scalar exact-support update kernel"
+                    .to_string()
+            },
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_initial_grid_workers",
+            value: workers.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: if grid_threads_explicit {
+                "respect the explicit standard-MFS worker request".to_string()
+            } else {
+                "use the assigned CPU hard cap while authoritative production windows calibrate the exact sparse-tile worker count"
+                    .to_string()
+            },
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_initial_grid_workers_source",
+            value: if grid_threads_explicit {
+                "explicit"
+            } else {
+                "resource-calibrated"
+            }
+            .to_string(),
+            origin: if grid_threads_explicit {
+                casa_imaging::ImagingPlanOrigin::UserPolicy
+            } else {
+                casa_imaging::ImagingPlanOrigin::Resources
+            },
+            reason: if grid_threads_explicit {
+                "the caller supplied standard_mfs_grid_threads before runtime planning".to_string()
+            } else {
+                "the runtime planner derived the hard cap from assigned CPUs and enables bounded exact-kernel production-window calibration"
+                    .to_string()
+            },
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_multifield_initial_grid_admission",
+            value: "admitted".to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "the 512 MiB tap arena, replay-priming extension, sparse-grid ceiling, source blocks, CF/POINTING state, and initial compensated grid fit the exact stage lifetime ledger"
+                .to_string(),
+        },
+    ] {
+        replace_standard_mfs_plan_decision(&mut candidate, decision);
+    }
+
+    let admitted = match admit_standard_mfs_plan_with_lifetimes(candidate, true) {
+        Ok(admitted) => admitted,
+        Err(reason) => {
+            return Ok(reject_awproject_multifield_initial_grid(
+                plan,
+                selected_field_count,
+                format!("exact lifetime admission rejected the CPU sparse initial grid: {reason}"),
+            ));
+        }
+    };
+    let replay_stage_peak_bytes = [
+        ImagingMemoryStage::ResidualGrid,
+        ImagingMemoryStage::ResidualTransform,
+    ]
+    .into_iter()
+    .filter_map(|stage| admitted.memory_lifetime_ledger.stage_peak(stage))
+    .map(|peak| peak.resident_bytes)
+    .max()
+    .unwrap_or(admitted.maximum_planned_resident_bytes);
+    let replay_headroom_bytes = admitted
+        .usable_memory_bytes
+        .saturating_sub(replay_stage_peak_bytes);
+    if replay_headroom_bytes < AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES {
+        return Ok(reject_awproject_multifield_initial_grid(
+            plan,
+            selected_field_count,
+            format!(
+                "the admitted CPU sparse initial grid leaves {replay_headroom_bytes} residual-stage bytes, below the {AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES}-byte grouped replay minimum"
+            ),
+        ));
+    }
+    Ok(admitted)
 }
 
 fn standard_mfs_memory_plan_with_cache_channels_for_ms(
@@ -40997,15 +41312,29 @@ fn standard_mfs_grid_workers_requested_auto(config: &CliConfig) -> bool {
 
 fn standard_mfs_parallel_worker_calibration_request(
     config: &CliConfig,
+    strategy: &ImagingResolvedPlan,
 ) -> Option<ParallelWorkerCalibrationRequest> {
-    if !standard_mfs_worker_planner_experiment_enabled()
-        || !standard_mfs_grid_workers_requested_auto(config)
-        || config.aw_project.is_none()
-        || env::var_os("CASA_RS_AWPROJECT_DYNAMIC_SPARSE_TILE_TASKS_EXPERIMENT").is_none()
-    {
+    let production_sparse_initial_grid = standard_mfs_plan_decision_is(
+        strategy,
+        "awproject_initial_grid_backend",
+        "cpu-dynamic-sparse-f64",
+    ) && standard_mfs_plan_decision_is(
+        strategy,
+        "awproject_initial_grid_workers_source",
+        "resource-calibrated",
+    );
+    let experimental_request = standard_mfs_worker_planner_experiment_enabled()
+        && standard_mfs_grid_workers_requested_auto(config)
+        && config.aw_project.is_some()
+        && env::var_os("CASA_RS_AWPROJECT_DYNAMIC_SPARSE_TILE_TASKS_EXPERIMENT").is_some();
+    if !production_sparse_initial_grid && !experimental_request {
         return None;
     }
-    let assigned_parallelism = imaging_hardware_threads();
+    let assigned_parallelism = if production_sparse_initial_grid {
+        strategy.workers.max(1)
+    } else {
+        imaging_hardware_threads()
+    };
     let highest_capacity_class_boundary = system_performance_cpu_count()
         .filter(|boundary| *boundary > 0 && *boundary < assigned_parallelism);
     let candidates =
@@ -41361,7 +41690,7 @@ fn standard_mfs_execution_config(
     execution.force_tiled_one_worker = execution.grid_backend == StandardMfsBackend::FixedTile;
     execution.progress_callback = standard_mfs_progress_callback(config);
     execution.observability_callback = standard_mfs_observability_callback(config);
-    if let Some(calibration) = standard_mfs_parallel_worker_calibration_request(config) {
+    if let Some(calibration) = standard_mfs_parallel_worker_calibration_request(config, strategy) {
         execution = execution.with_parallel_worker_calibration(calibration);
     }
     execution
@@ -41436,7 +41765,13 @@ fn standard_mfs_execution_config_with_plan(
         if config.standard_mfs_residual_backend.is_none() {
             execution.residual_backend = Some(StandardMfsBackend::MetalRowRunGrouped);
         }
-        if config.standard_mfs_initial_dirty_backend.is_none() {
+        if standard_mfs_plan_decision_is(
+            strategy,
+            "awproject_initial_grid_backend",
+            "cpu-dynamic-sparse-f64",
+        ) {
+            execution.initial_dirty_backend = Some(StandardMfsBackend::Cpu);
+        } else if config.standard_mfs_initial_dirty_backend.is_none() {
             execution.initial_dirty_backend = Some(StandardMfsBackend::MetalRowRunGrouped);
         }
     }
@@ -41473,7 +41808,7 @@ fn standard_mfs_execution_config_with_plan(
                 name: "awproject_grouped_replay_compile_admission_bytes",
                 value: grouped.compile_admission_bytes().to_string(),
                 origin: casa_imaging::ImagingPlanOrigin::Resources,
-                reason: "the grouped compiler must fit inside initial-grid headroom after subtracting fixed overlap and replacing consumed source-row/direct-Metal buffers, including its explicit allocator-uncertainty reserve"
+                reason: "the grouped compiler must fit inside initial-grid headroom after subtracting fixed overlap and replacing consumed source-row buffers plus the direct-Metal buffer only for a Metal initial grid, including its explicit allocator-uncertainty reserve"
                     .to_string(),
             },
             casa_imaging::ImagingPlanDecision {
@@ -41516,9 +41851,18 @@ fn awproject_grouped_replay_plan(
         .map_or(strategy.maximum_planned_resident_bytes, |peak| {
             peak.resident_bytes
         });
+    let direct_metal_initial_scratch_bytes = if standard_mfs_plan_decision_is(
+        strategy,
+        "awproject_initial_grid_backend",
+        "cpu-dynamic-sparse-f64",
+    ) {
+        0
+    } else {
+        strategy.allocation_bytes("direct Metal host scratch")
+    };
     let compile_replaced_bytes = strategy
         .allocation_bytes("source row blocks")
-        .saturating_add(strategy.allocation_bytes("direct Metal host scratch"));
+        .saturating_add(direct_metal_initial_scratch_bytes);
     let compile_fixed_overlap_bytes =
         initial_grid_peak_bytes.saturating_sub(compile_replaced_bytes);
     let compile_admission_bytes = strategy
@@ -59243,6 +59587,33 @@ mod tests {
     }
 
     #[test]
+    fn metal_mosaic_runtime_workers_are_resource_derived_only_for_multiple_fields() {
+        let mut config = awproject_mtmfs_planner_config(
+            PathBuf::from("/tmp/awproject-runtime-workers-cache"),
+            4096,
+        );
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
+        config.standard_mfs_grid_threads = None;
+        let expected =
+            mosaic_mfs_cpu_grid_threads(standard_mfs_grid_worker_count(&config)).to_string();
+
+        let multiple =
+            plan_standard_mfs_runtime_with_metal_device(&config, false, 1, None, true, true);
+        assert_eq!(multiple.grid_threads.as_deref(), Some(expected.as_str()));
+
+        config.standard_mfs_grid_threads = Some("3".to_string());
+        let explicit =
+            plan_standard_mfs_runtime_with_metal_device(&config, false, 1, None, true, true);
+        assert_eq!(explicit.grid_threads.as_deref(), Some("3"));
+
+        config.standard_mfs_grid_threads = None;
+        config.field_ids = Some(vec![0]);
+        let single =
+            plan_standard_mfs_runtime_with_metal_device(&config, false, 1, None, true, true);
+        assert_eq!(single.grid_threads.as_deref(), Some("1"));
+    }
+
+    #[test]
     fn cube_slab_auto_plane_workers_use_available_parallelism_for_multi_plane_output() {
         let available = std::thread::available_parallelism().map_or(1, |value| value.get());
 
@@ -61498,6 +61869,197 @@ mod tests {
         assert!(
             awproject_initial_dirty_replay_priming_tap_extension_bytes(usize::MAX).is_err(),
             "planner overflow must fail closed"
+        );
+    }
+
+    #[test]
+    fn awproject_multifield_initial_grid_is_plan_admitted_without_changing_residual_metal() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("multifield-initial-grid-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
+        config.standard_mfs_grid_threads = Some("3".to_string());
+        let mut base = standard_mfs_memory_plan(&config, 64, 1024);
+        base.metal.eligible = true;
+
+        let initial =
+            admit_awproject_multifield_initial_grid(base, &config, 2, false, true).unwrap();
+        assert_eq!(
+            initial.allocation_bytes("AWProject source-order tap scratch"),
+            AWPROJECT_MULTIFIELD_INITIAL_GRID_TAP_BYTES
+        );
+        assert_eq!(
+            initial.allocation_bytes("AWProject initial-dirty replay-priming tap extension"),
+            awproject_initial_dirty_replay_priming_tap_extension_bytes(
+                AWPROJECT_MULTIFIELD_INITIAL_GRID_TAP_BYTES
+            )
+            .unwrap()
+        );
+        assert_eq!(initial.workers, 3);
+        assert!(initial.maximum_planned_resident_bytes <= initial.usable_memory_bytes);
+        assert!(initial.decisions.iter().any(|decision| {
+            decision.name == "awproject_initial_grid_backend"
+                && decision.value == "cpu-dynamic-sparse-f64"
+        }));
+        assert!(initial.decisions.iter().any(|decision| {
+            decision.name == "awproject_initial_grid_sparse_tile_side"
+                && decision.value == AWPROJECT_MULTIFIELD_INITIAL_GRID_TILE_SIDE.to_string()
+        }));
+        assert!(initial.decisions.iter().any(|decision| {
+            decision.name == "awproject_initial_grid_workers" && decision.value == "3"
+        }));
+        assert!(initial.decisions.iter().any(|decision| {
+            decision.name == "awproject_initial_grid_workers_source" && decision.value == "explicit"
+        }));
+        let grid_lifetime = initial
+            .memory_lifetime_ledger
+            .allocations
+            .iter()
+            .find(|allocation| allocation.component == "grids")
+            .expect("admitted grid lifetime");
+        assert_eq!(
+            grid_lifetime.residencies[0].backing,
+            ImagingMemoryBacking::HostHeap
+        );
+        assert_eq!(
+            grid_lifetime.residencies[1].backing,
+            ImagingMemoryBacking::UnifiedMemory
+        );
+        let direct_metal_scratch_lifetime = initial
+            .memory_lifetime_ledger
+            .allocations
+            .iter()
+            .find(|allocation| allocation.component == "direct Metal host scratch")
+            .expect("direct Metal scratch lifetime");
+        assert_eq!(direct_metal_scratch_lifetime.residencies.len(), 1);
+        assert_eq!(
+            direct_metal_scratch_lifetime.residencies[0].live_from,
+            ImagingMemoryStage::ResidualGrid
+        );
+
+        let plan = admit_awproject_compact_replay_retention(initial, 4).expect("replay admission");
+        let execution = standard_mfs_execution_config_with_plan(&config, &plan);
+        assert_eq!(
+            execution.initial_dirty_backend,
+            Some(StandardMfsBackend::Cpu)
+        );
+        assert_eq!(
+            execution.residual_backend,
+            Some(StandardMfsBackend::MetalRowRunGrouped)
+        );
+        if casa_imaging::standard_mfs_metal_device_available() {
+            let grouped = execution
+                .awproject_grouped_replay
+                .as_ref()
+                .expect("grouped replay remains selected");
+            let initial_peak_bytes = plan
+                .memory_lifetime_ledger
+                .stage_peak(ImagingMemoryStage::InitialGrid)
+                .expect("initial-grid stage peak")
+                .resident_bytes;
+            let expected_compile_admission_bytes = plan.usable_memory_bytes.saturating_sub(
+                initial_peak_bytes.saturating_sub(plan.allocation_bytes("source row blocks")),
+            );
+            assert_eq!(
+                grouped.compile_admission_bytes(),
+                expected_compile_admission_bytes,
+                "CPU initial-grid admission must not pretend residual-only direct Metal scratch is replaced during grouped replay compilation"
+            );
+        }
+        assert!(plan.maximum_planned_resident_bytes <= plan.usable_memory_bytes);
+    }
+
+    #[test]
+    fn awproject_multifield_initial_grid_auto_workers_enable_plan_owned_calibration() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("auto-worker-initial-grid-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let mut requested = awproject_mtmfs_planner_config(cf_cache, 4096);
+        requested.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
+        requested.standard_mfs_grid_threads = None;
+        let runtime =
+            plan_standard_mfs_runtime_with_metal_device(&requested, false, 1, None, true, true);
+        let config = runtime.applied(&requested);
+        let mut base = standard_mfs_memory_plan(&config, 64, 1024);
+        base.metal.eligible = true;
+
+        let initial =
+            admit_awproject_multifield_initial_grid(base, &config, 2, false, false).unwrap();
+        assert!(initial.decisions.iter().any(|decision| {
+            decision.name == "awproject_initial_grid_workers_source"
+                && decision.value == "resource-calibrated"
+        }));
+        assert_eq!(
+            standard_mfs_plan_decision_usize(&initial, "awproject_initial_grid_workers"),
+            Some(initial.workers)
+        );
+        assert!(
+            standard_mfs_parallel_worker_calibration_request(&config, &initial).is_some(),
+            "the admitted production path must activate bounded exact-kernel calibration from the resolved plan, not an environment flag"
+        );
+        let execution = standard_mfs_execution_config_with_plan(&config, &initial);
+        assert_eq!(
+            execution.initial_dirty_backend,
+            Some(StandardMfsBackend::Cpu)
+        );
+        assert_eq!(
+            execution.residual_backend,
+            Some(StandardMfsBackend::MetalRowRunGrouped)
+        );
+    }
+
+    #[test]
+    fn awproject_single_field_keeps_the_existing_metal_initial_grid() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("single-field-initial-grid-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
+        config.field_ids = Some(vec![0]);
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
+        let mut base = standard_mfs_memory_plan(&config, 64, 1024);
+        base.metal.eligible = true;
+
+        let unchanged =
+            admit_awproject_multifield_initial_grid(base.clone(), &config, 1, false, true).unwrap();
+        assert_eq!(unchanged, base);
+        assert_eq!(
+            standard_mfs_execution_config_with_plan(&config, &unchanged).initial_dirty_backend,
+            Some(StandardMfsBackend::MetalRowRunGrouped)
+        );
+    }
+
+    #[test]
+    fn awproject_multifield_initial_grid_fails_closed_when_the_ledger_cannot_admit_it() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("rejected-multifield-initial-grid-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
+        let mut base = standard_mfs_memory_plan(&config, 64, 1024);
+        base.metal.eligible = true;
+        base.usable_memory_bytes = base.maximum_planned_resident_bytes;
+        let original_tap_bytes = base.allocation_bytes("AWProject source-order tap scratch");
+
+        let rejected =
+            admit_awproject_multifield_initial_grid(base, &config, 2, false, true).unwrap();
+        assert_eq!(
+            rejected.allocation_bytes("AWProject source-order tap scratch"),
+            original_tap_bytes
+        );
+        assert!(rejected.maximum_planned_resident_bytes <= rejected.usable_memory_bytes);
+        assert!(rejected.decisions.iter().any(|decision| {
+            decision.name == "awproject_multifield_initial_grid_admission"
+                && decision.value == "rejected"
+                && decision.reason.contains("lifetime admission rejected")
+        }));
+        assert!(!rejected.decisions.iter().any(|decision| {
+            decision.name == "awproject_initial_grid_backend"
+                && decision.value == "cpu-dynamic-sparse-f64"
+        }));
+        assert_eq!(
+            standard_mfs_execution_config_with_plan(&config, &rejected).initial_dirty_backend,
+            Some(StandardMfsBackend::MetalRowRunGrouped)
         );
     }
 

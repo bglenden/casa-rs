@@ -5745,6 +5745,106 @@ fn sparse_vector_add_scaled(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AwProjectInitialGridPlan {
+    logical_tap_budget_bytes: usize,
+    sparse_grid_budget_bytes: usize,
+    sparse_tile_side: usize,
+    workers: usize,
+    neon_2x2: bool,
+    dynamic_sparse_scheduler: bool,
+}
+
+fn resolved_plan_decision_value<'a>(plan: &'a ImagingResolvedPlan, name: &str) -> Option<&'a str> {
+    plan.decisions
+        .iter()
+        .rev()
+        .find(|decision| decision.name == name)
+        .map(|decision| decision.value.as_str())
+}
+
+fn resolved_awproject_initial_grid_plan(
+    execution: &StandardMfsExecutionPlan,
+) -> Result<Option<AwProjectInitialGridPlan>, ImagingError> {
+    let resolved = &execution.resolved;
+    let Some(backend) = resolved_plan_decision_value(resolved, "awproject_initial_grid_backend")
+    else {
+        return Ok(None);
+    };
+    if backend != "cpu-dynamic-sparse-f64" {
+        return Ok(None);
+    }
+    if execution.initial_dirty_backend != Some(StandardMfsBackend::Cpu) {
+        return Err(ImagingError::InvalidRequest(
+            "resolved CPU sparse AWProject initial grid requires the CPU initial-dirty backend"
+                .to_string(),
+        ));
+    }
+    let parse_usize = |name| {
+        resolved_plan_decision_value(resolved, name)
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "resolved CPU sparse AWProject initial grid has no positive {name} decision"
+                ))
+            })
+    };
+    let parse_bool = |name| {
+        resolved_plan_decision_value(resolved, name)
+            .and_then(|value| value.parse::<bool>().ok())
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "resolved CPU sparse AWProject initial grid has no boolean {name} decision"
+                ))
+            })
+    };
+    let logical_tap_budget_bytes = resolved.allocation_bytes("AWProject source-order tap scratch");
+    let decision_tap_budget_bytes = parse_usize("awproject_source_order_tap_bytes")?;
+    if logical_tap_budget_bytes == 0 || logical_tap_budget_bytes != decision_tap_budget_bytes {
+        return Err(ImagingError::InvalidRequest(
+            "resolved CPU sparse AWProject initial-grid tap decision differs from the admitted memory allocation"
+                .to_string(),
+        ));
+    }
+    let sparse_grid_budget_bytes = resolved.allocation_bytes("grids");
+    if sparse_grid_budget_bytes == 0 {
+        return Err(ImagingError::InvalidRequest(
+            "resolved CPU sparse AWProject initial grid has no admitted grid allocation"
+                .to_string(),
+        ));
+    }
+    let workers = parse_usize("awproject_initial_grid_workers")?;
+    if workers != resolved.workers.max(1) {
+        return Err(ImagingError::InvalidRequest(
+            "resolved CPU sparse AWProject initial-grid workers differ from the admitted execution workers"
+                .to_string(),
+        ));
+    }
+    let dynamic_sparse_scheduler = parse_bool("awproject_initial_grid_dynamic_scheduler")?;
+    if !dynamic_sparse_scheduler {
+        return Err(ImagingError::InvalidRequest(
+            "resolved CPU sparse AWProject initial grid requires the dynamic sparse-tile scheduler"
+                .to_string(),
+        ));
+    }
+    let neon_2x2 = parse_bool("awproject_initial_grid_neon_2x2")?;
+    if neon_2x2 && !cfg!(target_arch = "aarch64") {
+        return Err(ImagingError::InvalidRequest(
+            "resolved CPU sparse AWProject initial grid requested NEON on a non-AArch64 host"
+                .to_string(),
+        ));
+    }
+    Ok(Some(AwProjectInitialGridPlan {
+        logical_tap_budget_bytes,
+        sparse_grid_budget_bytes,
+        sparse_tile_side: parse_usize("awproject_initial_grid_sparse_tile_side")?,
+        workers,
+        neon_2x2,
+        dynamic_sparse_scheduler,
+    }))
+}
+
 /// Run CASA-style MT-MFS imaging with the streaming mosaic gridder.
 ///
 /// This keeps the large-mosaic data path replayable: visibility row blocks are
@@ -5772,6 +5872,20 @@ where
     )
     .filter(|bytes| *bytes > 0);
     let execution_config = execution.standard_mfs;
+    let awproject_initial_grid_plan = resolved_awproject_initial_grid_plan(&execution_config)?;
+    if let Some(plan) = awproject_initial_grid_plan {
+        eprintln!(
+            "awproject_initial_grid_plan backend=cpu-dynamic-sparse-f64 tile_side={} workers={} logical_tap_bytes={} sparse_grid_budget_bytes={} neon_2x2={} dynamic_scheduler={} planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
+            plan.sparse_tile_side,
+            plan.workers,
+            plan.logical_tap_budget_bytes,
+            plan.sparse_grid_budget_bytes,
+            plan.neon_2x2,
+            plan.dynamic_sparse_scheduler,
+            execution_config.resolved.maximum_planned_resident_bytes,
+            execution_config.resolved.usable_memory_bytes,
+        );
+    }
     let planned_aw_replay_retention_bytes = execution_config
         .resolved
         .allocation_bytes("AWProject compact replay retention");
@@ -5935,6 +6049,7 @@ where
         execution_config.parallel_worker_calibration.as_ref(),
         allow_initial_direct_metal,
         direct_metal_scratch_bytes,
+        awproject_initial_grid_plan,
         aw_cache.as_ref(),
         aw_controls.as_ref(),
         if prime_aw_replay_during_initial_dirty {
@@ -6034,6 +6149,7 @@ where
             execution_config.parallel_worker_calibration.as_ref(),
             false,
             direct_metal_scratch_bytes,
+            awproject_initial_grid_plan,
             aw_cache.as_ref(),
             aw_controls.as_ref(),
             None,
@@ -7068,18 +7184,38 @@ struct MosaicMtmfsSparseHostGrids {
     tiles_y: usize,
     psf_term_count: usize,
     residual_term_count: usize,
+    resident_budget_bytes: usize,
     slots: Vec<Option<Mutex<MosaicMtmfsSparseTile>>>,
 }
 
 impl MosaicMtmfsSparseHostGrids {
-    const MAX_EXPERIMENTAL_BYTES: usize = 8 * 1024 * 1024 * 1024;
+    const DEFAULT_EXPERIMENTAL_BYTES: usize = 8 * 1024 * 1024 * 1024;
 
+    #[cfg(test)]
     fn new(
         rows: usize,
         columns: usize,
         tile_side: usize,
         psf_term_count: usize,
         residual_term_count: usize,
+    ) -> Result<Self, ImagingError> {
+        Self::new_with_budget(
+            rows,
+            columns,
+            tile_side,
+            psf_term_count,
+            residual_term_count,
+            Self::DEFAULT_EXPERIMENTAL_BYTES,
+        )
+    }
+
+    fn new_with_budget(
+        rows: usize,
+        columns: usize,
+        tile_side: usize,
+        psf_term_count: usize,
+        residual_term_count: usize,
+        resident_budget_bytes: usize,
     ) -> Result<Self, ImagingError> {
         if tile_side == 0 {
             return Err(ImagingError::InvalidRequest(
@@ -7099,6 +7235,7 @@ impl MosaicMtmfsSparseHostGrids {
             tiles_y,
             psf_term_count,
             residual_term_count,
+            resident_budget_bytes,
             slots: (0..tile_count).map(|_| None).collect(),
         })
     }
@@ -7177,10 +7314,10 @@ impl MosaicMtmfsSparseHostGrids {
                     "sparse AWProject projected bytes overflowed".to_string(),
                 )
             })?;
-        if projected_bytes > Self::MAX_EXPERIMENTAL_BYTES {
+        if projected_bytes > self.resident_budget_bytes {
             return Err(ImagingError::Unsupported(format!(
-                "sparse AWProject grid needs {projected_bytes} bytes above the {}-byte experimental ceiling",
-                Self::MAX_EXPERIMENTAL_BYTES,
+                "sparse AWProject grid needs {projected_bytes} bytes above the {}-byte admitted resident ceiling",
+                self.resident_budget_bytes,
             )));
         }
         let started = Instant::now();
@@ -7312,6 +7449,8 @@ struct MosaicMtmfsStreamGridConfig {
     direct_metal_mode: MosaicDirectMetalMode,
     awproject_grid: bool,
     direct_metal_scratch_bytes: Option<usize>,
+    sparse_tile_side: Option<usize>,
+    sparse_grid_budget_bytes: Option<usize>,
 }
 
 impl MosaicMtmfsStreamGridStorage {
@@ -7326,6 +7465,8 @@ impl MosaicMtmfsStreamGridStorage {
             direct_metal_mode,
             awproject_grid,
             direct_metal_scratch_bytes,
+            sparse_tile_side,
+            sparse_grid_budget_bytes,
         } = config;
         #[cfg(any(not(target_os = "macos"), coverage))]
         let _ = (
@@ -7443,14 +7584,18 @@ impl MosaicMtmfsStreamGridStorage {
             }));
         }
         if awproject_grid {
-            if let Some(tile_side) = awproject_compact_sparse_tile_side() {
-                return Ok(Self::SparseHostF64(MosaicMtmfsSparseHostGrids::new(
-                    rows,
-                    columns,
-                    tile_side,
-                    if residual_only { 0 } else { psf_term_count },
-                    residual_term_count,
-                )?));
+            if let Some(tile_side) = sparse_tile_side.or_else(awproject_compact_sparse_tile_side) {
+                return Ok(Self::SparseHostF64(
+                    MosaicMtmfsSparseHostGrids::new_with_budget(
+                        rows,
+                        columns,
+                        tile_side,
+                        if residual_only { 0 } else { psf_term_count },
+                        residual_term_count,
+                        sparse_grid_budget_bytes
+                            .unwrap_or(MosaicMtmfsSparseHostGrids::DEFAULT_EXPERIMENTAL_BYTES),
+                    )?,
+                ));
             }
         }
         Ok(Self::HostF64(MosaicMtmfsHostGrids {
@@ -9800,6 +9945,7 @@ fn accumulate_mosaic_mtmfs_stream_grids<F>(
     parallel_worker_calibration: Option<&ParallelWorkerCalibrationControl>,
     allow_direct_metal: bool,
     direct_metal_scratch_bytes: Option<usize>,
+    awproject_initial_grid_plan: Option<AwProjectInitialGridPlan>,
     aw_cache: Option<&AwConvolutionFunctionResidentCache>,
     aw_controls: Option<&AwProjectControls>,
     mut aw_replay_cache: Option<&mut AwProjectCompactReplayCache>,
@@ -9810,6 +9956,10 @@ where
         &mut dyn FnMut(MosaicMtmfsVisibilityBlock) -> Result<(), ImagingError>,
     ) -> Result<(), ImagingError>,
 {
+    let requested_threads = awproject_initial_grid_plan
+        .map(|plan| plan.workers)
+        .unwrap_or(requested_threads)
+        .max(1);
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let psf_term_count = 2 * request.nterms - 1;
     let grouped_replay = aw_replay_cache
@@ -9839,6 +9989,9 @@ where
             direct_metal_mode,
             awproject_grid: aw_cache.is_some(),
             direct_metal_scratch_bytes,
+            sparse_tile_side: awproject_initial_grid_plan.map(|plan| plan.sparse_tile_side),
+            sparse_grid_budget_bytes: awproject_initial_grid_plan
+                .map(|plan| plan.sparse_grid_budget_bytes),
         })?,
         pointing_weights: MosaicPointingWeightAccumulator::default(),
         reported_sumwt_terms: vec![0.0; psf_term_count],
@@ -9986,6 +10139,7 @@ where
                     &mut taylor_weights,
                     aw_replay_cache.as_deref_mut(),
                     aw_replay_block_ordinal,
+                    awproject_initial_grid_plan,
                 )?;
                 aw_replay_block_ordinal = aw_replay_block_ordinal.saturating_add(1);
             }
@@ -35046,6 +35200,9 @@ fn replay_awproject_compact_window(
     bundles: &[AwProjectCompactMaterializedTap],
     phase_tables: Option<&AwProjectPhaseTables>,
     contiguous_grid_taps: bool,
+    spatial_tile_side: Option<usize>,
+    neon_2x2: bool,
+    dynamic_sparse_scheduler: bool,
     requested_threads: usize,
     parallel_worker_calibration: Option<&ParallelWorkerCalibrationControl>,
     accumulation: &mut MosaicMtmfsStreamGridAccumulation,
@@ -35368,8 +35525,8 @@ fn replay_awproject_compact_window(
                 bundles,
                 phase_tables,
                 contiguous_grid_taps,
-                awproject_compact_spatial_tile_side(),
-                awproject_compact_neon_2x2_enabled(),
+                spatial_tile_side,
+                neon_2x2,
                 request.reffreq_hz,
                 requested_threads,
             )? {
@@ -35382,8 +35539,8 @@ fn replay_awproject_compact_window(
                 &planned_samples,
                 bundles,
                 phase_tables,
-                awproject_compact_neon_2x2_enabled(),
-                awproject_compact_dynamic_sparse_tile_scheduler_enabled(),
+                neon_2x2,
+                dynamic_sparse_scheduler,
                 awproject_compact_reverse_dynamic_sparse_tile_tasks_enabled(),
                 request.reffreq_hz,
                 requested_threads,
@@ -35772,6 +35929,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
     taylor_weights: &mut Vec<f32>,
     replay_cache: Option<&mut AwProjectCompactReplayCache>,
     replay_block_ordinal: usize,
+    awproject_initial_grid_plan: Option<AwProjectInitialGridPlan>,
 ) -> Result<(), ImagingError> {
     if request.plane_stokes != PlaneStokes::I {
         return Err(ImagingError::Unsupported(
@@ -35843,12 +36001,25 @@ fn accumulate_awproject_mtmfs_metadata_batch(
     let metal_packed_batch_report_bytes = metal_packed_batch_budget_bytes.unwrap_or(0);
     #[cfg(any(not(target_os = "macos"), coverage))]
     let metal_packed_batch_report_bytes = 0usize;
-    let tap_budget_bytes = awproject_compact_tap_budget_bytes(controls.cf_resident_bytes)
+    let tap_budget_bytes = awproject_initial_grid_plan
+        .map(|plan| plan.logical_tap_budget_bytes)
+        .unwrap_or_else(|| awproject_compact_tap_budget_bytes(controls.cf_resident_bytes))
         .min(metal_packed_batch_ceiling_bytes);
-    let plan_workers = awproject_compact_plan_workers();
+    let plan_workers = awproject_initial_grid_plan
+        .map(|plan| plan.workers)
+        .unwrap_or_else(awproject_compact_plan_workers);
     let plan_chunk_samples = awproject_compact_plan_chunk_samples();
     let pack_workers = awproject_compact_pack_workers();
     let tapless_phase = grouped_replay || awproject_compact_tapless_phase();
+    let spatial_tile_side = awproject_initial_grid_plan
+        .map(|plan| plan.sparse_tile_side)
+        .or_else(awproject_compact_spatial_tile_side);
+    let neon_2x2 = awproject_initial_grid_plan
+        .map(|plan| plan.neon_2x2)
+        .unwrap_or_else(awproject_compact_neon_2x2_enabled);
+    let dynamic_sparse_scheduler = awproject_initial_grid_plan
+        .map(|plan| plan.dynamic_sparse_scheduler)
+        .unwrap_or_else(awproject_compact_dynamic_sparse_tile_scheduler_enabled);
     // The legacy tap ceiling describes the logical phase-applied working set
     // and therefore owns numerical segmentation. A primed Metal program may
     // retain prediction-only compact taps at an initial-dirty boundary;
@@ -36033,6 +36204,9 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                     &window.bundles,
                     phase_tables.as_ref(),
                     contiguous_grid_taps,
+                    spatial_tile_side,
+                    neon_2x2,
+                    dynamic_sparse_scheduler,
                     requested_threads,
                     parallel_worker_calibration,
                     accumulation,
@@ -36373,6 +36547,9 @@ fn accumulate_awproject_mtmfs_metadata_batch(
             &bundles,
             phase_tables.as_ref(),
             contiguous_grid_taps,
+            spatial_tile_side,
+            neon_2x2,
+            dynamic_sparse_scheduler,
             requested_threads,
             parallel_worker_calibration,
             accumulation,
@@ -36645,8 +36822,8 @@ fn accumulate_awproject_mtmfs_metadata_batch(
             awproject_compact_prefetch_cf_cell(),
             tapless_phase,
             contiguous_grid_taps,
-            awproject_compact_spatial_tile_side().unwrap_or(0),
-            awproject_compact_neon_2x2_enabled(),
+            spatial_tile_side.unwrap_or(0),
+            neon_2x2,
             replay_stats.dynamic_tile_scheduler,
             replay_stats.tile_active_tiles,
             replay_stats.tile_new_tiles,
@@ -37166,6 +37343,7 @@ where
         parallel_worker_calibration,
         allow_residual_direct_metal,
         direct_metal_scratch_bytes,
+        None,
         aw_cache,
         aw_controls,
         aw_replay_cache.as_deref_mut(),
@@ -37226,6 +37404,7 @@ where
             parallel_worker_calibration,
             false,
             direct_metal_scratch_bytes,
+            None,
             aw_cache,
             aw_controls,
             aw_replay_cache,
@@ -73852,6 +74031,8 @@ mod tests {
             direct_metal_mode: super::MosaicDirectMetalMode::AwProject,
             awproject_grid: true,
             direct_metal_scratch_bytes: Some(1),
+            sparse_tile_side: None,
+            sparse_grid_budget_bytes: None,
         })
         .err()
         .expect("AWProject Metal must reject an f32 dirty-product FFT");
@@ -73881,6 +74062,8 @@ mod tests {
                 direct_metal_mode: mode,
                 awproject_grid: true,
                 direct_metal_scratch_bytes: None,
+                sparse_tile_side: None,
+                sparse_grid_budget_bytes: None,
             })
             .expect("global AWProject replay requires two-plane Metal residual storage");
         assert!(matches!(
@@ -73909,6 +74092,8 @@ mod tests {
                 direct_metal_mode: super::MosaicDirectMetalMode::Disabled,
                 awproject_grid: true,
                 direct_metal_scratch_bytes: None,
+                sparse_tile_side: None,
+                sparse_grid_budget_bytes: None,
             })
             .expect("auto AWProject CPU storage");
         assert!(matches!(
@@ -73930,6 +74115,8 @@ mod tests {
                 direct_metal_mode: super::MosaicDirectMetalMode::Disabled,
                 awproject_grid: true,
                 direct_metal_scratch_bytes: None,
+                sparse_tile_side: None,
+                sparse_grid_budget_bytes: None,
             })
             .expect("explicit-f32 AWProject CPU storage");
         assert!(matches!(
@@ -73951,12 +74138,88 @@ mod tests {
                 direct_metal_mode: super::MosaicDirectMetalMode::Disabled,
                 awproject_grid: true,
                 direct_metal_scratch_bytes: None,
+                sparse_tile_side: None,
+                sparse_grid_budget_bytes: None,
             })
             .expect("explicit-f64 AWProject CPU storage");
         assert!(matches!(
             storage,
             super::MosaicMtmfsStreamGridStorage::HostF64(_)
         ));
+    }
+
+    #[test]
+    fn awproject_cpu_storage_uses_resolved_sparse_grid_without_environment_activation() {
+        let storage =
+            super::MosaicMtmfsStreamGridStorage::new(super::MosaicMtmfsStreamGridConfig {
+                rows: 16,
+                columns: 16,
+                psf_term_count: 3,
+                residual_term_count: 2,
+                residual_only: false,
+                dirty_product_fft_policy: DirtyProductFftPolicy::new(
+                    FftPrecisionChoice::F64,
+                    FftBackendChoice::RustFft,
+                ),
+                direct_metal_mode: super::MosaicDirectMetalMode::Disabled,
+                awproject_grid: true,
+                direct_metal_scratch_bytes: None,
+                sparse_tile_side: Some(4),
+                sparse_grid_budget_bytes: Some(32 * 1024),
+            })
+            .expect("resolved sparse AWProject CPU storage");
+        let super::MosaicMtmfsStreamGridStorage::SparseHostF64(grids) = storage else {
+            panic!("resolved sparse AWProject CPU storage must not depend on an environment flag");
+        };
+        assert_eq!(grids.tile_side, 4);
+        assert_eq!(grids.resident_budget_bytes, 32 * 1024);
+    }
+
+    #[test]
+    fn awproject_initial_grid_reads_sparse_controls_from_the_resolved_plan() {
+        let decision = |name: &'static str, value: &str| crate::ImagingPlanDecision {
+            name,
+            value: value.to_string(),
+            origin: crate::ImagingPlanOrigin::Resources,
+            reason: "test resolved-plan control".to_string(),
+        };
+        let mut resolved = ImagingResolvedPlan::idle();
+        resolved.workers = 3;
+        resolved.memory_allocations = vec![
+            crate::ImagingMemoryAllocation {
+                component: "grids",
+                stage: "initial-grid",
+                bytes: 64 * 1024,
+            },
+            crate::ImagingMemoryAllocation {
+                component: "AWProject source-order tap scratch",
+                stage: "initial-grid",
+                bytes: 512 * 1024 * 1024,
+            },
+        ];
+        resolved.decisions = vec![
+            decision("awproject_initial_grid_backend", "cpu-dynamic-sparse-f64"),
+            decision("awproject_source_order_tap_bytes", "536870912"),
+            decision("awproject_initial_grid_sparse_tile_side", "192"),
+            decision("awproject_initial_grid_workers", "3"),
+            decision("awproject_initial_grid_neon_2x2", "false"),
+            decision("awproject_initial_grid_dynamic_scheduler", "true"),
+        ];
+        let execution = StandardMfsExecutionPlan {
+            initial_dirty_backend: Some(StandardMfsBackend::Cpu),
+            resolved,
+            ..Default::default()
+        };
+
+        let plan = super::resolved_awproject_initial_grid_plan(&execution)
+            .unwrap()
+            .expect("resolved sparse initial-grid plan");
+        assert_eq!(plan.logical_tap_budget_bytes, 512 * 1024 * 1024);
+        assert_eq!(plan.sparse_grid_budget_bytes, 64 * 1024);
+        assert_eq!(plan.sparse_tile_side, 192);
+        assert_eq!(plan.workers, 3);
+        assert!(!plan.neon_2x2);
+        assert!(plan.dynamic_sparse_scheduler);
     }
 
     #[test]
@@ -73975,6 +74238,8 @@ mod tests {
                 direct_metal_mode: super::MosaicDirectMetalMode::Disabled,
                 awproject_grid: true,
                 direct_metal_scratch_bytes: None,
+                sparse_tile_side: None,
+                sparse_grid_budget_bytes: None,
             })
             .expect("residual-only AWProject CPU storage");
         let super::MosaicMtmfsStreamGridStorage::HostF64(grids) = storage else {
@@ -74040,6 +74305,8 @@ mod tests {
                 direct_metal_mode: super::MosaicDirectMetalMode::Disabled,
                 awproject_grid: true,
                 direct_metal_scratch_bytes: None,
+                sparse_tile_side: None,
+                sparse_grid_budget_bytes: None,
             })
             .expect("residual-only sparse AWProject CPU storage");
         assert!(storage.is_residual_only());
