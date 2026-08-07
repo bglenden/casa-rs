@@ -8156,3 +8156,42 @@ Runtime receipts additionally require zero cropped plans, equal original and
 retained tap visits, unchanged kernel residency, and one exact-support receipt
 per AOT segment. The approximate support compiler remains experimental
 evidence only and is not a production scientific default.
+
+The one authorized exact-support grouped landmark at commit
+`9d9cd9ebaf65646bdf406a8382ff0dfeeef03f0d` completed the matched
+single-field, `4096`-square, four-SPW, 2,000-iteration workload in
+`55.400 s`. Against the frozen CASA runtime of `3631.809729 s`, this is
+`65.556132x`, but it fails the approved grouped reduced-row no-signoff ceiling
+of `42.350 s`. The release executable, run log, and immutable landmark receipt
+SHA-256 values are respectively
+`9b398cd9f1c7c376fed369cf13fce387f1c8fa6ab28457f270fcbcdd470f07f0`,
+`240351d08149fc7bfdff28f09592b75db3c721f68ace9093fedf2eb7ffffa0af`,
+and
+`9d6d84011b6da9b14b03a85abe4a960f36e5b616d4e5fd2fd5788ae12635efc6`.
+The run began with approximately `4.65 GB` compressed memory and `7.62 GB`
+swap already in use, but sampled stages recorded no material swap traffic
+during the workload. Compared with the invalid approximate-support run, the
+regression was distributed across controller, PSF, FFT, minor-cycle, and
+major-refresh stages rather than being explained by grouped replay alone.
+The exact resident replay artifact grew by only about `0.31 MB`, and the
+observed exact replay calls added only a small fraction of the total wall-time
+increase. This receipt therefore establishes the measured result but does not
+attribute the broad slowdown to exact CF support or claim a stable replacement
+performance baseline.
+
+The immediate immutable 19-product comparison against the frozen CASA oracle
+completed successfully. Mask and sum-weight products were exact; PSF, PB, and
+weight normalized RMS differences were approximately `9e-9` to `8e-8`;
+alpha, restored-image, model, and residual normalized RMS differences were
+approximately `7.1e-7` to `4.1e-6`. Product inventory, metadata, topology,
+beam, source-location, and flux gates passed. The comparison input, output,
+and log SHA-256 values are respectively
+`3c6d72f16057157cbce88c9121aa16b96632b7e8395959a6589eff7aa54daf1e`,
+`3e8b821e960b8bb3058e300d6f76bf49d1e1a154823a7431a9febbdacc19afd5`,
+and
+`c76c1f45504a03544a35083b2ab87a4352ef7d398db97100d950c29ae63f3c6c`.
+This earns exact-support grouped scientific promotion at the reduced
+single-field boundary, but not performance promotion under the current
+ceiling. No all-fields row was launched. Advancing to full-16-SPW or
+all-63-field acceptance requires Brian's explicit decision to accept this
+measured baseline or authorize another bounded performance investigation.
