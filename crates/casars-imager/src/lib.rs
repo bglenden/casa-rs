@@ -38884,6 +38884,30 @@ fn admit_awproject_multifield_initial_grid(
     }
 
     let workers = candidate.workers.max(1);
+    let requested_workers = grid_threads_explicit
+        .then(|| {
+            config
+                .standard_mfs_grid_threads
+                .as_deref()
+                .and_then(parse_standard_mfs_grid_threads)
+        })
+        .flatten();
+    let workers_resource_capped = requested_workers.is_some_and(|requested| requested != workers);
+    let workers_source = if workers_resource_capped {
+        "explicit-resource-capped"
+    } else if grid_threads_explicit {
+        "explicit"
+    } else {
+        "resource-calibrated"
+    };
+    let workers_reason = match requested_workers {
+        Some(requested) if requested != workers => format!(
+            "the explicit {requested}-worker request is an upper bound; the admitted process CPU capacity resolves {workers} effective workers"
+        ),
+        Some(requested) => format!("use the explicitly requested {requested} standard-MFS workers"),
+        None => "use the assigned CPU hard cap while authoritative production windows calibrate the exact sparse-tile worker count"
+            .to_string(),
+    };
     for decision in [
         casa_imaging::ImagingPlanDecision {
             name: "awproject_selected_field_count",
@@ -38940,31 +38964,34 @@ fn admit_awproject_multifield_initial_grid(
             },
         },
         casa_imaging::ImagingPlanDecision {
+            name: "awproject_initial_grid_workers_requested",
+            value: requested_workers
+                .map_or_else(|| "auto".to_string(), |requested| requested.to_string()),
+            origin: if grid_threads_explicit {
+                casa_imaging::ImagingPlanOrigin::UserPolicy
+            } else {
+                casa_imaging::ImagingPlanOrigin::Resources
+            },
+            reason: "record the requested worker policy separately from the resource-admitted effective worker count"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
             name: "awproject_initial_grid_workers",
             value: workers.to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Resources,
-            reason: if grid_threads_explicit {
-                "respect the explicit standard-MFS worker request".to_string()
-            } else {
-                "use the assigned CPU hard cap while authoritative production windows calibrate the exact sparse-tile worker count"
-                    .to_string()
-            },
+            reason: workers_reason,
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_initial_grid_workers_source",
-            value: if grid_threads_explicit {
-                "explicit"
-            } else {
-                "resource-calibrated"
-            }
-            .to_string(),
+            value: workers_source.to_string(),
             origin: if grid_threads_explicit {
                 casa_imaging::ImagingPlanOrigin::UserPolicy
             } else {
                 casa_imaging::ImagingPlanOrigin::Resources
             },
             reason: if grid_threads_explicit {
-                "the caller supplied standard_mfs_grid_threads before runtime planning".to_string()
+                "the caller supplied standard_mfs_grid_threads before resource admission"
+                    .to_string()
             } else {
                 "the runtime planner derived the hard cap from assigned CPUs and enables bounded exact-kernel production-window calibration"
                     .to_string()
@@ -61968,6 +61995,32 @@ mod tests {
             );
         }
         assert!(plan.maximum_planned_resident_bytes <= plan.usable_memory_bytes);
+    }
+
+    #[test]
+    fn awproject_multifield_initial_grid_receipts_resource_capped_explicit_workers() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("multifield-capped-workers-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
+        config.standard_mfs_grid_threads = Some("7".to_string());
+        let mut base = standard_mfs_memory_plan(&config, 64, 1024);
+        base.metal.eligible = true;
+        base.workers = 4;
+
+        let initial =
+            admit_awproject_multifield_initial_grid(base, &config, 63, false, true).unwrap();
+        assert!(initial.decisions.iter().any(|decision| {
+            decision.name == "awproject_initial_grid_workers_requested" && decision.value == "7"
+        }));
+        assert!(initial.decisions.iter().any(|decision| {
+            decision.name == "awproject_initial_grid_workers" && decision.value == "4"
+        }));
+        assert!(initial.decisions.iter().any(|decision| {
+            decision.name == "awproject_initial_grid_workers_source"
+                && decision.value == "explicit-resource-capped"
+        }));
     }
 
     #[test]

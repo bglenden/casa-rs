@@ -8277,10 +8277,11 @@ all-field full-16-SPW row. Exact-support grouped AOT/resident Metal residual
 replay remains unchanged. The resource planner selects the existing sparse CPU
 initial-grid path for resolved multi-field AWProject MT-MFS workloads when its
 lifetime ledger fits, admits the `512 MiB` tap arena independently of the
-`256 MiB` CF-residency ceiling, respects an explicit worker setting, and
-otherwise derives workers from the existing resource calibration. Tile size,
-dynamic scheduling, NEON eligibility, and tap capacity must be plan-owned
-rather than hidden environment activation.
+`256 MiB` CF-residency ceiling, treats an explicit worker setting as a
+resource-admitted upper bound, and otherwise derives workers from the existing
+resource calibration. Requested and effective workers must be receipted
+separately. Tile size, dynamic scheduling, NEON eligibility, and tap capacity
+must be plan-owned rather than hidden environment activation.
 
 The same-row release falsifier is finite: initial grid must be no more than
 `173.673 s`, total wall no more than `347.0197 s`, exact-support grouped replay
@@ -8291,3 +8292,50 @@ models `293.003 s`, or `11.844x` CASA. A miss is retained as negative evidence
 and is not rerun unchanged. Increasing CF residency alone is not the selected
 experiment because even removing all measured CF-load-worker time would model
 approximately `421.8 s`.
+
+The commit-bound release falsifier at
+`d2d0c0dad57c88987a2f8021350db6cff856a4bd` passed. Executable
+`7037562364d65f5657f4f6ec9e7fce86a92c7ef635b54f1a48f67bb1221642c8`
+completed the same all-63-field, POINTING, four-SPW, `4096`-square clean row in
+`268.490 s`. Against frozen matched CASA `3470.1970449999208 s`, the measured
+release speedup is `12.924865x`, with `78.530 s` of margin under the independent
+`10x` ceiling. Performance is accepted for this row and is not reopened merely
+to increase that margin.
+
+The resolved plan selected the intended exact `192`-pixel dynamic sparse host
+initial grid, `512 MiB` logical tap arena, AArch64 NEON 2x2 updates, and
+exact-support grouped Metal residual replay. Initial PSF gridding took
+`132.847 s`, below the `173.673 s` stage ceiling; residual degrid/grid took
+`101.277 s`. The grouped replay remained resident as one `2,810,917,176`-byte
+segment, read zero spill bytes, and rebuilt no runtime grouping, sorting, or
+route topology. Peak RSS was `11,193,843,712` bytes, the process recorded zero
+swaps, and all 19 products were written.
+
+All 19 numerical, metadata, topology, beam, source, flux, and inventory gates
+pass. The normalized RMS differences remain approximately `7.38e-5` and
+`9.74e-5` for restored images, `5.97e-6` and `1.60e-4` for models, and
+`1.70e-7` for the restoring-beam kernel. Eleven CASA and eleven casa-rs
+major-cycle boundaries align with zero discrete mismatches; the maximum
+start-peak relative difference is `9.98e-5` and the maximum model-flux relative
+difference is `7.15e-6`.
+
+The run also exposed and bounded a planner-receipt defect without invalidating
+the earned four-worker result. The launch requested seven grid workers, but
+generic full-grid admission capped the resolved plan to the four performance
+cores and the original sparse-grid receipt incorrectly described those four as
+respecting the explicit request. The follow-up telemetry repair records the
+requested value (`7`), effective value (`4`), and
+`explicit-resource-capped` source separately. Because the row passed both
+performance and correctness at four workers, this is not a reason to optimize
+or rerun it; the existing full-grid resource cap remains unchanged.
+
+The immutable run log, provenance, comparison input, comparison output,
+comparison log, and trajectory SHA-256 values are respectively:
+
+- `e32c72addc9e0fc5b5d23be960e91989aeacf557165f4b98e5b2bc8f2540e1f6`;
+- `445e52fb69a597e2ff72d9f00fb0a13c02fb1ced3d1bb6a027c3648e57c2d38f`;
+- `2a57b9ffa63d34515070ca0577aa0104929af773195afc288c632acbc624e703`;
+- `95b587efa276a5ed7c27e7a15b9f88ea16e5ea91caa7bae487dedda2d2213b90`;
+- `b628b252592ffdc855f29ca9aaa05e87870d4b76dc66c0bfb05579fc35c601cf`;
+  and
+- `f162ac041d5d6ff3d715488143c6b791726caac11ca177a3e7ea5ed1cf092fa5`.
