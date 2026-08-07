@@ -35465,6 +35465,8 @@ fn accumulate_awproject_mtmfs_metadata_batch(
         .as_deref()
         .and_then(AwProjectCompactReplayCache::grouped_replay_plan)
         .map(AwProjectGroupedReplayPlan::tile_side);
+    #[cfg(any(not(target_os = "macos"), coverage))]
+    let grouped_replay_tile_side = None;
     #[cfg(all(target_os = "macos", not(coverage)))]
     let (metal_packed_batch_budget_bytes, metal_psf_term_count) = match &accumulation.storage {
         MosaicMtmfsStreamGridStorage::MetalSharedF32 {
@@ -35578,67 +35580,77 @@ fn accumulate_awproject_mtmfs_metadata_batch(
         cache.hits = cache.hits.saturating_add(1);
         let complete_hit = if global_metal_replay {
             #[cfg(all(target_os = "macos", not(coverage)))]
-            build_awproject_metal_global_replay_program(
-                cache,
-                request.geometry.image_shape[0],
-                request.geometry.image_shape[1],
-                grouped_replay_tile_side.unwrap_or(awproject_metal_tile_probe_side()?),
-            )?;
-            let (classification_stats, classification_skipped_samples, cached_cursor_end) = {
-                let block = cache
-                    .block(replay_block_ordinal)
-                    .expect("the compact replay block hit was just checked");
-                if block.shape != replay_shape {
-                    return Err(ImagingError::InvalidRequest(format!(
-                        "compact AWProject replay block {replay_block_ordinal} changed shape or endpoint geometry across residual passes"
-                    )));
-                }
-                (
-                    block.classification_stats.clone(),
-                    block.classification_skipped_samples,
-                    block.cached_cursor_end,
-                )
-            };
-            add_awproject_sample_stats(&mut accumulation.aw_sample_census, &classification_stats);
-            accumulation.skipped_samples = accumulation
-                .skipped_samples
-                .saturating_add(classification_skipped_samples);
-            cursor = cached_cursor_end;
-            let is_last_block = replay_block_ordinal + 1 == cache.blocks.len();
-            if is_last_block {
-                let model_grids = model_grids.expect("global AWProject Metal replay model grids");
-                if cache.segmented_metal_global_replay_ready {
-                    let (segments, largest_samples) =
-                        replay_awproject_metal_spilled_global_programs(
-                            request,
+            {
+                build_awproject_metal_global_replay_program(
+                    cache,
+                    request.geometry.image_shape[0],
+                    request.geometry.image_shape[1],
+                    grouped_replay_tile_side.unwrap_or(awproject_metal_tile_probe_side()?),
+                )?;
+                let (classification_stats, classification_skipped_samples, cached_cursor_end) = {
+                    let block = cache
+                        .block(replay_block_ordinal)
+                        .expect("the compact replay block hit was just checked");
+                    if block.shape != replay_shape {
+                        return Err(ImagingError::InvalidRequest(format!(
+                            "compact AWProject replay block {replay_block_ordinal} changed shape or endpoint geometry across residual passes"
+                        )));
+                    }
+                    (
+                        block.classification_stats.clone(),
+                        block.classification_skipped_samples,
+                        block.cached_cursor_end,
+                    )
+                };
+                add_awproject_sample_stats(
+                    &mut accumulation.aw_sample_census,
+                    &classification_stats,
+                );
+                accumulation.skipped_samples = accumulation
+                    .skipped_samples
+                    .saturating_add(classification_skipped_samples);
+                cursor = cached_cursor_end;
+                let is_last_block = replay_block_ordinal + 1 == cache.blocks.len();
+                if is_last_block {
+                    let model_grids =
+                        model_grids.expect("global AWProject Metal replay model grids");
+                    if cache.segmented_metal_global_replay_ready {
+                        let (segments, largest_samples) =
+                            replay_awproject_metal_spilled_global_programs(
+                                request,
+                                model_grids,
+                                accumulation,
+                                &mut replay_stats,
+                                cache,
+                            )?;
+                        replay_stats.windows = segments;
+                        replay_stats.largest_window_samples = largest_samples;
+                    } else {
+                        let program = cache
+                            .persistent_metal_global_program
+                            .as_mut()
+                            .expect("global AWProject Metal replay was built above");
+                        program.metadata.clone().apply(accumulation);
+                        replay_awproject_metal_global_program(
+                            request.nterms,
                             model_grids,
                             accumulation,
                             &mut replay_stats,
-                            cache,
+                            program,
                         )?;
-                    replay_stats.windows = segments;
-                    replay_stats.largest_window_samples = largest_samples;
-                } else {
-                    let program = cache
-                        .persistent_metal_global_program
-                        .as_mut()
-                        .expect("global AWProject Metal replay was built above");
-                    program.metadata.clone().apply(accumulation);
-                    #[cfg(all(target_os = "macos", not(coverage)))]
-                    replay_awproject_metal_global_program(
-                        request.nterms,
-                        model_grids,
-                        accumulation,
-                        &mut replay_stats,
-                        program,
-                    )?;
-                    replay_stats.windows = 1;
-                    replay_stats.largest_window_samples = program.prediction_batch.samples.len();
+                        replay_stats.windows = 1;
+                        replay_stats.largest_window_samples =
+                            program.prediction_batch.samples.len();
+                    }
+                    replay_stats.largest_window_tap_bundles = 0;
+                    replay_stats.peak_tap_bytes = 0;
                 }
-                replay_stats.largest_window_tap_bundles = 0;
-                replay_stats.peak_tap_bytes = 0;
+                cursor == batch.len()
             }
-            cursor == batch.len()
+            #[cfg(any(not(target_os = "macos"), coverage))]
+            {
+                unreachable!("global Metal replay is unavailable on this target")
+            }
         } else {
             let block = cache
                 .block_mut(replay_block_ordinal)
