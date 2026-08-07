@@ -24776,6 +24776,7 @@ fn awproject_metal_complex_multiply_f32(
 }
 
 #[cfg(test)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 fn awproject_metal_phase_row_recurrence(
     phase: AwProjectMetalPhasePlan,
     phases: &[WProjectMetalComplex],
