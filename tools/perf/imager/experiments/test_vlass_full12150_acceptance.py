@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 MODULE_PATH = Path(__file__).with_name("vlass_full12150_acceptance.py")
@@ -111,6 +112,28 @@ def valid_runtime_log() -> str:
 
 
 class FullVlassAcceptanceContractTest(unittest.TestCase):
+    def test_frozen_inputs_use_their_earned_identity_algorithms(self) -> None:
+        paths = acceptance.default_paths(Path("/frozen"))
+        compact_results = [
+            {"tree_sha256": acceptance.MS_TREE_SHA256},
+            {"tree_sha256": acceptance.MASK_TREE_SHA256},
+        ]
+        with (
+            mock.patch.object(
+                acceptance, "tree_identity", side_effect=compact_results
+            ) as compact,
+            mock.patch.object(
+                acceptance,
+                "tree_inventory",
+                return_value={"stable_tree_sha256": acceptance.CF_TREE_SHA256},
+            ) as casa_inventory,
+        ):
+            observed = acceptance.validate_input_identities(paths)
+        self.assertEqual(acceptance.MS_TREE_SHA256, observed["ms"]["tree_sha256"])
+        compact.assert_any_call(paths.ms)
+        compact.assert_any_call(paths.mask, excluded_names={"table.lock"})
+        casa_inventory.assert_called_once_with(paths.cf_cache)
+
     def test_no_swap_target_has_hard_floor_and_two_gib_reserve(self) -> None:
         with self.assertRaisesRegex(acceptance.AcceptanceError, "below"):
             acceptance.target_mib_for_headroom(

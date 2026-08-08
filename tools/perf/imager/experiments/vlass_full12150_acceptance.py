@@ -38,6 +38,7 @@ from perf_harness.host_telemetry import (  # noqa: E402
     read_darwin_host_snapshot,
     read_darwin_process_snapshot,
 )
+from perf_harness.casa_tclean import tree_inventory  # noqa: E402
 from perf_harness.image_compare import compare_products  # noqa: E402
 from perf_harness.tree_identity import tree_identity  # noqa: E402
 
@@ -353,15 +354,16 @@ def validate_manifest(paths: Paths) -> dict[str, Any]:
     return manifest
 
 
-def identity(path: Path) -> dict[str, Any]:
-    return tree_identity(path, excluded_names={"table.lock"})
-
-
 def validate_input_identities(paths: Paths) -> dict[str, dict[str, Any]]:
     observed = {
-        "ms": identity(paths.ms),
-        "cf_cache": identity(paths.cf_cache),
-        "mask": identity(paths.mask),
+        # The frozen MS archive identity includes its 21 inert 2020 table.lock
+        # files. The warm CF cache receipt uses the CASA inventory algorithm,
+        # while the corrected mask uses the compact tree identity with its two
+        # volatile table.lock files excluded. Keep those three earned identity
+        # policies distinct.
+        "ms": tree_identity(paths.ms),
+        "cf_cache": tree_inventory(paths.cf_cache),
+        "mask": tree_identity(paths.mask, excluded_names={"table.lock"}),
     }
     expected = {
         "ms": MS_TREE_SHA256,
@@ -369,10 +371,11 @@ def validate_input_identities(paths: Paths) -> dict[str, dict[str, Any]]:
         "mask": MASK_TREE_SHA256,
     }
     for name, expected_hash in expected.items():
-        if observed[name].get("tree_sha256") != expected_hash:
+        hash_field = "stable_tree_sha256" if name == "cf_cache" else "tree_sha256"
+        if observed[name].get(hash_field) != expected_hash:
             raise AcceptanceError(
                 f"{name} tree identity differs: "
-                f"{observed[name].get('tree_sha256')} != {expected_hash}"
+                f"{observed[name].get(hash_field)} != {expected_hash}"
             )
     return observed
 
