@@ -1,0 +1,290 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: LGPL-3.0-or-later
+"""Focused contract tests for the bounded full-VLASS acceptance supervisor."""
+
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+
+
+MODULE_PATH = Path(__file__).with_name("vlass_full12150_acceptance.py")
+SPEC = importlib.util.spec_from_file_location("vlass_full12150_acceptance", MODULE_PATH)
+assert SPEC is not None and SPEC.loader is not None
+acceptance = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = acceptance
+SPEC.loader.exec_module(acceptance)
+
+
+def host_sample(*, headroom: int, swapouts: int = 4, throttled: int = 0) -> dict:
+    page_size = 4096
+    pages = headroom // page_size
+    return {
+        "page_size_bytes": page_size,
+        "pages_free": pages,
+        "pages_inactive": 0,
+        "pages_speculative": 0,
+        "pages_throttled": throttled,
+        "swapouts": swapouts,
+        "swap_used_bytes": 1024,
+    }
+
+
+def valid_probe_log(target_mib: int) -> str:
+    target_bytes = target_mib * acceptance.MIB
+    decisions = {
+        "awproject_selected_field_count": "63",
+        "awproject_initial_grid_backend": "cpu-dynamic-sparse-f64",
+        "awproject_multifield_initial_grid_admission": "admitted",
+        "awproject_grouped_replay_replaced_generic_caches": "true",
+        "awproject_grouped_metal_generic_scratch_bytes": "0",
+        "awproject_grouped_metal_residual_output_bytes": "2361960000",
+        "awproject_grouped_metal_residual_compensation_bytes": "2361960000",
+        "awproject_grouped_metal_model_wrapper_bytes": "2361960000",
+        "awproject_grouped_metal_safety_reserve_bytes": str(64 * acceptance.MIB),
+    }
+    lines = [
+        "standard_mfs_planning_resources "
+        f"memory_target_bytes={target_bytes} memory_target_origin=cli-imaging "
+        f"no_swap_headroom_bytes={target_bytes + acceptance.GIB}",
+        "standard_mfs_runtime_plan initial_dirty_backend=cpu "
+        "residual_backend=metal-row-run-grouped",
+        "awproject_grouped_replay_plan architecture=source-order-grouped-tile-v1 "
+        "tile_side=16 omitted_squared_l2_energy=0.000000000e0",
+    ]
+    lines.extend(
+        f"standard_mfs_execution_decision name={name} value={value} origin=Planner"
+        for name, value in decisions.items()
+    )
+    lines.append(
+        "standard_mfs_planner_preflight status=admitted "
+        "grouped_metal_status=admitted rows_total=655200 ddids=16 "
+        "selected_channels=64 correlations=4 "
+        "memory_pressure_policy=conservative-no-swap "
+        "visibility_streamed=false replay_compiled=false grids_allocated=false "
+        "products_materialized=false"
+    )
+    return "\n".join(lines)
+
+
+def valid_runtime_log() -> str:
+    lines = [
+        "awproject_grouped_metal_admission phase=sealed segment=0 "
+        "source_boundary_upper_bytes=100 exact_additional_bytes=90 all_fit=true",
+        "awproject_effective_support segment=0 omitted_energy_fraction=0 "
+        "max_omitted_energy_fraction=0 prediction_plans=2 "
+        "prediction_cropped_plans=0 prediction_original_tap_visits=10 "
+        "prediction_retained_tap_visits=10 tile_plans=2 tile_cropped_plans=0 "
+        "tile_original_tap_visits=20 tile_retained_tap_visits=20 "
+        "resident_kernel_bytes_before=100 resident_kernel_bytes_after=100",
+        "awproject_aot_grouped_tile_receipt segment=0 "
+        "omitted_energy_fraction_bits=0 grouped_plans_hash_prefix=abc "
+        "legacy_grouped_plans_hash_prefix=abc grouped_route_hash_prefix=def "
+        "legacy_grouped_route_hash_prefix=def "
+        "compile_transient_bytes_peak_estimated=90 compile_admission_limit_bytes=100",
+        "awproject_metal_grouped_replay_retention decision=resident-complete "
+        "segments=1 program_bytes=1000",
+        "awproject_grouped_metal_admission phase=runtime segment=0 all_fit=true "
+        "prechecks=fit postchecks=fit host_bytes_retained_during_tile=0 "
+        "persistent_post_combined_bytes=10 persistent_maximum_current_bytes=20 "
+        "prediction_post_combined_bytes=11 prediction_maximum_current_bytes=20 "
+        "tile_post_combined_bytes=12 tile_maximum_current_bytes=20",
+        "awproject_grouped_metal_host_lifetime segment=0 "
+        "candidate_audit_allocation_bytes=0 host_bytes_retained_during_tile=0 "
+        "dispatch_released_before_tile=true "
+        "candidate_auxiliary_released_before_tile=true "
+        "candidate_result_released_before_tile=true",
+        "awproject_metal_resident_grouped_replay_summary segments=1 "
+        "program_bytes=1000 spill_read_bytes=0 runtime_grouping_builds=0 "
+        "runtime_sort_builds=0 runtime_route_builds=0",
+    ]
+    lines.extend(
+        "image_product_write "
+        f"suffix={suffix} role=test shape=12150x12150x1x1 elements=147622500 "
+        "elapsed_ms=1.0"
+        for suffix in acceptance.EXPECTED_PRODUCTS
+    )
+    return "\n".join(lines)
+
+
+class FullVlassAcceptanceContractTest(unittest.TestCase):
+    def test_no_swap_target_has_hard_floor_and_two_gib_reserve(self) -> None:
+        with self.assertRaisesRegex(acceptance.AcceptanceError, "below"):
+            acceptance.target_mib_for_headroom(
+                acceptance.MINIMUM_NO_SWAP_HEADROOM_BYTES - 1
+            )
+        headroom = acceptance.MINIMUM_NO_SWAP_HEADROOM_BYTES
+        self.assertEqual(
+            (headroom - acceptance.HOST_RESERVE_BYTES) // acceptance.MIB,
+            acceptance.target_mib_for_headroom(headroom),
+        )
+        self.assertEqual(
+            acceptance.MAX_TARGET_MIB,
+            acceptance.target_mib_for_headroom(40 * acceptance.GIB),
+        )
+
+    def test_baseline_rejects_pressure_swapout_and_throttling(self) -> None:
+        first = host_sample(headroom=25_000_000_000)
+        second = host_sample(headroom=25_000_000_000)
+        self.assertGreater(
+            acceptance.validate_baseline_samples(first, second, 1).target_mib, 0
+        )
+        with self.assertRaisesRegex(acceptance.AcceptanceError, "pressure"):
+            acceptance.validate_baseline_samples(first, second, 2)
+        changed_swap = dict(second, swapouts=5)
+        with self.assertRaisesRegex(acceptance.AcceptanceError, "swapout"):
+            acceptance.validate_baseline_samples(first, changed_swap, 1)
+        changed_throttle = dict(second, pages_throttled=1)
+        with self.assertRaisesRegex(acceptance.AcceptanceError, "throttled"):
+            acceptance.validate_baseline_samples(first, changed_throttle, 1)
+
+    def test_direct_command_carries_exact_science_and_private_topology(self) -> None:
+        paths = acceptance.default_paths(Path("/frozen"))
+        common = acceptance.common_imager_command(
+            Path("/frozen/casars-imager"), paths, Path("/out/rust"), 22_000
+        )
+
+        def value(option: str) -> str:
+            return common[common.index(option) + 1]
+
+        self.assertEqual(acceptance.ALL_FIELDS, value("--field"))
+        self.assertEqual("2~17", value("--spw"))
+        self.assertEqual("12150", value("--imsize"))
+        self.assertEqual("20000", value("--niter"))
+        self.assertEqual("cpu", value("--standard-mfs-initial-dirty-backend"))
+        self.assertEqual(
+            "metal-row-run-grouped", value("--standard-mfs-residual-backend")
+        )
+        self.assertEqual(
+            "conservative-no-swap", value("--imaging-memory-pressure-policy")
+        )
+        self.assertEqual(1, common.count("--spw"))
+        self.assertIn("--usepointing", common)
+        self.assertIn("--mask-image", common)
+        self.assertIn("--cfcache", common)
+        environment = acceptance.restricted_environment(paths)
+        self.assertNotIn(
+            "CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GLOBAL_TILE_REPLAY", environment
+        )
+        self.assertEqual(
+            "0", environment["CASA_RS_EXPERIMENTAL_AWPROJECT_REPLAY_RETENTION_BYTES"]
+        )
+
+    def test_probe_contract_is_fail_closed(self) -> None:
+        target_mib = 22_000
+        accepted = valid_probe_log(target_mib)
+        self.assertEqual(
+            "admitted",
+            acceptance.validate_probe_log(accepted, target_mib)["preflight"]["status"],
+        )
+        mutations = (
+            ("grouped_metal_status=admitted", "grouped_metal_status=rejected"),
+            ("rows_total=655200", "rows_total=1"),
+            ("initial_dirty_backend=cpu", "initial_dirty_backend=metal"),
+            (
+                "omitted_squared_l2_energy=0.000000000e0",
+                "omitted_squared_l2_energy=1e-6",
+            ),
+            (
+                "awproject_selected_field_count value=63",
+                "awproject_selected_field_count value=1",
+            ),
+            (
+                "memory_target_origin=cli-imaging",
+                "memory_target_origin=cli-capped-to-no-swap-headroom",
+            ),
+        )
+        for old, new in mutations:
+            with self.subTest(mutation=old):
+                self.assertIn(old, accepted)
+                with self.assertRaises(acceptance.AcceptanceError):
+                    acceptance.validate_probe_log(
+                        accepted.replace(old, new), target_mib
+                    )
+
+    def test_runtime_contract_is_fail_closed(self) -> None:
+        accepted = valid_runtime_log()
+        result = acceptance.validate_runtime_log(accepted)
+        self.assertEqual(1, result["segment_count"])
+        self.assertEqual(19, result["product_count"])
+        mutations = (
+            ("all_fit=true", "all_fit=false"),
+            ("prediction_cropped_plans=0", "prediction_cropped_plans=1"),
+            (
+                "legacy_grouped_route_hash_prefix=def",
+                "legacy_grouped_route_hash_prefix=bad",
+            ),
+            ("decision=resident-complete", "decision=spill-prefetch"),
+            ("spill_read_bytes=0", "spill_read_bytes=1"),
+            ("runtime_route_builds=0", "runtime_route_builds=1"),
+            (
+                "candidate_audit_allocation_bytes=0",
+                "candidate_audit_allocation_bytes=16",
+            ),
+            ("shape=12150x12150x1x1", "shape=4096x4096x1x1"),
+        )
+        for old, new in mutations:
+            with self.subTest(mutation=old):
+                self.assertIn(old, accepted)
+                with self.assertRaises(acceptance.AcceptanceError):
+                    acceptance.validate_runtime_log(accepted.replace(old, new, 1))
+
+    def test_monitor_policy_stops_on_each_destructive_signal(self) -> None:
+        first = host_sample(headroom=25_000_000_000)
+        baseline = acceptance.validate_baseline_samples(first, dict(first), 1)
+        self.assertIsNone(
+            acceptance.monitor_stop_reason(
+                baseline=baseline,
+                sample=dict(first),
+                pressure_level=1,
+                swap_used_growth_samples=0,
+            )
+        )
+        cases = (
+            (dict(first), 2, 0, "pressure"),
+            (dict(first, pages_throttled=1), 1, 0, "throttled"),
+            (dict(first, swapouts=5), 1, 0, "swapout"),
+            (dict(first), 1, 2, "swap-used"),
+            (host_sample(headroom=acceptance.HOST_RESERVE_BYTES - 1), 1, 0, "headroom"),
+        )
+        for sample, level, growth, expected in cases:
+            with self.subTest(expected=expected):
+                reason = acceptance.monitor_stop_reason(
+                    baseline=baseline,
+                    sample=sample,
+                    pressure_level=level,
+                    swap_used_growth_samples=growth,
+                )
+                self.assertIsNotNone(reason)
+                self.assertIn(expected, reason.lower())
+
+    def test_comparison_request_reuses_frozen_full_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            comparison = {
+                "products": list(acceptance.EXPECTED_PRODUCTS),
+                "max_elements_per_product": 1_000_000,
+                "mode": "full",
+                "full_chunk_elements": 262_144,
+                "require_exact_product_inventory": True,
+                "require_metadata_parity": True,
+                "source_regions": [{"products": [".image.tt0"]}],
+                "tolerances": {"schema_version": 2},
+            }
+            request = acceptance.comparison_request(
+                {"comparison": comparison},
+                root / "rust",
+                root / "casa",
+                root,
+            )
+        self.assertEqual(list(acceptance.EXPECTED_PRODUCTS), request["products"])
+        self.assertEqual("full", request["mode"])
+        self.assertTrue(request["require_exact_product_inventory"])
+        self.assertTrue(request["require_metadata_parity"])
+
+
+if __name__ == "__main__":
+    unittest.main()

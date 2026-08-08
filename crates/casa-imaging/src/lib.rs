@@ -5755,6 +5755,31 @@ struct AwProjectInitialGridPlan {
     dynamic_sparse_scheduler: bool,
 }
 
+const AWPROJECT_GROUPED_METAL_SAFETY_RESERVE_BYTES: usize = 64 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AwProjectGroupedMetalAdmission {
+    planner_device_budget_bytes: usize,
+    residual_output_bytes: usize,
+    residual_compensation_bytes: usize,
+    model_wrapper_bytes: usize,
+    safety_reserve_bytes: usize,
+    legacy_generic_scratch_bytes: usize,
+    segment_ceiling_bytes: usize,
+}
+
+impl AwProjectGroupedMetalAdmission {
+    fn persistent_bytes(self) -> Result<usize, ImagingError> {
+        self.residual_output_bytes
+            .checked_add(self.residual_compensation_bytes)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "grouped residual Metal persistent byte count overflowed".to_string(),
+                )
+            })
+    }
+}
+
 fn resolved_plan_decision_value<'a>(plan: &'a ImagingResolvedPlan, name: &str) -> Option<&'a str> {
     plan.decisions
         .iter()
@@ -5845,6 +5870,87 @@ fn resolved_awproject_initial_grid_plan(
     }))
 }
 
+fn resolved_awproject_grouped_metal_admission(
+    execution: &StandardMfsExecutionPlan,
+) -> Result<Option<AwProjectGroupedMetalAdmission>, ImagingError> {
+    let resolved = &execution.resolved;
+    if resolved_plan_decision_value(resolved, "awproject_initial_grid_backend")
+        != Some("cpu-dynamic-sparse-f64")
+        || resolved_plan_decision_value(
+            resolved,
+            "awproject_grouped_replay_replaced_generic_caches",
+        ) != Some("true")
+    {
+        return Ok(None);
+    }
+    let parse_positive = |name| {
+        resolved_plan_decision_value(resolved, name)
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "resolved grouped residual Metal plan has no positive {name} decision"
+                ))
+            })
+    };
+    let parse_any = |name| {
+        resolved_plan_decision_value(resolved, name)
+            .and_then(|value| value.parse::<usize>().ok())
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "resolved grouped residual Metal plan has no integer {name} decision"
+                ))
+            })
+    };
+    let admission = AwProjectGroupedMetalAdmission {
+        planner_device_budget_bytes: parse_positive("awproject_grouped_metal_device_budget_bytes")?,
+        residual_output_bytes: parse_positive("awproject_grouped_metal_residual_output_bytes")?,
+        residual_compensation_bytes: parse_positive(
+            "awproject_grouped_metal_residual_compensation_bytes",
+        )?,
+        model_wrapper_bytes: parse_positive("awproject_grouped_metal_model_wrapper_bytes")?,
+        safety_reserve_bytes: parse_positive("awproject_grouped_metal_safety_reserve_bytes")?,
+        legacy_generic_scratch_bytes: parse_positive(
+            "awproject_grouped_metal_legacy_generic_scratch_bytes",
+        )?,
+        segment_ceiling_bytes: parse_positive("awproject_grouped_metal_segment_ceiling_bytes")?,
+    };
+    if admission.safety_reserve_bytes != AWPROJECT_GROUPED_METAL_SAFETY_RESERVE_BYTES {
+        return Err(ImagingError::InvalidRequest(format!(
+            "resolved grouped residual Metal reserve {} differs from the required {} bytes",
+            admission.safety_reserve_bytes, AWPROJECT_GROUPED_METAL_SAFETY_RESERVE_BYTES,
+        )));
+    }
+    let generic_scratch = parse_any("awproject_grouped_metal_generic_scratch_bytes")?;
+    if generic_scratch != 0
+        || resolved.caches.direct_metal_scratch_bytes != 0
+        || resolved.workload.direct_metal_scratch_candidate_bytes != 0
+    {
+        return Err(ImagingError::InvalidRequest(format!(
+            "resolved CPU-initial/grouped-residual Metal plan retained generic scratch: decision={generic_scratch}, cache={}, candidate={}",
+            resolved.caches.direct_metal_scratch_bytes,
+            resolved.workload.direct_metal_scratch_candidate_bytes,
+        )));
+    }
+    let expected_ceiling = admission
+        .planner_device_budget_bytes
+        .checked_sub(admission.persistent_bytes()?)
+        .and_then(|bytes| bytes.checked_sub(admission.safety_reserve_bytes))
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "resolved grouped residual Metal budget cannot hold persistent grids and reserve"
+                    .to_string(),
+            )
+        })?;
+    if admission.segment_ceiling_bytes != expected_ceiling {
+        return Err(ImagingError::InvalidRequest(format!(
+            "resolved grouped residual Metal ceiling {} differs from formula-derived {expected_ceiling}",
+            admission.segment_ceiling_bytes,
+        )));
+    }
+    Ok(Some(admission))
+}
+
 /// Run CASA-style MT-MFS imaging with the streaming mosaic gridder.
 ///
 /// This keeps the large-mosaic data path replayable: visibility row blocks are
@@ -5873,6 +5979,8 @@ where
     .filter(|bytes| *bytes > 0);
     let execution_config = execution.standard_mfs;
     let awproject_initial_grid_plan = resolved_awproject_initial_grid_plan(&execution_config)?;
+    let awproject_grouped_metal_admission =
+        resolved_awproject_grouped_metal_admission(&execution_config)?;
     if let Some(plan) = awproject_initial_grid_plan {
         eprintln!(
             "awproject_initial_grid_plan backend=cpu-dynamic-sparse-f64 tile_side={} workers={} logical_tap_bytes={} sparse_grid_budget_bytes={} neon_2x2={} dynamic_scheduler={} planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
@@ -5897,6 +6005,7 @@ where
         AwProjectCompactReplayCache::new(
             planned_aw_replay_retention_bytes,
             grouped_replay_plan.clone(),
+            awproject_grouped_metal_admission,
         )
     });
     let total_started = Instant::now();
@@ -6116,6 +6225,7 @@ where
                 AwProjectCompactReplayCache::new(
                     planned_aw_replay_retention_bytes,
                     grouped_replay_plan.clone(),
+                    awproject_grouped_metal_admission,
                 )
             });
         }
@@ -10429,6 +10539,9 @@ enum AwProjectCompactReplayBlockSlot {
 struct AwProjectCompactReplayCache {
     budget_bytes: usize,
     grouped_replay: Option<AwProjectGroupedReplayPlan>,
+    grouped_metal_admission: Option<AwProjectGroupedMetalAdmission>,
+    grouped_metal_segment_split_count: usize,
+    grouped_metal_max_segment_additional_bytes: usize,
     resident_bytes: usize,
     compiled_total_bytes: usize,
     compiled_total_bytes_complete: bool,
@@ -10461,10 +10574,17 @@ struct AwProjectCompactReplayCache {
 }
 
 impl AwProjectCompactReplayCache {
-    fn new(budget_bytes: usize, grouped_replay: Option<AwProjectGroupedReplayPlan>) -> Self {
+    fn new(
+        budget_bytes: usize,
+        grouped_replay: Option<AwProjectGroupedReplayPlan>,
+        grouped_metal_admission: Option<AwProjectGroupedMetalAdmission>,
+    ) -> Self {
         Self {
             budget_bytes,
             grouped_replay,
+            grouped_metal_admission,
+            grouped_metal_segment_split_count: 0,
+            grouped_metal_max_segment_additional_bytes: 0,
             resident_bytes: 0,
             compiled_total_bytes: 0,
             compiled_total_bytes_complete: true,
@@ -11842,6 +11962,23 @@ struct AwProjectMetalPredictionDispatch {
     candidate_builder: Option<AwProjectWideDivisionCandidateBuilderStats>,
     elapsed: Duration,
     host_readback: Duration,
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    grouped_metal_admission: Option<AwProjectGroupedMetalPredictionAdmissionReceipt>,
+}
+
+#[derive(Clone, Copy, Debug)]
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectGroupedMetalPredictionAdmission {
+    admission: AwProjectGroupedMetalAdmission,
+    segment: usize,
+    tile_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectGroupedMetalPredictionAdmissionReceipt {
+    overlap: AwProjectGroupedMetalDispatchOverlap,
+    live: AwProjectGroupedMetalLiveCheck,
 }
 
 #[derive(Clone, Copy)]
@@ -11867,6 +12004,67 @@ struct AwProjectWideDivisionCandidateBuilderStats {
     result_allocation_bytes: usize,
     audit_allocation_bytes: usize,
     additional_per_worker_heap_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectGroupedMetalHostPredictionLifetime {
+    dispatch_result_allocation_bytes: usize,
+    dispatch_audit_allocation_bytes: usize,
+    dispatch_wide_division_allocation_bytes: usize,
+    dispatch_release_before_tile_bytes: usize,
+    candidate_result_allocation_bytes: usize,
+    candidate_audit_allocation_bytes: usize,
+    candidate_wide_division_allocation_bytes: usize,
+    candidate_auxiliary_release_before_tile_bytes: usize,
+    candidate_result_release_before_tile_bytes: usize,
+    host_bytes_retained_during_tile: usize,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_vec_capacity_bytes<T>(capacity: usize) -> usize {
+    capacity.saturating_mul(std::mem::size_of::<T>())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_grouped_metal_host_prediction_lifetime(
+    dispatch: &AwProjectMetalPredictionDispatch,
+    candidate: &AwProjectMetalPredictionDispatch,
+) -> AwProjectGroupedMetalHostPredictionLifetime {
+    let dispatch_result_allocation_bytes =
+        awproject_vec_capacity_bytes::<AwProjectMetalPredictionResult>(dispatch.results.capacity());
+    let dispatch_audit_allocation_bytes = dispatch.audit.as_ref().map_or(0, |audit| {
+        awproject_vec_capacity_bytes::<AwProjectMetalPredictionAuditSample>(audit.capacity())
+    });
+    let dispatch_wide_division_allocation_bytes =
+        dispatch.wide_division.as_ref().map_or(0, |wide| {
+            awproject_vec_capacity_bytes::<AwProjectMetalWideDivisionSample>(wide.capacity())
+        });
+    let candidate_result_allocation_bytes = awproject_vec_capacity_bytes::<
+        AwProjectMetalPredictionResult,
+    >(candidate.results.capacity());
+    let candidate_audit_allocation_bytes = candidate.audit.as_ref().map_or(0, |audit| {
+        awproject_vec_capacity_bytes::<AwProjectMetalPredictionAuditSample>(audit.capacity())
+    });
+    let candidate_wide_division_allocation_bytes =
+        candidate.wide_division.as_ref().map_or(0, |wide| {
+            awproject_vec_capacity_bytes::<AwProjectMetalWideDivisionSample>(wide.capacity())
+        });
+    AwProjectGroupedMetalHostPredictionLifetime {
+        dispatch_result_allocation_bytes,
+        dispatch_audit_allocation_bytes,
+        dispatch_wide_division_allocation_bytes,
+        dispatch_release_before_tile_bytes: dispatch_result_allocation_bytes
+            .saturating_add(dispatch_audit_allocation_bytes)
+            .saturating_add(dispatch_wide_division_allocation_bytes),
+        candidate_result_allocation_bytes,
+        candidate_audit_allocation_bytes,
+        candidate_wide_division_allocation_bytes,
+        candidate_auxiliary_release_before_tile_bytes: candidate_audit_allocation_bytes
+            .saturating_add(candidate_wide_division_allocation_bytes),
+        candidate_result_release_before_tile_bytes: candidate_result_allocation_bytes,
+        host_bytes_retained_during_tile: 0,
+    }
 }
 
 #[repr(C)]
@@ -12258,6 +12456,602 @@ impl AwProjectMetalResidentProgram {
                     .unwrap_or(0),
             )
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+struct AwProjectGroupedMetalDispatchOverlap {
+    prediction_metal_bytes: usize,
+    prediction_readback_host_bytes: usize,
+    prediction_with_readback_bytes: usize,
+    tile_metal_bytes: usize,
+    exact_additional_bytes: usize,
+    persistent_bytes: usize,
+    peak_bytes: usize,
+}
+
+fn awproject_grouped_metal_dispatch_overlap(
+    admission: AwProjectGroupedMetalAdmission,
+    prediction_metal_bytes: usize,
+    prediction_readback_host_bytes: usize,
+    tile_metal_bytes: usize,
+) -> Result<AwProjectGroupedMetalDispatchOverlap, ImagingError> {
+    let prediction_with_readback_bytes = prediction_metal_bytes
+        .checked_add(prediction_readback_host_bytes)
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "grouped residual Metal prediction/readback overlap overflowed".to_string(),
+            )
+        })?;
+    let exact_additional_bytes = prediction_with_readback_bytes.max(tile_metal_bytes);
+    let persistent_bytes = admission.persistent_bytes()?;
+    let peak_bytes = persistent_bytes
+        .checked_add(exact_additional_bytes)
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "grouped residual Metal dispatch peak overflowed".to_string(),
+            )
+        })?;
+    if exact_additional_bytes > admission.segment_ceiling_bytes {
+        return Err(ImagingError::InvalidRequest(format!(
+            "grouped residual Metal segment requires {exact_additional_bytes} dispatch-overlap bytes, above its {}-byte ceiling (prediction_metal={prediction_metal_bytes}, prediction_readback_host={prediction_readback_host_bytes}, tile_metal={tile_metal_bytes})",
+            admission.segment_ceiling_bytes,
+        )));
+    }
+    Ok(AwProjectGroupedMetalDispatchOverlap {
+        prediction_metal_bytes,
+        prediction_readback_host_bytes,
+        prediction_with_readback_bytes,
+        tile_metal_bytes,
+        exact_additional_bytes,
+        persistent_bytes,
+        peak_bytes,
+    })
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+struct AwProjectGroupedMetalSourceUpper {
+    prediction_without_model_bytes: usize,
+    tile_bytes: usize,
+}
+
+impl AwProjectGroupedMetalSourceUpper {
+    fn checked_add(self, incoming: Self) -> Result<Self, ImagingError> {
+        Ok(Self {
+            prediction_without_model_bytes: self
+                .prediction_without_model_bytes
+                .checked_add(incoming.prediction_without_model_bytes)
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "grouped residual Metal source prediction upper overflowed".to_string(),
+                    )
+                })?,
+            tile_bytes: self
+                .tile_bytes
+                .checked_add(incoming.tile_bytes)
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "grouped residual Metal source tile upper overflowed".to_string(),
+                    )
+                })?,
+        })
+    }
+
+    fn dispatch_bytes(
+        self,
+        admission: AwProjectGroupedMetalAdmission,
+    ) -> Result<usize, ImagingError> {
+        let prediction_bytes = admission
+            .model_wrapper_bytes
+            .checked_add(self.prediction_without_model_bytes)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "grouped residual Metal segment prediction upper overflowed".to_string(),
+                )
+            })?;
+        Ok(prediction_bytes.max(self.tile_bytes))
+    }
+
+    fn is_empty(self) -> bool {
+        self.prediction_without_model_bytes == 0 && self.tile_bytes == 0
+    }
+}
+
+fn awproject_grouped_metal_segment_split_required(
+    current: AwProjectGroupedMetalSourceUpper,
+    incoming: AwProjectGroupedMetalSourceUpper,
+    admission: AwProjectGroupedMetalAdmission,
+) -> Result<bool, ImagingError> {
+    let incoming_bytes = incoming.dispatch_bytes(admission)?;
+    if incoming_bytes > admission.segment_ceiling_bytes {
+        return Err(ImagingError::InvalidRequest(format!(
+            "one AWProject source program requires {incoming_bytes} conservative dispatch-overlap bytes, above the minimum segment ceiling {}",
+            admission.segment_ceiling_bytes,
+        )));
+    }
+    let combined_bytes = current.checked_add(incoming)?.dispatch_bytes(admission)?;
+    Ok(!current.is_empty() && combined_bytes > admission.segment_ceiling_bytes)
+}
+
+fn awproject_grouped_metal_missing_persistent_bytes(
+    admission: AwProjectGroupedMetalAdmission,
+    compensation_present: bool,
+) -> usize {
+    if compensation_present {
+        0
+    } else {
+        admission.residual_compensation_bytes
+    }
+}
+
+fn awproject_grouped_metal_live_additional_bytes(
+    dispatch_overlap_bytes: usize,
+    missing_persistent_bytes: usize,
+) -> Result<usize, ImagingError> {
+    dispatch_overlap_bytes
+        .checked_add(missing_persistent_bytes)
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "grouped residual Metal live additional byte count overflowed".to_string(),
+            )
+        })
+}
+
+fn awproject_grouped_metal_preallocation_required_bytes(
+    current_bytes: usize,
+    additional_bytes: usize,
+    reserve_bytes: usize,
+) -> Result<usize, ImagingError> {
+    current_bytes
+        .checked_add(additional_bytes)
+        .and_then(|bytes| bytes.checked_add(reserve_bytes))
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "grouped residual Metal preallocation byte count overflowed".to_string(),
+            )
+        })
+}
+
+fn awproject_grouped_metal_maximum_current_bytes(
+    recommended_bytes: usize,
+    reserve_bytes: usize,
+) -> Result<usize, ImagingError> {
+    recommended_bytes.checked_sub(reserve_bytes).ok_or_else(|| {
+        ImagingError::Unsupported(
+            "grouped residual Metal reserve exceeds the live recommended working set".to_string(),
+        )
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn checked_awproject_grouped_metal_bytes(
+    values: impl IntoIterator<Item = usize>,
+    label: &str,
+) -> Result<usize, ImagingError> {
+    values.into_iter().try_fold(0usize, |total, value| {
+        total.checked_add(value).ok_or_else(|| {
+            ImagingError::InvalidRequest(format!(
+                "grouped residual Metal {label} byte count overflowed"
+            ))
+        })
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn checked_awproject_grouped_metal_product(
+    values: impl IntoIterator<Item = usize>,
+    label: &str,
+) -> Result<usize, ImagingError> {
+    values.into_iter().try_fold(1usize, |product, value| {
+        product.checked_mul(value).ok_or_else(|| {
+            ImagingError::InvalidRequest(format!(
+                "grouped residual Metal {label} byte count overflowed"
+            ))
+        })
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_grouped_metal_prediction_bytes(
+    batch: &AwProjectMetalPredictionBatch,
+    model_wrapper_bytes: usize,
+    unique_program: &AwProjectMetalUniquePredictionProgram,
+) -> Result<usize, ImagingError> {
+    let result_bytes = checked_awproject_grouped_metal_product(
+        [
+            batch.samples.len(),
+            std::mem::size_of::<AwProjectMetalPredictionResult>(),
+        ],
+        "prediction result overlap",
+    )?;
+    let wide_division_bytes = checked_awproject_grouped_metal_product(
+        [
+            batch.samples.len(),
+            std::mem::size_of::<AwProjectMetalWideDivisionSample>(),
+        ],
+        "wide-division overlap",
+    )?;
+    let unique_result_bytes = checked_awproject_grouped_metal_product(
+        [
+            unique_program.work_plans.len(),
+            std::mem::size_of::<AwProjectMetalUniquePrediction>(),
+        ],
+        "unique-prediction result overlap",
+    )?;
+    checked_awproject_grouped_metal_bytes(
+        [
+            std::mem::size_of_val(batch.samples.as_slice()),
+            std::mem::size_of_val(batch.kernels.as_slice()),
+            std::mem::size_of_val(batch.phases.as_slice()),
+            model_wrapper_bytes,
+            result_bytes,
+            wide_division_bytes,
+            std::mem::size_of_val(unique_program.work_plans.as_slice()),
+            std::mem::size_of_val(unique_program.plan_indices.as_slice()),
+            unique_result_bytes,
+            std::mem::size_of::<AwProjectMetalPredictionParams>(),
+        ],
+        "prediction overlap",
+    )
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_grouped_metal_prediction_readback_host_bytes(
+    sample_count: usize,
+) -> Result<usize, ImagingError> {
+    checked_awproject_grouped_metal_product(
+        [
+            sample_count,
+            std::mem::size_of::<AwProjectMetalPredictionResult>()
+                + std::mem::size_of::<AwProjectMetalWideDivisionSample>(),
+        ],
+        "prediction host readback overlap",
+    )
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_grouped_metal_tile_bytes(
+    program: &AwProjectMetalResidentProgram,
+) -> Result<usize, ImagingError> {
+    let aot = program.aot_grouped_tile.as_ref().ok_or_else(|| {
+        ImagingError::InvalidRequest(
+            "grouped residual Metal admission requires a sealed AOT tile program".to_string(),
+        )
+    })?;
+    checked_awproject_grouped_metal_bytes(
+        [
+            std::mem::size_of_val(aot.grouped.groups.as_slice()),
+            std::mem::size_of_val(program.imaging_kernels()),
+            std::mem::size_of_val(program.tile_batch.phases.as_slice()),
+            std::mem::size_of_val(aot.grouped.tile_plan.active_tile_ids.as_slice()),
+            std::mem::size_of_val(aot.grouped.tile_plan.tile_fragment_offsets.as_slice()),
+            std::mem::size_of_val(aot.grouped.tile_plan.fragments.as_slice()),
+            std::mem::size_of_val(aot.fixed_scales.as_slice()),
+            std::mem::size_of_val(aot.inverse_fixed_scales.as_slice()),
+            std::mem::size_of::<AwProjectMetalTileParams>(),
+        ],
+        "tile overlap",
+    )
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_grouped_metal_padded_prediction_plan_upper(
+    samples: &[AwProjectMetalPredictionSample],
+    thread_width: usize,
+) -> Result<usize, ImagingError> {
+    if thread_width == 0 {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject grouped prediction SIMD width must be non-zero".to_string(),
+        ));
+    }
+    let mut support_counts = BTreeMap::<(u32, u32), usize>::new();
+    for sample in samples {
+        for plan in [sample.first_prediction, sample.second_prediction] {
+            let count = support_counts
+                .entry((plan.x_support, plan.y_support))
+                .or_default();
+            *count = count.checked_add(1).ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "grouped residual Metal source prediction count overflowed".to_string(),
+                )
+            })?;
+        }
+    }
+    support_counts
+        .into_values()
+        .try_fold(0usize, |total, count| {
+            let padded = count
+                .div_ceil(thread_width)
+                .checked_mul(thread_width)
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "grouped residual Metal padded prediction count overflowed".to_string(),
+                    )
+                })?;
+            total.checked_add(padded).ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "grouped residual Metal padded prediction upper overflowed".to_string(),
+                )
+            })
+        })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_grouped_metal_unique_prediction_thread_width() -> Result<usize, ImagingError> {
+    use objc2_metal::MTLComputePipelineState;
+
+    AWPROJECT_METAL_EXECUTOR.with(|executor_slot| {
+        let mut executor_slot = executor_slot.borrow_mut();
+        if executor_slot.is_none() {
+            *executor_slot = Some(AwProjectMetalExecutor::new()?);
+        }
+        Ok(executor_slot
+            .as_ref()
+            .expect("grouped residual Metal admission executor")
+            .unique_prediction_pipeline
+            .threadExecutionWidth()
+            .max(1))
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_grouped_metal_source_dispatch_upper_bytes(
+    program: &AwProjectMetalResidentProgram,
+    raw_kernel_upper_bytes: usize,
+    thread_width: usize,
+) -> Result<AwProjectGroupedMetalSourceUpper, ImagingError> {
+    let samples = program.prediction_batch.samples.len();
+    let unique_upper = awproject_grouped_metal_padded_prediction_plan_upper(
+        &program.prediction_batch.samples,
+        thread_width,
+    )?;
+    let result_upper = checked_awproject_grouped_metal_product(
+        [
+            samples,
+            std::mem::size_of::<AwProjectMetalPredictionResult>(),
+        ],
+        "source prediction result upper bound",
+    )?;
+    let wide_division_upper = checked_awproject_grouped_metal_product(
+        [
+            samples,
+            std::mem::size_of::<AwProjectMetalWideDivisionSample>(),
+        ],
+        "source wide-division upper bound",
+    )?;
+    let unique_plan_upper = checked_awproject_grouped_metal_product(
+        [
+            unique_upper,
+            std::mem::size_of::<AwProjectMetalPredictionWorkPlan>(),
+        ],
+        "source unique-plan upper bound",
+    )?;
+    let index_upper = checked_awproject_grouped_metal_product(
+        [
+            samples,
+            std::mem::size_of::<AwProjectMetalPredictionPlanIndices>(),
+        ],
+        "source prediction-index upper bound",
+    )?;
+    let unique_result_upper = checked_awproject_grouped_metal_product(
+        [
+            unique_upper,
+            std::mem::size_of::<AwProjectMetalUniquePrediction>(),
+        ],
+        "source unique-result upper bound",
+    )?;
+    let prediction_without_model_bytes = checked_awproject_grouped_metal_bytes(
+        [
+            std::mem::size_of_val(program.prediction_batch.samples.as_slice()),
+            raw_kernel_upper_bytes,
+            std::mem::size_of_val(program.prediction_batch.phases.as_slice()),
+            result_upper,
+            wide_division_upper,
+            result_upper,
+            wide_division_upper,
+            unique_plan_upper,
+            index_upper,
+            unique_result_upper,
+            std::mem::size_of::<AwProjectMetalPredictionParams>(),
+        ],
+        "source prediction upper bound",
+    )?;
+    let group_upper = samples.checked_mul(6).ok_or_else(|| {
+        ImagingError::InvalidRequest(
+            "grouped residual Metal source group upper bound overflowed".to_string(),
+        )
+    })?;
+    let group_bytes_upper = checked_awproject_grouped_metal_product(
+        [
+            group_upper,
+            std::mem::size_of::<AwProjectMetalGroupedTilePlan>(),
+        ],
+        "source tile-group upper bound",
+    )?;
+    let scale_bytes = checked_awproject_grouped_metal_product(
+        [4, std::mem::size_of::<f32>()],
+        "source tile-scale upper bound",
+    )?;
+    let fragment_bytes_upper = checked_awproject_grouped_metal_product(
+        [
+            program.tile_plan.fragments.len(),
+            2,
+            std::mem::size_of::<u32>(),
+        ],
+        "source grouped tile-fragment upper bound",
+    )?;
+    let tile = checked_awproject_grouped_metal_bytes(
+        [
+            group_bytes_upper,
+            raw_kernel_upper_bytes,
+            std::mem::size_of_val(program.tile_batch.phases.as_slice()),
+            std::mem::size_of_val(program.tile_plan.active_tile_ids.as_slice()),
+            std::mem::size_of_val(program.tile_plan.tile_fragment_offsets.as_slice()),
+            fragment_bytes_upper,
+            scale_bytes,
+            std::mem::size_of::<AwProjectMetalTileParams>(),
+        ],
+        "source tile upper bound",
+    )?;
+    Ok(AwProjectGroupedMetalSourceUpper {
+        prediction_without_model_bytes,
+        tile_bytes: tile,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_grouped_metal_sealed_dispatch_overlap(
+    program: &AwProjectMetalResidentProgram,
+    admission: AwProjectGroupedMetalAdmission,
+) -> Result<(AwProjectGroupedMetalDispatchOverlap, usize, usize), ImagingError> {
+    use objc2_metal::{MTLComputePipelineState, MTLDevice};
+
+    AWPROJECT_METAL_EXECUTOR.with(|executor_slot| {
+        let mut executor_slot = executor_slot.borrow_mut();
+        if executor_slot.is_none() {
+            *executor_slot = Some(AwProjectMetalExecutor::new()?);
+        }
+        let executor = executor_slot
+            .as_ref()
+            .expect("grouped residual Metal admission executor");
+        let unique_program = deduplicate_awproject_metal_prediction_plans(
+            &program.prediction_batch.samples,
+            executor
+                .unique_prediction_pipeline
+                .threadExecutionWidth()
+                .max(1),
+        )?;
+        let prediction_bytes = awproject_grouped_metal_prediction_bytes(
+            &program.prediction_batch,
+            admission.model_wrapper_bytes,
+            &unique_program,
+        )?;
+        let prediction_readback_host_bytes =
+            awproject_grouped_metal_prediction_readback_host_bytes(
+                program.prediction_batch.samples.len(),
+            )?;
+        let tile_bytes = awproject_grouped_metal_tile_bytes(program)?;
+        Ok((
+            awproject_grouped_metal_dispatch_overlap(
+                admission,
+                prediction_bytes,
+                prediction_readback_host_bytes,
+                tile_bytes,
+            )?,
+            usize::try_from(executor.device.recommendedMaxWorkingSetSize()).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "Metal recommended working-set size exceeds usize".to_string(),
+                )
+            })?,
+            executor.device.currentAllocatedSize(),
+        ))
+    })
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectGroupedMetalLiveCheck {
+    recommended_bytes: usize,
+    pre_current_bytes: usize,
+    post_current_bytes: usize,
+    post_combined_bytes: usize,
+    additional_bytes: usize,
+    known_host_overlap_bytes: usize,
+    required_bytes: usize,
+    maximum_current_bytes: usize,
+}
+
+fn awproject_grouped_metal_postallocation_combined_bytes(
+    current_bytes: usize,
+    known_host_overlap_bytes: usize,
+) -> Result<usize, ImagingError> {
+    current_bytes
+        .checked_add(known_host_overlap_bytes)
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "grouped residual Metal postallocation byte count overflowed".to_string(),
+            )
+        })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_grouped_metal_preallocation_check(
+    device: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLDevice>,
+    admission: AwProjectGroupedMetalAdmission,
+    additional_bytes: usize,
+    known_host_overlap_bytes: usize,
+    segment: usize,
+    phase: &str,
+) -> Result<AwProjectGroupedMetalLiveCheck, ImagingError> {
+    use objc2_metal::MTLDevice;
+
+    let recommended_bytes =
+        usize::try_from(device.recommendedMaxWorkingSetSize()).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "Metal recommended working-set size exceeds usize".to_string(),
+            )
+        })?;
+    let pre_current_bytes = device.currentAllocatedSize();
+    if known_host_overlap_bytes > additional_bytes {
+        return Err(ImagingError::InvalidRequest(format!(
+            "grouped residual Metal {phase} known host overlap {known_host_overlap_bytes} exceeds its {additional_bytes}-byte preallocation envelope"
+        )));
+    }
+    let required = awproject_grouped_metal_preallocation_required_bytes(
+        pre_current_bytes,
+        additional_bytes,
+        admission.safety_reserve_bytes,
+    )?;
+    let maximum_current_bytes = awproject_grouped_metal_maximum_current_bytes(
+        recommended_bytes,
+        admission.safety_reserve_bytes,
+    )?;
+    if recommended_bytes == 0 || required > recommended_bytes {
+        return Err(ImagingError::Unsupported(format!(
+            "grouped residual Metal {phase} preallocation rejected segment {segment}: current={pre_current_bytes}, additional={additional_bytes}, reserve={}, required={required}, recommended={recommended_bytes}",
+            admission.safety_reserve_bytes,
+        )));
+    }
+    Ok(AwProjectGroupedMetalLiveCheck {
+        recommended_bytes,
+        pre_current_bytes,
+        post_current_bytes: pre_current_bytes,
+        post_combined_bytes: pre_current_bytes,
+        additional_bytes,
+        known_host_overlap_bytes,
+        required_bytes: required,
+        maximum_current_bytes,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_grouped_metal_postallocation_check(
+    device: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLDevice>,
+    admission: AwProjectGroupedMetalAdmission,
+    segment: usize,
+    phase: &str,
+    mut check: AwProjectGroupedMetalLiveCheck,
+) -> Result<AwProjectGroupedMetalLiveCheck, ImagingError> {
+    use objc2_metal::MTLDevice;
+
+    check.post_current_bytes = device.currentAllocatedSize();
+    check.post_combined_bytes = awproject_grouped_metal_postallocation_combined_bytes(
+        check.post_current_bytes,
+        check.known_host_overlap_bytes,
+    )?;
+    if check.post_combined_bytes > check.maximum_current_bytes {
+        return Err(ImagingError::Unsupported(format!(
+            "grouped residual Metal {phase} postallocation rejected segment {segment} before GPU commit: current={}, known_host_overlap={}, combined={}, maximum_current={}, recommended={}, reserve={}",
+            check.post_current_bytes,
+            check.known_host_overlap_bytes,
+            check.post_combined_bytes,
+            check.maximum_current_bytes,
+            check.recommended_bytes,
+            admission.safety_reserve_bytes,
+        )));
+    }
+    Ok(check)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -13847,6 +14641,15 @@ struct AwProjectMetalTileGridStats {
     dispatch_wait: Duration,
     output_bytes: usize,
     total: Duration,
+    grouped_metal_live: Option<AwProjectGroupedMetalLiveCheck>,
+}
+
+#[derive(Clone, Copy, Debug)]
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectGroupedMetalTileAdmission {
+    admission: AwProjectGroupedMetalAdmission,
+    segment: usize,
+    overlap: AwProjectGroupedMetalDispatchOverlap,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -18440,6 +19243,7 @@ impl AwProjectMetalExecutor {
         model_grids: &[Array2<Complex32>],
         audit_generation: Option<u32>,
         wide_division_generation: Option<u32>,
+        grouped_metal_context: Option<AwProjectGroupedMetalPredictionAdmission>,
     ) -> Result<AwProjectMetalPredictionDispatch, ImagingError> {
         use std::{ffi::c_void, mem, ptr::NonNull, slice};
 
@@ -18457,6 +19261,7 @@ impl AwProjectMetalExecutor {
                 candidate_builder: None,
                 elapsed: Duration::ZERO,
                 host_readback: Duration::ZERO,
+                grouped_metal_admission: None,
             });
         }
         if audit_generation == Some(0) {
@@ -18572,6 +19377,51 @@ impl AwProjectMetalExecutor {
                     "AWProject Metal prediction result size overflowed".to_string(),
                 )
             })?;
+        let mut grouped_metal_receipt = grouped_metal_context
+            .map(|context| {
+                if audit_generation.is_some() || wide_division_generation.is_none() {
+                    return Err(ImagingError::InvalidRequest(
+                        "grouped residual Metal admission requires raw-only wide-division prediction without an audit buffer"
+                            .to_string(),
+                    ));
+                }
+                let actual_model_wrapper_bytes = model_bytes.checked_mul(2).ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "grouped residual Metal model-wrapper byte count overflowed".to_string(),
+                    )
+                })?;
+                if actual_model_wrapper_bytes != context.admission.model_wrapper_bytes {
+                    return Err(ImagingError::InvalidRequest(format!(
+                        "grouped residual Metal segment {} model wrappers use {actual_model_wrapper_bytes} bytes, expected {}",
+                        context.segment, context.admission.model_wrapper_bytes,
+                    )));
+                }
+                let prediction_bytes = awproject_grouped_metal_prediction_bytes(
+                    batch,
+                    actual_model_wrapper_bytes,
+                    unique_program
+                        .as_ref()
+                        .expect("grouped residual prediction uses the unique program"),
+                )?;
+                let prediction_readback_host_bytes =
+                    awproject_grouped_metal_prediction_readback_host_bytes(batch.samples.len())?;
+                let overlap = awproject_grouped_metal_dispatch_overlap(
+                    context.admission,
+                    prediction_bytes,
+                    prediction_readback_host_bytes,
+                    context.tile_bytes,
+                )?;
+                let live = awproject_grouped_metal_preallocation_check(
+                    &self.device,
+                    context.admission,
+                    overlap.prediction_with_readback_bytes,
+                    overlap.prediction_readback_host_bytes,
+                    context.segment,
+                    "prediction",
+                )?;
+                Ok(AwProjectGroupedMetalPredictionAdmissionReceipt { overlap, live })
+            })
+            .transpose()?;
         let storage_options = MTLResourceOptions::StorageModeShared;
         let wrap_shared = |pointer: *const c_void,
                            bytes: usize,
@@ -18742,6 +19592,17 @@ impl AwProjectMetalExecutor {
                     )
                 })?
         };
+        if let (Some(context), Some(receipt)) =
+            (grouped_metal_context, grouped_metal_receipt.as_mut())
+        {
+            receipt.live = awproject_grouped_metal_postallocation_check(
+                &self.device,
+                context.admission,
+                context.segment,
+                "prediction",
+                receipt.live,
+            )?;
+        }
         let command_buffer = self.queue.commandBuffer().ok_or_else(|| {
             ImagingError::Unsupported(
                 "AWProject Metal prediction could not create a command buffer".to_string(),
@@ -18918,6 +19779,7 @@ impl AwProjectMetalExecutor {
             candidate_builder: None,
             elapsed,
             host_readback,
+            grouped_metal_admission: grouped_metal_receipt,
         })
     }
 
@@ -19443,6 +20305,7 @@ impl AwProjectMetalExecutor {
         dispatch: AwProjectMetalTileDispatch<'_>,
         nterms: usize,
         residual_scale_plan: Option<AwProjectMetalResidualScalePlan>,
+        grouped_metal_context: Option<AwProjectGroupedMetalTileAdmission>,
     ) -> Result<AwProjectMetalTileGridStats, ImagingError> {
         use std::{ffi::c_void, mem, ptr, ptr::NonNull, slice};
 
@@ -19625,6 +20488,63 @@ impl AwProjectMetalExecutor {
         let active_tile_bytes = mem::size_of_val(tile_plan.active_tile_ids.as_slice());
         let offset_bytes = mem::size_of_val(tile_plan.tile_fragment_offsets.as_slice());
         let fragment_bytes = mem::size_of_val(tile_plan.fragments.as_slice());
+        let missing_persistent_bytes = grouped_metal_context.map_or(0, |context| {
+            awproject_grouped_metal_missing_persistent_bytes(
+                context.admission,
+                compensation.is_some(),
+            )
+        });
+        let mut grouped_metal_live = grouped_metal_context
+            .map(|context| {
+                if aot_grouped_tile.is_none() {
+                    return Err(ImagingError::InvalidRequest(
+                        "grouped residual Metal tile admission requires the sealed AOT route"
+                            .to_string(),
+                    ));
+                }
+                if output_bytes != context.admission.residual_output_bytes
+                    || output_bytes != context.admission.residual_compensation_bytes
+                {
+                    return Err(ImagingError::InvalidRequest(format!(
+                        "grouped residual Metal segment {} tile grid uses {output_bytes} output bytes, expected output={} compensation={}",
+                        context.segment,
+                        context.admission.residual_output_bytes,
+                        context.admission.residual_compensation_bytes,
+                    )));
+                }
+                let exact_tile_bytes = checked_awproject_grouped_metal_bytes(
+                    [
+                        group_bytes,
+                        kernel_bytes,
+                        phase_bytes,
+                        active_tile_bytes,
+                        offset_bytes,
+                        fragment_bytes,
+                        mem::size_of_val(scales),
+                        mem::size_of_val(inverse_scales),
+                        mem::size_of::<AwProjectMetalTileParams>(),
+                    ],
+                    "live tile overlap",
+                )?;
+                if exact_tile_bytes != context.overlap.tile_metal_bytes {
+                    return Err(ImagingError::InvalidRequest(format!(
+                        "grouped residual Metal segment {} live tile overlap {exact_tile_bytes} differs from sealed {}",
+                        context.segment, context.overlap.tile_metal_bytes,
+                    )));
+                }
+                awproject_grouped_metal_preallocation_check(
+                    &self.device,
+                    context.admission,
+                    awproject_grouped_metal_live_additional_bytes(
+                        context.overlap.tile_metal_bytes,
+                        missing_persistent_bytes,
+                    )?,
+                    0,
+                    context.segment,
+                    "tile",
+                )
+            })
+            .transpose()?;
         let storage_options = MTLResourceOptions::StorageModeShared;
         let buffer_started = Instant::now();
         let wrap_shared = |pointer: *const c_void,
@@ -19733,7 +20653,7 @@ impl AwProjectMetalExecutor {
                     .to_string(),
             ));
         }
-        if compensation.is_none() {
+        let new_compensation = if compensation.is_none() {
             let buffer = self
                 .device
                 .newBufferWithLength_options(output_bytes, storage_options)
@@ -19746,7 +20666,21 @@ impl AwProjectMetalExecutor {
             unsafe {
                 ptr::write_bytes(buffer.contents().as_ptr().cast::<u8>(), 0, output_bytes);
             }
-            *compensation = Some(AwProjectMetalCompensation { buffer });
+            Some(AwProjectMetalCompensation { buffer })
+        } else {
+            None
+        };
+        if let (Some(context), Some(live)) = (grouped_metal_context, grouped_metal_live.as_mut()) {
+            *live = awproject_grouped_metal_postallocation_check(
+                &self.device,
+                context.admission,
+                context.segment,
+                "tile",
+                *live,
+            )?;
+        }
+        if let Some(new_compensation) = new_compensation {
+            *compensation = Some(new_compensation);
         }
         let buffer_alloc = buffer_started.elapsed();
         let command_buffer = self.queue.commandBuffer().ok_or_else(|| {
@@ -19817,6 +20751,7 @@ impl AwProjectMetalExecutor {
             dispatch_wait,
             output_bytes: output_bytes.saturating_mul(2),
             total: buffer_alloc + dispatch_wait,
+            grouped_metal_live,
         })
     }
 
@@ -25277,6 +26212,8 @@ struct AwProjectMetalGlobalProgramBuilder {
     metadata: AwProjectMetalResidentMetadata,
     source_programs: usize,
     source_program_bytes: usize,
+    dispatch_prediction_upper_without_model_bytes: usize,
+    dispatch_tile_upper_bytes: usize,
     separable_phases: bool,
     raw_planes: BTreeMap<AwProjectMetalRawPlaneKey, AwProjectMetalRawPlane>,
     raw_mode: bool,
@@ -25299,6 +26236,8 @@ impl Default for AwProjectMetalGlobalProgramBuilder {
             },
             source_programs: 0,
             source_program_bytes: 0,
+            dispatch_prediction_upper_without_model_bytes: 0,
+            dispatch_tile_upper_bytes: 0,
             separable_phases: true,
             raw_planes: BTreeMap::new(),
             raw_mode: false,
@@ -25936,6 +26875,40 @@ impl AwProjectCompactReplayCache {
                     "raw-CF AWProject global replay requires a grouped replay plan".to_string(),
                 )
             })?;
+        let incoming_source_upper = if self.grouped_metal_admission.is_some() {
+            let raw_kernel_upper_bytes = AwProjectMetalGlobalProgramBuilder::raw()
+                .additional_raw_kernel_bytes(source_samples, tap_requests, bundles)?;
+            Some(awproject_grouped_metal_source_dispatch_upper_bytes(
+                &program,
+                raw_kernel_upper_bytes,
+                awproject_grouped_metal_unique_prediction_thread_width()?,
+            )?)
+        } else {
+            None
+        };
+        if let (Some(admission), Some(incoming)) =
+            (self.grouped_metal_admission, incoming_source_upper)
+        {
+            let current = self.persistent_metal_global_builder.as_ref().map_or_else(
+                AwProjectGroupedMetalSourceUpper::default,
+                |builder| AwProjectGroupedMetalSourceUpper {
+                    prediction_without_model_bytes: builder
+                        .dispatch_prediction_upper_without_model_bytes,
+                    tile_bytes: builder.dispatch_tile_upper_bytes,
+                },
+            );
+            if awproject_grouped_metal_segment_split_required(current, incoming, admission)? {
+                self.spill_metal_global_builder_segment(grid_width, grid_height, tile_side)?;
+                self.grouped_metal_segment_split_count = self
+                    .grouped_metal_segment_split_count
+                    .checked_add(1)
+                    .ok_or_else(|| {
+                        ImagingError::InvalidRequest(
+                            "grouped residual Metal segment split count overflowed".to_string(),
+                        )
+                    })?;
+            }
+        }
         if let Some(builder) = self.persistent_metal_global_builder.as_ref() {
             if !builder.raw_mode {
                 return Err(ImagingError::InvalidRequest(
@@ -25974,6 +26947,17 @@ impl AwProjectCompactReplayCache {
             .persistent_metal_global_builder
             .get_or_insert_with(AwProjectMetalGlobalProgramBuilder::raw);
         builder.absorb_raw(program, source_samples, tap_requests, bundles)?;
+        if let Some(incoming) = incoming_source_upper {
+            let combined = AwProjectGroupedMetalSourceUpper {
+                prediction_without_model_bytes: builder
+                    .dispatch_prediction_upper_without_model_bytes,
+                tile_bytes: builder.dispatch_tile_upper_bytes,
+            }
+            .checked_add(incoming)?;
+            builder.dispatch_prediction_upper_without_model_bytes =
+                combined.prediction_without_model_bytes;
+            builder.dispatch_tile_upper_bytes = combined.tile_bytes;
+        }
         let builder_bytes_after = builder.resident_bytes();
         let resident_bytes_after = self
             .resident_bytes
@@ -26128,6 +27112,10 @@ impl AwProjectCompactReplayCache {
         };
         let source_programs = builder.source_programs;
         let builder_bytes = builder.resident_bytes();
+        let dispatch_source_upper = AwProjectGroupedMetalSourceUpper {
+            prediction_without_model_bytes: builder.dispatch_prediction_upper_without_model_bytes,
+            tile_bytes: builder.dispatch_tile_upper_bytes,
+        };
         let mut program = builder.finish(grid_width, grid_height, tile_side)?;
         let grouped_replay = self.grouped_replay_plan().cloned().ok_or_else(|| {
             ImagingError::InvalidRequest(
@@ -26143,6 +27131,46 @@ impl AwProjectCompactReplayCache {
             grid_height,
             grouped_replay.compile_admission_bytes(),
         )?;
+        if let Some(admission) = self.grouped_metal_admission {
+            let segment = self.spilled_metal_global_programs.len();
+            let dispatch_source_upper_bytes = dispatch_source_upper.dispatch_bytes(admission)?;
+            let (overlap, raw_recommended_bytes, raw_current_bytes) =
+                awproject_grouped_metal_sealed_dispatch_overlap(&program, admission)?;
+            if overlap.exact_additional_bytes > dispatch_source_upper_bytes {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "grouped residual Metal sealed segment {segment} exact overlap {} exceeded its conservative source-boundary upper {dispatch_source_upper_bytes}",
+                    overlap.exact_additional_bytes,
+                )));
+            }
+            self.grouped_metal_max_segment_additional_bytes = self
+                .grouped_metal_max_segment_additional_bytes
+                .max(overlap.exact_additional_bytes);
+            eprintln!(
+                "awproject_grouped_metal_admission phase=sealed segment={} source_programs={} raw_recommended_bytes={} raw_current_bytes={} planner_device_budget_bytes={} residual_output_bytes={} residual_compensation_bytes={} model_wrapper_bytes={} safety_reserve_bytes={} legacy_generic_scratch_bytes={} generic_scratch_bytes=0 segment_ceiling_bytes={} prediction_metal_bytes={} prediction_readback_host_bytes={} prediction_with_readback_bytes={} tile_metal_bytes={} exact_additional_bytes={} peak_bytes={} source_prediction_upper_without_model_bytes={} source_tile_upper_bytes={} source_boundary_upper_bytes={} split_count={} max_segment_additional_bytes={} precheck=not-dispatched postcheck=not-dispatched all_fit=true",
+                segment,
+                source_programs,
+                raw_recommended_bytes,
+                raw_current_bytes,
+                admission.planner_device_budget_bytes,
+                admission.residual_output_bytes,
+                admission.residual_compensation_bytes,
+                admission.model_wrapper_bytes,
+                admission.safety_reserve_bytes,
+                admission.legacy_generic_scratch_bytes,
+                admission.segment_ceiling_bytes,
+                overlap.prediction_metal_bytes,
+                overlap.prediction_readback_host_bytes,
+                overlap.prediction_with_readback_bytes,
+                overlap.tile_metal_bytes,
+                overlap.exact_additional_bytes,
+                overlap.peak_bytes,
+                dispatch_source_upper.prediction_without_model_bytes,
+                dispatch_source_upper.tile_bytes,
+                dispatch_source_upper_bytes,
+                self.grouped_metal_segment_split_count,
+                self.grouped_metal_max_segment_additional_bytes,
+            );
+        }
         if profile::standard_mfs_profile_detail_enabled() {
             support.log(self.spilled_metal_global_programs.len(), source_programs);
             program
@@ -26306,6 +27334,19 @@ impl AwProjectCompactReplayCache {
             );
         }
         Ok(true)
+    }
+
+    fn require_grouped_metal_resident_complete(
+        &self,
+        resident_retained: bool,
+    ) -> Result<(), ImagingError> {
+        if self.grouped_metal_admission.is_some() && !resident_retained {
+            return Err(ImagingError::Unsupported(
+                "grouped residual Metal admission requires every sealed source segment to remain resident"
+                    .to_string(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -26662,6 +27703,7 @@ fn build_awproject_metal_global_replay_program(
             .saturating_add(cache.resident_bytes);
         cache.compiled_total_bytes_complete = true;
         let resident_retained = cache.retain_complete_spilled_metal_global_programs()?;
+        cache.require_grouped_metal_resident_complete(resident_retained)?;
         cache.segmented_metal_global_replay_ready = true;
         if profile::standard_mfs_profile_detail_enabled() {
             eprintln!(
@@ -26940,6 +27982,7 @@ fn run_awproject_metal_tile_grid_probe(
                     aot_grouped_tile: None,
                 },
                 request.nterms,
+                None,
                 None,
             )
     })?;
@@ -27320,7 +28363,7 @@ fn run_awproject_metal_prediction_probe(
         }
         slot.as_ref()
             .expect("AWProject Metal executor")
-            .dispatch_prediction_probe(&packed, model_grids, None, None)
+            .dispatch_prediction_probe(&packed, model_grids, None, None, None)
     })?;
     let actual = dispatch.results;
     let execute_elapsed = dispatch.elapsed;
@@ -28544,7 +29587,7 @@ fn fill_awproject_wide_division_candidate_lane(
     samples: &[AwProjectMetalPredictionSample],
     raw: &[AwProjectMetalWideDivisionSample],
     results: &mut [AwProjectMetalPredictionResult],
-    audit: &mut [AwProjectMetalPredictionAuditSample],
+    mut audit: Option<&mut [AwProjectMetalPredictionAuditSample]>,
     generation: u32,
     config: AwProjectWideDivisionCandidateConfig,
     required_fp_environment: (i32, u64),
@@ -28569,14 +29612,27 @@ fn fill_awproject_wide_division_candidate_lane(
         thread::sleep(test_delay);
     }
     let started = Instant::now();
-    for (local_ordinal, (((sample, raw), result), audit)) in
-        samples.iter().zip(raw).zip(results).zip(audit).enumerate()
+    if audit
+        .as_ref()
+        .is_some_and(|audit| audit.len() != samples.len())
+    {
+        return Err(AwProjectWideDivisionCandidateIndexedError {
+            ordinal: range_start,
+            error: ImagingError::Normalization(
+                "two-lane AWProject candidate audit slice differs from its source range"
+                    .to_string(),
+            ),
+        });
+    }
+    for (local_ordinal, ((sample, raw), result)) in samples.iter().zip(raw).zip(results).enumerate()
     {
         let ordinal = range_start.saturating_add(local_ordinal);
         let record = build_awproject_wide_division_record(ordinal, generation, sample, raw, config)
             .map_err(|error| AwProjectWideDivisionCandidateIndexedError { ordinal, error })?;
         *result = record.result;
-        *audit = record.audit;
+        if let Some(audit) = audit.as_deref_mut() {
+            audit[local_ordinal] = record.audit;
+        }
     }
     Ok(AwProjectWideDivisionCandidateLaneStats {
         range_start,
@@ -28637,6 +29693,7 @@ fn build_awproject_wide_division_candidate_with_config(
         candidate_builder: None,
         elapsed: started.elapsed(),
         host_readback: Duration::ZERO,
+        grouped_metal_admission: None,
     })
 }
 
@@ -28661,6 +29718,7 @@ fn build_awproject_wide_division_candidate_two_lane_with_config(
     batch: &AwProjectMetalPredictionBatch,
     current: &AwProjectMetalPredictionDispatch,
     config: AwProjectWideDivisionCandidateConfig,
+    retain_audit: bool,
     require_two_host_threads: bool,
     test_delays: [Duration; 2],
 ) -> Result<AwProjectMetalPredictionDispatch, ImagingError> {
@@ -28678,17 +29736,23 @@ fn build_awproject_wide_division_candidate_two_lane_with_config(
     let source_count = batch.samples.len();
     let split_ordinal = source_count.div_ceil(2);
     let mut results = vec![AwProjectMetalPredictionResult::default(); source_count];
-    let mut audit = vec![AwProjectMetalPredictionAuditSample::default(); source_count];
+    let mut audit =
+        retain_audit.then(|| vec![AwProjectMetalPredictionAuditSample::default(); source_count]);
     let result_allocation_bytes = results
         .capacity()
         .saturating_mul(std::mem::size_of::<AwProjectMetalPredictionResult>());
-    let audit_allocation_bytes = audit
-        .capacity()
-        .saturating_mul(std::mem::size_of::<AwProjectMetalPredictionAuditSample>());
+    let audit_allocation_bytes = audit.as_ref().map_or(0, |audit| {
+        audit
+            .capacity()
+            .saturating_mul(std::mem::size_of::<AwProjectMetalPredictionAuditSample>())
+    });
     let (first_samples, second_samples) = batch.samples.split_at(split_ordinal);
     let (first_raw, second_raw) = raw.split_at(split_ordinal);
     let (first_results, second_results) = results.split_at_mut(split_ordinal);
-    let (first_audit, second_audit) = audit.split_at_mut(split_ordinal);
+    let (first_audit, second_audit) = audit.as_mut().map_or((None, None), |audit| {
+        let (first, second) = audit.split_at_mut(split_ordinal);
+        (Some(first), Some(second))
+    });
     let spawn_to_join_started = Instant::now();
     let (first_lane, second_lane) = thread::scope(|scope| {
         let worker = scope.spawn(|| {
@@ -28729,7 +29793,7 @@ fn build_awproject_wide_division_candidate_two_lane_with_config(
     let lanes = select_awproject_wide_division_candidate_lane_results(first_lane, second_lane)?;
     Ok(AwProjectMetalPredictionDispatch {
         results,
-        audit: Some(audit),
+        audit,
         wide_division: None,
         candidate_builder: Some(AwProjectWideDivisionCandidateBuilderStats {
             mode: "fixed-index-two-lane",
@@ -28743,6 +29807,7 @@ fn build_awproject_wide_division_candidate_two_lane_with_config(
         }),
         elapsed: started.elapsed(),
         host_readback: Duration::ZERO,
+        grouped_metal_admission: None,
     })
 }
 
@@ -28757,6 +29822,7 @@ fn build_awproject_wide_division_candidate_two_lane(
         batch,
         current,
         awproject_wide_division_candidate_config()?,
+        true,
         true,
         [Duration::ZERO; 2],
     )
@@ -34354,6 +35420,8 @@ fn replay_awproject_metal_global_program(
     accumulation: &mut MosaicMtmfsStreamGridAccumulation,
     replay_stats: &mut AwProjectCompactReplayStats,
     program: &mut AwProjectMetalResidentProgram,
+    grouped_metal_admission: Option<AwProjectGroupedMetalAdmission>,
+    segment: usize,
 ) -> Result<(), ImagingError> {
     let grid_started = Instant::now();
     let MosaicMtmfsStreamGridStorage::MetalSharedF32 {
@@ -34394,6 +35462,85 @@ fn replay_awproject_metal_global_program(
         let executor = executor_slot
             .as_ref()
             .expect("global AWProject Metal executor");
+        use std::ptr;
+
+        use objc2_metal::{MTLBuffer, MTLDevice, MTLResourceOptions};
+
+        let grouped_tile_bytes = grouped_metal_admission
+            .map(|admission| {
+                let output_bytes = grid.metal_buffer().length();
+                if output_bytes != admission.residual_output_bytes {
+                    return Err(ImagingError::InvalidRequest(format!(
+                        "grouped residual Metal segment {segment} output grid uses {output_bytes} bytes, expected {}",
+                        admission.residual_output_bytes,
+                    )));
+                }
+                if let Some(compensation) = aw_compensation.as_ref()
+                    && compensation.buffer.length() != admission.residual_compensation_bytes
+                {
+                    return Err(ImagingError::InvalidRequest(format!(
+                        "grouped residual Metal segment {segment} compensation grid uses {} bytes, expected {}",
+                        compensation.buffer.length(), admission.residual_compensation_bytes,
+                    )));
+                }
+                awproject_grouped_metal_tile_bytes(program)
+            })
+            .transpose()?;
+        let persistent_allocation_bytes = grouped_metal_admission.map_or(0, |admission| {
+            awproject_grouped_metal_missing_persistent_bytes(
+                admission,
+                aw_compensation.is_some(),
+            )
+        });
+        let persistent_live = if let Some(admission) = grouped_metal_admission {
+            let check = awproject_grouped_metal_preallocation_check(
+                &executor.device,
+                admission,
+                persistent_allocation_bytes,
+                0,
+                segment,
+                "persistent-grid",
+            )?;
+            if persistent_allocation_bytes > 0 {
+                let buffer = executor
+                    .device
+                    .newBufferWithLength_options(
+                        persistent_allocation_bytes,
+                        MTLResourceOptions::StorageModeShared,
+                    )
+                    .ok_or_else(|| {
+                        ImagingError::Unsupported(format!(
+                            "grouped residual Metal segment {segment} could not allocate its persistent compensation grid"
+                        ))
+                    })?;
+                unsafe {
+                    ptr::write_bytes(
+                        buffer.contents().as_ptr().cast::<u8>(),
+                        0,
+                        persistent_allocation_bytes,
+                    );
+                }
+                let live = awproject_grouped_metal_postallocation_check(
+                    &executor.device,
+                    admission,
+                    segment,
+                    "persistent-grid",
+                    check,
+                )?;
+                *aw_compensation = Some(AwProjectMetalCompensation { buffer });
+                Some(live)
+            } else {
+                Some(awproject_grouped_metal_postallocation_check(
+                    &executor.device,
+                    admission,
+                    segment,
+                    "persistent-grid",
+                    check,
+                )?)
+            }
+        } else {
+            None
+        };
         let sidecar_prefix =
             env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDICTION_SIDECAR_PREFIX")
                 .map(PathBuf::from);
@@ -34454,8 +35601,6 @@ fn replay_awproject_metal_global_program(
         let sidecar_generation = sidecar_prefix.as_ref().map(|_| 1);
         let wide_division_generation = wide_division_prefix.as_ref().map(|_| 1);
         let hybrid_generation = hybrid_enabled.then_some(1);
-        #[cfg(all(target_os = "macos", not(coverage)))]
-        use objc2_metal::MTLDevice;
         let metal_allocated_before = hybrid_prefix
             .as_ref()
             .map(|_| executor.device.currentAllocatedSize());
@@ -34464,7 +35609,15 @@ fn replay_awproject_metal_global_program(
             model_grids,
             sidecar_generation.or(wide_division_generation),
             wide_division_generation.or(hybrid_generation),
+            grouped_metal_admission.zip(grouped_tile_bytes).map(
+                |(admission, tile_bytes)| AwProjectGroupedMetalPredictionAdmission {
+                    admission,
+                    segment,
+                    tile_bytes,
+                },
+            ),
         )?;
+        let grouped_prediction_receipt = dispatch.grouped_metal_admission;
         emit_awproject_frozen_final_state_prediction_hashes(
             &program.prediction_batch,
             &dispatch.results,
@@ -34504,6 +35657,7 @@ fn replay_awproject_metal_global_program(
             candidate_hash_elapsed,
             candidate_residual_hash,
             residuals,
+            host_prediction_lifetime,
         ) =
             if hybrid_enabled {
                 if hybrid_prefix.is_some() {
@@ -34556,6 +35710,7 @@ fn replay_awproject_metal_global_program(
                             source_phase_enabled: true,
                             raw_frame_taylor_enabled: true,
                         },
+                        hybrid_prefix.is_some(),
                         true,
                         [Duration::ZERO; 2],
                     )?
@@ -34566,6 +35721,19 @@ fn replay_awproject_metal_global_program(
                         &dispatch,
                     )?
                 };
+                let host_prediction_lifetime = grouped_replay.then(|| {
+                    awproject_grouped_metal_host_prediction_lifetime(&dispatch, &candidate)
+                });
+                if grouped_replay
+                    && hybrid_prefix.is_none()
+                    && host_prediction_lifetime
+                        .is_some_and(|lifetime| lifetime.candidate_audit_allocation_bytes != 0)
+                {
+                    return Err(ImagingError::Normalization(
+                        "grouped residual Metal production retained a candidate audit allocation"
+                            .to_string(),
+                    ));
+                }
                 let candidate_hash_started = Instant::now();
                 let candidate_residual_hash = if hybrid_prefix.is_some() {
                     let candidate_hashes = hash_awproject_prediction_visibilities(
@@ -34636,14 +35804,23 @@ fn replay_awproject_metal_global_program(
                 let candidate_hash_elapsed = candidate_hash_started.elapsed();
                 let dispatch_elapsed = dispatch.elapsed;
                 let dispatch_readback = dispatch.host_readback;
-                let candidate_elapsed = candidate.elapsed;
-                let candidate_builder = candidate.candidate_builder.ok_or_else(|| {
+                let AwProjectMetalPredictionDispatch {
+                    results: residuals,
+                    audit: candidate_audit,
+                    wide_division: candidate_wide_division,
+                    candidate_builder,
+                    elapsed: candidate_elapsed,
+                    ..
+                } = candidate;
+                let candidate_builder = candidate_builder.ok_or_else(|| {
                     ImagingError::Normalization(
                         "hybrid AW residual candidate omitted its two-lane builder receipt"
                             .to_string(),
                     )
                 })?;
-                let residuals = candidate.results;
+                drop(candidate_audit);
+                drop(candidate_wide_division);
+                drop(dispatch);
                 (
                     dispatch_elapsed,
                     dispatch_readback,
@@ -34652,6 +35829,7 @@ fn replay_awproject_metal_global_program(
                     candidate_hash_elapsed,
                     candidate_residual_hash,
                     residuals,
+                    host_prediction_lifetime,
                 )
             } else {
                 (
@@ -34662,6 +35840,7 @@ fn replay_awproject_metal_global_program(
                     Duration::ZERO,
                     None,
                     dispatch.results,
+                    None,
                 )
             };
         let tile_update_started = Instant::now();
@@ -34698,6 +35877,27 @@ fn replay_awproject_metal_global_program(
                 )));
             }
         }
+        let residual_count = residuals.len();
+        if grouped_replay {
+            drop(residuals);
+            if let Some(lifetime) = host_prediction_lifetime {
+                eprintln!(
+                    "awproject_grouped_metal_host_lifetime segment={} samples={} dispatch_result_allocation_bytes={} dispatch_audit_allocation_bytes={} dispatch_wide_division_allocation_bytes={} dispatch_release_before_tile_bytes={} candidate_result_allocation_bytes={} candidate_audit_allocation_bytes={} candidate_wide_division_allocation_bytes={} candidate_auxiliary_release_before_tile_bytes={} candidate_result_release_before_tile_bytes={} host_bytes_retained_during_tile={} dispatch_released_before_tile=true candidate_auxiliary_released_before_tile=true candidate_result_released_before_tile=true",
+                    segment,
+                    residual_count,
+                    lifetime.dispatch_result_allocation_bytes,
+                    lifetime.dispatch_audit_allocation_bytes,
+                    lifetime.dispatch_wide_division_allocation_bytes,
+                    lifetime.dispatch_release_before_tile_bytes,
+                    lifetime.candidate_result_allocation_bytes,
+                    lifetime.candidate_audit_allocation_bytes,
+                    lifetime.candidate_wide_division_allocation_bytes,
+                    lifetime.candidate_auxiliary_release_before_tile_bytes,
+                    lifetime.candidate_result_release_before_tile_bytes,
+                    lifetime.host_bytes_retained_during_tile,
+                );
+            }
+        }
         let imaging_kernels = program.imaging_kernels();
         let tile_stats = executor.dispatch_tile_grid_probe(
             grid,
@@ -34710,7 +35910,67 @@ fn replay_awproject_metal_global_program(
             },
             nterms,
             Some(program.residual_scale_plan),
+            grouped_metal_admission
+                .zip(grouped_prediction_receipt)
+                .map(|(admission, receipt)| AwProjectGroupedMetalTileAdmission {
+                    admission,
+                    segment,
+                    overlap: receipt.overlap,
+                }),
         )?;
+        if let Some(admission) = grouped_metal_admission {
+            let persistent_live = persistent_live.expect("grouped persistent check exists");
+            let prediction = grouped_prediction_receipt.ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "grouped residual Metal segment {segment} omitted its prediction admission receipt"
+                ))
+            })?;
+            let tile_live = tile_stats.grouped_metal_live.ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "grouped residual Metal segment {segment} omitted its tile admission receipt"
+                ))
+            })?;
+            eprintln!(
+                "awproject_grouped_metal_admission phase=runtime segment={} raw_recommended_bytes={} persistent_pre_current_bytes={} persistent_post_current_bytes={} persistent_post_combined_bytes={} persistent_additional_bytes={} persistent_known_host_overlap_bytes={} persistent_required_bytes={} persistent_maximum_current_bytes={} prediction_pre_current_bytes={} prediction_post_current_bytes={} prediction_post_combined_bytes={} prediction_additional_bytes={} prediction_known_host_overlap_bytes={} prediction_required_bytes={} prediction_maximum_current_bytes={} tile_pre_current_bytes={} tile_post_current_bytes={} tile_post_combined_bytes={} tile_additional_bytes={} tile_known_host_overlap_bytes={} tile_required_bytes={} tile_maximum_current_bytes={} planner_device_budget_bytes={} residual_output_bytes={} residual_compensation_bytes={} model_wrapper_bytes={} safety_reserve_bytes={} legacy_generic_scratch_bytes={} generic_scratch_bytes=0 segment_ceiling_bytes={} prediction_metal_bytes={} prediction_readback_host_bytes={} prediction_with_readback_bytes={} tile_metal_bytes={} exact_additional_bytes={} peak_bytes={} persistent_allocation_bytes={} host_bytes_retained_during_tile=0 prechecks=fit postchecks=fit all_fit=true",
+                segment,
+                prediction.live.recommended_bytes,
+                persistent_live.pre_current_bytes,
+                persistent_live.post_current_bytes,
+                persistent_live.post_combined_bytes,
+                persistent_live.additional_bytes,
+                persistent_live.known_host_overlap_bytes,
+                persistent_live.required_bytes,
+                persistent_live.maximum_current_bytes,
+                prediction.live.pre_current_bytes,
+                prediction.live.post_current_bytes,
+                prediction.live.post_combined_bytes,
+                prediction.live.additional_bytes,
+                prediction.live.known_host_overlap_bytes,
+                prediction.live.required_bytes,
+                prediction.live.maximum_current_bytes,
+                tile_live.pre_current_bytes,
+                tile_live.post_current_bytes,
+                tile_live.post_combined_bytes,
+                tile_live.additional_bytes,
+                tile_live.known_host_overlap_bytes,
+                tile_live.required_bytes,
+                tile_live.maximum_current_bytes,
+                admission.planner_device_budget_bytes,
+                admission.residual_output_bytes,
+                admission.residual_compensation_bytes,
+                admission.model_wrapper_bytes,
+                admission.safety_reserve_bytes,
+                admission.legacy_generic_scratch_bytes,
+                admission.segment_ceiling_bytes,
+                prediction.overlap.prediction_metal_bytes,
+                prediction.overlap.prediction_readback_host_bytes,
+                prediction.overlap.prediction_with_readback_bytes,
+                prediction.overlap.tile_metal_bytes,
+                prediction.overlap.exact_additional_bytes,
+                prediction.overlap.peak_bytes,
+                persistent_allocation_bytes,
+            );
+        }
         if let Some(prefix) = hybrid_prefix.as_deref() {
             let candidate_builder = candidate_builder.as_ref().ok_or_else(|| {
                 ImagingError::Normalization(
@@ -34760,7 +36020,7 @@ fn replay_awproject_metal_global_program(
                 "memory_bytes": {
                     "raw_wide_division_logical": program.prediction_batch.samples.len().saturating_mul(std::mem::size_of::<AwProjectMetalWideDivisionSample>()),
                     "ordinary_result_logical": program.prediction_batch.samples.len().saturating_mul(std::mem::size_of::<AwProjectMetalPredictionResult>()),
-                    "candidate_result_logical": residuals.len().saturating_mul(std::mem::size_of::<AwProjectMetalPredictionResult>()),
+                    "candidate_result_logical": residual_count.saturating_mul(std::mem::size_of::<AwProjectMetalPredictionResult>()),
                     "candidate_result_allocation": candidate_builder.result_allocation_bytes,
                     "candidate_audit_allocation": candidate_builder.audit_allocation_bytes,
                     "candidate_additional_per_worker_heap": candidate_builder.additional_per_worker_heap_bytes,
@@ -34849,7 +36109,7 @@ fn replay_awproject_metal_global_program(
                  metal_dispatch_ms={:.6} host_readback_ms={:.6} cpu_candidate_ms={:.6} \
                  tile_update_ms={:.6} prediction_to_tile_ready_ms={:.6} tile_grid_ms={:.6} \
                  receipt={}",
-                residuals.len(),
+                residual_count,
                 env::var("CASA_RS_EXPERIMENTAL_AWPROJECT_HYBRID_EXPECTED_CANDIDATE_TILE_RESIDUAL_SHA256").unwrap_or_default(),
                 tile_ingress_hash,
                 candidate_builder.mode,
@@ -34875,7 +36135,7 @@ fn replay_awproject_metal_global_program(
                  metal_dispatch_ms={:.6} host_readback_ms={:.6} cpu_candidate_ms={:.6} \
                  candidate_hash_ms={:.6} tile_update_ms={:.6} tile_ingress_hash_ms={:.6} \
                  verified_prediction_to_tile_ready_ms={:.6} tile_grid_ms={:.6}",
-                residuals.len(),
+                residual_count,
                 candidate_residual_hash.as_deref().unwrap_or_default(),
                 tile_ingress_hash,
                 candidate_builder.mode,
@@ -34906,8 +36166,7 @@ fn replay_awproject_metal_global_program(
             buffer_alloc: tile_stats.buffer_alloc,
             dispatch_wait: prediction_elapsed + tile_stats.dispatch_wait,
             output_bytes: tile_stats.output_bytes,
-            residual_bytes: residuals
-                .len()
+            residual_bytes: residual_count
                 .saturating_mul(std::mem::size_of::<AwProjectMetalPredictionResult>()),
             total: prediction_elapsed
                 + prediction_host_readback
@@ -34972,6 +36231,7 @@ fn replay_awproject_metal_spilled_global_programs(
     }
     let programs = cache.spilled_metal_global_programs.clone();
     let total_payload_bytes = cache.spilled_metal_global_payload_bytes;
+    let grouped_metal_admission = cache.grouped_metal_admission;
     cache.metal_global_metadata.clone().apply(accumulation);
     let store = cache.metal_global_spill_store.as_mut().ok_or_else(|| {
         ImagingError::InvalidRequest(
@@ -34998,6 +36258,8 @@ fn replay_awproject_metal_spilled_global_programs(
                 accumulation,
                 replay_stats,
                 &mut program,
+                grouped_metal_admission,
+                segment,
             )?;
             if profile::standard_mfs_profile_detail_enabled() {
                 eprintln!(
@@ -35060,9 +36322,14 @@ fn replay_awproject_metal_resident_global_programs(
     }
     cache.metal_global_metadata.clone().apply(accumulation);
     let started = Instant::now();
+    let spill_read_bytes_before = cache
+        .metal_global_spill_store
+        .as_ref()
+        .map_or(0, |store| store.bytes_read);
     let runtime_builds_before = awproject_metal_runtime_build_counter_snapshot();
     let mut largest_samples = 0usize;
     let segment_count = cache.resident_metal_global_programs.len();
+    let grouped_metal_admission = cache.grouped_metal_admission;
     for (segment, program) in cache.resident_metal_global_programs.iter_mut().enumerate() {
         largest_samples = largest_samples.max(program.prediction_batch.samples.len());
         let segment_started = Instant::now();
@@ -35072,6 +36339,8 @@ fn replay_awproject_metal_resident_global_programs(
             accumulation,
             replay_stats,
             program,
+            grouped_metal_admission,
+            segment,
         )?;
         if profile::standard_mfs_profile_detail_enabled() {
             eprintln!(
@@ -35095,6 +36364,21 @@ fn replay_awproject_metal_resident_global_programs(
     let route_builds = runtime_builds_after
         .routing
         .saturating_sub(runtime_builds_before.routing);
+    let spill_read_bytes = cache
+        .metal_global_spill_store
+        .as_ref()
+        .map_or(0, |store| store.bytes_read)
+        .checked_sub(spill_read_bytes_before)
+        .ok_or_else(|| {
+            ImagingError::Normalization(
+                "resident AOT grouped replay spill-read accounting moved backwards".to_string(),
+            )
+        })?;
+    if grouped_metal_admission.is_some() && spill_read_bytes != 0 {
+        return Err(ImagingError::Normalization(format!(
+            "resident AOT grouped replay performed {spill_read_bytes} spill-read bytes during refresh"
+        )));
+    }
     if grouping_builds != 0 || sort_builds != 0 || route_builds != 0 {
         return Err(ImagingError::Normalization(format!(
             "resident AOT grouped replay rebuilt runtime topology: grouping={grouping_builds}, \
@@ -35104,7 +36388,7 @@ fn replay_awproject_metal_resident_global_programs(
     if profile::standard_mfs_profile_detail_enabled() {
         eprintln!(
             "awproject_metal_resident_grouped_replay_summary segments={} program_bytes={} \
-             spill_read_bytes=0 runtime_grouping_builds={} runtime_sort_builds={} \
+             spill_read_bytes={} runtime_grouping_builds={} runtime_sort_builds={} \
              runtime_route_builds={} total_ms={:.3}",
             segment_count,
             cache
@@ -35112,6 +36396,7 @@ fn replay_awproject_metal_resident_global_programs(
                 .iter()
                 .map(AwProjectMetalResidentProgram::resident_bytes)
                 .sum::<usize>(),
+            spill_read_bytes,
             grouping_builds,
             sort_builds,
             route_builds,
@@ -35629,6 +36914,7 @@ fn replay_awproject_compact_window(
                             env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDICTION_SIDECAR_PREFIX")
                                 .map(|_| 1),
                             Some(1),
+                            None,
                         )?;
                         let prediction_elapsed = dispatch.elapsed;
                         let prediction_host_readback = dispatch.host_readback;
@@ -35698,6 +36984,7 @@ fn replay_awproject_compact_window(
                             },
                             request.nterms,
                             Some(program.residual_scale_plan),
+                            None,
                         )?;
                         eprintln!(
                             "awproject_windowed_hybrid_clean_refresh \
@@ -35760,6 +37047,7 @@ fn replay_awproject_compact_window(
                             model_grids,
                             None,
                             None,
+                            None,
                         )?;
                         let prediction_elapsed = dispatch.elapsed;
                         let residuals = dispatch.results;
@@ -35778,6 +37066,7 @@ fn replay_awproject_compact_window(
                             },
                             request.nterms,
                             Some(program.residual_scale_plan),
+                            None,
                         )?;
                         AwProjectMetalResidentChainStats {
                             samples: program.prediction_batch.samples.len(),
@@ -36141,6 +37430,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                         replay_stats.windows = segments;
                         replay_stats.largest_window_samples = largest_samples;
                     } else {
+                        let grouped_metal_admission = cache.grouped_metal_admission;
                         let program = cache
                             .persistent_metal_global_program
                             .as_mut()
@@ -36152,6 +37442,8 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                             accumulation,
                             &mut replay_stats,
                             program,
+                            grouped_metal_admission,
+                            0,
                         )?;
                         replay_stats.windows = 1;
                         replay_stats.largest_window_samples =
@@ -68530,7 +69822,7 @@ mod tests {
 
     #[test]
     fn compact_replay_cache_accounts_compiled_bytes_and_prefix_completeness() {
-        let mut cache = super::AwProjectCompactReplayCache::new(usize::MAX, None);
+        let mut cache = super::AwProjectCompactReplayCache::new(usize::MAX, None, None);
         assert!(
             cache
                 .store(0, compact_replay_test_block(8, 8))
@@ -68562,7 +69854,7 @@ mod tests {
 
     #[test]
     fn compact_replay_cache_marks_unmeasured_budget_rejection_incomplete() {
-        let mut cache = super::AwProjectCompactReplayCache::new(0, None);
+        let mut cache = super::AwProjectCompactReplayCache::new(0, None, None);
         cache.mark_exceeds_budget(0);
         assert_eq!(cache.compiled_total_bytes, 0);
         assert!(!cache.compiled_total_bytes_complete);
@@ -68578,7 +69870,7 @@ mod tests {
             16,
         )
         .expect("grouped replay plan");
-        let mut cache = super::AwProjectCompactReplayCache::new(0, Some(grouped));
+        let mut cache = super::AwProjectCompactReplayCache::new(0, Some(grouped), None);
         assert_eq!(cache.fill_budget_bytes(), 1024 * 1024 * 1024);
         assert!(
             cache
@@ -68591,6 +69883,188 @@ mod tests {
         assert_eq!(block.resident_bytes, 0);
         assert_eq!(cache.resident_bytes, 0);
         assert!(cache.compiled_total_bytes_complete);
+    }
+
+    #[test]
+    fn grouped_metal_overlap_uses_the_larger_dispatch_and_counts_persistent_once() {
+        let admission = super::AwProjectGroupedMetalAdmission {
+            planner_device_budget_bytes: 1_564,
+            residual_output_bytes: 200,
+            residual_compensation_bytes: 300,
+            model_wrapper_bytes: 100,
+            safety_reserve_bytes: 64,
+            legacy_generic_scratch_bytes: 900,
+            segment_ceiling_bytes: 1_000,
+        };
+
+        let prediction_limited =
+            super::awproject_grouped_metal_dispatch_overlap(admission, 800, 100, 600)
+                .expect("prediction-limited overlap");
+        assert_eq!(prediction_limited.prediction_metal_bytes, 800);
+        assert_eq!(prediction_limited.prediction_readback_host_bytes, 100);
+        assert_eq!(prediction_limited.prediction_with_readback_bytes, 900);
+        assert_eq!(prediction_limited.exact_additional_bytes, 900);
+        assert_eq!(prediction_limited.persistent_bytes, 500);
+        assert_eq!(prediction_limited.peak_bytes, 1_400);
+
+        let tile_limited =
+            super::awproject_grouped_metal_dispatch_overlap(admission, 700, 100, 900)
+                .expect("tile-limited overlap");
+        assert_eq!(tile_limited.exact_additional_bytes, 900);
+        assert_eq!(tile_limited.peak_bytes, 1_400);
+        assert!(
+            super::awproject_grouped_metal_dispatch_overlap(admission, 901, 100, 10).is_err(),
+            "a sealed segment one byte above the formula-derived ceiling must fail closed"
+        );
+    }
+
+    #[test]
+    fn grouped_metal_source_boundary_splitting_preserves_order_and_exact_fit() {
+        let admission = super::AwProjectGroupedMetalAdmission {
+            planner_device_budget_bytes: 164,
+            residual_output_bytes: 20,
+            residual_compensation_bytes: 20,
+            model_wrapper_bytes: 20,
+            safety_reserve_bytes: 4,
+            legacy_generic_scratch_bytes: 500,
+            segment_ceiling_bytes: 100,
+        };
+        let partition = |sources: &[super::AwProjectGroupedMetalSourceUpper]| {
+            let mut segments = vec![Vec::new()];
+            let mut current = super::AwProjectGroupedMetalSourceUpper::default();
+            for (source, &upper) in sources.iter().enumerate() {
+                if super::awproject_grouped_metal_segment_split_required(current, upper, admission)
+                    .expect("source boundary")
+                {
+                    segments.push(Vec::new());
+                    current = super::AwProjectGroupedMetalSourceUpper::default();
+                }
+                segments.last_mut().unwrap().push(source);
+                current = current.checked_add(upper).unwrap();
+            }
+            segments
+        };
+
+        let tile_exact = [
+            super::AwProjectGroupedMetalSourceUpper {
+                prediction_without_model_bytes: 1,
+                tile_bytes: 60,
+            },
+            super::AwProjectGroupedMetalSourceUpper {
+                prediction_without_model_bytes: 1,
+                tile_bytes: 40,
+            },
+        ];
+        assert_eq!(partition(&tile_exact), vec![vec![0, 1]]);
+        let tile_one_over = [
+            tile_exact[0],
+            super::AwProjectGroupedMetalSourceUpper {
+                prediction_without_model_bytes: 1,
+                tile_bytes: 41,
+            },
+        ];
+        assert_eq!(partition(&tile_one_over), vec![vec![0], vec![1]]);
+
+        let prediction_exact = [
+            super::AwProjectGroupedMetalSourceUpper {
+                prediction_without_model_bytes: 40,
+                tile_bytes: 1,
+            },
+            super::AwProjectGroupedMetalSourceUpper {
+                prediction_without_model_bytes: 40,
+                tile_bytes: 1,
+            },
+        ];
+        assert_eq!(partition(&prediction_exact), vec![vec![0, 1]]);
+        let prediction_one_over = [
+            prediction_exact[0],
+            super::AwProjectGroupedMetalSourceUpper {
+                prediction_without_model_bytes: 41,
+                tile_bytes: 1,
+            },
+        ];
+        assert_eq!(partition(&prediction_one_over), vec![vec![0], vec![1]]);
+
+        assert!(
+            super::awproject_grouped_metal_segment_split_required(
+                super::AwProjectGroupedMetalSourceUpper::default(),
+                super::AwProjectGroupedMetalSourceUpper {
+                    prediction_without_model_bytes: 81,
+                    tile_bytes: 1,
+                },
+                admission,
+            )
+            .is_err(),
+            "one minimum source prediction above the ceiling cannot be split"
+        );
+        assert!(
+            super::awproject_grouped_metal_segment_split_required(
+                super::AwProjectGroupedMetalSourceUpper::default(),
+                super::AwProjectGroupedMetalSourceUpper {
+                    prediction_without_model_bytes: 1,
+                    tile_bytes: 101,
+                },
+                admission,
+            )
+            .is_err(),
+            "one minimum source tile upper above the ceiling cannot be split"
+        );
+    }
+
+    #[test]
+    fn grouped_metal_live_checks_charge_first_compensation_and_reuse_it_later() {
+        let admission = super::AwProjectGroupedMetalAdmission {
+            planner_device_budget_bytes: 1_000,
+            residual_output_bytes: 200,
+            residual_compensation_bytes: 300,
+            model_wrapper_bytes: 100,
+            safety_reserve_bytes: 64,
+            legacy_generic_scratch_bytes: 900,
+            segment_ceiling_bytes: 436,
+        };
+        let first_missing =
+            super::awproject_grouped_metal_missing_persistent_bytes(admission, false);
+        let later_missing =
+            super::awproject_grouped_metal_missing_persistent_bytes(admission, true);
+        assert_eq!(first_missing, 300);
+        assert_eq!(later_missing, 0);
+        assert_eq!(
+            super::awproject_grouped_metal_live_additional_bytes(500, first_missing).unwrap(),
+            800
+        );
+        assert_eq!(
+            super::awproject_grouped_metal_live_additional_bytes(500, later_missing).unwrap(),
+            500
+        );
+        assert_eq!(
+            super::awproject_grouped_metal_preallocation_required_bytes(136, 800, 64).unwrap(),
+            1_000,
+            "an exact live working-set fit is admitted"
+        );
+        assert_eq!(
+            super::awproject_grouped_metal_preallocation_required_bytes(137, 800, 64).unwrap(),
+            1_001,
+            "one byte beyond the live working-set limit is observable for rejection"
+        );
+        assert_eq!(
+            super::awproject_grouped_metal_maximum_current_bytes(1_000, 64).unwrap(),
+            936
+        );
+        assert_eq!(
+            super::awproject_grouped_metal_postallocation_combined_bytes(836, 100).unwrap(),
+            936,
+            "the postallocation check admits an exact Metal-plus-host fit"
+        );
+        assert_eq!(
+            super::awproject_grouped_metal_postallocation_combined_bytes(837, 100).unwrap(),
+            937,
+            "one byte over the Metal-plus-host postallocation limit is observable"
+        );
+        assert!(super::awproject_grouped_metal_live_additional_bytes(usize::MAX, 1).is_err());
+        assert!(super::awproject_grouped_metal_maximum_current_bytes(63, 64).is_err());
+        assert!(
+            super::awproject_grouped_metal_postallocation_combined_bytes(usize::MAX, 1).is_err()
+        );
     }
 
     #[cfg(all(target_os = "macos", not(coverage)))]
@@ -71521,14 +72995,18 @@ mod tests {
         let d = plan(4, 0, 20, raw_layout);
         let e = plan(5, 0, 20, conjugate_layout);
         let f = plan(6, 1, 10, raw_layout);
-        let program = super::deduplicate_awproject_metal_prediction_plans(
-            &[sample(c, a), sample(f, b), sample(d, e), sample(a, c)],
-            4,
-        )
-        .expect("packed unique prediction program");
+        let samples = [sample(c, a), sample(f, b), sample(d, e), sample(a, c)];
+        let program = super::deduplicate_awproject_metal_prediction_plans(&samples, 4)
+            .expect("packed unique prediction program");
 
         assert_eq!(program.logical_plan_count, 6);
         assert_eq!(program.work_plans.len(), 12);
+        assert_eq!(
+            super::awproject_grouped_metal_padded_prediction_plan_upper(&samples, 4)
+                .expect("source prediction upper"),
+            12,
+            "each support bucket needs its own SIMD tail; rounding all eight occurrences once would undercount"
+        );
         assert_eq!(
             program
                 .work_plans
@@ -72002,6 +73480,7 @@ mod tests {
             candidate_builder: None,
             elapsed: Duration::ZERO,
             host_readback: Duration::ZERO,
+            grouped_metal_admission: None,
         };
         (batch, dispatch)
     }
@@ -72072,6 +73551,7 @@ mod tests {
                 &batch,
                 &dispatch,
                 config,
+                true,
                 false,
                 [Duration::ZERO; 2],
             )
@@ -72125,12 +73605,89 @@ mod tests {
             assert_eq!(stats.lanes[0].fpcr, stats.lanes[1].fpcr);
         }
 
+        let source_count = 6;
+        let (batch, dispatch) = awproject_two_lane_candidate_fixture(source_count);
+        let serial = super::build_awproject_wide_division_candidate_with_config(
+            7, &batch, &dispatch, config,
+        )
+        .expect("serial production candidate reference");
+        let production = super::build_awproject_wide_division_candidate_two_lane_with_config(
+            7,
+            &batch,
+            &dispatch,
+            config,
+            false,
+            false,
+            [Duration::ZERO; 2],
+        )
+        .expect("production no-audit two-lane candidate");
+        assert!(production.audit.is_none());
+        assert!(production.wide_division.is_none());
+        assert_eq!(
+            production
+                .results
+                .iter()
+                .map(|result| [
+                    result.first_residual_re.to_bits(),
+                    result.first_residual_im.to_bits(),
+                    result.second_residual_re.to_bits(),
+                    result.second_residual_im.to_bits(),
+                ])
+                .collect::<Vec<_>>(),
+            serial
+                .results
+                .iter()
+                .map(|result| [
+                    result.first_residual_re.to_bits(),
+                    result.first_residual_im.to_bits(),
+                    result.second_residual_re.to_bits(),
+                    result.second_residual_im.to_bits(),
+                ])
+                .collect::<Vec<_>>()
+        );
+        let stats = production
+            .candidate_builder
+            .expect("production candidate builder receipt");
+        assert_eq!(stats.audit_allocation_bytes, 0);
+        let lifetime =
+            super::awproject_grouped_metal_host_prediction_lifetime(&dispatch, &production);
+        let result_bytes =
+            source_count * std::mem::size_of::<super::AwProjectMetalPredictionResult>();
+        let wide_bytes =
+            source_count * std::mem::size_of::<super::AwProjectMetalWideDivisionSample>();
+        assert_eq!(lifetime.dispatch_result_allocation_bytes, result_bytes);
+        assert_eq!(lifetime.dispatch_audit_allocation_bytes, 0);
+        assert_eq!(lifetime.dispatch_wide_division_allocation_bytes, wide_bytes);
+        assert_eq!(
+            lifetime.dispatch_release_before_tile_bytes,
+            result_bytes + wide_bytes
+        );
+        assert_eq!(lifetime.candidate_result_allocation_bytes, result_bytes);
+        assert_eq!(lifetime.candidate_audit_allocation_bytes, 0);
+        assert_eq!(lifetime.candidate_wide_division_allocation_bytes, 0);
+        assert_eq!(lifetime.candidate_auxiliary_release_before_tile_bytes, 0);
+        assert_eq!(
+            lifetime.candidate_result_release_before_tile_bytes,
+            result_bytes
+        );
+        assert_eq!(lifetime.host_bytes_retained_during_tile, 0);
+        assert_eq!(
+            super::awproject_grouped_metal_prediction_readback_host_bytes(655_200)
+                .expect("VLASS fragment host readback bytes"),
+            83_865_600
+        );
+        assert_eq!(
+            655_200 * std::mem::size_of::<super::AwProjectMetalPredictionResult>(),
+            10_483_200
+        );
+
         let (batch, dispatch) = awproject_two_lane_candidate_fixture(17);
         let first_lane_slow = super::build_awproject_wide_division_candidate_two_lane_with_config(
             7,
             &batch,
             &dispatch,
             config,
+            true,
             false,
             [Duration::from_millis(2), Duration::ZERO],
         )
@@ -72140,6 +73697,7 @@ mod tests {
             &batch,
             &dispatch,
             config,
+            true,
             false,
             [Duration::ZERO, Duration::from_millis(2)],
         )
@@ -72187,6 +73745,7 @@ mod tests {
             &batch,
             &dispatch,
             config,
+            true,
             false,
             [Duration::from_millis(2), Duration::ZERO],
         )
@@ -73263,9 +74822,39 @@ mod tests {
     #[cfg(all(target_os = "macos", not(coverage)))]
     fn awproject_aot_grouped_tile_exact_support_preserves_dense_plans() {
         let mut program = awproject_effective_support_test_program();
+        let source_upper = super::awproject_grouped_metal_source_dispatch_upper_bytes(
+            &program,
+            std::mem::size_of_val(program.prediction_batch.kernels.as_slice()),
+            4,
+        )
+        .expect("source dispatch upper");
+        let unique = super::deduplicate_awproject_metal_prediction_plans(
+            &program.prediction_batch.samples,
+            4,
+        )
+        .expect("source prediction deduplication");
+        let exact_prediction_metal =
+            super::awproject_grouped_metal_prediction_bytes(&program.prediction_batch, 0, &unique)
+                .expect("source prediction Metal bytes");
+        let exact_prediction_readback =
+            super::awproject_grouped_metal_prediction_readback_host_bytes(
+                program.prediction_batch.samples.len(),
+            )
+            .expect("source prediction host readback bytes");
+        assert!(
+            exact_prediction_metal + exact_prediction_readback
+                <= source_upper.prediction_without_model_bytes,
+            "source-boundary prediction upper must charge Metal plus copied host readback"
+        );
         let prediction_hash = super::hash_awproject_copy_slice(&program.prediction_batch.samples);
         let dense_grouped =
             super::group_awproject_metal_tile_plans(&program.tile_batch, 16, 16, 8).unwrap();
+        assert_eq!(program.tile_plan.fragments.len(), 1);
+        assert_eq!(
+            dense_grouped.tile_plan.fragments.len(),
+            2,
+            "two distinct imaging roles overlap one raw source tile and require separate grouped fragments"
+        );
         let dense_group_hash = super::hash_awproject_copy_slice(&dense_grouped.groups);
         let dense_route_hash = super::hash_awproject_grouped_route(&dense_grouped.tile_plan);
         let prediction_plan_count = program.prediction_batch.samples.len() * 2;
@@ -73281,6 +74870,13 @@ mod tests {
             usize::MAX,
         )
         .unwrap();
+        let exact_tile_bytes =
+            super::awproject_grouped_metal_tile_bytes(&program).expect("sealed AOT tile bytes");
+        assert!(
+            exact_tile_bytes <= source_upper.tile_bytes,
+            "sealed AOT tile overlap {exact_tile_bytes} exceeded source upper {}",
+            source_upper.tile_bytes,
+        );
 
         assert_eq!(stats.omitted_energy_fraction.to_bits(), 0.0f64.to_bits());
         assert_eq!(
@@ -73488,8 +75084,11 @@ mod tests {
             16,
         )
         .unwrap();
-        let mut admitted =
-            super::AwProjectCompactReplayCache::new(expected_program_bytes, Some(grouped.clone()));
+        let mut admitted = super::AwProjectCompactReplayCache::new(
+            expected_program_bytes,
+            Some(grouped.clone()),
+            None,
+        );
         admitted.spilled_metal_global_programs = descriptors.clone();
         admitted.spilled_metal_global_payload_bytes = descriptors
             .iter()
@@ -73517,10 +75116,26 @@ mod tests {
                 .unwrap(),
             "a second admission check must reuse the complete resident set"
         );
+        let admission = super::AwProjectGroupedMetalAdmission {
+            planner_device_budget_bytes: usize::MAX,
+            residual_output_bytes: 1,
+            residual_compensation_bytes: 1,
+            model_wrapper_bytes: 1,
+            safety_reserve_bytes: super::AWPROJECT_GROUPED_METAL_SAFETY_RESERVE_BYTES,
+            legacy_generic_scratch_bytes: 1,
+            segment_ceiling_bytes: usize::MAX
+                - super::AWPROJECT_GROUPED_METAL_SAFETY_RESERVE_BYTES
+                - 2,
+        };
+        admitted.grouped_metal_admission = Some(admission);
+        admitted
+            .require_grouped_metal_resident_complete(true)
+            .unwrap();
 
         let mut rejected = super::AwProjectCompactReplayCache::new(
             expected_program_bytes.saturating_sub(1),
             Some(grouped),
+            Some(admission),
         );
         rejected.spilled_metal_global_programs = descriptors;
         assert!(
@@ -73530,6 +75145,10 @@ mod tests {
         );
         assert!(rejected.resident_metal_global_programs.is_empty());
         assert_eq!(rejected.resident_bytes, 0);
+        let error = rejected
+            .require_grouped_metal_resident_complete(false)
+            .expect_err("the exact grouped admission must reject spill-backed refresh");
+        assert!(error.to_string().contains("every sealed source segment"));
     }
 
     #[test]
@@ -73544,6 +75163,163 @@ mod tests {
         assert_eq!(after.grouping.saturating_sub(before.grouping), 1);
         assert_eq!(after.sorting.saturating_sub(before.sorting), 1);
         assert_eq!(after.routing.saturating_sub(before.routing), 1);
+    }
+
+    #[test]
+    #[serial]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn grouped_metal_live_receipts_charge_first_compensation_then_reuse_it() {
+        use objc2_metal::{MTLBuffer, MTLComputePipelineState, MTLDevice};
+
+        if !super::standard_mfs_metal_device_available() {
+            return;
+        }
+        let mut program = awproject_effective_support_test_program();
+        super::compile_awproject_metal_aot_grouped_tile(
+            &mut program,
+            super::AwProjectMetalEffectiveSupportConfig {
+                omitted_energy_fraction:
+                    super::AWPROJECT_METAL_EFFECTIVE_SUPPORT_FOCUSED_OMITTED_ENERGY_FRACTION,
+            },
+            16,
+            16,
+            usize::MAX,
+        )
+        .unwrap();
+        let model_grids = [
+            Array2::<Complex32>::zeros((16, 16)),
+            Array2::<Complex32>::zeros((16, 16)),
+        ];
+        let mut grid = crate::apple_fft::MetalSharedF32DirtyGridBatch::new(16, 16, 2).unwrap();
+        let mut compensation = None;
+
+        let (prediction, first_tile, second_tile, overlap, compensation_bytes) =
+            super::AWPROJECT_METAL_EXECUTOR
+                .with(|slot| {
+                    let mut slot = slot.borrow_mut();
+                    if slot.is_none() {
+                        *slot = Some(super::AwProjectMetalExecutor::new()?);
+                    }
+                    let executor = slot.as_ref().unwrap();
+                    let recommended =
+                        usize::try_from(executor.device.recommendedMaxWorkingSetSize()).unwrap();
+                    let output_bytes = grid.metal_buffer().length();
+                    let reserve = super::AWPROJECT_GROUPED_METAL_SAFETY_RESERVE_BYTES;
+                    let admission = super::AwProjectGroupedMetalAdmission {
+                        planner_device_budget_bytes: recommended,
+                        residual_output_bytes: output_bytes,
+                        residual_compensation_bytes: output_bytes,
+                        model_wrapper_bytes: output_bytes,
+                        safety_reserve_bytes: reserve,
+                        legacy_generic_scratch_bytes: output_bytes * 4,
+                        segment_ceiling_bytes: recommended
+                            .checked_sub(output_bytes * 2)
+                            .and_then(|bytes| bytes.checked_sub(reserve))
+                            .expect("test device can hold the focused receipt fixture"),
+                    };
+                    let unique = super::deduplicate_awproject_metal_prediction_plans(
+                        &program.prediction_batch.samples,
+                        executor
+                            .unique_prediction_pipeline
+                            .threadExecutionWidth()
+                            .max(1),
+                    )?;
+                    let prediction_bytes = super::awproject_grouped_metal_prediction_bytes(
+                        &program.prediction_batch,
+                        admission.model_wrapper_bytes,
+                        &unique,
+                    )?;
+                    let prediction_readback_host_bytes =
+                        super::awproject_grouped_metal_prediction_readback_host_bytes(
+                            program.prediction_batch.samples.len(),
+                        )?;
+                    let tile_bytes = super::awproject_grouped_metal_tile_bytes(&program)?;
+                    let overlap = super::awproject_grouped_metal_dispatch_overlap(
+                        admission,
+                        prediction_bytes,
+                        prediction_readback_host_bytes,
+                        tile_bytes,
+                    )?;
+                    let prediction = executor.dispatch_prediction_probe(
+                        &program.prediction_batch,
+                        &model_grids,
+                        None,
+                        Some(1),
+                        Some(super::AwProjectGroupedMetalPredictionAdmission {
+                            admission,
+                            segment: 0,
+                            tile_bytes,
+                        }),
+                    )?;
+                    super::refresh_awproject_metal_aot_grouped_tile(
+                        program.aot_grouped_tile.as_mut().unwrap(),
+                        &prediction.results,
+                        &program.tile_batch.term_weights,
+                        program.residual_scale_plan,
+                    )?;
+                    let tile_dispatch = || super::AwProjectMetalTileDispatch {
+                        batch: &program.tile_batch,
+                        kernels: program.imaging_kernels(),
+                        tile_plan: &program.tile_plan,
+                        aot_grouped_tile: program.aot_grouped_tile.as_ref(),
+                    };
+                    let context = super::AwProjectGroupedMetalTileAdmission {
+                        admission,
+                        segment: 0,
+                        overlap,
+                    };
+                    let first_tile = executor.dispatch_tile_grid_probe(
+                        &mut grid,
+                        &mut compensation,
+                        tile_dispatch(),
+                        2,
+                        Some(program.residual_scale_plan),
+                        Some(context),
+                    )?;
+                    let second_tile = executor.dispatch_tile_grid_probe(
+                        &mut grid,
+                        &mut compensation,
+                        tile_dispatch(),
+                        2,
+                        Some(program.residual_scale_plan),
+                        Some(context),
+                    )?;
+                    Ok::<_, super::ImagingError>((
+                        prediction,
+                        first_tile,
+                        second_tile,
+                        overlap,
+                        output_bytes,
+                    ))
+                })
+                .unwrap();
+
+        let prediction_live = prediction.grouped_metal_admission.unwrap().live;
+        let first_live = first_tile.grouped_metal_live.unwrap();
+        let second_live = second_tile.grouped_metal_live.unwrap();
+        assert_eq!(
+            prediction_live.additional_bytes,
+            overlap.prediction_with_readback_bytes
+        );
+        assert_eq!(
+            prediction_live.known_host_overlap_bytes,
+            overlap.prediction_readback_host_bytes
+        );
+        assert_eq!(
+            first_live.additional_bytes,
+            overlap.tile_metal_bytes + compensation_bytes
+        );
+        assert_eq!(second_live.additional_bytes, overlap.tile_metal_bytes);
+        assert_eq!(first_live.known_host_overlap_bytes, 0);
+        assert_eq!(second_live.known_host_overlap_bytes, 0);
+        for live in [prediction_live, first_live, second_live] {
+            assert!(live.required_bytes <= live.recommended_bytes);
+            assert!(live.post_combined_bytes <= live.maximum_current_bytes);
+        }
+        assert_eq!(
+            compensation.as_ref().unwrap().buffer.length(),
+            compensation_bytes
+        );
     }
 
     #[test]
@@ -75066,6 +76842,7 @@ mod tests {
                         },
                         2,
                         None,
+                        None,
                     )
                 })
                 .unwrap();
@@ -75212,12 +76989,14 @@ mod tests {
                         &model_grids,
                         Some(1),
                         Some(1),
+                        None,
                     )?,
                     executor.dispatch_prediction_probe(
                         &prediction_batch,
                         &model_grids,
                         None,
                         Some(1),
+                        None,
                     )?,
                 ))
             })
@@ -75352,12 +77131,14 @@ mod tests {
                         &[model_tt0.clone(), model_tt1.clone()],
                         Some(1),
                         Some(1),
+                        None,
                     )?,
                     executor.dispatch_prediction_probe(
                         &batch,
                         &[model_tt0, model_tt1],
                         None,
                         Some(1),
+                        None,
                     )?,
                 ))
             })
@@ -81295,6 +83076,91 @@ mod tests {
         assert!(
             atlas.len() * 2 < dense_values,
             "the fixture must demonstrate material atlas compression"
+        );
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn grouped_metal_source_upper_charges_the_full_raw_atlas_for_sparse_phase_coverage() {
+        let cell_key = super::AwConvolutionFunctionKey {
+            frequency_hz: 2.0e9,
+            w_value_lambda: 12.0,
+            mueller_element: 0,
+            parallactic_angle_deg: 3.0,
+        };
+        let stable_cell = super::awproject_stable_cell_key(cell_key);
+        let request = |off_x, off_y| super::AwProjectCompactTapRequest {
+            key: super::AwProjectCompactTapKey {
+                group_index: 0,
+                cell: stable_cell,
+                kernel_kind: super::AwProjectCompactKernelKind::Imaging,
+                off_x,
+                off_y,
+                conjugate_for_grid: false,
+            },
+            cell_key,
+            representative_geometry: super::gridder::AwProjectSampleGeometry {
+                loc_x: 2,
+                loc_y: 2,
+                off_x,
+                off_y,
+                conjugate_for_grid: false,
+            },
+        };
+        let bundle = |off_x, off_y| {
+            super::AwProjectCompactMaterializedTap::Ready(super::AwProjectCompactTapBundle {
+                values: vec![Complex32::new(1.0, 0.0); 9],
+                x_support: 1,
+                y_support: 1,
+                normalization: Complex32::new(1.0, 0.0),
+                grid_normalization: Complex64::new(1.0, 0.0),
+                sampling: 4,
+                off_x,
+                off_y,
+                phase_applied: false,
+            })
+        };
+        let tap_requests = vec![request(0, 0), request(1, -1)];
+        let bundles = vec![bundle(0, 0), bundle(1, -1)];
+        let plan = |tap_bundle| super::AwProjectCompactSamplePlan {
+            loc_x: 2,
+            loc_y: 2,
+            tap_bundle,
+        };
+        let source = super::AwProjectCompactSourceSample {
+            sample_index: 0,
+            group_index: 0,
+            first_imaging_plan: plan(0),
+            second_imaging_plan: plan(1),
+            first_prediction_plan: plan(0),
+            second_prediction_plan: plan(1),
+            first_psf_plan: plan(0),
+            second_psf_plan: plan(1),
+            first_weight_plan: plan(0),
+            second_weight_plan: plan(1),
+        };
+        let raw_upper = super::AwProjectMetalGlobalProgramBuilder::raw()
+            .additional_raw_kernel_bytes(&[source], &tap_requests, &bundles)
+            .expect("full raw-plane upper");
+        let super::AwProjectCompactMaterializedTap::Ready(first_bundle) = &bundles[0] else {
+            unreachable!("fixture contains a ready bundle")
+        };
+        assert_eq!(
+            raw_upper,
+            super::AwProjectMetalGlobalProgramBuilder::raw_plane_bytes(first_bundle).unwrap(),
+            "two sparse offsets of one cell still allocate its complete polyphase plane"
+        );
+        let dense_window_bytes = 2 * 9 * std::mem::size_of::<Complex32>();
+        assert!(
+            raw_upper > dense_window_bytes,
+            "per-window dense stencil bytes do not conservatively bound the raw atlas"
+        );
+        assert_eq!(
+            super::AwProjectMetalGlobalProgramBuilder::raw()
+                .additional_raw_kernel_bytes(&[source, source], &tap_requests, &bundles)
+                .unwrap(),
+            raw_upper,
+            "duplicate use shares one atlas inside a sealed segment; summing source-intrinsic uppers only overcounts"
         );
     }
 

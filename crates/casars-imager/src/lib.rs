@@ -45,11 +45,11 @@ use casa_imaging::{
     ImagingExecutionPlan, ImagingExecutionPolicy, ImagingMemoryAllocation,
     ImagingMemoryAllocationLifecycle, ImagingMemoryBacking, ImagingMemoryLifetimeLedger,
     ImagingMemoryNextUse, ImagingMemoryPressurePolicy as CoreImagingMemoryPressurePolicy,
-    ImagingMemoryResidency, ImagingMemoryStage, ImagingPlanAdmission, ImagingPlanningContext,
-    ImagingRequest, ImagingResolvedPlan, ImagingResources, ImagingResult, ImagingSpectralSchedule,
-    ImagingStageTimings, ImagingTileAnchor, ImagingWorkloadShape, MinorCycleTrace,
-    MosaicGridderConfig, ParallelHandBatch, ParallelWorkerCalibrationRequest, PlaneStokes,
-    PrimaryBeamModel, PrimaryBeamProductRequest, PrimaryBeamWeightSample,
+    ImagingMemoryResidency, ImagingMemoryStage, ImagingMetalPlan, ImagingPlanAdmission,
+    ImagingPlanningContext, ImagingRequest, ImagingResolvedPlan, ImagingResources, ImagingResult,
+    ImagingSpectralSchedule, ImagingStageTimings, ImagingTileAnchor, ImagingWorkloadShape,
+    MinorCycleTrace, MosaicGridderConfig, ParallelHandBatch, ParallelWorkerCalibrationRequest,
+    PlaneStokes, PrimaryBeamModel, PrimaryBeamProductRequest, PrimaryBeamWeightSample,
     ResidualRefreshDiagnostics, RestoringBeamMode, ScalarVisibilitySample, StandardMfsBackend,
     StandardMfsCleanFinishPlan, StandardMfsCleanPlan, StandardMfsCleanSession,
     StandardMfsDensitySourcePlan, StandardMfsDensitySourcePlanRequest, StandardMfsDirtyAccumulator,
@@ -6398,6 +6398,12 @@ fn run_standard_mfs_plan_probe_from_config(config: &CliConfig) -> Result<RunSumm
     } else {
         base_strategy
     };
+    let grouped_metal_status = awproject_grouped_metal_plan_probe_status(
+        &strategy,
+        config,
+        selected_field_count,
+        standard_mfs_initial_dirty_backend_explicit,
+    );
     log_standard_mfs_memory_plan_actual(
         &strategy,
         active_row_count,
@@ -6405,6 +6411,23 @@ fn run_standard_mfs_plan_probe_from_config(config: &CliConfig) -> Result<RunSumm
         0,
         "planner_preflight_mosaic_mtmfs_single_plane_stream",
     );
+    if grouped_metal_status == "rejected" {
+        let reason = strategy
+            .decisions
+            .iter()
+            .rev()
+            .find(|decision| decision.name == "awproject_multifield_initial_grid_admission")
+            .map_or(
+                "the grouped residual Metal topology omitted its admission decision",
+                |decision| decision.reason.as_str(),
+            );
+        eprintln!(
+            "standard_mfs_planner_preflight status=rejected grouped_metal_status=rejected execution_mode=mosaic_mtmfs_single_plane_stream visibility_streamed=false replay_compiled=false grids_allocated=false products_materialized=false"
+        );
+        return Err(format!(
+            "standard-MFS planner preflight rejected grouped residual Metal admission: {reason}"
+        ));
+    }
     let lifetime_peak_stage = strategy
         .memory_lifetime_ledger
         .peak_stage
@@ -6414,7 +6437,8 @@ fn run_standard_mfs_plan_probe_from_config(config: &CliConfig) -> Result<RunSumm
         .peak_stored_stage
         .map_or("none", ImagingMemoryStage::label);
     eprintln!(
-        "standard_mfs_planner_preflight status=admitted execution_mode=mosaic_mtmfs_single_plane_stream rows_total={} ddids={} selected_channels={} correlations={} stream_blocks={} row_block_rows={} memory_pressure_policy={} memory_target_bytes={} planned_peak_bytes={} lifetime_peak_bytes={} lifetime_peak_stage={} lifetime_stored_peak_bytes={} lifetime_stored_peak_stage={} lifetime_logical_bytes={} visibility_streamed=false replay_compiled=false grids_allocated=false products_materialized=false",
+        "standard_mfs_planner_preflight status=admitted grouped_metal_status={} execution_mode=mosaic_mtmfs_single_plane_stream rows_total={} ddids={} selected_channels={} correlations={} stream_blocks={} row_block_rows={} memory_pressure_policy={} memory_target_bytes={} planned_peak_bytes={} lifetime_peak_bytes={} lifetime_peak_stage={} lifetime_stored_peak_bytes={} lifetime_stored_peak_stage={} lifetime_logical_bytes={} visibility_streamed=false replay_compiled=false grids_allocated=false products_materialized=false",
+        grouped_metal_status,
         active_row_count,
         ddid_plans.len(),
         selected_channel_count,
@@ -38271,6 +38295,15 @@ fn standard_mfs_memory_allocation_lifetimes(
 
     plan.memory_allocations
         .iter()
+        .filter(|allocation| {
+            allocation.component != "direct Metal host scratch"
+                || allocation.bytes > 0
+                || !standard_mfs_plan_decision_is(
+                    plan,
+                    "awproject_grouped_replay_replaced_generic_caches",
+                    "true",
+                )
+        })
         .map(|allocation| {
             let occurrence = component_occurrences
                 .entry(allocation.component)
@@ -38768,6 +38801,71 @@ fn admit_awproject_compact_replay_retention(
 const AWPROJECT_MULTIFIELD_INITIAL_GRID_TILE_SIDE: usize = 192;
 const AWPROJECT_MULTIFIELD_INITIAL_GRID_TAP_BYTES: usize = 512 * 1024 * 1024;
 const AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES: usize = 512 * 1024 * 1024;
+const AWPROJECT_GROUPED_METAL_SAFETY_RESERVE_BYTES: usize = 64 * 1024 * 1024;
+
+fn standard_mfs_plan_decision_usize_value(plan: &ImagingResolvedPlan, name: &str) -> Option<usize> {
+    plan.decisions
+        .iter()
+        .rev()
+        .find(|decision| decision.name == name)
+        .and_then(|decision| decision.value.parse::<usize>().ok())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AwProjectGroupedMetalPlannerAdmission {
+    device_budget_bytes: usize,
+    residual_output_bytes: usize,
+    residual_compensation_bytes: usize,
+    model_wrapper_bytes: usize,
+    safety_reserve_bytes: usize,
+    segment_ceiling_bytes: usize,
+}
+
+fn awproject_grouped_metal_planner_admission(
+    plan: &ImagingResolvedPlan,
+) -> Result<AwProjectGroupedMetalPlannerAdmission, String> {
+    let device_budget_bytes =
+        standard_mfs_plan_decision_usize_value(plan, "awproject_grouped_metal_device_budget_bytes")
+            .ok_or_else(|| {
+                "the grouped residual Metal topology omitted its device-budget decision".to_string()
+            })?;
+    let residual_output_bytes = checked_imaging_product(
+        [
+            plan.workload.image_width,
+            plan.workload.image_height,
+            plan.workload.taylor_terms.max(1),
+            std::mem::size_of::<Complex32>(),
+        ],
+        "grouped residual Metal output limb",
+    )?;
+    let residual_compensation_bytes = residual_output_bytes;
+    let model_wrapper_bytes = residual_output_bytes;
+    let persistent_bytes = residual_output_bytes
+        .checked_add(residual_compensation_bytes)
+        .ok_or_else(|| "the grouped residual Metal persistent byte count overflowed".to_string())?;
+    let segment_ceiling_bytes = device_budget_bytes
+        .checked_sub(persistent_bytes)
+        .and_then(|bytes| bytes.checked_sub(AWPROJECT_GROUPED_METAL_SAFETY_RESERVE_BYTES))
+        .ok_or_else(|| {
+            format!(
+                "the grouped residual Metal device budget {device_budget_bytes} cannot hold {persistent_bytes} persistent residual bytes plus the {}-byte safety reserve",
+                AWPROJECT_GROUPED_METAL_SAFETY_RESERVE_BYTES,
+            )
+        })?;
+    if segment_ceiling_bytes <= model_wrapper_bytes {
+        return Err(format!(
+            "the grouped residual Metal segment ceiling {segment_ceiling_bytes} cannot hold the {model_wrapper_bytes}-byte two-term model wrapper overlap"
+        ));
+    }
+    Ok(AwProjectGroupedMetalPlannerAdmission {
+        device_budget_bytes,
+        residual_output_bytes,
+        residual_compensation_bytes,
+        model_wrapper_bytes,
+        safety_reserve_bytes: AWPROJECT_GROUPED_METAL_SAFETY_RESERVE_BYTES,
+        segment_ceiling_bytes,
+    })
+}
 
 fn replace_standard_mfs_memory_allocation(
     plan: &mut ImagingResolvedPlan,
@@ -38806,6 +38904,166 @@ fn standard_mfs_plan_decision_is(plan: &ImagingResolvedPlan, name: &str, expecte
         .is_some_and(|decision| decision.value == expected)
 }
 
+fn standard_mfs_prefers_metal(config: &CliConfig) -> bool {
+    matches!(
+        config.standard_mfs_acceleration,
+        StandardMfsAccelerationPolicy::Metal
+    ) || [
+        config.standard_mfs_backend.as_deref(),
+        config.standard_mfs_residual_backend.as_deref(),
+        config.standard_mfs_initial_dirty_backend.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| value.to_ascii_lowercase().contains("metal"))
+}
+
+fn awproject_grouped_metal_topology_eligible(
+    config: &CliConfig,
+    selected_field_count: usize,
+    initial_dirty_backend_explicit: bool,
+) -> bool {
+    let explicit_initial_backend = config
+        .standard_mfs_initial_dirty_backend
+        .as_deref()
+        .and_then(parse_standard_mfs_backend_for_plan);
+    selected_field_count > 1
+        && config.aw_project.is_some()
+        && config.deconvolver == Deconvolver::Mtmfs
+        && config.nterms == 2
+        && !clean_is_dirty(config)
+        && standard_mfs_prefers_metal(config)
+        && (!initial_dirty_backend_explicit
+            || explicit_initial_backend == Some(StandardMfsBackend::Cpu))
+}
+
+fn awproject_grouped_metal_plan_probe_status(
+    plan: &ImagingResolvedPlan,
+    config: &CliConfig,
+    selected_field_count: usize,
+    initial_dirty_backend_explicit: bool,
+) -> &'static str {
+    if !awproject_grouped_metal_topology_eligible(
+        config,
+        selected_field_count,
+        initial_dirty_backend_explicit,
+    ) {
+        return "not-applicable";
+    }
+    let execution = standard_mfs_execution_config_with_plan(config, plan);
+    awproject_grouped_metal_execution_probe_status(plan, &execution)
+}
+
+fn awproject_grouped_metal_execution_probe_status(
+    plan: &ImagingResolvedPlan,
+    execution: &StandardMfsExecutionPlan,
+) -> &'static str {
+    let exact_grouped_replay = execution
+        .awproject_grouped_replay
+        .as_ref()
+        .is_some_and(|grouped| grouped.omitted_energy_fraction() == 0.0);
+    let generic_storage_absent = plan.workload.direct_metal_scratch_candidate_bytes == 0
+        && plan.workload.routed_replay_cache_candidate_bytes == 0
+        && plan.workload.metal_grouped_input_cache_candidate_bytes == 0
+        && plan.caches.direct_metal_scratch_bytes == 0
+        && !plan.caches.routed_replay_enabled
+        && plan.caches.routed_replay_bytes == 0
+        && !plan.caches.metal_grouped_input_enabled
+        && plan.caches.metal_grouped_input_bytes == 0;
+    if execution.initial_dirty_backend == Some(StandardMfsBackend::Cpu)
+        && execution.residual_backend == Some(StandardMfsBackend::MetalRowRunGrouped)
+        && exact_grouped_replay
+        && generic_storage_absent
+        && standard_mfs_plan_decision_is(
+            plan,
+            "awproject_multifield_initial_grid_admission",
+            "admitted",
+        )
+        && standard_mfs_plan_decision_is(
+            plan,
+            "awproject_grouped_replay_replaced_generic_caches",
+            "true",
+        )
+    {
+        "admitted"
+    } else {
+        "rejected"
+    }
+}
+
+fn prepare_awproject_grouped_metal_candidate(
+    mut plan: ImagingResolvedPlan,
+    config: &CliConfig,
+    selected_field_count: usize,
+    initial_dirty_backend_explicit: bool,
+) -> Result<ImagingResolvedPlan, String> {
+    if !awproject_grouped_metal_topology_eligible(
+        config,
+        selected_field_count,
+        initial_dirty_backend_explicit,
+    ) {
+        return Err(
+            "grouped residual Metal candidate preparation received an ineligible topology"
+                .to_string(),
+        );
+    }
+    let legacy_generic_scratch_bytes = plan.workload.direct_metal_scratch_candidate_bytes;
+    plan.workload.direct_metal_scratch_candidate_bytes = 0;
+    plan.workload.routed_replay_cache_candidate_bytes = 0;
+    plan.workload.metal_grouped_input_cache_candidate_bytes = 0;
+    plan.caches.direct_metal_scratch_bytes = 0;
+    plan.caches.routed_replay_enabled = false;
+    plan.caches.routed_replay_bytes = 0;
+    plan.caches.metal_grouped_input_enabled = false;
+    plan.caches.metal_grouped_input_bytes = 0;
+    let allocations_replaced = [
+        "direct Metal host scratch",
+        "routed replay cache",
+        "Metal grouped input cache",
+    ]
+    .into_iter()
+    .all(|component| replace_standard_mfs_memory_allocation(&mut plan, component, 0));
+    if !allocations_replaced {
+        return Err(
+            "grouped residual Metal candidate omitted a generic scratch/cache allocation"
+                .to_string(),
+        );
+    }
+    for decision in [
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_grouped_replay_replaced_generic_caches",
+            value: "true".to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "the exact resolved CPU-initial/grouped-residual topology replaces generic Metal scratch and replay caches"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_grouped_metal_safety_reserve_bytes",
+            value: AWPROJECT_GROUPED_METAL_SAFETY_RESERVE_BYTES.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "reserve retained beyond every grouped residual Metal pre/post allocation check"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_grouped_metal_legacy_generic_scratch_bytes",
+            value: legacy_generic_scratch_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "diagnostic only: the exact grouped topology does not allocate this generic dense-grid estimate"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_grouped_metal_generic_scratch_bytes",
+            value: "0".to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "CPU-initial/grouped-residual execution has no generic dense Metal scratch allocation"
+                .to_string(),
+        },
+    ] {
+        replace_standard_mfs_plan_decision(&mut plan, decision);
+    }
+    Ok(plan)
+}
+
 fn reject_awproject_multifield_initial_grid(
     mut plan: ImagingResolvedPlan,
     selected_field_count: usize,
@@ -38840,31 +39098,95 @@ fn admit_awproject_multifield_initial_grid(
     initial_dirty_backend_explicit: bool,
     grid_threads_explicit: bool,
 ) -> Result<ImagingResolvedPlan, String> {
-    let explicit_initial_backend = config
-        .standard_mfs_initial_dirty_backend
-        .as_deref()
-        .and_then(parse_standard_mfs_backend_for_plan);
-    let eligible = selected_field_count > 1
-        && config.aw_project.is_some()
-        && config.deconvolver == Deconvolver::Mtmfs
-        && config.nterms == 2
-        && !clean_is_dirty(config)
-        && plan.metal.eligible
-        && standard_mfs_plan_decision_is(
-            &plan,
-            "awproject_grouped_replay_replaced_generic_caches",
-            "true",
-        )
-        && (!initial_dirty_backend_explicit
-            || explicit_initial_backend == Some(StandardMfsBackend::Cpu));
-    if !eligible {
+    if !awproject_grouped_metal_topology_eligible(
+        config,
+        selected_field_count,
+        initial_dirty_backend_explicit,
+    ) {
         return Ok(plan);
     }
+
+    let mut candidate = match prepare_awproject_grouped_metal_candidate(
+        plan.clone(),
+        config,
+        selected_field_count,
+        initial_dirty_backend_explicit,
+    ) {
+        Ok(candidate) => candidate,
+        Err(reason) => {
+            return Ok(reject_awproject_multifield_initial_grid(
+                plan,
+                selected_field_count,
+                format!("grouped residual Metal candidate preparation failed: {reason}"),
+            ));
+        }
+    };
+    let grouped_metal = match awproject_grouped_metal_planner_admission(&candidate) {
+        Ok(admission) => admission,
+        Err(reason) => {
+            return Ok(reject_awproject_multifield_initial_grid(
+                plan,
+                selected_field_count,
+                format!("grouped residual Metal admission rejected the topology: {reason}"),
+            ));
+        }
+    };
 
     let priming_extension_bytes = awproject_initial_dirty_replay_priming_tap_extension_bytes(
         AWPROJECT_MULTIFIELD_INITIAL_GRID_TAP_BYTES,
     )?;
-    let mut candidate = plan.clone();
+    let metal_bytes_per_sample = candidate.workload.metal_bytes_per_sample.max(1);
+    let segment_sample_bytes = grouped_metal
+        .segment_ceiling_bytes
+        .checked_sub(grouped_metal.model_wrapper_bytes)
+        .ok_or_else(|| {
+            "grouped residual Metal segment ceiling cannot hold its model wrappers".to_string()
+        })?;
+    let command_samples = candidate
+        .workload
+        .sample_count
+        .min(segment_sample_bytes / metal_bytes_per_sample);
+    if candidate.workload.sample_count > 0 && command_samples == 0 {
+        return Ok(reject_awproject_multifield_initial_grid(
+            plan,
+            selected_field_count,
+            "grouped residual Metal admission cannot hold one source sample below its segment ceiling"
+                .to_string(),
+        ));
+    }
+    candidate.metal = ImagingMetalPlan {
+        eligible: true,
+        command_samples,
+        device_cache_bytes: command_samples
+            .checked_mul(metal_bytes_per_sample)
+            .ok_or_else(|| "grouped residual Metal command byte count overflowed".to_string())?,
+        rejection_reason: None,
+    };
+    replace_standard_mfs_plan_decision(
+        &mut candidate,
+        casa_imaging::ImagingPlanDecision {
+            name: "metal",
+            value: "eligible".to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "CPU initial gridding removes the generic dense-grid Metal gate; grouped residual replay is admitted by exact persistent and per-segment overlap"
+                .to_string(),
+        },
+    );
+    if candidate.allocation_bytes("AWProject compensated f64 readback") == 0 {
+        let readback_bytes = checked_imaging_product(
+            [
+                candidate.workload.image_width,
+                candidate.workload.image_height,
+                std::mem::size_of::<Complex64>(),
+            ],
+            "AWProject compensated f64 readback plane",
+        )?;
+        candidate.memory_allocations.push(ImagingMemoryAllocation {
+            component: "AWProject compensated f64 readback",
+            stage: "dirty-transform",
+            bytes: readback_bytes,
+        });
+    }
     let replaced_taps = replace_standard_mfs_memory_allocation(
         &mut candidate,
         "AWProject source-order tap scratch",
@@ -38936,6 +39258,39 @@ fn admit_awproject_multifield_initial_grid(
             origin: casa_imaging::ImagingPlanOrigin::Resources,
             reason: "the resolved multi-field AWProject MT-MFS topology and exact lifetime ledger admit the existing exact-support sparse CPU initial grid while residual replay remains grouped Metal"
                 .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_grouped_metal_residual_output_bytes",
+            value: grouped_metal.residual_output_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "two residual Taylor-term Complex32 output planes remain persistent across grouped dispatches"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_grouped_metal_residual_compensation_bytes",
+            value: grouped_metal.residual_compensation_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "the compensation limb remains persistent beside the residual output grid"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_grouped_metal_model_wrapper_bytes",
+            value: grouped_metal.model_wrapper_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "two no-copy Complex32 model-grid wrappers and their data overlap prediction"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_grouped_metal_segment_ceiling_bytes",
+            value: grouped_metal.segment_ceiling_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: format!(
+                "device budget {} minus residual output {}, compensation {}, and the {}-byte reserve",
+                grouped_metal.device_budget_bytes,
+                grouped_metal.residual_output_bytes,
+                grouped_metal.residual_compensation_bytes,
+                grouped_metal.safety_reserve_bytes,
+            ),
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_initial_grid_sparse_tile_side",
@@ -39583,7 +39938,19 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     } else {
         0
     };
-    let direct_metal_scratch_candidate_bytes = if mosaic_full_grid {
+    let prefer_metal = standard_mfs_prefers_metal(config);
+    let explicit_workers = config
+        .standard_mfs_grid_threads
+        .as_deref()
+        .and_then(parse_standard_mfs_grid_threads)
+        .or(config.imaging_prepare_workers);
+    let repeated_refresh = !clean_is_dirty(config);
+    let routed_replay_useful = repeated_refresh
+        && (explicit_workers.unwrap_or(1) > 1
+            || standard_mfs_fixed_tile_backend_enabled_for_frontend(config));
+    let metal_cache_useful = repeated_refresh && prefer_metal;
+
+    let legacy_direct_metal_scratch_candidate_bytes = if mosaic_full_grid {
         let grid_allocation_bytes = if awproject_mtmfs {
             // The regular Complex64 grid ledger already represents the
             // persistent Complex32 output and compensation pair. Direct Metal
@@ -39635,6 +40002,7 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         // for a buffer that can never be allocated and starve source ingest.
         0
     };
+    let direct_metal_scratch_candidate_bytes = legacy_direct_metal_scratch_candidate_bytes;
 
     let mosaic_facets = config
         .field_ids
@@ -39675,30 +40043,6 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             "per-worker imaging scratch",
         )?
     };
-    let prefer_metal = matches!(
-        config.standard_mfs_acceleration,
-        StandardMfsAccelerationPolicy::Metal
-    ) || [
-        config.standard_mfs_backend.as_deref(),
-        config.standard_mfs_residual_backend.as_deref(),
-        config.standard_mfs_initial_dirty_backend.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    .any(|value| value.to_ascii_lowercase().contains("metal"));
-    let explicit_workers = config
-        .standard_mfs_grid_threads
-        .as_deref()
-        .and_then(parse_standard_mfs_grid_threads)
-        .or(config.imaging_prepare_workers);
-    let repeated_refresh = !clean_is_dirty(config);
-    let grouped_awproject_replay_useful = awproject_mtmfs && repeated_refresh && prefer_metal;
-    let routed_replay_useful = !grouped_awproject_replay_useful
-        && repeated_refresh
-        && (explicit_workers.unwrap_or(1) > 1
-            || standard_mfs_fixed_tile_backend_enabled_for_frontend(config));
-    let metal_cache_useful = !grouped_awproject_replay_useful && repeated_refresh && prefer_metal;
-
     let tile_anchor = match config.standard_mfs_tile_anchor.as_deref() {
         Some("zero") => ImagingTileAnchor::Zero,
         Some(
@@ -39748,14 +40092,8 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     } else {
         0
     };
-    let grouped_compiler_minimum_uncertainty_reserve_bytes = if grouped_awproject_replay_useful {
-        64 * 1024 * 1024
-    } else {
-        0
-    };
     let aw_safety_margin_bytes = if awproject_mtmfs {
-        (memory_target.target_bytes / 20)
-            .saturating_sub(grouped_compiler_minimum_uncertainty_reserve_bytes)
+        memory_target.target_bytes / 20
     } else {
         0
     };
@@ -40029,15 +40367,38 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_grouped_replay_replaced_generic_caches",
-            value: grouped_awproject_replay_useful.to_string(),
+            value: "false".to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Workload,
-            reason: if grouped_awproject_replay_useful {
-                "source-order grouped replay owns the residual input grouping and tile route, so the generic Metal grouped-input and routed-replay caches are neither admitted nor retained"
-                    .to_string()
-            } else {
-                "the selected workload does not use the Metal AWProject grouped-replay architecture"
-                    .to_string()
-            },
+            reason: "the base plan retains generic Metal scratch and replay caches until resolved active-field selection admits the exact private grouped topology"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_grouped_metal_device_budget_bytes",
+            value: planning_resources.metal_device_budget_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "the planner snapshot bounds additional grouped residual Metal residency before live device checks"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_grouped_metal_safety_reserve_bytes",
+            value: "0".to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "the generic base topology has not yet reserved private grouped Metal headroom"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_grouped_metal_legacy_generic_scratch_bytes",
+            value: legacy_direct_metal_scratch_candidate_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "the unmodified generic dense-grid scratch candidate before resolved grouped admission"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_grouped_metal_generic_scratch_bytes",
+            value: direct_metal_scratch_candidate_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "the base topology retains the generic direct Metal scratch calculation"
+                .to_string(),
         },
     ]);
 
@@ -40187,9 +40548,8 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             name: "awproject_safety_margin_bytes",
             value: aw_safety_margin_bytes.to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Resources,
-            reason: format!(
-                "five percent of the assigned process budget is reserved for allocator and unmodeled metadata overhead, less the grouped compiler's independently admitted minimum allocator-uncertainty reserve of {grouped_compiler_minimum_uncertainty_reserve_bytes} bytes"
-            ),
+            reason: "five percent of the assigned process budget is reserved for allocator and unmodeled metadata overhead"
+                .to_string(),
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_fft_residency",
@@ -41869,7 +42229,7 @@ fn awproject_grouped_replay_plan(
         return None;
     }
     let replay_bytes = strategy.allocation_bytes("AWProject compact replay retention");
-    if replay_bytes < 512 * 1024 * 1024 {
+    if replay_bytes < AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES {
         return None;
     }
     let initial_grid_peak_bytes = strategy
@@ -41898,9 +42258,10 @@ fn awproject_grouped_replay_plan(
     if compile_admission_bytes <= replay_bytes {
         return None;
     }
-    let segment_target_bytes = compile_admission_bytes
-        .saturating_sub(replay_bytes)
-        .clamp(512 * 1024 * 1024, 8 * 1024 * 1024 * 1024);
+    let segment_target_bytes = compile_admission_bytes.saturating_sub(replay_bytes).clamp(
+        AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES,
+        8 * 1024 * 1024 * 1024,
+    );
     let spill_directory = config
         .imagename
         .parent()
@@ -61705,6 +62066,22 @@ mod tests {
         config
     }
 
+    fn force_grouped_metal_test_device_budget(
+        plan: &mut ImagingResolvedPlan,
+        device_budget: usize,
+    ) {
+        assert!(plan.workload.direct_metal_scratch_candidate_bytes > 0);
+        replace_standard_mfs_plan_decision(
+            plan,
+            casa_imaging::ImagingPlanDecision {
+                name: "awproject_grouped_metal_device_budget_bytes",
+                value: device_budget.to_string(),
+                origin: casa_imaging::ImagingPlanOrigin::Resources,
+                reason: "deterministic private grouped-Metal test device budget".to_string(),
+            },
+        );
+    }
+
     #[test]
     fn awproject_mtmfs_memory_plan_accounts_for_exact_grid_and_external_indexes() {
         let tmp = tempdir().unwrap();
@@ -61908,6 +62285,7 @@ mod tests {
         config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
         config.standard_mfs_grid_threads = Some("3".to_string());
         let mut base = standard_mfs_memory_plan(&config, 64, 1024);
+        force_grouped_metal_test_device_budget(&mut base, 16 * 1024 * 1024 * 1024);
         base.metal.eligible = true;
 
         let initial =
@@ -61957,12 +62335,45 @@ mod tests {
             .memory_lifetime_ledger
             .allocations
             .iter()
-            .find(|allocation| allocation.component == "direct Metal host scratch")
-            .expect("direct Metal scratch lifetime");
-        assert_eq!(direct_metal_scratch_lifetime.residencies.len(), 1);
+            .find(|allocation| allocation.component == "direct Metal host scratch");
+        assert!(
+            direct_metal_scratch_lifetime.is_none(),
+            "CPU-initial/grouped-residual execution must not retain an allocation for unused generic scratch"
+        );
         assert_eq!(
-            direct_metal_scratch_lifetime.residencies[0].live_from,
-            ImagingMemoryStage::ResidualGrid
+            standard_mfs_plan_decision_usize(
+                &initial,
+                "awproject_grouped_metal_generic_scratch_bytes"
+            ),
+            Some(0)
+        );
+        let residual_output = standard_mfs_plan_decision_usize(
+            &initial,
+            "awproject_grouped_metal_residual_output_bytes",
+        )
+        .unwrap();
+        let residual_compensation = standard_mfs_plan_decision_usize(
+            &initial,
+            "awproject_grouped_metal_residual_compensation_bytes",
+        )
+        .unwrap();
+        let device_budget = standard_mfs_plan_decision_usize(
+            &initial,
+            "awproject_grouped_metal_device_budget_bytes",
+        )
+        .unwrap();
+        assert_eq!(residual_output, residual_compensation);
+        assert_eq!(
+            standard_mfs_plan_decision_usize(
+                &initial,
+                "awproject_grouped_metal_segment_ceiling_bytes"
+            ),
+            Some(
+                device_budget
+                    - residual_output
+                    - residual_compensation
+                    - AWPROJECT_GROUPED_METAL_SAFETY_RESERVE_BYTES
+            )
         );
 
         let plan = admit_awproject_compact_replay_retention(initial, 4).expect("replay admission");
@@ -61995,6 +62406,68 @@ mod tests {
             );
         }
         assert!(plan.maximum_planned_resident_bytes <= plan.usable_memory_bytes);
+        assert_eq!(
+            awproject_grouped_metal_plan_probe_status(&plan, &config, 2, false),
+            awproject_grouped_metal_execution_probe_status(&plan, &execution),
+            "the production probe wrapper must classify its effective execution plan"
+        );
+        let mut admitted_execution = execution.clone();
+        admitted_execution.awproject_grouped_replay = Some(
+            AwProjectGroupedReplayPlan::new(
+                tmp.path().to_path_buf(),
+                512 * 1024 * 1024,
+                1024 * 1024 * 1024,
+                0.0,
+                16,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            awproject_grouped_metal_execution_probe_status(&plan, &admitted_execution),
+            "admitted"
+        );
+        let mut missing_replay = admitted_execution.clone();
+        missing_replay.awproject_grouped_replay = None;
+        assert_eq!(
+            awproject_grouped_metal_execution_probe_status(&plan, &missing_replay),
+            "rejected",
+            "admission decisions cannot substitute for an effective grouped replay plan"
+        );
+        let mut stale_generic_scratch = plan.clone();
+        stale_generic_scratch
+            .workload
+            .direct_metal_scratch_candidate_bytes = 1;
+        assert_eq!(
+            awproject_grouped_metal_execution_probe_status(
+                &stale_generic_scratch,
+                &admitted_execution,
+            ),
+            "rejected",
+            "the grouped topology must remove both candidate and resolved generic storage"
+        );
+        let mut wrong_residual_backend = admitted_execution.clone();
+        wrong_residual_backend.residual_backend = Some(StandardMfsBackend::Cpu);
+        assert_eq!(
+            awproject_grouped_metal_execution_probe_status(&plan, &wrong_residual_backend),
+            "rejected",
+            "the effective residual backend is part of grouped preflight admission"
+        );
+        let mut approximate_replay = admitted_execution;
+        approximate_replay.awproject_grouped_replay = Some(
+            AwProjectGroupedReplayPlan::new(
+                tmp.path().to_path_buf(),
+                512 * 1024 * 1024,
+                1024 * 1024 * 1024,
+                1.0e-4,
+                16,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            awproject_grouped_metal_execution_probe_status(&plan, &approximate_replay),
+            "rejected",
+            "the production acceptance probe requires an exact-support grouped replay"
+        );
     }
 
     #[test]
@@ -62006,6 +62479,7 @@ mod tests {
         config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
         config.standard_mfs_grid_threads = Some("7".to_string());
         let mut base = standard_mfs_memory_plan(&config, 64, 1024);
+        force_grouped_metal_test_device_budget(&mut base, 16 * 1024 * 1024 * 1024);
         base.metal.eligible = true;
         base.workers = 4;
 
@@ -62035,6 +62509,7 @@ mod tests {
             plan_standard_mfs_runtime_with_metal_device(&requested, false, 1, None, true, true);
         let config = runtime.applied(&requested);
         let mut base = standard_mfs_memory_plan(&config, 64, 1024);
+        force_grouped_metal_test_device_budget(&mut base, 16 * 1024 * 1024 * 1024);
         base.metal.eligible = true;
 
         let initial =
@@ -62063,15 +62538,36 @@ mod tests {
     }
 
     #[test]
-    fn awproject_single_field_keeps_the_existing_metal_initial_grid() {
+    fn awproject_resolved_single_field_keeps_the_existing_metal_initial_grid() {
         let tmp = tempdir().unwrap();
         let cf_cache = tmp.path().join("single-field-initial-grid-cf-cache");
         make_awproject_planner_cache(&cf_cache, 8);
         let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
-        config.field_ids = Some(vec![0]);
+        assert_eq!(config.field_ids.as_deref(), Some([0, 1].as_slice()));
         config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
         let mut base = standard_mfs_memory_plan(&config, 64, 1024);
         base.metal.eligible = true;
+        let legacy_scratch = base.workload.direct_metal_scratch_candidate_bytes;
+        assert!(legacy_scratch > 0);
+        assert_eq!(
+            standard_mfs_plan_decision_usize(
+                &base,
+                "awproject_grouped_metal_legacy_generic_scratch_bytes"
+            ),
+            Some(legacy_scratch)
+        );
+        assert_eq!(
+            standard_mfs_plan_decision_usize(
+                &base,
+                "awproject_grouped_metal_generic_scratch_bytes"
+            ),
+            Some(legacy_scratch),
+            "single-field Metal initial gridding must retain its generic scratch admission"
+        );
+        assert!(base.decisions.iter().any(|decision| {
+            decision.name == "awproject_grouped_replay_replaced_generic_caches"
+                && decision.value == "false"
+        }));
 
         let unchanged =
             admit_awproject_multifield_initial_grid(base.clone(), &config, 1, false, true).unwrap();
@@ -62080,6 +62576,52 @@ mod tests {
             standard_mfs_execution_config_with_plan(&config, &unchanged).initial_dirty_backend,
             Some(StandardMfsBackend::MetalRowRunGrouped)
         );
+        assert_eq!(
+            awproject_grouped_metal_plan_probe_status(&unchanged, &config, 1, false),
+            "not-applicable"
+        );
+    }
+
+    #[test]
+    fn awproject_non_two_term_candidate_preserves_the_legacy_generic_plan() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("three-term-initial-grid-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
+        config.nterms = 3;
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
+        let base = standard_mfs_memory_plan(&config, 64, 1024);
+
+        let unchanged =
+            admit_awproject_multifield_initial_grid(base.clone(), &config, 2, false, true).unwrap();
+        assert_eq!(unchanged, base);
+        assert!(unchanged.workload.direct_metal_scratch_candidate_bytes > 0);
+        assert!(standard_mfs_plan_decision_is(
+            &unchanged,
+            "awproject_grouped_replay_replaced_generic_caches",
+            "false"
+        ));
+    }
+
+    #[test]
+    fn awproject_explicit_metal_initial_preserves_the_legacy_generic_plan() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("explicit-metal-initial-grid-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
+        config.standard_mfs_initial_dirty_backend = Some("metal-row-run-grouped".to_string());
+        let base = standard_mfs_memory_plan(&config, 64, 1024);
+
+        let unchanged =
+            admit_awproject_multifield_initial_grid(base.clone(), &config, 2, true, true).unwrap();
+        assert_eq!(unchanged, base);
+        assert!(unchanged.workload.direct_metal_scratch_candidate_bytes > 0);
+        assert!(standard_mfs_plan_decision_is(
+            &unchanged,
+            "awproject_grouped_replay_replaced_generic_caches",
+            "false"
+        ));
     }
 
     #[test]
@@ -62090,6 +62632,7 @@ mod tests {
         let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
         config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
         let mut base = standard_mfs_memory_plan(&config, 64, 1024);
+        force_grouped_metal_test_device_budget(&mut base, 16 * 1024 * 1024 * 1024);
         base.metal.eligible = true;
         base.usable_memory_bytes = base.maximum_planned_resident_bytes;
         let original_tap_bytes = base.allocation_bytes("AWProject source-order tap scratch");
@@ -62113,6 +62656,10 @@ mod tests {
         assert_eq!(
             standard_mfs_execution_config_with_plan(&config, &rejected).initial_dirty_backend,
             Some(StandardMfsBackend::MetalRowRunGrouped)
+        );
+        assert_eq!(
+            awproject_grouped_metal_plan_probe_status(&rejected, &config, 2, false),
+            "rejected"
         );
     }
 
@@ -62140,6 +62687,63 @@ mod tests {
             grid.residencies[1].resident_bytes, 4_723_920_000,
             "residual-only storage has two compensated Taylor planes, not the initial eight"
         );
+    }
+
+    #[test]
+    fn awproject_grouped_metal_full_geometry_uses_exact_residual_admission() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("grouped-metal-full-geometry-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let mut config = awproject_mtmfs_planner_config(cf_cache, 32 * 1024);
+        config.imsize = 12_150;
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
+        config.imaging_memory_pressure_policy = ImagingMemoryPressurePolicy::Oversubscribe;
+        let device_budget = 16usize * 1024 * 1024 * 1024;
+        for precision in [
+            ImagingFftPrecisionPolicy::F64,
+            ImagingFftPrecisionPolicy::F32,
+        ] {
+            config.imaging_fft_precision = precision;
+            let mut base = standard_mfs_memory_plan(&config, 64, 1024);
+            force_grouped_metal_test_device_budget(&mut base, device_budget);
+            assert!(base.workload.direct_metal_scratch_candidate_bytes > 0);
+
+            let admission = awproject_grouped_metal_planner_admission(&base)
+                .expect("full geometry residual-only Metal admission");
+            assert_eq!(admission.residual_output_bytes, 2_361_960_000);
+            assert_eq!(admission.residual_compensation_bytes, 2_361_960_000);
+            assert_eq!(admission.model_wrapper_bytes, 2_361_960_000);
+            assert_eq!(
+                admission.segment_ceiling_bytes,
+                device_budget - 4_723_920_000 - AWPROJECT_GROUPED_METAL_SAFETY_RESERVE_BYTES
+            );
+
+            let admitted =
+                admit_awproject_multifield_initial_grid(base, &config, 63, false, true).unwrap();
+            assert_eq!(
+                standard_mfs_plan_decision_usize(
+                    &admitted,
+                    "awproject_grouped_metal_segment_ceiling_bytes"
+                ),
+                Some(admission.segment_ceiling_bytes)
+            );
+            assert_eq!(admitted.workload.direct_metal_scratch_candidate_bytes, 0);
+            assert!(
+                standard_mfs_plan_decision_usize(
+                    &admitted,
+                    "awproject_grouped_metal_legacy_generic_scratch_bytes"
+                )
+                .is_some_and(|bytes| bytes > 0),
+                "the removed generic estimate remains available as a diagnostic"
+            );
+            let scratch = admitted
+                .memory_lifetime_ledger
+                .allocations
+                .iter()
+                .find(|allocation| allocation.component == "direct Metal host scratch");
+            assert!(scratch.is_none());
+            assert!(admitted.maximum_planned_resident_bytes <= admitted.usable_memory_bytes);
+        }
     }
 
     #[test]
