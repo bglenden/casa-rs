@@ -38884,6 +38884,8 @@ const AWPROJECT_MULTIFIELD_INITIAL_GRID_TILE_SIDE: usize = 192;
 const AWPROJECT_MULTIFIELD_INITIAL_GRID_TAP_BYTES: usize = 512 * 1024 * 1024;
 const AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES: usize = 512 * 1024 * 1024;
 const AWPROJECT_GROUPED_METAL_SAFETY_RESERVE_BYTES: usize = 64 * 1024 * 1024;
+const AWPROJECT_GROUPED_SEGMENT_TARGET_EXPERIMENT: &str =
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_GROUPED_SEGMENT_TARGET_BYTES";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct AwProjectGroupedReplayCompileEnvelope {
@@ -42611,7 +42613,7 @@ fn awproject_grouped_replay_plan(
                 envelope.compile_admission_bytes
             )
         })?;
-    let segment_target_bytes = if grouped_joint_envelope {
+    let planned_segment_target_bytes = if grouped_joint_envelope {
         available_segment_bytes.min(8 * 1024 * 1024 * 1024)
     } else {
         available_segment_bytes.clamp(
@@ -42619,6 +42621,27 @@ fn awproject_grouped_replay_plan(
             8 * 1024 * 1024 * 1024,
         )
     };
+    let segment_target_override = match env::var(AWPROJECT_GROUPED_SEGMENT_TARGET_EXPERIMENT) {
+        Ok(value) => Some(value),
+        Err(env::VarError::NotPresent) => None,
+        Err(env::VarError::NotUnicode(_)) => {
+            return Err(format!(
+                "{AWPROJECT_GROUPED_SEGMENT_TARGET_EXPERIMENT} is not valid Unicode"
+            ));
+        }
+    };
+    let segment_target_bytes = awproject_grouped_replay_segment_target_bytes(
+        planned_segment_target_bytes,
+        segment_target_override.as_deref(),
+    )?;
+    if segment_target_override.is_some() {
+        eprintln!(
+            "awproject_grouped_replay_segment_target source=experiment requested_bytes={} planned_bytes={} effective_bytes={}",
+            segment_target_override.as_deref().unwrap_or_default(),
+            planned_segment_target_bytes,
+            segment_target_bytes,
+        );
+    }
     let spill_directory = config
         .imagename
         .parent()
@@ -42634,6 +42657,29 @@ fn awproject_grouped_replay_plan(
     )
     .map(Some)
     .map_err(|error| format!("construct grouped AWProject replay plan: {error}"))
+}
+
+fn awproject_grouped_replay_segment_target_bytes(
+    planned_bytes: usize,
+    experimental_value: Option<&str>,
+) -> Result<usize, String> {
+    let Some(value) = experimental_value else {
+        return Ok(planned_bytes);
+    };
+    let requested_bytes = value.parse::<usize>().map_err(|_| {
+        format!("{AWPROJECT_GROUPED_SEGMENT_TARGET_EXPERIMENT} must be an integer byte count")
+    })?;
+    if requested_bytes < AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES {
+        return Err(format!(
+            "{AWPROJECT_GROUPED_SEGMENT_TARGET_EXPERIMENT}={requested_bytes} is below the {AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES}-byte grouped segment minimum"
+        ));
+    }
+    if requested_bytes > planned_bytes {
+        return Err(format!(
+            "{AWPROJECT_GROUPED_SEGMENT_TARGET_EXPERIMENT}={requested_bytes} exceeds the {planned_bytes}-byte stage-aware planned segment target"
+        ));
+    }
+    Ok(requested_bytes)
 }
 
 fn parse_standard_mfs_backend_for_plan(value: &str) -> Option<StandardMfsBackend> {
@@ -63669,6 +63715,37 @@ mod tests {
             decision.name == "awproject_compact_replay_resident_accounting"
                 && decision.value == "runtime-exact-capacities"
         }));
+    }
+
+    #[test]
+    fn awproject_grouped_segment_target_experiment_can_only_tighten_the_plan() {
+        let planned = 8 * 1024 * 1024 * 1024;
+        let minimum = 512 * 1024 * 1024;
+        assert_eq!(
+            awproject_grouped_replay_segment_target_bytes(planned, None).unwrap(),
+            planned
+        );
+        assert_eq!(
+            awproject_grouped_replay_segment_target_bytes(planned, Some(&minimum.to_string()))
+                .unwrap(),
+            minimum
+        );
+        assert!(
+            awproject_grouped_replay_segment_target_bytes(
+                planned,
+                Some(&(minimum - 1).to_string())
+            )
+            .unwrap_err()
+            .contains("below")
+        );
+        assert!(
+            awproject_grouped_replay_segment_target_bytes(
+                planned,
+                Some(&(planned + 1).to_string())
+            )
+            .unwrap_err()
+            .contains("exceeds")
+        );
     }
 
     #[test]

@@ -15,6 +15,7 @@ windowed_hybrid_clean="${CASA_RS_VLASS_WINDOWED_HYBRID_CLEAN:-auto}"
 compact_global_metal_replay="${CASA_RS_VLASS_COMPACT_GLOBAL_METAL_REPLAY:-0}"
 metal_tile_side="${CASA_RS_VLASS_METAL_TILE_SIDE:-16}"
 replay_retention_bytes="${CASA_RS_VLASS_REPLAY_RETENTION_BYTES:-0}"
+grouped_segment_target_bytes="${CASA_RS_VLASS_GROUPED_SEGMENT_TARGET_BYTES:-}"
 all_field_tuned_replay="${CASA_RS_VLASS_ALL_FIELD_TUNED_REPLAY:-0}"
 all_field_spatial_replay="${CASA_RS_VLASS_ALL_FIELD_SPATIAL_REPLAY:-0}"
 spatial_neon_2x2="${CASA_RS_VLASS_SPATIAL_NEON_2X2:-1}"
@@ -54,6 +55,18 @@ experimental_environment=(
     CASA_RS_EXPERIMENTAL_MT_MFS_SPARSE_RHS=1
     CASA_RS_EXPERIMENTAL_MT_MFS_CASA_FFT0=1
 )
+
+if [[ -n "$grouped_segment_target_bytes" ]]; then
+    case "$grouped_segment_target_bytes" in
+        *[!0-9]*|0)
+            echo "CASA_RS_VLASS_GROUPED_SEGMENT_TARGET_BYTES must be a positive integer" >&2
+            exit 2
+            ;;
+    esac
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_GROUPED_SEGMENT_TARGET_BYTES="$grouped_segment_target_bytes"
+    )
+fi
 
 if [[ "${CASA_RS_VLASS_SEPARABLE_GLOBAL_PHASE+x}" == "x" ]]; then
     echo "CASA_RS_VLASS_SEPARABLE_GLOBAL_PHASE is no longer supported; separable Metal phase replay is the production default" >&2
@@ -493,6 +506,7 @@ mkdir -p "$run_root"
     printf 'logical_tap_budget_mib\t%s\n' "${logical_tap_budget_mib:-planner-default}"
     printf 'initial_dirty_backend\t%s\n' "${initial_dirty_backend:-planner-default}"
     printf 'residual_backend\t%s\n' "${residual_backend:-planner-default}"
+    printf 'grouped_segment_target_bytes\t%s\n' "${grouped_segment_target_bytes:-planner-default}"
     if [[ "$all_field_tuned_replay" == "1" ]]; then
         printf 'packed_cf\t%s\n' "$packed_cf"
         printf 'packed_cf_sha256\t%s\n' "$actual_packed_cf_sha256"

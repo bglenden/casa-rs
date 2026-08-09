@@ -10542,6 +10542,10 @@ struct AwProjectCompactReplayCache {
     grouped_metal_admission: Option<AwProjectGroupedMetalAdmission>,
     grouped_metal_segment_split_count: usize,
     grouped_metal_max_segment_additional_bytes: usize,
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    raw_global_builder_last_source_block: Option<usize>,
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    raw_global_segment_target_crossed: bool,
     resident_bytes: usize,
     compiled_total_bytes: usize,
     compiled_total_bytes_complete: bool,
@@ -10585,6 +10589,10 @@ impl AwProjectCompactReplayCache {
             grouped_metal_admission,
             grouped_metal_segment_split_count: 0,
             grouped_metal_max_segment_additional_bytes: 0,
+            #[cfg(all(target_os = "macos", not(coverage)))]
+            raw_global_builder_last_source_block: None,
+            #[cfg(all(target_os = "macos", not(coverage)))]
+            raw_global_segment_target_crossed: false,
             resident_bytes: 0,
             compiled_total_bytes: 0,
             compiled_total_bytes_complete: true,
@@ -11393,6 +11401,9 @@ fn awproject_metal_kernel_value(
 const AWPROJECT_METAL_EFFECTIVE_SUPPORT_FOCUSED_OMITTED_ENERGY_FRACTION: f64 = 1.0e-6;
 
 const AWPROJECT_METAL_EFFECTIVE_SUPPORT_MAX_OMITTED_ENERGY_FRACTION: f64 = 1.0e-4;
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_GROUPED_SEGMENT_TARGET_EXPERIMENT: &str =
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_GROUPED_SEGMENT_TARGET_BYTES";
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 const AWPROJECT_METAL_AOT_HASHMAP_MINIMUM_RESERVE_BYTES: usize = 64 * 1024 * 1024;
@@ -26842,6 +26853,7 @@ impl AwProjectMetalGlobalProgramBuilder {
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 impl AwProjectCompactReplayCache {
+    #[allow(clippy::too_many_arguments)]
     fn absorb_metal_raw_global_program(
         &mut self,
         program: AwProjectMetalResidentProgram,
@@ -26850,6 +26862,7 @@ impl AwProjectCompactReplayCache {
         bundles: &[AwProjectCompactMaterializedTap],
         grid_shape: [usize; 2],
         tile_side: usize,
+        source_block_ordinal: usize,
     ) -> Result<(), ImagingError> {
         let [grid_width, grid_height] = grid_shape;
         if self.persistent_metal_global_program.is_some()
@@ -26875,17 +26888,46 @@ impl AwProjectCompactReplayCache {
                     "raw-CF AWProject global replay requires a grouped replay plan".to_string(),
                 )
             })?;
-        let incoming_source_upper = if self.grouped_metal_admission.is_some() {
-            let raw_kernel_upper_bytes = AwProjectMetalGlobalProgramBuilder::raw()
-                .additional_raw_kernel_bytes(source_samples, tap_requests, bundles)?;
-            Some(awproject_grouped_metal_source_dispatch_upper_bytes(
+        if self
+            .raw_global_builder_last_source_block
+            .is_some_and(|last| source_block_ordinal < last)
+        {
+            return Err(ImagingError::InvalidRequest(format!(
+                "raw-CF AWProject source block {source_block_ordinal} followed a later block {}",
+                self.raw_global_builder_last_source_block
+                    .unwrap_or_default(),
+            )));
+        }
+        if self
+            .persistent_metal_global_builder
+            .as_ref()
+            .is_some_and(|builder| !builder.raw_mode)
+        {
+            return Err(ImagingError::InvalidRequest(
+                "raw-CF AWProject replay cannot extend a dense global builder".to_string(),
+            ));
+        }
+        let source_upper = |builder: Option<&AwProjectMetalGlobalProgramBuilder>| {
+            let raw_kernel_upper_bytes = match builder {
+                Some(builder) => {
+                    builder.additional_raw_kernel_bytes(source_samples, tap_requests, bundles)?
+                }
+                None => AwProjectMetalGlobalProgramBuilder::raw().additional_raw_kernel_bytes(
+                    source_samples,
+                    tap_requests,
+                    bundles,
+                )?,
+            };
+            awproject_grouped_metal_source_dispatch_upper_bytes(
                 &program,
                 raw_kernel_upper_bytes,
                 awproject_grouped_metal_unique_prediction_thread_width()?,
-            )?)
-        } else {
-            None
+            )
         };
+        let mut incoming_source_upper = self
+            .grouped_metal_admission
+            .map(|_| source_upper(self.persistent_metal_global_builder.as_ref()))
+            .transpose()?;
         if let (Some(admission), Some(incoming)) =
             (self.grouped_metal_admission, incoming_source_upper)
         {
@@ -26898,6 +26940,14 @@ impl AwProjectCompactReplayCache {
                 },
             );
             if awproject_grouped_metal_segment_split_required(current, incoming, admission)? {
+                let at_source_block_boundary = self
+                    .raw_global_builder_last_source_block
+                    .is_some_and(|last| last < source_block_ordinal);
+                if !at_source_block_boundary {
+                    return Err(ImagingError::InvalidRequest(format!(
+                        "raw-CF AWProject source block {source_block_ordinal} exceeds the exact grouped Metal segment ceiling before its source-order boundary"
+                    )));
+                }
                 self.spill_metal_global_builder_segment(grid_width, grid_height, tile_side)?;
                 self.grouped_metal_segment_split_count = self
                     .grouped_metal_segment_split_count
@@ -26907,20 +26957,16 @@ impl AwProjectCompactReplayCache {
                             "grouped residual Metal segment split count overflowed".to_string(),
                         )
                     })?;
-            }
-        }
-        if let Some(builder) = self.persistent_metal_global_builder.as_ref() {
-            if !builder.raw_mode {
-                return Err(ImagingError::InvalidRequest(
-                    "raw-CF AWProject replay cannot extend a dense global builder".to_string(),
-                ));
-            }
-            let additional =
-                builder.additional_raw_kernel_bytes(source_samples, tap_requests, bundles)?;
-            if builder.source_programs > 0
-                && builder.resident_bytes().saturating_add(additional) > segment_target
-            {
-                self.spill_metal_global_builder_segment(grid_width, grid_height, tile_side)?;
+                incoming_source_upper = Some(source_upper(None)?);
+                if awproject_grouped_metal_segment_split_required(
+                    AwProjectGroupedMetalSourceUpper::default(),
+                    incoming_source_upper.expect("source upper was recomputed"),
+                    admission,
+                )? {
+                    return Err(ImagingError::InvalidRequest(format!(
+                        "raw-CF AWProject source program in block {source_block_ordinal} exceeds the exact grouped Metal segment ceiling"
+                    )));
+                }
             }
         }
         let transient_program_bytes = program.resident_bytes();
@@ -26978,6 +27024,8 @@ impl AwProjectCompactReplayCache {
         self.compiled_total_bytes = self
             .spilled_metal_global_payload_bytes
             .saturating_add(resident_bytes_after);
+        self.raw_global_builder_last_source_block = Some(source_block_ordinal);
+        self.raw_global_segment_target_crossed |= builder_bytes_after >= segment_target;
         if profile::standard_mfs_profile_detail_enabled() {
             eprintln!(
                 "awproject_metal_raw_global_replay_absorb source_programs={} \
@@ -27000,10 +27048,63 @@ impl AwProjectCompactReplayCache {
                 segment_target,
             );
         }
-        if builder_bytes_after >= segment_target {
-            self.spill_metal_global_builder_segment(grid_width, grid_height, tile_side)?;
-        }
         Ok(())
+    }
+
+    fn finish_metal_raw_global_source_block(
+        &mut self,
+        source_block_ordinal: usize,
+        grid_shape: [usize; 2],
+        tile_side: usize,
+    ) -> Result<(), ImagingError> {
+        if !self.raw_global_segment_target_crossed {
+            return Ok(());
+        }
+        if self
+            .raw_global_builder_last_source_block
+            .is_some_and(|last| last != source_block_ordinal)
+        {
+            return Err(ImagingError::InvalidRequest(format!(
+                "raw-CF AWProject source block boundary {source_block_ordinal} does not match builder block {}",
+                self.raw_global_builder_last_source_block
+                    .unwrap_or_default(),
+            )));
+        }
+        let source_programs = self
+            .persistent_metal_global_builder
+            .as_ref()
+            .map_or(0, |builder| builder.source_programs);
+        let raw_planes = self
+            .persistent_metal_global_builder
+            .as_ref()
+            .map_or(0, |builder| builder.raw_planes.len());
+        let builder_bytes = self
+            .persistent_metal_global_builder
+            .as_ref()
+            .map_or(0, AwProjectMetalGlobalProgramBuilder::resident_bytes);
+        let raw_kernel_bytes = self
+            .persistent_metal_global_builder
+            .as_ref()
+            .map_or(0, |builder| {
+                builder
+                    .prediction_batch
+                    .kernels
+                    .len()
+                    .saturating_mul(std::mem::size_of::<WProjectMetalComplex>())
+            });
+        let segment_target_bytes = self
+            .grouped_replay_plan()
+            .map_or(0, AwProjectGroupedReplayPlan::segment_target_bytes);
+        eprintln!(
+            "awproject_metal_raw_global_source_block boundary={} decision=seal-soft-target source_programs={} raw_planes={} raw_kernel_bytes={} builder_bytes={} segment_target_bytes={}",
+            source_block_ordinal,
+            source_programs,
+            raw_planes,
+            raw_kernel_bytes,
+            builder_bytes,
+            segment_target_bytes,
+        );
+        self.spill_metal_global_builder_segment(grid_shape[0], grid_shape[1], tile_side)
     }
 
     fn absorb_metal_global_program(
@@ -27110,6 +27211,8 @@ impl AwProjectCompactReplayCache {
         let Some(builder) = self.persistent_metal_global_builder.take() else {
             return Ok(());
         };
+        self.raw_global_builder_last_source_block = None;
+        self.raw_global_segment_target_crossed = false;
         let source_programs = builder.source_programs;
         let builder_bytes = builder.resident_bytes();
         let dispatch_source_upper = AwProjectGroupedMetalSourceUpper {
@@ -27339,15 +27442,32 @@ impl AwProjectCompactReplayCache {
     fn require_grouped_metal_resident_complete(
         &self,
         resident_retained: bool,
+        allow_experimental_spill_prefetch: bool,
     ) -> Result<(), ImagingError> {
-        if self.grouped_metal_admission.is_some() && !resident_retained {
+        if self.grouped_metal_admission.is_some()
+            && !resident_retained
+            && !allow_experimental_spill_prefetch
+        {
             return Err(ImagingError::Unsupported(
                 "grouped residual Metal admission requires every sealed source segment to remain resident"
                     .to_string(),
             ));
         }
+        if self.grouped_metal_admission.is_some()
+            && !resident_retained
+            && allow_experimental_spill_prefetch
+        {
+            eprintln!(
+                "awproject_metal_grouped_replay_retention decision=spill-prefetch-experiment source=explicit-segment-target"
+            );
+        }
         Ok(())
     }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_grouped_segment_target_experiment_enabled() -> bool {
+    std::env::var_os(AWPROJECT_GROUPED_SEGMENT_TARGET_EXPERIMENT).is_some()
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -27703,7 +27823,10 @@ fn build_awproject_metal_global_replay_program(
             .saturating_add(cache.resident_bytes);
         cache.compiled_total_bytes_complete = true;
         let resident_retained = cache.retain_complete_spilled_metal_global_programs()?;
-        cache.require_grouped_metal_resident_complete(resident_retained)?;
+        cache.require_grouped_metal_resident_complete(
+            resident_retained,
+            awproject_grouped_segment_target_experiment_enabled(),
+        )?;
         cache.segmented_metal_global_replay_ready = true;
         if profile::standard_mfs_profile_detail_enabled() {
             eprintln!(
@@ -37899,6 +38022,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                             &window.bundles,
                             request.geometry.image_shape,
                             grouped_replay_tile_side.unwrap_or(awproject_metal_tile_probe_side()?),
+                            replay_block_ordinal,
                         )?;
                     window.release_source_materialization()
                 } else {
@@ -38075,6 +38199,17 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                 retained_cursor_end = cursor;
             }
         }
+    }
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    if attempt_replay_fill && grouped_replay && raw_global_metal_builder {
+        replay_cache
+            .as_deref_mut()
+            .expect("raw grouped replay fill requires a replay cache")
+            .finish_metal_raw_global_source_block(
+                replay_block_ordinal,
+                request.geometry.image_shape,
+                grouped_replay_tile_side.unwrap_or(awproject_metal_tile_probe_side()?),
+            )?;
     }
     if let Some(cache) = replay_cache
         && attempt_replay_fill
@@ -75129,7 +75264,7 @@ mod tests {
         };
         admitted.grouped_metal_admission = Some(admission);
         admitted
-            .require_grouped_metal_resident_complete(true)
+            .require_grouped_metal_resident_complete(true, false)
             .unwrap();
 
         let mut rejected = super::AwProjectCompactReplayCache::new(
@@ -75146,9 +75281,12 @@ mod tests {
         assert!(rejected.resident_metal_global_programs.is_empty());
         assert_eq!(rejected.resident_bytes, 0);
         let error = rejected
-            .require_grouped_metal_resident_complete(false)
+            .require_grouped_metal_resident_complete(false, false)
             .expect_err("the exact grouped admission must reject spill-backed refresh");
         assert!(error.to_string().contains("every sealed source segment"));
+        rejected
+            .require_grouped_metal_resident_complete(false, true)
+            .expect("the explicit small-segment experiment may use bounded spill prefetch");
     }
 
     #[test]
@@ -83161,6 +83299,144 @@ mod tests {
                 .unwrap(),
             raw_upper,
             "duplicate use shares one atlas inside a sealed segment; summing source-intrinsic uppers only overcounts"
+        );
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn grouped_raw_replay_keeps_one_shared_atlas_until_the_source_block_ends() {
+        let directory = tempfile::tempdir().unwrap();
+        let grouped = super::AwProjectGroupedReplayPlan {
+            spill_directory: directory.path().to_path_buf(),
+            segment_target_bytes: 1,
+            compile_admission_bytes: usize::MAX,
+            omitted_energy_fraction: 0.0,
+            tile_side: 8,
+        };
+        let mut cache = super::AwProjectCompactReplayCache::new(usize::MAX, Some(grouped), None);
+        let cell_key = super::AwConvolutionFunctionKey {
+            frequency_hz: 2.0e9,
+            w_value_lambda: 12.0,
+            mueller_element: 0,
+            parallactic_angle_deg: 3.0,
+        };
+        let tap_request = super::AwProjectCompactTapRequest {
+            key: super::AwProjectCompactTapKey {
+                group_index: 0,
+                cell: super::awproject_stable_cell_key(cell_key),
+                kernel_kind: super::AwProjectCompactKernelKind::Imaging,
+                off_x: 0,
+                off_y: 0,
+                conjugate_for_grid: false,
+            },
+            cell_key,
+            representative_geometry: super::gridder::AwProjectSampleGeometry {
+                loc_x: 4,
+                loc_y: 4,
+                off_x: 0,
+                off_y: 0,
+                conjugate_for_grid: false,
+            },
+        };
+        let bundle =
+            super::AwProjectCompactMaterializedTap::Ready(super::AwProjectCompactTapBundle {
+                values: vec![Complex32::new(1.0, 0.0); 25],
+                x_support: 2,
+                y_support: 2,
+                normalization: Complex32::new(1.0, 0.0),
+                grid_normalization: Complex64::new(1.0, 0.0),
+                sampling: 1,
+                off_x: 0,
+                off_y: 0,
+                phase_applied: false,
+            });
+        let compact_plan = super::AwProjectCompactSamplePlan {
+            loc_x: 4,
+            loc_y: 4,
+            tap_bundle: 0,
+        };
+        let source = super::AwProjectCompactSourceSample {
+            sample_index: 0,
+            group_index: 0,
+            first_imaging_plan: compact_plan,
+            second_imaging_plan: compact_plan,
+            first_prediction_plan: compact_plan,
+            second_prediction_plan: compact_plan,
+            first_psf_plan: compact_plan,
+            second_psf_plan: compact_plan,
+            first_weight_plan: compact_plan,
+            second_weight_plan: compact_plan,
+        };
+
+        for _ in 0..2 {
+            cache
+                .absorb_metal_raw_global_program(
+                    awproject_effective_support_test_program(),
+                    &[source],
+                    std::slice::from_ref(&tap_request),
+                    std::slice::from_ref(&bundle),
+                    [16, 16],
+                    8,
+                    0,
+                )
+                .unwrap();
+        }
+
+        assert!(
+            cache.spilled_metal_global_programs.is_empty(),
+            "a segment target smaller than one raw atlas must not duplicate that atlas inside one source block"
+        );
+        let builder = cache
+            .persistent_metal_global_builder
+            .as_ref()
+            .expect("the source block keeps one shared builder until its boundary");
+        assert_eq!(builder.source_programs, 2);
+        assert_eq!(builder.raw_planes.len(), 1);
+        let shared_kernel_values = builder.prediction_batch.kernels.len();
+
+        cache
+            .finish_metal_raw_global_source_block(0, [16, 16], 8)
+            .unwrap();
+        assert!(cache.persistent_metal_global_builder.is_none());
+        assert_eq!(cache.spilled_metal_global_programs.len(), 1);
+        let segment = &cache.spilled_metal_global_programs[0];
+        assert_eq!(segment.source_programs, 2);
+        assert_eq!(segment.kernels.len, shared_kernel_values);
+
+        let normal_directory = tempfile::tempdir().unwrap();
+        let normal_grouped = super::AwProjectGroupedReplayPlan {
+            spill_directory: normal_directory.path().to_path_buf(),
+            segment_target_bytes: usize::MAX,
+            compile_admission_bytes: usize::MAX,
+            omitted_energy_fraction: 0.0,
+            tile_side: 8,
+        };
+        let mut normal_cache =
+            super::AwProjectCompactReplayCache::new(usize::MAX, Some(normal_grouped), None);
+        for source_block_ordinal in 0..2 {
+            normal_cache
+                .absorb_metal_raw_global_program(
+                    awproject_effective_support_test_program(),
+                    &[source],
+                    std::slice::from_ref(&tap_request),
+                    std::slice::from_ref(&bundle),
+                    [16, 16],
+                    8,
+                    source_block_ordinal,
+                )
+                .unwrap();
+            normal_cache
+                .finish_metal_raw_global_source_block(source_block_ordinal, [16, 16], 8)
+                .unwrap();
+        }
+        assert!(normal_cache.spilled_metal_global_programs.is_empty());
+        assert_eq!(
+            normal_cache
+                .persistent_metal_global_builder
+                .as_ref()
+                .expect("the ordinary large target remains a single builder")
+                .source_programs,
+            2
         );
     }
 

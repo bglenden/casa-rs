@@ -132,6 +132,32 @@ class VlassAllFieldCleanRunnerTests(unittest.TestCase):
         self.assertIn("required matched-row input does not exist", result.stderr)
         self.assertNotIn("LOGICAL_TAP_BUDGET_MIB must be", result.stderr)
 
+    def test_grouped_segment_target_rejects_nonpositive_values(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_preflight(
+                pathlib.Path(directory),
+                None,
+                {"CASA_RS_VLASS_GROUPED_SEGMENT_TARGET_BYTES": "0"},
+            )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(
+            "CASA_RS_VLASS_GROUPED_SEGMENT_TARGET_BYTES must be a positive integer",
+            result.stderr,
+        )
+
+    def test_grouped_segment_target_reaches_input_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_preflight(
+                pathlib.Path(directory),
+                None,
+                {"CASA_RS_VLASS_GROUPED_SEGMENT_TARGET_BYTES": "536870912"},
+            )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("required matched-row input does not exist", result.stderr)
+        self.assertNotIn("GROUPED_SEGMENT_TARGET_BYTES must be", result.stderr)
+
     def test_removed_separable_global_phase_flag_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             result = self.run_preflight(
@@ -146,7 +172,9 @@ class VlassAllFieldCleanRunnerTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_removed_separable_global_phase_flag_cannot_override_production(self) -> None:
+    def test_removed_separable_global_phase_flag_cannot_override_production(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             result = self.run_preflight(
                 pathlib.Path(directory),
@@ -165,6 +193,7 @@ class VlassAllFieldCleanRunnerTests(unittest.TestCase):
             "separable Metal phase replay is the production default",
             result.stderr,
         )
+
 
 if __name__ == "__main__":
     unittest.main()
