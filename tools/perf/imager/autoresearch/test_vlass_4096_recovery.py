@@ -149,6 +149,7 @@ class Vlass4096RecoveryTests(unittest.TestCase):
                 self.contract, log, enforce_sequential_guard=True
             )
             self.assertEqual(1, receipt["segments"])
+            self.assertEqual(4, receipt["effective_workers"])
             log.write_text(
                 good.replace("spill_read_bytes=0", "spill_read_bytes=1") + "\n"
             )

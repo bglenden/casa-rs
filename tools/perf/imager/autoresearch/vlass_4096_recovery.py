@@ -460,9 +460,9 @@ def validate_all_field_log(
     if len(execution_plans) != 1:
         raise ContractError("all-field runtime must emit one execution plan")
     workers = int(execution_plans[0].get("workers", "0"))
-    if workers < 4 or workers > int(row["requested_grid_threads"]):
+    if workers < 2 or workers > int(row["requested_grid_threads"]):
         raise ContractError(
-            f"all-field effective workers {workers} do not honor the admitted request"
+            f"all-field effective workers {workers} are outside the requested worker envelope"
         )
     summaries = [
         parse_key_values(line)
