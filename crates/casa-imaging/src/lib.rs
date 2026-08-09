@@ -1520,9 +1520,9 @@ impl AwProjectGroupedReplayPlan {
                 AWPROJECT_METAL_EFFECTIVE_SUPPORT_MAX_OMITTED_ENERGY_FRACTION
             )));
         }
-        if !matches!(tile_side, 4 | 8 | 16 | 32) {
+        if !matches!(tile_side, 8 | 16 | 32) {
             return Err(ImagingError::InvalidRequest(format!(
-                "AWProject grouped replay tile side must be 4, 8, 16, or 32, got {tile_side}"
+                "AWProject grouped replay tile side must be 8, 16, or 32, got {tile_side}"
             )));
         }
         Ok(Self {
@@ -25633,9 +25633,9 @@ fn plan_awproject_metal_tiles(
     tile_side: usize,
 ) -> Result<AwProjectMetalTilePlan, ImagingError> {
     let started = Instant::now();
-    if !matches!(tile_side, 4 | 8 | 16 | 32) {
+    if !matches!(tile_side, 8 | 16 | 32) {
         return Err(ImagingError::InvalidRequest(format!(
-            "AWProject Metal tile-grid probe supports tile sides 4, 8, 16, or 32, got {tile_side}"
+            "AWProject Metal tile-grid probe supports tile sides 8, 16, or 32, got {tile_side}"
         )));
     }
     let tiles_x = grid_width.div_ceil(tile_side);
