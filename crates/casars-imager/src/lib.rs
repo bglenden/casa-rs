@@ -6373,21 +6373,37 @@ fn run_standard_mfs_plan_probe_from_config(config: &CliConfig) -> Result<RunSumm
         .map(|plan| plan.table_values.corr_types.len())
         .max()
         .unwrap_or(1);
-    let base_strategy = standard_mfs_memory_plan_for_ms(
+    let grouped_topology_eligible = awproject_grouped_metal_topology_eligible(
         config,
-        &ms,
-        data_column,
-        selected_channel_count,
-        active_row_count,
-        correlation_count,
-    )?;
+        selected_field_count,
+        standard_mfs_initial_dirty_backend_explicit,
+    );
+    let base_strategy = if grouped_topology_eligible {
+        standard_mfs_deferred_memory_plan_for_ms(
+            config,
+            &ms,
+            data_column,
+            selected_channel_count,
+            active_row_count,
+            correlation_count,
+        )?
+    } else {
+        standard_mfs_memory_plan_for_ms(
+            config,
+            &ms,
+            data_column,
+            selected_channel_count,
+            active_row_count,
+            correlation_count,
+        )?
+    };
     let row_block_rows = base_strategy.ingest.source_row_block_rows.max(1);
     let stream_block_count = ddid_plans
         .iter()
         .map(|plan| plan.active_selected_rows.len().div_ceil(row_block_rows))
         .sum::<usize>();
     let strategy = if !clean_is_dirty(config) && config.aw_project.is_some() {
-        let initial_grid_strategy = admit_awproject_multifield_initial_grid(
+        let initial_grid_strategy = resolve_awproject_multifield_memory_plan(
             base_strategy,
             config,
             selected_field_count,
@@ -11075,21 +11091,37 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         .map(|plan| plan.table_values.corr_types.len())
         .max()
         .unwrap_or(1);
-    let base_strategy = standard_mfs_memory_plan_for_ms(
+    let grouped_topology_eligible = awproject_grouped_metal_topology_eligible(
         config,
-        ms,
-        data_column,
-        selected_channel_count,
-        active_row_count,
-        correlation_count,
-    )?;
+        selected_field_count,
+        standard_mfs_initial_dirty_backend_explicit,
+    );
+    let base_strategy = if grouped_topology_eligible {
+        standard_mfs_deferred_memory_plan_for_ms(
+            config,
+            ms,
+            data_column,
+            selected_channel_count,
+            active_row_count,
+            correlation_count,
+        )?
+    } else {
+        standard_mfs_memory_plan_for_ms(
+            config,
+            ms,
+            data_column,
+            selected_channel_count,
+            active_row_count,
+            correlation_count,
+        )?
+    };
     let row_block_rows = base_strategy.ingest.source_row_block_rows.max(1);
     let stream_block_count = ddid_plans
         .iter()
         .map(|plan| plan.active_selected_rows.len().div_ceil(row_block_rows))
         .sum::<usize>();
     let strategy = if !clean_is_dirty(config) && config.aw_project.is_some() {
-        let initial_grid_strategy = admit_awproject_multifield_initial_grid(
+        let initial_grid_strategy = resolve_awproject_multifield_memory_plan(
             base_strategy,
             config,
             selected_field_count,
@@ -38400,17 +38432,26 @@ fn standard_mfs_memory_allocation_lifetimes(
                 // Complex64 plane at a time. The same bounded host allocation
                 // is reused for the initial products and residual refreshes.
                 "AWProject compensated f64 readback" => {
-                    let mut residencies = vec![standard_mfs_memory_residency(
-                        host,
-                        bytes,
-                        DirtyTransform,
-                        DirtyTransform,
-                        if has_clean_cycles {
-                            AtStage(ResidualTransform)
-                        } else {
-                            NoFurtherUse
-                        },
-                    )];
+                    let cpu_sparse_initial = standard_mfs_plan_decision_is(
+                        plan,
+                        "awproject_initial_grid_backend",
+                        "cpu-dynamic-sparse-f64",
+                    );
+                    let mut residencies = if cpu_sparse_initial {
+                        Vec::new()
+                    } else {
+                        vec![standard_mfs_memory_residency(
+                            host,
+                            bytes,
+                            DirtyTransform,
+                            DirtyTransform,
+                            if has_clean_cycles {
+                                AtStage(ResidualTransform)
+                            } else {
+                                NoFurtherUse
+                            },
+                        )]
+                    };
                     if has_clean_cycles {
                         residencies.push(standard_mfs_memory_residency(
                             host,
@@ -39397,6 +39438,37 @@ fn admit_awproject_multifield_initial_grid(
     Ok(admitted)
 }
 
+fn resolve_awproject_multifield_memory_plan(
+    plan: ImagingResolvedPlan,
+    config: &CliConfig,
+    selected_field_count: usize,
+    initial_dirty_backend_explicit: bool,
+    grid_threads_explicit: bool,
+) -> Result<ImagingResolvedPlan, String> {
+    if !awproject_grouped_metal_topology_eligible(
+        config,
+        selected_field_count,
+        initial_dirty_backend_explicit,
+    ) {
+        return admit_standard_mfs_plan_with_lifetimes(plan, true);
+    }
+    let resolved = admit_awproject_multifield_initial_grid(
+        plan,
+        config,
+        selected_field_count,
+        initial_dirty_backend_explicit,
+        grid_threads_explicit,
+    )?;
+    if standard_mfs_plan_decision_is(
+        &resolved,
+        "awproject_multifield_initial_grid_admission",
+        "admitted",
+    ) {
+        return Ok(resolved);
+    }
+    admit_standard_mfs_plan_with_lifetimes(resolved, true)
+}
+
 fn standard_mfs_memory_plan_with_cache_channels_for_ms(
     config: &CliConfig,
     ms: &MeasurementSet,
@@ -39405,6 +39477,49 @@ fn standard_mfs_memory_plan_with_cache_channels_for_ms(
     cache_selected_channel_count: usize,
     active_row_count: usize,
     corr_count: usize,
+) -> Result<ImagingResolvedPlan, String> {
+    standard_mfs_memory_plan_with_cache_channels_for_ms_admission(
+        config,
+        ms,
+        data_column,
+        selected_channel_count,
+        cache_selected_channel_count,
+        active_row_count,
+        corr_count,
+        StandardMfsLifetimeAdmission::Immediate,
+    )
+}
+
+fn standard_mfs_deferred_memory_plan_for_ms(
+    config: &CliConfig,
+    ms: &MeasurementSet,
+    data_column: VisibilityDataColumn,
+    selected_channel_count: usize,
+    active_row_count: usize,
+    corr_count: usize,
+) -> Result<ImagingResolvedPlan, String> {
+    standard_mfs_memory_plan_with_cache_channels_for_ms_admission(
+        config,
+        ms,
+        data_column,
+        selected_channel_count,
+        selected_channel_count,
+        active_row_count,
+        corr_count,
+        StandardMfsLifetimeAdmission::DeferredForResolvedAwprojectTopology,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn standard_mfs_memory_plan_with_cache_channels_for_ms_admission(
+    config: &CliConfig,
+    ms: &MeasurementSet,
+    data_column: VisibilityDataColumn,
+    selected_channel_count: usize,
+    cache_selected_channel_count: usize,
+    active_row_count: usize,
+    corr_count: usize,
+    lifetime_admission: StandardMfsLifetimeAdmission,
 ) -> Result<ImagingResolvedPlan, String> {
     let visibility_shape = visibility_source_shape_for_single_plane_stream(
         ms,
@@ -39421,13 +39536,15 @@ fn standard_mfs_memory_plan_with_cache_channels_for_ms(
     } else {
         0
     };
-    standard_mfs_memory_plan_with_visibility_shape_and_pointing_rows(
+    plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         config,
         selected_channel_count,
         cache_selected_channel_count,
         active_row_count,
-        visibility_shape,
+        &visibility_shape,
         pointing_table_row_count,
+        imaging_process_memory_ledger(config),
+        lifetime_admission,
     )
 }
 
@@ -39736,6 +39853,7 @@ fn plan_standard_mfs_execution_shape(
         visibility_shape,
         active_row_count,
         imaging_process_memory_ledger(config),
+        StandardMfsLifetimeAdmission::Immediate,
     )
 }
 
@@ -39755,9 +39873,17 @@ fn plan_standard_mfs_execution_shape_with_memory_ledger(
         visibility_shape,
         active_row_count,
         memory_target,
+        StandardMfsLifetimeAdmission::Immediate,
     )
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StandardMfsLifetimeAdmission {
+    Immediate,
+    DeferredForResolvedAwprojectTopology,
+}
+
+#[allow(clippy::too_many_arguments)]
 fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     config: &CliConfig,
     selected_channel_count: usize,
@@ -39766,6 +39892,7 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     visibility_shape: &spectral_slab::VisibilitySourceShape,
     pointing_table_row_count: usize,
     memory_target: ImagingProcessMemoryLedger,
+    lifetime_admission: StandardMfsLifetimeAdmission,
 ) -> Result<ImagingResolvedPlan, String> {
     let selected_channel_count = selected_channel_count.max(1);
     let cache_selected_channel_count = cache_selected_channel_count.max(1);
@@ -40403,7 +40530,12 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     ]);
 
     if !awproject_mtmfs {
-        return admit_standard_mfs_plan_with_lifetimes(plan, !clean_is_dirty(config));
+        return match lifetime_admission {
+            StandardMfsLifetimeAdmission::Immediate => {
+                admit_standard_mfs_plan_with_lifetimes(plan, !clean_is_dirty(config))
+            }
+            StandardMfsLifetimeAdmission::DeferredForResolvedAwprojectTopology => Ok(plan),
+        };
     }
 
     let aw_compensated_f64_readback_bytes = if plan.metal.eligible {
@@ -40647,7 +40779,12 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         },
     ]);
 
-    admit_standard_mfs_plan_with_lifetimes(plan, !clean_is_dirty(config))
+    match lifetime_admission {
+        StandardMfsLifetimeAdmission::Immediate => {
+            admit_standard_mfs_plan_with_lifetimes(plan, !clean_is_dirty(config))
+        }
+        StandardMfsLifetimeAdmission::DeferredForResolvedAwprojectTopology => Ok(plan),
+    }
 }
 
 fn standard_mfs_memory_plan_with_visibility_shape(
@@ -40666,6 +40803,7 @@ fn standard_mfs_memory_plan_with_visibility_shape(
     )
 }
 
+#[cfg(test)]
 fn standard_mfs_memory_plan_with_visibility_shape_and_pointing_rows(
     config: &CliConfig,
     selected_channel_count: usize,
@@ -40682,6 +40820,7 @@ fn standard_mfs_memory_plan_with_visibility_shape_and_pointing_rows(
         &visibility_shape,
         pointing_table_row_count,
         imaging_process_memory_ledger(config),
+        StandardMfsLifetimeAdmission::Immediate,
     )
 }
 
@@ -62593,7 +62732,8 @@ mod tests {
         let base = standard_mfs_memory_plan(&config, 64, 1024);
 
         let unchanged =
-            admit_awproject_multifield_initial_grid(base.clone(), &config, 2, false, true).unwrap();
+            resolve_awproject_multifield_memory_plan(base.clone(), &config, 2, false, true)
+                .unwrap();
         assert_eq!(unchanged, base);
         assert!(unchanged.workload.direct_metal_scratch_candidate_bytes > 0);
         assert!(standard_mfs_plan_decision_is(
@@ -62614,7 +62754,7 @@ mod tests {
         let base = standard_mfs_memory_plan(&config, 64, 1024);
 
         let unchanged =
-            admit_awproject_multifield_initial_grid(base.clone(), &config, 2, true, true).unwrap();
+            resolve_awproject_multifield_memory_plan(base.clone(), &config, 2, true, true).unwrap();
         assert_eq!(unchanged, base);
         assert!(unchanged.workload.direct_metal_scratch_candidate_bytes > 0);
         assert!(standard_mfs_plan_decision_is(
@@ -62638,7 +62778,7 @@ mod tests {
         let original_tap_bytes = base.allocation_bytes("AWProject source-order tap scratch");
 
         let rejected =
-            admit_awproject_multifield_initial_grid(base, &config, 2, false, true).unwrap();
+            resolve_awproject_multifield_memory_plan(base, &config, 2, false, true).unwrap();
         assert_eq!(
             rejected.allocation_bytes("AWProject source-order tap scratch"),
             original_tap_bytes
@@ -62744,6 +62884,142 @@ mod tests {
             assert!(scratch.is_none());
             assert!(admitted.maximum_planned_resident_bytes <= admitted.usable_memory_bytes);
         }
+    }
+
+    #[test]
+    fn awproject_grouped_metal_full12150_all63_resolves_before_legacy_admission() {
+        const ACTIVE_ROWS: usize = 655_200;
+        const POINTING_ROWS: usize = 3_335_002;
+        const MEMORY_TARGET_BYTES: usize = 33_554_432_000;
+        const GROUPED_DEVICE_BUDGET: usize = 26_575_224_832;
+
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("grouped-metal-full12150-all63-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let mut config = awproject_mtmfs_planner_config(cf_cache, 32_000);
+        config.imsize = 12_150;
+        config.field_ids = Some((0..63).collect());
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
+        config.standard_mfs_initial_dirty_backend = Some("cpu".to_string());
+        config.standard_mfs_residual_backend = Some("metal-row-run-grouped".to_string());
+        config.standard_mfs_grid_threads = Some("7".to_string());
+        config.imaging_prepare_workers = Some(1);
+        config.imaging_read_ahead_blocks = Some(1);
+        config.imaging_fft_precision = ImagingFftPrecisionPolicy::F64;
+        config.imaging_fft_backend = ImagingFftBackendPolicy::Fftw;
+        config.imaging_memory_pressure_policy = ImagingMemoryPressurePolicy::Oversubscribe;
+        config.multiscale_scales = vec![0.0, 5.0, 12.0];
+        config.niter = 20_000;
+        let controls = config.aw_project.as_mut().expect("AWProject controls");
+        controls.cf_resident_bytes = 256 * 1024 * 1024;
+        controls.mosaic_weighting = false;
+
+        let mut visibility_shape =
+            prepared_single_plane_visibility_source_shape(&config, ACTIVE_ROWS, 64);
+        visibility_shape.corr_count = 2;
+        let mut base = plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
+            &config,
+            64,
+            64,
+            ACTIVE_ROWS,
+            &visibility_shape,
+            POINTING_ROWS,
+            imaging_process_memory_ledger(&config),
+            StandardMfsLifetimeAdmission::DeferredForResolvedAwprojectTopology,
+        )
+        .expect("full12150/all63 base topology must be shape-plannable before admission");
+        force_grouped_metal_test_device_budget(&mut base, GROUPED_DEVICE_BUDGET);
+        // The unit-test binary does not create a Metal device. Restore the
+        // bounded generic allocations and the correspondingly reduced source
+        // row block selected by the real Metal planner so this fixture
+        // exercises the same premature semantic-admission failure.
+        let generic_cache_bytes = base.workload.metal_grouped_input_cache_candidate_bytes;
+        let routed_cache_bytes = base.workload.routed_replay_cache_candidate_bytes;
+        let generic_scratch_bytes = 1024 * 1024 * 1024;
+        let source_row_block_bytes = base
+            .workload
+            .source_bytes_per_row
+            .checked_add(base.workload.prepared_bytes_per_row)
+            .unwrap();
+        let compensated_readback_bytes = 2_361_960_000;
+        base.metal.eligible = true;
+        base.workload.direct_metal_scratch_candidate_bytes = generic_scratch_bytes;
+        base.ingest.batch_rows = 1;
+        base.ingest.source_row_block_rows = 1;
+        base.caches.routed_replay_enabled = true;
+        base.caches.routed_replay_bytes = routed_cache_bytes;
+        base.caches.metal_grouped_input_enabled = true;
+        base.caches.metal_grouped_input_bytes = generic_cache_bytes;
+        base.caches.direct_metal_scratch_bytes = generic_scratch_bytes;
+        assert!(replace_standard_mfs_memory_allocation(
+            &mut base,
+            "source row blocks",
+            source_row_block_bytes,
+        ));
+        assert!(replace_standard_mfs_memory_allocation(
+            &mut base,
+            "routed replay cache",
+            routed_cache_bytes,
+        ));
+        assert!(replace_standard_mfs_memory_allocation(
+            &mut base,
+            "Metal grouped input cache",
+            generic_cache_bytes,
+        ));
+        assert!(replace_standard_mfs_memory_allocation(
+            &mut base,
+            "direct Metal host scratch",
+            generic_scratch_bytes,
+        ));
+        assert_eq!(
+            base.allocation_bytes("AWProject compensated f64 readback"),
+            0
+        );
+        base.memory_allocations.push(ImagingMemoryAllocation {
+            component: "AWProject compensated f64 readback",
+            stage: "dirty-transform",
+            bytes: compensated_readback_bytes,
+        });
+
+        let legacy_error = admit_standard_mfs_plan_with_lifetimes(base.clone(), true).unwrap_err();
+        assert!(
+            legacy_error.contains("semantic memory lifetime peak")
+                && legacy_error.contains(&format!(
+                    "exceeds admitted memory target {MEMORY_TARGET_BYTES}"
+                )),
+            "the real-shape fixture must stay red-capable for premature legacy admission: {legacy_error}"
+        );
+
+        let admitted = resolve_awproject_multifield_memory_plan(base, &config, 63, true, true)
+            .expect("resolved grouped topology must precede semantic admission");
+        assert_eq!(admitted.usable_memory_bytes, MEMORY_TARGET_BYTES);
+        assert_eq!(admitted.workload.direct_metal_scratch_candidate_bytes, 0);
+        assert_eq!(admitted.workload.routed_replay_cache_candidate_bytes, 0);
+        assert_eq!(
+            admitted.workload.metal_grouped_input_cache_candidate_bytes,
+            0
+        );
+        assert!(standard_mfs_plan_decision_is(
+            &admitted,
+            "awproject_multifield_initial_grid_admission",
+            "admitted"
+        ));
+        let compensated_readback = admitted
+            .memory_lifetime_ledger
+            .allocations
+            .iter()
+            .find(|allocation| allocation.component == "AWProject compensated f64 readback")
+            .expect("grouped residual Metal readback lifetime");
+        assert_eq!(compensated_readback.residencies.len(), 1);
+        assert_eq!(
+            compensated_readback.residencies[0].live_from,
+            ImagingMemoryStage::ResidualTransform
+        );
+        assert_eq!(
+            compensated_readback.residencies[0].live_through,
+            ImagingMemoryStage::ResidualTransform
+        );
+        assert!(admitted.maximum_planned_resident_bytes <= admitted.usable_memory_bytes);
     }
 
     #[test]
