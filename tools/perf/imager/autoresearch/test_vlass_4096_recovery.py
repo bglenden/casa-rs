@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 from pathlib import Path
 import sys
@@ -241,6 +242,56 @@ class Vlass4096RecoveryTests(unittest.TestCase):
             str(self.contract["all_fields"]["requested_grid_threads"]),
             captured["CASA_RS_VLASS_GRID_THREADS"],
         )
+
+    def test_all_field_primary_guard_never_runs_or_vetoes_on_single_field(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            runtime_log = run_dir / "all63.log"
+            runtime_log.write_text("validated by mock\n", encoding="utf-8")
+            measurement = {
+                "run_dir": str(run_dir),
+                "source_head": "candidate-head",
+                "build": {"binary_sha256": "candidate-binary"},
+                "all_fields": {
+                    "runtime_log": str(runtime_log),
+                    "output_prefix": str(run_dir / "rust"),
+                    "wall_seconds": 33.0,
+                },
+            }
+            comparison = {"status": "completed"}
+            with (
+                mock.patch.object(
+                    subject, "load_measurement", return_value=measurement
+                ),
+                mock.patch.object(subject, "validate_all_field_log") as validate,
+                mock.patch.object(
+                    subject, "compare_row", return_value=comparison
+                ) as compare,
+                mock.patch.object(
+                    subject,
+                    "load_reusable_single_landmark",
+                    side_effect=AssertionError("single-field guard must not run"),
+                ),
+                mock.patch.object(
+                    subject,
+                    "run_single_series",
+                    side_effect=AssertionError("single-field series must not run"),
+                ),
+            ):
+                subject.guard_all_fields_primary(self.contract)
+
+            validate.assert_called_once_with(
+                self.contract,
+                runtime_log,
+                enforce_sequential_guard=False,
+            )
+            compare.assert_called_once()
+            receipt = json.loads(
+                (run_dir / "all-fields-primary-guard.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual("all-fields-primary", receipt["authority"])
+            self.assertEqual(comparison, receipt["all_fields"]["comparison"])
+            self.assertNotIn("single_field_series", receipt)
 
     def test_single_field_launch_pins_two_grid_workers(self) -> None:
         captured: dict[str, str] = {}

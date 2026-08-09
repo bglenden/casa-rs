@@ -999,6 +999,39 @@ def guard_all_fields(contract: dict[str, Any]) -> None:
     output.write_text(json.dumps(guard_receipt, indent=2, sort_keys=True) + "\n")
 
 
+def guard_all_fields_primary(contract: dict[str, Any]) -> None:
+    """Guard an all-field trial without making the single-field row a veto."""
+    measurement = load_measurement(contract, "all-fields")
+    run_dir = Path(measurement["run_dir"])
+    all_fields = measurement["all_fields"]
+    validate_all_field_log(
+        contract,
+        Path(all_fields["runtime_log"]),
+        enforce_sequential_guard=False,
+    )
+    all_comparison = all_fields.get("comparison")
+    if all_comparison is None:
+        all_comparison = compare_row(
+            contract,
+            contract["all_fields"],
+            Path(all_fields["output_prefix"]),
+            run_dir / "all63-casa",
+        )
+    guard_receipt = {
+        "schema_version": 1,
+        "status": "passed",
+        "authority": "all-fields-primary",
+        "source_head": measurement["source_head"],
+        "binary_sha256": measurement["build"]["binary_sha256"],
+        "all_fields": {
+            **all_fields,
+            "comparison": all_comparison,
+        },
+    }
+    output = run_dir / "all-fields-primary-guard.json"
+    output.write_text(json.dumps(guard_receipt, indent=2, sort_keys=True) + "\n")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -1008,6 +1041,7 @@ def main() -> int:
             "guard-single",
             "measure-all-fields",
             "guard-all-fields",
+            "guard-all-fields-primary",
         ),
     )
     parser.add_argument("--contract", type=Path, default=DEFAULT_CONTRACT)
@@ -1024,6 +1058,8 @@ def main() -> int:
         elif args.action == "measure-all-fields":
             metric = measure_all_fields(contract)
             print(f"{metric:.9f}")
+        elif args.action == "guard-all-fields-primary":
+            guard_all_fields_primary(contract)
         else:
             guard_all_fields(contract)
     except (ContractError, OSError, ValueError, subprocess.SubprocessError) as error:
