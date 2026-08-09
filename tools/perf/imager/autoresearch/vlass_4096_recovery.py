@@ -510,6 +510,49 @@ def load_reusable_single_landmark(
     }
 
 
+def load_reusable_all_fields_landmark(
+    contract: dict[str, Any], binary: Path
+) -> dict[str, Any] | None:
+    landmark = contract.get("all_fields_landmark")
+    if not isinstance(landmark, dict):
+        return None
+    binary_sha256 = sha256_file(binary)
+    if landmark.get("binary_sha256") != binary_sha256:
+        return None
+    measurement_path = Path(landmark["measurement"])
+    if sha256_file(measurement_path) != landmark["measurement_sha256"]:
+        raise ContractError("all-field landmark measurement receipt changed")
+    measurement = load_object(measurement_path)
+    if measurement.get("build", {}).get("binary_sha256") != binary_sha256:
+        raise ContractError("all-field landmark executable identity changed")
+    all_fields = measurement.get("all_fields")
+    if not isinstance(all_fields, dict):
+        raise ContractError("all-field landmark measurement is incomplete")
+    runtime_log = Path(all_fields["runtime_log"])
+    if sha256_file(runtime_log) != all_fields["runtime_log_sha256"]:
+        raise ContractError("all-field landmark runtime log changed")
+    activity = validate_all_field_log(contract, runtime_log)
+    output_prefix = Path(all_fields["output_prefix"])
+    if not Path(f"{output_prefix}.image.tt0").is_dir():
+        raise ContractError(f"all-field landmark products are missing: {output_prefix}")
+    validation = Path(landmark["validation"])
+    if sha256_file(validation) != landmark["validation_sha256"]:
+        raise ContractError("all-field landmark validation receipt changed")
+    validation_receipt = load_object(validation)
+    if validation_receipt.get("status") != "completed":
+        raise ContractError("all-field landmark validation is not completed")
+    return {
+        **all_fields,
+        "status": "reused-identical-release-binary",
+        "activity": activity,
+        "comparison": {
+            "validation": str(validation),
+            "validation_sha256": landmark["validation_sha256"],
+            "status": "completed",
+        },
+    }
+
+
 def run_single_series(
     contract: dict[str, Any],
     binary: Path,
@@ -872,21 +915,24 @@ def measure_all_fields(contract: dict[str, Any]) -> float:
     run_dir = Path(contract["run_root"]) / "runs" / token
     run_dir.mkdir(parents=True, exist_ok=False)
     binary, build = build_release(run_dir)
-    host_idle = wait_for_host_idle(contract)
-    all_fields = run_all_fields(
-        contract,
-        binary,
-        run_dir,
-        token[-8:],
-        enforce_sequential_guard=False,
-    )
+    all_fields = load_reusable_all_fields_landmark(contract, binary)
+    if all_fields is None:
+        host_idle = wait_for_host_idle(contract)
+        all_fields = run_all_fields(
+            contract,
+            binary,
+            run_dir,
+            token[-8:],
+            enforce_sequential_guard=False,
+        )
+        all_fields = {**all_fields, "host_idle_precondition": host_idle}
     receipt = {
         "schema_version": 1,
         "token": token,
         "run_dir": str(run_dir),
         "source_head": build["head"],
         "build": build,
-        "all_fields": {**all_fields, "host_idle_precondition": host_idle},
+        "all_fields": all_fields,
     }
     write_measurement(contract, "all-fields", receipt)
     return float(all_fields["wall_seconds"])
@@ -896,12 +942,14 @@ def guard_all_fields(contract: dict[str, Any]) -> None:
     measurement = load_measurement(contract, "all-fields")
     run_dir = Path(measurement["run_dir"])
     binary = Path(measurement["build"]["binary"])
-    all_comparison = compare_row(
-        contract,
-        contract["all_fields"],
-        Path(measurement["all_fields"]["output_prefix"]),
-        run_dir / "all63-casa",
-    )
+    all_comparison = measurement["all_fields"].get("comparison")
+    if all_comparison is None:
+        all_comparison = compare_row(
+            contract,
+            contract["all_fields"],
+            Path(measurement["all_fields"]["output_prefix"]),
+            run_dir / "all63-casa",
+        )
     single_landmark = load_reusable_single_landmark(contract, binary)
     if single_landmark is None:
         cooldown_seconds = int(contract["phase_two_single_guard_cooldown_seconds"])

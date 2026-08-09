@@ -38,6 +38,13 @@
       }
     ]
   },
+  "all_fields_landmark": {
+    "binary_sha256": "b66ab495b460ee8252da087ddefc942a23ce8d2891d3e9f90338e5ba4f620a91",
+    "measurement": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/autoresearch/vlass-4096-performance-recovery-v1/runs/20260809T161400Z-f5204164/all-fields-measurement.json",
+    "measurement_sha256": "bca7416b744d0426c176c1a581ca42f6c5ecfae6aeed01568cec2a7a32dfc118",
+    "validation": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/autoresearch/vlass-4096-performance-recovery-v1/runs/20260809T161400Z-f5204164/all63-casa.validation.json",
+    "validation_sha256": "99f5af2c9572694b54a6755564e22e67787039349dcf0818b463f0d3d2b644a2"
+  },
   "single_field": {
     "matched_casa_wall_seconds": 3631.809729,
     "target_wall_seconds": 36.31809729,

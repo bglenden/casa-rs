@@ -166,6 +166,14 @@ class Vlass4096RecoveryTests(unittest.TestCase):
                 )
             )
 
+    def test_all_field_landmark_is_not_reused_for_a_different_binary(self) -> None:
+        with mock.patch.object(subject, "sha256_file", return_value="different"):
+            self.assertIsNone(
+                subject.load_reusable_all_fields_landmark(
+                    self.contract, Path("target/release/casars-imager")
+                )
+            )
+
     def test_all_field_log_rejects_spill_or_topology_rebuild(self) -> None:
         row = self.contract["all_fields"]
         good = "\n".join(
