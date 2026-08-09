@@ -5746,13 +5746,80 @@ fn sparse_vector_add_scaled(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct AwProjectInitialGridPlan {
-    logical_tap_budget_bytes: usize,
-    sparse_grid_budget_bytes: usize,
-    sparse_tile_side: usize,
-    workers: usize,
-    neon_2x2: bool,
-    dynamic_sparse_scheduler: bool,
+enum AwProjectInitialGridPlan {
+    CpuSparse {
+        logical_tap_budget_bytes: usize,
+        sparse_grid_budget_bytes: usize,
+        sparse_tile_side: usize,
+        workers: usize,
+        neon_2x2: bool,
+        dynamic_sparse_scheduler: bool,
+    },
+    SourceMajorGroupedMetal {
+        tile_side: usize,
+        workers: usize,
+        process_compile_ceiling_bytes: usize,
+        replay_retention_ceiling_bytes: usize,
+        device_budget_bytes: usize,
+        safety_reserve_bytes: usize,
+    },
+}
+
+impl AwProjectInitialGridPlan {
+    fn workers(self) -> usize {
+        match self {
+            Self::CpuSparse { workers, .. } | Self::SourceMajorGroupedMetal { workers, .. } => {
+                workers
+            }
+        }
+    }
+
+    fn sparse_tile_side(self) -> Option<usize> {
+        match self {
+            Self::CpuSparse {
+                sparse_tile_side, ..
+            } => Some(sparse_tile_side),
+            Self::SourceMajorGroupedMetal { .. } => None,
+        }
+    }
+
+    fn sparse_grid_budget_bytes(self) -> Option<usize> {
+        match self {
+            Self::CpuSparse {
+                sparse_grid_budget_bytes,
+                ..
+            } => Some(sparse_grid_budget_bytes),
+            Self::SourceMajorGroupedMetal { .. } => None,
+        }
+    }
+
+    fn logical_tap_budget_bytes(self) -> Option<usize> {
+        match self {
+            Self::CpuSparse {
+                logical_tap_budget_bytes,
+                ..
+            } => Some(logical_tap_budget_bytes),
+            Self::SourceMajorGroupedMetal { .. } => None,
+        }
+    }
+
+    fn neon_2x2(self) -> bool {
+        matches!(self, Self::CpuSparse { neon_2x2: true, .. })
+    }
+
+    fn dynamic_sparse_scheduler(self) -> bool {
+        matches!(
+            self,
+            Self::CpuSparse {
+                dynamic_sparse_scheduler: true,
+                ..
+            }
+        )
+    }
+
+    fn is_source_major_grouped(self) -> bool {
+        matches!(self, Self::SourceMajorGroupedMetal { .. })
+    }
 }
 
 const AWPROJECT_GROUPED_METAL_SAFETY_RESERVE_BYTES: usize = 64 * 1024 * 1024;
@@ -5796,14 +5863,22 @@ fn resolved_awproject_initial_grid_plan(
     else {
         return Ok(None);
     };
-    if backend != "cpu-dynamic-sparse-f64" {
+    if !matches!(
+        backend,
+        "cpu-dynamic-sparse-f64" | "source-major-grouped-metal-f64"
+    ) {
         return Ok(None);
     }
-    if execution.initial_dirty_backend != Some(StandardMfsBackend::Cpu) {
-        return Err(ImagingError::InvalidRequest(
-            "resolved CPU sparse AWProject initial grid requires the CPU initial-dirty backend"
-                .to_string(),
-        ));
+    let expected_initial_backend = if backend == "source-major-grouped-metal-f64" {
+        StandardMfsBackend::MetalRowRunGrouped
+    } else {
+        StandardMfsBackend::Cpu
+    };
+    if execution.initial_dirty_backend != Some(expected_initial_backend) {
+        return Err(ImagingError::InvalidRequest(format!(
+            "resolved AWProject initial grid backend {backend} requires {expected_initial_backend:?} execution, got {:?}",
+            execution.initial_dirty_backend,
+        )));
     }
     let parse_usize = |name| {
         resolved_plan_decision_value(resolved, name)
@@ -5824,6 +5899,30 @@ fn resolved_awproject_initial_grid_plan(
                 ))
             })
     };
+    let workers = parse_usize("awproject_initial_grid_workers")?;
+    if workers != resolved.workers.max(1) {
+        return Err(ImagingError::InvalidRequest(
+            "resolved AWProject initial-grid workers differ from the admitted execution workers"
+                .to_string(),
+        ));
+    }
+    if backend == "source-major-grouped-metal-f64" {
+        let grouped = execution.awproject_grouped_replay.as_ref().ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "resolved source-major AWProject initial grid lost its grouped replay plan"
+                    .to_string(),
+            )
+        })?;
+        return Ok(Some(AwProjectInitialGridPlan::SourceMajorGroupedMetal {
+            tile_side: grouped.tile_side(),
+            workers,
+            process_compile_ceiling_bytes: grouped.compile_admission_bytes(),
+            replay_retention_ceiling_bytes: resolved
+                .allocation_bytes("AWProject compact replay retention"),
+            device_budget_bytes: parse_usize("awproject_grouped_metal_device_budget_bytes")?,
+            safety_reserve_bytes: parse_usize("awproject_grouped_metal_safety_reserve_bytes")?,
+        }));
+    }
     let logical_tap_budget_bytes = resolved.allocation_bytes("AWProject source-order tap scratch");
     let decision_tap_budget_bytes = parse_usize("awproject_source_order_tap_bytes")?;
     if logical_tap_budget_bytes == 0 || logical_tap_budget_bytes != decision_tap_budget_bytes {
@@ -5836,13 +5935,6 @@ fn resolved_awproject_initial_grid_plan(
     if sparse_grid_budget_bytes == 0 {
         return Err(ImagingError::InvalidRequest(
             "resolved CPU sparse AWProject initial grid has no admitted grid allocation"
-                .to_string(),
-        ));
-    }
-    let workers = parse_usize("awproject_initial_grid_workers")?;
-    if workers != resolved.workers.max(1) {
-        return Err(ImagingError::InvalidRequest(
-            "resolved CPU sparse AWProject initial-grid workers differ from the admitted execution workers"
                 .to_string(),
         ));
     }
@@ -5860,7 +5952,7 @@ fn resolved_awproject_initial_grid_plan(
                 .to_string(),
         ));
     }
-    Ok(Some(AwProjectInitialGridPlan {
+    Ok(Some(AwProjectInitialGridPlan::CpuSparse {
         logical_tap_budget_bytes,
         sparse_grid_budget_bytes,
         sparse_tile_side: parse_usize("awproject_initial_grid_sparse_tile_side")?,
@@ -5874,12 +5966,13 @@ fn resolved_awproject_grouped_metal_admission(
     execution: &StandardMfsExecutionPlan,
 ) -> Result<Option<AwProjectGroupedMetalAdmission>, ImagingError> {
     let resolved = &execution.resolved;
-    if resolved_plan_decision_value(resolved, "awproject_initial_grid_backend")
-        != Some("cpu-dynamic-sparse-f64")
-        || resolved_plan_decision_value(
-            resolved,
-            "awproject_grouped_replay_replaced_generic_caches",
-        ) != Some("true")
+    if !matches!(
+        resolved_plan_decision_value(resolved, "awproject_initial_grid_backend"),
+        Some("cpu-dynamic-sparse-f64" | "source-major-grouped-metal-f64")
+    ) || resolved_plan_decision_value(
+        resolved,
+        "awproject_grouped_replay_replaced_generic_caches",
+    ) != Some("true")
     {
         return Ok(None);
     }
@@ -5982,17 +6075,32 @@ where
     let awproject_grouped_metal_admission =
         resolved_awproject_grouped_metal_admission(&execution_config)?;
     if let Some(plan) = awproject_initial_grid_plan {
-        eprintln!(
-            "awproject_initial_grid_plan backend=cpu-dynamic-sparse-f64 tile_side={} workers={} logical_tap_bytes={} sparse_grid_budget_bytes={} neon_2x2={} dynamic_scheduler={} planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
-            plan.sparse_tile_side,
-            plan.workers,
-            plan.logical_tap_budget_bytes,
-            plan.sparse_grid_budget_bytes,
-            plan.neon_2x2,
-            plan.dynamic_sparse_scheduler,
-            execution_config.resolved.maximum_planned_resident_bytes,
-            execution_config.resolved.usable_memory_bytes,
-        );
+        match plan {
+            AwProjectInitialGridPlan::CpuSparse {
+                logical_tap_budget_bytes,
+                sparse_grid_budget_bytes,
+                sparse_tile_side,
+                workers,
+                neon_2x2,
+                dynamic_sparse_scheduler,
+            } => eprintln!(
+                "awproject_initial_grid_plan backend=cpu-dynamic-sparse-f64 tile_side={sparse_tile_side} workers={workers} logical_tap_bytes={logical_tap_budget_bytes} sparse_grid_budget_bytes={sparse_grid_budget_bytes} neon_2x2={neon_2x2} dynamic_scheduler={dynamic_sparse_scheduler} planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
+                execution_config.resolved.maximum_planned_resident_bytes,
+                execution_config.resolved.usable_memory_bytes,
+            ),
+            AwProjectInitialGridPlan::SourceMajorGroupedMetal {
+                tile_side,
+                workers,
+                process_compile_ceiling_bytes,
+                replay_retention_ceiling_bytes,
+                device_budget_bytes,
+                safety_reserve_bytes,
+            } => eprintln!(
+                "awproject_initial_grid_plan backend=source-major-grouped-metal-f64 architecture=direct-source-major-v2 tile_side={tile_side} workers={workers} compile_ceiling_bytes={process_compile_ceiling_bytes} replay_retention_ceiling_bytes={replay_retention_ceiling_bytes} device_budget_bytes={device_budget_bytes} safety_reserve_bytes={safety_reserve_bytes} legacy_tap_scratch_bytes=0 legacy_priming_scratch_bytes=0 spill_bytes=0 planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
+                execution_config.resolved.maximum_planned_resident_bytes,
+                execution_config.resolved.usable_memory_bytes,
+            ),
+        }
     }
     let planned_aw_replay_retention_bytes = execution_config
         .resolved
@@ -6128,10 +6236,13 @@ where
     let prime_aw_replay_during_initial_dirty = aw_replay_cache
         .as_ref()
         .is_some_and(AwProjectCompactReplayCache::grouped_replay_enabled);
+    let source_major_grouped_initial = awproject_initial_grid_plan
+        .is_some_and(AwProjectInitialGridPlan::is_source_major_grouped)
+        && grouped_replay_plan.is_some();
     let allow_initial_direct_metal = standard_mfs_backend_allows_direct_metal(
         execution_config.initial_dirty_backend,
         aw_cache.is_none() || direct_metal_scratch_bytes.is_some(),
-    );
+    ) || source_major_grouped_initial;
     let dirty_started = Instant::now();
     let mut initial = accumulate_mosaic_mtmfs_stream_grids(
         &request,
@@ -7529,6 +7640,7 @@ enum MosaicDirectMetalMode {
     Disabled,
     Mosaic,
     AwProject,
+    AwProjectSourceMajorGroupedInitial,
     AwProjectGlobalReplay,
 }
 
@@ -7536,10 +7648,14 @@ fn mosaic_direct_metal_mode(
     allow_direct_metal: bool,
     awproject_grid: bool,
     global_metal_replay: bool,
+    source_major_grouped_initial: bool,
 ) -> MosaicDirectMetalMode {
     if global_metal_replay {
         debug_assert!(awproject_grid);
         MosaicDirectMetalMode::AwProjectGlobalReplay
+    } else if source_major_grouped_initial {
+        debug_assert!(awproject_grid);
+        MosaicDirectMetalMode::AwProjectSourceMajorGroupedInitial
     } else if !allow_direct_metal {
         MosaicDirectMetalMode::Disabled
     } else if awproject_grid {
@@ -7600,11 +7716,16 @@ impl MosaicMtmfsStreamGridStorage {
         #[cfg(all(target_os = "macos", not(coverage)))]
         let awproject_metal = matches!(
             direct_metal_mode,
-            MosaicDirectMetalMode::AwProject | MosaicDirectMetalMode::AwProjectGlobalReplay
+            MosaicDirectMetalMode::AwProject
+                | MosaicDirectMetalMode::AwProjectSourceMajorGroupedInitial
+                | MosaicDirectMetalMode::AwProjectGlobalReplay
         );
         #[cfg(all(target_os = "macos", not(coverage)))]
         let global_replay_storage =
             direct_metal_mode == MosaicDirectMetalMode::AwProjectGlobalReplay;
+        #[cfg(all(target_os = "macos", not(coverage)))]
+        let source_major_grouped_storage =
+            direct_metal_mode == MosaicDirectMetalMode::AwProjectSourceMajorGroupedInitial;
         #[cfg(all(target_os = "macos", not(coverage)))]
         if awproject_metal
             && dirty_product_fft_uses_f32(
@@ -7634,7 +7755,7 @@ impl MosaicMtmfsStreamGridStorage {
         {
             let scratch_budget_bytes = match direct_metal_scratch_bytes.filter(|bytes| *bytes > 0) {
                 Some(bytes) => bytes,
-                None if global_replay_storage => 0,
+                None if global_replay_storage || source_major_grouped_storage => 0,
                 None => {
                     if dirty_product_fft_explicit_metal_requested(dirty_product_fft_policy) {
                         return Err(ImagingError::Unsupported(
@@ -10067,7 +10188,7 @@ where
     ) -> Result<(), ImagingError>,
 {
     let requested_threads = awproject_initial_grid_plan
-        .map(|plan| plan.workers)
+        .map(AwProjectInitialGridPlan::workers)
         .unwrap_or(requested_threads)
         .max(1);
     let [grid_nx, grid_ny] = gridder.grid_shape();
@@ -10080,8 +10201,17 @@ where
         && (grouped_replay
             || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_ONLY_REFRESH").is_some());
     let global_metal_replay = residual_only && model_grids.is_some() && grouped_replay;
-    let direct_metal_mode =
-        mosaic_direct_metal_mode(allow_direct_metal, aw_cache.is_some(), global_metal_replay);
+    let source_major_grouped_initial = model_grids.is_none()
+        && pass == SinglePlaneStreamPass::InitialDirty
+        && awproject_initial_grid_plan
+            .is_some_and(AwProjectInitialGridPlan::is_source_major_grouped)
+        && grouped_replay;
+    let direct_metal_mode = mosaic_direct_metal_mode(
+        allow_direct_metal,
+        aw_cache.is_some(),
+        global_metal_replay,
+        source_major_grouped_initial,
+    );
     if residual_only && profile::standard_mfs_profile_detail_enabled() {
         eprintln!(
             "awproject_residual_refresh_plane_plan physical_psf_terms=0 physical_residual_terms={} physical_weight_terms=0 logical_psf_terms={} source=experimental-residual-only",
@@ -10099,9 +10229,10 @@ where
             direct_metal_mode,
             awproject_grid: aw_cache.is_some(),
             direct_metal_scratch_bytes,
-            sparse_tile_side: awproject_initial_grid_plan.map(|plan| plan.sparse_tile_side),
+            sparse_tile_side: awproject_initial_grid_plan
+                .and_then(AwProjectInitialGridPlan::sparse_tile_side),
             sparse_grid_budget_bytes: awproject_initial_grid_plan
-                .map(|plan| plan.sparse_grid_budget_bytes),
+                .and_then(AwProjectInitialGridPlan::sparse_grid_budget_bytes),
         })?,
         pointing_weights: MosaicPointingWeightAccumulator::default(),
         reported_sumwt_terms: vec![0.0; psf_term_count],
@@ -10397,6 +10528,23 @@ struct AwProjectCompactTapBundle {
     phase_applied: bool,
 }
 
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Clone, Copy)]
+struct AwProjectSourceMajorTap {
+    x_support: usize,
+    y_support: usize,
+    normalization: Complex32,
+    grid_normalization: Complex64,
+    sampling: usize,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Clone, Copy)]
+enum AwProjectSourceMajorMaterializedTap {
+    Ready(AwProjectSourceMajorTap),
+    Rejected(gridder::AwProjectSamplePlanRejection),
+}
+
 enum AwProjectCompactMaterializedTap {
     Ready(AwProjectCompactTapBundle),
     Rejected(gridder::AwProjectSamplePlanRejection),
@@ -10568,6 +10716,12 @@ struct AwProjectCompactReplayCache {
     #[cfg(all(target_os = "macos", not(coverage)))]
     peak_metal_global_absorb_bytes: usize,
     #[cfg(all(target_os = "macos", not(coverage)))]
+    source_major_direct_segments: usize,
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    source_major_initial_receipts: usize,
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    source_major_last_block: Option<usize>,
+    #[cfg(all(target_os = "macos", not(coverage)))]
     incremental_model_probe: Option<AwProjectIncrementalModelProbeCache>,
     #[cfg(all(target_os = "macos", not(coverage)))]
     selected_model_support: Vec<(usize, usize)>,
@@ -10619,6 +10773,12 @@ impl AwProjectCompactReplayCache {
             },
             #[cfg(all(target_os = "macos", not(coverage)))]
             peak_metal_global_absorb_bytes: 0,
+            #[cfg(all(target_os = "macos", not(coverage)))]
+            source_major_direct_segments: 0,
+            #[cfg(all(target_os = "macos", not(coverage)))]
+            source_major_initial_receipts: 0,
+            #[cfg(all(target_os = "macos", not(coverage)))]
+            source_major_last_block: None,
             #[cfg(all(target_os = "macos", not(coverage)))]
             incremental_model_probe: None,
             #[cfg(all(target_os = "macos", not(coverage)))]
@@ -11247,6 +11407,78 @@ struct AwProjectMetalGroupedTilePlan {
     residual: AwProjectMetalGroupedTileMember,
 }
 
+const AWPROJECT_INITIAL_GROUPED_PLANE_COUNT: usize = 8;
+
+#[repr(C, align(8))]
+#[derive(Clone, Copy)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+struct AwProjectMetalInitialGroupedPlan {
+    plan: AwProjectMetalPlan,
+    values: [WProjectMetalComplex; AWPROJECT_INITIAL_GROUPED_PLANE_COUNT],
+}
+
+#[derive(Clone, Default)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+struct AwProjectMetalInitialGroupedProgram {
+    groups: Vec<AwProjectMetalInitialGroupedPlan>,
+    tile_plan: AwProjectMetalTilePlan,
+    fixed_scales: Vec<f32>,
+    inverse_fixed_scales: Vec<f32>,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl AwProjectMetalInitialGroupedProgram {
+    fn resident_bytes(&self) -> usize {
+        self.groups
+            .capacity()
+            .saturating_mul(std::mem::size_of::<AwProjectMetalInitialGroupedPlan>())
+            .saturating_add(self.tile_plan.resident_bytes())
+            .saturating_add(
+                self.fixed_scales
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<f32>()),
+            )
+            .saturating_add(
+                self.inverse_fixed_scales
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<f32>()),
+            )
+    }
+
+    fn device_transient_bytes(
+        &self,
+        kernel_count: usize,
+        phase_count: usize,
+    ) -> Result<usize, ImagingError> {
+        checked_awproject_source_major_bytes(&[
+            self.groups
+                .len()
+                .saturating_mul(std::mem::size_of::<AwProjectMetalInitialGroupedPlan>()),
+            kernel_count.saturating_mul(std::mem::size_of::<WProjectMetalComplex>()),
+            self.tile_plan
+                .active_tile_ids
+                .len()
+                .saturating_mul(std::mem::size_of::<u32>()),
+            self.tile_plan
+                .tile_fragment_offsets
+                .len()
+                .saturating_mul(std::mem::size_of::<u32>()),
+            self.tile_plan
+                .fragments
+                .len()
+                .saturating_mul(std::mem::size_of::<u32>()),
+            self.fixed_scales
+                .len()
+                .saturating_mul(std::mem::size_of::<f32>()),
+            self.inverse_fixed_scales
+                .len()
+                .saturating_mul(std::mem::size_of::<f32>()),
+            std::mem::size_of::<AwProjectMetalTileParams>(),
+            phase_count.saturating_mul(std::mem::size_of::<WProjectMetalComplex>()),
+        ])
+    }
+}
+
 #[repr(C, align(8))]
 #[derive(Clone, Copy, Default)]
 #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
@@ -11281,6 +11513,25 @@ impl From<AwProjectMetalPlan> for AwProjectMetalPlanKey {
             plan.phase.base,
             plan.phase.y_base,
         ])
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+trait AwProjectMetalTileGroup {
+    fn tile_plan(&self) -> AwProjectMetalPlan;
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl AwProjectMetalTileGroup for AwProjectMetalGroupedTilePlan {
+    fn tile_plan(&self) -> AwProjectMetalPlan {
+        self.plan
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl AwProjectMetalTileGroup for AwProjectMetalInitialGroupedPlan {
+    fn tile_plan(&self) -> AwProjectMetalPlan {
+        self.plan
     }
 }
 
@@ -15087,6 +15338,7 @@ struct AwProjectMetalExecutor {
     selected_model_row_pipeline: AwProjectMetalPipeline,
     selected_model_finish_pipeline: AwProjectMetalPipeline,
     tile_pipeline: AwProjectMetalPipeline,
+    initial_grouped_tile_pipeline: AwProjectMetalPipeline,
     predicted_tile_pipeline: AwProjectMetalPipeline,
 }
 
@@ -18792,6 +19044,23 @@ impl AwProjectMetalExecutor {
                     "AWProject backend 'metal' failed to create tile-grid probe pipeline: {error:?}"
                 ))
             })?;
+        let initial_grouped_tile_function_name =
+            objc2_foundation::NSString::from_str("awproject_grid_initial_grouped_tiles");
+        let initial_grouped_tile_function = library
+            .newFunctionWithName(&initial_grouped_tile_function_name)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "AWProject backend 'metal' initial grouped-tile entry point was not found"
+                        .to_string(),
+                )
+            })?;
+        let initial_grouped_tile_pipeline = device
+            .newComputePipelineStateWithFunction_error(&initial_grouped_tile_function)
+            .map_err(|error| {
+                ImagingError::Unsupported(format!(
+                    "AWProject backend 'metal' failed to create initial grouped-tile pipeline: {error:?}"
+                ))
+            })?;
         let predicted_tile_function_name =
             objc2_foundation::NSString::from_str("awproject_grid_predicted_mtmfs_tiles");
         let predicted_tile_function = library
@@ -18821,6 +19090,7 @@ impl AwProjectMetalExecutor {
             selected_model_row_pipeline,
             selected_model_finish_pipeline,
             tile_pipeline,
+            initial_grouped_tile_pipeline,
             predicted_tile_pipeline,
         })
     }
@@ -20808,6 +21078,302 @@ impl AwProjectMetalExecutor {
         })
     }
 
+    fn dispatch_initial_grouped_tiles(
+        &self,
+        grid: &mut crate::apple_fft::MetalSharedF32DirtyGridBatch,
+        compensation: &mut Option<AwProjectMetalCompensation>,
+        program: &AwProjectMetalInitialGroupedProgram,
+        kernels: &[WProjectMetalComplex],
+        phases: &[WProjectMetalComplex],
+        kernel_pack: Duration,
+    ) -> Result<AwProjectMetalTileGridStats, ImagingError> {
+        use std::{ffi::c_void, mem, ptr, ptr::NonNull, slice};
+
+        use objc2_metal::{
+            MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder,
+            MTLCommandQueue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLDevice,
+            MTLResourceOptions, MTLSize,
+        };
+
+        if program.groups.is_empty() || program.tile_plan.active_tile_ids.is_empty() {
+            return Ok(AwProjectMetalTileGridStats::default());
+        }
+        if grid.plane_count() != AWPROJECT_INITIAL_GROUPED_PLANE_COUNT
+            || program.fixed_scales.len() != AWPROJECT_INITIAL_GROUPED_PLANE_COUNT
+            || program.inverse_fixed_scales.len() != AWPROJECT_INITIAL_GROUPED_PLANE_COUNT
+        {
+            return Err(ImagingError::Normalization(format!(
+                "source-major initial grouped topology has output_planes={}, scales={}, inverse_scales={}",
+                grid.plane_count(),
+                program.fixed_scales.len(),
+                program.inverse_fixed_scales.len(),
+            )));
+        }
+        let [grid_width, grid_height] = grid.shape();
+        let output_bytes = grid_width
+            .checked_mul(grid_height)
+            .and_then(|value| value.checked_mul(AWPROJECT_INITIAL_GROUPED_PLANE_COUNT))
+            .and_then(|value| value.checked_mul(mem::size_of::<Complex32>()))
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "source-major initial grouped output byte count overflowed".to_string(),
+                )
+            })?;
+        if grid.metal_buffer().length() < output_bytes {
+            return Err(ImagingError::Normalization(
+                "source-major initial grouped output buffer is smaller than its topology"
+                    .to_string(),
+            ));
+        }
+        let tile_plan = &program.tile_plan;
+        let params = AwProjectMetalTileParams {
+            grid_width: u32::try_from(grid_width).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "source-major initial grid width exceeds u32".to_string(),
+                )
+            })?,
+            grid_height: u32::try_from(grid_height).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "source-major initial grid height exceeds u32".to_string(),
+                )
+            })?,
+            tile_side: u32::try_from(tile_plan.tile_side).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "source-major initial tile side exceeds u32".to_string(),
+                )
+            })?,
+            tiles_y: u32::try_from(tile_plan.tiles_y).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "source-major initial tile Y count exceeds u32".to_string(),
+                )
+            })?,
+            active_tile_count: u32::try_from(tile_plan.active_tile_ids.len()).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "source-major initial active tile count exceeds u32".to_string(),
+                )
+            })?,
+            nterms: AWPROJECT_INITIAL_GROUPED_PLANE_COUNT as u32,
+        };
+        let threads_per_tile = tile_plan
+            .tile_side
+            .checked_mul(tile_plan.tile_side)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "source-major initial tile thread count overflowed".to_string(),
+                )
+            })?;
+        if threads_per_tile
+            > self
+                .initial_grouped_tile_pipeline
+                .maxTotalThreadsPerThreadgroup()
+        {
+            return Err(ImagingError::Unsupported(format!(
+                "source-major initial tile side {} requires {threads_per_tile} threads, above the device limit {}",
+                tile_plan.tile_side,
+                self.initial_grouped_tile_pipeline
+                    .maxTotalThreadsPerThreadgroup(),
+            )));
+        }
+        let storage_options = MTLResourceOptions::StorageModeShared;
+        let buffer_started = Instant::now();
+        let wrap_shared = |pointer: *const c_void,
+                           bytes: usize,
+                           label: &str|
+         -> Result<
+            objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn MTLBuffer>>,
+            ImagingError,
+        > {
+            let pointer = NonNull::new(pointer as *mut c_void).ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "source-major initial grouped {label} pointer was null"
+                ))
+            })?;
+            unsafe {
+                self.device
+                    .newBufferWithBytesNoCopy_length_options_deallocator(
+                        pointer,
+                        bytes,
+                        storage_options,
+                        None,
+                    )
+                    .ok_or_else(|| {
+                        ImagingError::Unsupported(format!(
+                            "source-major initial grouped could not wrap {label} buffer"
+                        ))
+                    })
+            }
+        };
+        let group_buffer = wrap_shared(
+            program.groups.as_ptr().cast::<c_void>(),
+            mem::size_of_val(program.groups.as_slice()),
+            "plan",
+        )?;
+        let kernel_buffer = wrap_shared(
+            kernels.as_ptr().cast::<c_void>(),
+            mem::size_of_val(kernels),
+            "kernel",
+        )?;
+        let phase_buffer = wrap_shared(
+            phases.as_ptr().cast::<c_void>(),
+            mem::size_of_val(phases),
+            "phase",
+        )?;
+        let active_tile_buffer = wrap_shared(
+            tile_plan.active_tile_ids.as_ptr().cast::<c_void>(),
+            mem::size_of_val(tile_plan.active_tile_ids.as_slice()),
+            "active tile",
+        )?;
+        let offset_buffer = wrap_shared(
+            tile_plan.tile_fragment_offsets.as_ptr().cast::<c_void>(),
+            mem::size_of_val(tile_plan.tile_fragment_offsets.as_slice()),
+            "tile offsets",
+        )?;
+        let fragment_buffer = wrap_shared(
+            tile_plan.fragments.as_ptr().cast::<c_void>(),
+            mem::size_of_val(tile_plan.fragments.as_slice()),
+            "tile fragments",
+        )?;
+        let scales_buffer = unsafe {
+            self.device
+                .newBufferWithBytes_length_options(
+                    NonNull::new(program.fixed_scales.as_ptr().cast::<c_void>() as *mut c_void)
+                        .expect("source-major scales pointer"),
+                    mem::size_of_val(program.fixed_scales.as_slice()),
+                    storage_options,
+                )
+                .ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "source-major initial grouped could not allocate scales".to_string(),
+                    )
+                })?
+        };
+        let inverse_scales_buffer = unsafe {
+            self.device
+                .newBufferWithBytes_length_options(
+                    NonNull::new(
+                        program.inverse_fixed_scales.as_ptr().cast::<c_void>() as *mut c_void
+                    )
+                    .expect("source-major inverse-scales pointer"),
+                    mem::size_of_val(program.inverse_fixed_scales.as_slice()),
+                    storage_options,
+                )
+                .ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "source-major initial grouped could not allocate inverse scales"
+                            .to_string(),
+                    )
+                })?
+        };
+        let params_buffer = unsafe {
+            let params_slice = slice::from_ref(&params);
+            self.device
+                .newBufferWithBytes_length_options(
+                    NonNull::new(params_slice.as_ptr().cast::<c_void>() as *mut c_void)
+                        .expect("source-major params pointer"),
+                    mem::size_of_val(params_slice),
+                    storage_options,
+                )
+                .ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "source-major initial grouped could not allocate params".to_string(),
+                    )
+                })?
+        };
+        if compensation
+            .as_ref()
+            .is_some_and(|state| state.buffer.length() < output_bytes)
+        {
+            return Err(ImagingError::Normalization(
+                "source-major initial compensation is smaller than the output".to_string(),
+            ));
+        }
+        if compensation.is_none() {
+            let buffer = self
+                .device
+                .newBufferWithLength_options(output_bytes, storage_options)
+                .ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "source-major initial grouped could not allocate compensation".to_string(),
+                    )
+                })?;
+            unsafe {
+                ptr::write_bytes(buffer.contents().as_ptr().cast::<u8>(), 0, output_bytes);
+            }
+            *compensation = Some(AwProjectMetalCompensation { buffer });
+        }
+        let buffer_alloc = buffer_started.elapsed();
+        let command_buffer = self.queue.commandBuffer().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "source-major initial grouped could not create a command buffer".to_string(),
+            )
+        })?;
+        let encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "source-major initial grouped could not create an encoder".to_string(),
+            )
+        })?;
+        encoder.setComputePipelineState(&self.initial_grouped_tile_pipeline);
+        unsafe {
+            encoder.setBuffer_offset_atIndex(Some(&group_buffer), 0, 0);
+            encoder.setBuffer_offset_atIndex(Some(&kernel_buffer), 0, 1);
+            encoder.setBuffer_offset_atIndex(Some(&active_tile_buffer), 0, 3);
+            encoder.setBuffer_offset_atIndex(Some(&offset_buffer), 0, 4);
+            encoder.setBuffer_offset_atIndex(Some(&fragment_buffer), 0, 5);
+            encoder.setBuffer_offset_atIndex(Some(grid.metal_buffer()), 0, 6);
+            encoder.setBuffer_offset_atIndex(
+                Some(
+                    &compensation
+                        .as_ref()
+                        .expect("source-major compensation")
+                        .buffer,
+                ),
+                0,
+                7,
+            );
+            encoder.setBuffer_offset_atIndex(Some(&scales_buffer), 0, 8);
+            encoder.setBuffer_offset_atIndex(Some(&inverse_scales_buffer), 0, 9);
+            encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 10);
+            encoder.setBuffer_offset_atIndex(Some(&phase_buffer), 0, 11);
+        }
+        encoder.dispatchThreadgroups_threadsPerThreadgroup(
+            MTLSize {
+                width: tile_plan.active_tile_ids.len(),
+                height: 1,
+                depth: 1,
+            },
+            MTLSize {
+                width: threads_per_tile,
+                height: 1,
+                depth: 1,
+            },
+        );
+        encoder.endEncoding();
+        let dispatch_started = Instant::now();
+        command_buffer.commit();
+        command_buffer.waitUntilCompleted();
+        let dispatch_wait = dispatch_started.elapsed();
+        if command_buffer.status() == MTLCommandBufferStatus::Error {
+            let message = command_buffer
+                .error()
+                .map(|error| format!("{error:?}"))
+                .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
+            return Err(ImagingError::Unsupported(format!(
+                "source-major initial grouped command failed: {message}"
+            )));
+        }
+        Ok(AwProjectMetalTileGridStats {
+            active_tiles: tile_plan.active_tile_ids.len(),
+            fragments: tile_plan.fragments.len(),
+            route_plan: tile_plan.plan_elapsed,
+            kernel_pack,
+            buffer_alloc,
+            dispatch_wait,
+            output_bytes: output_bytes.saturating_mul(2),
+            total: buffer_alloc + dispatch_wait,
+            grouped_metal_live: None,
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn dispatch_prediction_tile_chain_probe(
         &self,
@@ -21310,6 +21876,11 @@ struct AwGroupedTilePlan {
     float2 tt1;
 };
 
+struct AwInitialGroupedPlan {
+    AwPlan plan;
+    float2 values[8];
+};
+
 struct AwParams {
     uint sample_count;
     uint grid_width;
@@ -21481,6 +22052,9 @@ static_assert(sizeof(AwWeightedResidual) == 32, "AwWeightedResidual ABI drift");
 static_assert(alignof(AwWeightedResidual) == 8, "AwWeightedResidual alignment drift");
 static_assert(sizeof(AwGroupedTilePlan) == 48, "AwGroupedTilePlan ABI drift");
 static_assert(alignof(AwGroupedTilePlan) == 8, "AwGroupedTilePlan alignment drift");
+static_assert(sizeof(AwInitialGroupedPlan) == 96, "AwInitialGroupedPlan ABI drift");
+static_assert(alignof(AwInitialGroupedPlan) == 8, "AwInitialGroupedPlan alignment drift");
+static_assert(__builtin_offsetof(AwInitialGroupedPlan, values) == 32, "AwInitialGroupedPlan values offset drift");
 static_assert(sizeof(AwParams) == 32, "AwParams ABI drift");
 static_assert(alignof(AwParams) == 4, "AwParams alignment drift");
 static_assert(sizeof(AwPredictionPlan) == 40, "AwPredictionPlan ABI drift");
@@ -22207,6 +22781,80 @@ kernel void awproject_grid_mtmfs_tiles(
         fixed_tt1.y,
         inverse_scales[1]
     );
+}
+
+kernel void awproject_grid_initial_grouped_tiles(
+    device const AwInitialGroupedPlan *groups [[buffer(0)]],
+    device const float2 *kernels [[buffer(1)]],
+    device const uint *active_tile_ids [[buffer(3)]],
+    device const uint *tile_fragment_offsets [[buffer(4)]],
+    device const uint *fragments [[buffer(5)]],
+    device float *output [[buffer(6)]],
+    device float *compensation [[buffer(7)]],
+    device const float *fixed_scales [[buffer(8)]],
+    device const float *inverse_scales [[buffer(9)]],
+    constant AwTileParams &params [[buffer(10)]],
+    device const float2 *phases [[buffer(11)]],
+    uint local_index [[thread_index_in_threadgroup]],
+    uint active_tile_index [[threadgroup_position_in_grid]]
+) {
+    if (active_tile_index >= params.active_tile_count || params.nterms != 8u) {
+        return;
+    }
+    const uint tile_id = active_tile_ids[active_tile_index];
+    const uint tile_x = tile_id / params.tiles_y;
+    const uint tile_y = tile_id % params.tiles_y;
+    const uint local_x = local_index % params.tile_side;
+    const uint local_y = local_index / params.tile_side;
+    const uint grid_x = tile_x * params.tile_side + local_x;
+    const uint grid_y = tile_y * params.tile_side + local_y;
+    if (grid_x >= params.grid_width || grid_y >= params.grid_height) {
+        return;
+    }
+
+    long2 fixed_planes[8];
+    for (uint plane = 0u; plane < 8u; ++plane) {
+        fixed_planes[plane] = long2(0);
+    }
+    const uint fragment_start = tile_fragment_offsets[active_tile_index];
+    const uint fragment_end = tile_fragment_offsets[active_tile_index + 1u];
+    for (uint fragment_index = fragment_start;
+         fragment_index < fragment_end;
+         ++fragment_index) {
+        const AwInitialGroupedPlan group = groups[fragments[fragment_index]];
+        float2 tap;
+        if (!aw_tile_plan_tap(
+                group.plan, grid_x, grid_y, kernels, phases, tap)) {
+            continue;
+        }
+        for (uint plane = 0u; plane < 8u; ++plane) {
+            fixed_planes[plane] += aw_complex_product_fixed64(
+                group.values[plane], tap, fixed_scales[plane]
+            );
+        }
+    }
+
+    const uint fft_x = (grid_x + params.grid_width / 2u) % params.grid_width;
+    const uint fft_y = (grid_y + params.grid_height / 2u) % params.grid_height;
+    const uint cell_count = params.grid_width * params.grid_height;
+    const uint cell = fft_x * params.grid_height + fft_y;
+    for (uint plane = 0u; plane < 8u; ++plane) {
+        const uint scalar = (plane * cell_count + cell) * 2u;
+        aw_tile_add_fixed(
+            output,
+            compensation,
+            scalar,
+            fixed_planes[plane].x,
+            inverse_scales[plane]
+        );
+        aw_tile_add_fixed(
+            output,
+            compensation,
+            scalar + 1u,
+            fixed_planes[plane].y,
+            inverse_scales[plane]
+        );
+    }
 }
 
 kernel void awproject_grid_predicted_mtmfs_tiles(
@@ -24461,23 +25109,56 @@ impl AwProjectMetalPhaseAtlasBuilder {
         if bundle.phase_applied {
             return Ok(AwProjectMetalPhasePlan::NONE);
         }
-        let table_key = (
+        self.plan_layout(
             group_index,
             bundle.sampling,
             bundle.x_support,
             bundle.y_support,
             bundle.off_x,
             bundle.off_y,
-        );
+            phase_tables,
+        )
+    }
+
+    fn plan_source_major(
+        &mut self,
+        group_index: usize,
+        tap: AwProjectSourceMajorTap,
+        request: AwProjectCompactTapRequest,
+        phase_tables: Option<&AwProjectPhaseTables>,
+    ) -> Result<AwProjectMetalPhasePlan, ImagingError> {
+        self.plan_layout(
+            group_index,
+            tap.sampling,
+            tap.x_support,
+            tap.y_support,
+            request.key.off_x,
+            request.key.off_y,
+            phase_tables,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn plan_layout(
+        &mut self,
+        group_index: usize,
+        sampling: usize,
+        x_support: usize,
+        y_support: usize,
+        off_x: isize,
+        off_y: isize,
+        phase_tables: Option<&AwProjectPhaseTables>,
+    ) -> Result<AwProjectMetalPhasePlan, ImagingError> {
+        let table_key = (group_index, sampling, x_support, y_support, off_x, off_y);
         let table_plan = if let Some(plan) = self.tables.get(&table_key) {
             *plan
         } else {
             let table = phase_tables
-                .and_then(|tables| tables.get(&(group_index, bundle.sampling)))
+                .and_then(|tables| tables.get(&(group_index, sampling)))
                 .ok_or_else(|| {
                     ImagingError::InvalidRequest(format!(
                         "AWProject Metal tapless phase atlas is missing group {group_index} sampling {}",
-                        bundle.sampling,
+                        sampling,
                     ))
                 })?;
             let base = u32::try_from(self.values.len()).map_err(|_| {
@@ -24486,8 +25167,8 @@ impl AwProjectMetalPhaseAtlasBuilder {
                 )
             })?;
             let plan = if self.separable {
-                for ix in -(bundle.x_support as isize)..=bundle.x_support as isize {
-                    let x_coordinate = ix * bundle.sampling as isize + bundle.off_x;
+                for ix in -(x_support as isize)..=x_support as isize {
+                    let x_coordinate = ix * sampling as isize + off_x;
                     self.values.push(WProjectMetalComplex {
                         re: table.x(x_coordinate).re,
                         im: table.x(x_coordinate).im,
@@ -24498,8 +25179,8 @@ impl AwProjectMetalPhaseAtlasBuilder {
                         "AWProject Metal separable Y-phase atlas offset exceeds u32".to_string(),
                     )
                 })?;
-                for iy in -(bundle.y_support as isize)..=bundle.y_support as isize {
-                    let y_coordinate = iy * bundle.sampling as isize + bundle.off_y;
+                for iy in -(y_support as isize)..=y_support as isize {
+                    let y_coordinate = iy * sampling as isize + off_y;
                     self.values.push(WProjectMetalComplex {
                         re: table.y(y_coordinate).re,
                         im: table.y(y_coordinate).im,
@@ -24507,11 +25188,11 @@ impl AwProjectMetalPhaseAtlasBuilder {
                 }
                 AwProjectMetalPhasePlan::separable(base, y_base)
             } else {
-                for iy in -(bundle.y_support as isize)..=bundle.y_support as isize {
-                    let y_coordinate = iy * bundle.sampling as isize + bundle.off_y;
+                for iy in -(y_support as isize)..=y_support as isize {
+                    let y_coordinate = iy * sampling as isize + off_y;
                     let phase_y = table.y(y_coordinate);
-                    for ix in -(bundle.x_support as isize)..=bundle.x_support as isize {
-                        let x_coordinate = ix * bundle.sampling as isize + bundle.off_x;
+                    for ix in -(x_support as isize)..=x_support as isize {
+                        let x_coordinate = ix * sampling as isize + off_x;
                         let phase = gridder::casa_aw_phase_gradient_from_axes(
                             table.x(x_coordinate),
                             phase_y,
@@ -24602,6 +25283,104 @@ fn awproject_compact_metal_prediction_plan(
         normalization_re: bundle.normalization.re,
         normalization_im: bundle.normalization.im,
         phase: phase_atlas.plan(group_index, bundle, phase_tables)?,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_source_major_ready_tap(
+    materialized: &[AwProjectSourceMajorMaterializedTap],
+    plan: AwProjectCompactSamplePlan,
+) -> Result<AwProjectSourceMajorTap, ImagingError> {
+    match materialized.get(plan.tap_bundle) {
+        Some(AwProjectSourceMajorMaterializedTap::Ready(tap)) => Ok(*tap),
+        Some(AwProjectSourceMajorMaterializedTap::Rejected(_)) => Err(ImagingError::Normalization(
+            "source-major AWProject plan reached a rejected request".to_string(),
+        )),
+        None => Err(ImagingError::Normalization(
+            "source-major AWProject plan escaped its materialized requests".to_string(),
+        )),
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_source_major_metal_plan(
+    plan: AwProjectCompactSamplePlan,
+    requests: &[AwProjectCompactTapRequest],
+    materialized: &[AwProjectSourceMajorMaterializedTap],
+    atlas: &AwProjectMetalRawAtlas,
+    group_index: usize,
+    phase_tables: Option<&AwProjectPhaseTables>,
+    phase_atlas: &mut AwProjectMetalPhaseAtlasBuilder,
+) -> Result<AwProjectMetalPlan, ImagingError> {
+    let request = *requests.get(plan.tap_bundle).ok_or_else(|| {
+        ImagingError::Normalization(
+            "source-major AWProject Metal plan escaped its requests".to_string(),
+        )
+    })?;
+    let tap = awproject_source_major_ready_tap(materialized, plan)?;
+    let (kernel_base, layout) = atlas.kernel_plan(
+        awproject_source_major_raw_plane_key(request),
+        request.key.off_x,
+        request.key.off_y,
+        request.key.conjugate_for_grid,
+    )?;
+    Ok(AwProjectMetalPlan {
+        loc_x: i32::try_from(plan.loc_x).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "source-major AWProject Metal x coordinate exceeds i32".to_string(),
+            )
+        })?,
+        loc_y: i32::try_from(plan.loc_y).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "source-major AWProject Metal y coordinate exceeds i32".to_string(),
+            )
+        })?,
+        x_support: u32::try_from(tap.x_support).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "source-major AWProject Metal X support exceeds u32".to_string(),
+            )
+        })?,
+        y_support: u32::try_from(tap.y_support).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "source-major AWProject Metal Y support exceeds u32".to_string(),
+            )
+        })?,
+        kernel_base,
+        _pad0: layout,
+        phase: phase_atlas.plan_source_major(group_index, tap, request, phase_tables)?,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_source_major_prediction_plan(
+    plan: AwProjectCompactSamplePlan,
+    requests: &[AwProjectCompactTapRequest],
+    materialized: &[AwProjectSourceMajorMaterializedTap],
+    atlas: &AwProjectMetalRawAtlas,
+    group_index: usize,
+    phase_tables: Option<&AwProjectPhaseTables>,
+    phase_atlas: &mut AwProjectMetalPhaseAtlasBuilder,
+) -> Result<AwProjectMetalPredictionPlan, ImagingError> {
+    let imaging = awproject_source_major_metal_plan(
+        plan,
+        requests,
+        materialized,
+        atlas,
+        group_index,
+        phase_tables,
+        phase_atlas,
+    )?;
+    let tap = awproject_source_major_ready_tap(materialized, plan)?;
+    Ok(AwProjectMetalPredictionPlan {
+        loc_x: imaging.loc_x,
+        loc_y: imaging.loc_y,
+        x_support: imaging.x_support,
+        y_support: imaging.y_support,
+        kernel_base: imaging.kernel_base,
+        _pad0: imaging._pad0,
+        normalization_re: tap.normalization.re,
+        normalization_im: tap.normalization.im,
+        phase: imaging.phase,
     })
 }
 
@@ -24979,8 +25758,8 @@ fn awproject_metal_plan_tile_ids(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
-fn plan_awproject_metal_group_tiles(
-    groups: &[AwProjectMetalGroupedTilePlan],
+fn plan_awproject_metal_group_tiles<T: AwProjectMetalTileGroup>(
+    groups: &[T],
     grid_width: usize,
     grid_height: usize,
     tile_side: usize,
@@ -24996,7 +25775,7 @@ fn plan_awproject_metal_group_tiles(
     let mut tile_ids = Vec::with_capacity(64);
     for group in groups {
         awproject_metal_plan_tile_ids(
-            group.plan,
+            group.tile_plan(),
             grid_width,
             grid_height,
             tile_side,
@@ -25053,7 +25832,7 @@ fn plan_awproject_metal_group_tiles(
         .collect::<Vec<_>>();
     for (group_index, group) in groups.iter().enumerate() {
         awproject_metal_plan_tile_ids(
-            group.plan,
+            group.tile_plan(),
             grid_width,
             grid_height,
             tile_side,
@@ -25236,6 +26015,209 @@ fn group_awproject_metal_tile_plans_with_ledger(
             tile_planner_known_peak_bytes,
         },
     ))
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn add_awproject_source_major_initial_group(
+    group_index: &mut HashMap<AwProjectMetalPlanKey, usize>,
+    groups: &mut Vec<AwProjectMetalInitialGroupedPlan>,
+    sums: &mut Vec<[f64; AWPROJECT_INITIAL_GROUPED_PLANE_COUNT * 2]>,
+    plan: AwProjectMetalPlan,
+    plane: usize,
+    value: Complex32,
+) -> Result<(), ImagingError> {
+    let key = AwProjectMetalPlanKey::from(plan);
+    let group = if let Some(&group) = group_index.get(&key) {
+        group
+    } else {
+        let group = groups.len();
+        groups.push(AwProjectMetalInitialGroupedPlan {
+            plan,
+            values: [WProjectMetalComplex { re: 0.0, im: 0.0 };
+                AWPROJECT_INITIAL_GROUPED_PLANE_COUNT],
+        });
+        sums.push([0.0; AWPROJECT_INITIAL_GROUPED_PLANE_COUNT * 2]);
+        group_index.insert(key, group);
+        group
+    };
+    let sum = sums.get_mut(group).ok_or_else(|| {
+        ImagingError::Normalization(
+            "source-major initial group index escaped its accumulator".to_string(),
+        )
+    })?;
+    sum[plane * 2] += f64::from(value.re);
+    sum[plane * 2 + 1] += f64::from(value.im);
+    Ok(())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn finish_awproject_source_major_initial_partition(
+    mut groups: Vec<AwProjectMetalInitialGroupedPlan>,
+    sums: Vec<[f64; AWPROJECT_INITIAL_GROUPED_PLANE_COUNT * 2]>,
+    kernels: &[WProjectMetalComplex],
+    phases: &[WProjectMetalComplex],
+    grid_width: usize,
+    grid_height: usize,
+    tile_side: usize,
+) -> Result<AwProjectMetalInitialGroupedProgram, ImagingError> {
+    for (group, sums) in groups.iter_mut().zip(sums) {
+        for (plane, value) in group.values.iter_mut().enumerate() {
+            *value = WProjectMetalComplex {
+                re: sums[plane * 2] as f32,
+                im: sums[plane * 2 + 1] as f32,
+            };
+            if !(value.re.is_finite() && value.im.is_finite()) {
+                return Err(ImagingError::Normalization(
+                    "source-major grouped initial value is not finite".to_string(),
+                ));
+            }
+        }
+    }
+    let max_kernel_norm = awproject_metal_max_effective_kernel_norm(
+        groups.iter().map(|group| group.plan),
+        kernels,
+        phases,
+    )?;
+    let overlap = awproject_metal_max_plan_overlap(
+        groups.iter().map(|group| group.plan),
+        grid_width,
+        grid_height,
+    )?;
+    let fixed_limit = i64::MAX as f64 / 16.0;
+    let mut fixed_scales = Vec::with_capacity(AWPROJECT_INITIAL_GROUPED_PLANE_COUNT);
+    let mut inverse_fixed_scales = Vec::with_capacity(AWPROJECT_INITIAL_GROUPED_PLANE_COUNT);
+    for plane in 0..AWPROJECT_INITIAL_GROUPED_PLANE_COUNT {
+        let max_value = groups
+            .iter()
+            .map(|group| {
+                let value = group.values[plane];
+                f64::from(value.re).hypot(f64::from(value.im))
+            })
+            .fold(0.0f64, f64::max);
+        let bound = max_value * max_kernel_norm * overlap as f64;
+        let scale = if bound.is_finite() && bound > 0.0 {
+            let maximum_scale = fixed_limit / bound;
+            let exponent = maximum_scale.log2().floor().clamp(-126.0, 127.0) as i32;
+            2.0f32.powi(exponent)
+        } else {
+            1.0
+        };
+        if !(scale.is_finite() && scale > 0.0) {
+            return Err(ImagingError::Normalization(
+                "source-major grouped initial fixed-point scale is non-finite or zero".to_string(),
+            ));
+        }
+        fixed_scales.push(scale);
+        inverse_fixed_scales.push(scale.recip());
+    }
+    let (tile_plan, _) =
+        plan_awproject_metal_group_tiles(&groups, grid_width, grid_height, tile_side)?;
+    Ok(AwProjectMetalInitialGroupedProgram {
+        groups,
+        tile_plan,
+        fixed_scales,
+        inverse_fixed_scales,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn group_awproject_source_major_initial_imaging(
+    batch: &AwProjectMetalBatch,
+    kernels: &[WProjectMetalComplex],
+    grid_width: usize,
+    grid_height: usize,
+    tile_side: usize,
+) -> Result<AwProjectMetalInitialGroupedProgram, ImagingError> {
+    if batch.term_weights.len() != batch.samples.len().saturating_mul(2) {
+        return Err(ImagingError::Normalization(format!(
+            "source-major initial imaging partition received {} weights for {} samples",
+            batch.term_weights.len(),
+            batch.samples.len(),
+        )));
+    }
+    let mut group_index = HashMap::<AwProjectMetalPlanKey, usize>::new();
+    let mut groups = Vec::new();
+    let mut sums = Vec::new();
+    for (sample, weights) in batch.samples.iter().zip(batch.term_weights.chunks_exact(2)) {
+        let first = Complex32::new(sample.first_residual_re, sample.first_residual_im);
+        let second = Complex32::new(sample.second_residual_re, sample.second_residual_im);
+        for (order, &weight) in weights.iter().enumerate() {
+            let plane = 3 + order;
+            add_awproject_source_major_initial_group(
+                &mut group_index,
+                &mut groups,
+                &mut sums,
+                sample.first_imaging,
+                plane,
+                first * weight,
+            )?;
+            add_awproject_source_major_initial_group(
+                &mut group_index,
+                &mut groups,
+                &mut sums,
+                sample.second_imaging,
+                plane,
+                second * weight,
+            )?;
+        }
+    }
+    finish_awproject_source_major_initial_partition(
+        groups,
+        sums,
+        kernels,
+        &batch.phases,
+        grid_width,
+        grid_height,
+        tile_side,
+    )
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn group_awproject_source_major_initial_weight(
+    samples: &[AwProjectSourceMajorWeightSample],
+    kernels: &[WProjectMetalComplex],
+    phases: &[WProjectMetalComplex],
+    grid_width: usize,
+    grid_height: usize,
+    tile_side: usize,
+) -> Result<AwProjectMetalInitialGroupedProgram, ImagingError> {
+    let mut group_index = HashMap::<AwProjectMetalPlanKey, usize>::new();
+    let mut groups = Vec::new();
+    let mut sums = Vec::new();
+    for sample in samples {
+        for (order, &weight) in sample.term_weights.iter().enumerate() {
+            let value = Complex32::new(weight, 0.0);
+            for plan in [sample.first_psf, sample.second_psf] {
+                add_awproject_source_major_initial_group(
+                    &mut group_index,
+                    &mut groups,
+                    &mut sums,
+                    plan,
+                    order,
+                    value,
+                )?;
+            }
+            for plan in [sample.first_weight, sample.second_weight] {
+                add_awproject_source_major_initial_group(
+                    &mut group_index,
+                    &mut groups,
+                    &mut sums,
+                    plan,
+                    5 + order,
+                    value,
+                )?;
+            }
+        }
+    }
+    finish_awproject_source_major_initial_partition(
+        groups,
+        sums,
+        kernels,
+        phases,
+        grid_width,
+        grid_height,
+        tile_side,
+    )
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -26256,6 +27238,974 @@ impl AwProjectMetalRawPlane {
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Default)]
+struct AwProjectMetalRawAtlas {
+    values: Vec<WProjectMetalComplex>,
+    planes: BTreeMap<AwProjectMetalRawPlaneKey, AwProjectMetalRawPlane>,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn checked_awproject_source_major_bytes(components: &[usize]) -> Result<usize, ImagingError> {
+    components.iter().try_fold(0usize, |total, &bytes| {
+        total.checked_add(bytes).ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "source-major AWProject ownership byte count overflowed".to_string(),
+            )
+        })
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_source_major_vec_bytes<T>(values: &Vec<T>) -> usize {
+    values.capacity().saturating_mul(std::mem::size_of::<T>())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn admit_awproject_source_major_device_peak(
+    device_budget_bytes: usize,
+    grid_bytes: usize,
+    compensation_bytes: usize,
+    partition_bytes: usize,
+    safety_reserve_bytes: usize,
+) -> Result<usize, ImagingError> {
+    let peak_bytes = checked_awproject_source_major_bytes(&[
+        grid_bytes,
+        compensation_bytes,
+        partition_bytes,
+        safety_reserve_bytes,
+    ])?;
+    if peak_bytes > device_budget_bytes {
+        return Err(ImagingError::InvalidRequest(format!(
+            "source-major AWProject initial Metal peak {peak_bytes} exceeds its {device_budget_bytes}-byte device ceiling"
+        )));
+    }
+    Ok(peak_bytes)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectMetalRawAtlasInsertion {
+    key: AwProjectMetalRawPlaneKey,
+    atlas_index: usize,
+    plane_index: usize,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl AwProjectMetalRawAtlas {
+    fn resident_bytes(&self) -> usize {
+        self.values
+            .capacity()
+            .saturating_mul(std::mem::size_of::<WProjectMetalComplex>())
+            .saturating_add(
+                self.planes
+                    .values()
+                    .map(AwProjectMetalRawPlane::resident_bytes)
+                    .sum::<usize>(),
+            )
+    }
+
+    fn plane_shape(
+        sampling: usize,
+        x_support: usize,
+        y_support: usize,
+    ) -> Result<(usize, usize, isize, isize), ImagingError> {
+        let sampling = isize::try_from(sampling).map_err(|_| {
+            ImagingError::InvalidRequest("AWProject raw-CF sampling exceeds isize".to_string())
+        })?;
+        let x_support = isize::try_from(x_support).map_err(|_| {
+            ImagingError::InvalidRequest("AWProject raw-CF X support exceeds isize".to_string())
+        })?;
+        let y_support = isize::try_from(y_support).map_err(|_| {
+            ImagingError::InvalidRequest("AWProject raw-CF Y support exceeds isize".to_string())
+        })?;
+        let offset_radius = (sampling + 1) / 2;
+        let width =
+            usize::try_from(2 * x_support * sampling + 2 * offset_radius + 1).map_err(|_| {
+                ImagingError::InvalidRequest("AWProject raw-CF atlas width overflowed".to_string())
+            })?;
+        let height =
+            usize::try_from(2 * y_support * sampling + 2 * offset_radius + 1).map_err(|_| {
+                ImagingError::InvalidRequest("AWProject raw-CF atlas height overflowed".to_string())
+            })?;
+        Ok((
+            width,
+            height,
+            x_support * sampling + offset_radius,
+            y_support * sampling + offset_radius,
+        ))
+    }
+
+    fn plane_bytes(
+        sampling: usize,
+        x_support: usize,
+        y_support: usize,
+    ) -> Result<usize, ImagingError> {
+        let (width, height, _, _) = Self::plane_shape(sampling, x_support, y_support)?;
+        width
+            .checked_mul(height)
+            .and_then(|values| values.checked_mul(std::mem::size_of::<WProjectMetalComplex>()))
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject raw-CF atlas byte count overflowed".to_string(),
+                )
+            })
+    }
+
+    fn ensure_plane(
+        &mut self,
+        key: AwProjectMetalRawPlaneKey,
+        sampling: usize,
+        x_support: usize,
+        y_support: usize,
+    ) -> Result<(), ImagingError> {
+        if let Some(existing) = self.planes.get(&key) {
+            if existing.sampling != sampling
+                || existing.x_support != x_support
+                || existing.y_support != y_support
+            {
+                return Err(ImagingError::Normalization(
+                    "AWProject raw-CF cell changed sampling or support".to_string(),
+                ));
+            }
+            return Ok(());
+        }
+        let (width, height, origin_x, origin_y) =
+            Self::plane_shape(sampling, x_support, y_support)?;
+        let value_count = width.checked_mul(height).ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject raw-CF atlas value count overflowed".to_string(),
+            )
+        })?;
+        let base = u32::try_from(self.values.len()).map_err(|_| {
+            ImagingError::InvalidRequest("AWProject raw-CF atlas base exceeds u32".to_string())
+        })?;
+        let required_len = self
+            .values
+            .len()
+            .checked_add(value_count)
+            .filter(|&len| len <= u32::MAX as usize)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject raw-CF atlas exceeds the u32 Metal address space".to_string(),
+                )
+            })?;
+        reserve_awproject_metal_exact_atlas(
+            &mut self.values,
+            required_len,
+            AWPROJECT_METAL_EXACT_ATLAS_GROWTH_BYTES,
+            "AWProject raw-CF",
+        )?;
+        self.values
+            .resize(required_len, WProjectMetalComplex { re: 0.0, im: 0.0 });
+        let (residue_bases, residue_widths) =
+            AwProjectMetalRawPlane::polyphase_layout(base, width, height, sampling)?;
+        self.planes.insert(
+            key,
+            AwProjectMetalRawPlane {
+                base,
+                width,
+                height,
+                origin_x,
+                origin_y,
+                sampling,
+                x_support,
+                y_support,
+                residue_bases,
+                residue_widths,
+                present: vec![0u64; value_count.div_ceil(u64::BITS as usize)],
+            },
+        );
+        Ok(())
+    }
+
+    fn write_request_value(
+        &mut self,
+        key: AwProjectMetalRawPlaneKey,
+        x_coordinate: isize,
+        y_coordinate: isize,
+        conjugate_for_grid: bool,
+        packed: Complex32,
+    ) -> Result<Option<AwProjectMetalRawAtlasInsertion>, ImagingError> {
+        let Self { values, planes } = self;
+        let plane = planes.get_mut(&key).ok_or_else(|| {
+            ImagingError::Normalization(
+                "AWProject raw-CF request reached an unreserved plane".to_string(),
+            )
+        })?;
+        let raw_x = usize::try_from(plane.origin_x + x_coordinate).map_err(|_| {
+            ImagingError::Normalization(
+                "AWProject raw-CF X coordinate escaped its atlas".to_string(),
+            )
+        })?;
+        let raw_y = usize::try_from(plane.origin_y + y_coordinate).map_err(|_| {
+            ImagingError::Normalization(
+                "AWProject raw-CF Y coordinate escaped its atlas".to_string(),
+            )
+        })?;
+        if raw_x >= plane.width || raw_y >= plane.height {
+            return Err(ImagingError::Normalization(
+                "AWProject raw-CF coordinate escaped its admitted plane".to_string(),
+            ));
+        }
+        let (atlas_index, _) = plane.polyphase_index(raw_x, raw_y)?;
+        let plane_index = atlas_index
+            .checked_sub(plane.base as usize)
+            .ok_or_else(|| {
+                ImagingError::Normalization(
+                    "AWProject polyphase CF index precedes its plane".to_string(),
+                )
+            })?;
+        let canonical = if conjugate_for_grid {
+            packed.conj()
+        } else {
+            packed
+        };
+        let value = WProjectMetalComplex {
+            re: canonical.re,
+            im: canonical.im,
+        };
+        let word = plane_index / u64::BITS as usize;
+        let bit = 1u64 << (plane_index % u64::BITS as usize);
+        if plane.present[word] & bit == 0 {
+            values[atlas_index] = value;
+            plane.present[word] |= bit;
+            Ok(Some(AwProjectMetalRawAtlasInsertion {
+                key,
+                atlas_index,
+                plane_index,
+            }))
+        } else {
+            let existing = values[atlas_index];
+            if existing.re.to_bits() != value.re.to_bits()
+                || existing.im.to_bits() != value.im.to_bits()
+            {
+                return Err(ImagingError::Normalization(
+                    "AWProject raw-CF atlas received inconsistent source bits".to_string(),
+                ));
+            }
+            Ok(None)
+        }
+    }
+
+    fn rollback_request(&mut self, insertions: &[AwProjectMetalRawAtlasInsertion]) {
+        for insertion in insertions.iter().rev() {
+            if let Some(plane) = self.planes.get_mut(&insertion.key) {
+                let word = insertion.plane_index / u64::BITS as usize;
+                let bit = 1u64 << (insertion.plane_index % u64::BITS as usize);
+                plane.present[word] &= !bit;
+                self.values[insertion.atlas_index] = WProjectMetalComplex { re: 0.0, im: 0.0 };
+            }
+        }
+    }
+
+    fn kernel_plan(
+        &self,
+        key: AwProjectMetalRawPlaneKey,
+        off_x: isize,
+        off_y: isize,
+        conjugate_for_grid: bool,
+    ) -> Result<(u32, u32), ImagingError> {
+        let plane = self.planes.get(&key).ok_or_else(|| {
+            ImagingError::Normalization(
+                "AWProject raw-CF plan reached an unreserved plane".to_string(),
+            )
+        })?;
+        let first_x = plane.origin_x - plane.x_support as isize * plane.sampling as isize + off_x;
+        let first_y = plane.origin_y - plane.y_support as isize * plane.sampling as isize + off_y;
+        let first_x = usize::try_from(first_x).map_err(|_| {
+            ImagingError::Normalization(
+                "AWProject raw-CF first X coordinate escaped its atlas".to_string(),
+            )
+        })?;
+        let first_y = usize::try_from(first_y).map_err(|_| {
+            ImagingError::Normalization(
+                "AWProject raw-CF first Y coordinate escaped its atlas".to_string(),
+            )
+        })?;
+        let (kernel_base, polyphase_width) = plane.polyphase_index(first_x, first_y)?;
+        Ok((
+            u32::try_from(kernel_base).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "AWProject polyphase plan base exceeds u32".to_string(),
+                )
+            })?,
+            awproject_metal_raw_kernel_layout(polyphase_width, 1, conjugate_for_grid)?,
+        ))
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_source_major_raw_plane_key(
+    request: AwProjectCompactTapRequest,
+) -> AwProjectMetalRawPlaneKey {
+    AwProjectMetalRawPlaneKey {
+        cell: request.key.cell,
+        kernel_kind: request.key.kernel_kind,
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_source_major_kernel_metadata(
+    cache: &AwConvolutionFunctionResidentCache,
+    request: AwProjectCompactTapRequest,
+) -> Result<&AwConvolutionFunctionKernelMetadata, ImagingError> {
+    let metadata = cache.cache().metadata(request.cell_key).ok_or_else(|| {
+        ImagingError::ConvolutionFunctionCache(
+            "source-major AWProject request lost its indexed CF metadata".to_string(),
+        )
+    })?;
+    Ok(match request.key.kernel_kind {
+        AwProjectCompactKernelKind::Imaging => &metadata.imaging,
+        AwProjectCompactKernelKind::Weight => &metadata.weight,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn materialize_awproject_source_major_request_from_kernel<K: AwProjectKernelPixels + ?Sized>(
+    gridder: &StandardGridder,
+    metadata: &AwConvolutionFunctionKernelMetadata,
+    kernel: &K,
+    request: AwProjectCompactTapRequest,
+    atlas: &mut AwProjectMetalRawAtlas,
+) -> Result<AwProjectSourceMajorMaterializedTap, ImagingError> {
+    let projector = AwProjector::new(gridder, metadata, kernel, [0.0, 0.0])?;
+    let identity = Complex32::new(1.0, 0.0);
+    let key = awproject_source_major_raw_plane_key(request);
+    let mut insertions =
+        Vec::with_capacity((2 * metadata.x_support + 1).saturating_mul(2 * metadata.y_support + 1));
+    let mut write_error = None;
+    let planned = projector.visit_geometry_with_phase_lookup(
+        request.representative_geometry,
+        |_| identity,
+        |_| identity,
+        |x_coordinate, y_coordinate, value| {
+            if write_error.is_some() {
+                return;
+            }
+            match atlas.write_request_value(
+                key,
+                x_coordinate,
+                y_coordinate,
+                request.key.conjugate_for_grid,
+                value,
+            ) {
+                Ok(Some(insertion)) => insertions.push(insertion),
+                Ok(None) => {}
+                Err(error) => write_error = Some(error),
+            }
+        },
+    );
+    if let Some(error) = write_error {
+        atlas.rollback_request(&insertions);
+        return Err(error);
+    }
+    match planned {
+        Ok(plan) => {
+            debug_assert_eq!(plan.loc_x, request.representative_geometry.loc_x);
+            debug_assert_eq!(plan.loc_y, request.representative_geometry.loc_y);
+            debug_assert_eq!(plan.off_x, request.key.off_x);
+            debug_assert_eq!(plan.off_y, request.key.off_y);
+            debug_assert_eq!(plan.conjugate_for_grid, request.key.conjugate_for_grid);
+            Ok(AwProjectSourceMajorMaterializedTap::Ready(
+                AwProjectSourceMajorTap {
+                    x_support: metadata.x_support,
+                    y_support: metadata.y_support,
+                    normalization: plan.normalization,
+                    grid_normalization: plan.grid_normalization,
+                    sampling: metadata.sampling,
+                },
+            ))
+        }
+        Err(reason) => {
+            atlas.rollback_request(&insertions);
+            Ok(AwProjectSourceMajorMaterializedTap::Rejected(reason))
+        }
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn materialize_awproject_source_major_request(
+    gridder: &StandardGridder,
+    cell: &awprojection::AwConvolutionFunctionReplayCell,
+    request: AwProjectCompactTapRequest,
+    atlas: &mut AwProjectMetalRawAtlas,
+) -> Result<AwProjectSourceMajorMaterializedTap, ImagingError> {
+    match cell {
+        awprojection::AwConvolutionFunctionReplayCell::Owned(cell) => {
+            let (metadata, kernel) = match request.key.kernel_kind {
+                AwProjectCompactKernelKind::Imaging => (&cell.metadata.imaging, &cell.imaging),
+                AwProjectCompactKernelKind::Weight => (&cell.metadata.weight, &cell.weight),
+            };
+            materialize_awproject_source_major_request_from_kernel(
+                gridder, metadata, kernel, request, atlas,
+            )
+        }
+        #[cfg(unix)]
+        awprojection::AwConvolutionFunctionReplayCell::Mapped(cell) => {
+            let (metadata, kernel) = match request.key.kernel_kind {
+                AwProjectCompactKernelKind::Imaging => (&cell.metadata.imaging, &cell.imaging),
+                AwProjectCompactKernelKind::Weight => (&cell.metadata.weight, &cell.weight),
+            };
+            materialize_awproject_source_major_request_from_kernel(
+                gridder, metadata, kernel, request, atlas,
+            )
+        }
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn materialize_awproject_source_major_atlases(
+    gridder: &StandardGridder,
+    cache: &AwConvolutionFunctionResidentCache,
+    source_samples: &[AwProjectCompactSourceSample],
+    requests: &[AwProjectCompactTapRequest],
+) -> Result<
+    (
+        Vec<AwProjectSourceMajorMaterializedTap>,
+        AwProjectMetalRawAtlas,
+        AwProjectMetalRawAtlas,
+    ),
+    ImagingError,
+> {
+    let mut residual_atlas = AwProjectMetalRawAtlas::default();
+    let mut weight_atlas = AwProjectMetalRawAtlas::default();
+    let reserve = |plan: AwProjectCompactSamplePlan,
+                   atlas: &mut AwProjectMetalRawAtlas|
+     -> Result<(), ImagingError> {
+        let request = *requests.get(plan.tap_bundle).ok_or_else(|| {
+            ImagingError::Normalization(
+                "source-major AWProject plan escaped its request arena".to_string(),
+            )
+        })?;
+        let metadata = awproject_source_major_kernel_metadata(cache, request)?;
+        atlas.ensure_plane(
+            awproject_source_major_raw_plane_key(request),
+            metadata.sampling,
+            metadata.x_support,
+            metadata.y_support,
+        )
+    };
+    for sample in source_samples {
+        for plan in [
+            sample.first_prediction_plan,
+            sample.second_prediction_plan,
+            sample.first_imaging_plan,
+            sample.second_imaging_plan,
+        ] {
+            reserve(plan, &mut residual_atlas)?;
+        }
+        for plan in [
+            sample.first_psf_plan,
+            sample.second_psf_plan,
+            sample.first_weight_plan,
+            sample.second_weight_plan,
+        ] {
+            reserve(plan, &mut weight_atlas)?;
+        }
+    }
+
+    let mut by_cell = BTreeMap::<AwProjectStableCellKey, Vec<usize>>::new();
+    for (request_index, request) in requests.iter().enumerate() {
+        by_cell
+            .entry(request.key.cell)
+            .or_default()
+            .push(request_index);
+    }
+    let mut materialized = vec![
+        AwProjectSourceMajorMaterializedTap::Rejected(
+            gridder::AwProjectSamplePlanRejection::InvalidNormalization,
+        );
+        requests.len()
+    ];
+    for request_indices in by_cell.into_values() {
+        let cell_key = requests[request_indices[0]].cell_key;
+        let cell = cache.get_replay(cell_key)?;
+        for request_index in request_indices {
+            let request = requests[request_index];
+            let atlas = match request.key.kernel_kind {
+                AwProjectCompactKernelKind::Imaging => &mut residual_atlas,
+                AwProjectCompactKernelKind::Weight => &mut weight_atlas,
+            };
+            materialized[request_index] =
+                materialize_awproject_source_major_request(gridder, &cell, request, atlas)?;
+        }
+    }
+    Ok((materialized, residual_atlas, weight_atlas))
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_source_major_tap_rejection(
+    materialized: &[AwProjectSourceMajorMaterializedTap],
+    plan: AwProjectCompactSamplePlan,
+) -> Option<gridder::AwProjectSamplePlanRejection> {
+    match materialized.get(plan.tap_bundle) {
+        Some(AwProjectSourceMajorMaterializedTap::Ready(_)) => None,
+        Some(AwProjectSourceMajorMaterializedTap::Rejected(reason)) => Some(*reason),
+        None => Some(gridder::AwProjectSamplePlanRejection::KernelIndexOutsideCell),
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn prepare_awproject_source_major_samples(
+    request: &MtmfsRequest,
+    batch: &VisibilityBatch,
+    parallel_hands: &AwParallelHandVisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    source_samples: &[AwProjectCompactSourceSample],
+    tap_requests: &[AwProjectCompactTapRequest],
+    materialized: &[AwProjectSourceMajorMaterializedTap],
+    accumulation: &mut MosaicMtmfsStreamGridAccumulation,
+    taylor_weights: &mut Vec<f32>,
+) -> Result<
+    (
+        Vec<AwProjectCompactSourceSample>,
+        Vec<AwProjectCompactPlannedSample>,
+    ),
+    ImagingError,
+> {
+    let mut accepted_sources = Vec::with_capacity(source_samples.len());
+    let mut planned_samples = Vec::with_capacity(source_samples.len());
+    for &source in source_samples {
+        let mut rejected = None;
+        for (role, plan) in [
+            source.first_imaging_plan,
+            source.second_imaging_plan,
+            source.first_prediction_plan,
+            source.second_prediction_plan,
+            source.first_psf_plan,
+            source.second_psf_plan,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if let Some(reason) = awproject_source_major_tap_rejection(materialized, plan) {
+                rejected = Some(match role {
+                    0 => AwProjectCompactSourceRejection::FirstImaging(reason),
+                    1 => AwProjectCompactSourceRejection::SecondImaging(reason),
+                    2 => AwProjectCompactSourceRejection::FirstPrediction(reason),
+                    3 => AwProjectCompactSourceRejection::SecondPrediction(reason),
+                    4 => AwProjectCompactSourceRejection::FirstPsf(reason),
+                    5 => AwProjectCompactSourceRejection::SecondPsf(reason),
+                    _ => unreachable!("source-major role index is bounded by six plans"),
+                });
+                break;
+            }
+        }
+        if let Some(rejection) = rejected {
+            observe_awproject_compact_source_rejection(rejection, accumulation);
+            continue;
+        }
+        for (label, plan) in [
+            ("RR", source.first_weight_plan),
+            ("LL", source.second_weight_plan),
+        ] {
+            if let Some(reason) = awproject_source_major_tap_rejection(materialized, plan) {
+                return Err(ImagingError::Normalization(format!(
+                    "{label} source-major AWProject weight request failed centered placement: {reason:?}"
+                )));
+            }
+        }
+
+        let first_imaging =
+            awproject_source_major_ready_tap(materialized, source.first_imaging_plan)?;
+        let second_imaging =
+            awproject_source_major_ready_tap(materialized, source.second_imaging_plan)?;
+        let first_psf = awproject_source_major_ready_tap(materialized, source.first_psf_plan)?;
+        let second_psf = awproject_source_major_ready_tap(materialized, source.second_psf_plan)?;
+        let residual_norm_sum =
+            first_imaging.grid_normalization.norm() + second_imaging.grid_normalization.norm();
+        let psf_norm_sum =
+            first_psf.grid_normalization.norm() + second_psf.grid_normalization.norm();
+        if !(residual_norm_sum.is_finite()
+            && residual_norm_sum > 0.0
+            && psf_norm_sum.is_finite()
+            && psf_norm_sum > 0.0)
+        {
+            accumulation.skipped_samples += 1;
+            accumulation.aw_sample_census.rejected_invalid_input += 1;
+            continue;
+        }
+
+        let sample_index = source.sample_index;
+        let frequency_hz = sample_frequencies_hz[sample_index];
+        let weight = batch.weight[sample_index];
+        fill_mtmfs_taylor_weights(
+            taylor_weights,
+            frequency_hz,
+            request.reffreq_hz,
+            2 * request.nterms - 1,
+        );
+        for order in 0..(2 * request.nterms - 1) {
+            let term_weight =
+                mtmfs_casa_weighted_taylor_term(weight, frequency_hz, request.reffreq_hz, order);
+            accumulation.reported_sumwt_terms[order] += f64::from(term_weight) * residual_norm_sum;
+            accumulation.aw_psf_sumwt_terms[order] += f64::from(term_weight) * psf_norm_sum;
+        }
+        let direct_first_visibility = parallel_hands.first_visibility[sample_index];
+        let direct_second_visibility = parallel_hands.second_visibility[sample_index];
+        let first_imaging_mueller = tap_requests[source.first_imaging_plan.tap_bundle]
+            .cell_key
+            .mueller_element;
+        let second_imaging_mueller = tap_requests[source.second_imaging_plan.tap_bundle]
+            .cell_key
+            .mueller_element;
+        let first_residual = aw_stokes_i_visibility_for_mueller(
+            first_imaging_mueller,
+            direct_first_visibility,
+            direct_second_visibility,
+        )?;
+        let second_residual = aw_stokes_i_visibility_for_mueller(
+            second_imaging_mueller,
+            direct_first_visibility,
+            direct_second_visibility,
+        )?;
+        accepted_sources.push(source);
+        planned_samples.push(AwProjectCompactPlannedSample {
+            group_index: source.group_index,
+            first_imaging_plan: source.first_imaging_plan,
+            second_imaging_plan: source.second_imaging_plan,
+            first_psf_plan: source.first_psf_plan,
+            second_psf_plan: source.second_psf_plan,
+            first_weight_plan: source.first_weight_plan,
+            second_weight_plan: source.second_weight_plan,
+            frequency_hz,
+            weight,
+            first_residual,
+            second_residual,
+        });
+        accumulation.normalization_sumwt += f64::from(weight) * residual_norm_sum;
+        accumulation.gridded_samples += 1;
+        accumulation.aw_sample_census.accepted_samples += 1;
+    }
+    Ok((accepted_sources, planned_samples))
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Clone, Copy)]
+struct AwProjectSourceMajorWeightSample {
+    first_psf: AwProjectMetalPlan,
+    second_psf: AwProjectMetalPlan,
+    first_weight: AwProjectMetalPlan,
+    second_weight: AwProjectMetalPlan,
+    term_weights: [f32; 3],
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_source_major_prediction_metadata_role(
+    plan: AwProjectCompactSamplePlan,
+    tap_requests: &[AwProjectCompactTapRequest],
+    materialized: &[AwProjectSourceMajorMaterializedTap],
+) -> Result<AwProjectPredictionCfMetadataRole, ImagingError> {
+    let request = *tap_requests.get(plan.tap_bundle).ok_or_else(|| {
+        ImagingError::Normalization(
+            "source-major AWProject prediction metadata lost its request".to_string(),
+        )
+    })?;
+    let tap = awproject_source_major_ready_tap(materialized, plan)?;
+    Ok(AwProjectPredictionCfMetadataRole {
+        cell_key: request.cell_key,
+        loc_x: plan.loc_x,
+        loc_y: plan.loc_y,
+        off_x: request.representative_geometry.off_x,
+        off_y: request.representative_geometry.off_y,
+        conjugate_for_grid: request.representative_geometry.conjugate_for_grid,
+        x_support: tap.x_support,
+        y_support: tap.y_support,
+        normalization: tap.normalization,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn build_awproject_source_major_residual_builder(
+    request: &MtmfsRequest,
+    parallel_hands: &AwParallelHandVisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    source_samples: &[AwProjectCompactSourceSample],
+    planned_samples: &[AwProjectCompactPlannedSample],
+    tap_requests: &[AwProjectCompactTapRequest],
+    materialized: &[AwProjectSourceMajorMaterializedTap],
+    residual_atlas: AwProjectMetalRawAtlas,
+    weight_atlas: &AwProjectMetalRawAtlas,
+    phase_tables: Option<&AwProjectPhaseTables>,
+    metadata: AwProjectMetalResidentMetadata,
+) -> Result<
+    (
+        AwProjectMetalGlobalProgramBuilder,
+        Vec<AwProjectSourceMajorWeightSample>,
+        Vec<WProjectMetalComplex>,
+    ),
+    ImagingError,
+> {
+    if source_samples.len() != planned_samples.len() {
+        return Err(ImagingError::Normalization(format!(
+            "source-major AWProject builder received {} source and {} planned samples",
+            source_samples.len(),
+            planned_samples.len(),
+        )));
+    }
+    let retain_source_sample_indices =
+        env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDICTION_PREFIX_TRACE").is_some()
+            || env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PREDICTION_SIDECAR_PREFIX").is_some();
+    let mut prediction_batch = AwProjectMetalPredictionBatch::default();
+    let mut tile_batch = AwProjectMetalBatch::default();
+    let mut weight_samples = Vec::with_capacity(source_samples.len());
+    prediction_batch.samples.reserve(source_samples.len());
+    tile_batch.samples.reserve(source_samples.len());
+    tile_batch
+        .term_weights
+        .reserve(source_samples.len().saturating_mul(request.nterms));
+    if retain_source_sample_indices {
+        prediction_batch
+            .source_sample_indices
+            .reserve(source_samples.len());
+        prediction_batch.cf_metadata.reserve(source_samples.len());
+    }
+    let mut prediction_phases = AwProjectMetalPhaseAtlasBuilder::production();
+    let mut imaging_phases = AwProjectMetalPhaseAtlasBuilder::production();
+    let mut weight_phases = AwProjectMetalPhaseAtlasBuilder::production();
+    for (&source, planned) in source_samples.iter().zip(planned_samples) {
+        if source.group_index != planned.group_index {
+            return Err(ImagingError::Normalization(
+                "source-major AWProject preparation changed POINTING group order".to_string(),
+            ));
+        }
+        let sample_index = source.sample_index;
+        let first_imaging_mueller = tap_requests[source.first_imaging_plan.tap_bundle]
+            .cell_key
+            .mueller_element;
+        let second_imaging_mueller = tap_requests[source.second_imaging_plan.tap_bundle]
+            .cell_key
+            .mueller_element;
+        if !matches!(first_imaging_mueller, 0 | 15) || !matches!(second_imaging_mueller, 0 | 15) {
+            return Err(ImagingError::ConvolutionFunctionCache(
+                "source-major AWProject prediction supports Mueller elements 0 and 15 only"
+                    .to_string(),
+            ));
+        }
+        let first_prediction = awproject_source_major_prediction_plan(
+            source.first_prediction_plan,
+            tap_requests,
+            materialized,
+            &residual_atlas,
+            source.group_index,
+            phase_tables,
+            &mut prediction_phases,
+        )?;
+        let second_prediction = awproject_source_major_prediction_plan(
+            source.second_prediction_plan,
+            tap_requests,
+            materialized,
+            &residual_atlas,
+            source.group_index,
+            phase_tables,
+            &mut prediction_phases,
+        )?;
+        let first_imaging = awproject_source_major_metal_plan(
+            source.first_imaging_plan,
+            tap_requests,
+            materialized,
+            &residual_atlas,
+            source.group_index,
+            phase_tables,
+            &mut imaging_phases,
+        )?;
+        let second_imaging = awproject_source_major_metal_plan(
+            source.second_imaging_plan,
+            tap_requests,
+            materialized,
+            &residual_atlas,
+            source.group_index,
+            phase_tables,
+            &mut imaging_phases,
+        )?;
+        let first_psf = awproject_source_major_metal_plan(
+            source.first_psf_plan,
+            tap_requests,
+            materialized,
+            weight_atlas,
+            source.group_index,
+            phase_tables,
+            &mut weight_phases,
+        )?;
+        let second_psf = awproject_source_major_metal_plan(
+            source.second_psf_plan,
+            tap_requests,
+            materialized,
+            weight_atlas,
+            source.group_index,
+            phase_tables,
+            &mut weight_phases,
+        )?;
+        let first_weight = awproject_source_major_metal_plan(
+            source.first_weight_plan,
+            tap_requests,
+            materialized,
+            weight_atlas,
+            source.group_index,
+            phase_tables,
+            &mut weight_phases,
+        )?;
+        let second_weight = awproject_source_major_metal_plan(
+            source.second_weight_plan,
+            tap_requests,
+            materialized,
+            weight_atlas,
+            source.group_index,
+            phase_tables,
+            &mut weight_phases,
+        )?;
+        let first_observed = parallel_hands.first_visibility[sample_index];
+        let second_observed = parallel_hands.second_visibility[sample_index];
+        let source_phase = parallel_hands.source_phase[sample_index];
+        prediction_batch
+            .samples
+            .push(AwProjectMetalPredictionSample {
+                first_prediction,
+                second_prediction,
+                first_observed_re: first_observed.re,
+                first_observed_im: first_observed.im,
+                second_observed_re: second_observed.re,
+                second_observed_im: second_observed.im,
+                source_phase_re: source_phase.re,
+                source_phase_im: source_phase.im,
+                taylor_x: mtmfs_casa_taylor_x(
+                    sample_frequencies_hz[sample_index],
+                    request.reffreq_hz,
+                ),
+                first_imaging_mueller: first_imaging_mueller as u32,
+                second_imaging_mueller: second_imaging_mueller as u32,
+                _pad0: 0,
+            });
+        if retain_source_sample_indices {
+            prediction_batch
+                .source_sample_indices
+                .push(u32::try_from(sample_index).map_err(|_| {
+                    ImagingError::InvalidRequest(
+                        "source-major AWProject source sample index exceeds u32".to_string(),
+                    )
+                })?);
+            let first_metadata = awproject_source_major_prediction_metadata_role(
+                source.first_prediction_plan,
+                tap_requests,
+                materialized,
+            )?;
+            let second_metadata = awproject_source_major_prediction_metadata_role(
+                source.second_prediction_plan,
+                tap_requests,
+                materialized,
+            )?;
+            let roles = if first_imaging_mueller == 0 {
+                [first_metadata, second_metadata]
+            } else {
+                [second_metadata, first_metadata]
+            };
+            prediction_batch
+                .cf_metadata
+                .push(AwProjectPredictionCfMetadataSample { roles });
+        }
+        tile_batch.samples.push(AwProjectMetalSample {
+            first_imaging,
+            second_imaging,
+            first_psf: first_imaging,
+            second_psf: second_imaging,
+            first_weight: first_imaging,
+            second_weight: second_imaging,
+            first_residual_re: planned.first_residual.re,
+            first_residual_im: planned.first_residual.im,
+            second_residual_re: planned.second_residual.re,
+            second_residual_im: planned.second_residual.im,
+        });
+        let mut initial_weights = [0.0; 3];
+        for (order, value) in initial_weights.iter_mut().enumerate() {
+            *value = mtmfs_casa_weighted_taylor_term(
+                planned.weight,
+                planned.frequency_hz,
+                request.reffreq_hz,
+                order,
+            );
+            if order < request.nterms {
+                tile_batch.term_weights.push(*value);
+            }
+        }
+        weight_samples.push(AwProjectSourceMajorWeightSample {
+            first_psf,
+            second_psf,
+            first_weight,
+            second_weight,
+            term_weights: initial_weights,
+        });
+    }
+    if prediction_phases.values.is_empty() {
+        prediction_phases
+            .values
+            .push(WProjectMetalComplex { re: 1.0, im: 0.0 });
+    }
+    if imaging_phases.values.is_empty() {
+        imaging_phases
+            .values
+            .push(WProjectMetalComplex { re: 1.0, im: 0.0 });
+    }
+    if weight_phases.values.is_empty() {
+        weight_phases
+            .values
+            .push(WProjectMetalComplex { re: 1.0, im: 0.0 });
+    }
+    let source_prediction_phases = prediction_phases.values;
+    let mut canonical_prediction_phases = Vec::with_capacity(source_prediction_phases.len());
+    let mut prediction_phase_index = AwProjectMetalExactAtlasIndex::default();
+    let mut local_prediction_phases = HashMap::new();
+    for sample in &mut prediction_batch.samples {
+        for plan in [&mut sample.first_prediction, &mut sample.second_prediction] {
+            remap_awproject_metal_phase_plan(
+                &mut plan.phase,
+                plan.x_support,
+                plan.y_support,
+                &source_prediction_phases,
+                &mut canonical_prediction_phases,
+                &mut prediction_phase_index,
+                &mut local_prediction_phases,
+                "source-major AWProject prediction phase",
+            )?;
+        }
+    }
+    let source_imaging_phases = imaging_phases.values;
+    let mut canonical_imaging_phases = Vec::with_capacity(source_imaging_phases.len());
+    let mut imaging_phase_index = AwProjectMetalExactAtlasIndex::default();
+    let mut local_imaging_phases = HashMap::new();
+    for sample in &mut tile_batch.samples {
+        for plan in [&mut sample.first_imaging, &mut sample.second_imaging] {
+            remap_awproject_metal_phase_plan(
+                &mut plan.phase,
+                plan.x_support,
+                plan.y_support,
+                &source_imaging_phases,
+                &mut canonical_imaging_phases,
+                &mut imaging_phase_index,
+                &mut local_imaging_phases,
+                "source-major AWProject imaging phase",
+            )?;
+        }
+        sample.first_psf = sample.first_imaging;
+        sample.second_psf = sample.second_imaging;
+        sample.first_weight = sample.first_imaging;
+        sample.second_weight = sample.second_imaging;
+    }
+    prediction_batch.phases = canonical_prediction_phases;
+    tile_batch.phases = canonical_imaging_phases;
+    let mut builder = AwProjectMetalGlobalProgramBuilder::raw();
+    builder.prediction_batch = prediction_batch;
+    builder.tile_batch = tile_batch;
+    builder.prediction_phase_index = prediction_phase_index;
+    builder.imaging_phase_index = imaging_phase_index;
+    builder.metadata = metadata;
+    builder.source_programs = 1;
+    builder.raw_atlas = Some(residual_atlas);
+    builder.source_program_bytes = builder.resident_bytes();
+    Ok((builder, weight_samples, weight_phases.values))
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 struct AwProjectMetalGlobalProgramBuilder {
     prediction_batch: AwProjectMetalPredictionBatch,
     tile_batch: AwProjectMetalBatch,
@@ -26268,8 +28218,7 @@ struct AwProjectMetalGlobalProgramBuilder {
     dispatch_prediction_upper_without_model_bytes: usize,
     dispatch_tile_upper_bytes: usize,
     separable_phases: bool,
-    raw_planes: BTreeMap<AwProjectMetalRawPlaneKey, AwProjectMetalRawPlane>,
-    raw_mode: bool,
+    raw_atlas: Option<AwProjectMetalRawAtlas>,
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -26292,8 +28241,7 @@ impl Default for AwProjectMetalGlobalProgramBuilder {
             dispatch_prediction_upper_without_model_bytes: 0,
             dispatch_tile_upper_bytes: 0,
             separable_phases: true,
-            raw_planes: BTreeMap::new(),
-            raw_mode: false,
+            raw_atlas: None,
         }
     }
 }
@@ -26302,7 +28250,7 @@ impl Default for AwProjectMetalGlobalProgramBuilder {
 impl AwProjectMetalGlobalProgramBuilder {
     fn raw() -> Self {
         Self {
-            raw_mode: true,
+            raw_atlas: Some(AwProjectMetalRawAtlas::default()),
             ..Self::default()
         }
     }
@@ -26315,52 +28263,15 @@ impl AwProjectMetalGlobalProgramBuilder {
             .saturating_add(self.prediction_phase_index.accounted_payload_bytes())
             .saturating_add(self.imaging_phase_index.accounted_payload_bytes())
             .saturating_add(
-                self.raw_planes
-                    .values()
-                    .map(AwProjectMetalRawPlane::resident_bytes)
-                    .sum::<usize>(),
+                self.raw_atlas
+                    .as_ref()
+                    .map(AwProjectMetalRawAtlas::resident_bytes)
+                    .unwrap_or(0),
             )
     }
 
-    fn raw_plane_shape(
-        bundle: &AwProjectCompactTapBundle,
-    ) -> Result<(usize, usize, isize, isize), ImagingError> {
-        let sampling = isize::try_from(bundle.sampling).map_err(|_| {
-            ImagingError::InvalidRequest("AWProject raw-CF sampling exceeds isize".to_string())
-        })?;
-        let x_support = isize::try_from(bundle.x_support).map_err(|_| {
-            ImagingError::InvalidRequest("AWProject raw-CF X support exceeds isize".to_string())
-        })?;
-        let y_support = isize::try_from(bundle.y_support).map_err(|_| {
-            ImagingError::InvalidRequest("AWProject raw-CF Y support exceeds isize".to_string())
-        })?;
-        let offset_radius = (sampling + 1) / 2;
-        let width =
-            usize::try_from(2 * x_support * sampling + 2 * offset_radius + 1).map_err(|_| {
-                ImagingError::InvalidRequest("AWProject raw-CF atlas width overflowed".to_string())
-            })?;
-        let height =
-            usize::try_from(2 * y_support * sampling + 2 * offset_radius + 1).map_err(|_| {
-                ImagingError::InvalidRequest("AWProject raw-CF atlas height overflowed".to_string())
-            })?;
-        Ok((
-            width,
-            height,
-            x_support * sampling + offset_radius,
-            y_support * sampling + offset_radius,
-        ))
-    }
-
     fn raw_plane_bytes(bundle: &AwProjectCompactTapBundle) -> Result<usize, ImagingError> {
-        let (width, height, _, _) = Self::raw_plane_shape(bundle)?;
-        width
-            .checked_mul(height)
-            .and_then(|values| values.checked_mul(std::mem::size_of::<WProjectMetalComplex>()))
-            .ok_or_else(|| {
-                ImagingError::InvalidRequest(
-                    "AWProject raw-CF atlas byte count overflowed".to_string(),
-                )
-            })
+        AwProjectMetalRawAtlas::plane_bytes(bundle.sampling, bundle.x_support, bundle.y_support)
     }
 
     fn additional_raw_kernel_bytes(
@@ -26369,6 +28280,11 @@ impl AwProjectMetalGlobalProgramBuilder {
         tap_requests: &[AwProjectCompactTapRequest],
         bundles: &[AwProjectCompactMaterializedTap],
     ) -> Result<usize, ImagingError> {
+        let atlas = self.raw_atlas.as_ref().ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject raw-CF byte planning requires a raw atlas".to_string(),
+            )
+        })?;
         let mut missing = BTreeMap::new();
         for source in source_samples {
             for plan in [
@@ -26386,7 +28302,7 @@ impl AwProjectMetalGlobalProgramBuilder {
                     cell: request.key.cell,
                     kernel_kind: request.key.kernel_kind,
                 };
-                if !self.raw_planes.contains_key(&key) {
+                if !atlas.planes.contains_key(&key) {
                     missing.entry(key).or_insert(plan.tap_bundle);
                 }
             }
@@ -26417,70 +28333,19 @@ impl AwProjectMetalGlobalProgramBuilder {
         key: AwProjectMetalRawPlaneKey,
         bundle: &AwProjectCompactTapBundle,
     ) -> Result<(), ImagingError> {
-        if let Some(existing) = self.raw_planes.get(&key) {
-            if existing.sampling != bundle.sampling
-                || existing.x_support != bundle.x_support
-                || existing.y_support != bundle.y_support
-            {
-                return Err(ImagingError::Normalization(
-                    "AWProject raw-CF cell changed sampling or support".to_string(),
-                ));
-            }
-            return Ok(());
-        }
         if bundle.phase_applied {
             return Err(ImagingError::InvalidRequest(
                 "compact raw-CF replay requires tapless pointing phases".to_string(),
             ));
         }
-        let (width, height, origin_x, origin_y) = Self::raw_plane_shape(bundle)?;
-        let value_count = width.checked_mul(height).ok_or_else(|| {
-            ImagingError::InvalidRequest(
-                "AWProject raw-CF atlas value count overflowed".to_string(),
-            )
-        })?;
-        let base = u32::try_from(self.prediction_batch.kernels.len()).map_err(|_| {
-            ImagingError::InvalidRequest("AWProject raw-CF atlas base exceeds u32".to_string())
-        })?;
-        let required_len = self
-            .prediction_batch
-            .kernels
-            .len()
-            .checked_add(value_count)
-            .filter(|&len| len <= u32::MAX as usize)
+        self.raw_atlas
+            .as_mut()
             .ok_or_else(|| {
                 ImagingError::InvalidRequest(
-                    "AWProject raw-CF atlas exceeds the u32 Metal address space".to_string(),
+                    "AWProject raw-CF plane allocation requires a raw atlas".to_string(),
                 )
-            })?;
-        reserve_awproject_metal_exact_atlas(
-            &mut self.prediction_batch.kernels,
-            required_len,
-            AWPROJECT_METAL_EXACT_ATLAS_GROWTH_BYTES,
-            "AWProject raw-CF",
-        )?;
-        self.prediction_batch
-            .kernels
-            .resize(required_len, WProjectMetalComplex { re: 0.0, im: 0.0 });
-        let (residue_bases, residue_widths) =
-            AwProjectMetalRawPlane::polyphase_layout(base, width, height, bundle.sampling)?;
-        self.raw_planes.insert(
-            key,
-            AwProjectMetalRawPlane {
-                base,
-                width,
-                height,
-                origin_x,
-                origin_y,
-                sampling: bundle.sampling,
-                x_support: bundle.x_support,
-                y_support: bundle.y_support,
-                residue_bases,
-                residue_widths,
-                present: vec![0u64; value_count.div_ceil(u64::BITS as usize)],
-            },
-        );
-        Ok(())
+            })?
+            .ensure_plane(key, bundle.sampling, bundle.x_support, bundle.y_support)
     }
 
     fn raw_kernel_plan(
@@ -26507,14 +28372,9 @@ impl AwProjectMetalGlobalProgramBuilder {
             kernel_kind: request.key.kernel_kind,
         };
         self.ensure_raw_plane(key, bundle)?;
-        let Self {
-            prediction_batch,
-            raw_planes,
-            ..
-        } = self;
-        let plane = raw_planes
-            .get_mut(&key)
-            .expect("the raw-CF plane was initialized above");
+        let atlas = self.raw_atlas.as_mut().ok_or_else(|| {
+            ImagingError::InvalidRequest("AWProject raw-CF plan lost its raw atlas".to_string())
+        })?;
         let tap_width = 2 * bundle.x_support + 1;
         let tap_height = 2 * bundle.y_support + 1;
         if bundle.values.len() != tap_width.saturating_mul(tap_height) {
@@ -26524,82 +28384,24 @@ impl AwProjectMetalGlobalProgramBuilder {
         }
         for tap_y in 0..tap_height {
             let centered_y = tap_y as isize - bundle.y_support as isize;
-            let raw_y = plane.origin_y + centered_y * bundle.sampling as isize + bundle.off_y;
-            let raw_y = usize::try_from(raw_y).map_err(|_| {
-                ImagingError::Normalization(
-                    "AWProject raw-CF Y coordinate escaped its atlas".to_string(),
-                )
-            })?;
             for tap_x in 0..tap_width {
                 let centered_x = tap_x as isize - bundle.x_support as isize;
-                let raw_x = plane.origin_x + centered_x * bundle.sampling as isize + bundle.off_x;
-                let raw_x = usize::try_from(raw_x).map_err(|_| {
-                    ImagingError::Normalization(
-                        "AWProject raw-CF X coordinate escaped its atlas".to_string(),
-                    )
-                })?;
-                if raw_x >= plane.width || raw_y >= plane.height {
-                    return Err(ImagingError::Normalization(
-                        "AWProject raw-CF coordinate escaped its admitted plane".to_string(),
-                    ));
-                }
-                let (atlas_index, _) = plane.polyphase_index(raw_x, raw_y)?;
-                let plane_index =
-                    atlas_index
-                        .checked_sub(plane.base as usize)
-                        .ok_or_else(|| {
-                            ImagingError::Normalization(
-                                "AWProject polyphase CF index precedes its plane".to_string(),
-                            )
-                        })?;
                 let packed = bundle.values[tap_y * tap_width + tap_x];
-                let canonical = if request.key.conjugate_for_grid {
-                    packed.conj()
-                } else {
-                    packed
-                };
-                let value = WProjectMetalComplex {
-                    re: canonical.re,
-                    im: canonical.im,
-                };
-                let word = plane_index / u64::BITS as usize;
-                let bit = 1u64 << (plane_index % u64::BITS as usize);
-                if plane.present[word] & bit == 0 {
-                    prediction_batch.kernels[atlas_index] = value;
-                    plane.present[word] |= bit;
-                } else {
-                    let existing = prediction_batch.kernels[atlas_index];
-                    if existing.re.to_bits() != value.re.to_bits()
-                        || existing.im.to_bits() != value.im.to_bits()
-                    {
-                        return Err(ImagingError::Normalization(
-                            "AWProject raw-CF atlas received inconsistent source bits".to_string(),
-                        ));
-                    }
-                }
+                atlas.write_request_value(
+                    key,
+                    centered_x * bundle.sampling as isize + bundle.off_x,
+                    centered_y * bundle.sampling as isize + bundle.off_y,
+                    request.key.conjugate_for_grid,
+                    packed,
+                )?;
             }
         }
-        let first_x =
-            plane.origin_x - bundle.x_support as isize * bundle.sampling as isize + bundle.off_x;
-        let first_y =
-            plane.origin_y - bundle.y_support as isize * bundle.sampling as isize + bundle.off_y;
-        let first_x = usize::try_from(first_x).map_err(|_| {
-            ImagingError::Normalization(
-                "AWProject raw-CF first X coordinate escaped its atlas".to_string(),
-            )
-        })?;
-        let first_y = usize::try_from(first_y).map_err(|_| {
-            ImagingError::Normalization(
-                "AWProject raw-CF first Y coordinate escaped its atlas".to_string(),
-            )
-        })?;
-        let (kernel_base, polyphase_width) = plane.polyphase_index(first_x, first_y)?;
-        let kernel_base = u32::try_from(kernel_base).map_err(|_| {
-            ImagingError::InvalidRequest("AWProject polyphase plan base exceeds u32".to_string())
-        })?;
-        let layout =
-            awproject_metal_raw_kernel_layout(polyphase_width, 1, request.key.conjugate_for_grid)?;
-        Ok((kernel_base, layout))
+        atlas.kernel_plan(
+            key,
+            bundle.off_x,
+            bundle.off_y,
+            request.key.conjugate_for_grid,
+        )
     }
 
     fn absorb_raw(
@@ -26609,7 +28411,7 @@ impl AwProjectMetalGlobalProgramBuilder {
         tap_requests: &[AwProjectCompactTapRequest],
         bundles: &[AwProjectCompactMaterializedTap],
     ) -> Result<(), ImagingError> {
-        if !self.raw_mode {
+        if self.raw_atlas.is_none() {
             return Err(ImagingError::InvalidRequest(
                 "raw-CF AWProject replay cannot extend a dense global builder".to_string(),
             ));
@@ -26726,7 +28528,7 @@ impl AwProjectMetalGlobalProgramBuilder {
     }
 
     fn absorb(&mut self, program: AwProjectMetalResidentProgram) -> Result<(), ImagingError> {
-        if self.raw_mode {
+        if self.raw_atlas.is_some() {
             return Err(ImagingError::InvalidRequest(
                 "dense AWProject replay cannot extend a raw-CF global builder".to_string(),
             ));
@@ -26846,11 +28648,16 @@ impl AwProjectMetalGlobalProgramBuilder {
                 self.tile_batch.samples.len()
             )));
         }
-        self.raw_planes.clear();
+        let raw_mode = self.raw_atlas.is_some();
+        if let Some(mut raw_atlas) = self.raw_atlas.take() {
+            raw_atlas.planes.clear();
+            raw_atlas.values.shrink_to_fit();
+            self.prediction_batch.kernels = raw_atlas.values;
+        }
         self.prediction_batch.samples.shrink_to_fit();
         self.prediction_batch.source_sample_indices.shrink_to_fit();
         self.prediction_batch.cf_metadata.shrink_to_fit();
-        if !self.raw_mode {
+        if !raw_mode {
             self.prediction_batch.kernels.shrink_to_fit();
         }
         if self.prediction_batch.phases.is_empty() {
@@ -26895,6 +28702,141 @@ impl AwProjectMetalGlobalProgramBuilder {
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 impl AwProjectCompactReplayCache {
+    fn begin_source_major_block(
+        &mut self,
+        source_block_ordinal: usize,
+    ) -> Result<(), ImagingError> {
+        let expected = self.source_major_last_block.map_or(0, |last| last + 1);
+        if source_block_ordinal != expected || self.blocks.len() != source_block_ordinal {
+            return Err(ImagingError::InvalidRequest(format!(
+                "direct source-major block {source_block_ordinal} followed block state last={:?}, cached_blocks={}",
+                self.source_major_last_block,
+                self.blocks.len(),
+            )));
+        }
+        if !self.should_attempt_fill(source_block_ordinal) {
+            return Err(ImagingError::InvalidRequest(format!(
+                "direct source-major block {source_block_ordinal} was already materialized"
+            )));
+        }
+        self.source_major_last_block = Some(source_block_ordinal);
+        self.misses = self.misses.saturating_add(1);
+        Ok(())
+    }
+
+    fn admit_source_major_compile_peak(
+        &self,
+        current_source_peak_bytes: usize,
+    ) -> Result<(), ImagingError> {
+        let compile_ceiling = self
+            .grouped_replay_plan()
+            .map(AwProjectGroupedReplayPlan::compile_admission_bytes)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "source-major AWProject compile lost its grouped replay admission".to_string(),
+                )
+            })?;
+        let exact_peak = self
+            .resident_bytes
+            .checked_add(current_source_peak_bytes)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "source-major AWProject compile peak overflowed".to_string(),
+                )
+            })?;
+        if exact_peak > compile_ceiling {
+            return Err(ImagingError::InvalidRequest(format!(
+                "source-major AWProject compile peak {exact_peak} exceeds its {compile_ceiling}-byte stage-aware ceiling"
+            )));
+        }
+        Ok(())
+    }
+
+    fn retain_source_major_segment(
+        &mut self,
+        source_block_ordinal: usize,
+        program: AwProjectMetalResidentProgram,
+    ) -> Result<(), ImagingError> {
+        if self.persistent_metal_global_builder.is_some()
+            || self.persistent_metal_global_program.is_some()
+            || !self.spilled_metal_global_programs.is_empty()
+            || self.metal_global_spill_store.is_some()
+        {
+            return Err(ImagingError::InvalidRequest(
+                "direct source-major retention cannot mix with legacy builder or spill state"
+                    .to_string(),
+            ));
+        }
+        if program.aot_grouped_tile.is_none() {
+            return Err(ImagingError::InvalidRequest(
+                "direct source-major retention requires a compiled AOT residual artifact"
+                    .to_string(),
+            ));
+        }
+        if self.source_major_last_block != Some(source_block_ordinal) {
+            return Err(ImagingError::InvalidRequest(format!(
+                "direct source-major segment {source_block_ordinal} has no matching source-block ownership receipt"
+            )));
+        }
+        let program_bytes = program.resident_bytes();
+        let retained_after = self
+            .resident_bytes
+            .checked_add(program_bytes)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "direct source-major replay retention overflowed".to_string(),
+                )
+            })?;
+        if retained_after > self.budget_bytes {
+            return Err(ImagingError::InvalidRequest(format!(
+                "direct source-major replay retention {retained_after} exceeds its {}-byte ceiling",
+                self.budget_bytes,
+            )));
+        }
+        self.metal_global_metadata.normalization_sumwt += program.metadata.normalization_sumwt;
+        self.metal_global_metadata.gridded_samples = self
+            .metal_global_metadata
+            .gridded_samples
+            .saturating_add(program.metadata.gridded_samples);
+        self.metal_global_metadata.skipped_samples = self
+            .metal_global_metadata
+            .skipped_samples
+            .saturating_add(program.metadata.skipped_samples);
+        add_awproject_sample_stats(
+            &mut self.metal_global_metadata.aw_sample_census,
+            &program.metadata.aw_sample_census,
+        );
+        self.resident_metal_global_programs.push(program);
+        let global_scale = self.resident_metal_global_programs.iter().fold(
+            AwProjectMetalResidualScalePlan {
+                max_kernel_norm: 0.0,
+                residual_overlap: 0,
+            },
+            |combined, program| AwProjectMetalResidualScalePlan {
+                max_kernel_norm: combined
+                    .max_kernel_norm
+                    .max(program.residual_scale_plan.max_kernel_norm),
+                residual_overlap: combined
+                    .residual_overlap
+                    .max(program.residual_scale_plan.residual_overlap),
+            },
+        );
+        for retained in &mut self.resident_metal_global_programs {
+            retained.residual_scale_plan = global_scale;
+        }
+        self.resident_bytes = retained_after;
+        self.compiled_total_bytes = retained_after;
+        self.compiled_total_bytes_complete = true;
+        self.segmented_metal_global_replay_ready = true;
+        self.source_major_direct_segments += 1;
+        self.source_major_initial_receipts += 1;
+        eprintln!(
+            "awproject_source_major_retention source_block={source_block_ordinal} segments={} program_bytes={program_bytes} retained_bytes={retained_after} retention_ceiling_bytes={} spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v2 resident=true",
+            self.source_major_direct_segments, self.budget_bytes,
+        );
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn absorb_metal_raw_global_program(
         &mut self,
@@ -26943,7 +28885,7 @@ impl AwProjectCompactReplayCache {
         if self
             .persistent_metal_global_builder
             .as_ref()
-            .is_some_and(|builder| !builder.raw_mode)
+            .is_some_and(|builder| builder.raw_atlas.is_none())
         {
             return Err(ImagingError::InvalidRequest(
                 "raw-CF AWProject replay cannot extend a dense global builder".to_string(),
@@ -27059,7 +29001,10 @@ impl AwProjectCompactReplayCache {
             return Err(ImagingError::InvalidRequest(format!(
                 "raw-CF AWProject replay compile peak {absorb_peak_bytes} bytes exceeds its {compile_admission_bytes}-byte stage-aware admission after absorbing {} source programs and {} raw planes",
                 builder.source_programs,
-                builder.raw_planes.len(),
+                builder
+                    .raw_atlas
+                    .as_ref()
+                    .map_or(0, |atlas| atlas.planes.len()),
             )));
         }
         self.resident_bytes = resident_bytes_after;
@@ -27079,8 +29024,14 @@ impl AwProjectCompactReplayCache {
                 builder.source_program_bytes,
                 builder.prediction_batch.samples.len(),
                 builder.tile_batch.samples.len(),
-                builder.raw_planes.len(),
-                builder.prediction_batch.kernels.len(),
+                builder
+                    .raw_atlas
+                    .as_ref()
+                    .map_or(0, |atlas| atlas.planes.len()),
+                builder
+                    .raw_atlas
+                    .as_ref()
+                    .map_or(0, |atlas| atlas.values.len()),
                 builder.prediction_batch.phases.len(),
                 builder.tile_batch.phases.len(),
                 builder_bytes_after,
@@ -27119,7 +29070,8 @@ impl AwProjectCompactReplayCache {
         let raw_planes = self
             .persistent_metal_global_builder
             .as_ref()
-            .map_or(0, |builder| builder.raw_planes.len());
+            .and_then(|builder| builder.raw_atlas.as_ref())
+            .map_or(0, |atlas| atlas.planes.len());
         let builder_bytes = self
             .persistent_metal_global_builder
             .as_ref()
@@ -27129,8 +29081,10 @@ impl AwProjectCompactReplayCache {
             .as_ref()
             .map_or(0, |builder| {
                 builder
-                    .prediction_batch
-                    .kernels
+                    .raw_atlas
+                    .as_ref()
+                    .map(|atlas| &atlas.values)
+                    .unwrap_or(&builder.prediction_batch.kernels)
                     .len()
                     .saturating_mul(std::mem::size_of::<WProjectMetalComplex>())
             });
@@ -37365,6 +39319,726 @@ fn replay_awproject_compact_window(
     Ok(())
 }
 
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectSourceMajorClassifiedBlock {
+    source_samples: Vec<AwProjectCompactSourceSample>,
+    tap_requests: Vec<AwProjectCompactTapRequest>,
+    classification_stats: AwProjectSampleStats,
+    classification_skipped_samples: usize,
+    phase_tables: AwProjectPhaseTables,
+    phase_table_bytes: usize,
+    phase_elapsed: Duration,
+    plan_elapsed: Duration,
+    owner_bytes: usize,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn classify_awproject_source_major_block(
+    request: &MtmfsRequest,
+    mosaic: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    batch: &VisibilityBatch,
+    parallel_hands: &AwParallelHandVisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    groups: &[GroupedVisibilityMetadata],
+    cache: &AwConvolutionFunctionResidentCache,
+    controls: &AwProjectControls,
+    pa_deg: f64,
+    workers: usize,
+    accumulation: &mut MosaicMtmfsStreamGridAccumulation,
+) -> Result<AwProjectSourceMajorClassifiedBlock, ImagingError> {
+    let classification_stats_before = accumulation.aw_sample_census.clone();
+    let classification_skipped_before = accumulation.skipped_samples;
+    let phase_started = Instant::now();
+    let (phase_tables, phase_table_bytes) =
+        build_awproject_phase_tables(request, mosaic, groups, cache)?;
+    let phase_elapsed = phase_started.elapsed();
+    let source_group_route = grouped_visibility_source_group_route(batch.len(), groups)?;
+    let mut tap_indices = AwProjectCompactTapIndex::with_capacity_and_hasher(
+        65_536,
+        BuildHasherDefault::<MosaicMetalSampleHasher>::default(),
+    );
+    let mut tap_requests = Vec::<AwProjectCompactTapRequest>::new();
+    let mut source_samples = Vec::<AwProjectCompactSourceSample>::with_capacity(batch.len());
+    let plan_started = Instant::now();
+    for start in (0..batch.len()).step_by(awproject_compact_plan_chunk_samples()) {
+        let end = start
+            .saturating_add(awproject_compact_plan_chunk_samples())
+            .min(batch.len());
+        let outcomes = classify_awproject_compact_source_chunk(
+            request,
+            gridder,
+            batch,
+            parallel_hands,
+            sample_frequencies_hz,
+            &source_group_route,
+            cache,
+            controls,
+            pa_deg,
+            start,
+            end,
+            workers,
+            true,
+            false,
+        )?;
+        for (offset, outcome) in outcomes.into_iter().enumerate() {
+            accumulation.aw_sample_census.attempted_samples += 1;
+            let sample_index = start + offset;
+            let specs = match outcome? {
+                Ok(specs) => specs,
+                Err(rejection) => {
+                    observe_awproject_compact_source_rejection(rejection, accumulation);
+                    continue;
+                }
+            };
+            let mut bundle_indices = [0usize; 8];
+            for (role, spec) in specs.iter().copied().enumerate() {
+                let identity = awproject_compact_tap_identity_key(spec.request.key, true);
+                let index = if let Some(&index) = tap_indices.get(&identity) {
+                    index
+                } else {
+                    let index = tap_requests.len();
+                    tap_requests.push(spec.request);
+                    tap_indices.insert(identity, index);
+                    index
+                };
+                bundle_indices[role] = index;
+            }
+            source_samples.push(AwProjectCompactSourceSample {
+                sample_index,
+                group_index: source_group_route[sample_index],
+                first_imaging_plan: awproject_compact_plan(specs[0].geometry, bundle_indices[0]),
+                second_imaging_plan: awproject_compact_plan(specs[1].geometry, bundle_indices[1]),
+                first_prediction_plan: awproject_compact_plan(specs[2].geometry, bundle_indices[2]),
+                second_prediction_plan: awproject_compact_plan(
+                    specs[3].geometry,
+                    bundle_indices[3],
+                ),
+                first_psf_plan: awproject_compact_plan(specs[4].geometry, bundle_indices[4]),
+                second_psf_plan: awproject_compact_plan(specs[5].geometry, bundle_indices[5]),
+                first_weight_plan: awproject_compact_plan(specs[6].geometry, bundle_indices[6]),
+                second_weight_plan: awproject_compact_plan(specs[7].geometry, bundle_indices[7]),
+            });
+        }
+    }
+    let plan_elapsed = plan_started.elapsed();
+    let classification_stats =
+        awproject_sample_stats_delta(&accumulation.aw_sample_census, &classification_stats_before);
+    let classification_skipped_samples = accumulation
+        .skipped_samples
+        .saturating_sub(classification_skipped_before);
+    let owner_bytes = checked_awproject_source_major_bytes(&[
+        awproject_source_major_vec_bytes(&source_samples),
+        awproject_source_major_vec_bytes(&tap_requests),
+        tap_indices.capacity().saturating_mul(
+            std::mem::size_of::<AwProjectCompactTapKey>()
+                .saturating_add(std::mem::size_of::<usize>())
+                .saturating_add(1),
+        ),
+        phase_table_bytes,
+    ])?;
+    Ok(AwProjectSourceMajorClassifiedBlock {
+        source_samples,
+        tap_requests,
+        classification_stats,
+        classification_skipped_samples,
+        phase_tables,
+        phase_table_bytes,
+        phase_elapsed,
+        plan_elapsed,
+        owner_bytes,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectSourceMajorInitialReceipt {
+    metal_stats: AwProjectMetalGridStats,
+    imaging_owner_bytes: usize,
+    weight_owner_bytes: usize,
+    imaging_device_peak_bytes: usize,
+    weight_device_peak_bytes: usize,
+    imaging_groups: usize,
+    weight_groups: usize,
+    imaging_route_fragments: usize,
+    weight_route_fragments: usize,
+    imaging_group_elapsed: Duration,
+    weight_group_elapsed: Duration,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectSourceMajorPreparedBlock {
+    program: Option<AwProjectMetalResidentProgram>,
+    weight_samples: Vec<AwProjectSourceMajorWeightSample>,
+    weight_atlas: AwProjectMetalRawAtlas,
+    weight_phases: Vec<WProjectMetalComplex>,
+    classification_stats: AwProjectSampleStats,
+    classification_skipped_samples: usize,
+    classified_samples: usize,
+    classification_owner_bytes: usize,
+    materialized_owner_bytes: usize,
+    builder_owner_bytes: usize,
+    phase_elapsed: Duration,
+    plan_elapsed: Duration,
+    materialize_elapsed: Duration,
+    prepare_elapsed: Duration,
+    builder_elapsed: Duration,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn prepare_awproject_source_major_block(
+    request: &MtmfsRequest,
+    mosaic: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    batch: &VisibilityBatch,
+    parallel_hands: &AwParallelHandVisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    groups: &[GroupedVisibilityMetadata],
+    cache: &AwConvolutionFunctionResidentCache,
+    controls: &AwProjectControls,
+    pa_deg: f64,
+    workers: usize,
+    tile_side: usize,
+    accumulation: &mut MosaicMtmfsStreamGridAccumulation,
+    taylor_weights: &mut Vec<f32>,
+    replay_cache: &AwProjectCompactReplayCache,
+) -> Result<AwProjectSourceMajorPreparedBlock, ImagingError> {
+    let classified = classify_awproject_source_major_block(
+        request,
+        mosaic,
+        gridder,
+        batch,
+        parallel_hands,
+        sample_frequencies_hz,
+        groups,
+        cache,
+        controls,
+        pa_deg,
+        workers,
+        accumulation,
+    )?;
+    replay_cache.admit_source_major_compile_peak(classified.owner_bytes)?;
+    let classified_samples = classified.source_samples.len();
+    if classified_samples == 0 {
+        return Ok(AwProjectSourceMajorPreparedBlock {
+            program: None,
+            weight_samples: Vec::new(),
+            weight_atlas: AwProjectMetalRawAtlas::default(),
+            weight_phases: Vec::new(),
+            classification_stats: classified.classification_stats,
+            classification_skipped_samples: classified.classification_skipped_samples,
+            classified_samples,
+            classification_owner_bytes: classified.owner_bytes,
+            materialized_owner_bytes: 0,
+            builder_owner_bytes: 0,
+            phase_elapsed: classified.phase_elapsed,
+            plan_elapsed: classified.plan_elapsed,
+            materialize_elapsed: Duration::ZERO,
+            prepare_elapsed: Duration::ZERO,
+            builder_elapsed: Duration::ZERO,
+        });
+    }
+
+    let materialize_started = Instant::now();
+    let (materialized, residual_atlas, weight_atlas) = materialize_awproject_source_major_atlases(
+        gridder,
+        cache,
+        &classified.source_samples,
+        &classified.tap_requests,
+    )?;
+    let materialize_elapsed = materialize_started.elapsed();
+    let materialized_owner_bytes = checked_awproject_source_major_bytes(&[
+        awproject_source_major_vec_bytes(&classified.source_samples),
+        awproject_source_major_vec_bytes(&classified.tap_requests),
+        awproject_source_major_vec_bytes(&materialized),
+        residual_atlas.resident_bytes(),
+        weight_atlas.resident_bytes(),
+        classified.phase_table_bytes,
+    ])?;
+    replay_cache.admit_source_major_compile_peak(materialized_owner_bytes)?;
+
+    let normalization_sumwt_before = accumulation.normalization_sumwt;
+    let gridded_samples_before = accumulation.gridded_samples;
+    let skipped_samples_before = accumulation.skipped_samples;
+    let prepared_census_before = accumulation.aw_sample_census.clone();
+    let prepare_started = Instant::now();
+    let (accepted_sources, planned_samples) = prepare_awproject_source_major_samples(
+        request,
+        batch,
+        parallel_hands,
+        sample_frequencies_hz,
+        &classified.source_samples,
+        &classified.tap_requests,
+        &materialized,
+        accumulation,
+        taylor_weights,
+    )?;
+    let prepare_elapsed = prepare_started.elapsed();
+    let metadata = AwProjectMetalResidentMetadata {
+        normalization_sumwt: accumulation.normalization_sumwt - normalization_sumwt_before,
+        gridded_samples: accumulation
+            .gridded_samples
+            .saturating_sub(gridded_samples_before),
+        skipped_samples: accumulation
+            .skipped_samples
+            .saturating_sub(skipped_samples_before),
+        aw_sample_census: awproject_sample_stats_delta(
+            &accumulation.aw_sample_census,
+            &prepared_census_before,
+        ),
+    };
+    if accepted_sources.is_empty() {
+        return Ok(AwProjectSourceMajorPreparedBlock {
+            program: None,
+            weight_samples: Vec::new(),
+            weight_atlas,
+            weight_phases: Vec::new(),
+            classification_stats: classified.classification_stats,
+            classification_skipped_samples: classified.classification_skipped_samples,
+            classified_samples,
+            classification_owner_bytes: classified.owner_bytes,
+            materialized_owner_bytes,
+            builder_owner_bytes: 0,
+            phase_elapsed: classified.phase_elapsed,
+            plan_elapsed: classified.plan_elapsed,
+            materialize_elapsed,
+            prepare_elapsed,
+            builder_elapsed: Duration::ZERO,
+        });
+    }
+
+    let builder_started = Instant::now();
+    let (builder, weight_samples, weight_phases) = build_awproject_source_major_residual_builder(
+        request,
+        parallel_hands,
+        sample_frequencies_hz,
+        &accepted_sources,
+        &planned_samples,
+        &classified.tap_requests,
+        &materialized,
+        residual_atlas,
+        &weight_atlas,
+        Some(&classified.phase_tables),
+        metadata,
+    )?;
+    let builder_owner_bytes = checked_awproject_source_major_bytes(&[
+        awproject_source_major_vec_bytes(&accepted_sources),
+        awproject_source_major_vec_bytes(&planned_samples),
+        awproject_source_major_vec_bytes(&classified.tap_requests),
+        awproject_source_major_vec_bytes(&materialized),
+        builder.resident_bytes(),
+        weight_atlas.resident_bytes(),
+        awproject_source_major_vec_bytes(&weight_samples),
+        awproject_source_major_vec_bytes(&weight_phases),
+        classified.phase_table_bytes,
+    ])?;
+    replay_cache.admit_source_major_compile_peak(builder_owner_bytes)?;
+    let [grid_width, grid_height] = request.geometry.image_shape;
+    let program = builder.finish(grid_width, grid_height, tile_side)?;
+    let builder_elapsed = builder_started.elapsed();
+    Ok(AwProjectSourceMajorPreparedBlock {
+        program: Some(program),
+        weight_samples,
+        weight_atlas,
+        weight_phases,
+        classification_stats: classified.classification_stats,
+        classification_skipped_samples: classified.classification_skipped_samples,
+        classified_samples,
+        classification_owner_bytes: classified.owner_bytes,
+        materialized_owner_bytes,
+        builder_owner_bytes,
+        phase_elapsed: classified.phase_elapsed,
+        plan_elapsed: classified.plan_elapsed,
+        materialize_elapsed,
+        prepare_elapsed,
+        builder_elapsed,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn dispatch_awproject_source_major_initial(
+    program: &AwProjectMetalResidentProgram,
+    weight_samples: &[AwProjectSourceMajorWeightSample],
+    weight_atlas: &AwProjectMetalRawAtlas,
+    weight_phases: &[WProjectMetalComplex],
+    accumulation: &mut MosaicMtmfsStreamGridAccumulation,
+    replay_cache: &AwProjectCompactReplayCache,
+    tile_side: usize,
+    device_budget_bytes: usize,
+    safety_reserve_bytes: usize,
+) -> Result<AwProjectSourceMajorInitialReceipt, ImagingError> {
+    use objc2_metal::MTLBuffer;
+
+    let MosaicMtmfsStreamGridStorage::MetalSharedF32 {
+        grid,
+        aw_compensation,
+        psf_term_count,
+        residual_term_count,
+        ..
+    } = &mut accumulation.storage
+    else {
+        return Err(ImagingError::InvalidRequest(
+            "direct source-major AWProject requires shared Metal initial-grid storage".to_string(),
+        ));
+    };
+    if *psf_term_count != 3 || *residual_term_count != 2 || grid.plane_count() != 8 {
+        return Err(ImagingError::InvalidRequest(format!(
+            "direct source-major AWProject requires the exact 3/2/3 eight-plane topology, got psf_terms={psf_term_count}, residual_terms={residual_term_count}, planes={}",
+            grid.plane_count(),
+        )));
+    }
+    let [grid_width, grid_height] = grid.shape();
+    let grid_bytes = grid_width
+        .checked_mul(grid_height)
+        .and_then(|values| values.checked_mul(grid.plane_count()))
+        .and_then(|values| values.checked_mul(std::mem::size_of::<Complex32>()))
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "source-major AWProject initial grid byte count overflowed".to_string(),
+            )
+        })?;
+    let compensation_bytes = aw_compensation
+        .as_ref()
+        .map(|compensation| compensation.buffer.length())
+        .unwrap_or(grid_bytes);
+    let kernels = program.imaging_kernels();
+
+    let imaging_group_started = Instant::now();
+    let imaging_partition = group_awproject_source_major_initial_imaging(
+        &program.tile_batch,
+        kernels,
+        grid_width,
+        grid_height,
+        tile_side,
+    )?;
+    let imaging_group_elapsed = imaging_group_started.elapsed();
+    let imaging_owner_bytes = checked_awproject_source_major_bytes(&[
+        program.resident_bytes(),
+        weight_atlas.resident_bytes(),
+        weight_samples
+            .len()
+            .saturating_mul(std::mem::size_of::<AwProjectSourceMajorWeightSample>()),
+        weight_phases
+            .len()
+            .saturating_mul(std::mem::size_of::<WProjectMetalComplex>()),
+        imaging_partition.resident_bytes(),
+    ])?;
+    replay_cache.admit_source_major_compile_peak(imaging_owner_bytes)?;
+    let imaging_device_peak_bytes = admit_awproject_source_major_device_peak(
+        device_budget_bytes,
+        grid_bytes,
+        compensation_bytes,
+        imaging_partition.device_transient_bytes(kernels.len(), program.tile_batch.phases.len())?,
+        safety_reserve_bytes,
+    )?;
+    let imaging_groups = imaging_partition.groups.len();
+    let imaging_route_fragments = imaging_partition.tile_plan.fragments.len();
+    let (imaging_stats, executor_setup) = AWPROJECT_METAL_EXECUTOR.with(|executor_slot| {
+        let mut executor_slot = executor_slot.borrow_mut();
+        let mut setup = Duration::ZERO;
+        if executor_slot.is_none() {
+            let setup_started = Instant::now();
+            *executor_slot = Some(AwProjectMetalExecutor::new()?);
+            setup = setup_started.elapsed();
+        }
+        let stats = executor_slot
+            .as_ref()
+            .expect("source-major grouped Metal executor")
+            .dispatch_initial_grouped_tiles(
+                grid,
+                aw_compensation,
+                &imaging_partition,
+                kernels,
+                &program.tile_batch.phases,
+                Duration::ZERO,
+            )?;
+        Ok::<_, ImagingError>((stats, setup))
+    })?;
+    drop(imaging_partition);
+
+    let weight_group_started = Instant::now();
+    let weight_partition = group_awproject_source_major_initial_weight(
+        weight_samples,
+        &weight_atlas.values,
+        weight_phases,
+        grid_width,
+        grid_height,
+        tile_side,
+    )?;
+    let weight_group_elapsed = weight_group_started.elapsed();
+    let weight_owner_bytes = checked_awproject_source_major_bytes(&[
+        program.resident_bytes(),
+        weight_atlas.resident_bytes(),
+        weight_samples
+            .len()
+            .saturating_mul(std::mem::size_of::<AwProjectSourceMajorWeightSample>()),
+        weight_phases
+            .len()
+            .saturating_mul(std::mem::size_of::<WProjectMetalComplex>()),
+        weight_partition.resident_bytes(),
+    ])?;
+    replay_cache.admit_source_major_compile_peak(weight_owner_bytes)?;
+    let weight_device_peak_bytes = admit_awproject_source_major_device_peak(
+        device_budget_bytes,
+        grid_bytes,
+        compensation_bytes,
+        weight_partition.device_transient_bytes(weight_atlas.values.len(), weight_phases.len())?,
+        safety_reserve_bytes,
+    )?;
+    let weight_groups = weight_partition.groups.len();
+    let weight_route_fragments = weight_partition.tile_plan.fragments.len();
+    let weight_stats = AWPROJECT_METAL_EXECUTOR.with(|executor_slot| {
+        executor_slot
+            .borrow()
+            .as_ref()
+            .expect("source-major grouped Metal executor")
+            .dispatch_initial_grouped_tiles(
+                grid,
+                aw_compensation,
+                &weight_partition,
+                &weight_atlas.values,
+                weight_phases,
+                Duration::ZERO,
+            )
+    })?;
+    Ok(AwProjectSourceMajorInitialReceipt {
+        metal_stats: AwProjectMetalGridStats {
+            calls: 2,
+            plane_segments: 2,
+            samples: program.tile_batch.samples.len().saturating_mul(2),
+            kernel_values: kernels.len().saturating_add(weight_atlas.values.len()),
+            executor_setup,
+            buffer_alloc: imaging_stats.buffer_alloc + weight_stats.buffer_alloc,
+            dispatch_wait: imaging_stats.dispatch_wait + weight_stats.dispatch_wait,
+            fixed_grid_bytes: imaging_stats.output_bytes.max(weight_stats.output_bytes),
+            total: imaging_group_elapsed
+                + weight_group_elapsed
+                + executor_setup
+                + imaging_stats.total
+                + weight_stats.total,
+            ..AwProjectMetalGridStats::default()
+        },
+        imaging_owner_bytes,
+        weight_owner_bytes,
+        imaging_device_peak_bytes,
+        weight_device_peak_bytes,
+        imaging_groups,
+        weight_groups,
+        imaging_route_fragments,
+        weight_route_fragments,
+        imaging_group_elapsed,
+        weight_group_elapsed,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn store_awproject_source_major_block(
+    replay_cache: &mut AwProjectCompactReplayCache,
+    replay_block_ordinal: usize,
+    batch: &VisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    groups: &[GroupedVisibilityMetadata],
+    classification_stats: AwProjectSampleStats,
+    classification_skipped_samples: usize,
+) -> Result<(), ImagingError> {
+    replay_cache.store(
+        replay_block_ordinal,
+        AwProjectCompactReplayBlock {
+            shape: AwProjectCompactReplayBlockShape::from_block(
+                batch,
+                sample_frequencies_hz,
+                groups,
+            ),
+            cached_cursor_end: batch.len(),
+            classification_stats,
+            classification_skipped_samples,
+            windows: Vec::new(),
+            resident_bytes: 0,
+        },
+    )?;
+    Ok(())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn accumulate_awproject_source_major_block(
+    request: &MtmfsRequest,
+    mosaic: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    batch: &VisibilityBatch,
+    parallel_hands: &AwParallelHandVisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    groups: &[GroupedVisibilityMetadata],
+    cache: &AwConvolutionFunctionResidentCache,
+    controls: &AwProjectControls,
+    pa_deg: f64,
+    accumulation: &mut MosaicMtmfsStreamGridAccumulation,
+    taylor_weights: &mut Vec<f32>,
+    replay_cache: &mut AwProjectCompactReplayCache,
+    replay_block_ordinal: usize,
+    plan: AwProjectInitialGridPlan,
+) -> Result<(), ImagingError> {
+    let AwProjectInitialGridPlan::SourceMajorGroupedMetal {
+        tile_side,
+        workers,
+        process_compile_ceiling_bytes,
+        replay_retention_ceiling_bytes,
+        device_budget_bytes,
+        safety_reserve_bytes,
+    } = plan
+    else {
+        return Err(ImagingError::InvalidRequest(
+            "direct source-major orchestration requires its resolved planner variant".to_string(),
+        ));
+    };
+    if replay_cache.budget_bytes != replay_retention_ceiling_bytes {
+        return Err(ImagingError::InvalidRequest(format!(
+            "direct source-major replay retention changed between planning and execution: planned={replay_retention_ceiling_bytes}, runtime={}",
+            replay_cache.budget_bytes,
+        )));
+    }
+    let runtime_compile_ceiling = replay_cache
+        .grouped_replay_plan()
+        .map(AwProjectGroupedReplayPlan::compile_admission_bytes)
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "direct source-major execution lost its grouped replay plan".to_string(),
+            )
+        })?;
+    if runtime_compile_ceiling != process_compile_ceiling_bytes {
+        return Err(ImagingError::InvalidRequest(format!(
+            "direct source-major compile admission changed between planning and execution: planned={process_compile_ceiling_bytes}, runtime={runtime_compile_ceiling}"
+        )));
+    }
+
+    let started = Instant::now();
+    replay_cache.begin_source_major_block(replay_block_ordinal)?;
+    let prepared = prepare_awproject_source_major_block(
+        request,
+        mosaic,
+        gridder,
+        batch,
+        parallel_hands,
+        sample_frequencies_hz,
+        groups,
+        cache,
+        controls,
+        pa_deg,
+        workers,
+        tile_side,
+        accumulation,
+        taylor_weights,
+        replay_cache,
+    )?;
+    let AwProjectSourceMajorPreparedBlock {
+        program,
+        weight_samples,
+        weight_atlas,
+        weight_phases,
+        classification_stats,
+        classification_skipped_samples,
+        classified_samples,
+        classification_owner_bytes,
+        materialized_owner_bytes,
+        builder_owner_bytes,
+        phase_elapsed,
+        plan_elapsed,
+        materialize_elapsed,
+        prepare_elapsed,
+        builder_elapsed,
+    } = prepared;
+
+    let Some(mut program) = program else {
+        store_awproject_source_major_block(
+            replay_cache,
+            replay_block_ordinal,
+            batch,
+            sample_frequencies_hz,
+            groups,
+            classification_stats,
+            classification_skipped_samples,
+        )?;
+        eprintln!(
+            "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples=0 initial_partitions=0 residual_segments=0 compact_windows=0 spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v2 exact_support=true elapsed_ms={:.3}",
+            profile::millis(started.elapsed()),
+        );
+        replay_cache.log();
+        return Ok(());
+    };
+
+    let accepted_samples = program.tile_batch.samples.len();
+    let initial_receipt = dispatch_awproject_source_major_initial(
+        &program,
+        &weight_samples,
+        &weight_atlas,
+        &weight_phases,
+        accumulation,
+        replay_cache,
+        tile_side,
+        device_budget_bytes,
+        safety_reserve_bytes,
+    )?;
+    drop(weight_samples);
+    drop(weight_atlas);
+    drop(weight_phases);
+
+    let compile_limit = process_compile_ceiling_bytes
+        .checked_sub(replay_cache.resident_bytes)
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "direct source-major retained programs exceed compile admission".to_string(),
+            )
+        })?;
+    compile_awproject_metal_aot_grouped_tile(
+        &mut program,
+        AwProjectMetalEffectiveSupportConfig {
+            omitted_energy_fraction: 0.0,
+        },
+        request.geometry.image_shape[0],
+        request.geometry.image_shape[1],
+        compile_limit,
+    )?;
+    let program_bytes = program.resident_bytes();
+    replay_cache.admit_source_major_compile_peak(program_bytes)?;
+
+    eprintln!(
+        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} residual_program_bytes={program_bytes} spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v2 exact_support=true elapsed_ms={:.3}",
+        initial_receipt.imaging_owner_bytes,
+        initial_receipt.weight_owner_bytes,
+        initial_receipt.imaging_device_peak_bytes,
+        initial_receipt.weight_device_peak_bytes,
+        initial_receipt.imaging_groups,
+        initial_receipt.weight_groups,
+        initial_receipt.imaging_route_fragments,
+        initial_receipt.weight_route_fragments,
+        profile::millis(phase_elapsed),
+        profile::millis(plan_elapsed),
+        profile::millis(materialize_elapsed),
+        profile::millis(prepare_elapsed),
+        profile::millis(builder_elapsed),
+        profile::millis(initial_receipt.imaging_group_elapsed),
+        profile::millis(initial_receipt.weight_group_elapsed),
+        profile::millis(started.elapsed()),
+    );
+    accumulation
+        .aw_metal_stats
+        .add_assign(initial_receipt.metal_stats);
+    replay_cache.retain_source_major_segment(replay_block_ordinal, program)?;
+    store_awproject_source_major_block(
+        replay_cache,
+        replay_block_ordinal,
+        batch,
+        sample_frequencies_hz,
+        groups,
+        classification_stats,
+        classification_skipped_samples,
+    )?;
+    replay_cache.log();
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn accumulate_awproject_mtmfs_metadata_batch(
     request: &MtmfsRequest,
@@ -37406,6 +40080,35 @@ fn accumulate_awproject_mtmfs_metadata_batch(
     let grouped_replay = replay_cache
         .as_deref()
         .is_some_and(AwProjectCompactReplayCache::grouped_replay_enabled);
+    let source_major_grouped_initial = model_grids.is_none()
+        && awproject_initial_grid_plan
+            .is_some_and(AwProjectInitialGridPlan::is_source_major_grouped)
+        && grouped_replay;
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    if source_major_grouped_initial {
+        let direct_cache = replay_cache.as_deref_mut().ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "direct source-major execution requires a replay cache".to_string(),
+            )
+        })?;
+        return accumulate_awproject_source_major_block(
+            request,
+            mosaic,
+            gridder,
+            batch,
+            parallel_hands,
+            sample_frequencies_hz,
+            groups,
+            cache,
+            controls,
+            pa_deg,
+            accumulation,
+            taylor_weights,
+            direct_cache,
+            replay_block_ordinal,
+            awproject_initial_grid_plan.expect("source-major planner variant"),
+        );
+    }
     #[cfg(all(target_os = "macos", not(coverage)))]
     let grouped_replay_tile_side = replay_cache
         .as_deref()
@@ -37457,23 +40160,23 @@ fn accumulate_awproject_mtmfs_metadata_batch(
     #[cfg(any(not(target_os = "macos"), coverage))]
     let metal_packed_batch_report_bytes = 0usize;
     let tap_budget_bytes = awproject_initial_grid_plan
-        .map(|plan| plan.logical_tap_budget_bytes)
+        .and_then(AwProjectInitialGridPlan::logical_tap_budget_bytes)
         .unwrap_or_else(|| awproject_compact_tap_budget_bytes(controls.cf_resident_bytes))
         .min(metal_packed_batch_ceiling_bytes);
     let plan_workers = awproject_initial_grid_plan
-        .map(|plan| plan.workers)
+        .map(AwProjectInitialGridPlan::workers)
         .unwrap_or_else(awproject_compact_plan_workers);
     let plan_chunk_samples = awproject_compact_plan_chunk_samples();
     let pack_workers = awproject_compact_pack_workers();
     let tapless_phase = grouped_replay || awproject_compact_tapless_phase();
     let spatial_tile_side = awproject_initial_grid_plan
-        .map(|plan| plan.sparse_tile_side)
+        .and_then(AwProjectInitialGridPlan::sparse_tile_side)
         .or_else(awproject_compact_spatial_tile_side);
     let neon_2x2 = awproject_initial_grid_plan
-        .map(|plan| plan.neon_2x2)
+        .map(AwProjectInitialGridPlan::neon_2x2)
         .unwrap_or_else(awproject_compact_neon_2x2_enabled);
     let dynamic_sparse_scheduler = awproject_initial_grid_plan
-        .map(|plan| plan.dynamic_sparse_scheduler)
+        .map(AwProjectInitialGridPlan::dynamic_sparse_scheduler)
         .unwrap_or_else(awproject_compact_dynamic_sparse_tile_scheduler_enabled);
     // The legacy tap ceiling describes the logical phase-applied working set
     // and therefore owns numerical segmentation. A primed Metal program may
@@ -73000,6 +75703,20 @@ mod tests {
         assert_eq!(std::mem::align_of::<super::AwProjectMetalPhasePlan>(), 4);
         assert_eq!(std::mem::size_of::<super::AwProjectMetalPlan>(), 32);
         assert_eq!(std::mem::align_of::<super::AwProjectMetalPlan>(), 4);
+        assert_eq!(std::mem::size_of::<super::WProjectMetalComplex>(), 8);
+        assert_eq!(std::mem::align_of::<super::WProjectMetalComplex>(), 4);
+        assert_eq!(
+            std::mem::size_of::<super::AwProjectMetalInitialGroupedPlan>(),
+            96
+        );
+        assert_eq!(
+            std::mem::align_of::<super::AwProjectMetalInitialGroupedPlan>(),
+            8
+        );
+        assert_eq!(
+            std::mem::offset_of!(super::AwProjectMetalInitialGroupedPlan, values),
+            32
+        );
         assert_eq!(std::mem::size_of::<super::AwProjectMetalSample>(), 208);
         assert_eq!(std::mem::align_of::<super::AwProjectMetalSample>(), 4);
         assert_eq!(std::mem::size_of::<super::AwProjectMetalParams>(), 32);
@@ -75104,6 +77821,546 @@ mod tests {
 
     #[test]
     #[cfg(all(target_os = "macos", not(coverage)))]
+    fn source_major_admission_is_exact_at_one_byte_boundaries() {
+        let device_budget = 1_000usize;
+        assert_eq!(
+            super::admit_awproject_source_major_device_peak(device_budget, 400, 300, 200, 100)
+                .unwrap(),
+            device_budget
+        );
+        assert!(
+            super::admit_awproject_source_major_device_peak(device_budget - 1, 400, 300, 200, 100,)
+                .is_err()
+        );
+
+        let grouped = super::AwProjectGroupedReplayPlan {
+            spill_directory: std::path::PathBuf::new(),
+            segment_target_bytes: 64,
+            compile_admission_bytes: 1_000,
+            omitted_energy_fraction: 0.0,
+            tile_side: 8,
+        };
+        let mut cache = super::AwProjectCompactReplayCache::new(1_000, Some(grouped), None);
+        cache.resident_bytes = 600;
+        cache.admit_source_major_compile_peak(400).unwrap();
+        assert!(cache.admit_source_major_compile_peak(401).is_err());
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn source_major_parity_kernel_value(
+        kind: super::AwProjectCompactKernelKind,
+        mueller_element: i32,
+    ) -> Complex32 {
+        match (kind, mueller_element) {
+            (super::AwProjectCompactKernelKind::Imaging, 0) => Complex32::new(1.0, 0.125),
+            (super::AwProjectCompactKernelKind::Imaging, 15) => Complex32::new(-0.5, 0.25),
+            (super::AwProjectCompactKernelKind::Weight, 0) => Complex32::new(0.75, -0.125),
+            (super::AwProjectCompactKernelKind::Weight, 15) => Complex32::new(0.375, 0.5),
+            _ => panic!("unsupported source-major parity Mueller role"),
+        }
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn source_major_parity_raw_atlas(
+        requests: &[super::AwProjectCompactTapRequest],
+        kind: super::AwProjectCompactKernelKind,
+        populated: bool,
+    ) -> super::AwProjectMetalRawAtlas {
+        let mut atlas = super::AwProjectMetalRawAtlas::default();
+        let keys = requests
+            .iter()
+            .filter(|request| request.key.kernel_kind == kind)
+            .map(|&request| super::awproject_source_major_raw_plane_key(request))
+            .collect::<std::collections::BTreeSet<_>>();
+        for key in keys {
+            let (width, height, origin_x, origin_y) =
+                super::AwProjectMetalRawAtlas::plane_shape(1, 0, 0).unwrap();
+            let base = u32::try_from(atlas.values.len()).unwrap();
+            let (residue_bases, residue_widths) =
+                super::AwProjectMetalRawPlane::polyphase_layout(base, width, height, 1).unwrap();
+            atlas.values.resize(
+                atlas.values.len() + width * height,
+                super::WProjectMetalComplex { re: 0.0, im: 0.0 },
+            );
+            atlas.planes.insert(
+                key,
+                super::AwProjectMetalRawPlane {
+                    base,
+                    width,
+                    height,
+                    origin_x,
+                    origin_y,
+                    sampling: 1,
+                    x_support: 0,
+                    y_support: 0,
+                    residue_bases,
+                    residue_widths,
+                    present: vec![0; (width * height).div_ceil(u64::BITS as usize)],
+                },
+            );
+        }
+        if populated {
+            for request in requests
+                .iter()
+                .filter(|request| request.key.kernel_kind == kind)
+            {
+                atlas
+                    .write_request_value(
+                        super::awproject_source_major_raw_plane_key(*request),
+                        0,
+                        0,
+                        false,
+                        source_major_parity_kernel_value(kind, request.cell_key.mueller_element),
+                    )
+                    .unwrap();
+            }
+        }
+        atlas
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn source_major_residual_matches_multi_window_legacy_absorb_and_aot_hashes() {
+        let request = MtmfsRequest {
+            geometry: ImageGeometry {
+                image_shape: [16, 16],
+                cell_size_rad: [1.0e-4, 1.0e-4],
+            },
+            visibility_batches: Vec::new(),
+            sample_frequency_batches_hz: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.1e9,
+            selected_frequency_range_hz: [1.0e9, 1.2e9],
+            nterms: 2,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            clean: CleanConfig {
+                niter: 0,
+                ..CleanConfig::default()
+            },
+            clean_mask: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let parallel_hands = super::AwParallelHandVisibilityBatch {
+            first_visibility: vec![Complex32::new(0.5, -0.25), Complex32::new(-0.75, 0.125)],
+            second_visibility: vec![Complex32::new(0.25, 0.75), Complex32::new(0.5, -0.5)],
+            source_phase: vec![Complex32::new(1.0, 0.0), Complex32::new(0.8, 0.6)],
+            prediction_w_lambda: vec![10.0, -15.0],
+        };
+        let sample_frequencies_hz = vec![1.0e9, 1.2e9];
+        let mut tap_requests = Vec::new();
+        let mut bundles = Vec::new();
+        let mut materialized = Vec::new();
+        for group_index in 0..2 {
+            for (kind, mueller_element) in [
+                (super::AwProjectCompactKernelKind::Imaging, 0),
+                (super::AwProjectCompactKernelKind::Imaging, 15),
+                (super::AwProjectCompactKernelKind::Weight, 0),
+                (super::AwProjectCompactKernelKind::Weight, 15),
+            ] {
+                let cell_key = super::AwConvolutionFunctionKey {
+                    frequency_hz: 1.1e9,
+                    w_value_lambda: 0.0,
+                    mueller_element,
+                    parallactic_angle_deg: 0.0,
+                };
+                let geometry = super::gridder::AwProjectSampleGeometry {
+                    loc_x: 4 + 7 * group_index as isize,
+                    loc_y: 4 + 7 * group_index as isize,
+                    off_x: 0,
+                    off_y: 0,
+                    conjugate_for_grid: false,
+                };
+                tap_requests.push(super::AwProjectCompactTapRequest {
+                    key: super::AwProjectCompactTapKey {
+                        group_index,
+                        cell: super::awproject_stable_cell_key(cell_key),
+                        kernel_kind: kind,
+                        off_x: 0,
+                        off_y: 0,
+                        conjugate_for_grid: false,
+                    },
+                    cell_key,
+                    representative_geometry: geometry,
+                });
+                let normalization = if mueller_element == 0 {
+                    Complex32::new(1.0, 0.0)
+                } else {
+                    Complex32::new(0.75, 0.125)
+                };
+                bundles.push(super::AwProjectCompactMaterializedTap::Ready(
+                    super::AwProjectCompactTapBundle {
+                        values: vec![source_major_parity_kernel_value(kind, mueller_element)],
+                        x_support: 0,
+                        y_support: 0,
+                        normalization,
+                        grid_normalization: Complex64::new(1.0, 0.0),
+                        sampling: 1,
+                        off_x: 0,
+                        off_y: 0,
+                        phase_applied: false,
+                    },
+                ));
+                materialized.push(super::AwProjectSourceMajorMaterializedTap::Ready(
+                    super::AwProjectSourceMajorTap {
+                        x_support: 0,
+                        y_support: 0,
+                        normalization,
+                        grid_normalization: Complex64::new(1.0, 0.0),
+                        sampling: 1,
+                    },
+                ));
+            }
+        }
+        let mut source_samples = Vec::new();
+        let mut planned_samples = Vec::new();
+        for (sample_index, &frequency_hz) in sample_frequencies_hz.iter().enumerate() {
+            let base = sample_index * 4;
+            let plan = |tap_bundle| super::AwProjectCompactSamplePlan {
+                loc_x: 4 + 7 * sample_index as isize,
+                loc_y: 4 + 7 * sample_index as isize,
+                tap_bundle,
+            };
+            source_samples.push(super::AwProjectCompactSourceSample {
+                sample_index,
+                group_index: sample_index,
+                first_imaging_plan: plan(base),
+                second_imaging_plan: plan(base + 1),
+                first_prediction_plan: plan(base),
+                second_prediction_plan: plan(base + 1),
+                first_psf_plan: plan(base + 2),
+                second_psf_plan: plan(base + 3),
+                first_weight_plan: plan(base + 2),
+                second_weight_plan: plan(base + 3),
+            });
+            planned_samples.push(super::AwProjectCompactPlannedSample {
+                group_index: sample_index,
+                first_imaging_plan: plan(base),
+                second_imaging_plan: plan(base + 1),
+                first_psf_plan: plan(base + 2),
+                second_psf_plan: plan(base + 3),
+                first_weight_plan: plan(base + 2),
+                second_weight_plan: plan(base + 3),
+                frequency_hz,
+                weight: 0.75 + sample_index as f32 * 0.5,
+                first_residual: Complex32::new(0.5 - sample_index as f32, -0.25),
+                second_residual: Complex32::new(-0.125, 0.75 - sample_index as f32),
+            });
+        }
+        let phase = |x: Complex32, y: Complex32| super::AwProjectPhaseTable {
+            coordinate_radius: 0,
+            x: vec![x],
+            y: vec![y],
+        };
+        let phase_tables = [
+            (
+                (0, 1),
+                phase(Complex32::new(1.0, 0.0), Complex32::new(1.0, 0.0)),
+            ),
+            (
+                (1, 1),
+                phase(Complex32::new(0.8, 0.6), Complex32::new(0.6, -0.8)),
+            ),
+        ]
+        .into_iter()
+        .collect::<super::AwProjectPhaseTables>();
+        let metadata = super::AwProjectMetalResidentMetadata {
+            normalization_sumwt: 3.0,
+            gridded_samples: 2,
+            skipped_samples: 0,
+            aw_sample_census: super::AwProjectSampleStats::default(),
+        };
+        let residual_atlas = source_major_parity_raw_atlas(
+            &tap_requests,
+            super::AwProjectCompactKernelKind::Imaging,
+            true,
+        );
+        let weight_atlas = source_major_parity_raw_atlas(
+            &tap_requests,
+            super::AwProjectCompactKernelKind::Weight,
+            true,
+        );
+        let (direct_builder, weight_samples, weight_phases) =
+            super::build_awproject_source_major_residual_builder(
+                &request,
+                &parallel_hands,
+                &sample_frequencies_hz,
+                &source_samples,
+                &planned_samples,
+                &tap_requests,
+                &materialized,
+                residual_atlas,
+                &weight_atlas,
+                Some(&phase_tables),
+                metadata,
+            )
+            .unwrap();
+        assert_eq!(weight_samples.len(), 2);
+        assert_eq!(weight_phases.len(), 4);
+        let mut direct = direct_builder.finish(16, 16, 8).unwrap();
+
+        let mut legacy_builder = super::AwProjectMetalGlobalProgramBuilder::raw();
+        legacy_builder.raw_atlas = Some(source_major_parity_raw_atlas(
+            &tap_requests,
+            super::AwProjectCompactKernelKind::Imaging,
+            false,
+        ));
+        for window in 0..2 {
+            let program = super::build_awproject_metal_resident_program(
+                &request,
+                &parallel_hands,
+                &sample_frequencies_hz,
+                &source_samples[window..window + 1],
+                &planned_samples[window..window + 1],
+                &tap_requests,
+                &bundles,
+                Some(&phase_tables),
+                super::AwProjectMetalResidentMetadata {
+                    normalization_sumwt: 1.0 + window as f64,
+                    gridded_samples: 1,
+                    skipped_samples: 0,
+                    aw_sample_census: super::AwProjectSampleStats::default(),
+                },
+                8,
+            )
+            .unwrap();
+            legacy_builder
+                .absorb_raw(
+                    program,
+                    &source_samples[window..window + 1],
+                    &tap_requests,
+                    &bundles,
+                )
+                .unwrap();
+        }
+        assert_eq!(legacy_builder.source_programs, 2);
+        let mut legacy = legacy_builder.finish(16, 16, 8).unwrap();
+
+        for (sample, incumbent) in direct
+            .prediction_batch
+            .samples
+            .iter()
+            .zip(&legacy.prediction_batch.samples)
+        {
+            assert_eq!(
+                super::AwProjectMetalPredictionPlanKey::from(sample.first_prediction).0,
+                super::AwProjectMetalPredictionPlanKey::from(incumbent.first_prediction).0,
+                "source-major first prediction plan changed"
+            );
+            assert_eq!(
+                super::AwProjectMetalPredictionPlanKey::from(sample.second_prediction).0,
+                super::AwProjectMetalPredictionPlanKey::from(incumbent.second_prediction).0,
+                "source-major second prediction plan changed"
+            );
+            assert_eq!(
+                [
+                    sample.first_observed_re.to_bits(),
+                    sample.first_observed_im.to_bits(),
+                    sample.second_observed_re.to_bits(),
+                    sample.second_observed_im.to_bits(),
+                    sample.source_phase_re.to_bits(),
+                    sample.source_phase_im.to_bits(),
+                    sample.taylor_x.to_bits(),
+                    sample.first_imaging_mueller,
+                    sample.second_imaging_mueller,
+                    sample._pad0,
+                ],
+                [
+                    incumbent.first_observed_re.to_bits(),
+                    incumbent.first_observed_im.to_bits(),
+                    incumbent.second_observed_re.to_bits(),
+                    incumbent.second_observed_im.to_bits(),
+                    incumbent.source_phase_re.to_bits(),
+                    incumbent.source_phase_im.to_bits(),
+                    incumbent.taylor_x.to_bits(),
+                    incumbent.first_imaging_mueller,
+                    incumbent.second_imaging_mueller,
+                    incumbent._pad0,
+                ],
+                "source-major prediction payload changed"
+            );
+        }
+
+        for (label, direct_hash, legacy_hash) in [
+            (
+                "prediction samples",
+                super::hash_awproject_copy_slice(&direct.prediction_batch.samples),
+                super::hash_awproject_copy_slice(&legacy.prediction_batch.samples),
+            ),
+            (
+                "prediction kernels",
+                super::hash_awproject_copy_slice(&direct.prediction_batch.kernels),
+                super::hash_awproject_copy_slice(&legacy.prediction_batch.kernels),
+            ),
+            (
+                "prediction phases",
+                super::hash_awproject_copy_slice(&direct.prediction_batch.phases),
+                super::hash_awproject_copy_slice(&legacy.prediction_batch.phases),
+            ),
+            (
+                "tile samples",
+                super::hash_awproject_copy_slice(&direct.tile_batch.samples),
+                super::hash_awproject_copy_slice(&legacy.tile_batch.samples),
+            ),
+            (
+                "tile phases",
+                super::hash_awproject_copy_slice(&direct.tile_batch.phases),
+                super::hash_awproject_copy_slice(&legacy.tile_batch.phases),
+            ),
+            (
+                "term weights",
+                super::hash_awproject_copy_slice(&direct.tile_batch.term_weights),
+                super::hash_awproject_copy_slice(&legacy.tile_batch.term_weights),
+            ),
+        ] {
+            assert_eq!(direct_hash, legacy_hash, "source-major {label} changed");
+        }
+        assert_eq!(
+            super::hash_awproject_grouped_route(&direct.tile_plan),
+            super::hash_awproject_grouped_route(&legacy.tile_plan),
+            "source-major raw tile route changed"
+        );
+        assert_eq!(direct.metadata.normalization_sumwt, 3.0);
+        assert_eq!(direct.metadata.gridded_samples, 2);
+        assert_eq!(
+            direct.metadata.normalization_sumwt,
+            legacy.metadata.normalization_sumwt
+        );
+        assert_eq!(
+            direct.metadata.gridded_samples,
+            legacy.metadata.gridded_samples
+        );
+
+        for program in [&mut direct, &mut legacy] {
+            super::compile_awproject_metal_aot_grouped_tile(
+                program,
+                super::AwProjectMetalEffectiveSupportConfig {
+                    omitted_energy_fraction: 0.0,
+                },
+                16,
+                16,
+                usize::MAX,
+            )
+            .unwrap();
+        }
+        let direct_aot = direct.aot_grouped_tile.as_ref().unwrap();
+        let legacy_aot = legacy.aot_grouped_tile.as_ref().unwrap();
+        assert_eq!(
+            direct_aot.receipt.crop_decisions_sha256,
+            legacy_aot.receipt.crop_decisions_sha256
+        );
+        assert_eq!(
+            direct_aot.receipt.grouped_plans_sha256,
+            legacy_aot.receipt.grouped_plans_sha256
+        );
+        assert_eq!(
+            direct_aot.receipt.sample_role_groups_sha256,
+            legacy_aot.receipt.sample_role_groups_sha256
+        );
+        assert_eq!(
+            direct_aot.receipt.grouped_route_sha256,
+            legacy_aot.receipt.grouped_route_sha256
+        );
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn source_major_retains_one_multi_window_fixture_without_spill_or_reload() {
+        let legacy_tap_bytes = [60usize, 60, 60];
+        let legacy_budget = 100usize;
+        let mut legacy_windows = 1usize;
+        let mut window_bytes = 0usize;
+        for bytes in legacy_tap_bytes {
+            if window_bytes + bytes > legacy_budget {
+                legacy_windows += 1;
+                window_bytes = 0;
+            }
+            window_bytes += bytes;
+        }
+        assert!(
+            legacy_windows >= 2,
+            "fixture must split under legacy ownership"
+        );
+
+        let mut program = awproject_effective_support_test_program();
+        super::compile_awproject_metal_aot_grouped_tile(
+            &mut program,
+            super::AwProjectMetalEffectiveSupportConfig {
+                omitted_energy_fraction: 0.0,
+            },
+            16,
+            16,
+            usize::MAX,
+        )
+        .unwrap();
+        let program_bytes = program.resident_bytes();
+        let grouped = super::AwProjectGroupedReplayPlan {
+            spill_directory: std::path::PathBuf::new(),
+            segment_target_bytes: usize::MAX,
+            compile_admission_bytes: usize::MAX,
+            omitted_energy_fraction: 0.0,
+            tile_side: 8,
+        };
+        let mut cache =
+            super::AwProjectCompactReplayCache::new(program_bytes, Some(grouped.clone()), None);
+        cache.begin_source_major_block(0).unwrap();
+        cache.retain_source_major_segment(0, program).unwrap();
+        cache
+            .store(
+                0,
+                super::AwProjectCompactReplayBlock {
+                    shape: super::AwProjectCompactReplayBlockShape {
+                        samples: 3,
+                        groups: 2,
+                        first_frequency_bits: Some(1.0f64.to_bits()),
+                        last_frequency_bits: Some(2.0f64.to_bits()),
+                        first_u_bits: Some(0.0f64.to_bits()),
+                        last_u_bits: Some(1.0f64.to_bits()),
+                        first_v_bits: Some(0.0f64.to_bits()),
+                        last_v_bits: Some(1.0f64.to_bits()),
+                        first_w_bits: Some((-1.0f64).to_bits()),
+                        last_w_bits: Some(1.0f64.to_bits()),
+                    },
+                    cached_cursor_end: 3,
+                    classification_stats: super::AwProjectSampleStats::default(),
+                    classification_skipped_samples: 0,
+                    windows: Vec::new(),
+                    resident_bytes: 0,
+                },
+            )
+            .unwrap();
+        assert_eq!(cache.source_major_direct_segments, 1);
+        assert_eq!(cache.source_major_initial_receipts, 1);
+        assert_eq!(cache.resident_metal_global_programs.len(), 1);
+        assert!(cache.spilled_metal_global_programs.is_empty());
+        assert!(cache.metal_global_spill_store.is_none());
+        assert!(cache.block(0).unwrap().windows.is_empty());
+        assert!(cache.segmented_metal_global_replay_ready);
+
+        let mut rejected =
+            super::AwProjectCompactReplayCache::new(program_bytes - 1, Some(grouped), None);
+        rejected.begin_source_major_block(0).unwrap();
+        let mut oversized = awproject_effective_support_test_program();
+        super::compile_awproject_metal_aot_grouped_tile(
+            &mut oversized,
+            super::AwProjectMetalEffectiveSupportConfig {
+                omitted_energy_fraction: 0.0,
+            },
+            16,
+            16,
+            usize::MAX,
+        )
+        .unwrap();
+        assert_eq!(oversized.resident_bytes(), program_bytes);
+        assert!(rejected.retain_source_major_segment(0, oversized).is_err());
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
     fn awproject_aot_grouped_tile_spill_replaces_raw_tile_sections_and_round_trips() {
         let directory = tempfile::tempdir().unwrap();
         let mut store = super::AwProjectMetalSpillStore::create_in(directory.path()).unwrap();
@@ -76048,7 +79305,7 @@ mod tests {
     #[test]
     #[cfg(all(target_os = "macos", not(coverage)))]
     fn awproject_global_replay_requires_metal_storage_without_generic_scratch() {
-        let mode = super::mosaic_direct_metal_mode(false, true, true);
+        let mode = super::mosaic_direct_metal_mode(false, true, true, false);
         assert_eq!(mode, super::MosaicDirectMetalMode::AwProjectGlobalReplay);
 
         let storage =
@@ -76217,12 +79474,12 @@ mod tests {
         let plan = super::resolved_awproject_initial_grid_plan(&execution)
             .unwrap()
             .expect("resolved sparse initial-grid plan");
-        assert_eq!(plan.logical_tap_budget_bytes, 512 * 1024 * 1024);
-        assert_eq!(plan.sparse_grid_budget_bytes, 64 * 1024);
-        assert_eq!(plan.sparse_tile_side, 192);
-        assert_eq!(plan.workers, 3);
-        assert!(!plan.neon_2x2);
-        assert!(plan.dynamic_sparse_scheduler);
+        assert_eq!(plan.logical_tap_budget_bytes(), Some(512 * 1024 * 1024));
+        assert_eq!(plan.sparse_grid_budget_bytes(), Some(64 * 1024));
+        assert_eq!(plan.sparse_tile_side(), Some(192));
+        assert_eq!(plan.workers(), 3);
+        assert!(!plan.neon_2x2());
+        assert!(plan.dynamic_sparse_scheduler());
     }
 
     #[test]
@@ -76779,6 +80036,144 @@ mod tests {
         .unwrap();
 
         assert_eq!(segmented_planes, full_planes);
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn awproject_source_major_grouped_initial_partitions_match_source_order_reference() {
+        if !super::standard_mfs_metal_device_available() {
+            return;
+        }
+        let plan = super::AwProjectMetalPlan {
+            loc_x: 3,
+            loc_y: 4,
+            x_support: 0,
+            y_support: 0,
+            kernel_base: 0,
+            _pad0: 0,
+            phase: super::AwProjectMetalPhasePlan::expanded(0),
+        };
+        let sample = |first: Complex32, second: Complex32| super::AwProjectMetalSample {
+            first_imaging: plan,
+            second_imaging: plan,
+            first_psf: plan,
+            second_psf: plan,
+            first_weight: plan,
+            second_weight: plan,
+            first_residual_re: first.re,
+            first_residual_im: first.im,
+            second_residual_re: second.re,
+            second_residual_im: second.im,
+        };
+        let exact_batch = super::AwProjectMetalBatch {
+            samples: vec![
+                sample(Complex32::new(1.0, -0.5), Complex32::new(0.75, 0.25)),
+                sample(Complex32::new(-0.25, 0.5), Complex32::new(0.5, -0.75)),
+            ],
+            kernels: vec![super::WProjectMetalComplex { re: 1.0, im: 0.0 }],
+            phases: vec![super::WProjectMetalComplex { re: 1.0, im: 0.0 }],
+            term_weights: vec![2.0, 0.5, 0.125, 1.0, 0.25, 0.0625],
+            kernel_pack: Duration::ZERO,
+        };
+        let imaging_batch = super::AwProjectMetalBatch {
+            samples: exact_batch.samples.clone(),
+            kernels: exact_batch.kernels.clone(),
+            phases: exact_batch.phases.clone(),
+            term_weights: vec![2.0, 0.5, 1.0, 0.25],
+            kernel_pack: Duration::ZERO,
+        };
+        let weight_samples = exact_batch
+            .samples
+            .iter()
+            .zip(exact_batch.term_weights.chunks_exact(3))
+            .map(
+                |(sample, weights)| super::AwProjectSourceMajorWeightSample {
+                    first_psf: sample.first_psf,
+                    second_psf: sample.second_psf,
+                    first_weight: sample.first_weight,
+                    second_weight: sample.second_weight,
+                    term_weights: [weights[0], weights[1], weights[2]],
+                },
+            )
+            .collect::<Vec<_>>();
+        let imaging = super::group_awproject_source_major_initial_imaging(
+            &imaging_batch,
+            &imaging_batch.kernels,
+            8,
+            8,
+            8,
+        )
+        .unwrap();
+        let weight = super::group_awproject_source_major_initial_weight(
+            &weight_samples,
+            &exact_batch.kernels,
+            &exact_batch.phases,
+            8,
+            8,
+            8,
+        )
+        .unwrap();
+        for partition in [&imaging, &weight] {
+            assert_eq!(partition.fixed_scales.len(), 8);
+            assert_eq!(partition.inverse_fixed_scales.len(), 8);
+            assert_eq!(partition.groups.len(), 1);
+            assert!(!partition.tile_plan.fragments.is_empty());
+        }
+
+        let packed_batch_bytes = exact_batch.resident_bytes();
+        let fixed_bytes = 8 * 8 * 8 * std::mem::size_of::<Complex32>() * 2;
+        let mut exact_grid = crate::apple_fft::MetalSharedF32DirtyGridBatch::new(8, 8, 8).unwrap();
+        let mut exact_compensation = None;
+        super::dispatch_awproject_mtmfs_metal_batch(
+            &mut exact_grid,
+            &mut exact_compensation,
+            &exact_batch,
+            2,
+            3,
+            packed_batch_bytes + fixed_bytes,
+        )
+        .unwrap();
+
+        let mut grouped_grid =
+            crate::apple_fft::MetalSharedF32DirtyGridBatch::new(8, 8, 8).unwrap();
+        let mut grouped_compensation = None;
+        let executor = super::AwProjectMetalExecutor::new().unwrap();
+        for partition in [&imaging, &weight] {
+            executor
+                .dispatch_initial_grouped_tiles(
+                    &mut grouped_grid,
+                    &mut grouped_compensation,
+                    partition,
+                    &exact_batch.kernels,
+                    &exact_batch.phases,
+                    Duration::ZERO,
+                )
+                .unwrap();
+        }
+
+        let exact = super::copy_awproject_metal_centered_f64_planes(
+            &exact_grid,
+            exact_compensation.as_ref().unwrap(),
+        )
+        .unwrap();
+        let actual = super::copy_awproject_metal_centered_f64_planes(
+            &grouped_grid,
+            grouped_compensation.as_ref().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(actual.len(), 8);
+        assert_eq!(actual, exact);
+        let mut squared_error = 0.0;
+        let mut squared_reference = 0.0;
+        for (actual_plane, reference_plane) in actual.iter().zip(&exact) {
+            for (&actual, &reference) in actual_plane.iter().zip(reference_plane) {
+                assert!(actual.re.is_finite() && actual.im.is_finite());
+                squared_error += (actual - reference).norm_sqr();
+                squared_reference += reference.norm_sqr();
+            }
+        }
+        let nrmse = (squared_error / squared_reference.max(f64::MIN_POSITIVE)).sqrt();
+        assert!(nrmse <= 1.0e-3, "source-major initial NRMSE {nrmse}");
     }
 
     #[test]
@@ -83491,8 +86886,9 @@ mod tests {
             .as_ref()
             .expect("the source block keeps one shared builder until its boundary");
         assert_eq!(builder.source_programs, 2);
-        assert_eq!(builder.raw_planes.len(), 1);
-        let shared_kernel_values = builder.prediction_batch.kernels.len();
+        let raw_atlas = builder.raw_atlas.as_ref().expect("raw global atlas");
+        assert_eq!(raw_atlas.planes.len(), 1);
+        let shared_kernel_values = raw_atlas.values.len();
 
         cache
             .finish_metal_raw_global_source_block(0, [16, 16], 8)
