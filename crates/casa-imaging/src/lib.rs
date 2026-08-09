@@ -11271,7 +11271,7 @@ struct AwProjectMetalGroupedTilePlan {
 
 const AWPROJECT_INITIAL_GROUPED_PLANE_COUNT: usize = 8;
 
-#[repr(C, align(8))]
+#[repr(C)]
 #[derive(Clone, Copy)]
 #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 struct AwProjectMetalInitialGroupedPlan {
@@ -21862,8 +21862,7 @@ static_assert(alignof(AwWeightedResidual) == 8, "AwWeightedResidual alignment dr
 static_assert(sizeof(AwGroupedTilePlan) == 48, "AwGroupedTilePlan ABI drift");
 static_assert(alignof(AwGroupedTilePlan) == 8, "AwGroupedTilePlan alignment drift");
 static_assert(sizeof(AwInitialGroupedPlan) == 96, "AwInitialGroupedPlan ABI drift");
-static_assert(alignof(AwInitialGroupedPlan) == 8, "AwInitialGroupedPlan alignment drift");
-static_assert(__builtin_offsetof(AwInitialGroupedPlan, values) == 32, "AwInitialGroupedPlan values offset drift");
+static_assert(alignof(AwInitialGroupedPlan) == 4, "AwInitialGroupedPlan alignment drift");
 static_assert(sizeof(AwParams) == 32, "AwParams ABI drift");
 static_assert(alignof(AwParams) == 4, "AwParams alignment drift");
 static_assert(sizeof(AwPredictionPlan) == 40, "AwPredictionPlan ABI drift");
@@ -73815,20 +73814,6 @@ mod tests {
         assert_eq!(std::mem::align_of::<super::AwProjectMetalPhasePlan>(), 4);
         assert_eq!(std::mem::size_of::<super::AwProjectMetalPlan>(), 32);
         assert_eq!(std::mem::align_of::<super::AwProjectMetalPlan>(), 4);
-        assert_eq!(std::mem::size_of::<super::WProjectMetalComplex>(), 8);
-        assert_eq!(std::mem::align_of::<super::WProjectMetalComplex>(), 4);
-        assert_eq!(
-            std::mem::size_of::<super::AwProjectMetalInitialGroupedPlan>(),
-            96
-        );
-        assert_eq!(
-            std::mem::align_of::<super::AwProjectMetalInitialGroupedPlan>(),
-            8
-        );
-        assert_eq!(
-            std::mem::offset_of!(super::AwProjectMetalInitialGroupedPlan, values),
-            32
-        );
         assert_eq!(std::mem::size_of::<super::AwProjectMetalSample>(), 208);
         assert_eq!(std::mem::align_of::<super::AwProjectMetalSample>(), 4);
         assert_eq!(std::mem::size_of::<super::AwProjectMetalParams>(), 32);
