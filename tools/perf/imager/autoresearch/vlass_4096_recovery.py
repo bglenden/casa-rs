@@ -30,6 +30,7 @@ TIME_COUNTER_RE = re.compile(
     r"(?P<name>instructions retired|cycles elapsed)\s*$"
 )
 PROCESS_TIME_RE = re.compile(r"^(?P<name>user|sys) (?P<seconds>[0-9]+(?:\.[0-9]+)?)$")
+CPU_IDLE_RE = re.compile(r"^CPU usage: .* (?P<idle>[0-9]+(?:\.[0-9]+)?)% idle\s*$")
 COMPLETION_RE = re.compile(
     r"^Wrote CASA-compatible products at prefix (?P<prefix>.+) "
     r"\((?P<samples>[0-9]+) gridded samples, "
@@ -90,6 +91,20 @@ def validate_contract(contract: dict[str, Any]) -> None:
         raise ContractError("single-field and all-field contracts are required")
     if int(contract["phase_two_single_guard_cooldown_seconds"]) != 120:
         raise ContractError("phase-two single-field guard cooldown must be 120 seconds")
+    host_idle = contract.get("host_idle")
+    if not isinstance(host_idle, dict):
+        raise ContractError("host-idle precondition is required")
+    if not 0.0 < float(host_idle["minimum_idle_cpu_percent"]) < 100.0:
+        raise ContractError("host-idle threshold must be between zero and 100 percent")
+    if (
+        min(
+            int(host_idle["consecutive_samples"]),
+            int(host_idle["poll_interval_seconds"]),
+            int(host_idle["timeout_seconds"]),
+        )
+        <= 0
+    ):
+        raise ContractError("host-idle sampling controls must be positive")
     if int(single["warmup_runs"]) != 1 or int(single["timed_repetitions"]) != 3:
         raise ContractError(
             "single-field series must use one warmup and three timed runs"
@@ -350,10 +365,55 @@ def assert_no_competing_imager() -> None:
         raise ContractError("could not check for a competing casars-imager process")
 
 
-def quiesce(seconds: int) -> None:
+def sample_host_idle_cpu_percent() -> float:
+    completed = subprocess.run(
+        ["top", "-l", "2", "-s", "1", "-n", "0"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    samples = [
+        float(match.group("idle"))
+        for line in completed.stdout.splitlines()
+        if (match := CPU_IDLE_RE.fullmatch(line)) is not None
+    ]
+    if len(samples) < 2:
+        raise ContractError("host-idle precondition did not receive two CPU samples")
+    return samples[-1]
+
+
+def wait_for_host_idle(contract: dict[str, Any]) -> dict[str, Any]:
+    policy = contract["host_idle"]
+    minimum = float(policy["minimum_idle_cpu_percent"])
+    consecutive_required = int(policy["consecutive_samples"])
+    poll_seconds = int(policy["poll_interval_seconds"])
+    attempts = 1 + int(policy["timeout_seconds"]) // poll_seconds
+    consecutive = 0
+    observations: list[float] = []
+    for attempt in range(attempts):
+        assert_no_competing_imager()
+        idle = sample_host_idle_cpu_percent()
+        observations.append(idle)
+        consecutive = consecutive + 1 if idle >= minimum else 0
+        if consecutive >= consecutive_required:
+            return {
+                "status": "idle",
+                "minimum_idle_cpu_percent": minimum,
+                "observed_idle_cpu_percent": observations,
+            }
+        if attempt + 1 < attempts:
+            time.sleep(poll_seconds)
+    raise ContractError(
+        "host remained busy before imaging: "
+        f"required {consecutive_required} consecutive samples at >= {minimum:.1f}% idle; "
+        f"observed {observations}"
+    )
+
+
+def quiesce(contract: dict[str, Any], seconds: int) -> dict[str, Any]:
     subprocess.run(["sync"], check=True)
     time.sleep(seconds)
-    assert_no_competing_imager()
+    return wait_for_host_idle(contract)
 
 
 def validate_single_series(
@@ -396,16 +456,22 @@ def run_single_series(
     *,
     initial_cooldown_seconds: int = 0,
 ) -> dict[str, Any]:
-    assert_no_competing_imager()
     if initial_cooldown_seconds:
         time.sleep(initial_cooldown_seconds)
+    idle_receipts = [wait_for_host_idle(contract)]
     warmup = run_single(contract, binary, run_dir, f"{token}-warmup")
     timed = []
     for index in range(int(contract["single_field"]["timed_repetitions"])):
-        quiesce(int(contract["single_field"]["inter_run_quiescence_seconds"]))
+        idle_receipts.append(
+            quiesce(
+                contract,
+                int(contract["single_field"]["inter_run_quiescence_seconds"]),
+            )
+        )
         timed.append(run_single(contract, binary, run_dir, f"{token}-timed{index}"))
     return {
         "initial_cooldown_seconds": initial_cooldown_seconds,
+        "host_idle_preconditions": idle_receipts,
         "warmup": warmup,
         "timed": timed,
         "summary": validate_single_series(contract, timed),
@@ -705,6 +771,7 @@ def guard_single(contract: dict[str, Any]) -> None:
         Path(median_run["output_prefix"]),
         run_dir / "single-casa",
     )
+    all_field_idle = wait_for_host_idle(contract)
     all_fields = run_all_fields(
         contract,
         binary,
@@ -728,7 +795,11 @@ def guard_single(contract: dict[str, Any]) -> None:
             "summary": single_summary,
             "comparison": single_comparison,
         },
-        "all_fields": {**all_fields, "comparison": all_comparison},
+        "all_fields": {
+            **all_fields,
+            "host_idle_precondition": all_field_idle,
+            "comparison": all_comparison,
+        },
     }
     output = run_dir / "guard.json"
     output.write_text(json.dumps(guard_receipt, indent=2, sort_keys=True) + "\n")
@@ -739,6 +810,7 @@ def measure_all_fields(contract: dict[str, Any]) -> float:
     run_dir = Path(contract["run_root"]) / "runs" / token
     run_dir.mkdir(parents=True, exist_ok=False)
     binary, build = build_release(run_dir)
+    host_idle = wait_for_host_idle(contract)
     all_fields = run_all_fields(
         contract,
         binary,
@@ -752,7 +824,7 @@ def measure_all_fields(contract: dict[str, Any]) -> float:
         "run_dir": str(run_dir),
         "source_head": build["head"],
         "build": build,
-        "all_fields": all_fields,
+        "all_fields": {**all_fields, "host_idle_precondition": host_idle},
     }
     write_measurement(contract, "all-fields", receipt)
     return float(all_fields["wall_seconds"])

@@ -21,6 +21,8 @@ class Vlass4096RecoveryTests(unittest.TestCase):
     def test_contract_pins_both_100x_targets_and_sequential_guard(self) -> None:
         subject.validate_contract(self.contract)
         self.assertEqual(120, self.contract["phase_two_single_guard_cooldown_seconds"])
+        self.assertEqual(75.0, self.contract["host_idle"]["minimum_idle_cpu_percent"])
+        self.assertEqual(2, self.contract["host_idle"]["consecutive_samples"])
         self.assertEqual(1, self.contract["single_field"]["warmup_runs"])
         self.assertEqual(3, self.contract["single_field"]["timed_repetitions"])
         self.assertEqual(
@@ -124,6 +126,21 @@ class Vlass4096RecoveryTests(unittest.TestCase):
         unstable[2]["outer_process_times"]["user_seconds"] = 110.0
         with self.assertRaisesRegex(subject.ContractError, "user CPU"):
             subject.validate_single_series(self.contract, unstable)
+
+    def test_host_idle_wait_requires_consecutive_qualified_samples(self) -> None:
+        with (
+            mock.patch.object(
+                subject,
+                "sample_host_idle_cpu_percent",
+                side_effect=[90.0, 10.0, 80.0, 85.0],
+            ),
+            mock.patch.object(subject, "assert_no_competing_imager"),
+            mock.patch.object(subject.time, "sleep") as sleep,
+        ):
+            receipt = subject.wait_for_host_idle(self.contract)
+        self.assertEqual("idle", receipt["status"])
+        self.assertEqual([90.0, 10.0, 80.0, 85.0], receipt["observed_idle_cpu_percent"])
+        self.assertEqual(3, sleep.call_count)
 
     def test_all_field_log_rejects_spill_or_topology_rebuild(self) -> None:
         row = self.contract["all_fields"]
