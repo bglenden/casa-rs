@@ -785,7 +785,12 @@ def validate_probe_log(
     target_bytes = target_mib * MIB
     if resources[0].get("memory_target_bytes") != str(target_bytes):
         raise AcceptanceError("plan probe changed the requested memory target")
-    if resources[0].get("memory_target_origin") != "cli-imaging":
+    expected_target_origin = (
+        "cli-intentional-oversubscription"
+        if memory_pressure_policy == "oversubscribe"
+        else "cli-imaging"
+    )
+    if resources[0].get("memory_target_origin") != expected_target_origin:
         raise AcceptanceError("plan probe capped or relabeled the requested target")
     headroom = int(resources[0].get("no_swap_headroom_bytes", "-1"))
     if require_target_within_headroom and target_bytes > headroom:

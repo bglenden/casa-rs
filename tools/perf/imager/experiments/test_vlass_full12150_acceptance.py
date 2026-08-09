@@ -50,6 +50,11 @@ def valid_probe_log(
     headroom_bytes: int | None = None,
 ) -> str:
     target_bytes = target_mib * acceptance.MIB
+    target_origin = (
+        "cli-intentional-oversubscription"
+        if memory_pressure_policy == "oversubscribe"
+        else "cli-imaging"
+    )
     decisions = {
         "awproject_selected_field_count": "63",
         "awproject_initial_grid_backend": "cpu-dynamic-sparse-f64",
@@ -63,7 +68,7 @@ def valid_probe_log(
     }
     lines = [
         "standard_mfs_planning_resources "
-        f"memory_target_bytes={target_bytes} memory_target_origin=cli-imaging "
+        f"memory_target_bytes={target_bytes} memory_target_origin={target_origin} "
         f"no_swap_headroom_bytes={headroom_bytes or target_bytes + acceptance.GIB}",
         "standard_mfs_runtime_plan initial_dirty_backend=cpu "
         "residual_backend=metal-row-run-grouped",
@@ -292,6 +297,16 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
             require_target_within_headroom=False,
         )
         self.assertEqual("admitted", observed["preflight"]["status"])
+        with self.assertRaises(acceptance.AcceptanceError):
+            acceptance.validate_probe_log(
+                accepted.replace(
+                    "memory_target_origin=cli-intentional-oversubscription",
+                    "memory_target_origin=cli-imaging",
+                ),
+                target_mib,
+                memory_pressure_policy="oversubscribe",
+                require_target_within_headroom=False,
+            )
         with self.assertRaises(acceptance.AcceptanceError):
             acceptance.validate_probe_log(
                 accepted.replace(
