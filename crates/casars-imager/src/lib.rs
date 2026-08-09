@@ -42731,7 +42731,7 @@ fn awproject_grouped_replay_plan(
         segment_target_bytes,
         envelope.compile_admission_bytes,
         0.0,
-        16,
+        8,
     )
     .map(Some)
     .map_err(|error| format!("construct grouped AWProject replay plan: {error}"))
@@ -63980,7 +63980,7 @@ mod tests {
             config.imagename.parent().unwrap()
         );
         assert_eq!(grouped.omitted_energy_fraction(), 0.0);
-        assert_eq!(grouped.tile_side(), 16);
+        assert_eq!(grouped.tile_side(), 8);
         assert!(execution.resolved.decisions.iter().any(|decision| {
             decision.name == "awproject_replay_architecture"
                 && decision.value == "source-order-grouped-tile-v1"
