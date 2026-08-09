@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "run_root": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/autoresearch/vlass-4096-performance-recovery-v1",
+  "experiment_root": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446",
+  "casa_python": "/Volumes/GLENDENNING/DeveloperTools/CASA/6.7.5.18-laptop/venv-py312/bin/python",
+  "fftw_library_dir": "/opt/homebrew/opt/fftw/lib",
+  "measures_dir": "/Users/brianglendenning/.casa/data",
+  "scientific_contract": "tools/perf/imager/contracts/vlass-scientific-equivalence-v2-mask-topology.json",
+  "single_field": {
+    "matched_casa_wall_seconds": 3631.809729,
+    "target_wall_seconds": 36.31809729,
+    "runner": "tools/perf/imager/experiments/run_vlass_clean_4096_four_spw_sparse_fftw.sh",
+    "workload": "tools/perf/imager/workloads/vlass-fragment-single-field-clean-4096-four-spw-dense-rhs-control.json",
+    "casa_prefix": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/casa-reduced-clean/4096-four-spw/casa"
+  },
+  "all_fields": {
+    "matched_casa_wall_seconds": 3470.1970449999208,
+    "baseline_wall_seconds": 259.48,
+    "maximum_wall_seconds": 272.454,
+    "runner": "tools/perf/imager/experiments/run_vlass_clean_4096_all_fields_four_spw.sh",
+    "workload": "tools/perf/imager/workloads/vlass-fragment-all-fields-clean-4096-four-spw-casa.json",
+    "casa_prefix": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-d-all63-clean-4096-four-spw-retry1/artifacts/vlass-fragment-all-fields-clean-4096-four-spw-casa/reduced_turnaround_only/20260803T223749Z-vlass-fragment-all-fields-clean-4096-four-spw-casa-9b96c6ad/casa/measured-001/casa",
+    "segment_target_bytes": 536870912,
+    "gridded_samples": 6416526,
+    "major_cycles": 12,
+    "minor_iterations": 193,
+    "selected_fields": 63,
+    "ddids": "2,7,12,17"
+  }
+}
