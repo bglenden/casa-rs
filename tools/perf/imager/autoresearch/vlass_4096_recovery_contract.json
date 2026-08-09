@@ -13,6 +13,31 @@
     "poll_interval_seconds": 15,
     "timeout_seconds": 600
   },
+  "single_field_landmark": {
+    "binary_sha256": "b66ab495b460ee8252da087ddefc942a23ce8d2891d3e9f90338e5ba4f620a91",
+    "validation": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/autoresearch/vlass-4096-performance-recovery-v1/runs/20260809T155859Z-0fbefe7a/single-casa-recovered.validation.json",
+    "validation_sha256": "85c4406723af13e92a91a609eba1519f00336f75fe684365a71622a639098ed8",
+    "timed": [
+      {
+        "wall_seconds": 37.71,
+        "runtime_log": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260809-autoresearch-single-4096-8016c1b201e2-0fbefe7a-timed0.log",
+        "runtime_log_sha256": "73f65f185b70730b9703e39c97bfca1cc4dc253218c9acba62dc925d732e6723",
+        "output_prefix": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/products/autoresearch-single-4096-8016c1b201e2-0fbefe7a-timed0/rust"
+      },
+      {
+        "wall_seconds": 35.52,
+        "runtime_log": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260809-autoresearch-single-4096-8016c1b201e2-0fbefe7a-timed1.log",
+        "runtime_log_sha256": "992a29a5f61369e4ab4406b8a58ba472fda2df8d2f3263ab8927ff814a505390",
+        "output_prefix": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/products/autoresearch-single-4096-8016c1b201e2-0fbefe7a-timed1/rust"
+      },
+      {
+        "wall_seconds": 34.49,
+        "runtime_log": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260809-autoresearch-single-4096-8016c1b201e2-0fbefe7a-timed2.log",
+        "runtime_log_sha256": "e1e3cc858453342af28823bc27a54c2283701c7bdec0be3f20f1c90c43479522",
+        "output_prefix": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts/products/autoresearch-single-4096-8016c1b201e2-0fbefe7a-timed2/rust"
+      }
+    ]
+  },
   "single_field": {
     "matched_casa_wall_seconds": 3631.809729,
     "target_wall_seconds": 36.31809729,

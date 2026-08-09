@@ -446,6 +446,70 @@ def validate_single_series(
     }
 
 
+def load_reusable_single_landmark(
+    contract: dict[str, Any], binary: Path
+) -> dict[str, Any] | None:
+    landmark = contract.get("single_field_landmark")
+    if not isinstance(landmark, dict):
+        return None
+    binary_sha256 = sha256_file(binary)
+    if landmark.get("binary_sha256") != binary_sha256:
+        return None
+    timed = []
+    activity_contract = vlass_landmark_guard.find_landmark(
+        load_object(REPO_ROOT / "tools/perf/imager/vlass_recovery_contract.json"),
+        "VLASS-LANDMARK-SINGLE-4096-4SPW-CLEAN-N2000-v1",
+    )
+    for recorded in landmark.get("timed", []):
+        runtime_log = Path(recorded["runtime_log"])
+        if sha256_file(runtime_log) != recorded["runtime_log_sha256"]:
+            raise ContractError(f"single-field landmark log changed: {runtime_log}")
+        wall = parse_wall(runtime_log)
+        if wall != float(recorded["wall_seconds"]):
+            raise ContractError(f"single-field landmark wall changed: {runtime_log}")
+        activity = vlass_landmark_guard.parse_log(
+            runtime_log.read_text(encoding="utf-8")
+        )
+        errors = vlass_landmark_guard.evaluate(
+            activity_contract, activity, binary=binary, wall_seconds=wall
+        )
+        errors = [error for error in errors if not error.startswith("wall time ")]
+        if errors:
+            raise ContractError(
+                "single-field landmark activity failed: " + "; ".join(errors)
+            )
+        output_prefix = Path(recorded["output_prefix"])
+        if not Path(f"{output_prefix}.image.tt0").is_dir():
+            raise ContractError(
+                f"single-field landmark products are missing: {output_prefix}"
+            )
+        timed.append(
+            {
+                **recorded,
+                "activity": activity,
+                "outer_process_times": parse_process_times(runtime_log),
+            }
+        )
+    summary = validate_single_series(contract, timed)
+    validation = Path(landmark["validation"])
+    if sha256_file(validation) != landmark["validation_sha256"]:
+        raise ContractError("single-field landmark validation receipt changed")
+    validation_receipt = load_object(validation)
+    if validation_receipt.get("status") != "completed":
+        raise ContractError("single-field landmark validation is not completed")
+    return {
+        "status": "reused-identical-release-binary",
+        "binary_sha256": binary_sha256,
+        "timed": timed,
+        "summary": summary,
+        "comparison": {
+            "validation": str(validation),
+            "validation_sha256": landmark["validation_sha256"],
+            "status": "completed",
+        },
+    }
+
+
 def run_single_series(
     contract: dict[str, Any],
     binary: Path,
@@ -838,14 +902,20 @@ def guard_all_fields(contract: dict[str, Any]) -> None:
         Path(measurement["all_fields"]["output_prefix"]),
         run_dir / "all63-casa",
     )
-    cooldown_seconds = int(contract["phase_two_single_guard_cooldown_seconds"])
-    single_series = run_single_series(
-        contract,
-        binary,
-        run_dir,
-        measurement["token"][-8:],
-        initial_cooldown_seconds=cooldown_seconds,
-    )
+    single_landmark = load_reusable_single_landmark(contract, binary)
+    if single_landmark is None:
+        cooldown_seconds = int(contract["phase_two_single_guard_cooldown_seconds"])
+        single_series = run_single_series(
+            contract,
+            binary,
+            run_dir,
+            measurement["token"][-8:],
+            initial_cooldown_seconds=cooldown_seconds,
+        )
+        single_comparison = None
+    else:
+        single_series = single_landmark
+        single_comparison = single_landmark["comparison"]
     target = float(contract["single_field"]["target_wall_seconds"])
     if float(single_series["summary"]["median_wall_seconds"]) > target:
         raise ContractError(
@@ -853,13 +923,16 @@ def guard_all_fields(contract: dict[str, Any]) -> None:
             f"{single_series['summary']['median_wall_seconds']:.6f}s exceeds "
             f"{target:.6f}s"
         )
-    median_run = single_series["timed"][single_series["summary"]["median_run_index"]]
-    single_comparison = compare_row(
-        contract,
-        contract["single_field"],
-        Path(median_run["output_prefix"]),
-        run_dir / "single-casa",
-    )
+    if single_comparison is None:
+        median_run = single_series["timed"][
+            single_series["summary"]["median_run_index"]
+        ]
+        single_comparison = compare_row(
+            contract,
+            contract["single_field"],
+            Path(median_run["output_prefix"]),
+            run_dir / "single-casa",
+        )
     guard_receipt = {
         "schema_version": 1,
         "status": "passed",
