@@ -6652,7 +6652,8 @@ where
     let mut model_support_positions = BTreeSet::<(usize, usize)>::new();
     let model_delta_census =
         env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_MODEL_DELTA_CENSUS").is_some();
-    let secant_response_config = awproject_secant_response_experiment()?;
+    let secant_response_config = awproject_secant_response_experiment()?
+        .or_else(|| grouped_replay_plan.as_ref().map(|_| (0.1, 4)));
     let requested_image_response_experiment =
         env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_IMAGE_RESPONSE_CACHE").is_some();
     let image_response_experiment =
@@ -6705,6 +6706,7 @@ where
             )
         })
         .transpose()?;
+    let mut secant_requires_final_exact_refresh = false;
     if sparse_model_casacore_prep && profile::standard_mfs_profile_detail_enabled() {
         eprintln!("awproject_model_prepare_plan algorithm=sparse-casacore-layout");
     }
@@ -6975,6 +6977,7 @@ where
             residual_terms = synthesis.residual_terms;
             refreshed_trace_peak = Some(synthesis.principal_peak_abs);
             used_secant_response = true;
+            secant_requires_final_exact_refresh = true;
             eprintln!(
                 "awproject_secant_response_synthesize basis={} relative_remainder={:.9e} \
                  changed_positions={} elapsed_ms={:.3}",
@@ -7016,6 +7019,7 @@ where
                     Some(cycle_threshold_jy_per_beam),
                 )),
             )?;
+            secant_requires_final_exact_refresh = false;
             if let Some(cache) = secant_response_cache.as_mut() {
                 let observation =
                     cache.observe_exact(&model_terms, &residual_terms, &model_support_positions)?;
@@ -7165,7 +7169,7 @@ where
     if clean_request.clean.niter > 0 && clean_stop_reason.is_none() {
         clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
     }
-    if residual_needs_refresh {
+    if residual_needs_refresh || secant_requires_final_exact_refresh {
         if !image_response_experiment
             && let Some(cache) = image_response_cache
                 .as_ref()
