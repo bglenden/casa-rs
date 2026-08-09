@@ -38220,7 +38220,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
     #[cfg(any(not(target_os = "macos"), coverage))]
     let grouped_replay_tile_side = None;
     #[cfg(all(target_os = "macos", not(coverage)))]
-    let (mut metal_packed_batch_budget_bytes, metal_psf_term_count) = match &accumulation.storage {
+    let (metal_packed_batch_budget_bytes, metal_psf_term_count) = match &accumulation.storage {
         MosaicMtmfsStreamGridStorage::MetalSharedF32 {
             grid,
             psf_term_count,
@@ -38229,12 +38229,16 @@ fn accumulate_awproject_mtmfs_metadata_batch(
         } => {
             let [grid_width, grid_height] = grid.shape();
             (
-                awproject_metal_packed_batch_budget_for_replay(
-                    grid_width,
-                    grid_height,
-                    *scratch_budget_bytes,
-                    grouped_replay && *psf_term_count == 0,
-                )?,
+                if let Some(source_major_budget) = source_major_compile_budget_bytes {
+                    Some(source_major_budget)
+                } else {
+                    awproject_metal_packed_batch_budget_for_replay(
+                        grid_width,
+                        grid_height,
+                        *scratch_budget_bytes,
+                        grouped_replay && *psf_term_count == 0,
+                    )?
+                },
                 *psf_term_count,
             )
         }
@@ -38242,10 +38246,6 @@ fn accumulate_awproject_mtmfs_metadata_batch(
         | MosaicMtmfsStreamGridStorage::HostF64(_)
         | MosaicMtmfsStreamGridStorage::SparseHostF64(_) => (None, 0),
     };
-    #[cfg(all(target_os = "macos", not(coverage)))]
-    if let Some(source_major_budget) = source_major_compile_budget_bytes {
-        metal_packed_batch_budget_bytes = Some(source_major_budget);
-    }
     #[cfg(any(not(target_os = "macos"), coverage))]
     let metal_packed_batch_budget_bytes = None::<usize>;
     #[cfg(any(not(target_os = "macos"), coverage))]
