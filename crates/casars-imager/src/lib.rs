@@ -6414,12 +6414,13 @@ fn run_standard_mfs_plan_probe_from_config(config: &CliConfig) -> Result<RunSumm
     } else {
         base_strategy
     };
-    let grouped_metal_status = awproject_grouped_metal_plan_probe_status(
+    let grouped_metal_probe = awproject_grouped_metal_plan_probe_status(
         &strategy,
         config,
         selected_field_count,
         standard_mfs_initial_dirty_backend_explicit,
     );
+    let grouped_metal_status = grouped_metal_probe.label();
     log_standard_mfs_memory_plan_actual(
         &strategy,
         active_row_count,
@@ -6427,16 +6428,7 @@ fn run_standard_mfs_plan_probe_from_config(config: &CliConfig) -> Result<RunSumm
         0,
         "planner_preflight_mosaic_mtmfs_single_plane_stream",
     );
-    if grouped_metal_status == "rejected" {
-        let reason = strategy
-            .decisions
-            .iter()
-            .rev()
-            .find(|decision| decision.name == "awproject_multifield_initial_grid_admission")
-            .map_or(
-                "the grouped residual Metal topology omitted its admission decision",
-                |decision| decision.reason.as_str(),
-            );
+    if let Some(reason) = grouped_metal_probe.rejection_reason() {
         eprintln!(
             "standard_mfs_planner_preflight status=rejected grouped_metal_status=rejected execution_mode=mosaic_mtmfs_single_plane_stream visibility_streamed=false replay_compiled=false grids_allocated=false products_materialized=false"
         );
@@ -38327,15 +38319,7 @@ fn standard_mfs_memory_allocation_lifetimes(
 
     plan.memory_allocations
         .iter()
-        .filter(|allocation| {
-            allocation.component != "direct Metal host scratch"
-                || allocation.bytes > 0
-                || !standard_mfs_plan_decision_is(
-                    plan,
-                    "awproject_grouped_replay_replaced_generic_caches",
-                    "true",
-                )
-        })
+        .filter(|allocation| standard_mfs_memory_allocation_has_lifecycle(plan, allocation))
         .map(|allocation| {
             let occurrence = component_occurrences
                 .entry(allocation.component)
@@ -38721,6 +38705,39 @@ fn standard_mfs_memory_allocation_lifetimes(
         .collect()
 }
 
+fn standard_mfs_memory_allocation_has_lifecycle(
+    plan: &ImagingResolvedPlan,
+    allocation: &ImagingMemoryAllocation,
+) -> bool {
+    allocation.component != "direct Metal host scratch"
+        || allocation.bytes > 0
+        || !standard_mfs_plan_decision_is(
+            plan,
+            "awproject_grouped_replay_replaced_generic_caches",
+            "true",
+        )
+}
+
+fn standard_mfs_memory_allocation_receipt_ids(plan: &ImagingResolvedPlan) -> Vec<Option<String>> {
+    let mut component_occurrences = HashMap::<&str, usize>::new();
+    plan.memory_allocations
+        .iter()
+        .map(|allocation| {
+            if !standard_mfs_memory_allocation_has_lifecycle(plan, allocation) {
+                return None;
+            }
+            let occurrence = component_occurrences
+                .entry(allocation.component)
+                .and_modify(|count| *count += 1)
+                .or_insert(1);
+            Some(standard_mfs_memory_allocation_id(
+                allocation.component,
+                *occurrence,
+            ))
+        })
+        .collect()
+}
+
 fn rebuild_standard_mfs_memory_lifetime_ledger(
     plan: &mut ImagingResolvedPlan,
     has_clean_cycles: bool,
@@ -38801,7 +38818,18 @@ fn admit_awproject_compact_replay_retention(
     // programs as each block is compiled. Let exact resident bytes consume
     // only the stage-overlap headroom already assigned to this process; do not
     // impose a machine-size fraction or a per-sample proxy.
-    let admitted_bytes = headroom_bytes;
+    let grouped_compile_envelope = awproject_grouped_replay_uses_joint_memory_envelope(&plan)
+        .then(|| awproject_grouped_replay_compile_envelope(&plan))
+        .transpose()?;
+    let admitted_bytes = grouped_compile_envelope.map_or(headroom_bytes, |envelope| {
+        headroom_bytes.min(envelope.replay_retention_ceiling_bytes)
+    });
+    if grouped_compile_envelope.is_some() && admitted_bytes < AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES
+    {
+        return Err(format!(
+            "the grouped AWProject replay can retain only {admitted_bytes} bytes after reserving its compile segment, below the {AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES}-byte replay minimum"
+        ));
+    }
     if admitted_bytes == 0 {
         plan.decisions.push(casa_imaging::ImagingPlanDecision {
             name: "awproject_compact_replay_retention_bytes",
@@ -38820,13 +38848,26 @@ fn admit_awproject_compact_replay_retention(
             stage: "run",
             bytes: admitted_bytes,
         });
+    let retention_reason = grouped_compile_envelope.map_or_else(
+        || {
+            format!(
+                "reserve residual-grid/transform overlap headroom for exact source-order AW replay; runtime charges actual compact resident-program capacities, pins the full {stream_block_count}-block cyclic working set when it fits, and otherwise retains a pinned no-eviction subset admitted in source order; prior_replay_stage_peak_bytes={replay_stage_peak_bytes}, prior_headroom_bytes={headroom_bytes}, artificial_fraction_cap=none, per_sample_proxy=none"
+            )
+        },
+        |envelope| {
+            format!(
+                "reserve jointly bounded residual-grid/transform and compile-stage headroom for exact source-order AW replay; runtime charges actual compact resident-program capacities, pins the full {stream_block_count}-block cyclic working set when it fits, and otherwise retains a pinned no-eviction subset admitted in source order; prior_replay_stage_peak_bytes={replay_stage_peak_bytes}, prior_headroom_bytes={headroom_bytes}, compile_admission_bytes={}, compile_segment_reserve_bytes={}, compile_retention_ceiling_bytes={}, artificial_fraction_cap=none, per_sample_proxy=none",
+                envelope.compile_admission_bytes,
+                AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES,
+                envelope.replay_retention_ceiling_bytes,
+            )
+        },
+    );
     plan.decisions.push(casa_imaging::ImagingPlanDecision {
         name: "awproject_compact_replay_retention_bytes",
         value: admitted_bytes.to_string(),
         origin: casa_imaging::ImagingPlanOrigin::Resources,
-        reason: format!(
-            "reserve residual-grid/transform overlap headroom for exact source-order AW replay; runtime charges actual compact resident-program capacities, pins the full {stream_block_count}-block cyclic working set when it fits, and otherwise retains a pinned no-eviction subset admitted in source order; prior_replay_stage_peak_bytes={replay_stage_peak_bytes}, prior_headroom_bytes={headroom_bytes}, artificial_fraction_cap=none, per_sample_proxy=none"
-        ),
+        reason: retention_reason,
     });
     plan.decisions.push(casa_imaging::ImagingPlanDecision {
         name: "awproject_compact_replay_resident_accounting",
@@ -38843,6 +38884,85 @@ const AWPROJECT_MULTIFIELD_INITIAL_GRID_TILE_SIDE: usize = 192;
 const AWPROJECT_MULTIFIELD_INITIAL_GRID_TAP_BYTES: usize = 512 * 1024 * 1024;
 const AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES: usize = 512 * 1024 * 1024;
 const AWPROJECT_GROUPED_METAL_SAFETY_RESERVE_BYTES: usize = 64 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AwProjectGroupedReplayCompileEnvelope {
+    initial_grid_peak_bytes: usize,
+    compile_replaced_bytes: usize,
+    compile_fixed_overlap_bytes: usize,
+    compile_admission_bytes: usize,
+    replay_retention_ceiling_bytes: usize,
+}
+
+fn awproject_grouped_replay_uses_joint_memory_envelope(plan: &ImagingResolvedPlan) -> bool {
+    standard_mfs_plan_decision_is(
+        plan,
+        "awproject_grouped_replay_replaced_generic_caches",
+        "true",
+    ) && standard_mfs_plan_decision_is(
+        plan,
+        "awproject_initial_grid_backend",
+        "cpu-dynamic-sparse-f64",
+    )
+}
+
+fn awproject_grouped_replay_compile_envelope(
+    plan: &ImagingResolvedPlan,
+) -> Result<AwProjectGroupedReplayCompileEnvelope, String> {
+    let initial_grid_peak_bytes = plan
+        .memory_lifetime_ledger
+        .stage_peak(ImagingMemoryStage::InitialGrid)
+        .ok_or_else(|| {
+            "the grouped AWProject replay compile envelope omitted its initial-grid lifetime peak"
+                .to_string()
+        })?
+        .resident_bytes;
+    let direct_metal_initial_scratch_bytes = if standard_mfs_plan_decision_is(
+        plan,
+        "awproject_initial_grid_backend",
+        "cpu-dynamic-sparse-f64",
+    ) {
+        0
+    } else {
+        plan.allocation_bytes("direct Metal host scratch")
+    };
+    let compile_replaced_bytes = plan
+        .allocation_bytes("source row blocks")
+        .checked_add(direct_metal_initial_scratch_bytes)
+        .ok_or_else(|| {
+            "the grouped AWProject replay compile replacement byte count overflowed".to_string()
+        })?;
+    let compile_fixed_overlap_bytes = initial_grid_peak_bytes
+        .checked_sub(compile_replaced_bytes)
+        .ok_or_else(|| {
+            format!(
+                "the grouped AWProject replay compile replacement {compile_replaced_bytes} exceeds the initial-grid peak {initial_grid_peak_bytes}"
+            )
+        })?;
+    let compile_admission_bytes = plan
+        .usable_memory_bytes
+        .checked_sub(compile_fixed_overlap_bytes)
+        .ok_or_else(|| {
+            format!(
+                "the grouped AWProject replay fixed compile overlap {compile_fixed_overlap_bytes} exceeds the assigned memory target {}",
+                plan.usable_memory_bytes
+            )
+        })?;
+    let replay_retention_ceiling_bytes = compile_admission_bytes
+        .checked_sub(AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES)
+        .ok_or_else(|| {
+            format!(
+                "the grouped AWProject replay compile admission {compile_admission_bytes} cannot reserve its {AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES}-byte minimum segment"
+            )
+        })?;
+    Ok(AwProjectGroupedReplayCompileEnvelope {
+        initial_grid_peak_bytes,
+        compile_replaced_bytes,
+        compile_fixed_overlap_bytes,
+        compile_admission_bytes,
+        replay_retention_ceiling_bytes,
+    })
+}
 
 fn standard_mfs_plan_decision_usize_value(plan: &ImagingResolvedPlan, name: &str) -> Option<usize> {
     plan.decisions
@@ -38978,18 +39098,42 @@ fn awproject_grouped_metal_topology_eligible(
             || explicit_initial_backend == Some(StandardMfsBackend::Cpu))
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum AwProjectGroupedMetalProbeStatus {
+    NotApplicable,
+    Admitted,
+    Rejected(String),
+}
+
+impl AwProjectGroupedMetalProbeStatus {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::NotApplicable => "not-applicable",
+            Self::Admitted => "admitted",
+            Self::Rejected(_) => "rejected",
+        }
+    }
+
+    fn rejection_reason(&self) -> Option<&str> {
+        match self {
+            Self::Rejected(reason) => Some(reason),
+            Self::NotApplicable | Self::Admitted => None,
+        }
+    }
+}
+
 fn awproject_grouped_metal_plan_probe_status(
     plan: &ImagingResolvedPlan,
     config: &CliConfig,
     selected_field_count: usize,
     initial_dirty_backend_explicit: bool,
-) -> &'static str {
+) -> AwProjectGroupedMetalProbeStatus {
     if !awproject_grouped_metal_topology_eligible(
         config,
         selected_field_count,
         initial_dirty_backend_explicit,
     ) {
-        return "not-applicable";
+        return AwProjectGroupedMetalProbeStatus::NotApplicable;
     }
     let execution = standard_mfs_execution_config_with_plan(config, plan);
     awproject_grouped_metal_execution_probe_status(plan, &execution)
@@ -38998,11 +39142,66 @@ fn awproject_grouped_metal_plan_probe_status(
 fn awproject_grouped_metal_execution_probe_status(
     plan: &ImagingResolvedPlan,
     execution: &StandardMfsExecutionPlan,
-) -> &'static str {
-    let exact_grouped_replay = execution
-        .awproject_grouped_replay
-        .as_ref()
-        .is_some_and(|grouped| grouped.omitted_energy_fraction() == 0.0);
+) -> AwProjectGroupedMetalProbeStatus {
+    if !standard_mfs_plan_decision_is(
+        plan,
+        "awproject_multifield_initial_grid_admission",
+        "admitted",
+    ) {
+        let reason = plan
+            .decisions
+            .iter()
+            .rev()
+            .find(|decision| decision.name == "awproject_multifield_initial_grid_admission")
+            .map_or_else(
+                || "grouped topology omitted its initial-grid admission decision".to_string(),
+                |decision| decision.reason.clone(),
+            );
+        return AwProjectGroupedMetalProbeStatus::Rejected(reason);
+    }
+    if !standard_mfs_plan_decision_is(
+        plan,
+        "awproject_grouped_replay_replaced_generic_caches",
+        "true",
+    ) {
+        return AwProjectGroupedMetalProbeStatus::Rejected(
+            "grouped topology did not replace its generic scratch and replay caches".to_string(),
+        );
+    }
+    if execution.initial_dirty_backend != Some(StandardMfsBackend::Cpu) {
+        return AwProjectGroupedMetalProbeStatus::Rejected(format!(
+            "effective initial dirty backend is {:?}, expected CPU",
+            execution.initial_dirty_backend
+        ));
+    }
+    if execution.residual_backend != Some(StandardMfsBackend::MetalRowRunGrouped) {
+        return AwProjectGroupedMetalProbeStatus::Rejected(format!(
+            "effective residual backend is {:?}, expected grouped row-run Metal",
+            execution.residual_backend
+        ));
+    }
+    let Some(grouped_replay) = execution.awproject_grouped_replay.as_ref() else {
+        let reason = execution
+            .resolved
+            .decisions
+            .iter()
+            .rev()
+            .find(|decision| {
+                decision.name == "awproject_grouped_replay_plan_admission"
+                    && decision.value == "rejected"
+            })
+            .map_or_else(
+                || "effective execution plan omitted exact grouped replay".to_string(),
+                |decision| decision.reason.clone(),
+            );
+        return AwProjectGroupedMetalProbeStatus::Rejected(reason);
+    };
+    if grouped_replay.omitted_energy_fraction() != 0.0 {
+        return AwProjectGroupedMetalProbeStatus::Rejected(format!(
+            "effective grouped replay omits {} squared-L2 energy; production preflight requires exact support",
+            grouped_replay.omitted_energy_fraction()
+        ));
+    }
     let generic_storage_absent = plan.workload.direct_metal_scratch_candidate_bytes == 0
         && plan.workload.routed_replay_cache_candidate_bytes == 0
         && plan.workload.metal_grouped_input_cache_candidate_bytes == 0
@@ -39011,25 +39210,20 @@ fn awproject_grouped_metal_execution_probe_status(
         && plan.caches.routed_replay_bytes == 0
         && !plan.caches.metal_grouped_input_enabled
         && plan.caches.metal_grouped_input_bytes == 0;
-    if execution.initial_dirty_backend == Some(StandardMfsBackend::Cpu)
-        && execution.residual_backend == Some(StandardMfsBackend::MetalRowRunGrouped)
-        && exact_grouped_replay
-        && generic_storage_absent
-        && standard_mfs_plan_decision_is(
-            plan,
-            "awproject_multifield_initial_grid_admission",
-            "admitted",
-        )
-        && standard_mfs_plan_decision_is(
-            plan,
-            "awproject_grouped_replay_replaced_generic_caches",
-            "true",
-        )
-    {
-        "admitted"
-    } else {
-        "rejected"
+    if !generic_storage_absent {
+        return AwProjectGroupedMetalProbeStatus::Rejected(format!(
+            "effective grouped topology retained generic storage: direct_candidate={} routed_candidate={} grouped_candidate={} direct_bytes={} routed_enabled={} routed_bytes={} grouped_enabled={} grouped_bytes={}",
+            plan.workload.direct_metal_scratch_candidate_bytes,
+            plan.workload.routed_replay_cache_candidate_bytes,
+            plan.workload.metal_grouped_input_cache_candidate_bytes,
+            plan.caches.direct_metal_scratch_bytes,
+            plan.caches.routed_replay_enabled,
+            plan.caches.routed_replay_bytes,
+            plan.caches.metal_grouped_input_enabled,
+            plan.caches.metal_grouped_input_bytes,
+        ));
     }
+    AwProjectGroupedMetalProbeStatus::Admitted
 }
 
 fn prepare_awproject_grouped_metal_candidate(
@@ -41017,16 +41211,18 @@ fn log_standard_mfs_memory_plan_actual(
         local_grid_bytes_estimate,
         standard_mfs_product_status_for_frontend(strategy),
     );
-    for (allocation_index, allocation) in strategy.memory_allocations.iter().enumerate() {
-        let allocation_id = strategy
-            .memory_lifetime_ledger
-            .allocations
-            .get(allocation_index)
-            .map(|lifecycle| lifecycle.allocation_id.as_str())
-            .unwrap_or("missing-lifecycle");
+    let allocation_receipt_ids = standard_mfs_memory_allocation_receipt_ids(strategy);
+    for (allocation, allocation_id) in strategy
+        .memory_allocations
+        .iter()
+        .zip(allocation_receipt_ids.iter())
+    {
         eprintln!(
             "standard_mfs_execution_allocation allocation_id={} component={} stage={} bytes={}",
-            allocation_id, allocation.component, allocation.stage, allocation.bytes
+            allocation_id.as_deref().unwrap_or("not-live"),
+            allocation.component,
+            allocation.stage,
+            allocation.bytes
         );
     }
     for stage_peak in &strategy.memory_lifetime_ledger.stage_peaks {
@@ -42301,9 +42497,20 @@ fn standard_mfs_execution_config_with_plan(
             execution.initial_dirty_backend = Some(StandardMfsBackend::MetalRowRunGrouped);
         }
     }
-    execution.force_tiled_one_worker = execution.grid_backend == StandardMfsBackend::FixedTile;
-    execution.awproject_grouped_replay = awproject_grouped_replay_plan(config, strategy);
     execution.resolved = strategy.clone();
+    execution.force_tiled_one_worker = execution.grid_backend == StandardMfsBackend::FixedTile;
+    match awproject_grouped_replay_plan(config, strategy) {
+        Ok(grouped_replay) => execution.awproject_grouped_replay = grouped_replay,
+        Err(reason) => replace_standard_mfs_plan_decision(
+            &mut execution.resolved,
+            casa_imaging::ImagingPlanDecision {
+                name: "awproject_grouped_replay_plan_admission",
+                value: "rejected".to_string(),
+                origin: casa_imaging::ImagingPlanOrigin::Resources,
+                reason,
+            },
+        ),
+    }
     if let Some(grouped) = execution.awproject_grouped_replay.as_ref() {
         eprintln!(
             "awproject_grouped_replay_plan architecture=source-order-grouped-tile-v1 segment_target_bytes={} compile_admission_bytes={} omitted_squared_l2_energy={:.9e} tile_side={} spill_directory={}",
@@ -42359,64 +42566,74 @@ fn standard_mfs_execution_config_with_plan(
 fn awproject_grouped_replay_plan(
     config: &CliConfig,
     strategy: &ImagingResolvedPlan,
-) -> Option<AwProjectGroupedReplayPlan> {
+) -> Result<Option<AwProjectGroupedReplayPlan>, String> {
     if config.aw_project.is_none()
         || clean_is_dirty(config)
         || config.nterms != 2
         || !strategy.metal.eligible
     {
-        return None;
+        return Ok(None);
     }
     let replay_bytes = strategy.allocation_bytes("AWProject compact replay retention");
+    if replay_bytes == 0 {
+        return Ok(None);
+    }
     if replay_bytes < AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES {
-        return None;
+        return Err(format!(
+            "grouped AWProject replay retention {replay_bytes} is below the {AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES}-byte minimum"
+        ));
     }
-    let initial_grid_peak_bytes = strategy
-        .memory_lifetime_ledger
-        .stage_peak(ImagingMemoryStage::InitialGrid)
-        .map_or(strategy.maximum_planned_resident_bytes, |peak| {
-            peak.resident_bytes
-        });
-    let direct_metal_initial_scratch_bytes = if standard_mfs_plan_decision_is(
-        strategy,
-        "awproject_initial_grid_backend",
-        "cpu-dynamic-sparse-f64",
-    ) {
-        0
+    let envelope = awproject_grouped_replay_compile_envelope(strategy)?;
+    let grouped_joint_envelope = awproject_grouped_replay_uses_joint_memory_envelope(strategy);
+    if grouped_joint_envelope && replay_bytes > envelope.replay_retention_ceiling_bytes {
+        return Err(format!(
+            "grouped AWProject replay retention {replay_bytes} exceeds the compile-safe ceiling {}: compile_admission_bytes={} minimum_segment_bytes={} initial_grid_peak_bytes={} compile_replaced_bytes={} compile_fixed_overlap_bytes={}",
+            envelope.replay_retention_ceiling_bytes,
+            envelope.compile_admission_bytes,
+            AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES,
+            envelope.initial_grid_peak_bytes,
+            envelope.compile_replaced_bytes,
+            envelope.compile_fixed_overlap_bytes,
+        ));
+    }
+    if !grouped_joint_envelope && envelope.compile_admission_bytes <= replay_bytes {
+        return Err(format!(
+            "AWProject replay retention {replay_bytes} leaves no compile headroom inside the {}-byte admission",
+            envelope.compile_admission_bytes
+        ));
+    }
+    let available_segment_bytes = envelope
+        .compile_admission_bytes
+        .checked_sub(replay_bytes)
+        .ok_or_else(|| {
+            format!(
+                "grouped AWProject replay retention {replay_bytes} exceeds compile admission {}",
+                envelope.compile_admission_bytes
+            )
+        })?;
+    let segment_target_bytes = if grouped_joint_envelope {
+        available_segment_bytes.min(8 * 1024 * 1024 * 1024)
     } else {
-        strategy.allocation_bytes("direct Metal host scratch")
+        available_segment_bytes.clamp(
+            AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES,
+            8 * 1024 * 1024 * 1024,
+        )
     };
-    let compile_replaced_bytes = strategy
-        .allocation_bytes("source row blocks")
-        .saturating_add(direct_metal_initial_scratch_bytes);
-    let compile_fixed_overlap_bytes =
-        initial_grid_peak_bytes.saturating_sub(compile_replaced_bytes);
-    let compile_admission_bytes = strategy
-        .usable_memory_bytes
-        .saturating_sub(compile_fixed_overlap_bytes);
-    if compile_admission_bytes <= replay_bytes {
-        return None;
-    }
-    let segment_target_bytes = compile_admission_bytes.saturating_sub(replay_bytes).clamp(
-        AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES,
-        8 * 1024 * 1024 * 1024,
-    );
     let spill_directory = config
         .imagename
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
-    Some(
-        AwProjectGroupedReplayPlan::new(
-            spill_directory,
-            segment_target_bytes,
-            compile_admission_bytes,
-            0.0,
-            16,
-        )
-        .expect("resource-derived AWProject grouped replay plan is valid"),
+    AwProjectGroupedReplayPlan::new(
+        spill_directory,
+        segment_target_bytes,
+        envelope.compile_admission_bytes,
+        0.0,
+        16,
     )
+    .map(Some)
+    .map_err(|error| format!("construct grouped AWProject replay plan: {error}"))
 }
 
 fn parse_standard_mfs_backend_for_plan(value: &str) -> Option<StandardMfsBackend> {
@@ -62563,32 +62780,34 @@ mod tests {
         );
         assert_eq!(
             awproject_grouped_metal_execution_probe_status(&plan, &admitted_execution),
-            "admitted"
+            AwProjectGroupedMetalProbeStatus::Admitted
         );
         let mut missing_replay = admitted_execution.clone();
         missing_replay.awproject_grouped_replay = None;
-        assert_eq!(
-            awproject_grouped_metal_execution_probe_status(&plan, &missing_replay),
-            "rejected",
+        let missing_replay_status =
+            awproject_grouped_metal_execution_probe_status(&plan, &missing_replay);
+        assert!(
+            matches!(missing_replay_status, AwProjectGroupedMetalProbeStatus::Rejected(ref reason) if reason.contains("omitted exact grouped replay")),
             "admission decisions cannot substitute for an effective grouped replay plan"
         );
         let mut stale_generic_scratch = plan.clone();
         stale_generic_scratch
             .workload
             .direct_metal_scratch_candidate_bytes = 1;
-        assert_eq!(
-            awproject_grouped_metal_execution_probe_status(
-                &stale_generic_scratch,
-                &admitted_execution,
-            ),
-            "rejected",
+        let stale_storage_status = awproject_grouped_metal_execution_probe_status(
+            &stale_generic_scratch,
+            &admitted_execution,
+        );
+        assert!(
+            matches!(stale_storage_status, AwProjectGroupedMetalProbeStatus::Rejected(ref reason) if reason.contains("retained generic storage")),
             "the grouped topology must remove both candidate and resolved generic storage"
         );
         let mut wrong_residual_backend = admitted_execution.clone();
         wrong_residual_backend.residual_backend = Some(StandardMfsBackend::Cpu);
-        assert_eq!(
-            awproject_grouped_metal_execution_probe_status(&plan, &wrong_residual_backend),
-            "rejected",
+        let wrong_backend_status =
+            awproject_grouped_metal_execution_probe_status(&plan, &wrong_residual_backend);
+        assert!(
+            matches!(wrong_backend_status, AwProjectGroupedMetalProbeStatus::Rejected(ref reason) if reason.contains("effective residual backend")),
             "the effective residual backend is part of grouped preflight admission"
         );
         let mut approximate_replay = admitted_execution;
@@ -62602,9 +62821,10 @@ mod tests {
             )
             .unwrap(),
         );
-        assert_eq!(
-            awproject_grouped_metal_execution_probe_status(&plan, &approximate_replay),
-            "rejected",
+        let approximate_status =
+            awproject_grouped_metal_execution_probe_status(&plan, &approximate_replay);
+        assert!(
+            matches!(approximate_status, AwProjectGroupedMetalProbeStatus::Rejected(ref reason) if reason.contains("requires exact support")),
             "the production acceptance probe requires an exact-support grouped replay"
         );
     }
@@ -62717,7 +62937,7 @@ mod tests {
         );
         assert_eq!(
             awproject_grouped_metal_plan_probe_status(&unchanged, &config, 1, false),
-            "not-applicable"
+            AwProjectGroupedMetalProbeStatus::NotApplicable
         );
     }
 
@@ -62797,10 +63017,11 @@ mod tests {
             standard_mfs_execution_config_with_plan(&config, &rejected).initial_dirty_backend,
             Some(StandardMfsBackend::MetalRowRunGrouped)
         );
-        assert_eq!(
+        assert!(matches!(
             awproject_grouped_metal_plan_probe_status(&rejected, &config, 2, false),
-            "rejected"
-        );
+            AwProjectGroupedMetalProbeStatus::Rejected(reason)
+                if reason.contains("lifetime admission rejected")
+        ));
     }
 
     #[test]
@@ -62895,7 +63116,7 @@ mod tests {
 
         let tmp = tempdir().unwrap();
         let cf_cache = tmp.path().join("grouped-metal-full12150-all63-cf-cache");
-        make_awproject_planner_cache(&cf_cache, 8);
+        make_awproject_planner_cache(&cf_cache, 1024);
         let mut config = awproject_mtmfs_planner_config(cf_cache, 32_000);
         config.imsize = 12_150;
         config.field_ids = Some((0..63).collect());
@@ -63020,6 +63241,176 @@ mod tests {
             ImagingMemoryStage::ResidualTransform
         );
         assert!(admitted.maximum_planned_resident_bytes <= admitted.usable_memory_bytes);
+
+        let replay_stage_peak_bytes = [
+            ImagingMemoryStage::ResidualGrid,
+            ImagingMemoryStage::ResidualTransform,
+        ]
+        .into_iter()
+        .filter_map(|stage| admitted.memory_lifetime_ledger.stage_peak(stage))
+        .map(|peak| peak.resident_bytes)
+        .max()
+        .expect("full12150/all63 replay-stage peak");
+        let residual_headroom_bytes = admitted
+            .usable_memory_bytes
+            .checked_sub(replay_stage_peak_bytes)
+            .expect("admitted replay-stage headroom");
+        let compile_envelope = awproject_grouped_replay_compile_envelope(&admitted)
+            .expect("full12150/all63 compile envelope");
+        assert_eq!(compile_envelope.compile_admission_bytes, 10_784_124_037);
+        assert_eq!(
+            compile_envelope.replay_retention_ceiling_bytes,
+            10_247_253_125
+        );
+        assert!(
+            residual_headroom_bytes > compile_envelope.replay_retention_ceiling_bytes,
+            "the fixture must preserve the preflight-v2 conflict between residual and compile headroom"
+        );
+
+        let plan = admit_awproject_compact_replay_retention(admitted, 32)
+            .expect("jointly bounded full12150/all63 replay retention");
+        assert_eq!(
+            plan.allocation_bytes("AWProject compact replay retention"),
+            10_247_253_125
+        );
+        let execution = standard_mfs_execution_config_with_plan(&config, &plan);
+        let grouped_replay = execution
+            .awproject_grouped_replay
+            .as_ref()
+            .expect("compile-safe full12150/all63 grouped replay plan");
+        assert_eq!(grouped_replay.compile_admission_bytes(), 10_784_124_037);
+        assert_eq!(grouped_replay.segment_target_bytes(), 536_870_912);
+        assert_eq!(
+            awproject_grouped_metal_execution_probe_status(&plan, &execution),
+            AwProjectGroupedMetalProbeStatus::Admitted
+        );
+        assert!(plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_compact_replay_retention_bytes"
+                && decision.value == "10247253125"
+                && decision
+                    .reason
+                    .contains("compile_admission_bytes=10784124037")
+                && decision
+                    .reason
+                    .contains("compile_segment_reserve_bytes=536870912")
+                && decision
+                    .reason
+                    .contains("compile_retention_ceiling_bytes=10247253125")
+        }));
+
+        let receipt_ids = standard_mfs_memory_allocation_receipt_ids(&plan);
+        for (allocation, receipt_id) in plan.memory_allocations.iter().zip(receipt_ids.iter()) {
+            if let Some(receipt_id) = receipt_id {
+                assert!(
+                    plan.memory_lifetime_ledger
+                        .allocations
+                        .iter()
+                        .any(|lifecycle| {
+                            lifecycle.allocation_id.as_str() == receipt_id.as_str()
+                                && lifecycle.component.as_str() == allocation.component
+                        })
+                );
+            }
+        }
+        let scratch_index = plan
+            .memory_allocations
+            .iter()
+            .position(|allocation| allocation.component == "direct Metal host scratch")
+            .expect("zero-byte direct scratch receipt");
+        assert_eq!(receipt_ids[scratch_index], None);
+        let replay_index = plan
+            .memory_allocations
+            .iter()
+            .position(|allocation| allocation.component == "AWProject compact replay retention")
+            .expect("replay allocation receipt");
+        let replay_id = receipt_ids[replay_index]
+            .as_deref()
+            .expect("replay allocation must retain its lifecycle ID");
+        assert_eq!(
+            replay_id,
+            "standard-mfs-awproject-compact-replay-retention-1"
+        );
+        assert!(
+            plan.memory_lifetime_ledger
+                .allocations
+                .iter()
+                .any(|lifecycle| {
+                    lifecycle.component == "AWProject compact replay retention"
+                        && lifecycle.allocation_id == replay_id
+                })
+        );
+
+        let mut oversized_replay = plan.clone();
+        assert!(replace_standard_mfs_memory_allocation(
+            &mut oversized_replay,
+            "AWProject compact replay retention",
+            compile_envelope.replay_retention_ceiling_bytes + 1,
+        ));
+        rebuild_standard_mfs_memory_lifetime_ledger(&mut oversized_replay, true)
+            .expect("oversized replay remains inside the residual-stage target");
+        let oversized_execution =
+            standard_mfs_execution_config_with_plan(&config, &oversized_replay);
+        assert!(oversized_execution.awproject_grouped_replay.is_none());
+        assert!(matches!(
+            awproject_grouped_metal_plan_probe_status(
+                &oversized_replay,
+                &config,
+                63,
+                true,
+            ),
+            AwProjectGroupedMetalProbeStatus::Rejected(reason)
+                if reason.contains("compile-safe ceiling 10247253125")
+        ));
+    }
+
+    #[test]
+    fn awproject_grouped_replay_compile_envelope_fails_below_two_minimums() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("grouped-replay-compile-boundary-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
+        let mut base = standard_mfs_memory_plan(&config, 64, 1024);
+        force_grouped_metal_test_device_budget(&mut base, 16 * 1024 * 1024 * 1024);
+        base.metal.eligible = true;
+        let mut plan = admit_awproject_multifield_initial_grid(base, &config, 2, false, true)
+            .expect("grouped initial-grid boundary fixture");
+        let baseline_envelope = awproject_grouped_replay_compile_envelope(&plan)
+            .expect("baseline grouped compile envelope");
+        plan.usable_memory_bytes = baseline_envelope
+            .compile_fixed_overlap_bytes
+            .checked_add(2 * AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES - 1)
+            .expect("boundary target");
+
+        let boundary_envelope = awproject_grouped_replay_compile_envelope(&plan)
+            .expect("just-below-two-minimum compile envelope");
+        assert_eq!(
+            boundary_envelope.compile_admission_bytes,
+            2 * AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES - 1
+        );
+        assert_eq!(
+            boundary_envelope.replay_retention_ceiling_bytes,
+            AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES - 1
+        );
+        let replay_stage_peak_bytes = [
+            ImagingMemoryStage::ResidualGrid,
+            ImagingMemoryStage::ResidualTransform,
+        ]
+        .into_iter()
+        .filter_map(|stage| plan.memory_lifetime_ledger.stage_peak(stage))
+        .map(|peak| peak.resident_bytes)
+        .max()
+        .expect("boundary replay-stage peak");
+        assert!(
+            plan.usable_memory_bytes > replay_stage_peak_bytes,
+            "boundary fixture must fail on compile retention, not zero residual headroom"
+        );
+        let error = admit_awproject_compact_replay_retention(plan, 4)
+            .expect_err("sub-minimum replay retention must fail closed");
+        assert!(
+            error.contains("below the 536870912-byte replay minimum"),
+            "unexpected boundary rejection: {error}"
+        );
     }
 
     #[test]
@@ -63254,6 +63645,7 @@ mod tests {
         let admitted =
             admit_awproject_compact_replay_retention(base.clone(), 4).expect("replay admission");
         let retention = admitted.allocation_bytes("AWProject compact replay retention");
+        assert!(!awproject_grouped_replay_uses_joint_memory_envelope(&base));
         assert!(retention > 0);
         assert_eq!(retention, admitted.usable_memory_bytes - replay_stage_peak);
         assert_eq!(
@@ -63271,6 +63663,7 @@ mod tests {
                     "prior_replay_stage_peak_bytes={replay_stage_peak}"
                 ))
                 && decision.reason.contains("artificial_fraction_cap=none")
+                && !decision.reason.contains("compile_admission_bytes=")
         }));
         assert!(admitted.decisions.iter().any(|decision| {
             decision.name == "awproject_compact_replay_resident_accounting"
