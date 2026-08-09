@@ -26074,10 +26074,11 @@ fn finish_awproject_source_major_initial_partition(
     sums: Vec<[f64; AWPROJECT_INITIAL_GROUPED_PLANE_COUNT * 2]>,
     kernels: &[WProjectMetalComplex],
     phases: &[WProjectMetalComplex],
-    grid_width: usize,
-    grid_height: usize,
+    grid_shape: [usize; 2],
     tile_side: usize,
+    grouped_tile_plan: Option<AwProjectMetalTilePlan>,
 ) -> Result<AwProjectMetalInitialGroupedProgram, ImagingError> {
+    let [grid_width, grid_height] = grid_shape;
     for (group, sums) in groups.iter_mut().zip(sums) {
         for (plane, value) in group.values.iter_mut().enumerate() {
             *value = WProjectMetalComplex {
@@ -26128,8 +26129,10 @@ fn finish_awproject_source_major_initial_partition(
         fixed_scales.push(scale);
         inverse_fixed_scales.push(scale.recip());
     }
-    let (tile_plan, _) =
-        plan_awproject_metal_group_tiles(&groups, grid_width, grid_height, tile_side)?;
+    let tile_plan = match grouped_tile_plan {
+        Some(tile_plan) => tile_plan,
+        None => plan_awproject_metal_group_tiles(&groups, grid_width, grid_height, tile_side)?.0,
+    };
     Ok(AwProjectMetalInitialGroupedProgram {
         groups,
         tile_plan,
@@ -26138,7 +26141,7 @@ fn finish_awproject_source_major_initial_partition(
     })
 }
 
-#[cfg(all(target_os = "macos", not(coverage)))]
+#[cfg(all(test, target_os = "macos", not(coverage)))]
 fn group_awproject_source_major_initial_imaging(
     batch: &AwProjectMetalBatch,
     kernels: &[WProjectMetalComplex],
@@ -26184,9 +26187,9 @@ fn group_awproject_source_major_initial_imaging(
         sums,
         kernels,
         &batch.phases,
-        grid_width,
-        grid_height,
+        [grid_width, grid_height],
         tile_side,
+        None,
     )
 }
 
@@ -26232,9 +26235,50 @@ fn group_awproject_source_major_initial_weight(
         sums,
         kernels,
         phases,
-        grid_width,
-        grid_height,
+        [grid_width, grid_height],
         tile_side,
+        None,
+    )
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn source_major_initial_imaging_from_grouped(
+    grouped: &AwProjectMetalGroupedTileProgram,
+    kernels: &[WProjectMetalComplex],
+    phases: &[WProjectMetalComplex],
+    grid_width: usize,
+    grid_height: usize,
+    tile_side: usize,
+) -> Result<AwProjectMetalInitialGroupedProgram, ImagingError> {
+    if grouped.tile_plan.tile_side != tile_side {
+        return Err(ImagingError::Normalization(format!(
+            "source-major initial AOT tile side changed: compiled={}, requested={tile_side}",
+            grouped.tile_plan.tile_side,
+        )));
+    }
+    let mut initial_groups = Vec::with_capacity(grouped.groups.len());
+    let mut sums = Vec::with_capacity(grouped.groups.len());
+    for grouped_plan in &grouped.groups {
+        initial_groups.push(AwProjectMetalInitialGroupedPlan {
+            plan: grouped_plan.plan,
+            values: [WProjectMetalComplex { re: 0.0, im: 0.0 };
+                AWPROJECT_INITIAL_GROUPED_PLANE_COUNT],
+        });
+        let mut values = [0.0; AWPROJECT_INITIAL_GROUPED_PLANE_COUNT * 2];
+        values[3 * 2] = f64::from(grouped_plan.residual.tt0_re);
+        values[3 * 2 + 1] = f64::from(grouped_plan.residual.tt0_im);
+        values[4 * 2] = f64::from(grouped_plan.residual.tt1_re);
+        values[4 * 2 + 1] = f64::from(grouped_plan.residual.tt1_im);
+        sums.push(values);
+    }
+    finish_awproject_source_major_initial_partition(
+        initial_groups,
+        sums,
+        kernels,
+        phases,
+        [grid_width, grid_height],
+        tile_side,
+        Some(grouped.tile_plan.clone()),
     )
 }
 
@@ -39719,11 +39763,18 @@ fn dispatch_awproject_source_major_initial(
         .map(|compensation| compensation.buffer.length())
         .unwrap_or(grid_bytes);
     let kernels = program.imaging_kernels();
+    let aot = program.aot_grouped_tile.as_ref().ok_or_else(|| {
+        ImagingError::InvalidRequest(
+            "source-major initial dispatch lost its compiled AOT sample receipt".to_string(),
+        )
+    })?;
+    let source_samples = aot.receipt.sample_count;
 
     let imaging_group_started = Instant::now();
-    let imaging_partition = group_awproject_source_major_initial_imaging(
-        &program.tile_batch,
+    let imaging_partition = source_major_initial_imaging_from_grouped(
+        &aot.grouped,
         kernels,
+        &program.tile_batch.phases,
         grid_width,
         grid_height,
         tile_side,
@@ -39822,7 +39873,7 @@ fn dispatch_awproject_source_major_initial(
         metal_stats: AwProjectMetalGridStats {
             calls: 2,
             plane_segments: 2,
-            samples: program.tile_batch.samples.len().saturating_mul(2),
+            samples: source_samples.saturating_mul(2),
             kernel_values: kernels.len().saturating_add(weight_atlas.values.len()),
             executor_setup,
             buffer_alloc: imaging_stats.buffer_alloc + weight_stats.buffer_alloc,
@@ -39984,26 +40035,22 @@ fn accumulate_awproject_source_major_block(
     };
 
     let accepted_samples = program.tile_batch.samples.len();
-    let initial_receipt = dispatch_awproject_source_major_initial(
-        &program,
-        &weight_samples,
-        &weight_atlas,
-        &weight_phases,
-        accumulation,
-        replay_cache,
-        tile_side,
-        device_budget_bytes,
-        safety_reserve_bytes,
-    )?;
-    drop(weight_samples);
-    drop(weight_atlas);
-    drop(weight_phases);
-
+    let compile_external_overlap_bytes = checked_awproject_source_major_bytes(&[
+        weight_atlas.resident_bytes(),
+        weight_samples
+            .len()
+            .saturating_mul(std::mem::size_of::<AwProjectSourceMajorWeightSample>()),
+        weight_phases
+            .len()
+            .saturating_mul(std::mem::size_of::<WProjectMetalComplex>()),
+    ])?;
     let compile_limit = process_compile_ceiling_bytes
         .checked_sub(replay_cache.resident_bytes)
+        .and_then(|available| available.checked_sub(compile_external_overlap_bytes))
         .ok_or_else(|| {
             ImagingError::InvalidRequest(
-                "direct source-major retained programs exceed compile admission".to_string(),
+                "direct source-major retained programs and initial weight state exceed compile admission"
+                    .to_string(),
             )
         })?;
     let effective_support = compile_awproject_metal_aot_grouped_tile(
@@ -40021,6 +40068,21 @@ fn accumulate_awproject_source_major_block(
         &effective_support,
         &program,
     );
+
+    let initial_receipt = dispatch_awproject_source_major_initial(
+        &program,
+        &weight_samples,
+        &weight_atlas,
+        &weight_phases,
+        accumulation,
+        replay_cache,
+        tile_side,
+        device_budget_bytes,
+        safety_reserve_bytes,
+    )?;
+    drop(weight_samples);
+    drop(weight_atlas);
+    drop(weight_phases);
     let program_bytes = program.resident_bytes();
     replay_cache.admit_source_major_compile_peak(program_bytes)?;
 
@@ -80126,7 +80188,7 @@ mod tests {
                 },
             )
             .collect::<Vec<_>>();
-        let imaging = super::group_awproject_source_major_initial_imaging(
+        let legacy_imaging = super::group_awproject_source_major_initial_imaging(
             &imaging_batch,
             &imaging_batch.kernels,
             8,
@@ -80134,6 +80196,21 @@ mod tests {
             8,
         )
         .unwrap();
+        let grouped = super::group_awproject_metal_tile_plans(&imaging_batch, 8, 8, 8).unwrap();
+        let imaging = super::source_major_initial_imaging_from_grouped(
+            &grouped,
+            &imaging_batch.kernels,
+            &imaging_batch.phases,
+            8,
+            8,
+            8,
+        )
+        .unwrap();
+        assert_eq!(imaging.groups.len(), legacy_imaging.groups.len());
+        assert_eq!(
+            super::hash_awproject_grouped_route(&imaging.tile_plan),
+            super::hash_awproject_grouped_route(&grouped.tile_plan),
+        );
         let weight = super::group_awproject_source_major_initial_weight(
             &weight_samples,
             &exact_batch.kernels,
