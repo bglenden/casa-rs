@@ -533,7 +533,7 @@ def run_all_fields(
             "CASA_RS_VLASS_GROUPED_SEGMENT_TARGET_BYTES": str(
                 row["segment_target_bytes"]
             ),
-            "CASA_RS_VLASS_GRID_THREADS": "2",
+            "CASA_RS_VLASS_GRID_THREADS": str(row["requested_grid_threads"]),
             "CASA_RS_VLASS_STANDARD_MFS_ACCELERATION": "metal",
             "CASA_RS_VLASS_NITER": "2000",
         }

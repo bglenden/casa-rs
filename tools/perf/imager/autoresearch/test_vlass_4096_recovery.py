@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from autoresearch import vlass_4096_recovery as subject
 
@@ -165,6 +166,32 @@ class Vlass4096RecoveryTests(unittest.TestCase):
                 subject.validate_all_field_log(
                     self.contract, log, enforce_sequential_guard=True
                 )
+
+    def test_all_field_launch_binds_requested_grid_workers(self) -> None:
+        captured: dict[str, str] = {}
+
+        def stop_before_launch(*args, **kwargs):
+            captured.update(kwargs["environment"])
+            raise subject.ContractError("stop before launch")
+
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(
+                subject, "run_checked", side_effect=stop_before_launch
+            ):
+                with self.assertRaisesRegex(
+                    subject.ContractError, "stop before launch"
+                ):
+                    subject.run_all_fields(
+                        self.contract,
+                        Path(directory) / "casars-imager",
+                        Path(directory),
+                        "test",
+                        enforce_sequential_guard=False,
+                    )
+        self.assertEqual(
+            str(self.contract["all_fields"]["requested_grid_threads"]),
+            captured["CASA_RS_VLASS_GRID_THREADS"],
+        )
 
     def test_raw_comparison_status_can_be_deferred_only_explicitly(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
