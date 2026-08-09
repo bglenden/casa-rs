@@ -17,18 +17,25 @@ class Vlass4096RecoveryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.contract = subject.load_object(subject.DEFAULT_CONTRACT)
 
-    def test_contract_pins_100x_target_and_five_percent_all_field_guard(self) -> None:
+    def test_contract_pins_both_100x_targets_and_sequential_guard(self) -> None:
         subject.validate_contract(self.contract)
-        self.assertAlmostEqual(
-            100.0,
-            self.contract["single_field"]["matched_casa_wall_seconds"]
-            / self.contract["single_field"]["target_wall_seconds"],
-        )
+        for row_name in ("single_field", "all_fields"):
+            row = self.contract[row_name]
+            self.assertAlmostEqual(
+                100.0,
+                row["matched_casa_wall_seconds"] / row["target_wall_seconds"],
+            )
         self.assertAlmostEqual(
             1.05,
-            self.contract["all_fields"]["maximum_wall_seconds"]
-            / self.contract["all_fields"]["baseline_wall_seconds"],
+            self.contract["all_fields"]["sequential_guard_maximum_wall_seconds"]
+            / self.contract["all_fields"]["sequential_guard_baseline_wall_seconds"],
         )
+        for baseline, maximum in (
+            ("cold_instructions_retired", "maximum_instructions_retired"),
+            ("cold_cycles_elapsed", "maximum_cycles_elapsed"),
+        ):
+            row = self.contract["all_fields"]
+            self.assertEqual(int(row[baseline] * 1.05), row[maximum])
 
     def test_contract_rejects_weakened_target_or_all_field_guard(self) -> None:
         changed = copy.deepcopy(self.contract)
@@ -37,8 +44,13 @@ class Vlass4096RecoveryTests(unittest.TestCase):
             subject.validate_contract(changed)
 
         changed = copy.deepcopy(self.contract)
-        changed["all_fields"]["maximum_wall_seconds"] += 1.0
+        changed["all_fields"]["sequential_guard_maximum_wall_seconds"] += 1.0
         with self.assertRaisesRegex(subject.ContractError, "exactly 5%"):
+            subject.validate_contract(changed)
+
+        changed = copy.deepcopy(self.contract)
+        changed["all_fields"]["target_wall_seconds"] += 1.0
+        with self.assertRaisesRegex(subject.ContractError, "all-field target"):
             subject.validate_contract(changed)
 
     def test_parse_wall_requires_one_positive_time_record(self) -> None:
@@ -49,6 +61,26 @@ class Vlass4096RecoveryTests(unittest.TestCase):
             log.write_text("real 28.65\nreal 29.0\n", encoding="utf-8")
             with self.assertRaisesRegex(subject.ContractError, "exactly one"):
                 subject.parse_wall(log)
+
+    def test_time_counters_are_exact_and_enforce_cold_five_percent_guard(self) -> None:
+        row = self.contract["all_fields"]
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "run.log"
+            log.write_text(
+                f"  {row['maximum_instructions_retired']} instructions retired\n"
+                f"  {row['maximum_cycles_elapsed']} cycles elapsed\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                {
+                    "instructions_retired": row["maximum_instructions_retired"],
+                    "cycles_elapsed": row["maximum_cycles_elapsed"],
+                },
+                subject.parse_time_counters(log),
+            )
+            log.write_text("1 instructions retired\n", encoding="utf-8")
+            with self.assertRaisesRegex(subject.ContractError, "cycles_elapsed"):
+                subject.parse_time_counters(log)
 
     def test_all_field_log_rejects_spill_or_topology_rebuild(self) -> None:
         row = self.contract["all_fields"]
@@ -64,18 +96,32 @@ class Vlass4096RecoveryTests(unittest.TestCase):
                 "awproject_metal_resident_grouped_replay_summary spill_read_bytes=0 runtime_grouping_builds=0 runtime_sort_builds=0 runtime_route_builds=0",
                 "standard_mfs_stage_memory swapout_bytes_delta=0",
                 f"Wrote CASA-compatible products at prefix /tmp/rust ({row['gridded_samples']} gridded samples, {row['major_cycles']} major cycles, {row['minor_iterations']} minor iterations, stop=Some(NsigmaThresholdReached))",
+                f"  {row['cold_instructions_retired']} instructions retired",
+                f"  {row['cold_cycles_elapsed']} cycles elapsed",
             ]
         )
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "run.log"
             log.write_text(good + "\n", encoding="utf-8")
-            receipt = subject.validate_all_field_log(self.contract, log)
+            receipt = subject.validate_all_field_log(
+                self.contract, log, enforce_sequential_guard=True
+            )
             self.assertEqual(1, receipt["segments"])
             log.write_text(
                 good.replace("spill_read_bytes=0", "spill_read_bytes=1") + "\n"
             )
             with self.assertRaisesRegex(subject.ContractError, "spill_read_bytes"):
                 subject.validate_all_field_log(self.contract, log)
+
+            too_many = good.replace(
+                str(row["cold_cycles_elapsed"]),
+                str(row["maximum_cycles_elapsed"] + 1),
+            )
+            log.write_text(too_many + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(subject.ContractError, "cycles_elapsed"):
+                subject.validate_all_field_log(
+                    self.contract, log, enforce_sequential_guard=True
+                )
 
     def test_raw_comparison_status_can_be_deferred_only_explicitly(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

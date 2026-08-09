@@ -22,6 +22,10 @@ REPO_ROOT = SCRIPT_DIR.parents[3]
 DEFAULT_CONTRACT = SCRIPT_DIR / "vlass_4096_recovery_contract.json"
 CONTROLLER_RESULTS = "autoresearch-results"
 WALL_RE = re.compile(r"^real (?P<seconds>[0-9]+(?:\.[0-9]+)?)$")
+TIME_COUNTER_RE = re.compile(
+    r"^\s*(?P<value>[0-9]+)\s+"
+    r"(?P<name>instructions retired|cycles elapsed)\s*$"
+)
 COMPLETION_RE = re.compile(
     r"^Wrote CASA-compatible products at prefix (?P<prefix>.+) "
     r"\((?P<samples>[0-9]+) gridded samples, "
@@ -84,11 +88,23 @@ def validate_contract(contract: dict[str, Any]) -> None:
         single["target_wall_seconds"]
     ):
         raise ContractError("single-field target must equal the exact 100x CASA wall")
-    if (
-        float(all_fields["maximum_wall_seconds"])
-        != float(all_fields["baseline_wall_seconds"]) * 1.05
+    if float(all_fields["matched_casa_wall_seconds"]) / 100.0 != float(
+        all_fields["target_wall_seconds"]
     ):
-        raise ContractError("all-field guard must be exactly 5% above its baseline")
+        raise ContractError("all-field target must equal the exact 100x CASA wall")
+    if (
+        float(all_fields["sequential_guard_maximum_wall_seconds"])
+        != float(all_fields["sequential_guard_baseline_wall_seconds"]) * 1.05
+    ):
+        raise ContractError(
+            "all-field sequential guard must be exactly 5% above its baseline"
+        )
+    for baseline, maximum in (
+        ("cold_instructions_retired", "maximum_instructions_retired"),
+        ("cold_cycles_elapsed", "maximum_cycles_elapsed"),
+    ):
+        if int(all_fields[maximum]) != int(int(all_fields[baseline]) * 1.05):
+            raise ContractError(f"all-field {maximum} must be 5% above {baseline}")
     if int(all_fields["segment_target_bytes"]) != 512 * 1024 * 1024:
         raise ContractError("all-field guard must force 512 MiB grouped segments")
 
@@ -165,6 +181,23 @@ def parse_wall(log_path: Path) -> float:
     if len(matches) != 1 or matches[0] <= 0.0:
         raise ContractError(f"{log_path} must contain exactly one positive real line")
     return matches[0]
+
+
+def parse_time_counters(log_path: Path) -> dict[str, int]:
+    matches: dict[str, list[int]] = {
+        "instructions_retired": [],
+        "cycles_elapsed": [],
+    }
+    for line in log_path.read_text(encoding="utf-8").splitlines():
+        if match := TIME_COUNTER_RE.fullmatch(line):
+            key = match.group("name").replace(" ", "_")
+            matches[key].append(int(match.group("value")))
+    result: dict[str, int] = {}
+    for key, values in matches.items():
+        if len(values) != 1 or values[0] <= 0:
+            raise ContractError(f"{log_path} must contain exactly one positive {key}")
+        result[key] = values[0]
+    return result
 
 
 def run_checked(
@@ -267,7 +300,12 @@ def parse_key_values(line: str) -> dict[str, str]:
     return {match.group("key"): match.group("value") for match in KV_RE.finditer(line)}
 
 
-def validate_all_field_log(contract: dict[str, Any], log_path: Path) -> dict[str, Any]:
+def validate_all_field_log(
+    contract: dict[str, Any],
+    log_path: Path,
+    *,
+    enforce_sequential_guard: bool = False,
+) -> dict[str, Any]:
     row = contract["all_fields"]
     lines = log_path.read_text(encoding="utf-8").splitlines()
     completions = [COMPLETION_RE.fullmatch(line) for line in lines]
@@ -328,15 +366,31 @@ def validate_all_field_log(contract: dict[str, Any], log_path: Path) -> dict[str
         receipt.get("omitted_energy_fraction_bits") != "0" for receipt in receipts
     ):
         raise ContractError("all-field AOT replay is not exact support")
+    counters = parse_time_counters(log_path)
+    if enforce_sequential_guard:
+        for key, maximum_key in (
+            ("instructions_retired", "maximum_instructions_retired"),
+            ("cycles_elapsed", "maximum_cycles_elapsed"),
+        ):
+            if counters[key] > int(row[maximum_key]):
+                raise ContractError(
+                    f"all-field {key} {counters[key]} exceeds {row[maximum_key]}"
+                )
     return {
         "completion": completion,
         "segments": len(receipts),
         "refreshes": len(summaries),
+        **counters,
     }
 
 
 def run_all_fields(
-    contract: dict[str, Any], binary: Path, run_dir: Path, token: str
+    contract: dict[str, Any],
+    binary: Path,
+    run_dir: Path,
+    token: str,
+    *,
+    enforce_sequential_guard: bool,
 ) -> dict[str, Any]:
     row = contract["all_fields"]
     all_run = run_dir / f"all63-{token}"
@@ -365,11 +419,18 @@ def run_all_fields(
         raise ContractError("all-field runner did not return its exact run root")
     runtime_log = all_run / "casa-rs.log"
     wall = parse_wall(runtime_log)
-    if wall > float(row["maximum_wall_seconds"]):
+    if enforce_sequential_guard and wall > float(
+        row["sequential_guard_maximum_wall_seconds"]
+    ):
         raise ContractError(
-            f"all-field wall {wall:.6f}s exceeds {row['maximum_wall_seconds']:.6f}s"
+            f"all-field wall {wall:.6f}s exceeds "
+            f"{row['sequential_guard_maximum_wall_seconds']:.6f}s"
         )
-    runtime = validate_all_field_log(contract, runtime_log)
+    runtime = validate_all_field_log(
+        contract,
+        runtime_log,
+        enforce_sequential_guard=enforce_sequential_guard,
+    )
     return {
         "wall_seconds": wall,
         "runtime_log": str(runtime_log),
@@ -436,11 +497,48 @@ def run_token() -> str:
     )
 
 
-def latest_path(contract: dict[str, Any]) -> Path:
-    return Path(contract["run_root"]) / "latest-measurement.json"
+def latest_path(contract: dict[str, Any], phase: str) -> Path:
+    return Path(contract["run_root"]) / f"latest-{phase}-measurement.json"
 
 
-def measure(contract: dict[str, Any]) -> float:
+def write_measurement(
+    contract: dict[str, Any], phase: str, receipt: dict[str, Any]
+) -> None:
+    run_dir = Path(receipt["run_dir"])
+    measurement = run_dir / f"{phase}-measurement.json"
+    measurement.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    pointer = latest_path(contract, phase)
+    pointer.parent.mkdir(parents=True, exist_ok=True)
+    pointer.write_text(
+        json.dumps(
+            {
+                "measurement": str(measurement),
+                "measurement_sha256": sha256_file(measurement),
+                "source_head": receipt["source_head"],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def load_measurement(contract: dict[str, Any], phase: str) -> dict[str, Any]:
+    pointer = load_object(latest_path(contract, phase))
+    if pointer.get("source_head") != git("rev-parse", "HEAD"):
+        raise ContractError("latest measurement belongs to a different source commit")
+    measurement_path = Path(pointer["measurement"])
+    if sha256_file(measurement_path) != pointer["measurement_sha256"]:
+        raise ContractError("latest measurement receipt hash changed")
+    measurement = load_object(measurement_path)
+    binary = Path(measurement["build"]["binary"])
+    if sha256_file(binary) != measurement["build"]["binary_sha256"]:
+        raise ContractError("release binary changed between measurement and guard")
+    return measurement
+
+
+def measure_single(contract: dict[str, Any]) -> float:
     token = run_token()
     run_dir = Path(contract["run_root"]) / "runs" / token
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -454,45 +552,27 @@ def measure(contract: dict[str, Any]) -> float:
         "build": build,
         "single_field": single,
     }
-    measurement = run_dir / "measurement.json"
-    measurement.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
-    pointer = latest_path(contract)
-    pointer.parent.mkdir(parents=True, exist_ok=True)
-    pointer.write_text(
-        json.dumps(
-            {
-                "measurement": str(measurement),
-                "measurement_sha256": sha256_file(measurement),
-                "source_head": build["head"],
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    write_measurement(contract, "single", receipt)
     return float(single["wall_seconds"])
 
 
-def guard(contract: dict[str, Any]) -> None:
-    pointer = load_object(latest_path(contract))
-    if pointer.get("source_head") != git("rev-parse", "HEAD"):
-        raise ContractError("latest measurement belongs to a different source commit")
-    measurement_path = Path(pointer["measurement"])
-    if sha256_file(measurement_path) != pointer["measurement_sha256"]:
-        raise ContractError("latest measurement receipt hash changed")
-    measurement = load_object(measurement_path)
+def guard_single(contract: dict[str, Any]) -> None:
+    measurement = load_measurement(contract, "single")
     run_dir = Path(measurement["run_dir"])
     binary = Path(measurement["build"]["binary"])
-    if sha256_file(binary) != measurement["build"]["binary_sha256"]:
-        raise ContractError("release binary changed between measurement and guard")
     single_comparison = compare_row(
         contract,
         contract["single_field"],
         Path(measurement["single_field"]["output_prefix"]),
         run_dir / "single-casa",
     )
-    all_fields = run_all_fields(contract, binary, run_dir, measurement["token"][-8:])
+    all_fields = run_all_fields(
+        contract,
+        binary,
+        run_dir,
+        measurement["token"][-8:],
+        enforce_sequential_guard=True,
+    )
     all_comparison = compare_row(
         contract,
         contract["all_fields"],
@@ -514,20 +594,94 @@ def guard(contract: dict[str, Any]) -> None:
     output.write_text(json.dumps(guard_receipt, indent=2, sort_keys=True) + "\n")
 
 
+def measure_all_fields(contract: dict[str, Any]) -> float:
+    token = run_token()
+    run_dir = Path(contract["run_root"]) / "runs" / token
+    run_dir.mkdir(parents=True, exist_ok=False)
+    binary, build = build_release(run_dir)
+    all_fields = run_all_fields(
+        contract,
+        binary,
+        run_dir,
+        token[-8:],
+        enforce_sequential_guard=False,
+    )
+    receipt = {
+        "schema_version": 1,
+        "token": token,
+        "run_dir": str(run_dir),
+        "source_head": build["head"],
+        "build": build,
+        "all_fields": all_fields,
+    }
+    write_measurement(contract, "all-fields", receipt)
+    return float(all_fields["wall_seconds"])
+
+
+def guard_all_fields(contract: dict[str, Any]) -> None:
+    measurement = load_measurement(contract, "all-fields")
+    run_dir = Path(measurement["run_dir"])
+    binary = Path(measurement["build"]["binary"])
+    all_comparison = compare_row(
+        contract,
+        contract["all_fields"],
+        Path(measurement["all_fields"]["output_prefix"]),
+        run_dir / "all63-casa",
+    )
+    single = run_single(contract, binary, run_dir, measurement["token"][-8:])
+    target = float(contract["single_field"]["target_wall_seconds"])
+    if float(single["wall_seconds"]) > target:
+        raise ContractError(
+            f"single-field wall {single['wall_seconds']:.6f}s exceeds {target:.6f}s"
+        )
+    single_comparison = compare_row(
+        contract,
+        contract["single_field"],
+        Path(single["output_prefix"]),
+        run_dir / "single-casa",
+    )
+    guard_receipt = {
+        "schema_version": 1,
+        "status": "passed",
+        "source_head": measurement["source_head"],
+        "binary_sha256": measurement["build"]["binary_sha256"],
+        "all_fields": {
+            **measurement["all_fields"],
+            "comparison": all_comparison,
+        },
+        "single_field": {**single, "comparison": single_comparison},
+    }
+    output = run_dir / "all-fields-guard.json"
+    output.write_text(json.dumps(guard_receipt, indent=2, sort_keys=True) + "\n")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("measure", "guard"))
+    parser.add_argument(
+        "action",
+        choices=(
+            "measure-single",
+            "guard-single",
+            "measure-all-fields",
+            "guard-all-fields",
+        ),
+    )
     parser.add_argument("--contract", type=Path, default=DEFAULT_CONTRACT)
     args = parser.parse_args()
     try:
         contract = load_object(args.contract)
         validate_contract(contract)
         validate_inputs(contract)
-        if args.action == "measure":
-            metric = measure(contract)
+        if args.action == "measure-single":
+            metric = measure_single(contract)
+            print(f"{metric:.9f}")
+        elif args.action == "guard-single":
+            guard_single(contract)
+        elif args.action == "measure-all-fields":
+            metric = measure_all_fields(contract)
             print(f"{metric:.9f}")
         else:
-            guard(contract)
+            guard_all_fields(contract)
     except (ContractError, OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"VLASS 4096 autoresearch error: {error}", file=sys.stderr)
         return 1
