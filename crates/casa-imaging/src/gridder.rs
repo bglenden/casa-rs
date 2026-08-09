@@ -2557,35 +2557,12 @@ impl<'a, K: AwProjectKernelPixels + ?Sized> AwProjector<'a, K> {
         x_phase: impl Fn(isize) -> Complex32,
         y_phase: impl Fn(isize) -> Complex32,
     ) -> Result<(AwProjectSamplePlan, AwProjectorPackedTaps), AwProjectSamplePlanRejection> {
-        let mut values =
-            Vec::with_capacity((2 * self.x_support + 1).saturating_mul(2 * self.y_support + 1));
-        let plan = self.visit_geometry_with_phase_lookup(
-            geometry,
-            x_phase,
-            y_phase,
-            |_x_coordinate, _y_coordinate, value| values.push(value),
-        )?;
-        Ok((
-            plan,
-            AwProjectorPackedTaps {
-                values,
-                x_support: self.x_support,
-                y_support: self.y_support,
-            },
-        ))
-    }
-
-    pub(crate) fn visit_geometry_with_phase_lookup(
-        &self,
-        geometry: AwProjectSampleGeometry,
-        x_phase: impl Fn(isize) -> Complex32,
-        y_phase: impl Fn(isize) -> Complex32,
-        mut visit: impl FnMut(isize, isize, Complex32),
-    ) -> Result<AwProjectSamplePlan, AwProjectSamplePlanRejection> {
         let x_support = self.x_support as isize;
         let y_support = self.y_support as isize;
         let mut normalization = Complex32::new(0.0, 0.0);
         let mut grid_normalization = Complex64::new(0.0, 0.0);
+        let mut values =
+            Vec::with_capacity((2 * self.x_support + 1).saturating_mul(2 * self.y_support + 1));
         for iy in -y_support..=y_support {
             let y_coordinate = iy * self.sampling as isize + geometry.off_y;
             let kernel_y = usize::try_from(self.kernel_center[1] as isize + y_coordinate)
@@ -2608,7 +2585,7 @@ impl<'a, K: AwProjectKernelPixels + ?Sized> AwProjector<'a, K> {
                     tap,
                     casa_aw_phase_gradient_from_axes(x_phase(x_coordinate), phase_y),
                 );
-                visit(x_coordinate, y_coordinate, tap);
+                values.push(tap);
             }
         }
         if !(normalization.re.is_finite()
@@ -2620,15 +2597,22 @@ impl<'a, K: AwProjectKernelPixels + ?Sized> AwProjector<'a, K> {
         {
             return Err(AwProjectSamplePlanRejection::InvalidNormalization);
         }
-        Ok(AwProjectSamplePlan {
-            loc_x: geometry.loc_x,
-            loc_y: geometry.loc_y,
-            off_x: geometry.off_x,
-            off_y: geometry.off_y,
-            conjugate_for_grid: geometry.conjugate_for_grid,
-            normalization,
-            grid_normalization,
-        })
+        Ok((
+            AwProjectSamplePlan {
+                loc_x: geometry.loc_x,
+                loc_y: geometry.loc_y,
+                off_x: geometry.off_x,
+                off_y: geometry.off_y,
+                conjugate_for_grid: geometry.conjugate_for_grid,
+                normalization,
+                grid_normalization,
+            },
+            AwProjectorPackedTaps {
+                values,
+                x_support: self.x_support,
+                y_support: self.y_support,
+            },
+        ))
     }
 
     fn for_each_grid_tap(
