@@ -12738,12 +12738,40 @@ fn awproject_grouped_metal_tile_bytes(
             std::mem::size_of_val(aot.grouped.tile_plan.active_tile_ids.as_slice()),
             std::mem::size_of_val(aot.grouped.tile_plan.tile_fragment_offsets.as_slice()),
             std::mem::size_of_val(aot.grouped.tile_plan.fragments.as_slice()),
-            std::mem::size_of_val(aot.fixed_scales.as_slice()),
-            std::mem::size_of_val(aot.inverse_fixed_scales.as_slice()),
+            awproject_grouped_metal_fixed_scale_topology_bytes(aot)?,
             std::mem::size_of::<AwProjectMetalTileParams>(),
         ],
         "tile overlap",
     )
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_grouped_metal_fixed_scale_topology_bytes(
+    aot: &AwProjectMetalAotGroupedTileProgram,
+) -> Result<usize, ImagingError> {
+    const MTMFS_TERMS: usize = 2;
+    const SCALE_ARRAYS: usize = 2;
+
+    let expected = MTMFS_TERMS
+        .checked_mul(SCALE_ARRAYS)
+        .and_then(|values| values.checked_mul(std::mem::size_of::<f32>()))
+        .expect("the fixed two-term grouped scale topology fits usize");
+    if aot.receipt.ledger.fixed_scale_bytes != expected {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject AOT grouped-tile receipt records {} fixed-scale bytes, expected {expected}",
+            aot.receipt.ledger.fixed_scale_bytes,
+        )));
+    }
+    let fixed_len = aot.fixed_scales.len();
+    let inverse_len = aot.inverse_fixed_scales.len();
+    let inventory_is_deferred = fixed_len == 0 && inverse_len == 0;
+    let inventory_is_materialized = fixed_len == MTMFS_TERMS && inverse_len == MTMFS_TERMS;
+    if !inventory_is_deferred && !inventory_is_materialized {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject AOT grouped-tile fixed-scale inventory is partial: fixed={fixed_len}, inverse={inverse_len}, expected both empty or both {MTMFS_TERMS}",
+        )));
+    }
+    Ok(expected)
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -75097,6 +75125,8 @@ mod tests {
             .expect("compiled AOT grouped-tile artifact")
             .receipt
             .clone();
+        let sealed_tile_bytes =
+            super::awproject_grouped_metal_tile_bytes(&program).expect("sealed tile bytes");
 
         let descriptor = store.spill(program, 1).unwrap();
         assert_eq!(descriptor.tile_samples.byte_len, 0);
@@ -75135,6 +75165,50 @@ mod tests {
         assert_eq!(
             super::hash_awproject_grouped_route(&restored_aot.grouped.tile_plan),
             expected.grouped_route_sha256
+        );
+
+        let mut prefetched = store.reload_prefetched(&descriptor).unwrap().program;
+        let prefetched_aot = prefetched
+            .aot_grouped_tile
+            .as_ref()
+            .expect("prefetched AOT grouped-tile artifact");
+        assert!(prefetched_aot.fixed_scales.is_empty());
+        assert!(prefetched_aot.inverse_fixed_scales.is_empty());
+        assert_eq!(
+            super::awproject_grouped_metal_tile_bytes(&prefetched).unwrap(),
+            sealed_tile_bytes,
+            "deferred scale values must not change the sealed tile admission"
+        );
+        let residuals = prefetched
+            .prediction_batch
+            .samples
+            .iter()
+            .map(|sample| super::AwProjectMetalPredictionResult {
+                first_residual_re: sample.first_observed_re,
+                first_residual_im: sample.first_observed_im,
+                second_residual_re: sample.second_observed_re,
+                second_residual_im: sample.second_observed_im,
+            })
+            .collect::<Vec<_>>();
+        let term_weights = prefetched.tile_batch.term_weights.clone();
+        let residual_scale_plan = prefetched.residual_scale_plan;
+        let prefetched_aot = prefetched
+            .aot_grouped_tile
+            .as_mut()
+            .expect("prefetched AOT grouped-tile artifact");
+        super::refresh_awproject_metal_aot_grouped_tile(
+            prefetched_aot,
+            &residuals,
+            &term_weights,
+            residual_scale_plan,
+        )
+        .unwrap();
+        assert_eq!(prefetched_aot.fixed_scales.len(), 2);
+        assert_eq!(prefetched_aot.inverse_fixed_scales.len(), 2);
+        assert_eq!(
+            super::awproject_grouped_metal_tile_bytes(&prefetched).unwrap(),
+            sealed_tile_bytes,
+            "materializing scale values must preserve the sealed tile admission"
         );
 
         let stats = super::replay_awproject_metal_prefetched_sequence(
