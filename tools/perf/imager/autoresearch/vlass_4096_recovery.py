@@ -172,6 +172,7 @@ def run_checked(
     *,
     environment: dict[str, str],
     log_path: Path,
+    accepted_returncodes: tuple[int, ...] = (0,),
 ) -> subprocess.CompletedProcess[str]:
     completed = subprocess.run(
         command,
@@ -183,7 +184,7 @@ def run_checked(
     log_path.write_text(
         (completed.stdout or "") + (completed.stderr or ""), encoding="utf-8"
     )
-    if completed.returncode != 0:
+    if completed.returncode not in accepted_returncodes:
         raise ContractError(
             f"command exited {completed.returncode}; see {log_path}: {' '.join(command)}"
         )
@@ -395,6 +396,10 @@ def compare_row(
         ],
         environment=os.environ.copy(),
         log_path=compare_log,
+        # The raw comparator intentionally exits one for bounded mask-only
+        # topology differences. The immutable v2 reassessment below is the
+        # authoritative scientific gate and fails closed on every other case.
+        accepted_returncodes=(0, 1),
     )
     source_request = artifact.with_suffix(".comparison-input.json")
     source_output = artifact.with_suffix(".comparison.json")

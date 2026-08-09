@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import copy
+import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 
@@ -74,6 +76,24 @@ class Vlass4096RecoveryTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(subject.ContractError, "spill_read_bytes"):
                 subject.validate_all_field_log(self.contract, log)
+
+    def test_raw_comparison_status_can_be_deferred_only_explicitly(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "command.log"
+            command = [sys.executable, "-c", "raise SystemExit(1)"]
+            with self.assertRaisesRegex(subject.ContractError, "exited 1"):
+                subject.run_checked(
+                    command,
+                    environment=os.environ.copy(),
+                    log_path=log,
+                )
+            completed = subject.run_checked(
+                command,
+                environment=os.environ.copy(),
+                log_path=log,
+                accepted_returncodes=(0, 1),
+            )
+            self.assertEqual(1, completed.returncode)
 
 
 if __name__ == "__main__":
