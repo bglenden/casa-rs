@@ -119,8 +119,8 @@ class Vlass4096RecoveryTests(unittest.TestCase):
         self.assertEqual(1, summary["median_run_index"])
 
         unstable = copy.deepcopy(good)
-        unstable[2]["outer_time_counters"]["instructions_retired"] = 1_020_000
-        with self.assertRaisesRegex(subject.ContractError, "instructions_retired"):
+        unstable[2]["outer_process_times"]["user_seconds"] = 110.0
+        with self.assertRaisesRegex(subject.ContractError, "user CPU"):
             subject.validate_single_series(self.contract, unstable)
 
     def test_all_field_log_rejects_spill_or_topology_rebuild(self) -> None:

@@ -368,14 +368,9 @@ def validate_single_series(
             f"single-field maximum wall {maximum_wall:.6f}s exceeds "
             f"{row['stability_maximum_wall_seconds']:.6f}s"
         )
-    for counter, tolerance in (
-        ("instructions_retired", 0.01),
-        ("cycles_elapsed", 0.05),
-    ):
-        values = [int(run["outer_time_counters"][counter]) for run in timed]
-        center = float(statistics.median(values))
-        if any(abs(value - center) > center * tolerance for value in values):
-            raise ContractError(f"single-field {counter} series is unstable")
+    # macOS /usr/bin/time reports child RSS and CPU time, but its hardware
+    # counters describe the wrapper process rather than the imager child.
+    # Preserve them as diagnostics; do not misclassify them as workload gates.
     user_values = [float(run["outer_process_times"]["user_seconds"]) for run in timed]
     median_user = float(statistics.median(user_values))
     if any(abs(value - median_user) > median_user * 0.05 for value in user_values):
