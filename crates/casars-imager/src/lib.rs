@@ -38346,11 +38346,17 @@ fn standard_mfs_memory_allocation_lifetimes(
                     let initial_plane_count = plan.workload.grid_planes.max(1);
                     let residual_plane_count =
                         plan.workload.taylor_terms.max(1).min(initial_plane_count);
+                    let source_major_grouped_initial = standard_mfs_plan_decision_is(
+                        plan,
+                        "awproject_source_major_grouped_initial",
+                        "experimental-admitted",
+                    );
                     let initial_grid_backing = if standard_mfs_plan_decision_is(
                         plan,
                         "awproject_initial_grid_backend",
                         "cpu-dynamic-sparse-f64",
-                    ) {
+                    ) && !source_major_grouped_initial
+                    {
                         host
                     } else {
                         backing
@@ -38420,6 +38426,10 @@ fn standard_mfs_memory_allocation_lifetimes(
                         plan,
                         "awproject_initial_grid_backend",
                         "cpu-dynamic-sparse-f64",
+                    ) && !standard_mfs_plan_decision_is(
+                        plan,
+                        "awproject_source_major_grouped_initial",
+                        "experimental-admitted",
                     );
                     let mut residencies = if cpu_sparse_initial {
                         Vec::new()
@@ -38584,11 +38594,16 @@ fn standard_mfs_memory_allocation_lifetimes(
                     )]
                 }
                 "AWProject source-order tap scratch" => {
+                    let source_major_grouped_initial = standard_mfs_plan_decision_is(
+                        plan,
+                        "awproject_source_major_grouped_initial",
+                        "experimental-admitted",
+                    );
                     vec![standard_mfs_memory_residency(
                         host,
                         bytes,
                         InitialGrid,
-                        if has_clean_cycles {
+                        if has_clean_cycles && !source_major_grouped_initial {
                             ResidualGrid
                         } else {
                             InitialGrid
@@ -38661,7 +38676,15 @@ fn standard_mfs_memory_allocation_lifetimes(
                     vec![standard_mfs_memory_residency(
                         host,
                         bytes,
-                        ResidualGrid,
+                        if standard_mfs_plan_decision_is(
+                            plan,
+                            "awproject_source_major_grouped_initial",
+                            "experimental-admitted",
+                        ) {
+                            DirtyTransform
+                        } else {
+                            ResidualGrid
+                        },
                         ResidualTransform,
                         NoFurtherUse,
                     )]
@@ -39598,6 +39621,18 @@ fn admit_awproject_multifield_initial_grid(
         },
     ] {
         replace_standard_mfs_plan_decision(&mut candidate, decision);
+    }
+    if env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_GROUPED_INITIAL").is_some() {
+        replace_standard_mfs_plan_decision(
+            &mut candidate,
+            casa_imaging::ImagingPlanDecision {
+                name: "awproject_source_major_grouped_initial",
+                value: "experimental-admitted".to_string(),
+                origin: casa_imaging::ImagingPlanOrigin::UserPolicy,
+                reason: "the approved experiment compiles one source-owned exact residual program and one temporary eight-plane grouped initial program; the initial grid is Metal-resident, source/tap materialization ends after InitialGrid, and the compiled residual program remains live from DirtyTransform through ResidualTransform"
+                    .to_string(),
+            },
+        );
     }
 
     let admitted = match admit_standard_mfs_plan_with_lifetimes(candidate, true) {
@@ -62779,6 +62814,54 @@ mod tests {
         );
 
         let plan = admit_awproject_compact_replay_retention(initial, 4).expect("replay admission");
+        let mut source_major = plan.clone();
+        replace_standard_mfs_plan_decision(
+            &mut source_major,
+            casa_imaging::ImagingPlanDecision {
+                name: "awproject_source_major_grouped_initial",
+                value: "experimental-admitted".to_string(),
+                origin: casa_imaging::ImagingPlanOrigin::UserPolicy,
+                reason: "test source-major ownership".to_string(),
+            },
+        );
+        rebuild_standard_mfs_memory_lifetime_ledger(&mut source_major, true).unwrap();
+        let source_major_grid = source_major
+            .memory_lifetime_ledger
+            .allocations
+            .iter()
+            .find(|allocation| allocation.component == "grids")
+            .unwrap();
+        assert_eq!(
+            source_major_grid.residencies[0].backing,
+            ImagingMemoryBacking::UnifiedMemory
+        );
+        let source_major_readback = source_major
+            .memory_lifetime_ledger
+            .allocations
+            .iter()
+            .find(|allocation| allocation.component == "AWProject compensated f64 readback")
+            .unwrap();
+        assert_eq!(source_major_readback.residencies.len(), 2);
+        let source_major_taps = source_major
+            .memory_lifetime_ledger
+            .allocations
+            .iter()
+            .find(|allocation| allocation.component == "AWProject source-order tap scratch")
+            .unwrap();
+        assert_eq!(
+            source_major_taps.residencies[0].live_through,
+            ImagingMemoryStage::InitialGrid
+        );
+        let source_major_replay = source_major
+            .memory_lifetime_ledger
+            .allocations
+            .iter()
+            .find(|allocation| allocation.component == "AWProject compact replay retention")
+            .unwrap();
+        assert_eq!(
+            source_major_replay.residencies[0].live_from,
+            ImagingMemoryStage::DirtyTransform
+        );
         let execution = standard_mfs_execution_config_with_plan(&config, &plan);
         assert_eq!(
             execution.initial_dirty_backend,

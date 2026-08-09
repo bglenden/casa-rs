@@ -665,6 +665,38 @@ def validate_all_field_log(
         receipt.get("omitted_energy_fraction_bits") != "0" for receipt in receipts
     ):
         raise ContractError("all-field AOT replay is not exact support")
+    source_major = [
+        parse_key_values(line)
+        for line in lines
+        if line.startswith("awproject_source_major_grouped_initial ")
+    ]
+    expected_source_blocks = len(str(row["ddids"]).split(","))
+    if len(source_major) != expected_source_blocks:
+        raise ContractError(
+            "all-field source-major initial grid must compile exactly one window per source block"
+        )
+    if sorted(int(receipt.get("source_block", "-1")) for receipt in source_major) != list(
+        range(expected_source_blocks)
+    ) or any(receipt.get("window") != "0" for receipt in source_major):
+        raise ContractError("all-field source-major source/window ownership changed")
+    if any(
+        receipt.get("architecture") != "source-major-grouped-initial-v1"
+        or receipt.get("exact_support") != "true"
+        for receipt in source_major
+    ):
+        raise ContractError("all-field source-major architecture/science receipt changed")
+    source_major_memory = [
+        parse_key_values(line)
+        for line in lines
+        if line.startswith("awproject_source_major_grouped_initial_memory ")
+    ]
+    if len(source_major_memory) != expected_source_blocks or any(
+        receipt.get("within_admission") != "true"
+        or int(receipt.get("owned_peak_bytes", "1"))
+        > int(receipt.get("admitted_bytes", "0"))
+        for receipt in source_major_memory
+    ):
+        raise ContractError("all-field source-major memory ownership was not admitted")
     counters = parse_time_counters(log_path)
     if enforce_sequential_guard:
         for key, maximum_key in (
@@ -707,6 +739,7 @@ def run_all_fields(
             "CASA_RS_VLASS_GRID_THREADS": str(row["requested_grid_threads"]),
             "CASA_RS_VLASS_STANDARD_MFS_ACCELERATION": "metal",
             "CASA_RS_VLASS_NITER": "2000",
+            "CASA_RS_VLASS_SOURCE_MAJOR_GROUPED_INITIAL": "1",
         }
     )
     completed = run_checked(
