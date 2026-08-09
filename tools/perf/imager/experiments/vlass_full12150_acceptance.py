@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict, dataclass
+import fcntl
 import hashlib
 import json
 import os
@@ -33,14 +34,16 @@ REPO_ROOT = SCRIPT_DIR.parents[3]
 if str(IMAGER_DIR) not in sys.path:
     sys.path.insert(0, str(IMAGER_DIR))
 
+from perf_harness.casa_tclean import (  # noqa: E402
+    VOLATILE_TREE_FILE_NAMES,
+    canonical_sha256,
+)
 from perf_harness.host_telemetry import (  # noqa: E402
     HostTelemetryError,
     read_darwin_host_snapshot,
     read_darwin_process_snapshot,
 )
-from perf_harness.casa_tclean import tree_inventory  # noqa: E402
 from perf_harness.image_compare import compare_products  # noqa: E402
-from perf_harness.tree_identity import tree_identity  # noqa: E402
 
 
 GIB = 1024**3
@@ -57,6 +60,7 @@ MONITOR_INTERVAL_SECONDS = 15.0
 NO_PROGRESS_SECONDS = 1_800.0
 TERMINATE_GRACE_SECONDS = 10.0
 NORMAL_MEMORY_PRESSURE_LEVEL = 1
+DARWIN_F_NOCACHE = 48
 
 ALL_FIELDS = "1107~1127,1512~1532,1542~1562"
 EXPECTED_PRODUCTS = (
@@ -196,6 +200,124 @@ def sha256_file(path: Path) -> str:
         while chunk := handle.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def sha256_file_uncached(path: Path) -> str:
+    """Hash a large immutable input without polluting the launch file cache."""
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        try:
+            fcntl.fcntl(handle.fileno(), DARWIN_F_NOCACHE, 1)
+        except OSError as error:
+            raise AcceptanceError(
+                f"cannot disable caching for {path}: {error}"
+            ) from error
+        while chunk := handle.read(8 * 1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def compact_tree_identity_uncached(
+    root: Path, *, excluded_names: set[str] | None = None
+) -> dict[str, Any]:
+    """Match ``tree_identity`` while reading file payloads without caching."""
+
+    excluded_names = excluded_names or set()
+    root = root.resolve()
+    if not root.is_dir() or root.is_symlink():
+        raise AcceptanceError(f"tree root must be a real directory: {root}")
+    digest = hashlib.sha256()
+    file_count = 0
+    total_bytes = 0
+    excluded_count = 0
+    for path in sorted(root.rglob("*"), key=lambda value: value.as_posix()):
+        if path.is_dir() and not path.is_symlink():
+            continue
+        if path.name in excluded_names and not path.is_dir():
+            excluded_count += 1
+            continue
+        if not path.is_file() or path.is_symlink():
+            raise AcceptanceError(f"tree contains a non-regular file: {path}")
+        relative = path.relative_to(root).as_posix()
+        size = path.stat().st_size
+        file_digest = sha256_file_uncached(path)
+        digest.update(f"{relative}\0{size}\0{file_digest}\n".encode())
+        file_count += 1
+        total_bytes += size
+    return {
+        "tree_sha256": digest.hexdigest(),
+        "file_count": file_count,
+        "size_bytes": total_bytes,
+        "excluded_names": sorted(excluded_names),
+        "excluded_count": excluded_count,
+    }
+
+
+def casa_tree_inventory_uncached(root: Path) -> dict[str, Any]:
+    """Match the CASA CF inventory while avoiding a 23 GB cache warm-up."""
+
+    root = root.resolve()
+    if not root.is_dir() or root.is_symlink():
+        raise AcceptanceError(f"CF tree root must be a real directory: {root}")
+    entries: list[dict[str, Any]] = []
+    excluded: list[dict[str, Any]] = []
+    file_count = 0
+    directory_count = 0
+    symlink_count = 0
+    logical_bytes = 0
+    for item in sorted(
+        root.rglob("*"), key=lambda path: path.relative_to(root).as_posix()
+    ):
+        relative = item.relative_to(root).as_posix()
+        if item.name in VOLATILE_TREE_FILE_NAMES and not item.is_dir():
+            excluded.append(
+                {
+                    "relative_path": relative,
+                    "bytes": int(item.lstat().st_size),
+                    "reason": "CASA table.lock is volatile lock state",
+                }
+            )
+            continue
+        if item.is_symlink():
+            entries.append(
+                {
+                    "relative_path": relative,
+                    "kind": "symlink",
+                    "target": os.readlink(item),
+                }
+            )
+            symlink_count += 1
+        elif item.is_dir():
+            entries.append({"relative_path": relative, "kind": "directory"})
+            directory_count += 1
+        elif item.is_file():
+            size = item.stat().st_size
+            entries.append(
+                {
+                    "relative_path": relative,
+                    "kind": "file",
+                    "bytes": int(size),
+                    "sha256": sha256_file_uncached(item),
+                }
+            )
+            file_count += 1
+            logical_bytes += int(size)
+        else:
+            raise AcceptanceError(f"unsupported filesystem entry: {item}")
+    return {
+        "exists": True,
+        "root": str(root),
+        "kind": "directory",
+        "stable_tree_sha256": canonical_sha256(entries),
+        "included_file_count": file_count,
+        "included_directory_count": directory_count,
+        "included_symlink_count": symlink_count,
+        "logical_bytes": logical_bytes,
+        "excluded_volatile": excluded,
+        "entries": entries,
+        "darwin_f_nocache_applied": True,
+    }
 
 
 def atomic_json(path: Path, value: dict[str, Any]) -> None:
@@ -361,9 +483,11 @@ def validate_input_identities(paths: Paths) -> dict[str, dict[str, Any]]:
         # while the corrected mask uses the compact tree identity with its two
         # volatile table.lock files excluded. Keep those three earned identity
         # policies distinct.
-        "ms": tree_identity(paths.ms),
-        "cf_cache": tree_inventory(paths.cf_cache),
-        "mask": tree_identity(paths.mask, excluded_names={"table.lock"}),
+        "ms": compact_tree_identity_uncached(paths.ms),
+        "cf_cache": casa_tree_inventory_uncached(paths.cf_cache),
+        "mask": compact_tree_identity_uncached(
+            paths.mask, excluded_names={"table.lock"}
+        ),
     }
     expected = {
         "ms": MS_TREE_SHA256,

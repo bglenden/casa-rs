@@ -18,6 +18,8 @@ assert SPEC is not None and SPEC.loader is not None
 acceptance = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = acceptance
 SPEC.loader.exec_module(acceptance)
+from perf_harness.casa_tclean import tree_inventory  # noqa: E402
+from perf_harness.tree_identity import tree_identity  # noqa: E402
 
 
 def host_sample(*, headroom: int, swapouts: int = 4, throttled: int = 0) -> dict:
@@ -120,11 +122,13 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
         ]
         with (
             mock.patch.object(
-                acceptance, "tree_identity", side_effect=compact_results
+                acceptance,
+                "compact_tree_identity_uncached",
+                side_effect=compact_results,
             ) as compact,
             mock.patch.object(
                 acceptance,
-                "tree_inventory",
+                "casa_tree_inventory_uncached",
                 return_value={"stable_tree_sha256": acceptance.CF_TREE_SHA256},
             ) as casa_inventory,
         ):
@@ -133,6 +137,26 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
         compact.assert_any_call(paths.ms)
         compact.assert_any_call(paths.mask, excluded_names={"table.lock"})
         casa_inventory.assert_called_once_with(paths.cf_cache)
+
+    def test_uncached_identities_match_canonical_algorithms(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "nested").mkdir()
+            (root / "nested/payload").write_bytes(b"science")
+            (root / "nested/table.lock").write_bytes(b"volatile")
+            compact = acceptance.compact_tree_identity_uncached(
+                root, excluded_names={"table.lock"}
+            )
+            casa = acceptance.casa_tree_inventory_uncached(root)
+            self.assertEqual(
+                tree_identity(root, excluded_names={"table.lock"})["tree_sha256"],
+                compact["tree_sha256"],
+            )
+            self.assertEqual(
+                tree_inventory(root)["stable_tree_sha256"],
+                casa["stable_tree_sha256"],
+            )
+            self.assertTrue(casa["darwin_f_nocache_applied"])
 
     def test_no_swap_target_has_hard_floor_and_two_gib_reserve(self) -> None:
         with self.assertRaisesRegex(acceptance.AcceptanceError, "below"):
