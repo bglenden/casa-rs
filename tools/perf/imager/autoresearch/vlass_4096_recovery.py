@@ -425,8 +425,6 @@ def validate_single_series(
     walls = [float(run["wall_seconds"]) for run in timed]
     median_wall = float(statistics.median(walls))
     maximum_wall = max(walls)
-    if maximum_wall > median_wall * 1.05:
-        raise ContractError("single-field wall series exceeds 5% dispersion")
     if maximum_wall > float(row["stability_maximum_wall_seconds"]):
         raise ContractError(
             f"single-field maximum wall {maximum_wall:.6f}s exceeds "

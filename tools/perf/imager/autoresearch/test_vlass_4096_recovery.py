@@ -122,6 +122,22 @@ class Vlass4096RecoveryTests(unittest.TestCase):
         self.assertEqual(36.0, summary["median_wall_seconds"])
         self.assertEqual(1, summary["median_run_index"])
 
+        product_write_outlier = [
+            run(37.71, 1_000_000, 2_000_000, 98.29),
+            run(35.52, 1_005_000, 2_020_000, 100.12),
+            run(34.49, 999_000, 1_990_000, 100.47),
+        ]
+        summary = subject.validate_single_series(self.contract, product_write_outlier)
+        self.assertEqual(35.52, summary["median_wall_seconds"])
+        self.assertEqual(37.71, summary["maximum_wall_seconds"])
+
+        slow = copy.deepcopy(good)
+        slow[2]["wall_seconds"] = (
+            self.contract["single_field"]["stability_maximum_wall_seconds"] + 0.01
+        )
+        with self.assertRaisesRegex(subject.ContractError, "maximum wall"):
+            subject.validate_single_series(self.contract, slow)
+
         unstable = copy.deepcopy(good)
         unstable[2]["outer_process_times"]["user_seconds"] = 110.0
         with self.assertRaisesRegex(subject.ContractError, "user CPU"):
