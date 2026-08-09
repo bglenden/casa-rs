@@ -126,6 +126,10 @@ def validate_contract(contract: dict[str, Any]) -> None:
             raise ContractError(f"all-field {maximum} must be 5% above {baseline}")
     if int(all_fields["segment_target_bytes"]) != 512 * 1024 * 1024:
         raise ContractError("all-field guard must force 512 MiB grouped segments")
+    if int(all_fields["requested_grid_threads"]) != 7:
+        raise ContractError(
+            "all-field benchmark must request seven sparse-grid workers"
+        )
 
 
 def validate_inputs(contract: dict[str, Any]) -> None:
@@ -289,7 +293,7 @@ def run_single(
             "CASA_RS_VLASS_LABEL_OVERRIDE": label,
             "CASA_RS_VLASS_NITER": "2000",
             "CASA_RS_VLASS_FFTW_THREADS": "8",
-            "CASA_RS_VLASS_GRID_THREADS": "2",
+            "CASA_RS_VLASS_GRID_THREADS": str(row["requested_grid_threads"]),
             "CASA_RS_VLASS_MODEL_FFT_THREADS": "8",
             "CASA_RS_VLASS_STANDARD_MFS_ACCELERATION": "metal",
             "CASA_RS_VLASS_IMAGE_RESPONSE_CACHE": "1",
@@ -448,6 +452,18 @@ def validate_all_field_log(
     for fragment in required_fragments:
         if not any(fragment in line for line in lines):
             raise ContractError(f"all-field runtime contract is missing {fragment!r}")
+    execution_plans = [
+        parse_key_values(line)
+        for line in lines
+        if line.startswith("standard_mfs_execution_plan ")
+    ]
+    if len(execution_plans) != 1:
+        raise ContractError("all-field runtime must emit one execution plan")
+    workers = int(execution_plans[0].get("workers", "0"))
+    if workers < 4 or workers > int(row["requested_grid_threads"]):
+        raise ContractError(
+            f"all-field effective workers {workers} do not honor the admitted request"
+        )
     summaries = [
         parse_key_values(line)
         for line in lines
@@ -492,6 +508,7 @@ def validate_all_field_log(
         "completion": completion,
         "segments": len(receipts),
         "refreshes": len(summaries),
+        "effective_workers": workers,
         **counters,
     }
 
@@ -543,11 +560,18 @@ def run_all_fields(
         runtime_log,
         enforce_sequential_guard=enforce_sequential_guard,
     )
+    provenance = all_run / "provenance.txt"
+    if f"grid_threads\t{row['requested_grid_threads']}" not in provenance.read_text(
+        encoding="utf-8"
+    ):
+        raise ContractError("all-field provenance did not bind requested grid workers")
     return {
         "wall_seconds": wall,
         "runtime_log": str(runtime_log),
         "runtime_log_sha256": sha256_file(runtime_log),
         "output_prefix": str(all_run / "rust"),
+        "provenance": str(provenance),
+        "provenance_sha256": sha256_file(provenance),
         "activity": runtime,
     }
 

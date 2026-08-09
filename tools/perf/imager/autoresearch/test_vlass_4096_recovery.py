@@ -25,6 +25,7 @@ class Vlass4096RecoveryTests(unittest.TestCase):
         self.assertEqual(
             60, self.contract["single_field"]["inter_run_quiescence_seconds"]
         )
+        self.assertEqual(7, self.contract["all_fields"]["requested_grid_threads"])
         for row_name in ("single_field", "all_fields"):
             row = self.contract[row_name]
             self.assertAlmostEqual(
@@ -128,7 +129,7 @@ class Vlass4096RecoveryTests(unittest.TestCase):
         good = "\n".join(
             [
                 f"mfs_ddid_execution_plan ddids={row['ddids']} spws=2,7,12,17",
-                "standard_mfs_execution_plan selected_channels=64",
+                "standard_mfs_execution_plan selected_channels=64 workers=4",
                 "standard_mfs_execution_allocation component=POINTING index",
                 f"awproject_selected_field_count selected_fields={row['selected_fields']}",
                 f"awproject_grouped_replay_plan architecture=source-order-grouped-tile-v1 segment_target_bytes={row['segment_target_bytes']} omitted_squared_l2_energy=0.000000000e0",

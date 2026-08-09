@@ -32,6 +32,7 @@
     "workload": "tools/perf/imager/workloads/vlass-fragment-all-fields-clean-4096-four-spw-casa.json",
     "casa_prefix": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-d-all63-clean-4096-four-spw-retry1/artifacts/vlass-fragment-all-fields-clean-4096-four-spw-casa/reduced_turnaround_only/20260803T223749Z-vlass-fragment-all-fields-clean-4096-four-spw-casa-9b96c6ad/casa/measured-001/casa",
     "segment_target_bytes": 536870912,
+    "requested_grid_threads": 7,
     "gridded_samples": 6416526,
     "major_cycles": 12,
     "minor_iterations": 193,
