@@ -293,7 +293,7 @@ def run_single(
             "CASA_RS_VLASS_LABEL_OVERRIDE": label,
             "CASA_RS_VLASS_NITER": "2000",
             "CASA_RS_VLASS_FFTW_THREADS": "8",
-            "CASA_RS_VLASS_GRID_THREADS": str(row["requested_grid_threads"]),
+            "CASA_RS_VLASS_GRID_THREADS": "2",
             "CASA_RS_VLASS_MODEL_FFT_THREADS": "8",
             "CASA_RS_VLASS_STANDARD_MFS_ACCELERATION": "metal",
             "CASA_RS_VLASS_IMAGE_RESPONSE_CACHE": "1",

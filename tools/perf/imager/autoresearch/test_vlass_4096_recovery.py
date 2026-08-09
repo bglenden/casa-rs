@@ -193,6 +193,28 @@ class Vlass4096RecoveryTests(unittest.TestCase):
             captured["CASA_RS_VLASS_GRID_THREADS"],
         )
 
+    def test_single_field_launch_pins_two_grid_workers(self) -> None:
+        captured: dict[str, str] = {}
+
+        def stop_before_launch(*args, **kwargs):
+            captured.update(kwargs["environment"])
+            raise subject.ContractError("stop before launch")
+
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(
+                subject, "run_checked", side_effect=stop_before_launch
+            ):
+                with self.assertRaisesRegex(
+                    subject.ContractError, "stop before launch"
+                ):
+                    subject.run_single(
+                        self.contract,
+                        Path(directory) / "casars-imager",
+                        Path(directory),
+                        "test",
+                    )
+        self.assertEqual("2", captured["CASA_RS_VLASS_GRID_THREADS"])
+
     def test_raw_comparison_status_can_be_deferred_only_explicitly(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "command.log"
