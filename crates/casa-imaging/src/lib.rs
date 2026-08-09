@@ -14831,6 +14831,20 @@ fn awproject_metal_packed_batch_budget_bytes(
         })
 }
 
+#[cfg(any(all(target_os = "macos", not(coverage)), test))]
+fn awproject_metal_packed_batch_budget_for_replay(
+    grid_width: usize,
+    grid_height: usize,
+    scratch_budget_bytes: usize,
+    grouped_residual_replay: bool,
+) -> Result<Option<usize>, ImagingError> {
+    if grouped_residual_replay {
+        return Ok(None);
+    }
+    awproject_metal_packed_batch_budget_bytes(grid_width, grid_height, scratch_budget_bytes)
+        .map(Some)
+}
+
 impl AwProjectMetalGridStats {
     #[cfg(all(target_os = "macos", not(coverage)))]
     fn add_assign(&mut self, other: Self) {
@@ -37381,11 +37395,12 @@ fn accumulate_awproject_mtmfs_metadata_batch(
         } => {
             let [grid_width, grid_height] = grid.shape();
             (
-                Some(awproject_metal_packed_batch_budget_bytes(
+                awproject_metal_packed_batch_budget_for_replay(
                     grid_width,
                     grid_height,
                     *scratch_budget_bytes,
-                )?),
+                    grouped_replay && *psf_term_count == 0,
+                )?,
                 *psf_term_count,
             )
         }
@@ -76256,6 +76271,17 @@ mod tests {
             )
             .unwrap(),
             packed_batch_bytes
+        );
+        assert_eq!(
+            super::awproject_metal_packed_batch_budget_for_replay(grid_side, grid_side, 0, true,)
+                .unwrap(),
+            None,
+            "grouped residual replay uses sealed per-segment admission instead of generic packed-batch scratch"
+        );
+        assert!(
+            super::awproject_metal_packed_batch_budget_for_replay(grid_side, grid_side, 0, false,)
+                .is_err(),
+            "non-grouped Metal replay must retain the generic scratch guard"
         );
 
         let full = super::plan_awproject_metal_plane_segments(
