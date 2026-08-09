@@ -22,7 +22,13 @@ from perf_harness.casa_tclean import tree_inventory  # noqa: E402
 from perf_harness.tree_identity import tree_identity  # noqa: E402
 
 
-def host_sample(*, headroom: int, swapouts: int = 4, throttled: int = 0) -> dict:
+def host_sample(
+    *,
+    headroom: int,
+    swapouts: int = 4,
+    throttled: int = 0,
+    compressed_bytes: int = 0,
+) -> dict:
     page_size = 4096
     pages = headroom // page_size
     return {
@@ -33,10 +39,16 @@ def host_sample(*, headroom: int, swapouts: int = 4, throttled: int = 0) -> dict
         "pages_throttled": throttled,
         "swapouts": swapouts,
         "swap_used_bytes": 1024,
+        "host_compressed_memory_bytes": compressed_bytes,
     }
 
 
-def valid_probe_log(target_mib: int) -> str:
+def valid_probe_log(
+    target_mib: int,
+    *,
+    memory_pressure_policy: str = "conservative-no-swap",
+    headroom_bytes: int | None = None,
+) -> str:
     target_bytes = target_mib * acceptance.MIB
     decisions = {
         "awproject_selected_field_count": "63",
@@ -52,7 +64,7 @@ def valid_probe_log(target_mib: int) -> str:
     lines = [
         "standard_mfs_planning_resources "
         f"memory_target_bytes={target_bytes} memory_target_origin=cli-imaging "
-        f"no_swap_headroom_bytes={target_bytes + acceptance.GIB}",
+        f"no_swap_headroom_bytes={headroom_bytes or target_bytes + acceptance.GIB}",
         "standard_mfs_runtime_plan initial_dirty_backend=cpu "
         "residual_backend=metal-row-run-grouped",
         "awproject_grouped_replay_plan architecture=source-order-grouped-tile-v1 "
@@ -66,7 +78,7 @@ def valid_probe_log(target_mib: int) -> str:
         "standard_mfs_planner_preflight status=admitted "
         "grouped_metal_status=admitted rows_total=655200 ddids=16 "
         "selected_channels=64 correlations=4 "
-        "memory_pressure_policy=conservative-no-swap "
+        f"memory_pressure_policy={memory_pressure_policy} "
         "visibility_streamed=false replay_compiled=false grids_allocated=false "
         "products_materialized=false"
     )
@@ -172,6 +184,13 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
             acceptance.MAX_TARGET_MIB,
             acceptance.target_mib_for_headroom(40 * acceptance.GIB),
         )
+        self.assertEqual(
+            acceptance.MAX_TARGET_MIB,
+            acceptance.target_mib_for_headroom(
+                acceptance.MINIMUM_NO_SWAP_HEADROOM_BYTES - 1,
+                allow_pressure_experiment=True,
+            ),
+        )
 
     def test_baseline_rejects_pressure_swapout_and_throttling(self) -> None:
         first = host_sample(headroom=25_000_000_000)
@@ -187,6 +206,13 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
         changed_throttle = dict(second, pages_throttled=1)
         with self.assertRaisesRegex(acceptance.AcceptanceError, "throttled"):
             acceptance.validate_baseline_samples(first, changed_throttle, 1)
+        experimental = acceptance.validate_baseline_samples(
+            host_sample(headroom=19_000_000_000),
+            host_sample(headroom=19_000_000_000),
+            1,
+            allow_pressure_experiment=True,
+        )
+        self.assertEqual(acceptance.MAX_TARGET_MIB, experimental.target_mib)
 
     def test_direct_command_carries_exact_science_and_private_topology(self) -> None:
         paths = acceptance.default_paths(Path("/frozen"))
@@ -252,6 +278,31 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
                         accepted.replace(old, new), target_mib
                     )
 
+    def test_pressure_experiment_probe_is_explicit_and_still_fail_closed(self) -> None:
+        target_mib = acceptance.MAX_TARGET_MIB
+        accepted = valid_probe_log(
+            target_mib,
+            memory_pressure_policy="oversubscribe",
+            headroom_bytes=19_000_000_000,
+        )
+        observed = acceptance.validate_probe_log(
+            accepted,
+            target_mib,
+            memory_pressure_policy="oversubscribe",
+            require_target_within_headroom=False,
+        )
+        self.assertEqual("admitted", observed["preflight"]["status"])
+        with self.assertRaises(acceptance.AcceptanceError):
+            acceptance.validate_probe_log(
+                accepted.replace(
+                    "memory_pressure_policy=oversubscribe",
+                    "memory_pressure_policy=conservative-no-swap",
+                ),
+                target_mib,
+                memory_pressure_policy="oversubscribe",
+                require_target_within_headroom=False,
+            )
+
     def test_runtime_contract_is_fail_closed(self) -> None:
         accepted = valid_runtime_log()
         result = acceptance.validate_runtime_log(accepted)
@@ -295,6 +346,15 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
             (dict(first, pages_throttled=1), 1, 0, "throttled"),
             (dict(first, swapouts=5), 1, 0, "swapout"),
             (dict(first), 1, 2, "swap-used"),
+            (
+                dict(
+                    first,
+                    host_compressed_memory_bytes=2 * acceptance.GIB + 1,
+                ),
+                1,
+                0,
+                "compressed",
+            ),
             (host_sample(headroom=acceptance.HOST_RESERVE_BYTES - 1), 1, 0, "headroom"),
         )
         for sample, level, growth, expected in cases:
@@ -304,6 +364,9 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
                     sample=sample,
                     pressure_level=level,
                     swap_used_growth_samples=growth,
+                    max_compressed_growth_bytes=(
+                        2 * acceptance.GIB if expected == "compressed" else None
+                    ),
                 )
                 self.assertIsNotNone(reason)
                 self.assertIn(expected, reason.lower())

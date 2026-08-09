@@ -57,6 +57,8 @@ MAX_TARGET_MIB = 32_000
 MIN_INTERNAL_FREE_BYTES = 20 * GIB
 MIN_OUTPUT_FREE_BYTES = 100 * GIB
 MONITOR_INTERVAL_SECONDS = 15.0
+PRESSURE_EXPERIMENT_MONITOR_INTERVAL_SECONDS = 5.0
+PRESSURE_EXPERIMENT_MAX_COMPRESSED_GROWTH_BYTES = 2 * GIB
 NO_PROGRESS_SECONDS = 1_800.0
 TERMINATE_GRACE_SECONDS = 10.0
 NORMAL_MEMORY_PRESSURE_LEVEL = 1
@@ -371,7 +373,11 @@ def no_swap_headroom_bytes(snapshot: dict[str, Any]) -> int:
     )
 
 
-def target_mib_for_headroom(headroom_bytes: int) -> int:
+def target_mib_for_headroom(
+    headroom_bytes: int, *, allow_pressure_experiment: bool = False
+) -> int:
+    if allow_pressure_experiment:
+        return MAX_TARGET_MIB
     if headroom_bytes < MINIMUM_NO_SWAP_HEADROOM_BYTES:
         raise AcceptanceError(
             f"no-swap headroom {headroom_bytes} is below "
@@ -399,7 +405,11 @@ def memory_pressure_level(
 
 
 def validate_baseline_samples(
-    first: dict[str, Any], second: dict[str, Any], pressure_level: int
+    first: dict[str, Any],
+    second: dict[str, Any],
+    pressure_level: int,
+    *,
+    allow_pressure_experiment: bool = False,
 ) -> Baseline:
     if pressure_level != NORMAL_MEMORY_PRESSURE_LEVEL:
         raise AcceptanceError(f"memory pressure is not normal: level={pressure_level}")
@@ -413,19 +423,27 @@ def validate_baseline_samples(
         second=second,
         pressure_level=pressure_level,
         no_swap_headroom_bytes=headroom,
-        target_mib=target_mib_for_headroom(headroom),
+        target_mib=target_mib_for_headroom(
+            headroom, allow_pressure_experiment=allow_pressure_experiment
+        ),
     )
 
 
 def capture_baseline(
     *,
+    allow_pressure_experiment: bool = False,
     snapshot_reader: Callable[[], dict[str, Any]] = read_darwin_host_snapshot,
     sleeper: Callable[[float], None] = time.sleep,
 ) -> Baseline:
     first = snapshot_reader()
     sleeper(5.0)
     second = snapshot_reader()
-    return validate_baseline_samples(first, second, memory_pressure_level())
+    return validate_baseline_samples(
+        first,
+        second,
+        memory_pressure_level(),
+        allow_pressure_experiment=allow_pressure_experiment,
+    )
 
 
 def validate_manifest(paths: Paths) -> dict[str, Any]:
@@ -572,7 +590,12 @@ def restricted_environment(paths: Paths) -> dict[str, str]:
 
 
 def common_imager_command(
-    binary: Path, paths: Paths, output_prefix: Path, target_mib: int
+    binary: Path,
+    paths: Paths,
+    output_prefix: Path,
+    target_mib: int,
+    *,
+    memory_pressure_policy: str = "conservative-no-swap",
 ) -> list[str]:
     return [
         str(binary),
@@ -634,7 +657,7 @@ def common_imager_command(
         "--imaging-memory-target-mb",
         str(target_mib),
         "--imaging-memory-pressure-policy",
-        "conservative-no-swap",
+        memory_pressure_policy,
         "--imaging-prepare-workers",
         "1",
         "--imaging-read-ahead-blocks",
@@ -729,7 +752,13 @@ def matching_lines(text: str, prefix: str) -> list[dict[str, str]]:
     return [key_values(line) for line in text.splitlines() if line.startswith(prefix)]
 
 
-def validate_probe_log(text: str, target_mib: int) -> dict[str, Any]:
+def validate_probe_log(
+    text: str,
+    target_mib: int,
+    *,
+    memory_pressure_policy: str = "conservative-no-swap",
+    require_target_within_headroom: bool = True,
+) -> dict[str, Any]:
     preflight = matching_lines(text, "standard_mfs_planner_preflight ")
     resources = matching_lines(text, "standard_mfs_planning_resources ")
     runtime = matching_lines(text, "standard_mfs_runtime_plan ")
@@ -743,7 +772,7 @@ def validate_probe_log(text: str, target_mib: int) -> dict[str, Any]:
         "ddids": "16",
         "selected_channels": "64",
         "correlations": "4",
-        "memory_pressure_policy": "conservative-no-swap",
+        "memory_pressure_policy": memory_pressure_policy,
         "visibility_streamed": "false",
         "replay_compiled": "false",
         "grids_allocated": "false",
@@ -759,7 +788,7 @@ def validate_probe_log(text: str, target_mib: int) -> dict[str, Any]:
     if resources[0].get("memory_target_origin") != "cli-imaging":
         raise AcceptanceError("plan probe capped or relabeled the requested target")
     headroom = int(resources[0].get("no_swap_headroom_bytes", "-1"))
-    if target_bytes > headroom:
+    if require_target_within_headroom and target_bytes > headroom:
         raise AcceptanceError("plan probe target exceeds its fresh no-swap headroom")
     if len(runtime) != 1 or runtime[0].get("initial_dirty_backend") != "cpu":
         raise AcceptanceError("plan probe did not select the CPU initial grid")
@@ -797,7 +826,13 @@ def validate_probe_log(text: str, target_mib: int) -> dict[str, Any]:
 
 
 def run_probe(
-    command: list[str], environment: dict[str, str], log_path: Path, target_mib: int
+    command: list[str],
+    environment: dict[str, str],
+    log_path: Path,
+    target_mib: int,
+    *,
+    memory_pressure_policy: str = "conservative-no-swap",
+    require_target_within_headroom: bool = True,
 ) -> dict[str, Any]:
     completed = subprocess.run(
         command,
@@ -812,7 +847,12 @@ def run_probe(
     log_path.write_text(completed.stdout, encoding="utf-8")
     if completed.returncode != 0:
         raise AcceptanceError(f"plan probe exited {completed.returncode}")
-    return validate_probe_log(completed.stdout, target_mib)
+    return validate_probe_log(
+        completed.stdout,
+        target_mib,
+        memory_pressure_policy=memory_pressure_policy,
+        require_target_within_headroom=require_target_within_headroom,
+    )
 
 
 def terminate_group(process: subprocess.Popen[str]) -> None:
@@ -847,6 +887,7 @@ def monitor_stop_reason(
     sample: dict[str, Any],
     pressure_level: int,
     swap_used_growth_samples: int,
+    max_compressed_growth_bytes: int | None = None,
 ) -> str | None:
     if pressure_level != NORMAL_MEMORY_PRESSURE_LEVEL:
         return f"memory pressure escalated to level {pressure_level}"
@@ -856,6 +897,15 @@ def monitor_stop_reason(
         return "swapout activity began"
     if swap_used_growth_samples >= 2:
         return "swap-used bytes increased in two consecutive samples"
+    if max_compressed_growth_bytes is not None:
+        compressed_growth = int(sample["host_compressed_memory_bytes"]) - int(
+            baseline.second["host_compressed_memory_bytes"]
+        )
+        if compressed_growth > max_compressed_growth_bytes:
+            return (
+                "host compressed-memory growth exceeded "
+                f"{max_compressed_growth_bytes} bytes"
+            )
     if no_swap_headroom_bytes(sample) < HOST_RESERVE_BYTES:
         return "remaining no-swap headroom fell below 2 GiB"
     return None
@@ -869,6 +919,8 @@ def monitor_run(
     log_path: Path,
     progress_path: Path,
     telemetry_path: Path,
+    interval_seconds: float = MONITOR_INTERVAL_SECONDS,
+    max_compressed_growth_bytes: int | None = None,
     snapshot_reader: Callable[[], dict[str, Any]] = read_darwin_host_snapshot,
 ) -> MonitorResult:
     samples: list[dict[str, Any]] = []
@@ -899,7 +951,7 @@ def monitor_run(
         reader.start()
         last_swap_used = int(baseline.second["swap_used_bytes"])
         while process.poll() is None:
-            time.sleep(MONITOR_INTERVAL_SECONDS)
+            time.sleep(interval_seconds)
             if process.poll() is not None:
                 break
             now = time.monotonic()
@@ -940,6 +992,7 @@ def monitor_run(
                 sample=sample,
                 pressure_level=level,
                 swap_used_growth_samples=swap_used_growth_samples,
+                max_compressed_growth_bytes=max_compressed_growth_bytes,
             )
             if stop_reason is None and now - started >= RUST_WALL_LIMIT_SECONDS:
                 stop_reason = "10x acceptance wall exceeded"
@@ -1132,6 +1185,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="after all immutable and planner gates, run the single bounded row",
     )
+    parser.add_argument(
+        "--allow-pressure-experiment",
+        action="store_true",
+        help=(
+            "bypass only the unvalidated 24 GB host-headroom floor, request the "
+            "32,000 MiB oversubscribe planner envelope, and retain fail-fast "
+            "runtime pressure, compression, throttling, and swap guards"
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -1149,14 +1211,30 @@ def run_acceptance(args: argparse.Namespace) -> Path:
     frozen = build_and_freeze_binary(run_root)
     binary = Path(frozen.path)
     identities_before = validate_input_identities(paths)
-    baseline = capture_baseline()
+    baseline = capture_baseline(
+        allow_pressure_experiment=args.allow_pressure_experiment
+    )
     output_prefix = run_root / "products/rust"
     output_prefix.parent.mkdir(parents=True)
-    common = common_imager_command(binary, paths, output_prefix, baseline.target_mib)
+    memory_pressure_policy = (
+        "oversubscribe" if args.allow_pressure_experiment else "conservative-no-swap"
+    )
+    common = common_imager_command(
+        binary,
+        paths,
+        output_prefix,
+        baseline.target_mib,
+        memory_pressure_policy=memory_pressure_policy,
+    )
     environment = restricted_environment(paths)
     probe_log = run_root / "probe.log"
     probe = run_probe(
-        probe_command(common), environment, probe_log, baseline.target_mib
+        probe_command(common),
+        environment,
+        probe_log,
+        baseline.target_mib,
+        memory_pressure_policy=memory_pressure_policy,
+        require_target_within_headroom=not args.allow_pressure_experiment,
     )
     if sha256_file(binary) != frozen.sha256:
         raise AcceptanceError("frozen binary changed during the plan probe")
@@ -1164,6 +1242,11 @@ def run_acceptance(args: argparse.Namespace) -> Path:
         "kind": "vlass_full12150_all63_acceptance_preflight",
         "status": "admitted",
         "execute_requested": args.execute,
+        "evidence_class": (
+            "pressure-experiment" if args.allow_pressure_experiment else "acceptance"
+        ),
+        "acceptance_eligible": not args.allow_pressure_experiment,
+        "memory_pressure_policy": memory_pressure_policy,
         "paths": {key: str(value) for key, value in asdict(paths).items()},
         "manifest_sha256": MANIFEST_SHA256,
         "contract_sha256": CONTRACT_SHA256,
@@ -1185,8 +1268,13 @@ def run_acceptance(args: argparse.Namespace) -> Path:
     # The executable replans from a fresh snapshot.  The immutable CLI target
     # remains identical, so any reduced headroom makes the real process fail
     # before allocation rather than silently selecting a different plan.
-    launch_baseline = capture_baseline()
-    if launch_baseline.target_mib < baseline.target_mib:
+    launch_baseline = capture_baseline(
+        allow_pressure_experiment=args.allow_pressure_experiment
+    )
+    if (
+        not args.allow_pressure_experiment
+        and launch_baseline.target_mib < baseline.target_mib
+    ):
         raise AcceptanceError("host headroom worsened after the accepted plan probe")
     if sha256_file(binary) != frozen.sha256:
         raise AcceptanceError("frozen binary changed before timed execution")
@@ -1199,6 +1287,16 @@ def run_acceptance(args: argparse.Namespace) -> Path:
         log_path=run_log,
         progress_path=progress_path,
         telemetry_path=run_root / "telemetry.json",
+        interval_seconds=(
+            PRESSURE_EXPERIMENT_MONITOR_INTERVAL_SECONDS
+            if args.allow_pressure_experiment
+            else MONITOR_INTERVAL_SECONDS
+        ),
+        max_compressed_growth_bytes=(
+            PRESSURE_EXPERIMENT_MAX_COMPRESSED_GROWTH_BYTES
+            if args.allow_pressure_experiment
+            else None
+        ),
     )
     execution = {
         "monitor": asdict(monitor),
@@ -1231,7 +1329,10 @@ def run_acceptance(args: argparse.Namespace) -> Path:
         raise AcceptanceError("the 19-product scientific comparison did not pass")
     receipt = {
         "kind": "vlass_full12150_all63_acceptance",
-        "status": "passed",
+        "status": (
+            "passed-pressure-experiment" if args.allow_pressure_experiment else "passed"
+        ),
+        "acceptance_eligible": not args.allow_pressure_experiment,
         "preflight": preflight_receipt,
         "launch_baseline": asdict(launch_baseline),
         "execution": execution,
