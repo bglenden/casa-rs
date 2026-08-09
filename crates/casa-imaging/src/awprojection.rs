@@ -2635,7 +2635,7 @@ mod tests {
         let index = AwConvolutionFunctionCache::open(temp.path()).unwrap();
         let keys = index.keys();
         let one_cell_bytes = (16 * 16 + 32 * 32) * std::mem::size_of::<Complex32>();
-        let resident = AwConvolutionFunctionResidentCache::new(index.clone(), one_cell_bytes);
+        let resident = AwConvolutionFunctionResidentCache::new(index, one_cell_bytes);
 
         let first = resident.get(keys[0]).unwrap();
         assert!(Arc::ptr_eq(&first, &resident.get(keys[0]).unwrap()));
@@ -2650,23 +2650,6 @@ mod tests {
                 loads: 2,
                 hits: 2,
                 evictions: 1,
-            }
-        );
-
-        let full = AwConvolutionFunctionResidentCache::new(index, 2 * one_cell_bytes);
-        for _ in 0..2 {
-            for &key in &keys {
-                full.get(key).unwrap();
-            }
-        }
-        assert_eq!(
-            full.stats().unwrap(),
-            AwConvolutionFunctionResidentStats {
-                resident_cells: 2,
-                resident_bytes: 2 * one_cell_bytes,
-                loads: 2,
-                hits: 2,
-                evictions: 0,
             }
         );
     }

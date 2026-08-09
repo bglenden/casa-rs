@@ -33,9 +33,9 @@ use casa_imaging::fft_backend::{
     fft_backend_capability,
 };
 use casa_imaging::{
-    AwConvolutionFunctionCache, AwConvolutionFunctionEntryMetadata, AwParallelHandVisibilityBatch,
-    AwProjectControls, AwProjectGridderConfig, AwProjectGroupedReplayPlan, AwProjectNormalization,
-    AxisKind, BeamFit, BeamFitDebugSummary, CleanConfig, CleanMaskProductRequest, CleanStopReason,
+    AwConvolutionFunctionEntryMetadata, AwParallelHandVisibilityBatch, AwProjectControls,
+    AwProjectGridderConfig, AwProjectGroupedReplayPlan, AwProjectNormalization, AxisKind, BeamFit,
+    BeamFitDebugSummary, CleanConfig, CleanMaskProductRequest, CleanStopReason,
     CompatibilityMetadata, CompatibilityMode, CubeAutoMultiThresholdConfig, CubeImagingDiagnostics,
     CubeImagingResult, CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver,
     DirtyImagingResult, DirtyProductFftPolicy, GaussianUvTaper, GridderMode,
@@ -11221,10 +11221,7 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         geometry,
         visibility_batches: Vec::new(),
         sample_frequency_batches_hz: Vec::new(),
-        gridder_mode: gridder_mode_with_resolved_awproject_cf_residency(
-            &first_plane.gridder_mode,
-            &strategy,
-        ),
+        gridder_mode: first_plane.gridder_mode.clone(),
         plane_stokes: first_plane.plane_stokes,
         weighting: config.weighting,
         reffreq_hz: first_plane.reffreq_hz,
@@ -39637,177 +39634,6 @@ fn admit_awproject_multifield_initial_grid(
     Ok(admitted)
 }
 
-fn admit_awproject_full_cf_residency(
-    admitted: ImagingResolvedPlan,
-    requested_bytes: usize,
-    full_cache_bytes: usize,
-) -> Result<ImagingResolvedPlan, String> {
-    let planned_bytes = admitted.allocation_bytes("AWProject CF pixels");
-    if planned_bytes != requested_bytes {
-        return Err(format!(
-            "AWProject CF residency request {requested_bytes} differs from the admitted allocation {planned_bytes}"
-        ));
-    }
-    let initial_grid_peak_bytes = admitted
-        .memory_lifetime_ledger
-        .stage_peak(ImagingMemoryStage::InitialGrid)
-        .ok_or_else(|| {
-            "the admitted multi-field AWProject plan omitted its initial-grid lifetime peak"
-                .to_string()
-        })?
-        .resident_bytes;
-    let initial_grid_headroom_bytes = admitted
-        .usable_memory_bytes
-        .saturating_sub(initial_grid_peak_bytes);
-
-    let (mut effective_plan, effective_bytes, admission, admission_reason) = if full_cache_bytes
-        <= requested_bytes
-    {
-        (
-            admitted,
-            requested_bytes,
-            "already-covered",
-            format!(
-                "the requested {requested_bytes}-byte full-cell cache already covers the exact {full_cache_bytes}-byte validated cache"
-            ),
-        )
-    } else {
-        let additional_bytes = full_cache_bytes - requested_bytes;
-        let promotion = (|| {
-            if additional_bytes > initial_grid_headroom_bytes {
-                return Err(format!(
-                    "the exact full cache needs {additional_bytes} additional bytes but the admitted initial grid has {initial_grid_headroom_bytes} bytes of headroom"
-                ));
-            }
-            let mut candidate = admitted.clone();
-            if !replace_standard_mfs_memory_allocation(
-                &mut candidate,
-                "AWProject CF pixels",
-                full_cache_bytes,
-            ) {
-                return Err(
-                    "the admitted multi-field AWProject plan omitted its CF pixel allocation"
-                        .to_string(),
-                );
-            }
-            rebuild_standard_mfs_memory_lifetime_ledger(&mut candidate, true)
-                .map_err(|reason| format!("exact lifetime admission failed: {reason}"))?;
-            let replay_stage_peak_bytes = [
-                ImagingMemoryStage::ResidualGrid,
-                ImagingMemoryStage::ResidualTransform,
-            ]
-            .into_iter()
-            .filter_map(|stage| candidate.memory_lifetime_ledger.stage_peak(stage))
-            .map(|peak| peak.resident_bytes)
-            .max()
-            .unwrap_or(candidate.maximum_planned_resident_bytes);
-            let replay_headroom_bytes = candidate
-                .usable_memory_bytes
-                .saturating_sub(replay_stage_peak_bytes);
-            let compile_envelope = awproject_grouped_replay_compile_envelope(&candidate)
-                .map_err(|reason| format!("grouped replay compile admission failed: {reason}"))?;
-            let replay_retention_bytes =
-                replay_headroom_bytes.min(compile_envelope.replay_retention_ceiling_bytes);
-            if replay_retention_bytes < AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES {
-                return Err(format!(
-                    "full CF residency leaves {replay_retention_bytes} bytes for grouped replay retention, below the {AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES}-byte minimum"
-                ));
-            }
-            Ok((candidate, replay_retention_bytes))
-        })();
-        match promotion {
-            Ok((candidate, replay_retention_bytes)) => (
-                candidate,
-                full_cache_bytes,
-                "admitted-full-cache",
-                format!(
-                    "the exact full cache fits the semantic lifetime ledger and leaves {replay_retention_bytes} bytes for grouped replay retention"
-                ),
-            ),
-            Err(reason) => (admitted, requested_bytes, "requested-fallback", reason),
-        }
-    };
-
-    for decision in [
-        casa_imaging::ImagingPlanDecision {
-            name: "awproject_cf_resident_requested_bytes",
-            value: requested_bytes.to_string(),
-            origin: casa_imaging::ImagingPlanOrigin::UserPolicy,
-            reason: "the caller's full-cell CF residency request before resource admission"
-                .to_string(),
-        },
-        casa_imaging::ImagingPlanDecision {
-            name: "awproject_cf_full_cache_bytes",
-            value: full_cache_bytes.to_string(),
-            origin: casa_imaging::ImagingPlanOrigin::Workload,
-            reason:
-                "sum exact paired imaging and weight pixel bytes from every validated cache entry"
-                    .to_string(),
-        },
-        casa_imaging::ImagingPlanDecision {
-            name: "awproject_cf_full_residency_headroom_bytes",
-            value: initial_grid_headroom_bytes.to_string(),
-            origin: casa_imaging::ImagingPlanOrigin::Resources,
-            reason: format!(
-                "assigned memory {} minus the {initial_grid_peak_bytes}-byte admitted initial-grid lifetime peak before CF promotion",
-                effective_plan.usable_memory_bytes,
-            ),
-        },
-        casa_imaging::ImagingPlanDecision {
-            name: "awproject_cf_resident_effective_bytes",
-            value: effective_bytes.to_string(),
-            origin: casa_imaging::ImagingPlanOrigin::Resources,
-            reason: admission_reason.clone(),
-        },
-        casa_imaging::ImagingPlanDecision {
-            name: "awproject_cf_full_residency_admission",
-            value: admission.to_string(),
-            origin: casa_imaging::ImagingPlanOrigin::Resources,
-            reason: admission_reason,
-        },
-        casa_imaging::ImagingPlanDecision {
-            name: "awproject_cf_resident_bytes",
-            value: effective_bytes.to_string(),
-            origin: casa_imaging::ImagingPlanOrigin::Resources,
-            reason: "effective full-cell LRU residency after exact multi-field resource admission"
-                .to_string(),
-        },
-    ] {
-        replace_standard_mfs_plan_decision(&mut effective_plan, decision);
-    }
-    Ok(effective_plan)
-}
-
-fn resolve_awproject_multifield_memory_plan_with_full_cf_bytes(
-    plan: ImagingResolvedPlan,
-    config: &CliConfig,
-    selected_field_count: usize,
-    initial_dirty_backend_explicit: bool,
-    grid_threads_explicit: bool,
-    full_cache_bytes: usize,
-) -> Result<ImagingResolvedPlan, String> {
-    let resolved = admit_awproject_multifield_initial_grid(
-        plan,
-        config,
-        selected_field_count,
-        initial_dirty_backend_explicit,
-        grid_threads_explicit,
-    )?;
-    if !standard_mfs_plan_decision_is(
-        &resolved,
-        "awproject_multifield_initial_grid_admission",
-        "admitted",
-    ) {
-        return admit_standard_mfs_plan_with_lifetimes(resolved, true);
-    }
-    let requested_bytes = config
-        .aw_project
-        .as_ref()
-        .expect("eligible AWProject topology has controls")
-        .cf_resident_bytes;
-    admit_awproject_full_cf_residency(resolved, requested_bytes, full_cache_bytes)
-}
-
 fn resolve_awproject_multifield_memory_plan(
     plan: ImagingResolvedPlan,
     config: &CliConfig,
@@ -39822,19 +39648,21 @@ fn resolve_awproject_multifield_memory_plan(
     ) {
         return admit_standard_mfs_plan_with_lifetimes(plan, true);
     }
-    let controls = config
-        .aw_project
-        .as_ref()
-        .expect("eligible AWProject topology has controls");
-    let full_cache_bytes = awproject_full_cf_pixel_bytes(controls)?;
-    resolve_awproject_multifield_memory_plan_with_full_cf_bytes(
+    let resolved = admit_awproject_multifield_initial_grid(
         plan,
         config,
         selected_field_count,
         initial_dirty_backend_explicit,
         grid_threads_explicit,
-        full_cache_bytes,
-    )
+    )?;
+    if standard_mfs_plan_decision_is(
+        &resolved,
+        "awproject_multifield_initial_grid_admission",
+        "admitted",
+    ) {
+        return Ok(resolved);
+    }
+    admit_standard_mfs_plan_with_lifetimes(resolved, true)
 }
 
 fn standard_mfs_memory_plan_with_cache_channels_for_ms(
@@ -39997,42 +39825,6 @@ fn awproject_cf_index_estimate_bytes(controls: &AwProjectControls) -> Result<usi
         ],
         "AWProject CF metadata index",
     )
-}
-
-fn awproject_paired_cf_pixel_bytes(
-    imaging_shape: [usize; 2],
-    weight_shape: [usize; 2],
-) -> Result<usize, String> {
-    let imaging_values = checked_imaging_product(imaging_shape, "AWProject imaging CF pixels")?;
-    let weight_values = checked_imaging_product(weight_shape, "AWProject weight CF pixels")?;
-    checked_imaging_sum(
-        [imaging_values, weight_values],
-        "AWProject paired CF pixels",
-    )?
-    .checked_mul(std::mem::size_of::<Complex32>())
-    .ok_or_else(|| "AWProject paired CF pixel bytes overflowed".to_string())
-}
-
-fn awproject_full_cf_pixel_bytes(controls: &AwProjectControls) -> Result<usize, String> {
-    let cache = AwConvolutionFunctionCache::open(&controls.cf_cache).map_err(|error| {
-        format!(
-            "open AWProject CF cache {} for exact full-residency planning: {error}",
-            controls.cf_cache.display()
-        )
-    })?;
-    cache.keys().into_iter().try_fold(0usize, |total, key| {
-        let metadata = cache.metadata(key).ok_or_else(|| {
-            format!(
-                "validated AWProject CF cache {} omitted metadata for {key:?}",
-                controls.cf_cache.display()
-            )
-        })?;
-        let cell_bytes =
-            awproject_paired_cf_pixel_bytes(metadata.imaging.shape, metadata.weight.shape)?;
-        total
-            .checked_add(cell_bytes)
-            .ok_or_else(|| "AWProject full CF cache pixel bytes overflowed".to_string())
-    })
 }
 
 fn awproject_pointing_index_estimate_bytes(
@@ -42936,22 +42728,6 @@ fn imaging_execution_config_with_plan(
     )
     .with_resolved(standard_mfs.resolved.clone())
     .with_standard_mfs(standard_mfs)
-}
-
-fn gridder_mode_with_resolved_awproject_cf_residency(
-    gridder_mode: &GridderMode,
-    strategy: &ImagingResolvedPlan,
-) -> GridderMode {
-    let Some(effective_bytes) =
-        standard_mfs_plan_decision_usize_value(strategy, "awproject_cf_resident_effective_bytes")
-    else {
-        return gridder_mode.clone();
-    };
-    let mut resolved = gridder_mode.clone();
-    if let GridderMode::AwProject(awproject) = &mut resolved {
-        awproject.controls.cf_resident_bytes = effective_bytes;
-    }
-    resolved
 }
 
 fn standard_mfs_fixed_tile_backend_enabled_for_frontend(config: &CliConfig) -> bool {
@@ -62903,187 +62679,6 @@ mod tests {
     }
 
     #[test]
-    fn awproject_full_cf_pixel_bytes_are_exact_and_checked() {
-        assert_eq!(
-            awproject_paired_cf_pixel_bytes([16, 16], [32, 32]).unwrap(),
-            (16 * 16 + 32 * 32) * std::mem::size_of::<Complex32>()
-        );
-        assert!(
-            awproject_paired_cf_pixel_bytes([usize::MAX, 1], [1, 1])
-                .unwrap_err()
-                .contains("overflow"),
-            "the exact byte sum must fail closed on overflow"
-        );
-
-        let tmp = tempdir().unwrap();
-        let cf_cache = tmp.path().join("exact-full-residency-cf-cache");
-        fs::create_dir(&cf_cache).unwrap();
-        write_synthetic_awproject_cf_cache(&cf_cache, &[1.1e9, 1.2e9], &[0.0, 2.0]);
-        let controls = AwProjectControls::casa_defaults(cf_cache);
-        assert_eq!(
-            awproject_full_cf_pixel_bytes(&controls).unwrap(),
-            8 * (16 * 16 + 32 * 32) * std::mem::size_of::<Complex32>(),
-            "every validated imaging/weight pair contributes its exact pixel bytes"
-        );
-    }
-
-    #[test]
-    fn awproject_full_cf_residency_is_all_or_nothing_and_reaches_execution() {
-        let tmp = tempdir().unwrap();
-        let cf_cache = tmp.path().join("full-residency-admission-cf-cache");
-        make_awproject_planner_cache(&cf_cache, 8);
-        let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
-        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
-        let requested_bytes = config.aw_project.as_ref().unwrap().cf_resident_bytes;
-        let full_cache_bytes = requested_bytes + 64 * 1024 * 1024;
-        let mut base = standard_mfs_memory_plan(&config, 64, 1024);
-        force_grouped_metal_test_device_budget(&mut base, 16 * 1024 * 1024 * 1024);
-        base.metal.eligible = true;
-
-        let admitted = resolve_awproject_multifield_memory_plan_with_full_cf_bytes(
-            base,
-            &config,
-            2,
-            false,
-            true,
-            full_cache_bytes,
-        )
-        .unwrap();
-        assert_eq!(
-            admitted.allocation_bytes("AWProject CF pixels"),
-            full_cache_bytes
-        );
-        assert_eq!(
-            standard_mfs_plan_decision_usize(&admitted, "awproject_cf_resident_requested_bytes"),
-            Some(requested_bytes)
-        );
-        assert_eq!(
-            standard_mfs_plan_decision_usize(&admitted, "awproject_cf_full_cache_bytes"),
-            Some(full_cache_bytes)
-        );
-        assert_eq!(
-            standard_mfs_plan_decision_usize(&admitted, "awproject_cf_resident_effective_bytes"),
-            Some(full_cache_bytes)
-        );
-        assert!(
-            standard_mfs_plan_decision_usize(
-                &admitted,
-                "awproject_cf_full_residency_headroom_bytes"
-            )
-            .is_some_and(|headroom| headroom >= full_cache_bytes - requested_bytes)
-        );
-        assert!(standard_mfs_plan_decision_is(
-            &admitted,
-            "awproject_cf_full_residency_admission",
-            "admitted-full-cache"
-        ));
-        assert!(admitted.maximum_planned_resident_bytes <= admitted.usable_memory_bytes);
-
-        let mosaic = match test_mosaic_gridder(1.5e9) {
-            GridderMode::Mosaic(mosaic) => mosaic,
-            _ => unreachable!(),
-        };
-        let original_mode = GridderMode::AwProject(AwProjectGridderConfig {
-            controls: config.aw_project.clone().unwrap(),
-            mosaic,
-        });
-        let effective_mode =
-            gridder_mode_with_resolved_awproject_cf_residency(&original_mode, &admitted);
-        let GridderMode::AwProject(effective) = effective_mode else {
-            panic!("AWProject mode must remain selected");
-        };
-        assert_eq!(effective.controls.cf_resident_bytes, full_cache_bytes);
-        let GridderMode::AwProject(original) = original_mode else {
-            unreachable!();
-        };
-        assert_eq!(
-            original.controls.cf_resident_bytes, requested_bytes,
-            "execution must clone rather than mutate the caller's controls"
-        );
-    }
-
-    #[test]
-    fn awproject_full_cf_residency_falls_back_when_initial_grid_cannot_fit() {
-        let tmp = tempdir().unwrap();
-        let cf_cache = tmp.path().join("full-residency-headroom-cf-cache");
-        make_awproject_planner_cache(&cf_cache, 8);
-        let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
-        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
-        let requested_bytes = config.aw_project.as_ref().unwrap().cf_resident_bytes;
-        let mut base = standard_mfs_memory_plan(&config, 64, 1024);
-        force_grouped_metal_test_device_budget(&mut base, 16 * 1024 * 1024 * 1024);
-        base.metal.eligible = true;
-
-        let fallback = resolve_awproject_multifield_memory_plan_with_full_cf_bytes(
-            base,
-            &config,
-            2,
-            false,
-            true,
-            usize::MAX,
-        )
-        .unwrap();
-        assert_eq!(
-            fallback.allocation_bytes("AWProject CF pixels"),
-            requested_bytes
-        );
-        assert_eq!(
-            standard_mfs_plan_decision_usize(&fallback, "awproject_cf_resident_effective_bytes"),
-            Some(requested_bytes)
-        );
-        assert!(fallback.decisions.iter().any(|decision| {
-            decision.name == "awproject_cf_full_residency_admission"
-                && decision.value == "requested-fallback"
-                && decision.reason.contains("initial grid")
-        }));
-    }
-
-    #[test]
-    fn awproject_full_cf_residency_preserves_the_grouped_replay_minimum() {
-        let tmp = tempdir().unwrap();
-        let cf_cache = tmp.path().join("full-residency-replay-minimum-cf-cache");
-        make_awproject_planner_cache(&cf_cache, 8);
-        let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
-        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
-        let requested_bytes = config.aw_project.as_ref().unwrap().cf_resident_bytes;
-        let mut base = standard_mfs_memory_plan(&config, 64, 1024);
-        force_grouped_metal_test_device_budget(&mut base, 16 * 1024 * 1024 * 1024);
-        base.metal.eligible = true;
-        let admitted =
-            admit_awproject_multifield_initial_grid(base, &config, 2, false, true).unwrap();
-        let replay_stage_peak_bytes = [
-            ImagingMemoryStage::ResidualGrid,
-            ImagingMemoryStage::ResidualTransform,
-        ]
-        .into_iter()
-        .filter_map(|stage| admitted.memory_lifetime_ledger.stage_peak(stage))
-        .map(|peak| peak.resident_bytes)
-        .max()
-        .unwrap();
-        let replay_headroom_bytes = admitted.usable_memory_bytes - replay_stage_peak_bytes;
-        let compile_envelope = awproject_grouped_replay_compile_envelope(&admitted).unwrap();
-        let replay_capacity =
-            replay_headroom_bytes.min(compile_envelope.replay_retention_ceiling_bytes);
-        let additional_bytes = replay_capacity
-            .checked_sub(AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES)
-            .unwrap()
-            + 1;
-        let full_cache_bytes = requested_bytes.checked_add(additional_bytes).unwrap();
-
-        let fallback =
-            admit_awproject_full_cf_residency(admitted, requested_bytes, full_cache_bytes).unwrap();
-        assert_eq!(
-            fallback.allocation_bytes("AWProject CF pixels"),
-            requested_bytes
-        );
-        assert!(fallback.decisions.iter().any(|decision| {
-            decision.name == "awproject_cf_full_residency_admission"
-                && decision.value == "requested-fallback"
-                && decision.reason.contains("grouped replay retention")
-        }));
-    }
-
-    #[test]
     fn awproject_multifield_initial_grid_is_plan_admitted_without_changing_residual_metal() {
         let tmp = tempdir().unwrap();
         let cf_cache = tmp.path().join("multifield-initial-grid-cf-cache");
@@ -63382,14 +62977,6 @@ mod tests {
         let unchanged =
             admit_awproject_multifield_initial_grid(base.clone(), &config, 1, false, true).unwrap();
         assert_eq!(unchanged, base);
-        let legacy = admit_standard_mfs_plan_with_lifetimes(base.clone(), true).unwrap();
-        let resolved =
-            resolve_awproject_multifield_memory_plan(base.clone(), &config, 1, false, true)
-                .unwrap();
-        assert_eq!(
-            resolved, legacy,
-            "single-field planning must retain the pre-existing lifetime-admission path"
-        );
         assert_eq!(
             standard_mfs_execution_config_with_plan(&config, &unchanged).initial_dirty_backend,
             Some(StandardMfsBackend::MetalRowRunGrouped)
@@ -63444,48 +63031,6 @@ mod tests {
     }
 
     #[test]
-    fn awproject_dirty_candidate_preserves_the_legacy_generic_plan() {
-        let tmp = tempdir().unwrap();
-        let cf_cache = tmp.path().join("dirty-initial-grid-cf-cache");
-        make_awproject_planner_cache(&cf_cache, 8);
-        let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
-        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
-        config.dirty_only = true;
-        config.niter = 0;
-        let base = standard_mfs_memory_plan(&config, 64, 1024);
-
-        let base_cf_bytes = base.allocation_bytes("AWProject CF pixels");
-        let base_generic_scratch = base.workload.direct_metal_scratch_candidate_bytes;
-        let legacy = admit_standard_mfs_plan_with_lifetimes(base.clone(), true).unwrap();
-        let preserved =
-            resolve_awproject_multifield_memory_plan(base.clone(), &config, 2, false, true)
-                .unwrap();
-        assert_eq!(
-            preserved, legacy,
-            "dirty planning must retain the pre-existing lifetime-admission path"
-        );
-        assert_eq!(
-            preserved.allocation_bytes("AWProject CF pixels"),
-            base_cf_bytes
-        );
-        assert_eq!(
-            preserved.workload.direct_metal_scratch_candidate_bytes,
-            base_generic_scratch
-        );
-        assert!(
-            !preserved
-                .decisions
-                .iter()
-                .any(|decision| { decision.name == "awproject_cf_resident_effective_bytes" })
-        );
-        assert!(standard_mfs_plan_decision_is(
-            &preserved,
-            "awproject_grouped_replay_replaced_generic_caches",
-            "false"
-        ));
-    }
-
-    #[test]
     fn awproject_multifield_initial_grid_fails_closed_when_the_ledger_cannot_admit_it() {
         let tmp = tempdir().unwrap();
         let cf_cache = tmp.path().join("rejected-multifield-initial-grid-cf-cache");
@@ -63498,16 +63043,8 @@ mod tests {
         base.usable_memory_bytes = base.maximum_planned_resident_bytes;
         let original_tap_bytes = base.allocation_bytes("AWProject source-order tap scratch");
 
-        let requested_bytes = config.aw_project.as_ref().unwrap().cf_resident_bytes;
-        let rejected = resolve_awproject_multifield_memory_plan_with_full_cf_bytes(
-            base,
-            &config,
-            2,
-            false,
-            true,
-            requested_bytes,
-        )
-        .unwrap();
+        let rejected =
+            resolve_awproject_multifield_memory_plan(base, &config, 2, false, true).unwrap();
         assert_eq!(
             rejected.allocation_bytes("AWProject source-order tap scratch"),
             original_tap_bytes
@@ -63720,16 +63257,8 @@ mod tests {
             "the real-shape fixture must stay red-capable for premature legacy admission: {legacy_error}"
         );
 
-        let requested_bytes = config.aw_project.as_ref().unwrap().cf_resident_bytes;
-        let admitted = resolve_awproject_multifield_memory_plan_with_full_cf_bytes(
-            base,
-            &config,
-            63,
-            true,
-            true,
-            requested_bytes,
-        )
-        .expect("resolved grouped topology must precede semantic admission");
+        let admitted = resolve_awproject_multifield_memory_plan(base, &config, 63, true, true)
+            .expect("resolved grouped topology must precede semantic admission");
         assert_eq!(admitted.usable_memory_bytes, MEMORY_TARGET_BYTES);
         assert_eq!(admitted.workload.direct_metal_scratch_candidate_bytes, 0);
         assert_eq!(admitted.workload.routed_replay_cache_candidate_bytes, 0);
