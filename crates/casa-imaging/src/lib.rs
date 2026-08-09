@@ -28649,10 +28649,29 @@ impl AwProjectMetalGlobalProgramBuilder {
     }
 
     fn finish(
+        self,
+        grid_width: usize,
+        grid_height: usize,
+        tile_side: usize,
+    ) -> Result<AwProjectMetalResidentProgram, ImagingError> {
+        self.finish_with_raw_tile_route(grid_width, grid_height, tile_side, true)
+    }
+
+    fn finish_source_major_grouped(
+        self,
+        grid_width: usize,
+        grid_height: usize,
+        tile_side: usize,
+    ) -> Result<AwProjectMetalResidentProgram, ImagingError> {
+        self.finish_with_raw_tile_route(grid_width, grid_height, tile_side, false)
+    }
+
+    fn finish_with_raw_tile_route(
         mut self,
         grid_width: usize,
         grid_height: usize,
         tile_side: usize,
+        build_raw_tile_route: bool,
     ) -> Result<AwProjectMetalResidentProgram, ImagingError> {
         if self.source_programs == 0 {
             return Err(ImagingError::InvalidRequest(
@@ -28693,12 +28712,19 @@ impl AwProjectMetalGlobalProgramBuilder {
         }
         self.tile_batch.phases.shrink_to_fit();
         self.tile_batch.term_weights.shrink_to_fit();
-        let tile_plan = plan_awproject_metal_tiles(
-            &self.tile_batch.samples,
-            grid_width,
-            grid_height,
-            tile_side,
-        )?;
+        let tile_plan = if build_raw_tile_route {
+            plan_awproject_metal_tiles(
+                &self.tile_batch.samples,
+                grid_width,
+                grid_height,
+                tile_side,
+            )?
+        } else {
+            AwProjectMetalTilePlan {
+                tile_side,
+                ..AwProjectMetalTilePlan::default()
+            }
+        };
         let residual_scale_plan = plan_awproject_metal_residual_scales(
             &self.tile_batch.samples,
             &self.prediction_batch.kernels,
@@ -39650,7 +39676,7 @@ fn prepare_awproject_source_major_block(
     ])?;
     replay_cache.admit_source_major_compile_peak(builder_owner_bytes)?;
     let [grid_width, grid_height] = request.geometry.image_shape;
-    let program = builder.finish(grid_width, grid_height, tile_side)?;
+    let program = builder.finish_source_major_grouped(grid_width, grid_height, tile_side)?;
     let builder_elapsed = builder_started.elapsed();
     Ok(AwProjectSourceMajorPreparedBlock {
         program: Some(program),
@@ -78122,7 +78148,9 @@ mod tests {
             .unwrap();
         assert_eq!(weight_samples.len(), 2);
         assert_eq!(weight_phases.len(), 4);
-        let mut direct = direct_builder.finish(16, 16, 8).unwrap();
+        let mut direct = direct_builder
+            .finish_source_major_grouped(16, 16, 8)
+            .unwrap();
 
         let mut legacy_builder = super::AwProjectMetalGlobalProgramBuilder::raw();
         legacy_builder.raw_atlas = Some(source_major_parity_raw_atlas(
@@ -78240,11 +78268,10 @@ mod tests {
         ] {
             assert_eq!(direct_hash, legacy_hash, "source-major {label} changed");
         }
-        assert_eq!(
-            super::hash_awproject_grouped_route(&direct.tile_plan),
-            super::hash_awproject_grouped_route(&legacy.tile_plan),
-            "source-major raw tile route changed"
-        );
+        assert_eq!(direct.tile_plan.tile_side, 8);
+        assert!(direct.tile_plan.active_tile_ids.is_empty());
+        assert!(direct.tile_plan.tile_fragment_offsets.is_empty());
+        assert!(direct.tile_plan.fragments.is_empty());
         assert_eq!(direct.metadata.normalization_sumwt, 3.0);
         assert_eq!(direct.metadata.gridded_samples, 2);
         assert_eq!(
