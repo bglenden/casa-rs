@@ -108,28 +108,3 @@ python3 tools/perf/imager/autoresearch/vlass_5m.py \
 During controller initialization there is no incumbent state, so this option
 acts as the ordinary baseline guard. During an experiment it rejects and
 therefore reverts an apparent improvement smaller than 5%.
-
-## End-to-end 4096-square recovery controller
-
-`vlass_4096_recovery.py` is the end-to-end CLEAN controller. Its phase-one
-guard keeps the accepted single-field four-SPW result at 100x CASA while its
-phase-two metric is the matched all-63-field run. The all-field target is the
-complete process wall time, including initial gridding, CLEAN refreshes, and
-product writes; residual-replay timings are diagnostics only.
-
-The bounded source-major architecture experiment is selected only by
-`CASA_RS_VLASS_SOURCE_MAJOR_GROUPED_INITIAL=1`. For each source block it:
-
-1. classifies and materializes exact-support CF taps once;
-2. compiles an exact residual replay program and an eight-plane grouped
-   initial-grid program from the same source-owned materialization;
-3. dispatches the initial grouped program into compensated Metal grids; and
-4. releases temporary initial/source state while retaining the complete
-   residual program through the final residual transform.
-
-The guard requires one source-major window for every selected DDID, exact
-support, complete resident AOT residual replay, zero refresh spill reads or
-runtime topology rebuilds, and an owned-memory peak no larger than the
-planner's grouped compile admission. Scientific promotion still requires the
-matched CASA comparison; resource or correctness failure makes the trial
-non-retainable and the controller reverts it.

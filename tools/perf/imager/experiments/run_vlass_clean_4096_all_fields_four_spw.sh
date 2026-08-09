@@ -45,7 +45,6 @@ prime_replay_initial_dirty="${CASA_RS_VLASS_PRIME_REPLAY_INITIAL_DIRTY:-0}"
 logical_tap_budget_mib="${CASA_RS_VLASS_LOGICAL_TAP_BUDGET_MIB:-}"
 initial_dirty_backend="${CASA_RS_VLASS_INITIAL_DIRTY_BACKEND:-}"
 residual_backend="${CASA_RS_VLASS_RESIDUAL_BACKEND:-}"
-source_major_grouped_initial="${CASA_RS_VLASS_SOURCE_MAJOR_GROUPED_INITIAL:-0}"
 ms="$root/data/frozen-clean-b80d5e87487a/VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms"
 output="$run_root/rust"
 log="$run_root/casa-rs.log"
@@ -56,20 +55,6 @@ experimental_environment=(
     CASA_RS_EXPERIMENTAL_MT_MFS_SPARSE_RHS=1
     CASA_RS_EXPERIMENTAL_MT_MFS_CASA_FFT0=1
 )
-
-case "$source_major_grouped_initial" in
-    0)
-        ;;
-    1)
-        experimental_environment+=(
-            CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_GROUPED_INITIAL=1
-        )
-        ;;
-    *)
-        echo "CASA_RS_VLASS_SOURCE_MAJOR_GROUPED_INITIAL must be 0 or 1" >&2
-        exit 2
-        ;;
-esac
 
 if [[ -n "$grouped_segment_target_bytes" ]]; then
     case "$grouped_segment_target_bytes" in
@@ -521,7 +506,6 @@ mkdir -p "$run_root"
     printf 'logical_tap_budget_mib\t%s\n' "${logical_tap_budget_mib:-planner-default}"
     printf 'initial_dirty_backend\t%s\n' "${initial_dirty_backend:-planner-default}"
     printf 'residual_backend\t%s\n' "${residual_backend:-planner-default}"
-    printf 'source_major_grouped_initial\t%s\n' "$source_major_grouped_initial"
     printf 'grouped_segment_target_bytes\t%s\n' "${grouped_segment_target_bytes:-planner-default}"
     if [[ "$all_field_tuned_replay" == "1" ]]; then
         printf 'packed_cf\t%s\n' "$packed_cf"

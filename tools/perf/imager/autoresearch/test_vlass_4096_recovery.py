@@ -184,14 +184,6 @@ class Vlass4096RecoveryTests(unittest.TestCase):
                 f"awproject_selected_field_count selected_fields={row['selected_fields']}",
                 f"awproject_grouped_replay_plan architecture=source-order-grouped-tile-v1 segment_target_bytes={row['segment_target_bytes']} omitted_squared_l2_energy=0.000000000e0",
                 "awproject_plan usepointing=true",
-                *[
-                    f"awproject_source_major_grouped_initial source_block={source_block} window=0 architecture=source-major-grouped-initial-v1 exact_support=true"
-                    for source_block in range(4)
-                ],
-                *[
-                    f"awproject_source_major_grouped_initial_memory source_block={source_block} owned_peak_bytes=99 admitted_bytes=100 within_admission=true"
-                    for source_block in range(4)
-                ],
                 "awproject_aot_grouped_tile_receipt segment=0 omitted_energy_fraction_bits=0",
                 "awproject_metal_resident_grouped_replay_summary spill_read_bytes=0 runtime_grouping_builds=0 runtime_sort_builds=0 runtime_route_builds=0",
                 "standard_mfs_stage_memory swapout_bytes_delta=0",
@@ -248,9 +240,6 @@ class Vlass4096RecoveryTests(unittest.TestCase):
         self.assertEqual(
             str(self.contract["all_fields"]["requested_grid_threads"]),
             captured["CASA_RS_VLASS_GRID_THREADS"],
-        )
-        self.assertEqual(
-            "1", captured["CASA_RS_VLASS_SOURCE_MAJOR_GROUPED_INITIAL"]
         )
 
     def test_single_field_launch_pins_two_grid_workers(self) -> None:
