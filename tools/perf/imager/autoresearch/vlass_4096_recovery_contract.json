@@ -10,6 +10,10 @@
   "single_field": {
     "matched_casa_wall_seconds": 3631.809729,
     "target_wall_seconds": 36.31809729,
+    "stability_maximum_wall_seconds": 38.1340021545,
+    "warmup_runs": 1,
+    "timed_repetitions": 3,
+    "inter_run_quiescence_seconds": 60,
     "runner": "tools/perf/imager/experiments/run_vlass_clean_4096_four_spw_sparse_fftw.sh",
     "workload": "tools/perf/imager/workloads/vlass-fragment-single-field-clean-4096-four-spw-dense-rhs-control.json",
     "casa_prefix": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/casa-reduced-clean/4096-four-spw/casa"

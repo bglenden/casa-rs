@@ -7,9 +7,11 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
+import statistics
 import subprocess
 import sys
 import time
@@ -27,6 +29,7 @@ TIME_COUNTER_RE = re.compile(
     r"^\s*(?P<value>[0-9]+)\s+"
     r"(?P<name>instructions retired|cycles elapsed)\s*$"
 )
+PROCESS_TIME_RE = re.compile(r"^(?P<name>user|sys) (?P<seconds>[0-9]+(?:\.[0-9]+)?)$")
 COMPLETION_RE = re.compile(
     r"^Wrote CASA-compatible products at prefix (?P<prefix>.+) "
     r"\((?P<samples>[0-9]+) gridded samples, "
@@ -87,10 +90,23 @@ def validate_contract(contract: dict[str, Any]) -> None:
         raise ContractError("single-field and all-field contracts are required")
     if int(contract["phase_two_single_guard_cooldown_seconds"]) != 120:
         raise ContractError("phase-two single-field guard cooldown must be 120 seconds")
+    if int(single["warmup_runs"]) != 1 or int(single["timed_repetitions"]) != 3:
+        raise ContractError(
+            "single-field series must use one warmup and three timed runs"
+        )
+    if int(single["inter_run_quiescence_seconds"]) != 60:
+        raise ContractError("single-field inter-run quiescence must be 60 seconds")
     if float(single["matched_casa_wall_seconds"]) / 100.0 != float(
         single["target_wall_seconds"]
     ):
         raise ContractError("single-field target must equal the exact 100x CASA wall")
+    if not math.isclose(
+        float(single["stability_maximum_wall_seconds"]),
+        float(single["target_wall_seconds"]) * 1.05,
+        rel_tol=0.0,
+        abs_tol=1.0e-12,
+    ):
+        raise ContractError("single-field stability ceiling must be 5% above target")
     if float(all_fields["matched_casa_wall_seconds"]) / 100.0 != float(
         all_fields["target_wall_seconds"]
     ):
@@ -203,6 +219,23 @@ def parse_time_counters(log_path: Path) -> dict[str, int]:
     return result
 
 
+def parse_process_times(log_path: Path) -> dict[str, float]:
+    matches: dict[str, list[float]] = {"user_seconds": [], "sys_seconds": []}
+    for line in log_path.read_text(encoding="utf-8").splitlines():
+        if match := PROCESS_TIME_RE.fullmatch(line):
+            matches[f"{match.group('name')}_seconds"].append(
+                float(match.group("seconds"))
+            )
+    result: dict[str, float] = {}
+    for key, values in matches.items():
+        if len(values) != 1 or values[0] < 0.0:
+            raise ContractError(
+                f"{log_path} must contain exactly one nonnegative {key}"
+            )
+        result[key] = values[0]
+    return result
+
+
 def run_checked(
     command: list[str],
     *,
@@ -270,7 +303,7 @@ def run_single(
     )
     wrapper_log = run_dir / "single-runner.log"
     completed = run_checked(
-        ["bash", str(REPO_ROOT / row["runner"])],
+        ["/usr/bin/time", "-lp", "bash", str(REPO_ROOT / row["runner"])],
         environment=environment,
         log_path=wrapper_log,
     )
@@ -296,6 +329,87 @@ def run_single(
         "runtime_log_sha256": sha256_file(runtime_log),
         "output_prefix": str(single_output_prefix(contract, label)),
         "activity": runtime,
+        "outer_time_counters": parse_time_counters(wrapper_log),
+        "outer_process_times": parse_process_times(wrapper_log),
+    }
+
+
+def assert_no_competing_imager() -> None:
+    completed = subprocess.run(
+        ["pgrep", "-x", "casars-imager"],
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode == 0 and completed.stdout.strip():
+        raise ContractError("another casars-imager process is running")
+    if completed.returncode not in (0, 1):
+        raise ContractError("could not check for a competing casars-imager process")
+
+
+def quiesce(seconds: int) -> None:
+    subprocess.run(["sync"], check=True)
+    time.sleep(seconds)
+    assert_no_competing_imager()
+
+
+def validate_single_series(
+    contract: dict[str, Any], timed: list[dict[str, Any]]
+) -> dict[str, Any]:
+    row = contract["single_field"]
+    if len(timed) != int(row["timed_repetitions"]):
+        raise ContractError("single-field timed series cardinality changed")
+    walls = [float(run["wall_seconds"]) for run in timed]
+    median_wall = float(statistics.median(walls))
+    maximum_wall = max(walls)
+    if maximum_wall > median_wall * 1.05:
+        raise ContractError("single-field wall series exceeds 5% dispersion")
+    if maximum_wall > float(row["stability_maximum_wall_seconds"]):
+        raise ContractError(
+            f"single-field maximum wall {maximum_wall:.6f}s exceeds "
+            f"{row['stability_maximum_wall_seconds']:.6f}s"
+        )
+    for counter, tolerance in (
+        ("instructions_retired", 0.01),
+        ("cycles_elapsed", 0.05),
+    ):
+        values = [int(run["outer_time_counters"][counter]) for run in timed]
+        center = float(statistics.median(values))
+        if any(abs(value - center) > center * tolerance for value in values):
+            raise ContractError(f"single-field {counter} series is unstable")
+    user_values = [float(run["outer_process_times"]["user_seconds"]) for run in timed]
+    median_user = float(statistics.median(user_values))
+    if any(abs(value - median_user) > median_user * 0.05 for value in user_values):
+        raise ContractError("single-field user CPU series is unstable")
+    median_index = sorted(range(len(timed)), key=lambda index: walls[index])[1]
+    return {
+        "median_wall_seconds": median_wall,
+        "maximum_wall_seconds": maximum_wall,
+        "median_run_index": median_index,
+        "walls_seconds": walls,
+    }
+
+
+def run_single_series(
+    contract: dict[str, Any],
+    binary: Path,
+    run_dir: Path,
+    token: str,
+    *,
+    initial_cooldown_seconds: int = 0,
+) -> dict[str, Any]:
+    assert_no_competing_imager()
+    if initial_cooldown_seconds:
+        time.sleep(initial_cooldown_seconds)
+    warmup = run_single(contract, binary, run_dir, f"{token}-warmup")
+    timed = []
+    for index in range(int(contract["single_field"]["timed_repetitions"])):
+        quiesce(int(contract["single_field"]["inter_run_quiescence_seconds"]))
+        timed.append(run_single(contract, binary, run_dir, f"{token}-timed{index}"))
+    return {
+        "initial_cooldown_seconds": initial_cooldown_seconds,
+        "warmup": warmup,
+        "timed": timed,
+        "summary": validate_single_series(contract, timed),
     }
 
 
@@ -546,27 +660,30 @@ def measure_single(contract: dict[str, Any]) -> float:
     run_dir = Path(contract["run_root"]) / "runs" / token
     run_dir.mkdir(parents=True, exist_ok=False)
     binary, build = build_release(run_dir)
-    single = run_single(contract, binary, run_dir, token[-8:])
+    single_series = run_single_series(contract, binary, run_dir, token[-8:])
     receipt = {
         "schema_version": 1,
         "token": token,
         "run_dir": str(run_dir),
         "source_head": build["head"],
         "build": build,
-        "single_field": single,
+        "single_field_series": single_series,
     }
     write_measurement(contract, "single", receipt)
-    return float(single["wall_seconds"])
+    return float(single_series["summary"]["median_wall_seconds"])
 
 
 def guard_single(contract: dict[str, Any]) -> None:
     measurement = load_measurement(contract, "single")
     run_dir = Path(measurement["run_dir"])
     binary = Path(measurement["build"]["binary"])
+    single_series = measurement["single_field_series"]
+    single_summary = validate_single_series(contract, single_series["timed"])
+    median_run = single_series["timed"][single_summary["median_run_index"]]
     single_comparison = compare_row(
         contract,
         contract["single_field"],
-        Path(measurement["single_field"]["output_prefix"]),
+        Path(median_run["output_prefix"]),
         run_dir / "single-casa",
     )
     all_fields = run_all_fields(
@@ -587,8 +704,9 @@ def guard_single(contract: dict[str, Any]) -> None:
         "status": "passed",
         "source_head": measurement["source_head"],
         "binary_sha256": measurement["build"]["binary_sha256"],
-        "single_field": {
-            **measurement["single_field"],
+        "single_field_series": {
+            **single_series,
+            "summary": single_summary,
             "comparison": single_comparison,
         },
         "all_fields": {**all_fields, "comparison": all_comparison},
@@ -632,19 +750,25 @@ def guard_all_fields(contract: dict[str, Any]) -> None:
         run_dir / "all63-casa",
     )
     cooldown_seconds = int(contract["phase_two_single_guard_cooldown_seconds"])
-    cooldown_start = time.monotonic()
-    time.sleep(cooldown_seconds)
-    cooldown_elapsed = time.monotonic() - cooldown_start
-    single = run_single(contract, binary, run_dir, measurement["token"][-8:])
+    single_series = run_single_series(
+        contract,
+        binary,
+        run_dir,
+        measurement["token"][-8:],
+        initial_cooldown_seconds=cooldown_seconds,
+    )
     target = float(contract["single_field"]["target_wall_seconds"])
-    if float(single["wall_seconds"]) > target:
+    if float(single_series["summary"]["median_wall_seconds"]) > target:
         raise ContractError(
-            f"single-field wall {single['wall_seconds']:.6f}s exceeds {target:.6f}s"
+            "single-field median wall "
+            f"{single_series['summary']['median_wall_seconds']:.6f}s exceeds "
+            f"{target:.6f}s"
         )
+    median_run = single_series["timed"][single_series["summary"]["median_run_index"]]
     single_comparison = compare_row(
         contract,
         contract["single_field"],
-        Path(single["output_prefix"]),
+        Path(median_run["output_prefix"]),
         run_dir / "single-casa",
     )
     guard_receipt = {
@@ -656,11 +780,9 @@ def guard_all_fields(contract: dict[str, Any]) -> None:
             **measurement["all_fields"],
             "comparison": all_comparison,
         },
-        "single_field": {
-            **single,
+        "single_field_series": {
+            **single_series,
             "comparison": single_comparison,
-            "pre_run_cooldown_requested_seconds": cooldown_seconds,
-            "pre_run_cooldown_elapsed_seconds": cooldown_elapsed,
         },
     }
     output = run_dir / "all-fields-guard.json"

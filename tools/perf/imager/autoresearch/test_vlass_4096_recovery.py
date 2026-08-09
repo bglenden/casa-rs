@@ -20,6 +20,11 @@ class Vlass4096RecoveryTests(unittest.TestCase):
     def test_contract_pins_both_100x_targets_and_sequential_guard(self) -> None:
         subject.validate_contract(self.contract)
         self.assertEqual(120, self.contract["phase_two_single_guard_cooldown_seconds"])
+        self.assertEqual(1, self.contract["single_field"]["warmup_runs"])
+        self.assertEqual(3, self.contract["single_field"]["timed_repetitions"])
+        self.assertEqual(
+            60, self.contract["single_field"]["inter_run_quiescence_seconds"]
+        )
         for row_name in ("single_field", "all_fields"):
             row = self.contract[row_name]
             self.assertAlmostEqual(
@@ -59,6 +64,11 @@ class Vlass4096RecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(subject.ContractError, "cooldown"):
             subject.validate_contract(changed)
 
+        changed = copy.deepcopy(self.contract)
+        changed["single_field"]["stability_maximum_wall_seconds"] += 1.0
+        with self.assertRaisesRegex(subject.ContractError, "stability ceiling"):
+            subject.validate_contract(changed)
+
     def test_parse_wall_requires_one_positive_time_record(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "run.log"
@@ -87,6 +97,31 @@ class Vlass4096RecoveryTests(unittest.TestCase):
             log.write_text("1 instructions retired\n", encoding="utf-8")
             with self.assertRaisesRegex(subject.ContractError, "cycles_elapsed"):
                 subject.parse_time_counters(log)
+
+    def test_single_series_uses_median_and_rejects_unstable_work(self) -> None:
+        def run(wall: float, instructions: int, cycles: int, user: float) -> dict:
+            return {
+                "wall_seconds": wall,
+                "outer_time_counters": {
+                    "instructions_retired": instructions,
+                    "cycles_elapsed": cycles,
+                },
+                "outer_process_times": {"user_seconds": user, "sys_seconds": 1.0},
+            }
+
+        good = [
+            run(35.8, 1_000_000, 2_000_000, 100.0),
+            run(36.0, 1_005_000, 2_020_000, 101.0),
+            run(36.1, 999_000, 1_990_000, 99.5),
+        ]
+        summary = subject.validate_single_series(self.contract, good)
+        self.assertEqual(36.0, summary["median_wall_seconds"])
+        self.assertEqual(1, summary["median_run_index"])
+
+        unstable = copy.deepcopy(good)
+        unstable[2]["outer_time_counters"]["instructions_retired"] = 1_020_000
+        with self.assertRaisesRegex(subject.ContractError, "instructions_retired"):
+            subject.validate_single_series(self.contract, unstable)
 
     def test_all_field_log_rejects_spill_or_topology_rebuild(self) -> None:
         row = self.contract["all_fields"]
