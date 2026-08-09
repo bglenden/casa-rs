@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 import uuid
 from typing import Any
 
@@ -84,6 +85,8 @@ def validate_contract(contract: dict[str, Any]) -> None:
     all_fields = contract.get("all_fields")
     if not isinstance(single, dict) or not isinstance(all_fields, dict):
         raise ContractError("single-field and all-field contracts are required")
+    if int(contract["phase_two_single_guard_cooldown_seconds"]) != 120:
+        raise ContractError("phase-two single-field guard cooldown must be 120 seconds")
     if float(single["matched_casa_wall_seconds"]) / 100.0 != float(
         single["target_wall_seconds"]
     ):
@@ -628,6 +631,10 @@ def guard_all_fields(contract: dict[str, Any]) -> None:
         Path(measurement["all_fields"]["output_prefix"]),
         run_dir / "all63-casa",
     )
+    cooldown_seconds = int(contract["phase_two_single_guard_cooldown_seconds"])
+    cooldown_start = time.monotonic()
+    time.sleep(cooldown_seconds)
+    cooldown_elapsed = time.monotonic() - cooldown_start
     single = run_single(contract, binary, run_dir, measurement["token"][-8:])
     target = float(contract["single_field"]["target_wall_seconds"])
     if float(single["wall_seconds"]) > target:
@@ -649,7 +656,12 @@ def guard_all_fields(contract: dict[str, Any]) -> None:
             **measurement["all_fields"],
             "comparison": all_comparison,
         },
-        "single_field": {**single, "comparison": single_comparison},
+        "single_field": {
+            **single,
+            "comparison": single_comparison,
+            "pre_run_cooldown_requested_seconds": cooldown_seconds,
+            "pre_run_cooldown_elapsed_seconds": cooldown_elapsed,
+        },
     }
     output = run_dir / "all-fields-guard.json"
     output.write_text(json.dumps(guard_receipt, indent=2, sort_keys=True) + "\n")

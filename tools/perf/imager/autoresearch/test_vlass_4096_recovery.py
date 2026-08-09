@@ -19,6 +19,7 @@ class Vlass4096RecoveryTests(unittest.TestCase):
 
     def test_contract_pins_both_100x_targets_and_sequential_guard(self) -> None:
         subject.validate_contract(self.contract)
+        self.assertEqual(120, self.contract["phase_two_single_guard_cooldown_seconds"])
         for row_name in ("single_field", "all_fields"):
             row = self.contract[row_name]
             self.assertAlmostEqual(
@@ -51,6 +52,11 @@ class Vlass4096RecoveryTests(unittest.TestCase):
         changed = copy.deepcopy(self.contract)
         changed["all_fields"]["target_wall_seconds"] += 1.0
         with self.assertRaisesRegex(subject.ContractError, "all-field target"):
+            subject.validate_contract(changed)
+
+        changed = copy.deepcopy(self.contract)
+        changed["phase_two_single_guard_cooldown_seconds"] = 0
+        with self.assertRaisesRegex(subject.ContractError, "cooldown"):
             subject.validate_contract(changed)
 
     def test_parse_wall_requires_one_positive_time_record(self) -> None:

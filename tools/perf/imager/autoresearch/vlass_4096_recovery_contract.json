@@ -6,6 +6,7 @@
   "fftw_library_dir": "/opt/homebrew/opt/fftw/lib",
   "measures_dir": "/Users/brianglendenning/.casa/data",
   "scientific_contract": "tools/perf/imager/contracts/vlass-scientific-equivalence-v2-mask-topology.json",
+  "phase_two_single_guard_cooldown_seconds": 120,
   "single_field": {
     "matched_casa_wall_seconds": 3631.809729,
     "target_wall_seconds": 36.31809729,
