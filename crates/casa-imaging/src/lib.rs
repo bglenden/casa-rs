@@ -39477,6 +39477,7 @@ struct AwProjectSourceMajorInitialReceipt {
     metal_stats: AwProjectMetalGridStats,
     imaging_owner_bytes: usize,
     weight_owner_bytes: usize,
+    concurrent_owner_bytes: usize,
     imaging_device_peak_bytes: usize,
     weight_device_peak_bytes: usize,
     imaging_groups: usize,
@@ -39485,6 +39486,7 @@ struct AwProjectSourceMajorInitialReceipt {
     weight_route_fragments: usize,
     imaging_group_elapsed: Duration,
     weight_group_elapsed: Duration,
+    group_wall_elapsed: Duration,
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -39726,16 +39728,36 @@ fn dispatch_awproject_source_major_initial(
         .unwrap_or(grid_bytes);
     let kernels = program.imaging_kernels();
 
-    let imaging_group_started = Instant::now();
-    let imaging_partition = group_awproject_source_major_initial_imaging(
-        &program.tile_batch,
-        kernels,
-        grid_width,
-        grid_height,
-        tile_side,
-    )?;
-    let imaging_group_elapsed = imaging_group_started.elapsed();
-    let imaging_owner_bytes = checked_awproject_source_major_bytes(&[
+    let group_wall_started = Instant::now();
+    let (imaging_partition, weight_partition) = rayon::join(
+        || {
+            let started = Instant::now();
+            group_awproject_source_major_initial_imaging(
+                &program.tile_batch,
+                kernels,
+                grid_width,
+                grid_height,
+                tile_side,
+            )
+            .map(|partition| (partition, started.elapsed()))
+        },
+        || {
+            let started = Instant::now();
+            group_awproject_source_major_initial_weight(
+                weight_samples,
+                &weight_atlas.values,
+                weight_phases,
+                grid_width,
+                grid_height,
+                tile_side,
+            )
+            .map(|partition| (partition, started.elapsed()))
+        },
+    );
+    let (imaging_partition, imaging_group_elapsed) = imaging_partition?;
+    let (weight_partition, weight_group_elapsed) = weight_partition?;
+    let group_wall_elapsed = group_wall_started.elapsed();
+    let shared_owner_bytes = checked_awproject_source_major_bytes(&[
         program.resident_bytes(),
         weight_atlas.resident_bytes(),
         weight_samples
@@ -39744,9 +39766,21 @@ fn dispatch_awproject_source_major_initial(
         weight_phases
             .len()
             .saturating_mul(std::mem::size_of::<WProjectMetalComplex>()),
+    ])?;
+    let imaging_owner_bytes = checked_awproject_source_major_bytes(&[
+        shared_owner_bytes,
         imaging_partition.resident_bytes(),
     ])?;
-    replay_cache.admit_source_major_compile_peak(imaging_owner_bytes)?;
+    let weight_owner_bytes = checked_awproject_source_major_bytes(&[
+        shared_owner_bytes,
+        weight_partition.resident_bytes(),
+    ])?;
+    let concurrent_owner_bytes = checked_awproject_source_major_bytes(&[
+        shared_owner_bytes,
+        imaging_partition.resident_bytes(),
+        weight_partition.resident_bytes(),
+    ])?;
+    replay_cache.admit_source_major_compile_peak(concurrent_owner_bytes)?;
     let imaging_device_peak_bytes = admit_awproject_source_major_device_peak(
         device_budget_bytes,
         grid_bytes,
@@ -39779,28 +39813,6 @@ fn dispatch_awproject_source_major_initial(
     })?;
     drop(imaging_partition);
 
-    let weight_group_started = Instant::now();
-    let weight_partition = group_awproject_source_major_initial_weight(
-        weight_samples,
-        &weight_atlas.values,
-        weight_phases,
-        grid_width,
-        grid_height,
-        tile_side,
-    )?;
-    let weight_group_elapsed = weight_group_started.elapsed();
-    let weight_owner_bytes = checked_awproject_source_major_bytes(&[
-        program.resident_bytes(),
-        weight_atlas.resident_bytes(),
-        weight_samples
-            .len()
-            .saturating_mul(std::mem::size_of::<AwProjectSourceMajorWeightSample>()),
-        weight_phases
-            .len()
-            .saturating_mul(std::mem::size_of::<WProjectMetalComplex>()),
-        weight_partition.resident_bytes(),
-    ])?;
-    replay_cache.admit_source_major_compile_peak(weight_owner_bytes)?;
     let weight_device_peak_bytes = admit_awproject_source_major_device_peak(
         device_budget_bytes,
         grid_bytes,
@@ -39834,15 +39846,12 @@ fn dispatch_awproject_source_major_initial(
             buffer_alloc: imaging_stats.buffer_alloc + weight_stats.buffer_alloc,
             dispatch_wait: imaging_stats.dispatch_wait + weight_stats.dispatch_wait,
             fixed_grid_bytes: imaging_stats.output_bytes.max(weight_stats.output_bytes),
-            total: imaging_group_elapsed
-                + weight_group_elapsed
-                + executor_setup
-                + imaging_stats.total
-                + weight_stats.total,
+            total: group_wall_elapsed + executor_setup + imaging_stats.total + weight_stats.total,
             ..AwProjectMetalGridStats::default()
         },
         imaging_owner_bytes,
         weight_owner_bytes,
+        concurrent_owner_bytes,
         imaging_device_peak_bytes,
         weight_device_peak_bytes,
         imaging_groups,
@@ -39851,6 +39860,7 @@ fn dispatch_awproject_source_major_initial(
         weight_route_fragments,
         imaging_group_elapsed,
         weight_group_elapsed,
+        group_wall_elapsed,
     })
 }
 
@@ -40031,9 +40041,10 @@ fn accumulate_awproject_source_major_block(
     replay_cache.admit_source_major_compile_peak(program_bytes)?;
 
     eprintln!(
-        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} residual_program_bytes={program_bytes} spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v2 exact_support=true elapsed_ms={:.3}",
+        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v2 exact_support=true elapsed_ms={:.3}",
         initial_receipt.imaging_owner_bytes,
         initial_receipt.weight_owner_bytes,
+        initial_receipt.concurrent_owner_bytes,
         initial_receipt.imaging_device_peak_bytes,
         initial_receipt.weight_device_peak_bytes,
         initial_receipt.imaging_groups,
@@ -40047,6 +40058,7 @@ fn accumulate_awproject_source_major_block(
         profile::millis(builder_elapsed),
         profile::millis(initial_receipt.imaging_group_elapsed),
         profile::millis(initial_receipt.weight_group_elapsed),
+        profile::millis(initial_receipt.group_wall_elapsed),
         profile::millis(started.elapsed()),
     );
     accumulation
