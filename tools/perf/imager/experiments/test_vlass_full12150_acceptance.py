@@ -376,14 +376,25 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
                 baseline=baseline,
                 sample=dict(first),
                 pressure_level=1,
+                pressure_warning_samples=0,
+                swap_used_growth_samples=0,
+            )
+        )
+        self.assertIsNone(
+            acceptance.monitor_stop_reason(
+                baseline=baseline,
+                sample=dict(first),
+                pressure_level=2,
+                pressure_warning_samples=1,
                 swap_used_growth_samples=0,
             )
         )
         cases = (
-            (dict(first), 2, 0, "pressure"),
-            (dict(first, pages_throttled=1), 1, 0, "throttled"),
-            (dict(first, swapouts=5), 1, 0, "swapout"),
-            (dict(first), 1, 2, "swap-used"),
+            (dict(first), 2, 2, 0, "pressure"),
+            (dict(first), 4, 0, 0, "pressure"),
+            (dict(first, pages_throttled=1), 1, 0, 0, "throttled"),
+            (dict(first, swapouts=5), 1, 0, 0, "swapout"),
+            (dict(first), 1, 0, 2, "swap-used"),
             (
                 dict(
                     first,
@@ -391,16 +402,24 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
                 ),
                 1,
                 0,
+                0,
                 "compressed",
             ),
-            (host_sample(headroom=acceptance.HOST_RESERVE_BYTES - 1), 1, 0, "headroom"),
+            (
+                host_sample(headroom=acceptance.HOST_RESERVE_BYTES - 1),
+                1,
+                0,
+                0,
+                "headroom",
+            ),
         )
-        for sample, level, growth, expected in cases:
+        for sample, level, warnings, growth, expected in cases:
             with self.subTest(expected=expected):
                 reason = acceptance.monitor_stop_reason(
                     baseline=baseline,
                     sample=sample,
                     pressure_level=level,
+                    pressure_warning_samples=warnings,
                     swap_used_growth_samples=growth,
                     max_compressed_growth_bytes=(
                         2 * acceptance.GIB if expected == "compressed" else None

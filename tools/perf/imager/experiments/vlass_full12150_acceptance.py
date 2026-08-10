@@ -896,11 +896,14 @@ def monitor_stop_reason(
     baseline: Baseline,
     sample: dict[str, Any],
     pressure_level: int,
+    pressure_warning_samples: int,
     swap_used_growth_samples: int,
     max_compressed_growth_bytes: int | None = None,
 ) -> str | None:
-    if pressure_level != NORMAL_MEMORY_PRESSURE_LEVEL:
+    if pressure_level not in (NORMAL_MEMORY_PRESSURE_LEVEL, 2):
         return f"memory pressure escalated to level {pressure_level}"
+    if pressure_warning_samples >= 2:
+        return "memory pressure remained at warning level for two consecutive samples"
     if int(sample["pages_throttled"]) > int(baseline.second["pages_throttled"]):
         return "Pages throttled increased"
     if int(sample["swapouts"]) > int(baseline.second["swapouts"]):
@@ -941,6 +944,7 @@ def monitor_run(
     last_progress_mtime = 0
     low_activity_samples = 0
     swap_used_growth_samples = 0
+    pressure_warning_samples = 0
     stop_reason: str | None = None
     with log_path.open("w", encoding="utf-8") as log:
         process = subprocess.Popen(
@@ -985,6 +989,7 @@ def monitor_run(
                 terminate_group(process)
                 break
             swap_used = int(sample["swap_used_bytes"])
+            pressure_warning_samples = pressure_warning_samples + 1 if level == 2 else 0
             swap_used_growth_samples = (
                 swap_used_growth_samples + 1 if swap_used > last_swap_used else 0
             )
@@ -1002,6 +1007,7 @@ def monitor_run(
                 baseline=baseline,
                 sample=sample,
                 pressure_level=level,
+                pressure_warning_samples=pressure_warning_samples,
                 swap_used_growth_samples=swap_used_growth_samples,
                 max_compressed_growth_bytes=max_compressed_growth_bytes,
             )
