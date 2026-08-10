@@ -74,6 +74,12 @@ fi
 case "$effective_support" in
     0)
         ;;
+    0.000001|1e-6|1.0e-6)
+        label="${label}-effective-support-1e-6"
+        experimental_environment+=(
+            CASA_RS_EXPERIMENTAL_AWPROJECT_EFFECTIVE_SUPPORT=1e-6
+        )
+        ;;
     0.0001|1e-4|1.0e-4)
         label="${label}-effective-support-1e-4"
         experimental_environment+=(
@@ -81,7 +87,7 @@ case "$effective_support" in
         )
         ;;
     *)
-        echo "CASA_RS_VLASS_EFFECTIVE_SUPPORT must be 0 or 1e-4" >&2
+        echo "CASA_RS_VLASS_EFFECTIVE_SUPPORT must be 0, 1e-6, or 1e-4" >&2
         exit 2
         ;;
 esac
