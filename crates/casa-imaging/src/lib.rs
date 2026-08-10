@@ -42451,16 +42451,11 @@ fn accumulate_awproject_source_major_block(
                 "direct source-major retained programs exceed compile admission".to_string(),
             )
         })?;
-    let effective_support_config =
-        AwProjectMetalEffectiveSupportConfig::experiment_from_environment()?.unwrap_or(
-            AwProjectMetalEffectiveSupportConfig {
-                omitted_energy_fraction: 0.0,
-            },
-        );
-    let exact_support = effective_support_config.omitted_energy_fraction == 0.0;
     let effective_support = compile_awproject_metal_aot_grouped_tile(
         &mut program,
-        effective_support_config,
+        AwProjectMetalEffectiveSupportConfig {
+            omitted_energy_fraction: 0.0,
+        },
         request.geometry.image_shape[0],
         request.geometry.image_shape[1],
         compile_limit,
@@ -42514,7 +42509,7 @@ fn accumulate_awproject_source_major_block(
         .map_or(0, |program| program.payload_bytes);
 
     eprintln!(
-        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes={} imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} residual_i16_kernel_bytes={} residual_i16_scale_bytes={} compiled_total_bytes={} streaming_ceiling_bytes={} spill_bytes={} reload_bytes=0 architecture=direct-source-major-v11-sealed-sha-i16-residual initial_accumulation={} exact_support={exact_support} omitted_energy_fraction={:.9e} elapsed_ms={:.3}",
+        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes={} imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} residual_i16_kernel_bytes={} residual_i16_scale_bytes={} compiled_total_bytes={} streaming_ceiling_bytes={} spill_bytes={} reload_bytes=0 architecture=direct-source-major-v11-sealed-sha-i16-residual initial_accumulation={} exact_support=true elapsed_ms={:.3}",
         initial_receipt.imaging_owner_bytes,
         initial_receipt.weight_owner_bytes,
         initial_receipt.concurrent_owner_bytes,
@@ -42539,7 +42534,6 @@ fn accumulate_awproject_source_major_block(
         replay_cache.budget_bytes,
         spill_bytes,
         initial_receipt.compensation_mode.label(),
-        effective_support_config.omitted_energy_fraction,
         profile::millis(started.elapsed()),
     );
     accumulation
@@ -79939,13 +79933,6 @@ mod tests {
         assert!(
             super::AwProjectMetalEffectiveSupportConfig::parse_environment_value(Some(OsStr::new(
                 "1e-4"
-            ),))
-            .unwrap()
-            .is_some()
-        );
-        assert!(
-            super::AwProjectMetalEffectiveSupportConfig::parse_environment_value(Some(OsStr::new(
-                "1e-8"
             ),))
             .unwrap()
             .is_some()
