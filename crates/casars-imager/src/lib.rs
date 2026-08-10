@@ -39740,7 +39740,18 @@ fn resolve_awproject_multifield_memory_plan(
     ) {
         return Ok(resolved);
     }
-    admit_standard_mfs_plan_with_lifetimes(resolved, true)
+    let grouped_rejection = resolved
+        .decisions
+        .iter()
+        .rev()
+        .find(|decision| decision.name == "awproject_multifield_initial_grid_admission")
+        .map(|decision| decision.reason.clone())
+        .unwrap_or_else(|| "the grouped candidate omitted its rejection reason".to_string());
+    admit_standard_mfs_plan_with_lifetimes(resolved, true).map_err(|legacy_rejection| {
+        format!(
+            "grouped AWProject topology rejected: {grouped_rejection}; legacy fallback rejected: {legacy_rejection}"
+        )
+    })
 }
 
 fn standard_mfs_memory_plan_with_cache_channels_for_ms(
@@ -63218,6 +63229,26 @@ mod tests {
             AwProjectGroupedMetalProbeStatus::Rejected(reason)
                 if reason.contains("lifetime admission rejected")
         ));
+    }
+
+    #[test]
+    fn awproject_multifield_reports_grouped_and_legacy_rejections() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("dual-rejection-multifield-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
+        let mut base = standard_mfs_memory_plan(&config, 64, 1024);
+        force_grouped_metal_test_device_budget(&mut base, 1);
+        base.metal.eligible = true;
+        base.usable_memory_bytes = base.maximum_planned_resident_bytes - 1;
+
+        let error = resolve_awproject_multifield_memory_plan(base, &config, 2, false, true)
+            .expect_err("both grouped and legacy plans must reject");
+        assert!(error.contains("grouped AWProject topology rejected:"));
+        assert!(error.contains("grouped residual Metal admission rejected"));
+        assert!(error.contains("legacy fallback rejected:"));
+        assert!(error.contains("semantic memory lifetime peak"));
     }
 
     #[test]
