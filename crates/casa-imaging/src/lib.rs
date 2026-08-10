@@ -6096,7 +6096,7 @@ where
                 device_budget_bytes,
                 safety_reserve_bytes,
             } => eprintln!(
-                "awproject_initial_grid_plan backend=source-major-grouped-metal-f64 architecture=direct-source-major-v13-compact-f32-residual accumulation={} tile_side={tile_side} workers={workers} compile_ceiling_bytes={process_compile_ceiling_bytes} replay_streaming_ceiling_bytes={replay_retention_ceiling_bytes} device_budget_bytes={device_budget_bytes} safety_reserve_bytes={safety_reserve_bytes} legacy_tap_scratch_bytes=0 legacy_priming_scratch_bytes=0 staged_replay=true stream_after_dirty_grid_release=true prefetch_slots=1 planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
+                "awproject_initial_grid_plan backend=source-major-grouped-metal-f64 architecture=direct-source-major-v11-sealed-sha-i16-residual accumulation={} tile_side={tile_side} workers={workers} compile_ceiling_bytes={process_compile_ceiling_bytes} replay_streaming_ceiling_bytes={replay_retention_ceiling_bytes} device_budget_bytes={device_budget_bytes} safety_reserve_bytes={safety_reserve_bytes} legacy_tap_scratch_bytes=0 legacy_priming_scratch_bytes=0 staged_replay=true stream_after_dirty_grid_release=true prefetch_slots=1 planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
                 awproject_initial_compensation_mode().label(),
                 execution_config.resolved.maximum_planned_resident_bytes,
                 execution_config.resolved.usable_memory_bytes,
@@ -28092,7 +28092,6 @@ struct AwProjectMetalKernelAtlasCompaction {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
-#[cfg(test)]
 struct AwProjectMetalI16KernelQuantization {
     f32_bytes: usize,
     i16_bytes: usize,
@@ -28345,7 +28344,6 @@ fn compact_awproject_metal_aot_kernel_atlas(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
-#[cfg(test)]
 fn awproject_metal_max_effective_i16_kernel_norm(
     plans: impl IntoIterator<Item = AwProjectMetalPlan>,
     kernels: &[AwProjectMetalI16Complex],
@@ -28436,7 +28434,6 @@ fn awproject_metal_max_effective_i16_kernel_norm(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
-#[cfg(test)]
 fn quantize_awproject_metal_aot_kernel_atlas_i16(
     program: &mut AwProjectMetalResidentProgram,
     compile_admission_limit_bytes: usize,
@@ -30979,12 +30976,12 @@ impl AwProjectCompactReplayCache {
                 "direct source-major staging requires a compiled AOT residual artifact".to_string(),
             ));
         }
-        if program.prediction_batch.kernels.is_empty()
-            || !program.prediction_batch.quantized_kernels.is_empty()
-            || !program.prediction_batch.kernel_scales.is_empty()
+        if !program.prediction_batch.kernels.is_empty()
+            || program.prediction_batch.quantized_kernels.is_empty()
+            || program.prediction_batch.kernel_scales.is_empty()
         {
             return Err(ImagingError::InvalidRequest(
-                "direct source-major staging requires exclusive compact-f32 residual kernel ownership"
+                "direct source-major staging requires exclusive scaled-i16 residual kernel ownership"
                     .to_string(),
             ));
         }
@@ -31105,7 +31102,7 @@ impl AwProjectCompactReplayCache {
         self.source_major_direct_segments += 1;
         self.source_major_initial_receipts += 1;
         eprintln!(
-            "awproject_source_major_staging source_block={source_block_ordinal} segments={} program_bytes={program_bytes} compiled_total_bytes={compiled_after} streaming_live_bytes={program_bytes} streaming_ceiling_bytes={} spill_bytes={} total_spill_bytes={} reload_bytes=0 architecture=direct-source-major-v13-compact-f32-residual resident=false staged=true",
+            "awproject_source_major_staging source_block={source_block_ordinal} segments={} program_bytes={program_bytes} compiled_total_bytes={compiled_after} streaming_live_bytes={program_bytes} streaming_ceiling_bytes={} spill_bytes={} total_spill_bytes={} reload_bytes=0 architecture=direct-source-major-v11-sealed-sha-i16-residual resident=false staged=true",
             self.source_major_direct_segments,
             self.budget_bytes,
             self.spilled_metal_global_programs
@@ -31771,7 +31768,7 @@ impl AwProjectCompactReplayCache {
         self.source_major_payload_sha256_verified = false;
         self.segmented_metal_global_replay_ready = true;
         eprintln!(
-            "awproject_source_major_staged_streaming_ready segments={} spill_bytes={} compiled_total_bytes={} streaming_live_peak_bytes={} streaming_ceiling_bytes={} resident_bytes=0 prefetch_slots=1 architecture=direct-source-major-v13-compact-f32-residual lifecycle=after-dirty-grid-release resident=false",
+            "awproject_source_major_staged_streaming_ready segments={} spill_bytes={} compiled_total_bytes={} streaming_live_peak_bytes={} streaming_ceiling_bytes={} resident_bytes=0 prefetch_slots=1 architecture=direct-source-major-v11-sealed-sha-i16-residual lifecycle=after-dirty-grid-release resident=false",
             self.spilled_metal_global_programs.len(),
             self.spilled_metal_global_payload_bytes,
             verified_total_bytes,
@@ -42422,7 +42419,7 @@ fn accumulate_awproject_source_major_block(
             classification_skipped_samples,
         )?;
         eprintln!(
-            "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples=0 initial_partitions=0 residual_segments=0 compact_windows=0 spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v13-compact-f32-residual initial_accumulation={} initial_compensation_bytes=0 exact_support=true elapsed_ms={:.3}",
+            "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples=0 initial_partitions=0 residual_segments=0 compact_windows=0 spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v11-sealed-sha-i16-residual initial_accumulation={} initial_compensation_bytes=0 exact_support=true elapsed_ms={:.3}",
             awproject_initial_compensation_mode().label(),
             profile::millis(started.elapsed()),
         );
@@ -42473,20 +42470,27 @@ fn accumulate_awproject_source_major_block(
         kernel_compaction.scratch_bytes,
         kernel_compaction.applied,
     );
-    if program.prediction_batch.kernels.is_empty()
-        || !program.prediction_batch.quantized_kernels.is_empty()
-        || !program.prediction_batch.kernel_scales.is_empty()
+    let quantization = quantize_awproject_metal_aot_kernel_atlas_i16(&mut program, compile_limit)?;
+    if !program.prediction_batch.kernels.is_empty()
+        || program.prediction_batch.quantized_kernels.len() != quantization.values
+        || program.prediction_batch.kernel_scales.len() != quantization.stencils
     {
         return Err(ImagingError::Normalization(
-            "source-major residual retention did not exclusively own its compact-f32 kernel atlas"
+            "source-major residual retention did not exclusively own its scaled-i16 kernel atlas"
                 .to_string(),
         ));
     }
     eprintln!(
-        "awproject_source_major_kernel_f32 source_block={replay_block_ordinal} bytes={} values={} stencils={} bit_exact=true storage=compact-f32-complex max_kernel_norm={:.9e}",
-        kernel_compaction.compact_bytes,
-        program.prediction_batch.kernels.len(),
-        kernel_compaction.stencils,
+        "awproject_source_major_kernel_i16 source_block={replay_block_ordinal} f32_bytes={} i16_bytes={} scale_bytes={} values={} stencils={} nrmse={:.9e} max_abs_error={:.9e} zeroed_components={} compile_overlap_bytes={} max_kernel_norm={:.9e} storage=per-stencil-scaled-i16-complex range=-32767:32767 conversion=metal-load-to-f32",
+        quantization.f32_bytes,
+        quantization.i16_bytes,
+        quantization.scale_bytes,
+        quantization.values,
+        quantization.stencils,
+        quantization.nrmse,
+        quantization.max_abs_error,
+        quantization.zeroed_components,
+        quantization.compile_overlap_bytes,
         program.residual_scale_plan.max_kernel_norm,
     );
     log_awproject_metal_aot_grouped_tile_compile(
@@ -42505,7 +42509,7 @@ fn accumulate_awproject_source_major_block(
         .map_or(0, |program| program.payload_bytes);
 
     eprintln!(
-        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes={} imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} residual_f32_kernel_bytes={} compiled_total_bytes={} streaming_ceiling_bytes={} spill_bytes={} reload_bytes=0 architecture=direct-source-major-v13-compact-f32-residual initial_accumulation={} exact_support=true elapsed_ms={:.3}",
+        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes={} imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} residual_i16_kernel_bytes={} residual_i16_scale_bytes={} compiled_total_bytes={} streaming_ceiling_bytes={} spill_bytes={} reload_bytes=0 architecture=direct-source-major-v11-sealed-sha-i16-residual initial_accumulation={} exact_support=true elapsed_ms={:.3}",
         initial_receipt.imaging_owner_bytes,
         initial_receipt.weight_owner_bytes,
         initial_receipt.concurrent_owner_bytes,
@@ -42524,7 +42528,8 @@ fn accumulate_awproject_source_major_block(
         profile::millis(initial_receipt.imaging_group_elapsed),
         profile::millis(initial_receipt.weight_group_elapsed),
         profile::millis(initial_receipt.group_wall_elapsed),
-        kernel_compaction.compact_bytes,
+        quantization.i16_bytes,
+        quantization.scale_bytes,
         replay_cache.compiled_total_bytes,
         replay_cache.budget_bytes,
         spill_bytes,
@@ -81128,8 +81133,11 @@ mod tests {
         )
         .unwrap();
         super::compact_awproject_metal_aot_kernel_atlas(&mut program, usize::MAX).unwrap();
+        super::quantize_awproject_metal_aot_kernel_atlas_i16(&mut program, usize::MAX).unwrap();
         let program_bytes = program.resident_bytes();
-        let kernel_hash = super::hash_awproject_copy_slice(&program.prediction_batch.kernels);
+        let kernel_hash =
+            super::hash_awproject_copy_slice(&program.prediction_batch.quantized_kernels);
+        let scale_hash = super::hash_awproject_copy_slice(&program.prediction_batch.kernel_scales);
         let directory = tempfile::tempdir().unwrap();
         let grouped = super::AwProjectGroupedReplayPlan {
             spill_directory: directory.path().to_path_buf(),
@@ -81172,18 +81180,18 @@ mod tests {
         assert_eq!(cache.resident_bytes, 0);
         assert_eq!(cache.compiled_total_bytes, program_bytes);
         assert_eq!(cache.spilled_metal_global_programs.len(), 1);
-        assert!(cache.spilled_metal_global_programs[0].kernels.byte_len > 0);
-        assert_eq!(
+        assert_eq!(cache.spilled_metal_global_programs[0].kernels.byte_len, 0);
+        assert!(
             cache.spilled_metal_global_programs[0]
                 .quantized_kernels
-                .byte_len,
-            0
+                .byte_len
+                > 0
         );
-        assert_eq!(
+        assert!(
             cache.spilled_metal_global_programs[0]
                 .kernel_scales
-                .byte_len,
-            0
+                .byte_len
+                > 0
         );
         assert!(!cache.segmented_metal_global_replay_ready);
         let staged_payload_bytes = cache.spilled_metal_global_payload_bytes;
@@ -81216,8 +81224,16 @@ mod tests {
                     0,
                 );
                 assert_eq!(
-                    super::hash_awproject_copy_slice(&loaded.program.prediction_batch.kernels,),
+                    super::hash_awproject_copy_slice(
+                        &loaded.program.prediction_batch.quantized_kernels,
+                    ),
                     kernel_hash,
+                );
+                assert_eq!(
+                    super::hash_awproject_copy_slice(
+                        &loaded.program.prediction_batch.kernel_scales,
+                    ),
+                    scale_hash,
                 );
                 Ok(())
             },
@@ -81238,8 +81254,16 @@ mod tests {
             false,
             |_, _, loaded| {
                 assert_eq!(
-                    super::hash_awproject_copy_slice(&loaded.program.prediction_batch.kernels,),
+                    super::hash_awproject_copy_slice(
+                        &loaded.program.prediction_batch.quantized_kernels,
+                    ),
                     kernel_hash,
+                );
+                assert_eq!(
+                    super::hash_awproject_copy_slice(
+                        &loaded.program.prediction_batch.kernel_scales,
+                    ),
+                    scale_hash,
                 );
                 Ok(())
             },
@@ -81272,6 +81296,7 @@ mod tests {
         )
         .unwrap();
         super::compact_awproject_metal_aot_kernel_atlas(&mut oversized, usize::MAX).unwrap();
+        super::quantize_awproject_metal_aot_kernel_atlas_i16(&mut oversized, usize::MAX).unwrap();
         assert_eq!(oversized.resident_bytes(), program_bytes);
         assert!(rejected.stage_source_major_segment(0, oversized).is_err());
     }
@@ -81292,6 +81317,7 @@ mod tests {
             )
             .unwrap();
             super::compact_awproject_metal_aot_kernel_atlas(&mut program, usize::MAX).unwrap();
+            super::quantize_awproject_metal_aot_kernel_atlas_i16(&mut program, usize::MAX).unwrap();
             program
         };
         let block = |ordinal| super::AwProjectCompactReplayBlock {
