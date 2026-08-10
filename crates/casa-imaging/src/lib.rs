@@ -29907,36 +29907,19 @@ fn materialize_awproject_source_major_atlases(
         );
         requests.len()
     ];
-    let mut phase_invariant =
-        HashMap::<AwProjectPhaseInvariantTapKey, AwProjectSourceMajorMaterializedTap>::new();
-    let mut reused_requests = 0usize;
     for request_indices in by_cell.into_values() {
         let cell_key = requests[request_indices[0]].cell_key;
         let cell = cache.get_replay(cell_key)?;
         for request_index in request_indices {
             let request = requests[request_index];
-            let invariant_key = AwProjectPhaseInvariantTapKey::from(request.key);
-            if let Some(&existing) = phase_invariant.get(&invariant_key) {
-                materialized[request_index] = existing;
-                reused_requests = reused_requests.saturating_add(1);
-                continue;
-            }
             let atlas = match request.key.kernel_kind {
                 AwProjectCompactKernelKind::Imaging => &mut residual_atlas,
                 AwProjectCompactKernelKind::Weight => &mut weight_atlas,
             };
-            let result =
+            materialized[request_index] =
                 materialize_awproject_source_major_request(gridder, &cell, request, atlas)?;
-            phase_invariant.insert(invariant_key, result);
-            materialized[request_index] = result;
         }
     }
-    eprintln!(
-        "awproject_source_major_materialization requests={} unique_phase_invariant_requests={} reused_requests={} exact=true",
-        requests.len(),
-        phase_invariant.len(),
-        reused_requests,
-    );
     Ok((materialized, residual_atlas, weight_atlas))
 }
 
