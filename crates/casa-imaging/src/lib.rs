@@ -6096,8 +6096,7 @@ where
                 device_budget_bytes,
                 safety_reserve_bytes,
             } => eprintln!(
-                "awproject_initial_grid_plan backend=source-major-grouped-metal-f64 architecture=direct-source-major-v10-sealed-f32-residual accumulation={} tile_side={tile_side} workers={workers} compile_ceiling_bytes={process_compile_ceiling_bytes} replay_streaming_ceiling_bytes={replay_retention_ceiling_bytes} device_budget_bytes={device_budget_bytes} safety_reserve_bytes={safety_reserve_bytes} legacy_tap_scratch_bytes=0 legacy_priming_scratch_bytes=0 staged_replay=true stream_after_dirty_grid_release=true prefetch_slots=1 planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
-                awproject_initial_compensation_mode().label(),
+                "awproject_initial_grid_plan backend=source-major-grouped-metal-f64 architecture=direct-source-major-v10-sealed-f32-residual accumulation=high-limb-only tile_side={tile_side} workers={workers} compile_ceiling_bytes={process_compile_ceiling_bytes} replay_streaming_ceiling_bytes={replay_retention_ceiling_bytes} device_budget_bytes={device_budget_bytes} safety_reserve_bytes={safety_reserve_bytes} legacy_tap_scratch_bytes=0 legacy_priming_scratch_bytes=0 staged_replay=true stream_after_dirty_grid_release=true prefetch_slots=1 planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
                 execution_config.resolved.maximum_planned_resident_bytes,
                 execution_config.resolved.usable_memory_bytes,
             ),
@@ -15649,7 +15648,6 @@ impl AwProjectMetalCompensation {
 enum AwProjectInitialCompensationMode {
     HighOnly,
     WeightTerms,
-    BlockFoldedWeightTerms,
     Full,
 }
 
@@ -15658,7 +15656,7 @@ impl AwProjectInitialCompensationMode {
     fn plane_range(self) -> Option<std::ops::Range<usize>> {
         match self {
             Self::HighOnly => None,
-            Self::WeightTerms | Self::BlockFoldedWeightTerms => Some(
+            Self::WeightTerms => Some(
                 AWPROJECT_INITIAL_GROUPED_WEIGHT_PLANE_START
                     ..AWPROJECT_INITIAL_GROUPED_WEIGHT_PLANE_START
                         + AWPROJECT_INITIAL_GROUPED_WEIGHT_PLANE_COUNT,
@@ -15671,13 +15669,8 @@ impl AwProjectInitialCompensationMode {
         match self {
             Self::HighOnly => "high-limb-only",
             Self::WeightTerms => "weight-two-limb",
-            Self::BlockFoldedWeightTerms => "weight-two-limb-block-folded",
             Self::Full => "full-two-limb",
         }
-    }
-
-    fn fold_after_source_block(self) -> bool {
-        self == Self::BlockFoldedWeightTerms
     }
 }
 
@@ -15685,12 +15678,6 @@ impl AwProjectInitialCompensationMode {
 fn awproject_initial_compensation_mode() -> AwProjectInitialCompensationMode {
     if std::env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_FULL_COMPENSATION").is_some() {
         AwProjectInitialCompensationMode::Full
-    } else if std::env::var_os(
-        "CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_BLOCK_FOLDED_WEIGHT_COMPENSATION",
-    )
-    .is_some()
-    {
-        AwProjectInitialCompensationMode::BlockFoldedWeightTerms
     } else if std::env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_WEIGHT_COMPENSATION")
         .is_some()
     {
@@ -15914,7 +15901,6 @@ struct AwProjectMetalExecutor {
     initial_grouped_tile_pipeline: AwProjectMetalPipeline,
     initial_grouped_weight_compensated_pipeline: Option<AwProjectMetalPipeline>,
     initial_grouped_high_only_pipeline: AwProjectMetalPipeline,
-    initial_compensation_fold_pipeline: Option<AwProjectMetalPipeline>,
     predicted_tile_pipeline: AwProjectMetalPipeline,
 }
 
@@ -19731,15 +19717,6 @@ impl AwProjectMetalExecutor {
                     "AWProject backend 'metal' failed to create high-only initial grouped-tile pipeline: {error:?}"
                 ))
             })?;
-        let initial_compensation_fold_pipeline = library
-            .newFunctionWithName(&objc2_foundation::NSString::from_str(
-                "awproject_fold_initial_compensation",
-            ))
-            .and_then(|function| {
-                device
-                    .newComputePipelineStateWithFunction_error(&function)
-                    .ok()
-            });
         let predicted_tile_function_name =
             objc2_foundation::NSString::from_str("awproject_grid_predicted_mtmfs_tiles");
         let predicted_tile_function = library
@@ -19774,7 +19751,6 @@ impl AwProjectMetalExecutor {
             initial_grouped_tile_pipeline,
             initial_grouped_weight_compensated_pipeline,
             initial_grouped_high_only_pipeline,
-            initial_compensation_fold_pipeline,
             predicted_tile_pipeline,
         })
     }
@@ -21856,11 +21832,8 @@ impl AwProjectMetalExecutor {
             return Ok(AwProjectMetalTileGridStats::default());
         }
         let compensation_range = compensation_mode.plane_range();
-        if matches!(
-            compensation_mode,
-            AwProjectInitialCompensationMode::WeightTerms
-                | AwProjectInitialCompensationMode::BlockFoldedWeightTerms
-        ) && self.initial_grouped_weight_compensated_pipeline.is_none()
+        if compensation_mode == AwProjectInitialCompensationMode::WeightTerms
+            && self.initial_grouped_weight_compensated_pipeline.is_none()
         {
             return Err(ImagingError::Unsupported(
                 "source-major weight-compensated initial grouped Metal pipeline is unavailable"
@@ -22122,8 +22095,7 @@ impl AwProjectMetalExecutor {
         })?;
         encoder.setComputePipelineState(match compensation_mode {
             AwProjectInitialCompensationMode::HighOnly => &self.initial_grouped_high_only_pipeline,
-            AwProjectInitialCompensationMode::WeightTerms
-            | AwProjectInitialCompensationMode::BlockFoldedWeightTerms => self
+            AwProjectInitialCompensationMode::WeightTerms => self
                 .initial_grouped_weight_compensated_pipeline
                 .as_ref()
                 .expect("weight-compensated pipeline checked above"),
@@ -22181,126 +22153,6 @@ impl AwProjectMetalExecutor {
             total: buffer_alloc + dispatch_wait,
             grouped_metal_live: None,
         })
-    }
-
-    fn fold_initial_compensation(
-        &self,
-        grid: &mut crate::apple_fft::MetalSharedF32DirtyGridBatch,
-        compensation: &mut Option<AwProjectMetalCompensation>,
-    ) -> Result<(usize, Duration), ImagingError> {
-        use std::{mem, time::Instant};
-
-        use objc2_metal::{
-            MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder,
-            MTLCommandQueue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLSize,
-        };
-
-        let pipeline = self
-            .initial_compensation_fold_pipeline
-            .as_ref()
-            .ok_or_else(|| {
-                ImagingError::Unsupported(
-                    "source-major block-folded compensation pipeline is unavailable".to_string(),
-                )
-            })?;
-        let state = compensation.as_ref().ok_or_else(|| {
-            ImagingError::Normalization(
-                "source-major block-folded accumulation lost its compensation buffer".to_string(),
-            )
-        })?;
-        let [rows, columns] = grid.shape();
-        let plane_elements = rows.checked_mul(columns).ok_or_else(|| {
-            ImagingError::InvalidRequest(
-                "source-major compensation-fold plane size overflowed".to_string(),
-            )
-        })?;
-        let scalar_count = plane_elements
-            .checked_mul(state.plane_count)
-            .and_then(|value| value.checked_mul(2))
-            .ok_or_else(|| {
-                ImagingError::InvalidRequest(
-                    "source-major compensation-fold scalar count overflowed".to_string(),
-                )
-            })?;
-        let compensation_bytes =
-            scalar_count
-                .checked_mul(mem::size_of::<f32>())
-                .ok_or_else(|| {
-                    ImagingError::InvalidRequest(
-                        "source-major compensation-fold byte count overflowed".to_string(),
-                    )
-                })?;
-        let output_offset = state
-            .plane_start
-            .checked_mul(plane_elements)
-            .and_then(|value| value.checked_mul(mem::size_of::<Complex32>()))
-            .ok_or_else(|| {
-                ImagingError::InvalidRequest(
-                    "source-major compensation-fold output offset overflowed".to_string(),
-                )
-            })?;
-        let output_end = output_offset
-            .checked_add(compensation_bytes)
-            .ok_or_else(|| {
-                ImagingError::InvalidRequest(
-                    "source-major compensation-fold output extent overflowed".to_string(),
-                )
-            })?;
-        if state.buffer.length() < compensation_bytes || grid.metal_buffer().length() < output_end {
-            return Err(ImagingError::Normalization(format!(
-                "source-major compensation-fold buffers are smaller than their topology: output={} required_output={} compensation={} required_compensation={compensation_bytes}",
-                grid.metal_buffer().length(),
-                output_end,
-                state.buffer.length(),
-            )));
-        }
-        let command_buffer = self.queue.commandBuffer().ok_or_else(|| {
-            ImagingError::Unsupported(
-                "source-major compensation fold could not create a command buffer".to_string(),
-            )
-        })?;
-        let encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
-            ImagingError::Unsupported(
-                "source-major compensation fold could not create an encoder".to_string(),
-            )
-        })?;
-        encoder.setComputePipelineState(pipeline);
-        unsafe {
-            encoder.setBuffer_offset_atIndex(Some(grid.metal_buffer()), output_offset, 0);
-            encoder.setBuffer_offset_atIndex(Some(&state.buffer), 0, 1);
-        }
-        let thread_width = pipeline
-            .threadExecutionWidth()
-            .max(1)
-            .min(scalar_count.max(1));
-        encoder.dispatchThreads_threadsPerThreadgroup(
-            MTLSize {
-                width: scalar_count,
-                height: 1,
-                depth: 1,
-            },
-            MTLSize {
-                width: thread_width,
-                height: 1,
-                depth: 1,
-            },
-        );
-        encoder.endEncoding();
-        let started = Instant::now();
-        command_buffer.commit();
-        command_buffer.waitUntilCompleted();
-        let elapsed = started.elapsed();
-        if command_buffer.status() == MTLCommandBufferStatus::Error {
-            let message = command_buffer
-                .error()
-                .map(|error| format!("{error:?}"))
-                .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
-            return Err(ImagingError::Unsupported(format!(
-                "source-major compensation-fold command failed: {message}"
-            )));
-        }
-        drop(compensation.take());
-        Ok((compensation_bytes, elapsed))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -23982,14 +23834,6 @@ kernel void awproject_grid_mtmfs_tiles_i16(
     aw_tile_add_fixed(output, compensation, tt0_scalar + 1u, fixed_tt0.y, inverse_scales[0]);
     aw_tile_add_fixed(output, compensation, tt1_scalar, fixed_tt1.x, inverse_scales[1]);
     aw_tile_add_fixed(output, compensation, tt1_scalar + 1u, fixed_tt1.y, inverse_scales[1]);
-}
-
-kernel void awproject_fold_initial_compensation(
-    device float *output [[buffer(0)]],
-    device const float *compensation [[buffer(1)]],
-    uint scalar [[thread_position_in_grid]]
-) {
-    output[scalar] += compensation[scalar];
 }
 
 kernel void awproject_grid_initial_grouped_tiles(
@@ -42041,9 +41885,6 @@ struct AwProjectSourceMajorInitialReceipt {
     group_wall_elapsed: Duration,
     compensation_mode: AwProjectInitialCompensationMode,
     compensation_bytes: usize,
-    compensation_fold_bytes: usize,
-    compensation_fold_elapsed: Duration,
-    compensation_released_before_compile: bool,
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -42404,35 +42245,21 @@ fn dispatch_awproject_source_major_initial(
     )?;
     let weight_groups = weight_partition.groups.len();
     let weight_route_fragments = weight_partition.tile_plan.fragments.len();
-    let (weight_stats, compensation_fold_bytes, compensation_fold_elapsed) =
-        AWPROJECT_METAL_EXECUTOR.with(|executor_slot| {
-            let executor_slot = executor_slot.borrow();
-            let executor = executor_slot
-                .as_ref()
-                .expect("source-major grouped Metal executor");
-            let stats = executor.dispatch_initial_grouped_tiles(
-                grid,
-                aw_compensation,
-                compensation_mode,
-                &weight_partition,
-                &weight_atlas.values,
-                weight_phases,
-                Duration::ZERO,
-            )?;
-            let (fold_bytes, fold_elapsed) = if compensation_mode.fold_after_source_block() {
-                executor.fold_initial_compensation(grid, aw_compensation)?
-            } else {
-                (0, Duration::ZERO)
-            };
-            Ok::<_, ImagingError>((stats, fold_bytes, fold_elapsed))
-        })?;
-    let compensation_released_before_compile = aw_compensation.is_none();
-    if compensation_mode.fold_after_source_block() && !compensation_released_before_compile {
-        return Err(ImagingError::Normalization(
-            "source-major block-folded compensation remained resident before residual compile"
-                .to_string(),
-        ));
-    }
+    let weight_stats = AWPROJECT_METAL_EXECUTOR.with(|executor_slot| {
+        let executor_slot = executor_slot.borrow();
+        let executor = executor_slot
+            .as_ref()
+            .expect("source-major grouped Metal executor");
+        executor.dispatch_initial_grouped_tiles(
+            grid,
+            aw_compensation,
+            compensation_mode,
+            &weight_partition,
+            &weight_atlas.values,
+            weight_phases,
+            Duration::ZERO,
+        )
+    })?;
     Ok(AwProjectSourceMajorInitialReceipt {
         metal_stats: AwProjectMetalGridStats {
             calls: 2,
@@ -42441,15 +42268,9 @@ fn dispatch_awproject_source_major_initial(
             kernel_values: kernels.len().saturating_add(weight_atlas.values.len()),
             executor_setup,
             buffer_alloc: imaging_stats.buffer_alloc + weight_stats.buffer_alloc,
-            dispatch_wait: imaging_stats.dispatch_wait
-                + weight_stats.dispatch_wait
-                + compensation_fold_elapsed,
+            dispatch_wait: imaging_stats.dispatch_wait + weight_stats.dispatch_wait,
             fixed_grid_bytes: imaging_stats.output_bytes.max(weight_stats.output_bytes),
-            total: group_wall_elapsed
-                + executor_setup
-                + imaging_stats.total
-                + weight_stats.total
-                + compensation_fold_elapsed,
+            total: group_wall_elapsed + executor_setup + imaging_stats.total + weight_stats.total,
             ..AwProjectMetalGridStats::default()
         },
         imaging_owner_bytes,
@@ -42466,9 +42287,6 @@ fn dispatch_awproject_source_major_initial(
         group_wall_elapsed,
         compensation_mode,
         compensation_bytes,
-        compensation_fold_bytes,
-        compensation_fold_elapsed,
-        compensation_released_before_compile,
     })
 }
 
@@ -42600,7 +42418,7 @@ fn accumulate_awproject_source_major_block(
             classification_skipped_samples,
         )?;
         eprintln!(
-            "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples=0 initial_partitions=0 residual_segments=0 compact_windows=0 spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v10-sealed-f32-residual initial_accumulation={} initial_compensation_bytes=0 initial_compensation_fold_bytes=0 initial_compensation_fold_ms=0.000 initial_compensation_released_before_residual_compile=true exact_support=true elapsed_ms={:.3}",
+            "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples=0 initial_partitions=0 residual_segments=0 compact_windows=0 spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v10-sealed-f32-residual initial_accumulation={} initial_compensation_bytes=0 exact_support=true elapsed_ms={:.3}",
             awproject_initial_compensation_mode().label(),
             profile::millis(started.elapsed()),
         );
@@ -42683,14 +42501,11 @@ fn accumulate_awproject_source_major_block(
         .map_or(0, |program| program.payload_bytes);
 
     eprintln!(
-        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes={} initial_compensation_fold_bytes={} initial_compensation_fold_ms={:.3} initial_compensation_released_before_residual_compile={} imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} residual_f32_kernel_bytes={} compiled_total_bytes={} streaming_ceiling_bytes={} spill_bytes={} reload_bytes=0 architecture=direct-source-major-v10-sealed-f32-residual initial_accumulation={} exact_support=true elapsed_ms={:.3}",
+        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes={} imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} residual_f32_kernel_bytes={} compiled_total_bytes={} streaming_ceiling_bytes={} spill_bytes={} reload_bytes=0 architecture=direct-source-major-v10-sealed-f32-residual initial_accumulation={} exact_support=true elapsed_ms={:.3}",
         initial_receipt.imaging_owner_bytes,
         initial_receipt.weight_owner_bytes,
         initial_receipt.concurrent_owner_bytes,
         initial_receipt.compensation_bytes,
-        initial_receipt.compensation_fold_bytes,
-        profile::millis(initial_receipt.compensation_fold_elapsed),
-        initial_receipt.compensation_released_before_compile,
         initial_receipt.imaging_device_peak_bytes,
         initial_receipt.weight_device_peak_bytes,
         initial_receipt.imaging_groups,
@@ -83653,78 +83468,6 @@ mod tests {
         for plane in 5..8 {
             assert_eq!(weight_compensated[plane], exact[plane]);
         }
-
-        let mut persistent_two_block_grid =
-            crate::apple_fft::MetalSharedF32DirtyGridBatch::new(8, 8, 8).unwrap();
-        let mut persistent_two_block_compensation = None;
-        for _ in 0..2 {
-            for partition in [&imaging, &weight] {
-                executor
-                    .dispatch_initial_grouped_tiles(
-                        &mut persistent_two_block_grid,
-                        &mut persistent_two_block_compensation,
-                        super::AwProjectInitialCompensationMode::WeightTerms,
-                        partition,
-                        &exact_batch.kernels,
-                        &exact_batch.phases,
-                        Duration::ZERO,
-                    )
-                    .unwrap();
-            }
-        }
-        let persistent_two_block = super::copy_awproject_metal_centered_f64_planes(
-            &persistent_two_block_grid,
-            persistent_two_block_compensation.as_ref().unwrap(),
-        )
-        .unwrap();
-
-        let mut folded_two_block_grid =
-            crate::apple_fft::MetalSharedF32DirtyGridBatch::new(8, 8, 8).unwrap();
-        let mut folded_two_block_compensation = None;
-        for _ in 0..2 {
-            for partition in [&imaging, &weight] {
-                executor
-                    .dispatch_initial_grouped_tiles(
-                        &mut folded_two_block_grid,
-                        &mut folded_two_block_compensation,
-                        super::AwProjectInitialCompensationMode::BlockFoldedWeightTerms,
-                        partition,
-                        &exact_batch.kernels,
-                        &exact_batch.phases,
-                        Duration::ZERO,
-                    )
-                    .unwrap();
-            }
-            let (folded_bytes, _) = executor
-                .fold_initial_compensation(
-                    &mut folded_two_block_grid,
-                    &mut folded_two_block_compensation,
-                )
-                .unwrap();
-            assert_eq!(folded_bytes, 8 * 8 * 3 * std::mem::size_of::<Complex32>());
-            assert!(folded_two_block_compensation.is_none());
-        }
-        let folded_two_block = (0..8)
-            .map(|plane| {
-                super::copy_awproject_metal_centered_f64_plane(&folded_two_block_grid, None, plane)
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        let mut folded_squared_error = 0.0;
-        let mut folded_squared_reference = 0.0;
-        for (actual_plane, reference_plane) in folded_two_block.iter().zip(&persistent_two_block) {
-            for (&actual, &reference) in actual_plane.iter().zip(reference_plane) {
-                assert!(actual.re.is_finite() && actual.im.is_finite());
-                folded_squared_error += (actual - reference).norm_sqr();
-                folded_squared_reference += reference.norm_sqr();
-            }
-        }
-        let folded_nrmse =
-            (folded_squared_error / folded_squared_reference.max(f64::MIN_POSITIVE)).sqrt();
-        assert!(
-            folded_nrmse <= 1.0e-3,
-            "source-major block-folded weight NRMSE {folded_nrmse}"
-        );
 
         let mut high_only_grid =
             crate::apple_fft::MetalSharedF32DirtyGridBatch::new(8, 8, 8).unwrap();
