@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import statistics
+import struct
 import subprocess
 import sys
 import time
@@ -145,6 +146,20 @@ def validate_contract(contract: dict[str, Any]) -> None:
         raise ContractError(
             "all-field benchmark must request seven sparse-grid workers"
         )
+    maximum_omitted_energy = float(all_fields["maximum_omitted_squared_l2_energy"])
+    if maximum_omitted_energy != 1.0e-4:
+        raise ContractError(
+            "all-field maximum omitted squared-L2 energy must remain 1e-4"
+        )
+    scientific_contract = load_object(REPO_ROOT / contract["scientific_contract"])
+    if scientific_contract.get("require_full_array") is not True:
+        raise ContractError("scientific comparison must require the full array")
+    default_science = scientific_contract.get("default")
+    if (
+        not isinstance(default_science, dict)
+        or float(default_science.get("diff_rms_over_right_rms", math.nan)) != 1.0e-3
+    ):
+        raise ContractError("scientific comparison must retain the 1e-3 NRMSE gate")
 
 
 def validate_inputs(contract: dict[str, Any]) -> None:
@@ -617,12 +632,29 @@ def validate_all_field_log(
         f"awproject_selected_field_count selected_fields={row['selected_fields']}",
         "architecture=source-order-grouped-tile-v1",
         f"segment_target_bytes={row['segment_target_bytes']}",
-        "omitted_squared_l2_energy=0.000000000e0",
         "usepointing=true",
     ]
     for fragment in required_fragments:
         if not any(fragment in line for line in lines):
             raise ContractError(f"all-field runtime contract is missing {fragment!r}")
+    grouped_plans = [
+        parse_key_values(line)
+        for line in lines
+        if line.startswith("awproject_grouped_replay_plan ")
+    ]
+    if len(grouped_plans) != 1:
+        raise ContractError("all-field runtime must emit one grouped replay plan")
+    omitted_energy = float(grouped_plans[0].get("omitted_squared_l2_energy", "nan"))
+    maximum_omitted_energy = float(row["maximum_omitted_squared_l2_energy"])
+    if (
+        not math.isfinite(omitted_energy)
+        or omitted_energy < 0.0
+        or omitted_energy > maximum_omitted_energy
+    ):
+        raise ContractError(
+            "all-field grouped replay omitted squared-L2 energy "
+            f"{omitted_energy} exceeds {maximum_omitted_energy}"
+        )
     execution_plans = [
         parse_key_values(line)
         for line in lines
@@ -661,10 +693,31 @@ def validate_all_field_log(
         for line in lines
         if line.startswith("awproject_aot_grouped_tile_receipt ")
     ]
-    if not receipts or any(
-        receipt.get("omitted_energy_fraction_bits") != "0" for receipt in receipts
-    ):
-        raise ContractError("all-field AOT replay is not exact support")
+    if not receipts:
+        raise ContractError("all-field AOT replay receipts are missing")
+    for receipt in receipts:
+        try:
+            bits = int(receipt["omitted_energy_fraction_bits"])
+            receipt_energy = struct.unpack(">d", struct.pack(">Q", bits))[0]
+        except (KeyError, ValueError, struct.error) as error:
+            raise ContractError(
+                "all-field AOT replay has malformed omitted-energy bits"
+            ) from error
+        if (
+            not math.isfinite(receipt_energy)
+            or receipt_energy < 0.0
+            or receipt_energy > maximum_omitted_energy
+            or not math.isclose(
+                receipt_energy,
+                omitted_energy,
+                rel_tol=5.0e-10,
+                abs_tol=0.0,
+            )
+        ):
+            raise ContractError(
+                "all-field AOT replay omitted-energy receipt does not match "
+                "the admitted grouped replay plan"
+            )
     counters = parse_time_counters(log_path)
     if enforce_sequential_guard:
         for key, maximum_key in (
@@ -680,6 +733,8 @@ def validate_all_field_log(
         "segments": len(receipts),
         "refreshes": len(summaries),
         "effective_workers": workers,
+        "omitted_squared_l2_energy": omitted_energy,
+        "maximum_omitted_squared_l2_energy": maximum_omitted_energy,
         **counters,
     }
 

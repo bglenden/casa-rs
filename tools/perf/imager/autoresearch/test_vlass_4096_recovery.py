@@ -7,6 +7,7 @@ import copy
 import json
 import os
 from pathlib import Path
+import struct
 import sys
 import tempfile
 import unittest
@@ -30,6 +31,10 @@ class Vlass4096RecoveryTests(unittest.TestCase):
             60, self.contract["single_field"]["inter_run_quiescence_seconds"]
         )
         self.assertEqual(7, self.contract["all_fields"]["requested_grid_threads"])
+        self.assertEqual(
+            1.0e-4,
+            self.contract["all_fields"]["maximum_omitted_squared_l2_energy"],
+        )
         for row_name in ("single_field", "all_fields"):
             row = self.contract[row_name]
             self.assertAlmostEqual(
@@ -216,6 +221,32 @@ class Vlass4096RecoveryTests(unittest.TestCase):
                 subject.validate_all_field_log(
                     self.contract, log, enforce_sequential_guard=True
                 )
+
+            bounded_energy = 1.0e-4
+            bounded_bits = struct.unpack(">Q", struct.pack(">d", bounded_energy))[0]
+            approximate = good.replace(
+                "omitted_squared_l2_energy=0.000000000e0",
+                f"omitted_squared_l2_energy={bounded_energy:.9e}",
+            ).replace(
+                "omitted_energy_fraction_bits=0",
+                f"omitted_energy_fraction_bits={bounded_bits}",
+            )
+            log.write_text(approximate + "\n", encoding="utf-8")
+            receipt = subject.validate_all_field_log(self.contract, log)
+            self.assertEqual(bounded_energy, receipt["omitted_squared_l2_energy"])
+
+            excessive_energy = 1.01e-4
+            excessive_bits = struct.unpack(">Q", struct.pack(">d", excessive_energy))[0]
+            excessive = good.replace(
+                "omitted_squared_l2_energy=0.000000000e0",
+                f"omitted_squared_l2_energy={excessive_energy:.9e}",
+            ).replace(
+                "omitted_energy_fraction_bits=0",
+                f"omitted_energy_fraction_bits={excessive_bits}",
+            )
+            log.write_text(excessive + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(subject.ContractError, "exceeds"):
+                subject.validate_all_field_log(self.contract, log)
 
     def test_all_field_launch_binds_requested_grid_workers(self) -> None:
         captured: dict[str, str] = {}
