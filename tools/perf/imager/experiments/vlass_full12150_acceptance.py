@@ -900,10 +900,11 @@ def monitor_stop_reason(
     pressure_warning_samples: int,
     swap_used_growth_samples: int,
     max_compressed_growth_bytes: int | None = None,
+    allow_sustained_pressure_warning: bool = False,
 ) -> str | None:
     if pressure_level not in (NORMAL_MEMORY_PRESSURE_LEVEL, 2):
         return f"memory pressure escalated to level {pressure_level}"
-    if pressure_warning_samples >= 2:
+    if pressure_warning_samples >= 2 and not allow_sustained_pressure_warning:
         return "memory pressure remained at warning level for two consecutive samples"
     if int(sample["pages_throttled"]) > int(baseline.second["pages_throttled"]):
         return "Pages throttled increased"
@@ -935,6 +936,7 @@ def monitor_run(
     telemetry_path: Path,
     interval_seconds: float = MONITOR_INTERVAL_SECONDS,
     max_compressed_growth_bytes: int | None = None,
+    allow_sustained_pressure_warning: bool = False,
     wall_limit_seconds: float = RUST_WALL_LIMIT_SECONDS,
     snapshot_reader: Callable[[], dict[str, Any]] = read_darwin_host_snapshot,
 ) -> MonitorResult:
@@ -1011,6 +1013,7 @@ def monitor_run(
                 pressure_warning_samples=pressure_warning_samples,
                 swap_used_growth_samples=swap_used_growth_samples,
                 max_compressed_growth_bytes=max_compressed_growth_bytes,
+                allow_sustained_pressure_warning=allow_sustained_pressure_warning,
             )
             if stop_reason is None and now - started >= wall_limit_seconds:
                 stop_reason = "10x acceptance wall exceeded"
@@ -1461,8 +1464,9 @@ def run_acceptance(args: argparse.Namespace) -> Path:
         ),
         # Compression is measured, but is not destructive by itself. The
         # pressure experiment still fails immediately on swapout, throttling,
-        # non-normal pressure, or loss of the 2 GiB no-swap reserve.
+        # critical/unavailable pressure, or loss of the 2 GiB no-swap reserve.
         max_compressed_growth_bytes=None,
+        allow_sustained_pressure_warning=args.allow_pressure_experiment,
     )
     execution = {
         "monitor": asdict(monitor),

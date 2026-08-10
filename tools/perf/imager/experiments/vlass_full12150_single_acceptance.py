@@ -402,6 +402,7 @@ def run_acceptance(args: argparse.Namespace) -> Path:
         # destructive swap/throttling/pressure signals instead of compression
         # alone.
         max_compressed_growth_bytes=None,
+        allow_sustained_pressure_warning=args.allow_pressure_experiment,
         wall_limit_seconds=RUST_WALL_LIMIT_SECONDS,
     )
     execution = {

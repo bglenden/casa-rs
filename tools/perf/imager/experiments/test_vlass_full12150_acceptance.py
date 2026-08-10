@@ -421,6 +421,26 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
                 swap_used_growth_samples=0,
             )
         )
+        self.assertIsNone(
+            acceptance.monitor_stop_reason(
+                baseline=baseline,
+                sample=dict(first),
+                pressure_level=2,
+                pressure_warning_samples=2,
+                swap_used_growth_samples=0,
+                allow_sustained_pressure_warning=True,
+            )
+        )
+        critical_reason = acceptance.monitor_stop_reason(
+            baseline=baseline,
+            sample=dict(first),
+            pressure_level=4,
+            pressure_warning_samples=0,
+            swap_used_growth_samples=0,
+            allow_sustained_pressure_warning=True,
+        )
+        self.assertIsNotNone(critical_reason)
+        self.assertIn("pressure", critical_reason.lower())
         cases = (
             (dict(first), 2, 2, 0, "pressure"),
             (dict(first), 4, 0, 0, "pressure"),
