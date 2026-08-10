@@ -38,6 +38,7 @@ cpp_complex="${CASA_RS_VLASS_CPP_COMPLEX:-0}"
 usepointing="${CASA_RS_VLASS_USEPOINTING:-1}"
 source_major_full_compensation="${CASA_RS_VLASS_SOURCE_MAJOR_FULL_COMPENSATION:-0}"
 source_major_weight_compensation="${CASA_RS_VLASS_SOURCE_MAJOR_WEIGHT_COMPENSATION:-0}"
+effective_support="${CASA_RS_VLASS_EFFECTIVE_SUPPORT:-0}"
 pointing_trace="${CASA_RS_VLASS_POINTING_TRACE:-0}"
 measures_dir="${CASA_RS_VLASS_MEASURES_DIR:-$HOME/.casa/data}"
 ms="$root/data/frozen-clean-b80d5e87487a/VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms"
@@ -71,6 +72,21 @@ elif [[ "$source_major_weight_compensation" != "0" ]]; then
     echo "CASA_RS_VLASS_SOURCE_MAJOR_WEIGHT_COMPENSATION must be 0 or 1" >&2
     exit 2
 fi
+
+case "$effective_support" in
+    0)
+        ;;
+    0.00000001|1e-8|1.0e-8)
+        label="${label}-effective-support-1e-8"
+        experimental_environment+=(
+            CASA_RS_EXPERIMENTAL_AWPROJECT_EFFECTIVE_SUPPORT=1e-8
+        )
+        ;;
+    *)
+        echo "CASA_RS_VLASS_EFFECTIVE_SUPPORT must be 0 or 1e-8" >&2
+        exit 2
+        ;;
+esac
 
 if [[ "$image_response_cache" == "1" ]]; then
     label="${label}-image-response-cache-promoted-stack"
