@@ -13,9 +13,9 @@ def valid_probe_log(target_mib: int) -> str:
     decisions = {
         "awproject_selected_field_count": "1",
         "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
-        "awproject_source_major_architecture": "direct-source-major-v11-sealed-sha-i16-residual",
-        "awproject_source_major_initial_accumulation": "weight-two-limb",
-        "awproject_source_major_initial_grid_bytes": "12990780000",
+        "awproject_source_major_architecture": "direct-source-major-v10-sealed-f32-residual",
+        "awproject_source_major_initial_accumulation": "high-limb-only",
+        "awproject_source_major_initial_grid_bytes": "9447840000",
         "awproject_multifield_initial_grid_admission": "admitted",
         "awproject_grouped_replay_replaced_generic_caches": "true",
         "awproject_grouped_metal_generic_scratch_bytes": "0",
@@ -56,19 +56,17 @@ def valid_probe_log(target_mib: int) -> str:
 def valid_runtime_log() -> str:
     lines = [
         "awproject_source_major_block source_block=0 accepted_samples=1 "
-        "initial_partitions=2 initial_grid_bytes=12990780000 "
-        "initial_compensation_bytes=3542940000 spill_bytes=900 reload_bytes=0 "
-        "architecture=direct-source-major-v11-sealed-sha-i16-residual "
-        "initial_accumulation=weight-two-limb",
+        "initial_partitions=2 initial_grid_bytes=9447840000 "
+        "initial_compensation_bytes=0 spill_bytes=900 reload_bytes=0 "
+        "architecture=direct-source-major-v10-sealed-f32-residual "
+        "initial_accumulation=high-limb-only",
         "awproject_source_major_staging source_block=0 segments=1 "
         "program_bytes=1000 compiled_total_bytes=1000 streaming_live_bytes=1000 "
         "streaming_ceiling_bytes=2000 spill_bytes=900 total_spill_bytes=900 "
-        "reload_bytes=0 architecture=direct-source-major-v11-sealed-sha-i16-residual "
+        "reload_bytes=0 architecture=direct-source-major-v10-sealed-f32-residual "
         "resident=false staged=true",
         "awproject_metal_initial_readback products=8 "
-        "residency=metal-shared-selected-two-limb-grid resident_bytes=12990780000 "
-        "compensation_plane_start=5 compensation_plane_count=3 "
-        "compensation_bytes=3542940000",
+        "residency=metal-shared-high-limb-only-grid resident_bytes=9447840000",
         "awproject_grouped_metal_admission phase=sealed segment=0 "
         "source_boundary_upper_bytes=100 exact_additional_bytes=90 all_fit=true",
         "awproject_effective_support segment=0 omitted_energy_fraction=0 "
@@ -84,22 +82,20 @@ def valid_runtime_log() -> str:
         "compile_transient_bytes_peak_estimated=90 compile_admission_limit_bytes=100 "
         "raw_kernel_atlas_bytes=100 compact_kernel_atlas_bytes=40 "
         "compact_kernel_stencils=2 compact_kernel_plan_references=4 "
-        "compact_kernel_scratch_bytes=64 i16_kernel_atlas_bytes=20 "
-        "i16_kernel_scale_bytes=8 i16_kernel_values=5 i16_kernel_stencils=2 "
-        "i16_kernel_nrmse=1e-4 i16_kernel_max_abs_error=1e-5 "
-        "i16_kernel_zeroed_components=0 i16_kernel_compile_overlap_bytes=68",
+        "compact_kernel_scratch_bytes=64 i16_kernel_atlas_bytes=0 "
+        "i16_kernel_scale_bytes=0 i16_kernel_values=0 i16_kernel_stencils=0 "
+        "i16_kernel_nrmse=0 i16_kernel_max_abs_error=0 "
+        "i16_kernel_zeroed_components=0 i16_kernel_compile_overlap_bytes=0",
         "awproject_source_major_kernel_compaction source_block=0 raw_bytes=100 "
         "compact_bytes=40 stencils=2 plan_references=4 scratch_bytes=64 "
         "applied=true bit_exact=true",
-        "awproject_source_major_kernel_i16 source_block=0 f32_bytes=40 "
-        "i16_bytes=20 scale_bytes=8 values=5 stencils=2 nrmse=1e-4 "
-        "max_abs_error=1e-5 zeroed_components=0 compile_overlap_bytes=68 "
-        "max_kernel_norm=1.0 storage=per-stencil-scaled-i16-complex "
-        "range=-32767:32767 conversion=metal-load-to-f32",
+        "awproject_source_major_kernel_f32 source_block=0 bytes=40 "
+        "values=5 stencils=2 max_kernel_norm=1.0 "
+        "storage=compact-f32-complex bit_exact=true",
         "awproject_source_major_staged_streaming_ready segments=1 spill_bytes=900 "
         "compiled_total_bytes=1000 streaming_live_peak_bytes=1000 "
         "streaming_ceiling_bytes=2000 resident_bytes=0 prefetch_slots=1 "
-        "architecture=direct-source-major-v11-sealed-sha-i16-residual "
+        "architecture=direct-source-major-v10-sealed-f32-residual "
         "lifecycle=after-dirty-grid-release resident=false",
         "awproject_source_major_invariant_weight_spill decision=staged terms=2 "
         "bytes=1180980000 resident_bytes_after=0 "
@@ -179,7 +175,7 @@ class FullVlassSingleAcceptanceContractTest(unittest.TestCase):
                 "initial_dirty_backend=cpu",
             ),
             ("tile_side=11", "tile_side=16"),
-            ("direct-source-major-v11-sealed-sha-i16-residual", "legacy-windowed"),
+            ("direct-source-major-v10-sealed-f32-residual", "legacy-windowed"),
             ("low_field=1525", "low_field=1107"),
         )
         for old, new in mutations:
@@ -199,10 +195,7 @@ class FullVlassSingleAcceptanceContractTest(unittest.TestCase):
         result = single.validate_runtime_log(accepted)
         self.assertEqual(19, result["product_count"])
         mutations = (
-            (
-                "initial_compensation_bytes=3542940000",
-                "initial_compensation_bytes=0",
-            ),
+            ("initial_compensation_bytes=0", "initial_compensation_bytes=9447840000"),
             (
                 "spill_read_bytes=900",
                 "spill_read_bytes=899",
@@ -211,7 +204,7 @@ class FullVlassSingleAcceptanceContractTest(unittest.TestCase):
             ("runtime_grouping_builds=0", "runtime_grouping_builds=1"),
             ("bit_exact=true", "bit_exact=false"),
             ("bytes=40", "bytes=39"),
-            ("storage=per-stencil-scaled-i16-complex", "storage=float16-complex"),
+            ("storage=compact-f32-complex", "storage=float16-complex"),
             (
                 "candidate_result_released_before_tile=true",
                 "candidate_result_released_before_tile=false",
