@@ -11054,23 +11054,12 @@ struct AwProjectSelectedModelDftCache {
     build_elapsed: Duration,
 }
 
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 struct AwProjectCompactSamplePlan {
     loc_x: isize,
     loc_y: isize,
     tap_bundle: usize,
 }
-
-#[cfg(all(target_os = "macos", not(coverage)))]
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
-struct AwProjectSourceMajorPlanCacheKey {
-    plan: AwProjectCompactSamplePlan,
-    group_index: usize,
-}
-
-#[cfg(all(target_os = "macos", not(coverage)))]
-type AwProjectSourceMajorPlanCache<T> =
-    HashMap<AwProjectSourceMajorPlanCacheKey, T, BuildHasherDefault<MosaicMetalSampleHasher>>;
 
 #[derive(Clone, Copy)]
 struct AwProjectCompactSourceSample {
@@ -25418,79 +25407,6 @@ fn awproject_source_major_prediction_plan(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
-#[allow(clippy::too_many_arguments)]
-fn cached_awproject_source_major_metal_plan(
-    cache: &mut AwProjectSourceMajorPlanCache<AwProjectMetalPlan>,
-    hits: &mut usize,
-    plan: AwProjectCompactSamplePlan,
-    requests: &[AwProjectCompactTapRequest],
-    materialized: &[AwProjectSourceMajorMaterializedTap],
-    atlas: &AwProjectMetalRawAtlas,
-    group_index: usize,
-    phase_tables: Option<&AwProjectPhaseTables>,
-    phase_atlas: &mut AwProjectMetalPhaseAtlasBuilder,
-) -> Result<AwProjectMetalPlan, ImagingError> {
-    let key = AwProjectSourceMajorPlanCacheKey { plan, group_index };
-    if let Some(&cached) = cache.get(&key) {
-        *hits = hits.saturating_add(1);
-        return Ok(cached);
-    }
-    let converted = awproject_source_major_metal_plan(
-        plan,
-        requests,
-        materialized,
-        atlas,
-        group_index,
-        phase_tables,
-        phase_atlas,
-    )?;
-    cache.insert(key, converted);
-    Ok(converted)
-}
-
-#[cfg(all(target_os = "macos", not(coverage)))]
-#[allow(clippy::too_many_arguments)]
-fn cached_awproject_source_major_prediction_plan(
-    cache: &mut AwProjectSourceMajorPlanCache<AwProjectMetalPredictionPlan>,
-    hits: &mut usize,
-    plan: AwProjectCompactSamplePlan,
-    requests: &[AwProjectCompactTapRequest],
-    materialized: &[AwProjectSourceMajorMaterializedTap],
-    atlas: &AwProjectMetalRawAtlas,
-    group_index: usize,
-    phase_tables: Option<&AwProjectPhaseTables>,
-    phase_atlas: &mut AwProjectMetalPhaseAtlasBuilder,
-) -> Result<AwProjectMetalPredictionPlan, ImagingError> {
-    let key = AwProjectSourceMajorPlanCacheKey { plan, group_index };
-    if let Some(&cached) = cache.get(&key) {
-        *hits = hits.saturating_add(1);
-        return Ok(cached);
-    }
-    let converted = awproject_source_major_prediction_plan(
-        plan,
-        requests,
-        materialized,
-        atlas,
-        group_index,
-        phase_tables,
-        phase_atlas,
-    )?;
-    cache.insert(key, converted);
-    Ok(converted)
-}
-
-#[cfg(all(target_os = "macos", not(coverage)))]
-fn awproject_source_major_plan_cache_estimated_bytes<T>(
-    cache: &AwProjectSourceMajorPlanCache<T>,
-) -> usize {
-    cache.capacity().saturating_mul(
-        std::mem::size_of::<AwProjectSourceMajorPlanCacheKey>()
-            .saturating_add(std::mem::size_of::<T>())
-            .saturating_add(1),
-    )
-}
-
-#[cfg(all(target_os = "macos", not(coverage)))]
 fn awproject_prediction_cf_metadata_role(
     plan: AwProjectCompactSamplePlan,
     tap_requests: &[AwProjectCompactTapRequest],
@@ -28242,18 +28158,6 @@ struct AwProjectSourceMajorWeightSample {
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
-#[derive(Clone, Copy, Default)]
-struct AwProjectSourceMajorPlanCacheStats {
-    prediction_entries: usize,
-    prediction_hits: usize,
-    imaging_entries: usize,
-    imaging_hits: usize,
-    weight_entries: usize,
-    weight_hits: usize,
-    estimated_bytes: usize,
-}
-
-#[cfg(all(target_os = "macos", not(coverage)))]
 fn awproject_source_major_prediction_metadata_role(
     plan: AwProjectCompactSamplePlan,
     tap_requests: &[AwProjectCompactTapRequest],
@@ -28297,7 +28201,6 @@ fn build_awproject_source_major_residual_builder(
         AwProjectMetalGlobalProgramBuilder,
         Vec<AwProjectSourceMajorWeightSample>,
         Vec<WProjectMetalComplex>,
-        AwProjectSourceMajorPlanCacheStats,
     ),
     ImagingError,
 > {
@@ -28328,12 +28231,6 @@ fn build_awproject_source_major_residual_builder(
     let mut prediction_phases = AwProjectMetalPhaseAtlasBuilder::production();
     let mut imaging_phases = AwProjectMetalPhaseAtlasBuilder::production();
     let mut weight_phases = AwProjectMetalPhaseAtlasBuilder::production();
-    let mut prediction_plan_cache = AwProjectSourceMajorPlanCache::default();
-    let mut imaging_plan_cache = AwProjectSourceMajorPlanCache::default();
-    let mut weight_plan_cache = AwProjectSourceMajorPlanCache::default();
-    let mut prediction_plan_cache_hits = 0usize;
-    let mut imaging_plan_cache_hits = 0usize;
-    let mut weight_plan_cache_hits = 0usize;
     for (&source, planned) in source_samples.iter().zip(planned_samples) {
         if source.group_index != planned.group_index {
             return Err(ImagingError::Normalization(
@@ -28353,9 +28250,7 @@ fn build_awproject_source_major_residual_builder(
                     .to_string(),
             ));
         }
-        let first_prediction = cached_awproject_source_major_prediction_plan(
-            &mut prediction_plan_cache,
-            &mut prediction_plan_cache_hits,
+        let first_prediction = awproject_source_major_prediction_plan(
             source.first_prediction_plan,
             tap_requests,
             materialized,
@@ -28364,9 +28259,7 @@ fn build_awproject_source_major_residual_builder(
             phase_tables,
             &mut prediction_phases,
         )?;
-        let second_prediction = cached_awproject_source_major_prediction_plan(
-            &mut prediction_plan_cache,
-            &mut prediction_plan_cache_hits,
+        let second_prediction = awproject_source_major_prediction_plan(
             source.second_prediction_plan,
             tap_requests,
             materialized,
@@ -28375,9 +28268,7 @@ fn build_awproject_source_major_residual_builder(
             phase_tables,
             &mut prediction_phases,
         )?;
-        let first_imaging = cached_awproject_source_major_metal_plan(
-            &mut imaging_plan_cache,
-            &mut imaging_plan_cache_hits,
+        let first_imaging = awproject_source_major_metal_plan(
             source.first_imaging_plan,
             tap_requests,
             materialized,
@@ -28386,9 +28277,7 @@ fn build_awproject_source_major_residual_builder(
             phase_tables,
             &mut imaging_phases,
         )?;
-        let second_imaging = cached_awproject_source_major_metal_plan(
-            &mut imaging_plan_cache,
-            &mut imaging_plan_cache_hits,
+        let second_imaging = awproject_source_major_metal_plan(
             source.second_imaging_plan,
             tap_requests,
             materialized,
@@ -28397,9 +28286,7 @@ fn build_awproject_source_major_residual_builder(
             phase_tables,
             &mut imaging_phases,
         )?;
-        let first_psf = cached_awproject_source_major_metal_plan(
-            &mut weight_plan_cache,
-            &mut weight_plan_cache_hits,
+        let first_psf = awproject_source_major_metal_plan(
             source.first_psf_plan,
             tap_requests,
             materialized,
@@ -28408,9 +28295,7 @@ fn build_awproject_source_major_residual_builder(
             phase_tables,
             &mut weight_phases,
         )?;
-        let second_psf = cached_awproject_source_major_metal_plan(
-            &mut weight_plan_cache,
-            &mut weight_plan_cache_hits,
+        let second_psf = awproject_source_major_metal_plan(
             source.second_psf_plan,
             tap_requests,
             materialized,
@@ -28419,9 +28304,7 @@ fn build_awproject_source_major_residual_builder(
             phase_tables,
             &mut weight_phases,
         )?;
-        let first_weight = cached_awproject_source_major_metal_plan(
-            &mut weight_plan_cache,
-            &mut weight_plan_cache_hits,
+        let first_weight = awproject_source_major_metal_plan(
             source.first_weight_plan,
             tap_requests,
             materialized,
@@ -28430,9 +28313,7 @@ fn build_awproject_source_major_residual_builder(
             phase_tables,
             &mut weight_phases,
         )?;
-        let second_weight = cached_awproject_source_major_metal_plan(
-            &mut weight_plan_cache,
-            &mut weight_plan_cache_hits,
+        let second_weight = awproject_source_major_metal_plan(
             source.second_weight_plan,
             tap_requests,
             materialized,
@@ -28588,27 +28469,7 @@ fn build_awproject_source_major_residual_builder(
     builder.source_programs = 1;
     builder.raw_atlas = Some(residual_atlas);
     builder.source_program_bytes = builder.resident_bytes();
-    let plan_cache_stats = AwProjectSourceMajorPlanCacheStats {
-        prediction_entries: prediction_plan_cache.len(),
-        prediction_hits: prediction_plan_cache_hits,
-        imaging_entries: imaging_plan_cache.len(),
-        imaging_hits: imaging_plan_cache_hits,
-        weight_entries: weight_plan_cache.len(),
-        weight_hits: weight_plan_cache_hits,
-        estimated_bytes: awproject_source_major_plan_cache_estimated_bytes(&prediction_plan_cache)
-            .saturating_add(awproject_source_major_plan_cache_estimated_bytes(
-                &imaging_plan_cache,
-            ))
-            .saturating_add(awproject_source_major_plan_cache_estimated_bytes(
-                &weight_plan_cache,
-            )),
-    };
-    Ok((
-        builder,
-        weight_samples,
-        weight_phases.values,
-        plan_cache_stats,
-    ))
+    Ok((builder, weight_samples, weight_phases.values))
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -40014,20 +39875,19 @@ fn prepare_awproject_source_major_block(
     }
 
     let builder_started = Instant::now();
-    let (builder, weight_samples, weight_phases, plan_cache_stats) =
-        build_awproject_source_major_residual_builder(
-            request,
-            parallel_hands,
-            sample_frequencies_hz,
-            &accepted_sources,
-            &planned_samples,
-            &classified.tap_requests,
-            &materialized,
-            residual_atlas,
-            &weight_atlas,
-            Some(&classified.phase_tables),
-            metadata,
-        )?;
+    let (builder, weight_samples, weight_phases) = build_awproject_source_major_residual_builder(
+        request,
+        parallel_hands,
+        sample_frequencies_hz,
+        &accepted_sources,
+        &planned_samples,
+        &classified.tap_requests,
+        &materialized,
+        residual_atlas,
+        &weight_atlas,
+        Some(&classified.phase_tables),
+        metadata,
+    )?;
     let builder_owner_bytes = checked_awproject_source_major_bytes(&[
         awproject_source_major_vec_bytes(&accepted_sources),
         awproject_source_major_vec_bytes(&planned_samples),
@@ -40038,19 +39898,8 @@ fn prepare_awproject_source_major_block(
         awproject_source_major_vec_bytes(&weight_samples),
         awproject_source_major_vec_bytes(&weight_phases),
         classified.phase_table_bytes,
-        plan_cache_stats.estimated_bytes,
     ])?;
     replay_cache.admit_source_major_compile_peak(builder_owner_bytes)?;
-    eprintln!(
-        "awproject_source_major_plan_cache prediction_entries={} prediction_hits={} imaging_entries={} imaging_hits={} weight_entries={} weight_hits={} estimated_bytes={}",
-        plan_cache_stats.prediction_entries,
-        plan_cache_stats.prediction_hits,
-        plan_cache_stats.imaging_entries,
-        plan_cache_stats.imaging_hits,
-        plan_cache_stats.weight_entries,
-        plan_cache_stats.weight_hits,
-        plan_cache_stats.estimated_bytes,
-    );
     let [grid_width, grid_height] = request.geometry.image_shape;
     let program = builder.finish(grid_width, grid_height, tile_side)?;
     let builder_elapsed = builder_started.elapsed();
@@ -78532,7 +78381,7 @@ mod tests {
             super::AwProjectCompactKernelKind::Weight,
             true,
         );
-        let (direct_builder, weight_samples, weight_phases, plan_cache_stats) =
+        let (direct_builder, weight_samples, weight_phases) =
             super::build_awproject_source_major_residual_builder(
                 &request,
                 &parallel_hands,
@@ -78549,7 +78398,6 @@ mod tests {
             .unwrap();
         assert_eq!(weight_samples.len(), 2);
         assert_eq!(weight_phases.len(), 4);
-        assert!(plan_cache_stats.estimated_bytes > 0);
         let mut direct = direct_builder.finish(16, 16, 8).unwrap();
 
         let mut legacy_builder = super::AwProjectMetalGlobalProgramBuilder::raw();
