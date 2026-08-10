@@ -797,14 +797,16 @@ def validate_probe_log(
         len(runtime) != 1
         or runtime[0].get("initial_dirty_backend") != "metal-row-run-grouped"
     ):
-        raise AcceptanceError("plan probe did not select the source-major Metal initial grid")
+        raise AcceptanceError(
+            "plan probe did not select the source-major Metal initial grid"
+        )
     if runtime[0].get("residual_backend") != "metal-row-run-grouped":
         raise AcceptanceError("plan probe did not select grouped Metal residual replay")
     if len(grouped) != 1:
         raise AcceptanceError("plan probe omitted the grouped replay plan")
     if grouped[0].get("architecture") != "source-order-grouped-tile-v1":
         raise AcceptanceError("grouped replay architecture differs")
-    if grouped[0].get("tile_side") != "16":
+    if grouped[0].get("tile_side") != "11":
         raise AcceptanceError("grouped replay tile side differs")
     if float(grouped[0].get("omitted_squared_l2_energy", "nan")) != 0.0:
         raise AcceptanceError("grouped replay is not exact-support")

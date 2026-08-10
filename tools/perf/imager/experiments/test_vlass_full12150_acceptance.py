@@ -73,7 +73,7 @@ def valid_probe_log(
         "standard_mfs_runtime_plan initial_dirty_backend=metal-row-run-grouped "
         "residual_backend=metal-row-run-grouped",
         "awproject_grouped_replay_plan architecture=source-order-grouped-tile-v1 "
-        "tile_side=16 omitted_squared_l2_energy=0.000000000e0",
+        "tile_side=11 omitted_squared_l2_energy=0.000000000e0",
     ]
     lines.extend(
         f"standard_mfs_execution_decision name={name} value={value} origin=Planner"
@@ -269,6 +269,7 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
                 "omitted_squared_l2_energy=0.000000000e0",
                 "omitted_squared_l2_energy=1e-6",
             ),
+            ("tile_side=11", "tile_side=16"),
             (
                 "awproject_selected_field_count value=63",
                 "awproject_selected_field_count value=1",
