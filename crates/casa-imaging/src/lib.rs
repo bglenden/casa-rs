@@ -6096,7 +6096,7 @@ where
                 device_budget_bytes,
                 safety_reserve_bytes,
             } => eprintln!(
-                "awproject_initial_grid_plan backend=source-major-grouped-metal-f64 architecture=direct-source-major-v4-high-only-dense-residual accumulation=high-limb-only tile_side={tile_side} workers={workers} compile_ceiling_bytes={process_compile_ceiling_bytes} replay_retention_ceiling_bytes={replay_retention_ceiling_bytes} device_budget_bytes={device_budget_bytes} safety_reserve_bytes={safety_reserve_bytes} legacy_tap_scratch_bytes=0 legacy_priming_scratch_bytes=0 spill_bytes=0 planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
+                "awproject_initial_grid_plan backend=source-major-grouped-metal-f64 architecture=direct-source-major-v5-high-only-i16-residual accumulation=high-limb-only tile_side={tile_side} workers={workers} compile_ceiling_bytes={process_compile_ceiling_bytes} replay_retention_ceiling_bytes={replay_retention_ceiling_bytes} device_budget_bytes={device_budget_bytes} safety_reserve_bytes={safety_reserve_bytes} legacy_tap_scratch_bytes=0 legacy_priming_scratch_bytes=0 spill_bytes=0 planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
                 execution_config.resolved.maximum_planned_resident_bytes,
                 execution_config.resolved.usable_memory_bytes,
             ),
@@ -12412,6 +12412,8 @@ struct AwProjectMetalPredictionBatch {
     source_sample_indices: Vec<u32>,
     cf_metadata: Vec<AwProjectPredictionCfMetadataSample>,
     kernels: Vec<WProjectMetalComplex>,
+    quantized_kernels: Vec<AwProjectMetalI16Complex>,
+    kernel_scales: Vec<f32>,
     phases: Vec<WProjectMetalComplex>,
 }
 
@@ -12436,10 +12438,95 @@ impl AwProjectMetalPredictionBatch {
                     .saturating_mul(std::mem::size_of::<WProjectMetalComplex>()),
             )
             .saturating_add(
+                self.quantized_kernels
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<AwProjectMetalI16Complex>()),
+            )
+            .saturating_add(
+                self.kernel_scales
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<f32>()),
+            )
+            .saturating_add(
                 self.phases
                     .capacity()
                     .saturating_mul(std::mem::size_of::<WProjectMetalComplex>()),
             )
+    }
+
+    fn kernel_storage(&self) -> Result<AwProjectMetalKernelStorage<'_>, ImagingError> {
+        match (self.kernels.is_empty(), self.quantized_kernels.is_empty()) {
+            (false, true) => Ok(AwProjectMetalKernelStorage::Float32(&self.kernels)),
+            (true, false) if !self.kernel_scales.is_empty() => {
+                Ok(AwProjectMetalKernelStorage::Int16Scaled {
+                    values: &self.quantized_kernels,
+                    scales: &self.kernel_scales,
+                })
+            }
+            (true, true) => Ok(AwProjectMetalKernelStorage::Float32(&[])),
+            _ => Err(ImagingError::Normalization(
+                "AWProject resident kernel storage is partial or mixed".to_string(),
+            )),
+        }
+    }
+}
+
+#[repr(C, align(4))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+struct AwProjectMetalI16Complex {
+    re: i16,
+    im: i16,
+}
+
+const _: () = {
+    assert!(std::mem::size_of::<AwProjectMetalI16Complex>() == 4);
+    assert!(std::mem::align_of::<AwProjectMetalI16Complex>() == 4);
+};
+
+#[derive(Clone, Copy)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+enum AwProjectMetalKernelStorage<'a> {
+    Float32(&'a [WProjectMetalComplex]),
+    Int16Scaled {
+        values: &'a [AwProjectMetalI16Complex],
+        scales: &'a [f32],
+    },
+}
+
+impl<'a> AwProjectMetalKernelStorage<'a> {
+    fn len(self) -> usize {
+        match self {
+            Self::Float32(values) => values.len(),
+            Self::Int16Scaled { values, .. } => values.len(),
+        }
+    }
+
+    fn byte_len(self) -> usize {
+        match self {
+            Self::Float32(values) => std::mem::size_of_val(values),
+            Self::Int16Scaled { values, scales } => {
+                std::mem::size_of_val(values).saturating_add(std::mem::size_of_val(scales))
+            }
+        }
+    }
+
+    fn as_ptr(self) -> *const u8 {
+        match self {
+            Self::Float32(values) => values.as_ptr().cast::<u8>(),
+            Self::Int16Scaled { values, .. } => values.as_ptr().cast::<u8>(),
+        }
+    }
+
+    fn is_quantized(self) -> bool {
+        matches!(self, Self::Int16Scaled { .. })
+    }
+
+    fn scales(self) -> &'a [f32] {
+        match self {
+            Self::Float32(_) => &[],
+            Self::Int16Scaled { scales, .. } => scales,
+        }
     }
 }
 
@@ -12522,6 +12609,14 @@ struct AwProjectMetalAotGroupedTileLedger {
     compact_kernel_stencils: usize,
     compact_kernel_plan_references: usize,
     compact_kernel_scratch_bytes: usize,
+    i16_kernel_atlas_bytes: usize,
+    i16_kernel_scale_bytes: usize,
+    i16_kernel_values: usize,
+    i16_kernel_stencils: usize,
+    i16_kernel_nrmse: f64,
+    i16_kernel_max_abs_error: f64,
+    i16_kernel_zeroed_components: usize,
+    i16_kernel_compile_overlap_bytes: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -12547,7 +12642,7 @@ impl AwProjectMetalAotGroupedTileReceipt {
             u64::from_be_bytes(hash[..8].try_into().expect("SHA-256 prefix is eight bytes"))
         };
         eprintln!(
-            "awproject_aot_grouped_tile_receipt segment={} omitted_energy_fraction_bits={} samples={} groups={} crop_hash_prefix={:016x} grouped_plans_hash_prefix={:016x} sample_role_groups_hash_prefix={:016x} grouped_route_hash_prefix={:016x} legacy_grouped_plans_hash_prefix={:016x} legacy_grouped_route_hash_prefix={:016x} raw_resident_bytes_before_compile={} raw_prediction_sample_bytes_replaced={} cropped_prediction_sample_bytes={} raw_tile_sample_bytes_released={} raw_route_bytes_released={} grouped_plan_bytes={} sample_role_group_bytes={} grouped_route_bytes={} canonical_group_plan_capacity_bytes={} canonical_group_sum_capacity_bytes={} canonical_hashmap_estimated_bytes={} tile_planner_known_peak_bytes={} sample_role_group_capacity_bytes={} final_hashmap_estimated_bytes={} aot_group_sum_bytes={} fixed_scale_bytes={} effective_support_hashmap_estimated_bytes={} effective_support_prefix_scratch_bytes={} effective_support_scratch_estimated_bytes={} compile_transient_bytes_peak_estimated={} hashmap_uncertainty_reserve_bytes={} compile_admission_bytes={} compile_admission_limit_bytes={} persisted_tile_bytes={} raw_kernel_atlas_bytes={} compact_kernel_atlas_bytes={} compact_kernel_stencils={} compact_kernel_plan_references={} compact_kernel_scratch_bytes={}",
+            "awproject_aot_grouped_tile_receipt segment={} omitted_energy_fraction_bits={} samples={} groups={} crop_hash_prefix={:016x} grouped_plans_hash_prefix={:016x} sample_role_groups_hash_prefix={:016x} grouped_route_hash_prefix={:016x} legacy_grouped_plans_hash_prefix={:016x} legacy_grouped_route_hash_prefix={:016x} raw_resident_bytes_before_compile={} raw_prediction_sample_bytes_replaced={} cropped_prediction_sample_bytes={} raw_tile_sample_bytes_released={} raw_route_bytes_released={} grouped_plan_bytes={} sample_role_group_bytes={} grouped_route_bytes={} canonical_group_plan_capacity_bytes={} canonical_group_sum_capacity_bytes={} canonical_hashmap_estimated_bytes={} tile_planner_known_peak_bytes={} sample_role_group_capacity_bytes={} final_hashmap_estimated_bytes={} aot_group_sum_bytes={} fixed_scale_bytes={} effective_support_hashmap_estimated_bytes={} effective_support_prefix_scratch_bytes={} effective_support_scratch_estimated_bytes={} compile_transient_bytes_peak_estimated={} hashmap_uncertainty_reserve_bytes={} compile_admission_bytes={} compile_admission_limit_bytes={} persisted_tile_bytes={} raw_kernel_atlas_bytes={} compact_kernel_atlas_bytes={} compact_kernel_stencils={} compact_kernel_plan_references={} compact_kernel_scratch_bytes={} i16_kernel_atlas_bytes={} i16_kernel_scale_bytes={} i16_kernel_values={} i16_kernel_stencils={} i16_kernel_nrmse={:.9e} i16_kernel_max_abs_error={:.9e} i16_kernel_zeroed_components={} i16_kernel_compile_overlap_bytes={}",
             segment,
             self.omitted_energy_fraction_bits,
             self.sample_count,
@@ -12587,6 +12682,14 @@ impl AwProjectMetalAotGroupedTileReceipt {
             ledger.compact_kernel_stencils,
             ledger.compact_kernel_plan_references,
             ledger.compact_kernel_scratch_bytes,
+            ledger.i16_kernel_atlas_bytes,
+            ledger.i16_kernel_scale_bytes,
+            ledger.i16_kernel_values,
+            ledger.i16_kernel_stencils,
+            ledger.i16_kernel_nrmse,
+            ledger.i16_kernel_max_abs_error,
+            ledger.i16_kernel_zeroed_components,
+            ledger.i16_kernel_compile_overlap_bytes,
         );
     }
 }
@@ -12739,6 +12842,21 @@ impl AwProjectMetalResidentProgram {
             &self.prediction_batch.kernels
         } else {
             &self.tile_batch.kernels
+        }
+    }
+
+    fn imaging_kernel_storage(&self) -> Result<AwProjectMetalKernelStorage<'_>, ImagingError> {
+        if self.tile_batch.kernels.is_empty() {
+            self.prediction_batch.kernel_storage()
+        } else if self.prediction_batch.quantized_kernels.is_empty() {
+            Ok(AwProjectMetalKernelStorage::Float32(
+                &self.tile_batch.kernels,
+            ))
+        } else {
+            Err(ImagingError::Normalization(
+                "AWProject program mixed private f32 imaging kernels with a shared quantized atlas"
+                    .to_string(),
+            ))
         }
     }
 
@@ -12986,7 +13104,7 @@ fn awproject_grouped_metal_prediction_bytes(
     checked_awproject_grouped_metal_bytes(
         [
             std::mem::size_of_val(batch.samples.as_slice()),
-            std::mem::size_of_val(batch.kernels.as_slice()),
+            batch.kernel_storage()?.byte_len(),
             std::mem::size_of_val(batch.phases.as_slice()),
             model_wrapper_bytes,
             result_bytes,
@@ -13026,7 +13144,7 @@ fn awproject_grouped_metal_tile_bytes(
     checked_awproject_grouped_metal_bytes(
         [
             std::mem::size_of_val(aot.grouped.groups.as_slice()),
-            std::mem::size_of_val(program.imaging_kernels()),
+            program.imaging_kernel_storage()?.byte_len(),
             std::mem::size_of_val(program.tile_batch.phases.as_slice()),
             std::mem::size_of_val(aot.grouped.tile_plan.active_tile_ids.as_slice()),
             std::mem::size_of_val(aot.grouped.tile_plan.tile_fragment_offsets.as_slice()),
@@ -14113,7 +14231,7 @@ struct AwProjectMetalResidualScalePlan {
 #[cfg(all(target_os = "macos", not(coverage)))]
 struct AwProjectMetalTileDispatch<'a> {
     batch: &'a AwProjectMetalBatch,
-    kernels: &'a [WProjectMetalComplex],
+    kernel_storage: AwProjectMetalKernelStorage<'a>,
     tile_plan: &'a AwProjectMetalTilePlan,
     aot_grouped_tile: Option<&'a AwProjectMetalAotGroupedTileProgram>,
 }
@@ -14524,6 +14642,14 @@ impl AwProjectMetalSpillStore {
         program: AwProjectMetalResidentProgram,
         source_programs: usize,
     ) -> Result<AwProjectMetalSpilledProgram, ImagingError> {
+        if !program.prediction_batch.quantized_kernels.is_empty()
+            || !program.prediction_batch.kernel_scales.is_empty()
+        {
+            return Err(ImagingError::InvalidRequest(
+                "scaled-i16 source-major replay is resident-only and cannot enter the legacy spill format"
+                    .to_string(),
+            ));
+        }
         if !program.prediction_batch.cf_metadata.is_empty() {
             return Err(ImagingError::InvalidRequest(
                 "segmented AWProject replay does not retain prediction-only CF audit metadata"
@@ -14721,6 +14847,8 @@ impl AwProjectMetalSpillStore {
                     .read_vec(program.source_sample_indices, "source sample indices")?,
                 cf_metadata: Vec::new(),
                 kernels: self.read_vec(program.kernels, "shared kernels")?,
+                quantized_kernels: Vec::new(),
+                kernel_scales: Vec::new(),
                 phases: self.read_vec(program.prediction_phases, "prediction phases")?,
             },
             tile_batch: AwProjectMetalBatch {
@@ -14800,6 +14928,8 @@ impl AwProjectMetalSpillStore {
                     .read_vec_at(descriptor.source_sample_indices, "source sample indices")?,
                 cf_metadata: Vec::new(),
                 kernels: self.read_vec_at(descriptor.kernels, "shared kernels")?,
+                quantized_kernels: Vec::new(),
+                kernel_scales: Vec::new(),
                 phases: self.read_vec_at(descriptor.prediction_phases, "prediction phases")?,
             },
             tile_batch: AwProjectMetalBatch {
@@ -15376,11 +15506,13 @@ struct AwProjectMetalExecutor {
     finalize_pipeline: AwProjectMetalPipeline,
     prediction_pipeline: AwProjectMetalPipeline,
     unique_prediction_pipeline: AwProjectMetalPipeline,
+    unique_prediction_i16_pipeline: AwProjectMetalPipeline,
     unique_prediction_scatter_pipeline: AwProjectMetalPipeline,
     incremental_model_pipeline: AwProjectMetalPipeline,
     selected_model_row_pipeline: AwProjectMetalPipeline,
     selected_model_finish_pipeline: AwProjectMetalPipeline,
     tile_pipeline: AwProjectMetalPipeline,
+    tile_i16_pipeline: AwProjectMetalPipeline,
     initial_grouped_tile_pipeline: AwProjectMetalPipeline,
     initial_grouped_high_only_pipeline: AwProjectMetalPipeline,
     predicted_tile_pipeline: AwProjectMetalPipeline,
@@ -19038,6 +19170,23 @@ impl AwProjectMetalExecutor {
                     "AWProject backend 'metal' failed to create unique prediction pipeline: {error:?}"
                 ))
             })?;
+        let unique_prediction_i16_function_name =
+            objc2_foundation::NSString::from_str("awproject_predict_unique_plans_i16");
+        let unique_prediction_i16_function = library
+            .newFunctionWithName(&unique_prediction_i16_function_name)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "AWProject backend 'metal' scaled-i16 prediction entry point was not found"
+                        .to_string(),
+                )
+            })?;
+        let unique_prediction_i16_pipeline = device
+            .newComputePipelineStateWithFunction_error(&unique_prediction_i16_function)
+            .map_err(|error| {
+                ImagingError::Unsupported(format!(
+                    "AWProject backend 'metal' failed to create scaled-i16 prediction pipeline: {error:?}"
+                ))
+            })?;
         let unique_prediction_scatter_function_name =
             objc2_foundation::NSString::from_str("awproject_scatter_unique_predictions");
         let unique_prediction_scatter_function = library
@@ -19122,6 +19271,23 @@ impl AwProjectMetalExecutor {
                     "AWProject backend 'metal' failed to create tile-grid probe pipeline: {error:?}"
                 ))
             })?;
+        let tile_i16_function_name =
+            objc2_foundation::NSString::from_str("awproject_grid_mtmfs_tiles_i16");
+        let tile_i16_function = library
+            .newFunctionWithName(&tile_i16_function_name)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "AWProject backend 'metal' scaled-i16 tile entry point was not found"
+                        .to_string(),
+                )
+            })?;
+        let tile_i16_pipeline = device
+            .newComputePipelineStateWithFunction_error(&tile_i16_function)
+            .map_err(|error| {
+                ImagingError::Unsupported(format!(
+                    "AWProject backend 'metal' failed to create scaled-i16 tile pipeline: {error:?}"
+                ))
+            })?;
         let initial_grouped_tile_function_name =
             objc2_foundation::NSString::from_str("awproject_grid_initial_grouped_tiles");
         let initial_grouped_tile_function = library
@@ -19180,11 +19346,13 @@ impl AwProjectMetalExecutor {
             finalize_pipeline,
             prediction_pipeline,
             unique_prediction_pipeline,
+            unique_prediction_i16_pipeline,
             unique_prediction_scatter_pipeline,
             incremental_model_pipeline,
             selected_model_row_pipeline,
             selected_model_finish_pipeline,
             tile_pipeline,
+            tile_i16_pipeline,
             initial_grouped_tile_pipeline,
             initial_grouped_high_only_pipeline,
             predicted_tile_pipeline,
@@ -19726,8 +19894,13 @@ impl AwProjectMetalExecutor {
             ));
         }
         let started = Instant::now();
-        let unique_prediction_thread_width = self
-            .unique_prediction_pipeline
+        let kernel_storage = batch.kernel_storage()?;
+        let selected_unique_prediction_pipeline = if kernel_storage.is_quantized() {
+            &self.unique_prediction_i16_pipeline
+        } else {
+            &self.unique_prediction_pipeline
+        };
+        let unique_prediction_thread_width = selected_unique_prediction_pipeline
             .threadExecutionWidth()
             .max(1);
         let unique_program = if audit_generation.is_none() && wide_division_generation.is_some() {
@@ -19784,7 +19957,15 @@ impl AwProjectMetalExecutor {
             })?,
         };
         let sample_bytes = mem::size_of_val(batch.samples.as_slice());
-        let kernel_bytes = mem::size_of_val(batch.kernels.as_slice());
+        let kernel_scale_bytes = std::mem::size_of_val(kernel_storage.scales());
+        let kernel_bytes = kernel_storage
+            .byte_len()
+            .checked_sub(kernel_scale_bytes)
+            .ok_or_else(|| {
+                ImagingError::Normalization(
+                    "AWProject prediction kernel scales exceed kernel storage".to_string(),
+                )
+            })?;
         let phase_bytes = mem::size_of_val(batch.phases.as_slice());
         let model_bytes = mem::size_of_val(model_tt0_values);
         let result_bytes = batch
@@ -19875,10 +20056,19 @@ impl AwProjectMetalExecutor {
             "sample",
         )?;
         let kernel_buffer = wrap_shared(
-            batch.kernels.as_ptr().cast::<c_void>(),
+            kernel_storage.as_ptr().cast::<c_void>(),
             kernel_bytes,
             "kernel",
         )?;
+        let kernel_scale_buffer = if kernel_storage.is_quantized() {
+            Some(wrap_shared(
+                kernel_storage.scales().as_ptr().cast::<c_void>(),
+                kernel_scale_bytes,
+                "kernel scale",
+            )?)
+        } else {
+            None
+        };
         let phase_buffer = wrap_shared(
             batch.phases.as_ptr().cast::<c_void>(),
             phase_bytes,
@@ -20033,7 +20223,7 @@ impl AwProjectMetalExecutor {
                     "AWProject Metal unique prediction could not create an encoder".to_string(),
                 )
             })?;
-            encoder.setComputePipelineState(&self.unique_prediction_pipeline);
+            encoder.setComputePipelineState(selected_unique_prediction_pipeline);
             unsafe {
                 encoder.setBuffer_offset_atIndex(Some(work_plan_buffer), 0, 0);
                 encoder.setBuffer_offset_atIndex(Some(&kernel_buffer), 0, 1);
@@ -20042,9 +20232,9 @@ impl AwProjectMetalExecutor {
                 encoder.setBuffer_offset_atIndex(Some(prediction_buffer), 0, 4);
                 encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 5);
                 encoder.setBuffer_offset_atIndex(Some(&phase_buffer), 0, 6);
+                encoder.setBuffer_offset_atIndex(kernel_scale_buffer.as_deref(), 0, 7);
             }
-            let max_threads = self
-                .unique_prediction_pipeline
+            let max_threads = selected_unique_prediction_pipeline
                 .maxTotalThreadsPerThreadgroup()
                 .max(1);
             if unique_prediction_thread_width > max_threads {
@@ -20106,6 +20296,12 @@ impl AwProjectMetalExecutor {
             );
             scatter.endEncoding();
         } else {
+            if kernel_storage.is_quantized() {
+                return Err(ImagingError::InvalidRequest(
+                    "scaled-i16 AWProject prediction requires the grouped unique-plan path"
+                        .to_string(),
+                ));
+            }
             let encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
                 ImagingError::Unsupported(
                     "AWProject Metal prediction could not create a compute encoder".to_string(),
@@ -20736,7 +20932,7 @@ impl AwProjectMetalExecutor {
 
         let AwProjectMetalTileDispatch {
             batch,
-            kernels,
+            kernel_storage,
             tile_plan: source_tile_plan,
             aot_grouped_tile,
         } = dispatch;
@@ -20851,7 +21047,15 @@ impl AwProjectMetalExecutor {
             } else {
                 awproject_metal_fixed_scales(
                     &batch.samples,
-                    kernels,
+                    match kernel_storage {
+                        AwProjectMetalKernelStorage::Float32(kernels) => kernels,
+                        AwProjectMetalKernelStorage::Int16Scaled { .. } => {
+                            return Err(ImagingError::InvalidRequest(
+                                "non-AOT tile grouping cannot consume quantized kernels"
+                                    .to_string(),
+                            ));
+                        }
+                    },
                     &batch.phases,
                     &batch.term_weights,
                     scale_params,
@@ -20902,7 +21106,15 @@ impl AwProjectMetalExecutor {
             )));
         }
         let group_bytes = mem::size_of_val(grouped.groups.as_slice());
-        let kernel_bytes = mem::size_of_val(kernels);
+        let kernel_scale_bytes = std::mem::size_of_val(kernel_storage.scales());
+        let kernel_bytes = kernel_storage
+            .byte_len()
+            .checked_sub(kernel_scale_bytes)
+            .ok_or_else(|| {
+                ImagingError::Normalization(
+                    "AWProject Metal kernel scale bytes exceed kernel storage".to_string(),
+                )
+            })?;
         let phase_bytes = mem::size_of_val(batch.phases.as_slice());
         let active_tile_bytes = mem::size_of_val(tile_plan.active_tile_ids.as_slice());
         let offset_bytes = mem::size_of_val(tile_plan.tile_fragment_offsets.as_slice());
@@ -20935,6 +21147,7 @@ impl AwProjectMetalExecutor {
                     [
                         group_bytes,
                         kernel_bytes,
+                        kernel_scale_bytes,
                         phase_bytes,
                         active_tile_bytes,
                         offset_bytes,
@@ -20998,7 +21211,20 @@ impl AwProjectMetalExecutor {
             group_bytes,
             "grouped plan",
         )?;
-        let kernel_buffer = wrap_shared(kernels.as_ptr().cast::<c_void>(), kernel_bytes, "kernel")?;
+        let kernel_buffer = wrap_shared(
+            kernel_storage.as_ptr().cast::<c_void>(),
+            kernel_bytes,
+            "kernel",
+        )?;
+        let kernel_scale_buffer = if kernel_storage.is_quantized() {
+            Some(wrap_shared(
+                kernel_storage.scales().as_ptr().cast::<c_void>(),
+                kernel_scale_bytes,
+                "kernel scale",
+            )?)
+        } else {
+            None
+        };
         let phase_buffer = wrap_shared(
             batch.phases.as_ptr().cast::<c_void>(),
             phase_bytes,
@@ -21112,7 +21338,11 @@ impl AwProjectMetalExecutor {
                 "AWProject Metal tile-grid could not create a compute encoder".to_string(),
             )
         })?;
-        encoder.setComputePipelineState(&self.tile_pipeline);
+        encoder.setComputePipelineState(if kernel_storage.is_quantized() {
+            &self.tile_i16_pipeline
+        } else {
+            &self.tile_pipeline
+        });
         unsafe {
             encoder.setBuffer_offset_atIndex(Some(&group_buffer), 0, 0);
             encoder.setBuffer_offset_atIndex(Some(&kernel_buffer), 0, 1);
@@ -21134,6 +21364,7 @@ impl AwProjectMetalExecutor {
             encoder.setBuffer_offset_atIndex(Some(&inverse_scales_buffer), 0, 9);
             encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 10);
             encoder.setBuffer_offset_atIndex(Some(&phase_buffer), 0, 11);
+            encoder.setBuffer_offset_atIndex(kernel_scale_buffer.as_deref(), 0, 12);
         }
         encoder.dispatchThreadgroups_threadsPerThreadgroup(
             MTLSize {
@@ -22283,6 +22514,32 @@ static inline float2 aw_phased_tap(
     return aw_complex_multiply(value, pointing_phase);
 }
 
+static inline float2 aw_i16_phased_tap(
+    AwPhasePlan phase,
+    device const short2 *kernels,
+    device const float2 *phases,
+    device const float *kernel_scales,
+    uint kernel_base,
+    uint scale_index,
+    uint phase_x,
+    uint phase_y,
+    uint phase_offset
+) {
+    const float2 value = float2(kernels[kernel_base + phase_offset])
+        * kernel_scales[scale_index];
+    if (phase.base == 0xffffffffu) {
+        return value;
+    }
+    const float2 pointing_phase =
+        phase.y_base == 0xffffffffu
+            ? phases[phase.base + phase_offset]
+            : aw_complex_multiply(
+                phases[phase.base + phase_x],
+                phases[phase.y_base + phase_y]
+            );
+    return aw_complex_multiply(value, pointing_phase);
+}
+
 static inline AwWideDivisionTerm aw_degrid_prediction_raw(
     AwPredictionPlan plan,
     device const float2 *kernels,
@@ -22363,6 +22620,35 @@ static inline float2 aw_cohort_phased_tap(
     return aw_complex_multiply(kernel_value, pointing_phase);
 }
 
+static inline float2 aw_i16_cohort_phased_tap(
+    AwPredictionPlan plan,
+    device const short2 *kernels,
+    device const float2 *phases,
+    device const float *kernel_scales,
+    float2 separable_phase,
+    uint tap_offset,
+    ushort kernel_leader_lane,
+    ushort lane
+) {
+    float2 kernel_value = float2(0.0f);
+    if (lane == kernel_leader_lane) {
+        kernel_value = float2(kernels[plan.kernel_base + tap_offset])
+            * kernel_scales[plan._pad0];
+    }
+    kernel_value = float2(
+        simd_shuffle(kernel_value.x, kernel_leader_lane),
+        simd_shuffle(kernel_value.y, kernel_leader_lane)
+    );
+    if (plan.phase.base == 0xffffffffu) {
+        return kernel_value;
+    }
+    const float2 pointing_phase =
+        plan.phase.y_base == 0xffffffffu
+            ? phases[plan.phase.base + tap_offset]
+            : separable_phase;
+    return aw_complex_multiply(kernel_value, pointing_phase);
+}
+
 static inline float2 aw_separable_phase_step(float2 x0, float2 x1) {
     const float denominator =
         fma(x0.x, x0.x, 0.0f) + fma(x0.y, x0.y, 0.0f);
@@ -22414,6 +22700,63 @@ static inline AwWideDivisionTerm aw_degrid_prediction_raw_cohort(
                     kernel_leader_lane,
                     lane
                 );
+            ++tap_offset;
+            const float2 conjugate_kernel = float2(kernel_value.x, -kernel_value.y);
+            const uint grid_index =
+                grid_x * params.model_stride_x + grid_y * params.model_stride_y;
+            value += aw_complex_multiply(conjugate_kernel, model[grid_index]);
+            if (separable_phase) {
+                row_phase = aw_complex_multiply(row_phase, phase_x_step);
+            }
+        }
+    }
+    AwWideDivisionTerm raw;
+    raw.numerator = value;
+    raw.normalizer = float2(plan.normalization_re, plan.normalization_im);
+    raw.current_f32 = float2(0.0f);
+    return raw;
+}
+
+static inline AwWideDivisionTerm aw_degrid_prediction_raw_cohort_i16(
+    AwPredictionWorkPlan work,
+    device const short2 *kernels,
+    device const float2 *phases,
+    device const float *kernel_scales,
+    device const float2 *model,
+    constant AwPredictionParams &params,
+    ushort lane
+) {
+    const AwPredictionPlan plan = work.plan;
+    const ushort kernel_leader_lane = ushort(work.kernel_leader_lane);
+    const bool separable_phase =
+        plan.phase.base != 0xffffffffu && plan.phase.y_base != 0xffffffffu;
+    const float2 phase_x0 =
+        separable_phase ? phases[plan.phase.base] : float2(1.0f, 0.0f);
+    const float2 phase_x_step =
+        separable_phase && plan.x_support != 0u
+            ? aw_separable_phase_step(phase_x0, phases[plan.phase.base + 1u])
+            : float2(1.0f, 0.0f);
+    float2 value = float2(0.0f);
+    uint tap_offset = 0u;
+    uint tap_y = 0u;
+    for (int iy = -int(plan.y_support); iy <= int(plan.y_support); ++iy, ++tap_y) {
+        const uint grid_y = uint(plan.loc_y + iy);
+        float2 row_phase =
+            separable_phase
+                ? aw_complex_multiply(phase_x0, phases[plan.phase.y_base + tap_y])
+                : float2(1.0f, 0.0f);
+        for (int ix = -int(plan.x_support); ix <= int(plan.x_support); ++ix) {
+            const uint grid_x = uint(plan.loc_x + ix);
+            const float2 kernel_value = aw_i16_cohort_phased_tap(
+                plan,
+                kernels,
+                phases,
+                kernel_scales,
+                row_phase,
+                tap_offset,
+                kernel_leader_lane,
+                lane
+            );
             ++tap_offset;
             const float2 conjugate_kernel = float2(kernel_value.x, -kernel_value.y);
             const uint grid_index =
@@ -22553,6 +22896,32 @@ kernel void awproject_predict_unique_plans(
         aw_degrid_prediction_raw_cohort(work, kernels, phases, model_tt0, params, lane);
     const AwWideDivisionTerm model_term1 =
         aw_degrid_prediction_raw_cohort(work, kernels, phases, model_tt1, params, lane);
+    if (work.active != 0u) {
+        predictions[work.prediction_ordinal].model_term0_numerator = model_term0.numerator;
+        predictions[work.prediction_ordinal].model_term1_numerator = model_term1.numerator;
+    }
+}
+
+kernel void awproject_predict_unique_plans_i16(
+    device const AwPredictionWorkPlan *work_plans [[buffer(0)]],
+    device const short2 *kernels [[buffer(1)]],
+    device const float2 *model_tt0 [[buffer(2)]],
+    device const float2 *model_tt1 [[buffer(3)]],
+    device AwUniquePrediction *predictions [[buffer(4)]],
+    constant AwPredictionParams &params [[buffer(5)]],
+    device const float2 *phases [[buffer(6)]],
+    device const float *kernel_scales [[buffer(7)]],
+    uint dispatch_index [[thread_position_in_grid]],
+    ushort lane [[thread_index_in_simdgroup]]
+) {
+    if (dispatch_index >= params.padded_dispatch_count) {
+        return;
+    }
+    const AwPredictionWorkPlan work = work_plans[dispatch_index];
+    const AwWideDivisionTerm model_term0 = aw_degrid_prediction_raw_cohort_i16(
+        work, kernels, phases, kernel_scales, model_tt0, params, lane);
+    const AwWideDivisionTerm model_term1 = aw_degrid_prediction_raw_cohort_i16(
+        work, kernels, phases, kernel_scales, model_tt1, params, lane);
     if (work.active != 0u) {
         predictions[work.prediction_ordinal].model_term0_numerator = model_term0.numerator;
         predictions[work.prediction_ordinal].model_term1_numerator = model_term1.numerator;
@@ -22784,6 +23153,37 @@ static inline bool aw_tile_plan_tap(
     return true;
 }
 
+static inline bool aw_tile_plan_tap_i16(
+    AwPlan plan,
+    uint grid_x,
+    uint grid_y,
+    device const short2 *kernels,
+    device const float2 *phases,
+    device const float *kernel_scales,
+    thread float2 &tap
+) {
+    const int delta_x = int(grid_x) - plan.loc_x;
+    const int delta_y = int(grid_y) - plan.loc_y;
+    if (abs(delta_x) > int(plan.x_support) || abs(delta_y) > int(plan.y_support)) {
+        return false;
+    }
+    const uint tap_x = uint(delta_x + int(plan.x_support));
+    const uint tap_y = uint(delta_y + int(plan.y_support));
+    const uint tap_width = 2u * plan.x_support + 1u;
+    tap = aw_i16_phased_tap(
+        plan.phase,
+        kernels,
+        phases,
+        kernel_scales,
+        plan.kernel_base,
+        plan._pad0,
+        tap_x,
+        tap_y,
+        tap_y * tap_width + tap_x
+    );
+    return true;
+}
+
 static inline void aw_tile_add_fixed(
     device float *output,
     device float *compensation,
@@ -22902,6 +23302,71 @@ kernel void awproject_grid_mtmfs_tiles(
         fixed_tt1.y,
         inverse_scales[1]
     );
+}
+
+kernel void awproject_grid_mtmfs_tiles_i16(
+    device const AwGroupedTilePlan *groups [[buffer(0)]],
+    device const short2 *kernels [[buffer(1)]],
+    device const uint *active_tile_ids [[buffer(3)]],
+    device const uint *tile_fragment_offsets [[buffer(4)]],
+    device const uint *fragments [[buffer(5)]],
+    device float *output [[buffer(6)]],
+    device float *compensation [[buffer(7)]],
+    device const float *fixed_scales [[buffer(8)]],
+    device const float *inverse_scales [[buffer(9)]],
+    constant AwTileParams &params [[buffer(10)]],
+    device const float2 *phases [[buffer(11)]],
+    device const float *kernel_scales [[buffer(12)]],
+    uint local_index [[thread_index_in_threadgroup]],
+    uint active_tile_index [[threadgroup_position_in_grid]]
+) {
+    if (active_tile_index >= params.active_tile_count || params.nterms != 2u) {
+        return;
+    }
+    const uint tile_id = active_tile_ids[active_tile_index];
+    const uint tile_x = tile_id / params.tiles_y;
+    const uint tile_y = tile_id % params.tiles_y;
+    const uint local_x = local_index % params.tile_side;
+    const uint local_y = local_index / params.tile_side;
+    const uint grid_x = tile_x * params.tile_side + local_x;
+    const uint grid_y = tile_y * params.tile_side + local_y;
+    if (grid_x >= params.grid_width || grid_y >= params.grid_height) {
+        return;
+    }
+
+    long2 fixed_tt0 = long2(0);
+    long2 fixed_tt1 = long2(0);
+    const uint fragment_start = tile_fragment_offsets[active_tile_index];
+    const uint fragment_end = tile_fragment_offsets[active_tile_index + 1u];
+    for (uint fragment_index = fragment_start;
+         fragment_index < fragment_end;
+         ++fragment_index) {
+        const AwGroupedTilePlan group = groups[fragments[fragment_index]];
+        float2 tap;
+        if (!aw_tile_plan_tap_i16(
+                group.plan,
+                grid_x,
+                grid_y,
+                kernels,
+                phases,
+                kernel_scales,
+                tap)) {
+            continue;
+        }
+        fixed_tt0 += aw_complex_product_fixed64(group.tt0, tap, fixed_scales[0]);
+        fixed_tt1 += aw_complex_product_fixed64(group.tt1, tap, fixed_scales[1]);
+    }
+
+    const uint fft_x = (grid_x + params.grid_width / 2u) % params.grid_width;
+    const uint fft_y = (grid_y + params.grid_height / 2u) % params.grid_height;
+    const uint cell_count = params.grid_width * params.grid_height;
+    const uint cell = fft_x * params.grid_height + fft_y;
+    const uint tt0_scalar = cell * 2u;
+    const uint tt1_scalar = (cell_count + cell) * 2u;
+    aw_tile_add_fixed(output, compensation, tt0_scalar, fixed_tt0.x, inverse_scales[0]);
+    aw_tile_add_fixed(output, compensation, tt0_scalar + 1u, fixed_tt0.y, inverse_scales[0]);
+    aw_tile_add_fixed(output, compensation, tt1_scalar, fixed_tt1.x, inverse_scales[1]);
+    aw_tile_add_fixed(output, compensation, tt1_scalar + 1u, fixed_tt1.y, inverse_scales[1]);
 }
 
 kernel void awproject_grid_initial_grouped_tiles(
@@ -27027,6 +27492,14 @@ fn compile_awproject_metal_aot_grouped_tile(
             compact_kernel_stencils: 0,
             compact_kernel_plan_references: 0,
             compact_kernel_scratch_bytes: 0,
+            i16_kernel_atlas_bytes: 0,
+            i16_kernel_scale_bytes: 0,
+            i16_kernel_values: 0,
+            i16_kernel_stencils: 0,
+            i16_kernel_nrmse: 0.0,
+            i16_kernel_max_abs_error: 0.0,
+            i16_kernel_zeroed_components: 0,
+            i16_kernel_compile_overlap_bytes: 0,
         },
     };
     let group_sums = vec![[0.0; 4]; grouped.groups.len()];
@@ -27055,6 +27528,20 @@ struct AwProjectMetalKernelAtlasCompaction {
     plan_references: usize,
     scratch_bytes: usize,
     applied: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+struct AwProjectMetalI16KernelQuantization {
+    f32_bytes: usize,
+    i16_bytes: usize,
+    scale_bytes: usize,
+    values: usize,
+    stencils: usize,
+    nrmse: f64,
+    max_abs_error: f64,
+    zeroed_components: usize,
+    compile_overlap_bytes: usize,
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -27294,6 +27781,389 @@ fn compact_awproject_metal_aot_kernel_atlas(
     aot.receipt.ledger.compact_kernel_plan_references = stats.plan_references;
     aot.receipt.ledger.compact_kernel_scratch_bytes = stats.scratch_bytes;
     Ok(stats)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_metal_max_effective_i16_kernel_norm(
+    plans: impl IntoIterator<Item = AwProjectMetalPlan>,
+    kernels: &[AwProjectMetalI16Complex],
+    scales: &[f32],
+    phases: &[WProjectMetalComplex],
+) -> Result<f64, ImagingError> {
+    let mut seen = HashSet::new();
+    let mut maximum = 0.0f64;
+    for plan in plans {
+        let identity = (
+            plan.kernel_base,
+            plan._pad0,
+            plan.phase.base,
+            plan.phase.y_base,
+            plan.x_support,
+            plan.y_support,
+        );
+        if !seen.insert(identity) {
+            continue;
+        }
+        let width = usize::try_from(plan.x_support)
+            .ok()
+            .and_then(|support| support.checked_mul(2))
+            .and_then(|value| value.checked_add(1))
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject i16 residual kernel width overflowed".to_string(),
+                )
+            })?;
+        let height = usize::try_from(plan.y_support)
+            .ok()
+            .and_then(|support| support.checked_mul(2))
+            .and_then(|value| value.checked_add(1))
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject i16 residual kernel height overflowed".to_string(),
+                )
+            })?;
+        let base = usize::try_from(plan.kernel_base).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject i16 residual kernel base exceeds usize".to_string(),
+            )
+        })?;
+        let scale = scales
+            .get(usize::try_from(plan._pad0).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "AWProject i16 residual scale index exceeds usize".to_string(),
+                )
+            })?)
+            .copied()
+            .ok_or_else(|| {
+                ImagingError::Normalization(
+                    "AWProject i16 residual plan escaped the scale table".to_string(),
+                )
+            })?;
+        for tap_y in 0..height {
+            for tap_x in 0..width {
+                let tap_offset = tap_y * width + tap_x;
+                let kernel = kernels
+                    .get(base.checked_add(tap_offset).ok_or_else(|| {
+                        ImagingError::InvalidRequest(
+                            "AWProject i16 residual kernel index overflowed".to_string(),
+                        )
+                    })?)
+                    .copied()
+                    .ok_or_else(|| {
+                        ImagingError::Normalization(
+                            "AWProject i16 residual kernel plan escaped the atlas".to_string(),
+                        )
+                    })?;
+                let kernel = WProjectMetalComplex {
+                    re: f32::from(kernel.re) * scale,
+                    im: f32::from(kernel.im) * scale,
+                };
+                let phase =
+                    awproject_metal_phase_value(plan.phase, phases, tap_x, tap_y, tap_offset)?;
+                let value = Complex32::new(kernel.re, kernel.im) * phase;
+                maximum = maximum.max(f64::from(value.re).hypot(f64::from(value.im)));
+            }
+        }
+    }
+    if !(maximum.is_finite() && maximum > 0.0) {
+        return Err(ImagingError::Normalization(
+            "AWProject i16 residual kernel atlas has no finite non-zero values".to_string(),
+        ));
+    }
+    Ok(maximum)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn quantize_awproject_metal_aot_kernel_atlas_i16(
+    program: &mut AwProjectMetalResidentProgram,
+    compile_admission_limit_bytes: usize,
+) -> Result<AwProjectMetalI16KernelQuantization, ImagingError> {
+    if !program.prediction_batch.quantized_kernels.is_empty()
+        || !program.prediction_batch.kernel_scales.is_empty()
+    {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject residual kernel atlas was quantized more than once".to_string(),
+        ));
+    }
+    if program.prediction_batch.kernels.is_empty() {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject residual i16 quantization requires a compact f32 atlas".to_string(),
+        ));
+    }
+    if program
+        .aot_grouped_tile
+        .as_ref()
+        .is_none_or(|aot| aot.grouped.groups.is_empty())
+    {
+        return Err(ImagingError::InvalidRequest(
+            "AWProject residual i16 quantization requires a sealed AOT route".to_string(),
+        ));
+    }
+    let source = &program.prediction_batch.kernels;
+    let f32_bytes = source
+        .capacity()
+        .checked_mul(std::mem::size_of::<WProjectMetalComplex>())
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject f32 residual kernel byte count overflowed".to_string(),
+            )
+        })?;
+    let stencils = {
+        let aot = program
+            .aot_grouped_tile
+            .as_ref()
+            .expect("AOT route checked above");
+        program
+            .prediction_batch
+            .samples
+            .iter()
+            .flat_map(|sample| [sample.first_prediction, sample.second_prediction])
+            .map(|plan| (plan.kernel_base, plan.x_support, plan.y_support))
+            .chain(aot.grouped.groups.iter().map(|group| {
+                (
+                    group.plan.kernel_base,
+                    group.plan.x_support,
+                    group.plan.y_support,
+                )
+            }))
+            .collect::<BTreeSet<_>>()
+    };
+    let planned_i16_bytes = source
+        .len()
+        .checked_mul(std::mem::size_of::<AwProjectMetalI16Complex>())
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject i16 residual kernel byte count overflowed".to_string(),
+            )
+        })?;
+    let planned_scale_bytes = stencils
+        .len()
+        .checked_mul(std::mem::size_of::<f32>())
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject i16 residual scale byte count overflowed".to_string(),
+            )
+        })?;
+    let compile_overlap_bytes = program
+        .resident_bytes()
+        .checked_add(planned_i16_bytes)
+        .and_then(|bytes| bytes.checked_add(planned_scale_bytes))
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject i16 residual kernel conversion overlap overflowed".to_string(),
+            )
+        })?;
+    if compile_overlap_bytes > compile_admission_limit_bytes {
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject i16 residual kernel conversion overlap {compile_overlap_bytes} exceeds its {compile_admission_limit_bytes}-byte compile ceiling"
+        )));
+    }
+
+    let mut quantized = Vec::with_capacity(source.len());
+    let mut scales = Vec::with_capacity(stencils.len());
+    let mut scale_indices = BTreeMap::new();
+    let mut source_energy = 0.0f64;
+    let mut error_energy = 0.0f64;
+    let mut max_abs_error = 0.0f64;
+    let mut zeroed_components = 0usize;
+    for stencil in stencils {
+        let (kernel_base, x_support, y_support) = stencil;
+        let base = usize::try_from(kernel_base).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject i16 residual kernel base exceeds usize".to_string(),
+            )
+        })?;
+        if base != quantized.len() {
+            return Err(ImagingError::Normalization(format!(
+                "AWProject dense residual atlas is not contiguous at base {base}, expected {}",
+                quantized.len(),
+            )));
+        }
+        let tap_count = awproject_metal_effective_support_tap_count(x_support, y_support)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject i16 residual stencil tap count overflowed".to_string(),
+                )
+            })?;
+        let end = base.checked_add(tap_count).ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject i16 residual stencil range overflowed".to_string(),
+            )
+        })?;
+        let values = source.get(base..end).ok_or_else(|| {
+            ImagingError::Normalization(
+                "AWProject i16 residual stencil escaped the dense atlas".to_string(),
+            )
+        })?;
+        let peak = values.iter().try_fold(0.0f32, |peak, value| {
+            if !(value.re.is_finite() && value.im.is_finite()) {
+                return Err(ImagingError::Normalization(
+                    "AWProject i16 residual quantization received a non-finite tap".to_string(),
+                ));
+            }
+            Ok(peak.max(value.re.abs()).max(value.im.abs()))
+        })?;
+        let scale = if peak == 0.0 { 1.0 } else { peak / 32767.0 };
+        if !(scale.is_finite() && scale > 0.0) {
+            return Err(ImagingError::Normalization(
+                "AWProject i16 residual quantization produced an invalid scale".to_string(),
+            ));
+        }
+        let scale_index = u32::try_from(scales.len()).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject i16 residual scale count exceeds u32".to_string(),
+            )
+        })?;
+        scale_indices.insert(stencil, scale_index);
+        scales.push(scale);
+        for &value in values {
+            let quantize =
+                |component: f32| (component / scale).round().clamp(-32767.0, 32767.0) as i16;
+            let packed = AwProjectMetalI16Complex {
+                re: quantize(value.re),
+                im: quantize(value.im),
+            };
+            let restored = WProjectMetalComplex {
+                re: f32::from(packed.re) * scale,
+                im: f32::from(packed.im) * scale,
+            };
+            for (original, restored) in [(value.re, restored.re), (value.im, restored.im)] {
+                let original = f64::from(original);
+                let restored = f64::from(restored);
+                let error = restored - original;
+                source_energy += original * original;
+                error_energy += error * error;
+                max_abs_error = max_abs_error.max(error.abs());
+                if original != 0.0 && restored == 0.0 {
+                    zeroed_components = zeroed_components.saturating_add(1);
+                }
+            }
+            quantized.push(packed);
+        }
+    }
+    if quantized.len() != source.len() {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject i16 residual atlas materialized {} values, expected {}",
+            quantized.len(),
+            source.len(),
+        )));
+    }
+    quantized.shrink_to_fit();
+    scales.shrink_to_fit();
+    let i16_bytes = quantized
+        .capacity()
+        .checked_mul(std::mem::size_of::<AwProjectMetalI16Complex>())
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject i16 residual kernel resident byte count overflowed".to_string(),
+            )
+        })?;
+    let scale_bytes = scales
+        .capacity()
+        .checked_mul(std::mem::size_of::<f32>())
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject i16 residual scale resident byte count overflowed".to_string(),
+            )
+        })?;
+    let actual_overlap_bytes = program
+        .resident_bytes()
+        .checked_add(i16_bytes)
+        .and_then(|bytes| bytes.checked_add(scale_bytes))
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject i16 residual kernel actual overlap overflowed".to_string(),
+            )
+        })?;
+    if actual_overlap_bytes > compile_admission_limit_bytes {
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject i16 residual kernel actual overlap {actual_overlap_bytes} exceeds its {compile_admission_limit_bytes}-byte compile ceiling"
+        )));
+    }
+    let nrmse = if source_energy == 0.0 {
+        0.0
+    } else {
+        (error_energy / source_energy).sqrt()
+    };
+    if !(nrmse.is_finite() && nrmse <= 1.0e-3) {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject i16 residual kernel NRMSE {nrmse:.9e} exceeds 1e-3"
+        )));
+    }
+
+    let remap_prediction = |plan: &mut AwProjectMetalPredictionPlan| -> Result<(), ImagingError> {
+        plan._pad0 = *scale_indices
+            .get(&(plan.kernel_base, plan.x_support, plan.y_support))
+            .ok_or_else(|| {
+                ImagingError::Normalization(
+                    "AWProject i16 residual scale table lost a prediction stencil".to_string(),
+                )
+            })?;
+        Ok(())
+    };
+    for sample in &mut program.prediction_batch.samples {
+        remap_prediction(&mut sample.first_prediction)?;
+        remap_prediction(&mut sample.second_prediction)?;
+    }
+    let aot = program
+        .aot_grouped_tile
+        .as_mut()
+        .expect("AOT route checked above");
+    for group in &mut aot.grouped.groups {
+        group.plan._pad0 = *scale_indices
+            .get(&(
+                group.plan.kernel_base,
+                group.plan.x_support,
+                group.plan.y_support,
+            ))
+            .ok_or_else(|| {
+                ImagingError::Normalization(
+                    "AWProject i16 residual scale table lost a grouped stencil".to_string(),
+                )
+            })?;
+    }
+    aot.receipt.grouped_plans_sha256 = hash_awproject_copy_slice(&aot.grouped.groups);
+    let max_kernel_norm = {
+        let aot = program
+            .aot_grouped_tile
+            .as_ref()
+            .expect("AOT route checked above");
+        awproject_metal_max_effective_i16_kernel_norm(
+            aot.grouped.groups.iter().map(|group| group.plan),
+            &quantized,
+            &scales,
+            &program.tile_batch.phases,
+        )?
+    };
+    program.residual_scale_plan.max_kernel_norm = max_kernel_norm;
+    let values = quantized.len();
+    let stencil_count = scales.len();
+    program.prediction_batch.quantized_kernels = quantized;
+    program.prediction_batch.kernel_scales = scales;
+    program.prediction_batch.kernels = Vec::new();
+    let aot = program
+        .aot_grouped_tile
+        .as_mut()
+        .expect("AOT route checked above");
+    aot.receipt.ledger.i16_kernel_atlas_bytes = i16_bytes;
+    aot.receipt.ledger.i16_kernel_scale_bytes = scale_bytes;
+    aot.receipt.ledger.i16_kernel_values = values;
+    aot.receipt.ledger.i16_kernel_stencils = stencil_count;
+    aot.receipt.ledger.i16_kernel_nrmse = nrmse;
+    aot.receipt.ledger.i16_kernel_max_abs_error = max_abs_error;
+    aot.receipt.ledger.i16_kernel_zeroed_components = zeroed_components;
+    aot.receipt.ledger.i16_kernel_compile_overlap_bytes = actual_overlap_bytes;
+    Ok(AwProjectMetalI16KernelQuantization {
+        f32_bytes,
+        i16_bytes,
+        scale_bytes,
+        values,
+        stencils: stencil_count,
+        nrmse,
+        max_abs_error,
+        zeroed_components,
+        compile_overlap_bytes: actual_overlap_bytes,
+    })
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -29172,6 +30042,8 @@ impl AwProjectMetalGlobalProgramBuilder {
                     mut source_sample_indices,
                     mut cf_metadata,
                     kernels: _,
+                    quantized_kernels: source_quantized_kernels,
+                    kernel_scales: source_kernel_scales,
                     phases: source_prediction_phases,
                 },
             tile_batch:
@@ -29185,6 +30057,11 @@ impl AwProjectMetalGlobalProgramBuilder {
             metadata,
             ..
         } = program;
+        if !source_quantized_kernels.is_empty() || !source_kernel_scales.is_empty() {
+            return Err(ImagingError::InvalidRequest(
+                "raw-CF AWProject builder cannot absorb a sealed quantized program".to_string(),
+            ));
+        }
         if source_samples.len() != samples.len() || samples.len() != tile_samples.len() {
             return Err(ImagingError::Normalization(format!(
                 "raw-CF AWProject builder received {} source, {} prediction, and {} imaging samples",
@@ -29289,6 +30166,8 @@ impl AwProjectMetalGlobalProgramBuilder {
                     mut source_sample_indices,
                     mut cf_metadata,
                     kernels: source_prediction_kernels,
+                    quantized_kernels: source_quantized_kernels,
+                    kernel_scales: source_kernel_scales,
                     phases: source_prediction_phases,
                 },
             tile_batch:
@@ -29302,6 +30181,11 @@ impl AwProjectMetalGlobalProgramBuilder {
             metadata,
             ..
         } = program;
+        if !source_quantized_kernels.is_empty() || !source_kernel_scales.is_empty() {
+            return Err(ImagingError::InvalidRequest(
+                "dense AWProject builder cannot absorb a sealed quantized program".to_string(),
+            ));
+        }
         if samples.len() != tile_samples.len() {
             return Err(ImagingError::Normalization(format!(
                 "global AWProject Metal builder received {} prediction samples and {} imaging samples",
@@ -29521,6 +30405,15 @@ impl AwProjectCompactReplayCache {
                     .to_string(),
             ));
         }
+        if !program.prediction_batch.kernels.is_empty()
+            || program.prediction_batch.quantized_kernels.is_empty()
+            || program.prediction_batch.kernel_scales.is_empty()
+        {
+            return Err(ImagingError::InvalidRequest(
+                "direct source-major retention requires exclusive scaled-i16 residual kernel ownership"
+                    .to_string(),
+            ));
+        }
         if self.source_major_last_block != Some(source_block_ordinal) {
             return Err(ImagingError::InvalidRequest(format!(
                 "direct source-major segment {source_block_ordinal} has no matching source-block ownership receipt"
@@ -29610,7 +30503,7 @@ impl AwProjectCompactReplayCache {
         self.source_major_direct_segments += 1;
         self.source_major_initial_receipts += 1;
         eprintln!(
-            "awproject_source_major_retention source_block={source_block_ordinal} segments={} program_bytes={program_bytes} retained_bytes={retained_after} retention_ceiling_bytes={} spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v4-high-only-dense-residual resident=true",
+            "awproject_source_major_retention source_block={source_block_ordinal} segments={} program_bytes={program_bytes} retained_bytes={retained_after} retention_ceiling_bytes={} spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v5-high-only-i16-residual resident=true",
             self.source_major_direct_segments, self.budget_bytes,
         );
         Ok(())
@@ -30872,7 +31765,7 @@ fn run_awproject_metal_tile_grid_probe(
                 &mut tile_compensation,
                 AwProjectMetalTileDispatch {
                     batch: &packed,
-                    kernels: &packed.kernels,
+                    kernel_storage: AwProjectMetalKernelStorage::Float32(&packed.kernels),
                     tile_plan: &tile_plan,
                     aot_grouped_tile: None,
                 },
@@ -38793,13 +39686,13 @@ fn replay_awproject_metal_global_program(
                 );
             }
         }
-        let imaging_kernels = program.imaging_kernels();
+        let imaging_kernel_storage = program.imaging_kernel_storage()?;
         let tile_stats = executor.dispatch_tile_grid_probe(
             grid,
             aw_compensation,
             AwProjectMetalTileDispatch {
                 batch: &program.tile_batch,
-                kernels: imaging_kernels,
+                kernel_storage: imaging_kernel_storage,
                 tile_plan: &program.tile_plan,
                 aot_grouped_tile: program.aot_grouped_tile.as_ref(),
             },
@@ -39054,7 +39947,7 @@ fn replay_awproject_metal_global_program(
         }
         let stats = AwProjectMetalResidentChainStats {
             samples: program.prediction_batch.samples.len(),
-            prediction_kernel_values: program.prediction_batch.kernels.len(),
+            prediction_kernel_values: program.prediction_batch.kernel_storage()?.len(),
             imaging_kernel_values: program.tile_batch.kernels.len(),
             active_tiles: tile_stats.active_tiles,
             fragments: tile_stats.fragments,
@@ -39873,7 +40766,9 @@ fn replay_awproject_compact_window(
                             aw_compensation,
                             AwProjectMetalTileDispatch {
                                 batch: &program.tile_batch,
-                                kernels: &program.tile_batch.kernels,
+                                kernel_storage: AwProjectMetalKernelStorage::Float32(
+                                    &program.tile_batch.kernels,
+                                ),
                                 tile_plan: &program.tile_plan,
                                 aot_grouped_tile: None,
                             },
@@ -39955,7 +40850,9 @@ fn replay_awproject_compact_window(
                             aw_compensation,
                             AwProjectMetalTileDispatch {
                                 batch: &program.tile_batch,
-                                kernels: &program.tile_batch.kernels,
+                                kernel_storage: AwProjectMetalKernelStorage::Float32(
+                                    &program.tile_batch.kernels,
+                                ),
                                 tile_plan: &program.tile_plan,
                                 aot_grouped_tile: None,
                             },
@@ -40762,7 +41659,7 @@ fn accumulate_awproject_source_major_block(
             classification_skipped_samples,
         )?;
         eprintln!(
-            "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples=0 initial_partitions=0 residual_segments=0 compact_windows=0 spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v4-high-only-dense-residual initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
+            "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples=0 initial_partitions=0 residual_segments=0 compact_windows=0 spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v5-high-only-i16-residual initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
             profile::millis(started.elapsed()),
         );
         replay_cache.log();
@@ -40812,6 +41709,29 @@ fn accumulate_awproject_source_major_block(
         kernel_compaction.scratch_bytes,
         kernel_compaction.applied,
     );
+    let quantization = quantize_awproject_metal_aot_kernel_atlas_i16(&mut program, compile_limit)?;
+    if !program.prediction_batch.kernels.is_empty()
+        || program.prediction_batch.quantized_kernels.len() != quantization.values
+        || program.prediction_batch.kernel_scales.len() != quantization.stencils
+    {
+        return Err(ImagingError::Normalization(
+            "source-major residual retention did not exclusively own its scaled-i16 kernel atlas"
+                .to_string(),
+        ));
+    }
+    eprintln!(
+        "awproject_source_major_kernel_i16 source_block={replay_block_ordinal} f32_bytes={} i16_bytes={} scale_bytes={} values={} stencils={} nrmse={:.9e} max_abs_error={:.9e} zeroed_components={} compile_overlap_bytes={} max_kernel_norm={:.9e} storage=per-stencil-scaled-i16-complex range=-32767:32767 conversion=metal-load-to-f32",
+        quantization.f32_bytes,
+        quantization.i16_bytes,
+        quantization.scale_bytes,
+        quantization.values,
+        quantization.stencils,
+        quantization.nrmse,
+        quantization.max_abs_error,
+        quantization.zeroed_components,
+        quantization.compile_overlap_bytes,
+        program.residual_scale_plan.max_kernel_norm,
+    );
     log_awproject_metal_aot_grouped_tile_compile(
         replay_cache.resident_metal_global_programs.len(),
         1,
@@ -40823,7 +41743,7 @@ fn accumulate_awproject_source_major_block(
     let initial_grid_bytes = initial_receipt.metal_stats.fixed_grid_bytes;
 
     eprintln!(
-        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes=0 imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v4-high-only-dense-residual initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
+        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes=0 imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} residual_i16_kernel_bytes={} residual_i16_scale_bytes={} retained_after_bytes={} retention_ceiling_bytes={} spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v5-high-only-i16-residual initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
         initial_receipt.imaging_owner_bytes,
         initial_receipt.weight_owner_bytes,
         initial_receipt.concurrent_owner_bytes,
@@ -40841,6 +41761,10 @@ fn accumulate_awproject_source_major_block(
         profile::millis(initial_receipt.imaging_group_elapsed),
         profile::millis(initial_receipt.weight_group_elapsed),
         profile::millis(initial_receipt.group_wall_elapsed),
+        quantization.i16_bytes,
+        quantization.scale_bytes,
+        replay_cache.resident_bytes.saturating_add(program_bytes),
+        replay_cache.budget_bytes,
         profile::millis(started.elapsed()),
     );
     accumulation
@@ -77693,6 +78617,8 @@ mod tests {
                 source_sample_indices: vec![7],
                 cf_metadata: Vec::new(),
                 kernels: kernels.clone(),
+                quantized_kernels: Vec::new(),
+                kernel_scales: Vec::new(),
                 phases: phases.clone(),
             },
             tile_batch: super::AwProjectMetalBatch {
@@ -77880,6 +78806,135 @@ mod tests {
             aot.receipt.grouped_plans_sha256,
             aot.receipt.legacy_grouped_plans_sha256
         );
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn source_major_scaled_i16_kernel_atlas_stays_within_science_and_memory_contract() {
+        let mut program = awproject_effective_support_test_program();
+        super::compile_awproject_metal_aot_grouped_tile(
+            &mut program,
+            super::AwProjectMetalEffectiveSupportConfig {
+                omitted_energy_fraction: 0.0,
+            },
+            8,
+            8,
+            usize::MAX,
+        )
+        .expect("exact AOT compile");
+        super::compact_awproject_metal_aot_kernel_atlas(&mut program, usize::MAX)
+            .expect("dense kernel compaction");
+        let compact = program.prediction_batch.kernels.clone();
+        let route_before = super::hash_awproject_grouped_route(
+            &program
+                .aot_grouped_tile
+                .as_ref()
+                .expect("compacted AOT")
+                .grouped
+                .tile_plan,
+        );
+        let mapping_before = program
+            .aot_grouped_tile
+            .as_ref()
+            .expect("compacted AOT")
+            .sample_role_groups
+            .clone();
+
+        let stats = super::quantize_awproject_metal_aot_kernel_atlas_i16(&mut program, usize::MAX)
+            .expect("scaled-i16 kernel quantization");
+
+        assert!(program.prediction_batch.kernels.is_empty());
+        assert_eq!(
+            program.prediction_batch.quantized_kernels.len(),
+            compact.len()
+        );
+        assert_eq!(stats.values, compact.len());
+        assert_eq!(stats.stencils, 2);
+        assert_eq!(stats.f32_bytes, compact.len() * 8);
+        assert_eq!(stats.i16_bytes, compact.len() * 4);
+        assert_eq!(stats.scale_bytes, stats.stencils * 4);
+        assert!(stats.i16_bytes + stats.scale_bytes < stats.f32_bytes);
+        assert!(stats.nrmse.is_finite() && stats.nrmse <= 1.0e-3);
+        assert!(stats.max_abs_error.is_finite());
+        assert!(
+            program
+                .prediction_batch
+                .kernel_scales
+                .iter()
+                .all(|scale| scale.is_finite() && *scale > 0.0)
+        );
+
+        let mut source_energy = 0.0f64;
+        let mut error_energy = 0.0f64;
+        let plans = program
+            .aot_grouped_tile
+            .as_ref()
+            .expect("quantized AOT")
+            .grouped
+            .groups
+            .iter()
+            .map(|group| group.plan)
+            .collect::<Vec<_>>();
+        let mut seen = std::collections::BTreeSet::new();
+        for plan in plans.iter().copied() {
+            if !seen.insert((plan.kernel_base, plan.x_support, plan.y_support)) {
+                continue;
+            }
+            let base = plan.kernel_base as usize;
+            let tap_count =
+                super::awproject_metal_effective_support_tap_count(plan.x_support, plan.y_support)
+                    .unwrap();
+            let scale = program.prediction_batch.kernel_scales[plan._pad0 as usize];
+            for offset in 0..tap_count {
+                let original = compact[base + offset];
+                let quantized = program.prediction_batch.quantized_kernels[base + offset];
+                for (source, restored) in [
+                    (original.re, f32::from(quantized.re) * scale),
+                    (original.im, f32::from(quantized.im) * scale),
+                ] {
+                    source_energy += f64::from(source) * f64::from(source);
+                    let error = f64::from(restored) - f64::from(source);
+                    error_energy += error * error;
+                }
+            }
+        }
+        let reconstructed_nrmse = (error_energy / source_energy).sqrt();
+        assert!((reconstructed_nrmse - stats.nrmse).abs() <= f64::EPSILON);
+        assert_eq!(
+            mapping_before,
+            program
+                .aot_grouped_tile
+                .as_ref()
+                .unwrap()
+                .sample_role_groups
+        );
+        assert_eq!(
+            route_before,
+            super::hash_awproject_grouped_route(
+                &program.aot_grouped_tile.as_ref().unwrap().grouped.tile_plan
+            )
+        );
+        let recomputed_max = super::awproject_metal_max_effective_i16_kernel_norm(
+            plans,
+            &program.prediction_batch.quantized_kernels,
+            &program.prediction_batch.kernel_scales,
+            &program.tile_batch.phases,
+        )
+        .unwrap();
+        assert_eq!(program.residual_scale_plan.max_kernel_norm, recomputed_max);
+        let ledger = &program.aot_grouped_tile.as_ref().unwrap().receipt.ledger;
+        assert_eq!(ledger.i16_kernel_atlas_bytes, stats.i16_bytes);
+        assert_eq!(ledger.i16_kernel_scale_bytes, stats.scale_bytes);
+        assert_eq!(ledger.i16_kernel_values, stats.values);
+        assert_eq!(ledger.i16_kernel_stencils, stats.stencils);
+        assert_eq!(ledger.i16_kernel_nrmse, stats.nrmse);
+        let directory = tempfile::tempdir().unwrap();
+        let mut spill = super::AwProjectMetalSpillStore::create_in(directory.path()).unwrap();
+        let error = spill
+            .spill(program, 1)
+            .err()
+            .expect("scaled-i16 source-major replay must remain resident-only");
+        assert!(error.to_string().contains("resident-only"));
     }
 
     #[cfg(all(target_os = "macos", not(coverage)))]
@@ -79264,6 +80319,8 @@ mod tests {
             usize::MAX,
         )
         .unwrap();
+        super::compact_awproject_metal_aot_kernel_atlas(&mut program, usize::MAX).unwrap();
+        super::quantize_awproject_metal_aot_kernel_atlas_i16(&mut program, usize::MAX).unwrap();
         let program_bytes = program.resident_bytes();
         let grouped = super::AwProjectGroupedReplayPlan {
             spill_directory: std::path::PathBuf::new(),
@@ -79331,6 +80388,8 @@ mod tests {
             usize::MAX,
         )
         .unwrap();
+        super::compact_awproject_metal_aot_kernel_atlas(&mut oversized, usize::MAX).unwrap();
+        super::quantize_awproject_metal_aot_kernel_atlas_i16(&mut oversized, usize::MAX).unwrap();
         assert_eq!(oversized.resident_bytes(), program_bytes);
         assert!(rejected.retain_source_major_segment(0, oversized).is_err());
     }
@@ -79719,7 +80778,7 @@ mod tests {
                     )?;
                     let tile_dispatch = || super::AwProjectMetalTileDispatch {
                         batch: &program.tile_batch,
-                        kernels: program.imaging_kernels(),
+                        kernel_storage: program.imaging_kernel_storage().unwrap(),
                         tile_plan: &program.tile_plan,
                         aot_grouped_tile: program.aot_grouped_tile.as_ref(),
                     };
@@ -79780,6 +80839,188 @@ mod tests {
             compensation.as_ref().unwrap().buffer.length(),
             compensation_bytes
         );
+    }
+
+    #[test]
+    #[serial]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn grouped_metal_scaled_i16_prediction_and_tile_match_f32_within_science_budget() {
+        if !super::standard_mfs_metal_device_available() {
+            return;
+        }
+        let prepare = || {
+            let mut program = awproject_effective_support_test_program();
+            super::compile_awproject_metal_aot_grouped_tile(
+                &mut program,
+                super::AwProjectMetalEffectiveSupportConfig {
+                    omitted_energy_fraction: 0.0,
+                },
+                16,
+                16,
+                usize::MAX,
+            )
+            .unwrap();
+            super::compact_awproject_metal_aot_kernel_atlas(&mut program, usize::MAX).unwrap();
+            program
+        };
+        let mut reference = prepare();
+        let mut candidate = prepare();
+        let quantization =
+            super::quantize_awproject_metal_aot_kernel_atlas_i16(&mut candidate, usize::MAX)
+                .unwrap();
+        assert!(quantization.nrmse <= 1.0e-3);
+        let model_grids = [
+            Array2::from_shape_fn((16, 16), |(x, y)| {
+                Complex32::new(
+                    0.0025 * (x + 2 * y + 1) as f32,
+                    -0.0015 * (2 * x + y + 1) as f32,
+                )
+            }),
+            Array2::from_shape_fn((16, 16), |(x, y)| {
+                Complex32::new(
+                    -0.001 * (3 * x + y + 1) as f32,
+                    0.00075 * (x + 3 * y + 1) as f32,
+                )
+            }),
+        ];
+
+        let (reference_prediction, candidate_prediction, reference_planes, candidate_planes) =
+            super::AWPROJECT_METAL_EXECUTOR
+                .with(|slot| {
+                    let mut slot = slot.borrow_mut();
+                    if slot.is_none() {
+                        *slot = Some(super::AwProjectMetalExecutor::new()?);
+                    }
+                    let executor = slot.as_ref().unwrap();
+                    let reference_prediction = executor.dispatch_prediction_probe(
+                        &reference.prediction_batch,
+                        &model_grids,
+                        None,
+                        Some(1),
+                        None,
+                    )?;
+                    let candidate_prediction = executor.dispatch_prediction_probe(
+                        &candidate.prediction_batch,
+                        &model_grids,
+                        None,
+                        Some(1),
+                        None,
+                    )?;
+                    super::refresh_awproject_metal_aot_grouped_tile(
+                        reference.aot_grouped_tile.as_mut().unwrap(),
+                        &reference_prediction.results,
+                        &reference.tile_batch.term_weights,
+                        reference.residual_scale_plan,
+                    )?;
+                    super::refresh_awproject_metal_aot_grouped_tile(
+                        candidate.aot_grouped_tile.as_mut().unwrap(),
+                        &candidate_prediction.results,
+                        &candidate.tile_batch.term_weights,
+                        candidate.residual_scale_plan,
+                    )?;
+                    let mut reference_grid =
+                        crate::apple_fft::MetalSharedF32DirtyGridBatch::new(16, 16, 2)
+                            .map_err(|message| super::ImagingError::Unsupported(message.into()))?;
+                    let mut candidate_grid =
+                        crate::apple_fft::MetalSharedF32DirtyGridBatch::new(16, 16, 2)
+                            .map_err(|message| super::ImagingError::Unsupported(message.into()))?;
+                    let mut reference_compensation = None;
+                    let mut candidate_compensation = None;
+                    executor.dispatch_tile_grid_probe(
+                        &mut reference_grid,
+                        &mut reference_compensation,
+                        super::AwProjectMetalTileDispatch {
+                            batch: &reference.tile_batch,
+                            kernel_storage: reference.imaging_kernel_storage()?,
+                            tile_plan: &reference.tile_plan,
+                            aot_grouped_tile: reference.aot_grouped_tile.as_ref(),
+                        },
+                        2,
+                        Some(reference.residual_scale_plan),
+                        None,
+                    )?;
+                    executor.dispatch_tile_grid_probe(
+                        &mut candidate_grid,
+                        &mut candidate_compensation,
+                        super::AwProjectMetalTileDispatch {
+                            batch: &candidate.tile_batch,
+                            kernel_storage: candidate.imaging_kernel_storage()?,
+                            tile_plan: &candidate.tile_plan,
+                            aot_grouped_tile: candidate.aot_grouped_tile.as_ref(),
+                        },
+                        2,
+                        Some(candidate.residual_scale_plan),
+                        None,
+                    )?;
+                    let reference_planes = super::copy_awproject_metal_centered_f64_planes(
+                        &reference_grid,
+                        reference_compensation.as_ref().unwrap(),
+                    )?;
+                    let candidate_planes = super::copy_awproject_metal_centered_f64_planes(
+                        &candidate_grid,
+                        candidate_compensation.as_ref().unwrap(),
+                    )?;
+                    Ok::<_, super::ImagingError>((
+                        reference_prediction,
+                        candidate_prediction,
+                        reference_planes,
+                        candidate_planes,
+                    ))
+                })
+                .unwrap();
+
+        let normalized_rms = |pairs: Vec<(f64, f64)>| {
+            let (error, reference) = pairs.into_iter().fold(
+                (0.0f64, 0.0f64),
+                |(error, reference), (expected, actual)| {
+                    let difference = actual - expected;
+                    (
+                        error + difference * difference,
+                        reference + expected * expected,
+                    )
+                },
+            );
+            (error / reference).sqrt()
+        };
+        let prediction_pairs = reference_prediction
+            .results
+            .iter()
+            .zip(&candidate_prediction.results)
+            .flat_map(|(expected, actual)| {
+                [
+                    (
+                        f64::from(expected.first_residual_re),
+                        f64::from(actual.first_residual_re),
+                    ),
+                    (
+                        f64::from(expected.first_residual_im),
+                        f64::from(actual.first_residual_im),
+                    ),
+                    (
+                        f64::from(expected.second_residual_re),
+                        f64::from(actual.second_residual_re),
+                    ),
+                    (
+                        f64::from(expected.second_residual_im),
+                        f64::from(actual.second_residual_im),
+                    ),
+                ]
+            })
+            .collect::<Vec<_>>();
+        assert!(normalized_rms(prediction_pairs) <= 1.0e-3);
+        let grid_pairs = reference_planes
+            .iter()
+            .zip(&candidate_planes)
+            .flat_map(|(expected, actual)| {
+                expected
+                    .iter()
+                    .zip(actual)
+                    .flat_map(|(&expected, &actual)| {
+                        [(expected.re, actual.re), (expected.im, actual.im)]
+                    })
+            })
+            .collect::<Vec<_>>();
+        assert!(normalized_rms(grid_pairs) <= 1.0e-3);
     }
 
     #[test]
@@ -80136,6 +81377,8 @@ mod tests {
                     source_sample_indices: vec![source_index],
                     cf_metadata: Vec::new(),
                     kernels: kernels.clone(),
+                    quantized_kernels: Vec::new(),
+                    kernel_scales: Vec::new(),
                     phases: phases.clone(),
                 },
                 tile_batch: super::AwProjectMetalBatch {
@@ -80852,6 +82095,8 @@ mod tests {
             source_sample_indices: vec![11],
             cf_metadata: Vec::new(),
             kernels: vec![super::WProjectMetalComplex { re: 0.5, im: -0.25 }],
+            quantized_kernels: Vec::new(),
+            kernel_scales: Vec::new(),
             phases: vec![super::WProjectMetalComplex { re: 0.25, im: 0.75 }],
         };
         let mut model_tt0 = Array2::<Complex32>::zeros((4, 4));
@@ -81516,7 +82761,9 @@ mod tests {
                         &mut tile_compensation,
                         super::AwProjectMetalTileDispatch {
                             batch: &batch,
-                            kernels: &batch.kernels,
+                            kernel_storage: super::AwProjectMetalKernelStorage::Float32(
+                                &batch.kernels,
+                            ),
                             tile_plan: &tile_plan,
                             aot_grouped_tile: None,
                         },
@@ -81631,6 +82878,8 @@ mod tests {
             source_sample_indices: Vec::new(),
             cf_metadata: Vec::new(),
             kernels: tile_batch.kernels.clone(),
+            quantized_kernels: Vec::new(),
+            kernel_scales: Vec::new(),
             phases: tile_batch.phases.clone(),
         };
         let packed_batch_bytes = std::mem::size_of::<super::AwProjectMetalSample>()
@@ -81765,6 +83014,8 @@ mod tests {
                     im: -0.015 * (index + 2) as f32,
                 })
                 .collect(),
+            quantized_kernels: Vec::new(),
+            kernel_scales: Vec::new(),
             phases: vec![
                 super::WProjectMetalComplex {
                     re: 0.955_336_5,

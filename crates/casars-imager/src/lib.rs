@@ -39620,7 +39620,7 @@ fn admit_awproject_multifield_initial_grid(
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_source_major_architecture",
-            value: "direct-source-major-v4-high-only-dense-residual".to_string(),
+            value: "direct-source-major-v5-high-only-i16-residual".to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Workload,
             reason: "one source-major owner interns CF requests, dispatches high-only imaging and PSF-weight partitions, then retains the same source-ordered exact-support compensated residual artifact"
                 .to_string(),
@@ -62903,7 +62903,7 @@ mod tests {
         }));
         assert!(initial.decisions.iter().any(|decision| {
             decision.name == "awproject_source_major_architecture"
-                && decision.value == "direct-source-major-v4-high-only-dense-residual"
+                && decision.value == "direct-source-major-v5-high-only-i16-residual"
         }));
         assert!(initial.decisions.iter().any(|decision| {
             decision.name == "awproject_source_major_initial_accumulation"
@@ -63259,7 +63259,7 @@ mod tests {
         assert!(standard_mfs_plan_decision_is(
             &resolved,
             "awproject_source_major_architecture",
-            "direct-source-major-v4-high-only-dense-residual"
+            "direct-source-major-v5-high-only-i16-residual"
         ));
         let execution = standard_mfs_execution_config_with_plan(&config, &resolved);
         assert_eq!(

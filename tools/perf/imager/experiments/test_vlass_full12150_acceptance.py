@@ -58,7 +58,7 @@ def valid_probe_log(
     decisions = {
         "awproject_selected_field_count": "63",
         "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
-        "awproject_source_major_architecture": "direct-source-major-v4-high-only-dense-residual",
+        "awproject_source_major_architecture": "direct-source-major-v5-high-only-i16-residual",
         "awproject_source_major_initial_accumulation": "high-limb-only",
         "awproject_source_major_initial_grid_bytes": "9447840000",
         "awproject_multifield_initial_grid_admission": "admitted",
@@ -98,7 +98,7 @@ def valid_runtime_log() -> str:
         "awproject_source_major_block source_block=0 accepted_samples=1 "
         "initial_partitions=2 initial_grid_bytes=9447840000 "
         "initial_compensation_bytes=0 spill_bytes=0 reload_bytes=0 "
-        "architecture=direct-source-major-v4-high-only-dense-residual "
+        "architecture=direct-source-major-v5-high-only-i16-residual "
         "initial_accumulation=high-limb-only",
         "awproject_metal_initial_readback products=8 "
         "residency=metal-shared-high-limb-only-grid resident_bytes=9447840000",
@@ -117,10 +117,18 @@ def valid_runtime_log() -> str:
         "compile_transient_bytes_peak_estimated=90 compile_admission_limit_bytes=100 "
         "raw_kernel_atlas_bytes=100 compact_kernel_atlas_bytes=40 "
         "compact_kernel_stencils=2 compact_kernel_plan_references=4 "
-        "compact_kernel_scratch_bytes=64",
+        "compact_kernel_scratch_bytes=64 i16_kernel_atlas_bytes=20 "
+        "i16_kernel_scale_bytes=8 i16_kernel_values=5 i16_kernel_stencils=2 "
+        "i16_kernel_nrmse=1.0e-5 i16_kernel_max_abs_error=2.0e-5 "
+        "i16_kernel_zeroed_components=0 i16_kernel_compile_overlap_bytes=90",
         "awproject_source_major_kernel_compaction source_block=0 raw_bytes=100 "
         "compact_bytes=40 stencils=2 plan_references=4 scratch_bytes=64 "
         "applied=true bit_exact=true",
+        "awproject_source_major_kernel_i16 source_block=0 f32_bytes=40 "
+        "i16_bytes=20 scale_bytes=8 values=5 stencils=2 nrmse=1.0e-5 "
+        "max_abs_error=2.0e-5 zeroed_components=0 compile_overlap_bytes=90 "
+        "max_kernel_norm=1.0 storage=per-stencil-scaled-i16-complex "
+        "range=-32767:32767 conversion=metal-load-to-f32",
         "awproject_metal_grouped_replay_retention decision=resident-complete "
         "segments=1 program_bytes=1000",
         "awproject_grouped_metal_admission phase=runtime segment=0 all_fit=true "
@@ -356,6 +364,12 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
             ("spill_read_bytes=0", "spill_read_bytes=1"),
             ("runtime_route_builds=0", "runtime_route_builds=1"),
             ("bit_exact=true", "bit_exact=false"),
+            ("i16_bytes=20", "i16_bytes=40"),
+            (
+                "storage=per-stencil-scaled-i16-complex",
+                "storage=float16-complex",
+            ),
+            ("nrmse=1.0e-5", "nrmse=1.1e-3"),
             (
                 "candidate_audit_allocation_bytes=0",
                 "candidate_audit_allocation_bytes=16",
