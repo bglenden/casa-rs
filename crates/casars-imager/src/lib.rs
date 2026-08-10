@@ -38372,11 +38372,24 @@ fn standard_mfs_memory_allocation_lifetimes(
                              {initial_plane_count}-plane workload shape"
                         ));
                     }
-                    let residual_bytes = (bytes / initial_plane_count)
-                        .checked_mul(residual_plane_count)
-                        .ok_or_else(|| {
-                            "standard-MFS residual-grid residency overflowed".to_string()
-                        })?;
+                    let residual_bytes = if source_major_grouped_initial {
+                        checked_imaging_product(
+                            [
+                                plan.workload.grid_width,
+                                plan.workload.grid_height,
+                                residual_plane_count,
+                                std::mem::size_of::<Complex32>(),
+                                2,
+                            ],
+                            "source-major compensated residual-grid residency",
+                        )?
+                    } else {
+                        (bytes / initial_plane_count)
+                            .checked_mul(residual_plane_count)
+                            .ok_or_else(|| {
+                                "standard-MFS residual-grid residency overflowed".to_string()
+                            })?
+                    };
                     let initial_next_use = if has_clean_cycles {
                         AtStage(ResidualGrid)
                     } else {
@@ -39437,6 +39450,27 @@ fn admit_awproject_multifield_initial_grid(
             ));
         }
     };
+    let source_major_initial_grid_bytes = checked_imaging_product(
+        [
+            candidate.workload.grid_width,
+            candidate.workload.grid_height,
+            candidate.workload.grid_planes,
+            std::mem::size_of::<Complex32>(),
+        ],
+        "source-major high-only initial grid",
+    )?;
+    if !replace_standard_mfs_memory_allocation(
+        &mut candidate,
+        "grids",
+        source_major_initial_grid_bytes,
+    ) {
+        return Ok(reject_awproject_multifield_initial_grid(
+            plan,
+            selected_field_count,
+            "the AWProject MT-MFS lifetime ledger omitted its initial grid allocation".to_string(),
+        ));
+    }
+    candidate.workload.grid_element_bytes = std::mem::size_of::<Complex32>();
     let grouped_metal = match awproject_grouped_metal_planner_admission(&candidate) {
         Ok(admission) => admission,
         Err(reason) => {
@@ -39586,9 +39620,23 @@ fn admit_awproject_multifield_initial_grid(
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_source_major_architecture",
-            value: "direct-source-major-v2".to_string(),
+            value: "direct-source-major-v3-high-only-initial".to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Workload,
-            reason: "one source-major owner interns CF requests, dispatches separate imaging and PSF-weight partitions, then retains the same source-ordered exact-support residual artifact"
+            reason: "one source-major owner interns CF requests, dispatches high-only imaging and PSF-weight partitions, then retains the same source-ordered exact-support compensated residual artifact"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_source_major_initial_accumulation",
+            value: "high-limb-only".to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "retain one Complex32 initial grid and discard only the cross-source-block compensation rounding limb; full-product acceptance is bounded by normalized RMS"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_source_major_initial_grid_bytes",
+            value: source_major_initial_grid_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "eight Complex32 high-limb planes remain resident through the initial dirty transform"
                 .to_string(),
         },
         casa_imaging::ImagingPlanDecision {
@@ -39690,7 +39738,7 @@ fn admit_awproject_multifield_initial_grid(
             name: "awproject_multifield_initial_grid_admission",
             value: "admitted".to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Resources,
-            reason: "the direct source-major compiler segment, retained exact replay programs, source blocks, CF/POINTING state, and initial compensated grid fit the exact stage lifetime ledger"
+            reason: "the direct source-major compiler segment, retained exact replay programs, source blocks, CF/POINTING state, and initial high-only grid fit the exact stage lifetime ledger"
                 .to_string(),
         },
     ] {
@@ -62855,8 +62903,19 @@ mod tests {
         }));
         assert!(initial.decisions.iter().any(|decision| {
             decision.name == "awproject_source_major_architecture"
-                && decision.value == "direct-source-major-v2"
+                && decision.value == "direct-source-major-v3-high-only-initial"
         }));
+        assert!(initial.decisions.iter().any(|decision| {
+            decision.name == "awproject_source_major_initial_accumulation"
+                && decision.value == "high-limb-only"
+        }));
+        assert_eq!(
+            initial.allocation_bytes("grids"),
+            initial.workload.grid_width
+                * initial.workload.grid_height
+                * initial.workload.grid_planes
+                * std::mem::size_of::<Complex32>()
+        );
         assert!(initial.decisions.iter().any(|decision| {
             decision.name == "awproject_source_major_compiler_segment_bytes"
                 && decision.value == AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES.to_string()
@@ -63200,7 +63259,7 @@ mod tests {
         assert!(standard_mfs_plan_decision_is(
             &resolved,
             "awproject_source_major_architecture",
-            "direct-source-major-v2"
+            "direct-source-major-v3-high-only-initial"
         ));
         let execution = standard_mfs_execution_config_with_plan(&config, &resolved);
         assert_eq!(
@@ -63589,7 +63648,7 @@ mod tests {
                 .stage_peak(ImagingMemoryStage::DirtyTransform)
                 .expect("pre-replay dirty-transform peak")
                 .resident_bytes,
-            30_321_338_800
+            20_873_498_800
         );
         let compensated_readback = admitted
             .memory_lifetime_ledger
@@ -63633,13 +63692,13 @@ mod tests {
             .usable_memory_bytes
             .checked_sub(replay_stage_peak_bytes)
             .expect("admitted replay-lifetime headroom");
-        assert_eq!(replay_lifetime_headroom_bytes, 3_233_093_200);
+        assert_eq!(replay_lifetime_headroom_bytes, 12_680_933_200);
         let compile_envelope = awproject_grouped_replay_compile_envelope(&admitted)
             .expect("full12150/all63 compile envelope");
-        assert_eq!(compile_envelope.compile_admission_bytes, 11_499_928_027);
+        assert_eq!(compile_envelope.compile_admission_bytes, 20_947_768_027);
         assert_eq!(
             compile_envelope.replay_retention_ceiling_bytes,
-            10_963_057_115
+            20_410_897_115
         );
         assert!(replay_lifetime_headroom_bytes < compile_envelope.replay_retention_ceiling_bytes);
 
@@ -63647,7 +63706,7 @@ mod tests {
             .expect("jointly bounded full12150/all63 replay retention");
         assert_eq!(
             plan.allocation_bytes("AWProject compact replay retention"),
-            3_233_093_200
+            12_680_933_200
         );
         assert_eq!(plan.maximum_planned_resident_bytes, MEMORY_TARGET_BYTES);
         let execution = standard_mfs_execution_config_with_plan(&config, &plan);
@@ -63655,7 +63714,7 @@ mod tests {
             .awproject_grouped_replay
             .as_ref()
             .expect("compile-safe full12150/all63 grouped replay plan");
-        assert_eq!(grouped_replay.compile_admission_bytes(), 11_499_928_027);
+        assert_eq!(grouped_replay.compile_admission_bytes(), 20_947_768_027);
         assert_eq!(grouped_replay.segment_target_bytes(), 8_266_834_827);
         assert_eq!(
             grouped_replay.segment_target_bytes()
@@ -63669,16 +63728,16 @@ mod tests {
         );
         assert!(plan.decisions.iter().any(|decision| {
             decision.name == "awproject_compact_replay_retention_bytes"
-                && decision.value == "3233093200"
+                && decision.value == "12680933200"
                 && decision
                     .reason
-                    .contains("compile_admission_bytes=11499928027")
+                    .contains("compile_admission_bytes=20947768027")
                 && decision
                     .reason
                     .contains("compile_segment_reserve_bytes=536870912")
                 && decision
                     .reason
-                    .contains("compile_retention_ceiling_bytes=10963057115")
+                    .contains("compile_retention_ceiling_bytes=20410897115")
         }));
 
         let receipt_ids = standard_mfs_memory_allocation_receipt_ids(&plan);

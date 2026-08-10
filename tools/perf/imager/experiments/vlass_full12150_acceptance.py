@@ -814,6 +814,9 @@ def validate_probe_log(
     expected_decisions = {
         "awproject_selected_field_count": "63",
         "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
+        "awproject_source_major_architecture": "direct-source-major-v3-high-only-initial",
+        "awproject_source_major_initial_accumulation": "high-limb-only",
+        "awproject_source_major_initial_grid_bytes": "9447840000",
         "awproject_multifield_initial_grid_admission": "admitted",
         "awproject_grouped_replay_replaced_generic_caches": "true",
         "awproject_grouped_metal_generic_scratch_bytes": "0",
@@ -1033,6 +1036,8 @@ def monitor_run(
 
 
 def validate_runtime_log(text: str) -> dict[str, Any]:
+    source_blocks = matching_lines(text, "awproject_source_major_block ")
+    initial_readback = matching_lines(text, "awproject_metal_initial_readback ")
     sealed = matching_lines(text, "awproject_grouped_metal_admission phase=sealed ")
     runtime = matching_lines(text, "awproject_grouped_metal_admission phase=runtime ")
     host = matching_lines(text, "awproject_grouped_metal_host_lifetime ")
@@ -1040,6 +1045,31 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
     aot = matching_lines(text, "awproject_aot_grouped_tile_receipt ")
     retention = matching_lines(text, "awproject_metal_grouped_replay_retention ")
     summaries = matching_lines(text, "awproject_metal_resident_grouped_replay_summary ")
+    if not source_blocks:
+        raise AcceptanceError("runtime log omitted source-major initial blocks")
+    if {int(entry["source_block"]) for entry in source_blocks} != set(
+        range(len(source_blocks))
+    ):
+        raise AcceptanceError(
+            "source-major initial blocks are not unique and contiguous"
+        )
+    for entry in source_blocks:
+        if (
+            entry.get("architecture") != "direct-source-major-v3-high-only-initial"
+            or entry.get("initial_accumulation") != "high-limb-only"
+            or entry.get("initial_partitions") != "2"
+            or entry.get("initial_grid_bytes") != "9447840000"
+            or entry.get("initial_compensation_bytes") != "0"
+            or entry.get("spill_bytes") != "0"
+            or entry.get("reload_bytes") != "0"
+        ):
+            raise AcceptanceError("source-major high-only initial receipt differs")
+    if (
+        len(initial_readback) != 1
+        or initial_readback[0].get("residency") != "metal-shared-high-limb-only-grid"
+        or initial_readback[0].get("resident_bytes") != "9447840000"
+    ):
+        raise AcceptanceError("high-only initial readback receipt differs")
     if not sealed:
         raise AcceptanceError("runtime log omitted sealed grouped segments")
     segments = {int(entry["segment"]) for entry in sealed}

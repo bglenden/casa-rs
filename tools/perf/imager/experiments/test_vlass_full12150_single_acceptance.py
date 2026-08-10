@@ -13,7 +13,9 @@ def valid_probe_log(target_mib: int) -> str:
     decisions = {
         "awproject_selected_field_count": "1",
         "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
-        "awproject_source_major_architecture": "direct-source-major-v2",
+        "awproject_source_major_architecture": "direct-source-major-v3-high-only-initial",
+        "awproject_source_major_initial_accumulation": "high-limb-only",
+        "awproject_source_major_initial_grid_bytes": "9447840000",
         "awproject_multifield_initial_grid_admission": "admitted",
         "awproject_grouped_replay_replaced_generic_caches": "true",
         "awproject_grouped_metal_generic_scratch_bytes": "0",
@@ -53,6 +55,13 @@ def valid_probe_log(target_mib: int) -> str:
 
 def valid_runtime_log() -> str:
     lines = [
+        "awproject_source_major_block source_block=0 accepted_samples=1 "
+        "initial_partitions=2 initial_grid_bytes=9447840000 "
+        "initial_compensation_bytes=0 spill_bytes=0 reload_bytes=0 "
+        "architecture=direct-source-major-v3-high-only-initial "
+        "initial_accumulation=high-limb-only",
+        "awproject_metal_initial_readback products=8 "
+        "residency=metal-shared-high-limb-only-grid resident_bytes=9447840000",
         "awproject_grouped_metal_admission phase=sealed segment=0 "
         "source_boundary_upper_bytes=100 exact_additional_bytes=90 all_fit=true",
         "awproject_effective_support segment=0 omitted_energy_fraction=0 "
@@ -135,7 +144,7 @@ class FullVlassSingleAcceptanceContractTest(unittest.TestCase):
                 "initial_dirty_backend=cpu",
             ),
             ("tile_side=11", "tile_side=16"),
-            ("direct-source-major-v2", "legacy-windowed"),
+            ("direct-source-major-v3-high-only-initial", "legacy-windowed"),
             ("low_field=1525", "low_field=1107"),
         )
         for old, new in mutations:
@@ -155,6 +164,7 @@ class FullVlassSingleAcceptanceContractTest(unittest.TestCase):
         result = single.validate_runtime_log(accepted)
         self.assertEqual(19, result["product_count"])
         mutations = (
+            ("initial_compensation_bytes=0", "initial_compensation_bytes=9447840000"),
             (
                 "spill_read_bytes=0",
                 "spill_read_bytes=1",
