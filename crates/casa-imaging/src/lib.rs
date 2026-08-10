@@ -41802,6 +41802,8 @@ fn dispatch_awproject_source_major_initial(
     device_budget_bytes: usize,
     safety_reserve_bytes: usize,
 ) -> Result<AwProjectSourceMajorInitialReceipt, ImagingError> {
+    let full_compensation =
+        std::env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_FULL_COMPENSATION").is_some();
     let MosaicMtmfsStreamGridStorage::MetalSharedF32 {
         grid,
         aw_compensation,
@@ -41830,13 +41832,22 @@ fn dispatch_awproject_source_major_initial(
                 "source-major AWProject initial grid byte count overflowed".to_string(),
             )
         })?;
-    if aw_compensation.is_some() {
+    if !full_compensation && aw_compensation.is_some() {
         return Err(ImagingError::Normalization(
             "source-major high-only initial gridding unexpectedly retained a compensation limb"
                 .to_string(),
         ));
     }
-    let compensation_bytes = 0;
+    let compensation_bytes = if full_compensation { grid_bytes } else { 0 };
+    eprintln!(
+        "awproject_source_major_initial_accumulation mode={} compensation_bytes={} source=explicit-experiment",
+        if full_compensation {
+            "full-two-limb"
+        } else {
+            "high-limb-only"
+        },
+        compensation_bytes,
+    );
     let kernels = program.imaging_kernels();
 
     let group_pool = rayon::ThreadPoolBuilder::new()
@@ -41922,17 +41933,28 @@ fn dispatch_awproject_source_major_initial(
             *executor_slot = Some(AwProjectMetalExecutor::new()?);
             setup = setup_started.elapsed();
         }
-        let stats = executor_slot
+        let executor = executor_slot
             .as_ref()
-            .expect("source-major grouped Metal executor")
-            .dispatch_initial_grouped_tiles(
+            .expect("source-major grouped Metal executor");
+        let stats = if full_compensation {
+            executor.dispatch_initial_grouped_tiles(
+                grid,
+                Some(aw_compensation),
+                &imaging_partition,
+                kernels,
+                &program.tile_batch.phases,
+                Duration::ZERO,
+            )?
+        } else {
+            executor.dispatch_initial_grouped_tiles(
                 grid,
                 None,
                 &imaging_partition,
                 kernels,
                 &program.tile_batch.phases,
                 Duration::ZERO,
-            )?;
+            )?
+        };
         Ok::<_, ImagingError>((stats, setup))
     })?;
     drop(imaging_partition);
@@ -41947,11 +41969,21 @@ fn dispatch_awproject_source_major_initial(
     let weight_groups = weight_partition.groups.len();
     let weight_route_fragments = weight_partition.tile_plan.fragments.len();
     let weight_stats = AWPROJECT_METAL_EXECUTOR.with(|executor_slot| {
-        executor_slot
-            .borrow()
+        let executor_slot = executor_slot.borrow();
+        let executor = executor_slot
             .as_ref()
-            .expect("source-major grouped Metal executor")
-            .dispatch_initial_grouped_tiles(
+            .expect("source-major grouped Metal executor");
+        if full_compensation {
+            executor.dispatch_initial_grouped_tiles(
+                grid,
+                Some(aw_compensation),
+                &weight_partition,
+                &weight_atlas.values,
+                weight_phases,
+                Duration::ZERO,
+            )
+        } else {
+            executor.dispatch_initial_grouped_tiles(
                 grid,
                 None,
                 &weight_partition,
@@ -41959,6 +41991,7 @@ fn dispatch_awproject_source_major_initial(
                 weight_phases,
                 Duration::ZERO,
             )
+        }
     })?;
     Ok(AwProjectSourceMajorInitialReceipt {
         metal_stats: AwProjectMetalGridStats {

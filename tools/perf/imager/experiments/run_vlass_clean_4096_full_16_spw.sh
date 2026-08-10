@@ -35,6 +35,7 @@ prediction_trace_limit="${CASA_RS_VLASS_PREDICTION_TRACE_LIMIT:-0}"
 prediction_trace_stride="${CASA_RS_VLASS_PREDICTION_TRACE_STRIDE:-1}"
 cpp_complex="${CASA_RS_VLASS_CPP_COMPLEX:-0}"
 usepointing="${CASA_RS_VLASS_USEPOINTING:-1}"
+source_major_full_compensation="${CASA_RS_VLASS_SOURCE_MAJOR_FULL_COMPENSATION:-0}"
 pointing_trace="${CASA_RS_VLASS_POINTING_TRACE:-0}"
 measures_dir="${CASA_RS_VLASS_MEASURES_DIR:-$HOME/.casa/data}"
 ms="$root/data/frozen-clean-b80d5e87487a/VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms"
@@ -44,6 +45,16 @@ experimental_environment=(CASA_RS_VLASS_EXPERIMENT_RUNNER=1)
 parallel_argument=(--no-parallel)
 pointing_argument=(--usepointing)
 label="vlass-production-clean-4096-full-16-spw-fftw-t${fftw_threads}-gridt${grid_threads}-niter${niter}"
+
+if [[ "$source_major_full_compensation" == "1" ]]; then
+    label="${label}-source-major-full-compensation"
+    experimental_environment+=(
+        CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_FULL_COMPENSATION=1
+    )
+elif [[ "$source_major_full_compensation" != "0" ]]; then
+    echo "CASA_RS_VLASS_SOURCE_MAJOR_FULL_COMPENSATION must be 0 or 1" >&2
+    exit 2
+fi
 
 if [[ "$image_response_cache" == "1" ]]; then
     label="${label}-image-response-cache-promoted-stack"
