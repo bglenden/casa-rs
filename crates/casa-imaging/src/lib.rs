@@ -29078,8 +29078,16 @@ impl AwProjectMetalRawAtlas {
             packed
         };
         let value = WProjectMetalComplex {
-            re: canonical.re,
-            im: canonical.im,
+            re: if canonical.re == 0.0 {
+                0.0
+            } else {
+                canonical.re
+            },
+            im: if canonical.im == 0.0 {
+                0.0
+            } else {
+                canonical.im
+            },
         };
         let word = plane_index / u64::BITS as usize;
         let bit = 1u64 << (plane_index % u64::BITS as usize);
@@ -29096,9 +29104,14 @@ impl AwProjectMetalRawAtlas {
             if existing.re.to_bits() != value.re.to_bits()
                 || existing.im.to_bits() != value.im.to_bits()
             {
-                return Err(ImagingError::Normalization(
-                    "AWProject raw-CF atlas received inconsistent source bits".to_string(),
-                ));
+                return Err(ImagingError::Normalization(format!(
+                    "AWProject raw-CF atlas received inconsistent source bits at cell={:?} coordinate=({x_coordinate},{y_coordinate}) conjugate={conjugate_for_grid}: existing=({:08x},{:08x}) incoming=({:08x},{:08x})",
+                    key.cell,
+                    existing.re.to_bits(),
+                    existing.im.to_bits(),
+                    value.re.to_bits(),
+                    value.im.to_bits(),
+                )));
             }
             Ok(None)
         }
@@ -89008,6 +89021,30 @@ mod tests {
             atlas.len() * 2 < dense_values,
             "the fixture must demonstrate material atlas compression"
         );
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn awproject_raw_cf_atlas_canonicalizes_signed_zero_across_conjugate_roles() {
+        let key = super::AwProjectMetalRawPlaneKey {
+            cell: (1, 2, 3, 4),
+            kernel_kind: super::AwProjectCompactKernelKind::Imaging,
+        };
+        let mut atlas = super::AwProjectMetalRawAtlas::default();
+        atlas.ensure_plane(key, 1, 0, 0).unwrap();
+        atlas
+            .write_request_value(key, 0, 0, false, Complex32::new(1.0, 0.0))
+            .unwrap();
+        atlas
+            .write_request_value(key, 0, 0, true, Complex32::new(1.0, 0.0))
+            .expect("signed zero must not make conjugate roles inconsistent");
+        assert_eq!(atlas.values.len(), 9);
+        let plane = atlas.planes.get(&key).unwrap();
+        let (index, _) = plane
+            .polyphase_index(plane.origin_x as usize, plane.origin_y as usize)
+            .unwrap();
+        assert_eq!(atlas.values[index].re.to_bits(), 1.0f32.to_bits());
+        assert_eq!(atlas.values[index].im.to_bits(), 0.0f32.to_bits());
     }
 
     #[test]
