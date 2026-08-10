@@ -26397,130 +26397,32 @@ fn group_awproject_source_major_initial_imaging(
             batch.samples.len(),
         )));
     }
-    let grouping_started = Instant::now();
-    let (groups, sums, local_group_count, merge_elapsed) = if workers > 1
-        && batch.samples.len() >= 65_536
-    {
-        let chunk_size = batch.samples.len().div_ceil(workers);
-        let local = batch
-            .samples
-            .par_chunks(chunk_size)
-            .enumerate()
-            .map(|(chunk_index, samples)| {
-                let mut group_index = AwProjectMetalPlanIndex::<usize>::default();
-                let mut groups = Vec::new();
-                let mut sums = Vec::new();
-                let weight_start = chunk_index
-                    .checked_mul(chunk_size)
-                    .and_then(|value| value.checked_mul(2))
-                    .ok_or_else(|| {
-                        ImagingError::InvalidRequest(
-                            "source-major initial grouping weight offset overflowed".to_string(),
-                        )
-                    })?;
-                let weight_end = weight_start
-                    .checked_add(samples.len().saturating_mul(2))
-                    .ok_or_else(|| {
-                        ImagingError::InvalidRequest(
-                            "source-major initial grouping weight end overflowed".to_string(),
-                        )
-                    })?;
-                let weights = batch
-                    .term_weights
-                    .get(weight_start..weight_end)
-                    .ok_or_else(|| {
-                        ImagingError::Normalization(
-                            "source-major initial grouping lost its chunk weights".to_string(),
-                        )
-                    })?;
-                for (sample, weights) in samples.iter().zip(weights.chunks_exact(2)) {
-                    let first = Complex32::new(sample.first_residual_re, sample.first_residual_im);
-                    let second =
-                        Complex32::new(sample.second_residual_re, sample.second_residual_im);
-                    for (order, &weight) in weights.iter().enumerate() {
-                        let plane = 3 + order;
-                        add_awproject_source_major_initial_group(
-                            &mut group_index,
-                            &mut groups,
-                            &mut sums,
-                            sample.first_imaging,
-                            plane,
-                            first * weight,
-                        )?;
-                        add_awproject_source_major_initial_group(
-                            &mut group_index,
-                            &mut groups,
-                            &mut sums,
-                            sample.second_imaging,
-                            plane,
-                            second * weight,
-                        )?;
-                    }
-                }
-                Ok::<_, ImagingError>((groups, sums))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let local_group_count = local.iter().map(|(groups, _)| groups.len()).sum();
-        let merge_started = Instant::now();
-        let mut group_index = AwProjectMetalPlanIndex::<usize>::default();
-        let mut groups = Vec::new();
-        let mut sums = Vec::<[f64; AWPROJECT_INITIAL_GROUPED_PLANE_COUNT * 2]>::new();
-        for (local_groups, local_sums) in local {
-            for (local_group, local_sum) in local_groups.into_iter().zip(local_sums) {
-                let key = AwProjectMetalPlanKey::from(local_group.plan);
-                if let Some(&group) = group_index.get(&key) {
-                    let sum = &mut sums[group];
-                    for (total, partial) in sum.iter_mut().zip(local_sum) {
-                        *total += partial;
-                    }
-                } else {
-                    let group = groups.len();
-                    group_index.insert(key, group);
-                    groups.push(local_group);
-                    sums.push(local_sum);
-                }
-            }
+    let mut group_index = AwProjectMetalPlanIndex::<usize>::default();
+    let mut groups = Vec::new();
+    let mut sums = Vec::new();
+    for (sample, weights) in batch.samples.iter().zip(batch.term_weights.chunks_exact(2)) {
+        let first = Complex32::new(sample.first_residual_re, sample.first_residual_im);
+        let second = Complex32::new(sample.second_residual_re, sample.second_residual_im);
+        for (order, &weight) in weights.iter().enumerate() {
+            let plane = 3 + order;
+            add_awproject_source_major_initial_group(
+                &mut group_index,
+                &mut groups,
+                &mut sums,
+                sample.first_imaging,
+                plane,
+                first * weight,
+            )?;
+            add_awproject_source_major_initial_group(
+                &mut group_index,
+                &mut groups,
+                &mut sums,
+                sample.second_imaging,
+                plane,
+                second * weight,
+            )?;
         }
-        (groups, sums, local_group_count, merge_started.elapsed())
-    } else {
-        let mut group_index = AwProjectMetalPlanIndex::<usize>::default();
-        let mut groups = Vec::new();
-        let mut sums = Vec::new();
-        for (sample, weights) in batch.samples.iter().zip(batch.term_weights.chunks_exact(2)) {
-            let first = Complex32::new(sample.first_residual_re, sample.first_residual_im);
-            let second = Complex32::new(sample.second_residual_re, sample.second_residual_im);
-            for (order, &weight) in weights.iter().enumerate() {
-                let plane = 3 + order;
-                add_awproject_source_major_initial_group(
-                    &mut group_index,
-                    &mut groups,
-                    &mut sums,
-                    sample.first_imaging,
-                    plane,
-                    first * weight,
-                )?;
-                add_awproject_source_major_initial_group(
-                    &mut group_index,
-                    &mut groups,
-                    &mut sums,
-                    sample.second_imaging,
-                    plane,
-                    second * weight,
-                )?;
-            }
-        }
-        let group_count = groups.len();
-        (groups, sums, group_count, Duration::ZERO)
-    };
-    eprintln!(
-        "awproject_source_major_initial_imaging_grouping workers={} samples={} local_groups={} final_groups={} aggregation_ms={:.3} merge_ms={:.3}",
-        workers,
-        batch.samples.len(),
-        local_group_count,
-        groups.len(),
-        profile::millis(grouping_started.elapsed()),
-        profile::millis(merge_elapsed),
-    );
+    }
     finish_awproject_source_major_initial_partition(
         groups,
         sums,
@@ -80475,83 +80377,6 @@ mod tests {
         assert_eq!(parallel.tile_fragment_offsets, serial.tile_fragment_offsets);
         assert_eq!(parallel.fragments, serial.fragments);
         assert!(parallel_peak_bytes >= parallel.resident_bytes());
-    }
-
-    #[test]
-    #[cfg(all(target_os = "macos", not(coverage)))]
-    fn awproject_parallel_initial_grouping_matches_serial_partition() {
-        let samples = (0..65_536usize)
-            .map(|index| {
-                let plan = super::AwProjectMetalPlan {
-                    loc_x: 3 + (index % 58) as i32,
-                    loc_y: 2 + ((index / 58) % 60) as i32,
-                    x_support: 0,
-                    y_support: 0,
-                    kernel_base: 0,
-                    _pad0: 0,
-                    phase: super::AwProjectMetalPhasePlan::expanded(0),
-                };
-                super::AwProjectMetalSample {
-                    first_imaging: plan,
-                    second_imaging: plan,
-                    first_psf: plan,
-                    second_psf: plan,
-                    first_weight: plan,
-                    second_weight: plan,
-                    first_residual_re: 0.5,
-                    first_residual_im: -0.25,
-                    second_residual_re: 0.125,
-                    second_residual_im: 0.25,
-                }
-            })
-            .collect::<Vec<_>>();
-        let batch = super::AwProjectMetalBatch {
-            term_weights: (0..65_536).flat_map(|_| [1.0, 0.5]).collect(),
-            samples,
-            kernels: vec![super::WProjectMetalComplex { re: 1.0, im: 0.0 }],
-            phases: vec![super::WProjectMetalComplex { re: 1.0, im: 0.0 }],
-            kernel_pack: Duration::ZERO,
-        };
-        let serial = super::group_awproject_source_major_initial_imaging(
-            &batch,
-            &batch.kernels,
-            64,
-            64,
-            8,
-            1,
-        )
-        .unwrap();
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(4)
-            .build()
-            .unwrap();
-        let parallel = pool
-            .install(|| {
-                super::group_awproject_source_major_initial_imaging(
-                    &batch,
-                    &batch.kernels,
-                    64,
-                    64,
-                    8,
-                    4,
-                )
-            })
-            .unwrap();
-        assert_eq!(
-            super::hash_awproject_copy_slice(&parallel.groups),
-            super::hash_awproject_copy_slice(&serial.groups),
-        );
-        assert_eq!(parallel.fixed_scales, serial.fixed_scales);
-        assert_eq!(parallel.inverse_fixed_scales, serial.inverse_fixed_scales);
-        assert_eq!(
-            parallel.tile_plan.active_tile_ids,
-            serial.tile_plan.active_tile_ids
-        );
-        assert_eq!(
-            parallel.tile_plan.tile_fragment_offsets,
-            serial.tile_plan.tile_fragment_offsets,
-        );
-        assert_eq!(parallel.tile_plan.fragments, serial.tile_plan.fragments);
     }
 
     #[test]
