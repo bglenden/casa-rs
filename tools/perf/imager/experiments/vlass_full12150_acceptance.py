@@ -814,7 +814,7 @@ def validate_probe_log(
     expected_decisions = {
         "awproject_selected_field_count": "63",
         "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
-        "awproject_source_major_architecture": "direct-source-major-v9-sealed-sha-i16-residual",
+        "awproject_source_major_architecture": "direct-source-major-v10-sealed-f32-residual",
         "awproject_source_major_initial_accumulation": "high-limb-only",
         "awproject_source_major_initial_grid_bytes": "9447840000",
         "awproject_multifield_initial_grid_admission": "admitted",
@@ -1053,7 +1053,7 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
     support = matching_lines(text, "awproject_effective_support ")
     aot = matching_lines(text, "awproject_aot_grouped_tile_receipt ")
     compaction = matching_lines(text, "awproject_source_major_kernel_compaction ")
-    quantization = matching_lines(text, "awproject_source_major_kernel_i16 ")
+    f32_storage = matching_lines(text, "awproject_source_major_kernel_f32 ")
     staging = matching_lines(text, "awproject_source_major_staging ")
     staged_ready = matching_lines(
         text, "awproject_source_major_staged_streaming_ready "
@@ -1078,8 +1078,7 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
         )
     for entry in source_blocks:
         if (
-            entry.get("architecture")
-            != "direct-source-major-v9-sealed-sha-i16-residual"
+            entry.get("architecture") != "direct-source-major-v10-sealed-f32-residual"
             or entry.get("initial_accumulation") != "high-limb-only"
             or entry.get("initial_partitions") != "2"
             or entry.get("initial_grid_bytes") != "9447840000"
@@ -1098,8 +1097,7 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
         )
     for block, staged in zip(source_blocks, staging, strict=True):
         if (
-            staged.get("architecture")
-            != "direct-source-major-v9-sealed-sha-i16-residual"
+            staged.get("architecture") != "direct-source-major-v10-sealed-f32-residual"
             or staged.get("resident") != "false"
             or staged.get("staged") != "true"
             or int(staged.get("spill_bytes", "0")) <= 0
@@ -1155,11 +1153,11 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
         raise AcceptanceError("AOT receipts do not cover every segment")
     if {int(entry["source_block"]) for entry in compaction} != segments:
         raise AcceptanceError("kernel compaction receipts do not cover every segment")
-    if {int(entry["source_block"]) for entry in quantization} != segments:
-        raise AcceptanceError("scaled-i16 receipts do not cover every segment")
+    if {int(entry["source_block"]) for entry in f32_storage} != segments:
+        raise AcceptanceError("compact-f32 receipts do not cover every segment")
     compaction_by_segment = {int(entry["source_block"]): entry for entry in compaction}
-    quantization_by_segment = {
-        int(entry["source_block"]): entry for entry in quantization
+    f32_storage_by_segment = {
+        int(entry["source_block"]): entry for entry in f32_storage
     }
     for segment, entry in compaction_by_segment.items():
         if entry.get("applied") != "true" or entry.get("bit_exact") != "true":
@@ -1179,36 +1177,25 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
             raise AcceptanceError(
                 "source-major kernel compaction omitted scratch admission"
             )
-    for segment, entry in quantization_by_segment.items():
+    for segment, entry in f32_storage_by_segment.items():
         compact = compaction_by_segment[segment]
         if (
-            entry.get("storage") != "per-stencil-scaled-i16-complex"
-            or entry.get("range") != "-32767:32767"
-            or entry.get("conversion") != "metal-load-to-f32"
+            entry.get("storage") != "compact-f32-complex"
+            or entry.get("bit_exact") != "true"
         ):
-            raise AcceptanceError("scaled-i16 kernel storage contract differs")
-        f32_bytes = int(entry.get("f32_bytes", "0"))
-        i16_bytes = int(entry.get("i16_bytes", "0"))
-        scale_bytes = int(entry.get("scale_bytes", "0"))
-        if f32_bytes != int(compact["compact_bytes"]):
-            raise AcceptanceError("scaled-i16 source bytes differ from compact atlas")
-        if i16_bytes <= 0 or scale_bytes <= 0 or i16_bytes + scale_bytes >= f32_bytes:
-            raise AcceptanceError("scaled-i16 storage did not reduce kernel residency")
+            raise AcceptanceError("compact-f32 kernel storage contract differs")
+        if int(entry.get("bytes", "0")) != int(compact["compact_bytes"]):
+            raise AcceptanceError("compact-f32 storage bytes differ from compact atlas")
         if int(entry.get("values", "0")) <= 0 or int(entry.get("stencils", "0")) <= 0:
-            raise AcceptanceError("scaled-i16 receipt is empty")
-        nrmse = float(entry.get("nrmse", "nan"))
-        if not math.isfinite(nrmse) or nrmse > 1.0e-3:
-            raise AcceptanceError("scaled-i16 kernel NRMSE exceeds the science budget")
-        if not math.isfinite(float(entry.get("max_abs_error", "nan"))):
-            raise AcceptanceError("scaled-i16 maximum error is not finite")
+            raise AcceptanceError("compact-f32 receipt is empty")
         if not math.isfinite(float(entry.get("max_kernel_norm", "nan"))):
-            raise AcceptanceError("scaled-i16 kernel norm is not finite")
+            raise AcceptanceError("compact-f32 kernel norm is not finite")
     if any(entry.get("omitted_energy_fraction_bits") != "0" for entry in aot):
         raise AcceptanceError("AOT receipt is not exact-support")
     for entry in aot:
         segment = int(entry["segment"])
         compact = compaction_by_segment[segment]
-        quantized = quantization_by_segment[segment]
+        f32 = f32_storage_by_segment[segment]
         if entry.get("grouped_plans_hash_prefix") == entry.get(
             "legacy_grouped_plans_hash_prefix"
         ):
@@ -1229,18 +1216,22 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
             raise AcceptanceError("AOT and kernel-compaction cardinalities differ")
         if entry.get("compact_kernel_scratch_bytes") != compact.get("scratch_bytes"):
             raise AcceptanceError("AOT and kernel-compaction scratch ledgers differ")
-        for aot_name, quantized_name in (
-            ("i16_kernel_atlas_bytes", "i16_bytes"),
-            ("i16_kernel_scale_bytes", "scale_bytes"),
-            ("i16_kernel_values", "values"),
-            ("i16_kernel_stencils", "stencils"),
-            ("i16_kernel_nrmse", "nrmse"),
-            ("i16_kernel_max_abs_error", "max_abs_error"),
-            ("i16_kernel_zeroed_components", "zeroed_components"),
-            ("i16_kernel_compile_overlap_bytes", "compile_overlap_bytes"),
+        if entry.get("compact_kernel_atlas_bytes") != f32.get("bytes"):
+            raise AcceptanceError("AOT and compact-f32 kernel ledgers differ")
+        for name in (
+            "i16_kernel_atlas_bytes",
+            "i16_kernel_scale_bytes",
+            "i16_kernel_values",
+            "i16_kernel_stencils",
+            "i16_kernel_nrmse",
+            "i16_kernel_max_abs_error",
+            "i16_kernel_zeroed_components",
+            "i16_kernel_compile_overlap_bytes",
         ):
-            if entry.get(aot_name) != quantized.get(quantized_name):
-                raise AcceptanceError("AOT and scaled-i16 kernel ledgers differ")
+            if float(entry.get(name, "nan")) != 0.0:
+                raise AcceptanceError(
+                    "compact-f32 AOT receipt unexpectedly used i16 storage"
+                )
         if int(entry.get("compile_transient_bytes_peak_estimated", "-1")) > int(
             entry.get("compile_admission_limit_bytes", "-2")
         ):
@@ -1253,7 +1244,7 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
         raise AcceptanceError("source-major replay omitted its streaming-ready receipt")
     staged = staged_ready[0]
     if (
-        staged.get("architecture") != "direct-source-major-v9-sealed-sha-i16-residual"
+        staged.get("architecture") != "direct-source-major-v10-sealed-f32-residual"
         or staged.get("lifecycle") != "after-dirty-grid-release"
         or staged.get("resident") != "false"
         or staged.get("resident_bytes") != "0"
