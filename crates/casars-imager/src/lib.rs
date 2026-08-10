@@ -38572,12 +38572,22 @@ fn standard_mfs_memory_allocation_lifetimes(
                         NoFurtherUse,
                     )]
                 }
-                // This reflects current production retention. A later
-                // measured stage-aware policy may shorten the interval.
+                "AWProject MT-MFS dirty-transform state" => {
+                    vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        DirtyTransform,
+                        DirtyTransform,
+                        NoFurtherUse,
+                    )]
+                }
+                // The full run state contains the model and prediction grids
+                // first created for the minor/major-cycle loop. The initial
+                // transform owns the smaller, separately charged dirty state.
                 "AWProject MT-MFS run state" => vec![standard_mfs_memory_residency(
                     host,
                     bytes,
-                    DirtyTransform,
+                    MinorCycle,
                     Finish,
                     NoFurtherUse,
                 )],
@@ -38835,15 +38845,30 @@ fn admit_awproject_compact_replay_retention(
     if tap_bytes_per_block == 0 && !standard_mfs_uses_source_major_awproject(&plan) {
         return Ok(plan);
     }
-    let replay_stage_peak_bytes = [
+    let source_major_replay_stages = [
+        ImagingMemoryStage::InitialGrid,
+        ImagingMemoryStage::DirtyTransform,
+        ImagingMemoryStage::MinorCycle,
+        ImagingMemoryStage::ModelTransform,
         ImagingMemoryStage::ResidualGrid,
         ImagingMemoryStage::ResidualTransform,
-    ]
-    .into_iter()
-    .filter_map(|stage| plan.memory_lifetime_ledger.stage_peak(stage))
-    .map(|peak| peak.resident_bytes)
-    .max()
-    .unwrap_or(plan.maximum_planned_resident_bytes);
+    ];
+    let residual_replay_stages = [
+        ImagingMemoryStage::ResidualGrid,
+        ImagingMemoryStage::ResidualTransform,
+    ];
+    let replay_stages = if standard_mfs_uses_source_major_awproject(&plan) {
+        source_major_replay_stages.as_slice()
+    } else {
+        residual_replay_stages.as_slice()
+    };
+    let replay_stage_peak_bytes = replay_stages
+        .iter()
+        .copied()
+        .filter_map(|stage| plan.memory_lifetime_ledger.stage_peak(stage))
+        .map(|peak| peak.resident_bytes)
+        .max()
+        .unwrap_or(plan.maximum_planned_resident_bytes);
     let headroom_bytes = plan
         .usable_memory_bytes
         .saturating_sub(replay_stage_peak_bytes);
@@ -39140,18 +39165,13 @@ fn awproject_grouped_metal_topology_eligible(
     selected_field_count: usize,
     initial_dirty_backend_explicit: bool,
 ) -> bool {
-    let explicit_initial_backend = config
-        .standard_mfs_initial_dirty_backend
-        .as_deref()
-        .and_then(parse_standard_mfs_backend_for_plan);
     selected_field_count > 1
         && config.aw_project.is_some()
         && config.deconvolver == Deconvolver::Mtmfs
         && config.nterms == 2
         && !clean_is_dirty(config)
         && standard_mfs_prefers_metal(config)
-        && (!initial_dirty_backend_explicit
-            || explicit_initial_backend == Some(StandardMfsBackend::Cpu))
+        && !initial_dirty_backend_explicit
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39972,6 +39992,28 @@ fn awproject_mtmfs_run_state_bytes(nterms: usize, image_pixels: usize) -> Result
     )
 }
 
+fn awproject_mtmfs_dirty_transform_state_bytes(
+    nterms: usize,
+    image_pixels: usize,
+) -> Result<usize, String> {
+    // While the initial Metal grids are consumed one plane at a time, the
+    // transform retains the materialized PSF, residual, and weight products
+    // plus the external mask-weight image. Model and prediction grids do not
+    // exist until the later minor/major-cycle loop.
+    let resident_f32_planes = nterms
+        .checked_mul(5)
+        .and_then(|value| value.checked_sub(1))
+        .ok_or_else(|| "AWProject MT-MFS dirty plane count overflowed".to_string())?;
+    checked_imaging_product(
+        [
+            image_pixels,
+            resident_f32_planes,
+            std::mem::size_of::<f32>(),
+        ],
+        "AWProject MT-MFS dirty-transform state",
+    )
+}
+
 fn awproject_mtmfs_multiscale_minor_cycle_scratch_bytes(
     nterms: usize,
     scale_count: usize,
@@ -40205,6 +40247,11 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         awproject_mtmfs_run_state_bytes(config.nterms, image_pixels)?
     } else {
         standard_mfs_plane_state_requirements(config).estimated_bytes_per_plane(image_pixels)
+    };
+    let aw_dirty_transform_state_bytes = if awproject_mtmfs {
+        awproject_mtmfs_dirty_transform_state_bytes(config.nterms, image_pixels)?
+    } else {
+        0
     };
     let weighting_density_bytes = if matches!(
         config.weighting,
@@ -40575,6 +40622,11 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     if awproject_mtmfs {
         fixed_allocations.extend([
             ImagingMemoryAllocation {
+                component: "AWProject MT-MFS dirty-transform state",
+                stage: "dirty-transform",
+                bytes: aw_dirty_transform_state_bytes,
+            },
+            ImagingMemoryAllocation {
                 component: "AWProject CF pixels",
                 stage: "run",
                 bytes: aw_cf_resident_bytes,
@@ -40624,7 +40676,9 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         fixed_allocations.retain(|allocation| {
             if matches!(
                 allocation.component,
-                "AWProject MT-MFS run state" | "AWProject CASA-layout model FFT staging"
+                "AWProject MT-MFS dirty-transform state"
+                    | "AWProject MT-MFS run state"
+                    | "AWProject CASA-layout model FFT staging"
             ) {
                 deferred_lifetime_allocations.push(allocation.clone());
                 false
@@ -63192,6 +63246,40 @@ mod tests {
     }
 
     #[test]
+    fn awproject_explicit_cpu_initial_preserves_the_legacy_generic_plan() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("explicit-cpu-initial-grid-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
+        config.standard_mfs_initial_dirty_backend = Some("cpu".to_string());
+        let base = standard_mfs_memory_plan(&config, 64, 1024);
+
+        let unchanged =
+            resolve_awproject_multifield_memory_plan(base.clone(), &config, 2, true, true).unwrap();
+        assert_eq!(unchanged, base);
+        assert!(unchanged.workload.direct_metal_scratch_candidate_bytes > 0);
+        assert!(standard_mfs_plan_decision_is(
+            &unchanged,
+            "awproject_grouped_replay_replaced_generic_caches",
+            "false"
+        ));
+        assert!(!unchanged.decisions.iter().any(|decision| {
+            decision.name == "awproject_source_major_architecture"
+                || (decision.name == "awproject_initial_grid_backend"
+                    && decision.value == "source-major-grouped-metal-f64")
+        }));
+        assert_eq!(
+            standard_mfs_execution_config_with_plan(&config, &unchanged).initial_dirty_backend,
+            Some(StandardMfsBackend::Cpu)
+        );
+        assert_eq!(
+            awproject_grouped_metal_plan_probe_status(&unchanged, &config, 2, true),
+            AwProjectGroupedMetalProbeStatus::NotApplicable
+        );
+    }
+
+    #[test]
     fn awproject_multifield_initial_grid_fails_closed_when_the_ledger_cannot_admit_it() {
         let tmp = tempdir().unwrap();
         let cf_cache = tmp.path().join("rejected-multifield-initial-grid-cf-cache");
@@ -63348,7 +63436,6 @@ mod tests {
         config.imsize = 12_150;
         config.field_ids = Some((0..63).collect());
         config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
-        config.standard_mfs_initial_dirty_backend = Some("cpu".to_string());
         config.standard_mfs_residual_backend = Some("metal-row-run-grouped".to_string());
         config.standard_mfs_grid_threads = Some("7".to_string());
         config.imaging_prepare_workers = Some(1);
@@ -63438,7 +63525,7 @@ mod tests {
             "the real-shape fixture must stay red-capable for premature legacy admission: {legacy_error}"
         );
 
-        let admitted = resolve_awproject_multifield_memory_plan(base, &config, 63, true, true)
+        let admitted = resolve_awproject_multifield_memory_plan(base, &config, 63, false, true)
             .expect("resolved grouped topology must precede semantic admission");
         assert_eq!(admitted.usable_memory_bytes, MEMORY_TARGET_BYTES);
         assert_eq!(admitted.workload.direct_metal_scratch_candidate_bytes, 0);
@@ -63452,24 +63539,48 @@ mod tests {
             "awproject_multifield_initial_grid_admission",
             "admitted"
         ));
+        assert_eq!(
+            admitted.allocation_bytes("AWProject MT-MFS dirty-transform state"),
+            5_314_410_000
+        );
+        assert_eq!(
+            admitted
+                .memory_lifetime_ledger
+                .stage_peak(ImagingMemoryStage::DirtyTransform)
+                .expect("pre-replay dirty-transform peak")
+                .resident_bytes,
+            30_321_338_800
+        );
         let compensated_readback = admitted
             .memory_lifetime_ledger
             .allocations
             .iter()
             .find(|allocation| allocation.component == "AWProject compensated f64 readback")
             .expect("grouped residual Metal readback lifetime");
-        assert_eq!(compensated_readback.residencies.len(), 1);
+        assert_eq!(compensated_readback.residencies.len(), 2);
         assert_eq!(
             compensated_readback.residencies[0].live_from,
-            ImagingMemoryStage::ResidualTransform
+            ImagingMemoryStage::DirtyTransform
         );
         assert_eq!(
             compensated_readback.residencies[0].live_through,
+            ImagingMemoryStage::DirtyTransform
+        );
+        assert_eq!(
+            compensated_readback.residencies[1].live_from,
+            ImagingMemoryStage::ResidualTransform
+        );
+        assert_eq!(
+            compensated_readback.residencies[1].live_through,
             ImagingMemoryStage::ResidualTransform
         );
         assert!(admitted.maximum_planned_resident_bytes <= admitted.usable_memory_bytes);
 
         let replay_stage_peak_bytes = [
+            ImagingMemoryStage::InitialGrid,
+            ImagingMemoryStage::DirtyTransform,
+            ImagingMemoryStage::MinorCycle,
+            ImagingMemoryStage::ModelTransform,
             ImagingMemoryStage::ResidualGrid,
             ImagingMemoryStage::ResidualTransform,
         ]
@@ -63478,51 +63589,56 @@ mod tests {
         .map(|peak| peak.resident_bytes)
         .max()
         .expect("full12150/all63 replay-stage peak");
-        let residual_headroom_bytes = admitted
+        let replay_lifetime_headroom_bytes = admitted
             .usable_memory_bytes
             .checked_sub(replay_stage_peak_bytes)
-            .expect("admitted replay-stage headroom");
+            .expect("admitted replay-lifetime headroom");
+        assert_eq!(replay_lifetime_headroom_bytes, 3_233_093_200);
         let compile_envelope = awproject_grouped_replay_compile_envelope(&admitted)
             .expect("full12150/all63 compile envelope");
-        assert_eq!(compile_envelope.compile_admission_bytes, 10_784_124_037);
+        assert_eq!(compile_envelope.compile_admission_bytes, 11_499_928_027);
         assert_eq!(
             compile_envelope.replay_retention_ceiling_bytes,
-            10_247_253_125
+            10_963_057_115
         );
-        assert!(
-            residual_headroom_bytes > compile_envelope.replay_retention_ceiling_bytes,
-            "the fixture must preserve the preflight-v2 conflict between residual and compile headroom"
-        );
+        assert!(replay_lifetime_headroom_bytes < compile_envelope.replay_retention_ceiling_bytes);
 
         let plan = admit_awproject_compact_replay_retention(admitted, 32)
             .expect("jointly bounded full12150/all63 replay retention");
         assert_eq!(
             plan.allocation_bytes("AWProject compact replay retention"),
-            10_247_253_125
+            3_233_093_200
         );
+        assert_eq!(plan.maximum_planned_resident_bytes, MEMORY_TARGET_BYTES);
         let execution = standard_mfs_execution_config_with_plan(&config, &plan);
         let grouped_replay = execution
             .awproject_grouped_replay
             .as_ref()
             .expect("compile-safe full12150/all63 grouped replay plan");
-        assert_eq!(grouped_replay.compile_admission_bytes(), 10_784_124_037);
-        assert_eq!(grouped_replay.segment_target_bytes(), 536_870_912);
+        assert_eq!(grouped_replay.compile_admission_bytes(), 11_499_928_027);
+        assert_eq!(grouped_replay.segment_target_bytes(), 8_266_834_827);
+        assert_eq!(
+            grouped_replay.segment_target_bytes()
+                + plan.allocation_bytes("AWProject compact replay retention"),
+            grouped_replay.compile_admission_bytes()
+        );
+        assert!(grouped_replay.segment_target_bytes() >= AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES);
         assert_eq!(
             awproject_grouped_metal_execution_probe_status(&plan, &execution),
             AwProjectGroupedMetalProbeStatus::Admitted
         );
         assert!(plan.decisions.iter().any(|decision| {
             decision.name == "awproject_compact_replay_retention_bytes"
-                && decision.value == "10247253125"
+                && decision.value == "3233093200"
                 && decision
                     .reason
-                    .contains("compile_admission_bytes=10784124037")
+                    .contains("compile_admission_bytes=11499928027")
                 && decision
                     .reason
                     .contains("compile_segment_reserve_bytes=536870912")
                 && decision
                     .reason
-                    .contains("compile_retention_ceiling_bytes=10247253125")
+                    .contains("compile_retention_ceiling_bytes=10963057115")
         }));
 
         let receipt_ids = standard_mfs_memory_allocation_receipt_ids(&plan);
@@ -63571,23 +63687,12 @@ mod tests {
         assert!(replace_standard_mfs_memory_allocation(
             &mut oversized_replay,
             "AWProject compact replay retention",
-            compile_envelope.replay_retention_ceiling_bytes + 1,
+            replay_lifetime_headroom_bytes + 1,
         ));
-        rebuild_standard_mfs_memory_lifetime_ledger(&mut oversized_replay, true)
-            .expect("oversized replay remains inside the residual-stage target");
-        let oversized_execution =
-            standard_mfs_execution_config_with_plan(&config, &oversized_replay);
-        assert!(oversized_execution.awproject_grouped_replay.is_none());
-        assert!(matches!(
-            awproject_grouped_metal_plan_probe_status(
-                &oversized_replay,
-                &config,
-                63,
-                true,
-            ),
-            AwProjectGroupedMetalProbeStatus::Rejected(reason)
-                if reason.contains("compile-safe ceiling 10247253125")
-        ));
+        assert!(
+            rebuild_standard_mfs_memory_lifetime_ledger(&mut oversized_replay, true).is_err(),
+            "one byte above the source-major lifetime ceiling must reject"
+        );
     }
 
     #[test]

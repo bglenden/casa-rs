@@ -57,7 +57,7 @@ def valid_probe_log(
     )
     decisions = {
         "awproject_selected_field_count": "63",
-        "awproject_initial_grid_backend": "cpu-dynamic-sparse-f64",
+        "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
         "awproject_multifield_initial_grid_admission": "admitted",
         "awproject_grouped_replay_replaced_generic_caches": "true",
         "awproject_grouped_metal_generic_scratch_bytes": "0",
@@ -70,7 +70,7 @@ def valid_probe_log(
         "standard_mfs_planning_resources "
         f"memory_target_bytes={target_bytes} memory_target_origin={target_origin} "
         f"no_swap_headroom_bytes={headroom_bytes or target_bytes + acceptance.GIB}",
-        "standard_mfs_runtime_plan initial_dirty_backend=cpu "
+        "standard_mfs_runtime_plan initial_dirty_backend=metal-row-run-grouped "
         "residual_backend=metal-row-run-grouped",
         "awproject_grouped_replay_plan architecture=source-order-grouped-tile-v1 "
         "tile_side=16 omitted_squared_l2_energy=0.000000000e0",
@@ -232,7 +232,7 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
         self.assertEqual("2~17", value("--spw"))
         self.assertEqual("12150", value("--imsize"))
         self.assertEqual("20000", value("--niter"))
-        self.assertEqual("cpu", value("--standard-mfs-initial-dirty-backend"))
+        self.assertNotIn("--standard-mfs-initial-dirty-backend", common)
         self.assertEqual(
             "metal-row-run-grouped", value("--standard-mfs-residual-backend")
         )
@@ -261,7 +261,10 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
         mutations = (
             ("grouped_metal_status=admitted", "grouped_metal_status=rejected"),
             ("rows_total=655200", "rows_total=1"),
-            ("initial_dirty_backend=cpu", "initial_dirty_backend=metal"),
+            (
+                "initial_dirty_backend=metal-row-run-grouped",
+                "initial_dirty_backend=cpu",
+            ),
             (
                 "omitted_squared_l2_energy=0.000000000e0",
                 "omitted_squared_l2_energy=1e-6",

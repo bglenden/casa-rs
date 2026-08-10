@@ -643,8 +643,6 @@ def common_imager_command(
         "mtmfs",
         "--standard-mfs-acceleration",
         "metal",
-        "--standard-mfs-initial-dirty-backend",
-        "cpu",
         "--standard-mfs-residual-backend",
         "metal-row-run-grouped",
         "--imaging-fft-precision",
@@ -795,8 +793,11 @@ def validate_probe_log(
     headroom = int(resources[0].get("no_swap_headroom_bytes", "-1"))
     if require_target_within_headroom and target_bytes > headroom:
         raise AcceptanceError("plan probe target exceeds its fresh no-swap headroom")
-    if len(runtime) != 1 or runtime[0].get("initial_dirty_backend") != "cpu":
-        raise AcceptanceError("plan probe did not select the CPU initial grid")
+    if (
+        len(runtime) != 1
+        or runtime[0].get("initial_dirty_backend") != "metal-row-run-grouped"
+    ):
+        raise AcceptanceError("plan probe did not select the source-major Metal initial grid")
     if runtime[0].get("residual_backend") != "metal-row-run-grouped":
         raise AcceptanceError("plan probe did not select grouped Metal residual replay")
     if len(grouped) != 1:
@@ -810,7 +811,7 @@ def validate_probe_log(
     by_name = {decision.get("name"): decision.get("value") for decision in decisions}
     expected_decisions = {
         "awproject_selected_field_count": "63",
-        "awproject_initial_grid_backend": "cpu-dynamic-sparse-f64",
+        "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
         "awproject_multifield_initial_grid_admission": "admitted",
         "awproject_grouped_replay_replaced_generic_caches": "true",
         "awproject_grouped_metal_generic_scratch_bytes": "0",
