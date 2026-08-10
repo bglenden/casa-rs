@@ -145,7 +145,7 @@ EXPERIMENT_ENVIRONMENT = {
     "CASA_RS_EXPERIMENTAL_PARALLEL_MODEL_TERM_FFT": "1",
     "CASA_RS_EXPERIMENTAL_PARALLEL_RESIDUAL_TERM_FFT": "1",
     "CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_LIVE_CFS_ONLY": "1",
-    "CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_WEIGHT_COMPENSATION": "1",
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_BLOCK_FOLDED_WEIGHT_COMPENSATION": "1",
 }
 
 
@@ -816,7 +816,7 @@ def validate_probe_log(
         "awproject_selected_field_count": "63",
         "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
         "awproject_source_major_architecture": "direct-source-major-v10-sealed-f32-residual",
-        "awproject_source_major_initial_accumulation": "weight-two-limb",
+        "awproject_source_major_initial_accumulation": "weight-two-limb-block-folded",
         "awproject_source_major_initial_grid_bytes": "12990780000",
         "awproject_multifield_initial_grid_admission": "admitted",
         "awproject_grouped_replay_replaced_generic_caches": "true",
@@ -1080,10 +1080,13 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
     for entry in source_blocks:
         if (
             entry.get("architecture") != "direct-source-major-v10-sealed-f32-residual"
-            or entry.get("initial_accumulation") != "weight-two-limb"
+            or entry.get("initial_accumulation") != "weight-two-limb-block-folded"
             or entry.get("initial_partitions") != "2"
             or entry.get("initial_grid_bytes") != "12990780000"
             or entry.get("initial_compensation_bytes") != "3542940000"
+            or entry.get("initial_compensation_fold_bytes") != "3542940000"
+            or entry.get("initial_compensation_released_before_residual_compile")
+            != "true"
             or int(entry.get("spill_bytes", "0")) <= 0
             or entry.get("reload_bytes") != "0"
         ):
@@ -1112,13 +1115,13 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
             raise AcceptanceError("source-major staged replay receipt differs")
     if (
         len(initial_readback) != 1
-        or initial_readback[0].get("residency") != "metal-shared-selected-two-limb-grid"
-        or initial_readback[0].get("resident_bytes") != "12990780000"
-        or initial_readback[0].get("compensation_plane_start") != "5"
-        or initial_readback[0].get("compensation_plane_count") != "3"
-        or initial_readback[0].get("compensation_bytes") != "3542940000"
+        or initial_readback[0].get("residency") != "metal-shared-high-limb-only-grid"
+        or initial_readback[0].get("resident_bytes") != "9447840000"
+        or initial_readback[0].get("compensation_plane_start") != "none"
+        or initial_readback[0].get("compensation_plane_count") != "0"
+        or initial_readback[0].get("compensation_bytes") != "0"
     ):
-        raise AcceptanceError("weight-compensated initial readback receipt differs")
+        raise AcceptanceError("block-folded initial readback receipt differs")
     if not sealed:
         raise AcceptanceError("runtime log omitted sealed grouped segments")
     segments = {int(entry["segment"]) for entry in sealed}
