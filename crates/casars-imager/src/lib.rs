@@ -39444,15 +39444,46 @@ fn admit_awproject_multifield_initial_grid(
             ));
         }
     };
+    let source_major_full_compensation =
+        std::env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_FULL_COMPENSATION").is_some();
+    let source_major_psf_compensation =
+        std::env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_PSF_COMPENSATION").is_some();
+    if source_major_full_compensation && source_major_psf_compensation {
+        return Ok(reject_awproject_multifield_initial_grid(
+            plan,
+            selected_field_count,
+            "source-major full and PSF-only compensation experiments are mutually exclusive"
+                .to_string(),
+        ));
+    }
+    let source_major_compensation_planes = if source_major_full_compensation {
+        candidate.workload.grid_planes
+    } else if source_major_psf_compensation {
+        3
+    } else {
+        0
+    };
+    let source_major_grid_planes = candidate
+        .workload
+        .grid_planes
+        .checked_add(source_major_compensation_planes)
+        .ok_or_else(|| "source-major initial grid plane count overflowed".to_string())?;
     let source_major_initial_grid_bytes = checked_imaging_product(
         [
             candidate.workload.grid_width,
             candidate.workload.grid_height,
-            candidate.workload.grid_planes,
+            source_major_grid_planes,
             std::mem::size_of::<Complex32>(),
         ],
-        "source-major high-only initial grid",
+        "source-major initial grid and selected compensation limbs",
     )?;
+    let source_major_initial_accumulation = if source_major_full_compensation {
+        "full-two-limb"
+    } else if source_major_psf_compensation {
+        "psf-two-limb"
+    } else {
+        "high-limb-only"
+    };
     if !replace_standard_mfs_memory_allocation(
         &mut candidate,
         "grids",
@@ -39621,17 +39652,19 @@ fn admit_awproject_multifield_initial_grid(
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_source_major_initial_accumulation",
-            value: "high-limb-only".to_string(),
+            value: source_major_initial_accumulation.to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Workload,
-            reason: "retain one Complex32 initial grid and discard only the cross-source-block compensation rounding limb; full-product acceptance is bounded by normalized RMS"
-                .to_string(),
+            reason: format!(
+                "retain the eight-plane Complex32 initial grid plus {source_major_compensation_planes} selected compensation planes; full-product acceptance is bounded by normalized RMS"
+            ),
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_source_major_initial_grid_bytes",
             value: source_major_initial_grid_bytes.to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Resources,
-            reason: "eight Complex32 high-limb planes remain resident through the initial dirty transform"
-                .to_string(),
+            reason: format!(
+                "{source_major_grid_planes} Complex32 grid and compensation planes remain resident through the initial dirty transform"
+            ),
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_source_major_compiler_segment_bytes",
@@ -39732,7 +39765,7 @@ fn admit_awproject_multifield_initial_grid(
             name: "awproject_multifield_initial_grid_admission",
             value: "admitted".to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Resources,
-            reason: "the direct source-major compiler segment, retained exact replay programs, source blocks, CF/POINTING state, and initial high-only grid fit the exact stage lifetime ledger"
+            reason: "the direct source-major compiler segment, retained exact replay programs, source blocks, CF/POINTING state, and selected initial compensation topology fit the exact stage lifetime ledger"
                 .to_string(),
         },
     ] {
@@ -63622,6 +63655,14 @@ mod tests {
 
         let admitted = resolve_awproject_multifield_memory_plan(base, &config, 63, false, true)
             .expect("resolved grouped topology must precede semantic admission");
+        let psf_initial_compensation =
+            std::env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_PSF_COMPENSATION")
+                .is_some();
+        let expected_initial_compensation_bytes =
+            usize::from(psf_initial_compensation) * 3_542_940_000;
+        let expected_compile_admission_bytes = 20_947_768_027 - expected_initial_compensation_bytes;
+        let expected_compile_retention_ceiling_bytes =
+            20_410_897_115 - expected_initial_compensation_bytes;
         assert_eq!(admitted.usable_memory_bytes, MEMORY_TARGET_BYTES);
         assert_eq!(admitted.workload.direct_metal_scratch_candidate_bytes, 0);
         assert_eq!(admitted.workload.routed_replay_cache_candidate_bytes, 0);
@@ -63644,8 +63685,17 @@ mod tests {
                 .stage_peak(ImagingMemoryStage::DirtyTransform)
                 .expect("pre-replay dirty-transform peak")
                 .resident_bytes,
-            20_873_498_800
+            20_873_498_800 + expected_initial_compensation_bytes
         );
+        assert!(standard_mfs_plan_decision_is(
+            &admitted,
+            "awproject_source_major_initial_accumulation",
+            if psf_initial_compensation {
+                "psf-two-limb"
+            } else {
+                "high-limb-only"
+            }
+        ));
         let compensated_readback = admitted
             .memory_lifetime_ledger
             .allocations
@@ -63689,10 +63739,13 @@ mod tests {
         assert_eq!(replay_lifetime_headroom_bytes, 15_195_367_900);
         let compile_envelope = awproject_grouped_replay_compile_envelope(&admitted)
             .expect("full12150/all63 compile envelope");
-        assert_eq!(compile_envelope.compile_admission_bytes, 20_947_768_027);
+        assert_eq!(
+            compile_envelope.compile_admission_bytes,
+            expected_compile_admission_bytes
+        );
         assert_eq!(
             compile_envelope.replay_retention_ceiling_bytes,
-            20_410_897_115
+            expected_compile_retention_ceiling_bytes
         );
         assert!(replay_lifetime_headroom_bytes < compile_envelope.replay_retention_ceiling_bytes);
 
@@ -63708,8 +63761,14 @@ mod tests {
             .awproject_grouped_replay
             .as_ref()
             .expect("compile-safe full12150/all63 grouped replay plan");
-        assert_eq!(grouped_replay.compile_admission_bytes(), 20_947_768_027);
-        assert_eq!(grouped_replay.segment_target_bytes(), 5_752_400_127);
+        assert_eq!(
+            grouped_replay.compile_admission_bytes(),
+            expected_compile_admission_bytes
+        );
+        assert_eq!(
+            grouped_replay.segment_target_bytes(),
+            expected_compile_admission_bytes - 15_195_367_900
+        );
         assert_eq!(
             grouped_replay.segment_target_bytes()
                 + plan.allocation_bytes("AWProject compact replay retention"),
@@ -63723,15 +63782,15 @@ mod tests {
         assert!(plan.decisions.iter().any(|decision| {
             decision.name == "awproject_compact_replay_retention_bytes"
                 && decision.value == "15195367900"
-                && decision
-                    .reason
-                    .contains("compile_admission_bytes=20947768027")
+                && decision.reason.contains(&format!(
+                    "compile_admission_bytes={expected_compile_admission_bytes}"
+                ))
                 && decision
                     .reason
                     .contains("compile_segment_reserve_bytes=536870912")
-                && decision
-                    .reason
-                    .contains("compile_retention_ceiling_bytes=20410897115")
+                && decision.reason.contains(&format!(
+                    "compile_retention_ceiling_bytes={expected_compile_retention_ceiling_bytes}"
+                ))
         }));
 
         let receipt_ids = standard_mfs_memory_allocation_receipt_ids(&plan);

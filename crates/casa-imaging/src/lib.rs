@@ -11545,6 +11545,10 @@ struct AwProjectMetalGroupedTilePlan {
 }
 
 const AWPROJECT_INITIAL_GROUPED_PLANE_COUNT: usize = 8;
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_INITIAL_GROUPED_PSF_PLANE_START: usize = 0;
+#[cfg(all(target_os = "macos", not(coverage)))]
+const AWPROJECT_INITIAL_GROUPED_PSF_PLANE_COUNT: usize = 3;
 
 #[repr(C, align(8))]
 #[derive(Clone, Copy)]
@@ -15603,6 +15607,60 @@ type AwProjectMetalPipeline =
 #[cfg(all(target_os = "macos", not(coverage)))]
 struct AwProjectMetalCompensation {
     buffer: objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>>,
+    plane_start: usize,
+    plane_count: usize,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl AwProjectMetalCompensation {
+    fn new(
+        buffer: objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>>,
+        plane_start: usize,
+        plane_count: usize,
+    ) -> Self {
+        Self {
+            buffer,
+            plane_start,
+            plane_count,
+        }
+    }
+
+    fn local_plane(&self, plane: usize) -> Option<usize> {
+        plane
+            .checked_sub(self.plane_start)
+            .filter(|local| *local < self.plane_count)
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AwProjectInitialCompensationMode {
+    HighOnly,
+    PsfTerms,
+    Full,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl AwProjectInitialCompensationMode {
+    fn plane_range(self) -> Option<std::ops::Range<usize>> {
+        match self {
+            Self::HighOnly => None,
+            Self::PsfTerms => Some(
+                AWPROJECT_INITIAL_GROUPED_PSF_PLANE_START
+                    ..AWPROJECT_INITIAL_GROUPED_PSF_PLANE_START
+                        + AWPROJECT_INITIAL_GROUPED_PSF_PLANE_COUNT,
+            ),
+            Self::Full => Some(0..AWPROJECT_INITIAL_GROUPED_PLANE_COUNT),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::HighOnly => "high-limb-only",
+            Self::PsfTerms => "psf-two-limb",
+            Self::Full => "full-two-limb",
+        }
+    }
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -15646,11 +15704,14 @@ fn emit_awproject_frozen_final_state_pre_fft_grid_hashes(
             element_count,
         )
     };
-    let low = compensation.map(|compensation| unsafe {
-        slice::from_raw_parts(
-            compensation.buffer.contents().as_ptr().cast::<Complex32>(),
-            element_count,
-        )
+    let low = compensation.map(|compensation| {
+        let correction_elements = plane_elements.saturating_mul(compensation.plane_count);
+        unsafe {
+            slice::from_raw_parts(
+                compensation.buffer.contents().as_ptr().cast::<Complex32>(),
+                correction_elements,
+            )
+        }
     });
     for term in 0..plane_count {
         let plane = first_plane + term;
@@ -15664,7 +15725,12 @@ fn emit_awproject_frozen_final_state_pre_fft_grid_hashes(
         }
         for index in start..end {
             let high_value = high[index];
-            let low_value = low.map_or(Complex32::new(0.0, 0.0), |values| values[index]);
+            let low_value = compensation
+                .and_then(|state| state.local_plane(plane))
+                .zip(low)
+                .map_or(Complex32::new(0.0, 0.0), |(local_plane, values)| {
+                    values[local_plane * plane_elements + index - start]
+                });
             representation_hash.update(high_value.re.to_bits().to_le_bytes());
             representation_hash.update(high_value.im.to_bits().to_le_bytes());
             representation_hash.update(low_value.re.to_bits().to_le_bytes());
@@ -15689,7 +15755,7 @@ fn emit_awproject_frozen_final_state_pre_fft_grid_hashes(
             plane,
             rows,
             columns,
-            low.is_some(),
+            compensation.is_some_and(|state| state.local_plane(plane).is_some()),
             representation_hash.finalize(),
             value_hash.finalize(),
         );
@@ -15741,8 +15807,22 @@ fn copy_awproject_metal_centered_f64_plane(
                 "AWProject Metal compensated grid byte size overflowed".to_string(),
             )
         })?;
+    let expected_compensation_bytes = compensation
+        .map(|state| {
+            plane_elements
+                .checked_mul(state.plane_count)
+                .and_then(|value| value.checked_mul(mem::size_of::<Complex32>()))
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "AWProject Metal compensation byte size overflowed".to_string(),
+                    )
+                })
+        })
+        .transpose()?;
     if grid.metal_buffer().length() < expected_bytes
-        || compensation.is_some_and(|state| state.buffer.length() < expected_bytes)
+        || compensation
+            .zip(expected_compensation_bytes)
+            .is_some_and(|(state, bytes)| state.buffer.length() < bytes)
     {
         return Err(ImagingError::Normalization(
             "AWProject Metal compensated grid buffer is smaller than its plane topology"
@@ -15758,7 +15838,7 @@ fn copy_awproject_metal_centered_f64_plane(
     let corrections = compensation.map(|state| unsafe {
         slice::from_raw_parts(
             state.buffer.contents().as_ptr().cast::<Complex32>(),
-            element_count,
+            plane_elements * state.plane_count,
         )
     });
     let plane_offset = plane * plane_elements;
@@ -15766,7 +15846,12 @@ fn copy_awproject_metal_centered_f64_plane(
         let fft_row = (row + rows / 2) % rows;
         let fft_column = (column + columns / 2) % columns;
         let index = plane_offset + fft_row * columns + fft_column;
-        let correction = corrections.map_or(Complex32::new(0.0, 0.0), |values| values[index]);
+        let correction = compensation
+            .and_then(|state| state.local_plane(plane))
+            .zip(corrections)
+            .map_or(Complex32::new(0.0, 0.0), |(local_plane, values)| {
+                values[local_plane * plane_elements + fft_row * columns + fft_column]
+            });
         Complex64::new(
             f64::from(values[index].re) + f64::from(correction.re),
             f64::from(values[index].im) + f64::from(correction.im),
@@ -15790,6 +15875,7 @@ struct AwProjectMetalExecutor {
     tile_pipeline: AwProjectMetalPipeline,
     tile_i16_pipeline: AwProjectMetalPipeline,
     initial_grouped_tile_pipeline: AwProjectMetalPipeline,
+    initial_grouped_psf_compensated_pipeline: Option<AwProjectMetalPipeline>,
     initial_grouped_high_only_pipeline: AwProjectMetalPipeline,
     predicted_tile_pipeline: AwProjectMetalPipeline,
 }
@@ -19581,6 +19667,15 @@ impl AwProjectMetalExecutor {
                     "AWProject backend 'metal' failed to create initial grouped-tile pipeline: {error:?}"
                 ))
             })?;
+        let initial_grouped_psf_compensated_pipeline = library
+            .newFunctionWithName(&objc2_foundation::NSString::from_str(
+                "awproject_grid_initial_grouped_tiles_psf_compensated",
+            ))
+            .and_then(|function| {
+                device
+                    .newComputePipelineStateWithFunction_error(&function)
+                    .ok()
+            });
         let initial_grouped_high_only_function_name =
             objc2_foundation::NSString::from_str("awproject_grid_initial_grouped_tiles_high_only");
         let initial_grouped_high_only_function = library
@@ -19630,6 +19725,7 @@ impl AwProjectMetalExecutor {
             tile_pipeline,
             tile_i16_pipeline,
             initial_grouped_tile_pipeline,
+            initial_grouped_psf_compensated_pipeline,
             initial_grouped_high_only_pipeline,
             predicted_tile_pipeline,
         })
@@ -19865,7 +19961,11 @@ impl AwProjectMetalExecutor {
                     expected_output_bytes,
                 );
             }
-            *compensation = Some(AwProjectMetalCompensation { buffer });
+            *compensation = Some(AwProjectMetalCompensation::new(
+                buffer,
+                0,
+                usize::try_from(params.output_plane_count).unwrap_or(usize::MAX),
+            ));
         }
         let compensation_buffer = &compensation
             .as_ref()
@@ -21587,7 +21687,11 @@ impl AwProjectMetalExecutor {
             unsafe {
                 ptr::write_bytes(buffer.contents().as_ptr().cast::<u8>(), 0, output_bytes);
             }
-            Some(AwProjectMetalCompensation { buffer })
+            Some(AwProjectMetalCompensation::new(
+                buffer,
+                0,
+                grid.plane_count(),
+            ))
         } else {
             None
         };
@@ -21681,10 +21785,12 @@ impl AwProjectMetalExecutor {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn dispatch_initial_grouped_tiles(
         &self,
         grid: &mut crate::apple_fft::MetalSharedF32DirtyGridBatch,
-        mut compensation: Option<&mut Option<AwProjectMetalCompensation>>,
+        compensation: &mut Option<AwProjectMetalCompensation>,
+        compensation_mode: AwProjectInitialCompensationMode,
         program: &AwProjectMetalInitialGroupedProgram,
         kernels: &[WProjectMetalComplex],
         phases: &[WProjectMetalComplex],
@@ -21700,6 +21806,15 @@ impl AwProjectMetalExecutor {
 
         if program.groups.is_empty() || program.tile_plan.active_tile_ids.is_empty() {
             return Ok(AwProjectMetalTileGridStats::default());
+        }
+        let compensation_range = compensation_mode.plane_range();
+        if compensation_mode == AwProjectInitialCompensationMode::PsfTerms
+            && self.initial_grouped_psf_compensated_pipeline.is_none()
+        {
+            return Err(ImagingError::Unsupported(
+                "source-major PSF-compensated initial grouped Metal pipeline is unavailable"
+                    .to_string(),
+            ));
         }
         if grid.plane_count() != AWPROJECT_INITIAL_GROUPED_PLANE_COUNT
             || program.fixed_scales.len() != AWPROJECT_INITIAL_GROUPED_PLANE_COUNT
@@ -21722,6 +21837,21 @@ impl AwProjectMetalExecutor {
                     "source-major initial grouped output byte count overflowed".to_string(),
                 )
             })?;
+        let compensation_bytes = compensation_range
+            .as_ref()
+            .map(|range| {
+                grid_width
+                    .checked_mul(grid_height)
+                    .and_then(|value| value.checked_mul(range.len()))
+                    .and_then(|value| value.checked_mul(mem::size_of::<Complex32>()))
+                    .ok_or_else(|| {
+                        ImagingError::InvalidRequest(
+                            "source-major initial compensation byte count overflowed".to_string(),
+                        )
+                    })
+            })
+            .transpose()?
+            .unwrap_or(0);
         if grid.metal_buffer().length() < output_bytes {
             return Err(ImagingError::Normalization(
                 "source-major initial grouped output buffer is smaller than its topology"
@@ -21882,30 +22012,51 @@ impl AwProjectMetalExecutor {
                     )
                 })?
         };
-        if compensation
-            .as_deref()
-            .and_then(Option::as_ref)
-            .is_some_and(|state| state.buffer.length() < output_bytes)
-        {
-            return Err(ImagingError::Normalization(
-                "source-major initial compensation is smaller than the output".to_string(),
-            ));
+        if let Some(state) = compensation.as_ref() {
+            let Some(range) = compensation_range.as_ref() else {
+                return Err(ImagingError::Normalization(
+                    "source-major high-only initial gridding retained a compensation buffer"
+                        .to_string(),
+                ));
+            };
+            if state.plane_start != range.start
+                || state.plane_count != range.len()
+                || state.buffer.length() < compensation_bytes
+            {
+                return Err(ImagingError::Normalization(format!(
+                    "source-major initial compensation topology is start={}, count={}, bytes={}, expected start={}, count={}, bytes={}",
+                    state.plane_start,
+                    state.plane_count,
+                    state.buffer.length(),
+                    range.start,
+                    range.len(),
+                    compensation_bytes,
+                )));
+            }
         }
-        if let Some(compensation) = compensation.as_deref_mut()
-            && compensation.is_none()
+        if compensation.is_none()
+            && let Some(range) = compensation_range.as_ref()
         {
             let buffer = self
                 .device
-                .newBufferWithLength_options(output_bytes, storage_options)
+                .newBufferWithLength_options(compensation_bytes, storage_options)
                 .ok_or_else(|| {
                     ImagingError::Unsupported(
                         "source-major initial grouped could not allocate compensation".to_string(),
                     )
                 })?;
             unsafe {
-                ptr::write_bytes(buffer.contents().as_ptr().cast::<u8>(), 0, output_bytes);
+                ptr::write_bytes(
+                    buffer.contents().as_ptr().cast::<u8>(),
+                    0,
+                    compensation_bytes,
+                );
             }
-            *compensation = Some(AwProjectMetalCompensation { buffer });
+            *compensation = Some(AwProjectMetalCompensation::new(
+                buffer,
+                range.start,
+                range.len(),
+            ));
         }
         let buffer_alloc = buffer_started.elapsed();
         let command_buffer = self.queue.commandBuffer().ok_or_else(|| {
@@ -21918,10 +22069,13 @@ impl AwProjectMetalExecutor {
                 "source-major initial grouped could not create an encoder".to_string(),
             )
         })?;
-        encoder.setComputePipelineState(if compensation.is_some() {
-            &self.initial_grouped_tile_pipeline
-        } else {
-            &self.initial_grouped_high_only_pipeline
+        encoder.setComputePipelineState(match compensation_mode {
+            AwProjectInitialCompensationMode::HighOnly => &self.initial_grouped_high_only_pipeline,
+            AwProjectInitialCompensationMode::PsfTerms => self
+                .initial_grouped_psf_compensated_pipeline
+                .as_ref()
+                .expect("PSF-compensated pipeline checked above"),
+            AwProjectInitialCompensationMode::Full => &self.initial_grouped_tile_pipeline,
         });
         unsafe {
             encoder.setBuffer_offset_atIndex(Some(&group_buffer), 0, 0);
@@ -21930,17 +22084,8 @@ impl AwProjectMetalExecutor {
             encoder.setBuffer_offset_atIndex(Some(&offset_buffer), 0, 4);
             encoder.setBuffer_offset_atIndex(Some(&fragment_buffer), 0, 5);
             encoder.setBuffer_offset_atIndex(Some(grid.metal_buffer()), 0, 6);
-            if let Some(compensation) = compensation.as_deref() {
-                encoder.setBuffer_offset_atIndex(
-                    Some(
-                        &compensation
-                            .as_ref()
-                            .expect("source-major compensation")
-                            .buffer,
-                    ),
-                    0,
-                    7,
-                );
+            if let Some(compensation) = compensation.as_ref() {
+                encoder.setBuffer_offset_atIndex(Some(&compensation.buffer), 0, 7);
             }
             encoder.setBuffer_offset_atIndex(Some(&scales_buffer), 0, 8);
             encoder.setBuffer_offset_atIndex(Some(&inverse_scales_buffer), 0, 9);
@@ -21980,7 +22125,7 @@ impl AwProjectMetalExecutor {
             kernel_pack,
             buffer_alloc,
             dispatch_wait,
-            output_bytes: output_bytes.saturating_mul(if compensation.is_some() { 2 } else { 1 }),
+            output_bytes: output_bytes.saturating_add(compensation_bytes),
             total: buffer_alloc + dispatch_wait,
             grouped_metal_live: None,
         })
@@ -22331,7 +22476,11 @@ impl AwProjectMetalExecutor {
             unsafe {
                 ptr::write_bytes(buffer.contents().as_ptr().cast::<u8>(), 0, output_bytes);
             }
-            *compensation = Some(AwProjectMetalCompensation { buffer });
+            *compensation = Some(AwProjectMetalCompensation::new(
+                buffer,
+                0,
+                grid.plane_count(),
+            ));
         }
         let buffer_alloc = buffer_started.elapsed();
         let command_buffer = self.queue.commandBuffer().ok_or_else(|| {
@@ -23460,10 +23609,11 @@ static inline bool aw_tile_plan_tap_i16(
     return true;
 }
 
-static inline void aw_tile_add_fixed(
+static inline void aw_tile_add_fixed_indexed(
     device float *output,
     device float *compensation,
-    uint scalar_index,
+    uint output_scalar_index,
+    uint compensation_scalar_index,
     long fixed_value,
     float inverse_scale
 ) {
@@ -23471,15 +23621,32 @@ static inline void aw_tile_add_fixed(
     const long fixed_remainder = fixed_value - long(fixed_high);
     const float value_high = fixed_high * inverse_scale;
     const float value_low = float(fixed_remainder) * inverse_scale;
-    const float existing_high = output[scalar_index];
+    const float existing_high = output[output_scalar_index];
     const float first_sum = existing_high + value_high;
     const float first_error = aw_two_sum_error(existing_high, value_high, first_sum);
     const float correction =
-        compensation[scalar_index] + value_low + first_error;
+        compensation[compensation_scalar_index] + value_low + first_error;
     const float final_sum = first_sum + correction;
-    output[scalar_index] = final_sum;
-    compensation[scalar_index] =
+    output[output_scalar_index] = final_sum;
+    compensation[compensation_scalar_index] =
         aw_two_sum_error(first_sum, correction, final_sum);
+}
+
+static inline void aw_tile_add_fixed(
+    device float *output,
+    device float *compensation,
+    uint scalar_index,
+    long fixed_value,
+    float inverse_scale
+) {
+    aw_tile_add_fixed_indexed(
+        output,
+        compensation,
+        scalar_index,
+        scalar_index,
+        fixed_value,
+        inverse_scale
+    );
 }
 
 static inline void aw_tile_add_fixed_high_only(
@@ -23716,6 +23883,98 @@ kernel void awproject_grid_initial_grouped_tiles(
             fixed_planes[plane].y,
             inverse_scales[plane]
         );
+    }
+}
+
+kernel void awproject_grid_initial_grouped_tiles_psf_compensated(
+    device const AwInitialGroupedPlan *groups [[buffer(0)]],
+    device const float2 *kernels [[buffer(1)]],
+    device const uint *active_tile_ids [[buffer(3)]],
+    device const uint *tile_fragment_offsets [[buffer(4)]],
+    device const uint *fragments [[buffer(5)]],
+    device float *output [[buffer(6)]],
+    device float *psf_compensation [[buffer(7)]],
+    device const float *fixed_scales [[buffer(8)]],
+    device const float *inverse_scales [[buffer(9)]],
+    constant AwTileParams &params [[buffer(10)]],
+    device const float2 *phases [[buffer(11)]],
+    uint local_index [[thread_index_in_threadgroup]],
+    uint active_tile_index [[threadgroup_position_in_grid]]
+) {
+    if (active_tile_index >= params.active_tile_count || params.nterms != 8u) {
+        return;
+    }
+    const uint tile_id = active_tile_ids[active_tile_index];
+    const uint tile_x = tile_id / params.tiles_y;
+    const uint tile_y = tile_id % params.tiles_y;
+    const uint local_x = local_index % params.tile_side;
+    const uint local_y = local_index / params.tile_side;
+    const uint grid_x = tile_x * params.tile_side + local_x;
+    const uint grid_y = tile_y * params.tile_side + local_y;
+    if (grid_x >= params.grid_width || grid_y >= params.grid_height) {
+        return;
+    }
+
+    long2 fixed_planes[8];
+    for (uint plane = 0u; plane < 8u; ++plane) {
+        fixed_planes[plane] = long2(0);
+    }
+    const uint fragment_start = tile_fragment_offsets[active_tile_index];
+    const uint fragment_end = tile_fragment_offsets[active_tile_index + 1u];
+    for (uint fragment_index = fragment_start;
+         fragment_index < fragment_end;
+         ++fragment_index) {
+        const AwInitialGroupedPlan group = groups[fragments[fragment_index]];
+        float2 tap;
+        if (!aw_tile_plan_tap(
+                group.plan, grid_x, grid_y, kernels, phases, tap)) {
+            continue;
+        }
+        for (uint plane = 0u; plane < 8u; ++plane) {
+            fixed_planes[plane] += aw_complex_product_fixed64(
+                group.values[plane], tap, fixed_scales[plane]
+            );
+        }
+    }
+
+    const uint fft_x = (grid_x + params.grid_width / 2u) % params.grid_width;
+    const uint fft_y = (grid_y + params.grid_height / 2u) % params.grid_height;
+    const uint cell_count = params.grid_width * params.grid_height;
+    const uint cell = fft_x * params.grid_height + fft_y;
+    for (uint plane = 0u; plane < 8u; ++plane) {
+        const uint output_scalar = (plane * cell_count + cell) * 2u;
+        if (plane < 3u) {
+            const uint compensation_scalar = (plane * cell_count + cell) * 2u;
+            aw_tile_add_fixed_indexed(
+                output,
+                psf_compensation,
+                output_scalar,
+                compensation_scalar,
+                fixed_planes[plane].x,
+                inverse_scales[plane]
+            );
+            aw_tile_add_fixed_indexed(
+                output,
+                psf_compensation,
+                output_scalar + 1u,
+                compensation_scalar + 1u,
+                fixed_planes[plane].y,
+                inverse_scales[plane]
+            );
+        } else {
+            aw_tile_add_fixed_high_only(
+                output,
+                output_scalar,
+                fixed_planes[plane].x,
+                inverse_scales[plane]
+            );
+            aw_tile_add_fixed_high_only(
+                output,
+                output_scalar + 1u,
+                fixed_planes[plane].y,
+                inverse_scales[plane]
+            );
+        }
     }
 }
 
@@ -39379,7 +39638,7 @@ fn replay_awproject_metal_tiles_host_f64(
                         .to_string(),
                 )
             })?;
-        *compensation = Some(AwProjectMetalCompensation { buffer });
+        *compensation = Some(AwProjectMetalCompensation::new(buffer, 0, nterms));
     }
     let output = grid.metal_buffer().contents().as_ptr().cast::<Complex32>();
     let low = compensation
@@ -39705,7 +39964,11 @@ fn replay_awproject_metal_global_program(
                     "persistent-grid",
                     check,
                 )?;
-                *aw_compensation = Some(AwProjectMetalCompensation { buffer });
+                *aw_compensation = Some(AwProjectMetalCompensation::new(
+                    buffer,
+                    0,
+                    grid.plane_count(),
+                ));
                 Some(live)
             } else {
                 Some(awproject_grouped_metal_postallocation_check(
@@ -41802,8 +42065,18 @@ fn dispatch_awproject_source_major_initial(
     device_budget_bytes: usize,
     safety_reserve_bytes: usize,
 ) -> Result<AwProjectSourceMajorInitialReceipt, ImagingError> {
-    let full_compensation =
-        std::env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_FULL_COMPENSATION").is_some();
+    let compensation_mode =
+        if std::env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_FULL_COMPENSATION")
+            .is_some()
+        {
+            AwProjectInitialCompensationMode::Full
+        } else if std::env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_PSF_COMPENSATION")
+            .is_some()
+        {
+            AwProjectInitialCompensationMode::PsfTerms
+        } else {
+            AwProjectInitialCompensationMode::HighOnly
+        };
     let MosaicMtmfsStreamGridStorage::MetalSharedF32 {
         grid,
         aw_compensation,
@@ -41832,20 +42105,19 @@ fn dispatch_awproject_source_major_initial(
                 "source-major AWProject initial grid byte count overflowed".to_string(),
             )
         })?;
-    if !full_compensation && aw_compensation.is_some() {
+    if compensation_mode == AwProjectInitialCompensationMode::HighOnly && aw_compensation.is_some()
+    {
         return Err(ImagingError::Normalization(
             "source-major high-only initial gridding unexpectedly retained a compensation limb"
                 .to_string(),
         ));
     }
-    let compensation_bytes = if full_compensation { grid_bytes } else { 0 };
+    let compensation_bytes = compensation_mode.plane_range().map_or(0, |range| {
+        grid_bytes / AWPROJECT_INITIAL_GROUPED_PLANE_COUNT * range.len()
+    });
     eprintln!(
         "awproject_source_major_initial_accumulation mode={} compensation_bytes={} source=explicit-experiment",
-        if full_compensation {
-            "full-two-limb"
-        } else {
-            "high-limb-only"
-        },
+        compensation_mode.label(),
         compensation_bytes,
     );
     let kernels = program.imaging_kernels();
@@ -41936,25 +42208,15 @@ fn dispatch_awproject_source_major_initial(
         let executor = executor_slot
             .as_ref()
             .expect("source-major grouped Metal executor");
-        let stats = if full_compensation {
-            executor.dispatch_initial_grouped_tiles(
-                grid,
-                Some(aw_compensation),
-                &imaging_partition,
-                kernels,
-                &program.tile_batch.phases,
-                Duration::ZERO,
-            )?
-        } else {
-            executor.dispatch_initial_grouped_tiles(
-                grid,
-                None,
-                &imaging_partition,
-                kernels,
-                &program.tile_batch.phases,
-                Duration::ZERO,
-            )?
-        };
+        let stats = executor.dispatch_initial_grouped_tiles(
+            grid,
+            aw_compensation,
+            compensation_mode,
+            &imaging_partition,
+            kernels,
+            &program.tile_batch.phases,
+            Duration::ZERO,
+        )?;
         Ok::<_, ImagingError>((stats, setup))
     })?;
     drop(imaging_partition);
@@ -41973,25 +42235,15 @@ fn dispatch_awproject_source_major_initial(
         let executor = executor_slot
             .as_ref()
             .expect("source-major grouped Metal executor");
-        if full_compensation {
-            executor.dispatch_initial_grouped_tiles(
-                grid,
-                Some(aw_compensation),
-                &weight_partition,
-                &weight_atlas.values,
-                weight_phases,
-                Duration::ZERO,
-            )
-        } else {
-            executor.dispatch_initial_grouped_tiles(
-                grid,
-                None,
-                &weight_partition,
-                &weight_atlas.values,
-                weight_phases,
-                Duration::ZERO,
-            )
-        }
+        executor.dispatch_initial_grouped_tiles(
+            grid,
+            aw_compensation,
+            compensation_mode,
+            &weight_partition,
+            &weight_atlas.values,
+            weight_phases,
+            Duration::ZERO,
+        )
     })?;
     Ok(AwProjectSourceMajorInitialReceipt {
         metal_stats: AwProjectMetalGridStats {
@@ -83026,6 +83278,8 @@ mod tests {
     #[test]
     #[cfg(all(target_os = "macos", not(coverage)))]
     fn awproject_source_major_grouped_initial_partitions_match_source_order_reference() {
+        use objc2_metal::MTLBuffer;
+
         if !super::standard_mfs_metal_device_available() {
             return;
         }
@@ -83129,7 +83383,8 @@ mod tests {
             executor
                 .dispatch_initial_grouped_tiles(
                     &mut grouped_grid,
-                    Some(&mut grouped_compensation),
+                    &mut grouped_compensation,
+                    super::AwProjectInitialCompensationMode::Full,
                     partition,
                     &exact_batch.kernels,
                     &exact_batch.phases,
@@ -83162,13 +83417,47 @@ mod tests {
         let nrmse = (squared_error / squared_reference.max(f64::MIN_POSITIVE)).sqrt();
         assert!(nrmse <= 1.0e-3, "source-major initial NRMSE {nrmse}");
 
+        let mut psf_compensated_grid =
+            crate::apple_fft::MetalSharedF32DirtyGridBatch::new(8, 8, 8).unwrap();
+        let mut psf_compensation = None;
+        for partition in [&imaging, &weight] {
+            executor
+                .dispatch_initial_grouped_tiles(
+                    &mut psf_compensated_grid,
+                    &mut psf_compensation,
+                    super::AwProjectInitialCompensationMode::PsfTerms,
+                    partition,
+                    &exact_batch.kernels,
+                    &exact_batch.phases,
+                    Duration::ZERO,
+                )
+                .unwrap();
+        }
+        let psf_compensation = psf_compensation.as_ref().unwrap();
+        assert_eq!(psf_compensation.plane_start, 0);
+        assert_eq!(psf_compensation.plane_count, 3);
+        assert_eq!(
+            psf_compensation.buffer.length(),
+            8 * 8 * 3 * std::mem::size_of::<Complex32>()
+        );
+        let psf_compensated = super::copy_awproject_metal_centered_f64_planes(
+            &psf_compensated_grid,
+            psf_compensation,
+        )
+        .unwrap();
+        for plane in 0..3 {
+            assert_eq!(psf_compensated[plane], exact[plane]);
+        }
+
         let mut high_only_grid =
             crate::apple_fft::MetalSharedF32DirtyGridBatch::new(8, 8, 8).unwrap();
+        let mut high_only_compensation = None;
         for partition in [&imaging, &weight] {
             executor
                 .dispatch_initial_grouped_tiles(
                     &mut high_only_grid,
-                    None,
+                    &mut high_only_compensation,
+                    super::AwProjectInitialCompensationMode::HighOnly,
                     partition,
                     &exact_batch.kernels,
                     &exact_batch.phases,
@@ -83182,6 +83471,9 @@ mod tests {
             })
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
+        for plane in 3..8 {
+            assert_eq!(psf_compensated[plane], high_only[plane]);
+        }
         let mut high_only_squared_error = 0.0;
         for (actual_plane, reference_plane) in high_only.iter().zip(&exact) {
             for (&actual, &reference) in actual_plane.iter().zip(reference_plane) {
