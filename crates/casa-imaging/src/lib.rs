@@ -6096,7 +6096,7 @@ where
                 device_budget_bytes,
                 safety_reserve_bytes,
             } => eprintln!(
-                "awproject_initial_grid_plan backend=source-major-grouped-metal-f64 architecture=direct-source-major-v11-sealed-sha-i16-residual accumulation={} tile_side={tile_side} workers={workers} compile_ceiling_bytes={process_compile_ceiling_bytes} replay_streaming_ceiling_bytes={replay_retention_ceiling_bytes} device_budget_bytes={device_budget_bytes} safety_reserve_bytes={safety_reserve_bytes} legacy_tap_scratch_bytes=0 legacy_priming_scratch_bytes=0 staged_replay=true stream_after_dirty_grid_release=true prefetch_slots=1 planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
+                "awproject_initial_grid_plan backend=source-major-grouped-metal-f64 architecture=direct-source-major-v12-component-scaled-i16-residual accumulation={} tile_side={tile_side} workers={workers} compile_ceiling_bytes={process_compile_ceiling_bytes} replay_streaming_ceiling_bytes={replay_retention_ceiling_bytes} device_budget_bytes={device_budget_bytes} safety_reserve_bytes={safety_reserve_bytes} legacy_tap_scratch_bytes=0 legacy_priming_scratch_bytes=0 staged_replay=true stream_after_dirty_grid_release=true prefetch_slots=1 planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
                 awproject_initial_compensation_mode().label(),
                 execution_config.resolved.maximum_planned_resident_bytes,
                 execution_config.resolved.usable_memory_bytes,
@@ -12556,7 +12556,7 @@ struct AwProjectMetalPredictionBatch {
     cf_metadata: Vec<AwProjectPredictionCfMetadataSample>,
     kernels: Vec<WProjectMetalComplex>,
     quantized_kernels: Vec<AwProjectMetalI16Complex>,
-    kernel_scales: Vec<f32>,
+    kernel_scales: Vec<AwProjectMetalI16Scale>,
     phases: Vec<WProjectMetalComplex>,
 }
 
@@ -12588,7 +12588,7 @@ impl AwProjectMetalPredictionBatch {
             .saturating_add(
                 self.kernel_scales
                     .capacity()
-                    .saturating_mul(std::mem::size_of::<f32>()),
+                    .saturating_mul(std::mem::size_of::<AwProjectMetalI16Scale>()),
             )
             .saturating_add(
                 self.phases
@@ -12627,13 +12627,26 @@ const _: () = {
     assert!(std::mem::align_of::<AwProjectMetalI16Complex>() == 4);
 };
 
+#[repr(C, align(8))]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+struct AwProjectMetalI16Scale {
+    re: f32,
+    im: f32,
+}
+
+const _: () = {
+    assert!(std::mem::size_of::<AwProjectMetalI16Scale>() == 8);
+    assert!(std::mem::align_of::<AwProjectMetalI16Scale>() == 8);
+};
+
 #[derive(Clone, Copy)]
 #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 enum AwProjectMetalKernelStorage<'a> {
     Float32(&'a [WProjectMetalComplex]),
     Int16Scaled {
         values: &'a [AwProjectMetalI16Complex],
-        scales: &'a [f32],
+        scales: &'a [AwProjectMetalI16Scale],
     },
 }
 
@@ -12665,7 +12678,7 @@ impl<'a> AwProjectMetalKernelStorage<'a> {
         matches!(self, Self::Int16Scaled { .. })
     }
 
-    fn scales(self) -> &'a [f32] {
+    fn scales(self) -> &'a [AwProjectMetalI16Scale] {
         match self {
             Self::Float32(_) => &[],
             Self::Int16Scaled { scales, .. } => scales,
@@ -22968,7 +22981,7 @@ static inline float2 aw_i16_phased_tap(
     AwPhasePlan phase,
     device const short2 *kernels,
     device const float2 *phases,
-    device const float *kernel_scales,
+    device const float2 *kernel_scales,
     uint kernel_base,
     uint scale_index,
     uint phase_x,
@@ -23074,7 +23087,7 @@ static inline float2 aw_i16_cohort_phased_tap(
     AwPredictionPlan plan,
     device const short2 *kernels,
     device const float2 *phases,
-    device const float *kernel_scales,
+    device const float2 *kernel_scales,
     float2 separable_phase,
     uint tap_offset,
     ushort kernel_leader_lane,
@@ -23171,7 +23184,7 @@ static inline AwWideDivisionTerm aw_degrid_prediction_raw_cohort_i16(
     AwPredictionWorkPlan work,
     device const short2 *kernels,
     device const float2 *phases,
-    device const float *kernel_scales,
+    device const float2 *kernel_scales,
     device const float2 *model,
     constant AwPredictionParams &params,
     ushort lane
@@ -23360,7 +23373,7 @@ kernel void awproject_predict_unique_plans_i16(
     device AwUniquePrediction *predictions [[buffer(4)]],
     constant AwPredictionParams &params [[buffer(5)]],
     device const float2 *phases [[buffer(6)]],
-    device const float *kernel_scales [[buffer(7)]],
+    device const float2 *kernel_scales [[buffer(7)]],
     uint dispatch_index [[thread_position_in_grid]],
     ushort lane [[thread_index_in_simdgroup]]
 ) {
@@ -23609,7 +23622,7 @@ static inline bool aw_tile_plan_tap_i16(
     uint grid_y,
     device const short2 *kernels,
     device const float2 *phases,
-    device const float *kernel_scales,
+    device const float2 *kernel_scales,
     thread float2 &tap
 ) {
     const int delta_x = int(grid_x) - plan.loc_x;
@@ -23784,7 +23797,7 @@ kernel void awproject_grid_mtmfs_tiles_i16(
     device const float *inverse_scales [[buffer(9)]],
     constant AwTileParams &params [[buffer(10)]],
     device const float2 *phases [[buffer(11)]],
-    device const float *kernel_scales [[buffer(12)]],
+    device const float2 *kernel_scales [[buffer(12)]],
     uint local_index [[thread_index_in_threadgroup]],
     uint active_tile_index [[threadgroup_position_in_grid]]
 ) {
@@ -28347,7 +28360,7 @@ fn compact_awproject_metal_aot_kernel_atlas(
 fn awproject_metal_max_effective_i16_kernel_norm(
     plans: impl IntoIterator<Item = AwProjectMetalPlan>,
     kernels: &[AwProjectMetalI16Complex],
-    scales: &[f32],
+    scales: &[AwProjectMetalI16Scale],
     phases: &[WProjectMetalComplex],
 ) -> Result<f64, ImagingError> {
     let mut seen = HashSet::new();
@@ -28415,8 +28428,8 @@ fn awproject_metal_max_effective_i16_kernel_norm(
                         )
                     })?;
                 let kernel = WProjectMetalComplex {
-                    re: f32::from(kernel.re) * scale,
-                    im: f32::from(kernel.im) * scale,
+                    re: f32::from(kernel.re) * scale.re,
+                    im: f32::from(kernel.im) * scale.im,
                 };
                 let phase =
                     awproject_metal_phase_value(plan.phase, phases, tap_x, tap_y, tap_offset)?;
@@ -28498,7 +28511,7 @@ fn quantize_awproject_metal_aot_kernel_atlas_i16(
         })?;
     let planned_scale_bytes = stencils
         .len()
-        .checked_mul(std::mem::size_of::<f32>())
+        .checked_mul(std::mem::size_of::<AwProjectMetalI16Scale>())
         .ok_or_else(|| {
             ImagingError::InvalidRequest(
                 "AWProject i16 residual scale byte count overflowed".to_string(),
@@ -28555,16 +28568,22 @@ fn quantize_awproject_metal_aot_kernel_atlas_i16(
                 "AWProject i16 residual stencil escaped the dense atlas".to_string(),
             )
         })?;
-        let peak = values.iter().try_fold(0.0f32, |peak, value| {
+        let peak = values.iter().try_fold([0.0f32; 2], |peak, value| {
             if !(value.re.is_finite() && value.im.is_finite()) {
                 return Err(ImagingError::Normalization(
                     "AWProject i16 residual quantization received a non-finite tap".to_string(),
                 ));
             }
-            Ok(peak.max(value.re.abs()).max(value.im.abs()))
+            Ok([peak[0].max(value.re.abs()), peak[1].max(value.im.abs())])
         })?;
-        let scale = if peak == 0.0 { 1.0 } else { peak / 32767.0 };
-        if !(scale.is_finite() && scale > 0.0) {
+        let component_scale = |peak: f32| {
+            if peak == 0.0 { 1.0 } else { peak / 32767.0 }
+        };
+        let scale = AwProjectMetalI16Scale {
+            re: component_scale(peak[0]),
+            im: component_scale(peak[1]),
+        };
+        if !(scale.re.is_finite() && scale.re > 0.0 && scale.im.is_finite() && scale.im > 0.0) {
             return Err(ImagingError::Normalization(
                 "AWProject i16 residual quantization produced an invalid scale".to_string(),
             ));
@@ -28577,15 +28596,13 @@ fn quantize_awproject_metal_aot_kernel_atlas_i16(
         scale_indices.insert(stencil, scale_index);
         scales.push(scale);
         for &value in values {
-            let quantize =
-                |component: f32| (component / scale).round().clamp(-32767.0, 32767.0) as i16;
             let packed = AwProjectMetalI16Complex {
-                re: quantize(value.re),
-                im: quantize(value.im),
+                re: (value.re / scale.re).round().clamp(-32767.0, 32767.0) as i16,
+                im: (value.im / scale.im).round().clamp(-32767.0, 32767.0) as i16,
             };
             let restored = WProjectMetalComplex {
-                re: f32::from(packed.re) * scale,
-                im: f32::from(packed.im) * scale,
+                re: f32::from(packed.re) * scale.re,
+                im: f32::from(packed.im) * scale.im,
             };
             for (original, restored) in [(value.re, restored.re), (value.im, restored.im)] {
                 let original = f64::from(original);
@@ -28620,7 +28637,7 @@ fn quantize_awproject_metal_aot_kernel_atlas_i16(
         })?;
     let scale_bytes = scales
         .capacity()
-        .checked_mul(std::mem::size_of::<f32>())
+        .checked_mul(std::mem::size_of::<AwProjectMetalI16Scale>())
         .ok_or_else(|| {
             ImagingError::InvalidRequest(
                 "AWProject i16 residual scale resident byte count overflowed".to_string(),
@@ -31102,7 +31119,7 @@ impl AwProjectCompactReplayCache {
         self.source_major_direct_segments += 1;
         self.source_major_initial_receipts += 1;
         eprintln!(
-            "awproject_source_major_staging source_block={source_block_ordinal} segments={} program_bytes={program_bytes} compiled_total_bytes={compiled_after} streaming_live_bytes={program_bytes} streaming_ceiling_bytes={} spill_bytes={} total_spill_bytes={} reload_bytes=0 architecture=direct-source-major-v11-sealed-sha-i16-residual resident=false staged=true",
+            "awproject_source_major_staging source_block={source_block_ordinal} segments={} program_bytes={program_bytes} compiled_total_bytes={compiled_after} streaming_live_bytes={program_bytes} streaming_ceiling_bytes={} spill_bytes={} total_spill_bytes={} reload_bytes=0 architecture=direct-source-major-v12-component-scaled-i16-residual resident=false staged=true",
             self.source_major_direct_segments,
             self.budget_bytes,
             self.spilled_metal_global_programs
@@ -31768,7 +31785,7 @@ impl AwProjectCompactReplayCache {
         self.source_major_payload_sha256_verified = false;
         self.segmented_metal_global_replay_ready = true;
         eprintln!(
-            "awproject_source_major_staged_streaming_ready segments={} spill_bytes={} compiled_total_bytes={} streaming_live_peak_bytes={} streaming_ceiling_bytes={} resident_bytes=0 prefetch_slots=1 architecture=direct-source-major-v11-sealed-sha-i16-residual lifecycle=after-dirty-grid-release resident=false",
+            "awproject_source_major_staged_streaming_ready segments={} spill_bytes={} compiled_total_bytes={} streaming_live_peak_bytes={} streaming_ceiling_bytes={} resident_bytes=0 prefetch_slots=1 architecture=direct-source-major-v12-component-scaled-i16-residual lifecycle=after-dirty-grid-release resident=false",
             self.spilled_metal_global_programs.len(),
             self.spilled_metal_global_payload_bytes,
             verified_total_bytes,
@@ -42419,7 +42436,7 @@ fn accumulate_awproject_source_major_block(
             classification_skipped_samples,
         )?;
         eprintln!(
-            "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples=0 initial_partitions=0 residual_segments=0 compact_windows=0 spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v11-sealed-sha-i16-residual initial_accumulation={} initial_compensation_bytes=0 exact_support=true elapsed_ms={:.3}",
+            "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples=0 initial_partitions=0 residual_segments=0 compact_windows=0 spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v12-component-scaled-i16-residual initial_accumulation={} initial_compensation_bytes=0 exact_support=true elapsed_ms={:.3}",
             awproject_initial_compensation_mode().label(),
             profile::millis(started.elapsed()),
         );
@@ -42481,7 +42498,7 @@ fn accumulate_awproject_source_major_block(
         ));
     }
     eprintln!(
-        "awproject_source_major_kernel_i16 source_block={replay_block_ordinal} f32_bytes={} i16_bytes={} scale_bytes={} values={} stencils={} nrmse={:.9e} max_abs_error={:.9e} zeroed_components={} compile_overlap_bytes={} max_kernel_norm={:.9e} storage=per-stencil-scaled-i16-complex range=-32767:32767 conversion=metal-load-to-f32",
+        "awproject_source_major_kernel_i16 source_block={replay_block_ordinal} f32_bytes={} i16_bytes={} scale_bytes={} values={} stencils={} nrmse={:.9e} max_abs_error={:.9e} zeroed_components={} compile_overlap_bytes={} max_kernel_norm={:.9e} storage=per-stencil-component-scaled-i16-complex range=-32767:32767 conversion=metal-load-to-f32",
         quantization.f32_bytes,
         quantization.i16_bytes,
         quantization.scale_bytes,
@@ -42509,7 +42526,7 @@ fn accumulate_awproject_source_major_block(
         .map_or(0, |program| program.payload_bytes);
 
     eprintln!(
-        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes={} imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} residual_i16_kernel_bytes={} residual_i16_scale_bytes={} compiled_total_bytes={} streaming_ceiling_bytes={} spill_bytes={} reload_bytes=0 architecture=direct-source-major-v11-sealed-sha-i16-residual initial_accumulation={} exact_support=true elapsed_ms={:.3}",
+        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes={} imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} residual_i16_kernel_bytes={} residual_i16_scale_bytes={} compiled_total_bytes={} streaming_ceiling_bytes={} spill_bytes={} reload_bytes=0 architecture=direct-source-major-v12-component-scaled-i16-residual initial_accumulation={} exact_support=true elapsed_ms={:.3}",
         initial_receipt.imaging_owner_bytes,
         initial_receipt.weight_owner_bytes,
         initial_receipt.concurrent_owner_bytes,
@@ -79647,7 +79664,7 @@ mod tests {
         assert_eq!(stats.stencils, 2);
         assert_eq!(stats.f32_bytes, compact.len() * 8);
         assert_eq!(stats.i16_bytes, compact.len() * 4);
-        assert_eq!(stats.scale_bytes, stats.stencils * 4);
+        assert_eq!(stats.scale_bytes, stats.stencils * 8);
         assert!(stats.i16_bytes + stats.scale_bytes < stats.f32_bytes);
         assert!(stats.nrmse.is_finite() && stats.nrmse <= 1.0e-3);
         assert!(stats.max_abs_error.is_finite());
@@ -79656,7 +79673,10 @@ mod tests {
                 .prediction_batch
                 .kernel_scales
                 .iter()
-                .all(|scale| scale.is_finite() && *scale > 0.0)
+                .all(|scale| scale.re.is_finite()
+                    && scale.re > 0.0
+                    && scale.im.is_finite()
+                    && scale.im > 0.0)
         );
 
         let mut source_energy = 0.0f64;
@@ -79684,8 +79704,8 @@ mod tests {
                 let original = compact[base + offset];
                 let quantized = program.prediction_batch.quantized_kernels[base + offset];
                 for (source, restored) in [
-                    (original.re, f32::from(quantized.re) * scale),
-                    (original.im, f32::from(quantized.im) * scale),
+                    (original.re, f32::from(quantized.re) * scale.re),
+                    (original.im, f32::from(quantized.im) * scale.im),
                 ] {
                     source_energy += f64::from(source) * f64::from(source);
                     let error = f64::from(restored) - f64::from(source);

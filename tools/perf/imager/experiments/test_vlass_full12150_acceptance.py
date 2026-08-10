@@ -58,7 +58,7 @@ def valid_probe_log(
     decisions = {
         "awproject_selected_field_count": "63",
         "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
-        "awproject_source_major_architecture": "direct-source-major-v11-sealed-sha-i16-residual",
+        "awproject_source_major_architecture": "direct-source-major-v12-component-scaled-i16-residual",
         "awproject_source_major_initial_accumulation": "weight-two-limb",
         "awproject_source_major_initial_grid_bytes": "12990780000",
         "awproject_multifield_initial_grid_admission": "admitted",
@@ -98,12 +98,12 @@ def valid_runtime_log() -> str:
         "awproject_source_major_block source_block=0 accepted_samples=1 "
         "initial_partitions=2 initial_grid_bytes=12990780000 "
         "initial_compensation_bytes=3542940000 spill_bytes=900 reload_bytes=0 "
-        "architecture=direct-source-major-v11-sealed-sha-i16-residual "
+        "architecture=direct-source-major-v12-component-scaled-i16-residual "
         "initial_accumulation=weight-two-limb",
         "awproject_source_major_staging source_block=0 segments=1 "
         "program_bytes=1000 compiled_total_bytes=1000 streaming_live_bytes=1000 "
         "streaming_ceiling_bytes=2000 spill_bytes=900 total_spill_bytes=900 "
-        "reload_bytes=0 architecture=direct-source-major-v11-sealed-sha-i16-residual "
+        "reload_bytes=0 architecture=direct-source-major-v12-component-scaled-i16-residual "
         "resident=false staged=true",
         "awproject_metal_initial_readback products=8 "
         "residency=metal-shared-selected-two-limb-grid resident_bytes=12990780000 "
@@ -125,21 +125,21 @@ def valid_runtime_log() -> str:
         "raw_kernel_atlas_bytes=100 compact_kernel_atlas_bytes=40 "
         "compact_kernel_stencils=2 compact_kernel_plan_references=4 "
         "compact_kernel_scratch_bytes=64 i16_kernel_atlas_bytes=20 "
-        "i16_kernel_scale_bytes=8 i16_kernel_values=5 i16_kernel_stencils=2 "
+        "i16_kernel_scale_bytes=16 i16_kernel_values=5 i16_kernel_stencils=2 "
         "i16_kernel_nrmse=1e-4 i16_kernel_max_abs_error=1e-5 "
-        "i16_kernel_zeroed_components=0 i16_kernel_compile_overlap_bytes=68",
+        "i16_kernel_zeroed_components=0 i16_kernel_compile_overlap_bytes=76",
         "awproject_source_major_kernel_compaction source_block=0 raw_bytes=100 "
         "compact_bytes=40 stencils=2 plan_references=4 scratch_bytes=64 "
         "applied=true bit_exact=true",
         "awproject_source_major_kernel_i16 source_block=0 f32_bytes=40 "
-        "i16_bytes=20 scale_bytes=8 values=5 stencils=2 nrmse=1e-4 "
-        "max_abs_error=1e-5 zeroed_components=0 compile_overlap_bytes=68 "
-        "max_kernel_norm=1.0 storage=per-stencil-scaled-i16-complex "
+        "i16_bytes=20 scale_bytes=16 values=5 stencils=2 nrmse=1e-4 "
+        "max_abs_error=1e-5 zeroed_components=0 compile_overlap_bytes=76 "
+        "max_kernel_norm=1.0 storage=per-stencil-component-scaled-i16-complex "
         "range=-32767:32767 conversion=metal-load-to-f32",
         "awproject_source_major_staged_streaming_ready segments=1 spill_bytes=900 "
         "compiled_total_bytes=1000 streaming_live_peak_bytes=1000 "
         "streaming_ceiling_bytes=2000 resident_bytes=0 prefetch_slots=1 "
-        "architecture=direct-source-major-v11-sealed-sha-i16-residual "
+        "architecture=direct-source-major-v12-component-scaled-i16-residual "
         "lifecycle=after-dirty-grid-release resident=false",
         "awproject_source_major_invariant_weight_spill decision=staged terms=2 "
         "bytes=1180980000 resident_bytes_after=0 "
@@ -406,7 +406,7 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
             ("bit_exact=true", "bit_exact=false"),
             ("i16_bytes=20", "i16_bytes=21"),
             (
-                "storage=per-stencil-scaled-i16-complex",
+                "storage=per-stencil-component-scaled-i16-complex",
                 "storage=float16-complex",
             ),
             (
