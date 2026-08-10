@@ -601,7 +601,6 @@ dependencies = [
  "casa-lattices",
  "casa-test-support",
  "casa-types",
- "libc",
  "libloading",
  "libm",
  "memmap2",

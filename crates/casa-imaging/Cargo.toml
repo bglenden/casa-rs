@@ -27,7 +27,6 @@ thiserror.workspace = true
 memmap2 = "0.9"
 
 [target.'cfg(all(target_os = "macos", not(coverage)))'.dependencies]
-libc = "0.2"
 objc2 = { version = "0.6.4", default-features = false }
 objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "NSArray",

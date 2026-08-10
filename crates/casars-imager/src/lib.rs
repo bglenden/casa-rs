@@ -39449,23 +39449,17 @@ fn admit_awproject_multifield_initial_grid(
     let source_major_weight_compensation =
         std::env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_WEIGHT_COMPENSATION")
             .is_some();
-    let source_major_staged_weight_compensation =
-        std::env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_STAGED_WEIGHT_COMPENSATION")
-            .is_some();
-    if usize::from(source_major_full_compensation)
-        + usize::from(source_major_weight_compensation)
-        + usize::from(source_major_staged_weight_compensation)
-        > 1
-    {
+    if source_major_full_compensation && source_major_weight_compensation {
         return Ok(reject_awproject_multifield_initial_grid(
             plan,
             selected_field_count,
-            "source-major compensation experiments are mutually exclusive".to_string(),
+            "source-major full and weight-only compensation experiments are mutually exclusive"
+                .to_string(),
         ));
     }
     let source_major_compensation_planes = if source_major_full_compensation {
         candidate.workload.grid_planes
-    } else if source_major_weight_compensation || source_major_staged_weight_compensation {
+    } else if source_major_weight_compensation {
         3
     } else {
         0
@@ -39486,8 +39480,6 @@ fn admit_awproject_multifield_initial_grid(
     )?;
     let source_major_initial_accumulation = if source_major_full_compensation {
         "full-two-limb"
-    } else if source_major_staged_weight_compensation {
-        "weight-two-limb-staged-during-compile"
     } else if source_major_weight_compensation {
         "weight-two-limb"
     } else {
@@ -63667,13 +63659,8 @@ mod tests {
         let weight_initial_compensation =
             std::env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_WEIGHT_COMPENSATION")
                 .is_some();
-        let staged_weight_initial_compensation = std::env::var_os(
-            "CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_STAGED_WEIGHT_COMPENSATION",
-        )
-        .is_some();
         let expected_initial_compensation_bytes =
-            usize::from(weight_initial_compensation || staged_weight_initial_compensation)
-                * 3_542_940_000;
+            usize::from(weight_initial_compensation) * 3_542_940_000;
         let expected_compile_admission_bytes = 20_947_768_027 - expected_initial_compensation_bytes;
         let expected_compile_retention_ceiling_bytes =
             20_410_897_115 - expected_initial_compensation_bytes;
@@ -63704,9 +63691,7 @@ mod tests {
         assert!(standard_mfs_plan_decision_is(
             &admitted,
             "awproject_source_major_initial_accumulation",
-            if staged_weight_initial_compensation {
-                "weight-two-limb-staged-during-compile"
-            } else if weight_initial_compensation {
+            if weight_initial_compensation {
                 "weight-two-limb"
             } else {
                 "high-limb-only"

@@ -6096,8 +6096,7 @@ where
                 device_budget_bytes,
                 safety_reserve_bytes,
             } => eprintln!(
-                "awproject_initial_grid_plan backend=source-major-grouped-metal-f64 architecture=direct-source-major-v10-sealed-f32-residual accumulation={} tile_side={tile_side} workers={workers} compile_ceiling_bytes={process_compile_ceiling_bytes} replay_streaming_ceiling_bytes={replay_retention_ceiling_bytes} device_budget_bytes={device_budget_bytes} safety_reserve_bytes={safety_reserve_bytes} legacy_tap_scratch_bytes=0 legacy_priming_scratch_bytes=0 staged_replay=true stream_after_dirty_grid_release=true prefetch_slots=1 planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
-                awproject_initial_compensation_mode().label(),
+                "awproject_initial_grid_plan backend=source-major-grouped-metal-f64 architecture=direct-source-major-v10-sealed-f32-residual accumulation=high-limb-only tile_side={tile_side} workers={workers} compile_ceiling_bytes={process_compile_ceiling_bytes} replay_streaming_ceiling_bytes={replay_retention_ceiling_bytes} device_budget_bytes={device_budget_bytes} safety_reserve_bytes={safety_reserve_bytes} legacy_tap_scratch_bytes=0 legacy_priming_scratch_bytes=0 staged_replay=true stream_after_dirty_grid_release=true prefetch_slots=1 planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
                 execution_config.resolved.maximum_planned_resident_bytes,
                 execution_config.resolved.usable_memory_bytes,
             ),
@@ -10853,8 +10852,6 @@ struct AwProjectCompactReplayCache {
     #[cfg(all(target_os = "macos", not(coverage)))]
     metal_global_spill_store: Option<AwProjectMetalSpillStore>,
     #[cfg(all(target_os = "macos", not(coverage)))]
-    source_major_initial_compensation_spill: Option<AwProjectInitialCompensationSpill>,
-    #[cfg(all(target_os = "macos", not(coverage)))]
     segmented_metal_global_replay_ready: bool,
     #[cfg(all(target_os = "macos", not(coverage)))]
     spilled_metal_global_payload_bytes: usize,
@@ -10909,8 +10906,6 @@ impl AwProjectCompactReplayCache {
             resident_metal_global_programs: Vec::new(),
             #[cfg(all(target_os = "macos", not(coverage)))]
             metal_global_spill_store: None,
-            #[cfg(all(target_os = "macos", not(coverage)))]
-            source_major_initial_compensation_spill: None,
             #[cfg(all(target_os = "macos", not(coverage)))]
             segmented_metal_global_replay_ready: false,
             #[cfg(all(target_os = "macos", not(coverage)))]
@@ -14469,169 +14464,6 @@ struct AwProjectMetalSpillStore {
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
-struct AwProjectInitialCompensationSpill {
-    file: File,
-    plane_start: usize,
-    plane_count: usize,
-    byte_len: usize,
-    sha256: [u8; 32],
-    staged: bool,
-    bytes_written: u64,
-    bytes_read: u64,
-}
-
-#[cfg(all(target_os = "macos", not(coverage)))]
-impl AwProjectInitialCompensationSpill {
-    fn create(root: &Path) -> Result<Self, ImagingError> {
-        use std::os::fd::AsRawFd;
-
-        static NEXT_SPILL: AtomicUsize = AtomicUsize::new(0);
-        if !root.is_dir() {
-            return Err(ImagingError::InvalidRequest(format!(
-                "source-major initial compensation spill directory does not exist: {}",
-                root.display()
-            )));
-        }
-        let ordinal = NEXT_SPILL.fetch_add(1, Ordering::Relaxed);
-        let path = root.join(format!(
-            ".casars-aw-initial-compensation-{}-{ordinal}.tmp",
-            std::process::id()
-        ));
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .map_err(|error| {
-                ImagingError::InvalidRequest(format!(
-                    "create source-major initial compensation spill {}: {error}",
-                    path.display()
-                ))
-            })?;
-        std::fs::remove_file(&path).map_err(|error| {
-            ImagingError::InvalidRequest(format!(
-                "unlink source-major initial compensation spill {}: {error}",
-                path.display()
-            ))
-        })?;
-        let result = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_NOCACHE, 1) };
-        if result == -1 {
-            return Err(ImagingError::InvalidRequest(format!(
-                "disable cache for source-major initial compensation spill: {}",
-                std::io::Error::last_os_error()
-            )));
-        }
-        Ok(Self {
-            file,
-            plane_start: 0,
-            plane_count: 0,
-            byte_len: 0,
-            sha256: [0; 32],
-            staged: false,
-            bytes_written: 0,
-            bytes_read: 0,
-        })
-    }
-
-    fn stage(
-        &mut self,
-        compensation: &AwProjectMetalCompensation,
-    ) -> Result<(usize, Duration), ImagingError> {
-        use std::{os::unix::fs::FileExt, slice};
-
-        use objc2_metal::MTLBuffer;
-
-        if self.staged {
-            return Err(ImagingError::InvalidRequest(
-                "source-major initial compensation was staged twice without restoration"
-                    .to_string(),
-            ));
-        }
-        let byte_len = compensation.buffer.length();
-        if byte_len == 0 {
-            return Err(ImagingError::InvalidRequest(
-                "source-major initial compensation spill received an empty buffer".to_string(),
-            ));
-        }
-        let bytes = unsafe {
-            slice::from_raw_parts(
-                compensation.buffer.contents().as_ptr().cast::<u8>(),
-                byte_len,
-            )
-        };
-        let started = Instant::now();
-        self.file.set_len(byte_len as u64).map_err(|error| {
-            ImagingError::InvalidRequest(format!(
-                "size source-major initial compensation spill: {error}"
-            ))
-        })?;
-        self.file.write_all_at(bytes, 0).map_err(|error| {
-            ImagingError::InvalidRequest(format!(
-                "write source-major initial compensation spill: {error}"
-            ))
-        })?;
-        self.file.sync_data().map_err(|error| {
-            ImagingError::InvalidRequest(format!(
-                "sync source-major initial compensation spill: {error}"
-            ))
-        })?;
-        let elapsed = started.elapsed();
-        self.plane_start = compensation.plane_start;
-        self.plane_count = compensation.plane_count;
-        self.byte_len = byte_len;
-        self.sha256 = Sha256::digest(bytes).into();
-        self.staged = true;
-        self.bytes_written = self.bytes_written.saturating_add(byte_len as u64);
-        Ok((byte_len, elapsed))
-    }
-
-    fn restore(
-        &mut self,
-        device: &AwProjectMetalDevice,
-    ) -> Result<(AwProjectMetalCompensation, Duration), ImagingError> {
-        use std::{os::unix::fs::FileExt, slice};
-
-        use objc2_metal::{MTLBuffer, MTLDevice, MTLResourceOptions};
-
-        if !self.staged || self.byte_len == 0 || self.plane_count == 0 {
-            return Err(ImagingError::InvalidRequest(
-                "source-major initial compensation restore has no staged buffer".to_string(),
-            ));
-        }
-        let started = Instant::now();
-        let buffer = device
-            .newBufferWithLength_options(self.byte_len, MTLResourceOptions::StorageModeShared)
-            .ok_or_else(|| {
-                ImagingError::Unsupported(
-                    "source-major initial compensation restore could not allocate its Metal buffer"
-                        .to_string(),
-                )
-            })?;
-        let bytes = unsafe {
-            slice::from_raw_parts_mut(buffer.contents().as_ptr().cast::<u8>(), self.byte_len)
-        };
-        self.file.read_exact_at(bytes, 0).map_err(|error| {
-            ImagingError::InvalidRequest(format!(
-                "read source-major initial compensation spill: {error}"
-            ))
-        })?;
-        let observed_sha256: [u8; 32] = Sha256::digest(&*bytes).into();
-        if observed_sha256 != self.sha256 {
-            return Err(ImagingError::Normalization(
-                "source-major initial compensation spill failed SHA-256 verification".to_string(),
-            ));
-        }
-        let elapsed = started.elapsed();
-        self.staged = false;
-        self.bytes_read = self.bytes_read.saturating_add(self.byte_len as u64);
-        Ok((
-            AwProjectMetalCompensation::new(buffer, self.plane_start, self.plane_count),
-            elapsed,
-        ))
-    }
-}
-
-#[cfg(all(target_os = "macos", not(coverage)))]
 struct AwProjectMetalPrefetchedProgram {
     program: AwProjectMetalResidentProgram,
     bytes_read: u64,
@@ -15816,7 +15648,6 @@ impl AwProjectMetalCompensation {
 enum AwProjectInitialCompensationMode {
     HighOnly,
     WeightTerms,
-    StagedWeightTerms,
     Full,
 }
 
@@ -15825,7 +15656,7 @@ impl AwProjectInitialCompensationMode {
     fn plane_range(self) -> Option<std::ops::Range<usize>> {
         match self {
             Self::HighOnly => None,
-            Self::WeightTerms | Self::StagedWeightTerms => Some(
+            Self::WeightTerms => Some(
                 AWPROJECT_INITIAL_GROUPED_WEIGHT_PLANE_START
                     ..AWPROJECT_INITIAL_GROUPED_WEIGHT_PLANE_START
                         + AWPROJECT_INITIAL_GROUPED_WEIGHT_PLANE_COUNT,
@@ -15838,7 +15669,6 @@ impl AwProjectInitialCompensationMode {
         match self {
             Self::HighOnly => "high-limb-only",
             Self::WeightTerms => "weight-two-limb",
-            Self::StagedWeightTerms => "weight-two-limb-staged-during-compile",
             Self::Full => "full-two-limb",
         }
     }
@@ -15848,12 +15678,6 @@ impl AwProjectInitialCompensationMode {
 fn awproject_initial_compensation_mode() -> AwProjectInitialCompensationMode {
     if std::env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_FULL_COMPENSATION").is_some() {
         AwProjectInitialCompensationMode::Full
-    } else if std::env::var_os(
-        "CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_STAGED_WEIGHT_COMPENSATION",
-    )
-    .is_some()
-    {
-        AwProjectInitialCompensationMode::StagedWeightTerms
     } else if std::env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_WEIGHT_COMPENSATION")
         .is_some()
     {
@@ -22008,11 +21832,8 @@ impl AwProjectMetalExecutor {
             return Ok(AwProjectMetalTileGridStats::default());
         }
         let compensation_range = compensation_mode.plane_range();
-        if matches!(
-            compensation_mode,
-            AwProjectInitialCompensationMode::WeightTerms
-                | AwProjectInitialCompensationMode::StagedWeightTerms
-        ) && self.initial_grouped_weight_compensated_pipeline.is_none()
+        if compensation_mode == AwProjectInitialCompensationMode::WeightTerms
+            && self.initial_grouped_weight_compensated_pipeline.is_none()
         {
             return Err(ImagingError::Unsupported(
                 "source-major weight-compensated initial grouped Metal pipeline is unavailable"
@@ -22274,8 +22095,7 @@ impl AwProjectMetalExecutor {
         })?;
         encoder.setComputePipelineState(match compensation_mode {
             AwProjectInitialCompensationMode::HighOnly => &self.initial_grouped_high_only_pipeline,
-            AwProjectInitialCompensationMode::WeightTerms
-            | AwProjectInitialCompensationMode::StagedWeightTerms => self
+            AwProjectInitialCompensationMode::WeightTerms => self
                 .initial_grouped_weight_compensated_pipeline
                 .as_ref()
                 .expect("weight-compensated pipeline checked above"),
@@ -31106,84 +30926,6 @@ impl AwProjectCompactReplayCache {
         self.source_major_last_block = Some(source_block_ordinal);
         self.misses = self.misses.saturating_add(1);
         Ok(())
-    }
-
-    fn stage_source_major_initial_compensation(
-        &mut self,
-        compensation: &mut Option<AwProjectMetalCompensation>,
-    ) -> Result<(usize, Duration), ImagingError> {
-        let spill_directory = self
-            .grouped_replay_plan()
-            .map(|plan| plan.spill_directory().to_path_buf())
-            .ok_or_else(|| {
-                ImagingError::InvalidRequest(
-                    "source-major initial compensation staging lost its grouped replay plan"
-                        .to_string(),
-                )
-            })?;
-        if self.source_major_initial_compensation_spill.is_none() {
-            self.source_major_initial_compensation_spill =
-                Some(AwProjectInitialCompensationSpill::create(&spill_directory)?);
-        }
-        let state = compensation.take().ok_or_else(|| {
-            ImagingError::Normalization(
-                "source-major staged weight compensation lost its Metal buffer".to_string(),
-            )
-        })?;
-        if state.plane_start != AWPROJECT_INITIAL_GROUPED_WEIGHT_PLANE_START
-            || state.plane_count != AWPROJECT_INITIAL_GROUPED_WEIGHT_PLANE_COUNT
-        {
-            *compensation = Some(state);
-            return Err(ImagingError::Normalization(
-                "source-major staged weight compensation has the wrong plane topology".to_string(),
-            ));
-        }
-        let result = self
-            .source_major_initial_compensation_spill
-            .as_mut()
-            .expect("source-major compensation spill initialized")
-            .stage(&state);
-        match result {
-            Ok(receipt) => {
-                drop(state);
-                Ok(receipt)
-            }
-            Err(error) => {
-                *compensation = Some(state);
-                Err(error)
-            }
-        }
-    }
-
-    fn restore_source_major_initial_compensation(
-        &mut self,
-        compensation: &mut Option<AwProjectMetalCompensation>,
-    ) -> Result<(usize, Duration), ImagingError> {
-        if compensation.is_some() {
-            return Err(ImagingError::Normalization(
-                "source-major compensation restore would replace a live Metal buffer".to_string(),
-            ));
-        }
-        let spill = self
-            .source_major_initial_compensation_spill
-            .as_mut()
-            .ok_or_else(|| {
-                ImagingError::InvalidRequest(
-                    "source-major compensation restore has no spill store".to_string(),
-                )
-            })?;
-        let byte_len = spill.byte_len;
-        let (state, elapsed) = AWPROJECT_METAL_EXECUTOR.with(|executor_slot| {
-            let executor_slot = executor_slot.borrow();
-            let executor = executor_slot.as_ref().ok_or_else(|| {
-                ImagingError::InvalidRequest(
-                    "source-major compensation restore lost its Metal executor".to_string(),
-                )
-            })?;
-            spill.restore(&executor.device)
-        })?;
-        *compensation = Some(state);
-        Ok((byte_len, elapsed))
     }
 
     fn admit_source_major_compile_peak(
@@ -42701,27 +42443,6 @@ fn accumulate_awproject_source_major_block(
     drop(weight_atlas);
     drop(weight_phases);
 
-    let (initial_compensation_staged_bytes, initial_compensation_stage_elapsed) = if initial_receipt
-        .compensation_mode
-        == AwProjectInitialCompensationMode::StagedWeightTerms
-    {
-        let MosaicMtmfsStreamGridStorage::MetalSharedF32 {
-            aw_compensation, ..
-        } = &mut accumulation.storage
-        else {
-            unreachable!("source-major initial dispatch validated Metal storage");
-        };
-        let receipt = replay_cache.stage_source_major_initial_compensation(aw_compensation)?;
-        eprintln!(
-            "awproject_source_major_initial_compensation_stage source_block={replay_block_ordinal} bytes={} resident_bytes_after=0 release_before_residual_compile=true cache_policy=f_nocache sha256=verified write_ms={:.3}",
-            receipt.0,
-            profile::millis(receipt.1),
-        );
-        receipt
-    } else {
-        (0, Duration::ZERO)
-    };
-
     let compile_limit = process_compile_ceiling_bytes
         .checked_sub(replay_cache.resident_bytes)
         .ok_or_else(|| {
@@ -42774,39 +42495,17 @@ fn accumulate_awproject_source_major_block(
     replay_cache.admit_source_major_compile_peak(program_bytes)?;
     let initial_grid_bytes = initial_receipt.metal_stats.fixed_grid_bytes;
     replay_cache.stage_source_major_segment(replay_block_ordinal, program)?;
-    let (initial_compensation_restored_bytes, initial_compensation_restore_elapsed) =
-        if initial_receipt.compensation_mode == AwProjectInitialCompensationMode::StagedWeightTerms
-        {
-            let MosaicMtmfsStreamGridStorage::MetalSharedF32 {
-                aw_compensation, ..
-            } = &mut accumulation.storage
-            else {
-                unreachable!("source-major initial dispatch validated Metal storage");
-            };
-            let receipt =
-                replay_cache.restore_source_major_initial_compensation(aw_compensation)?;
-            eprintln!(
-                "awproject_source_major_initial_compensation_restore source_block={replay_block_ordinal} bytes={} sha256=verified read_ms={:.3}",
-                receipt.0,
-                profile::millis(receipt.1),
-            );
-            receipt
-        } else {
-            (0, Duration::ZERO)
-        };
     let spill_bytes = replay_cache
         .spilled_metal_global_programs
         .last()
         .map_or(0, |program| program.payload_bytes);
 
     eprintln!(
-        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes={} initial_compensation_staged_bytes={initial_compensation_staged_bytes} initial_compensation_stage_ms={:.3} initial_compensation_restored_bytes={initial_compensation_restored_bytes} initial_compensation_restore_ms={:.3} imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} residual_f32_kernel_bytes={} compiled_total_bytes={} streaming_ceiling_bytes={} spill_bytes={} reload_bytes=0 architecture=direct-source-major-v10-sealed-f32-residual initial_accumulation={} exact_support=true elapsed_ms={:.3}",
+        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes={} imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} residual_f32_kernel_bytes={} compiled_total_bytes={} streaming_ceiling_bytes={} spill_bytes={} reload_bytes=0 architecture=direct-source-major-v10-sealed-f32-residual initial_accumulation={} exact_support=true elapsed_ms={:.3}",
         initial_receipt.imaging_owner_bytes,
         initial_receipt.weight_owner_bytes,
         initial_receipt.concurrent_owner_bytes,
         initial_receipt.compensation_bytes,
-        profile::millis(initial_compensation_stage_elapsed),
-        profile::millis(initial_compensation_restore_elapsed),
         initial_receipt.imaging_device_peak_bytes,
         initial_receipt.weight_device_peak_bytes,
         initial_receipt.imaging_groups,
@@ -83808,49 +83507,6 @@ mod tests {
             high_only_nrmse <= 1.0e-3,
             "source-major high-only initial NRMSE {high_only_nrmse}"
         );
-    }
-
-    #[test]
-    #[cfg(all(target_os = "macos", not(coverage)))]
-    fn source_major_initial_compensation_spill_restores_exact_metal_bytes() {
-        use std::slice;
-
-        use objc2_metal::{MTLBuffer, MTLDevice, MTLResourceOptions};
-
-        if !super::standard_mfs_metal_device_available() {
-            return;
-        }
-        let executor = super::AwProjectMetalExecutor::new().unwrap();
-        let byte_len = 8 * 8 * 3 * std::mem::size_of::<Complex32>();
-        let buffer = executor
-            .device
-            .newBufferWithLength_options(byte_len, MTLResourceOptions::StorageModeShared)
-            .unwrap();
-        let expected = (0..byte_len)
-            .map(|index| (index.wrapping_mul(17) & 0xff) as u8)
-            .collect::<Vec<_>>();
-        let bytes =
-            unsafe { slice::from_raw_parts_mut(buffer.contents().as_ptr().cast::<u8>(), byte_len) };
-        bytes.copy_from_slice(&expected);
-        let compensation = super::AwProjectMetalCompensation::new(buffer, 5, 3);
-        let directory = tempfile::tempdir().unwrap();
-        let mut spill = super::AwProjectInitialCompensationSpill::create(directory.path()).unwrap();
-        let (staged_bytes, _) = spill.stage(&compensation).unwrap();
-        assert_eq!(staged_bytes, byte_len);
-        drop(compensation);
-        let (restored, _) = spill.restore(&executor.device).unwrap();
-        assert_eq!(restored.plane_start, 5);
-        assert_eq!(restored.plane_count, 3);
-        let restored_bytes = unsafe {
-            slice::from_raw_parts(
-                restored.buffer.contents().as_ptr().cast::<u8>(),
-                restored.buffer.length(),
-            )
-        };
-        assert_eq!(restored_bytes, expected);
-        assert_eq!(spill.bytes_written, byte_len as u64);
-        assert_eq!(spill.bytes_read, byte_len as u64);
-        assert!(!spill.staged);
     }
 
     #[test]
