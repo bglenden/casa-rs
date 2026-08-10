@@ -10,7 +10,6 @@ fftw_threads="${CASA_RS_VLASS_FFTW_THREADS:-1}"
 model_fft_threads="${CASA_RS_VLASS_MODEL_FFT_THREADS:-8}"
 memory_pressure_policy="${CASA_RS_VLASS_MEMORY_PRESSURE_POLICY:-auto}"
 grid_threads="${CASA_RS_VLASS_GRID_THREADS:-2}"
-row_block_rows="${CASA_RS_VLASS_IMAGING_ROW_BLOCK_ROWS:-0}"
 plan_threads="${CASA_RS_VLASS_AW_PLAN_THREADS:-1}"
 pack_threads="${CASA_RS_VLASS_AW_PACK_THREADS:-1}"
 standard_mfs_acceleration="${CASA_RS_VLASS_STANDARD_MFS_ACCELERATION:-metal}"
@@ -46,7 +45,6 @@ mask="$root/masks/vlass-single-field-peak-box-4096.mask"
 experimental_environment=(CASA_RS_VLASS_EXPERIMENT_RUNNER=1)
 parallel_argument=(--no-parallel)
 pointing_argument=(--usepointing)
-row_block_argument=()
 label="vlass-production-clean-4096-full-16-spw-fftw-t${fftw_threads}-gridt${grid_threads}-niter${niter}"
 
 if [[ "$source_major_full_compensation" == "1" && "$source_major_weight_compensation" == "1" ]]; then
@@ -337,18 +335,6 @@ case "$grid_threads" in
         exit 2
         ;;
 esac
-case "$row_block_rows" in
-    ''|*[!0-9]*)
-        echo "CASA_RS_VLASS_IMAGING_ROW_BLOCK_ROWS must be a non-negative integer" >&2
-        exit 2
-        ;;
-    0)
-        ;;
-    *)
-        label="${label}-rowblock${row_block_rows}"
-        row_block_argument=(--imaging-row-block-rows "$row_block_rows")
-        ;;
-esac
 case "$plan_threads" in
     ''|*[!0-9]*|0)
         echo "CASA_RS_VLASS_AW_PLAN_THREADS must be a positive integer" >&2
@@ -429,7 +415,6 @@ mkdir -p "$(dirname "$output")" "$(dirname "$log")"
     --imaging-memory-pressure-policy "$memory_pressure_policy" \
     --imaging-prepare-workers 1 \
     --imaging-read-ahead-blocks 1 \
-    "${row_block_argument[@]}" \
     --hogbom-iteration-mode strict \
     --nterms 2 \
     --scales 0,5,12 \
