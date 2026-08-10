@@ -6096,7 +6096,7 @@ where
                 device_budget_bytes,
                 safety_reserve_bytes,
             } => eprintln!(
-                "awproject_initial_grid_plan backend=source-major-grouped-metal-f64 architecture=direct-source-major-v3-high-only-initial accumulation=high-limb-only tile_side={tile_side} workers={workers} compile_ceiling_bytes={process_compile_ceiling_bytes} replay_retention_ceiling_bytes={replay_retention_ceiling_bytes} device_budget_bytes={device_budget_bytes} safety_reserve_bytes={safety_reserve_bytes} legacy_tap_scratch_bytes=0 legacy_priming_scratch_bytes=0 spill_bytes=0 planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
+                "awproject_initial_grid_plan backend=source-major-grouped-metal-f64 architecture=direct-source-major-v4-high-only-dense-residual accumulation=high-limb-only tile_side={tile_side} workers={workers} compile_ceiling_bytes={process_compile_ceiling_bytes} replay_retention_ceiling_bytes={replay_retention_ceiling_bytes} device_budget_bytes={device_budget_bytes} safety_reserve_bytes={safety_reserve_bytes} legacy_tap_scratch_bytes=0 legacy_priming_scratch_bytes=0 spill_bytes=0 planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
                 execution_config.resolved.maximum_planned_resident_bytes,
                 execution_config.resolved.usable_memory_bytes,
             ),
@@ -12517,6 +12517,11 @@ struct AwProjectMetalAotGroupedTileLedger {
     compile_admission_bytes: usize,
     compile_admission_limit_bytes: usize,
     persisted_tile_bytes: usize,
+    raw_kernel_atlas_bytes: usize,
+    compact_kernel_atlas_bytes: usize,
+    compact_kernel_stencils: usize,
+    compact_kernel_plan_references: usize,
+    compact_kernel_scratch_bytes: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -12542,7 +12547,7 @@ impl AwProjectMetalAotGroupedTileReceipt {
             u64::from_be_bytes(hash[..8].try_into().expect("SHA-256 prefix is eight bytes"))
         };
         eprintln!(
-            "awproject_aot_grouped_tile_receipt segment={} omitted_energy_fraction_bits={} samples={} groups={} crop_hash_prefix={:016x} grouped_plans_hash_prefix={:016x} sample_role_groups_hash_prefix={:016x} grouped_route_hash_prefix={:016x} legacy_grouped_plans_hash_prefix={:016x} legacy_grouped_route_hash_prefix={:016x} raw_resident_bytes_before_compile={} raw_prediction_sample_bytes_replaced={} cropped_prediction_sample_bytes={} raw_tile_sample_bytes_released={} raw_route_bytes_released={} grouped_plan_bytes={} sample_role_group_bytes={} grouped_route_bytes={} canonical_group_plan_capacity_bytes={} canonical_group_sum_capacity_bytes={} canonical_hashmap_estimated_bytes={} tile_planner_known_peak_bytes={} sample_role_group_capacity_bytes={} final_hashmap_estimated_bytes={} aot_group_sum_bytes={} fixed_scale_bytes={} effective_support_hashmap_estimated_bytes={} effective_support_prefix_scratch_bytes={} effective_support_scratch_estimated_bytes={} compile_transient_bytes_peak_estimated={} hashmap_uncertainty_reserve_bytes={} compile_admission_bytes={} compile_admission_limit_bytes={} persisted_tile_bytes={}",
+            "awproject_aot_grouped_tile_receipt segment={} omitted_energy_fraction_bits={} samples={} groups={} crop_hash_prefix={:016x} grouped_plans_hash_prefix={:016x} sample_role_groups_hash_prefix={:016x} grouped_route_hash_prefix={:016x} legacy_grouped_plans_hash_prefix={:016x} legacy_grouped_route_hash_prefix={:016x} raw_resident_bytes_before_compile={} raw_prediction_sample_bytes_replaced={} cropped_prediction_sample_bytes={} raw_tile_sample_bytes_released={} raw_route_bytes_released={} grouped_plan_bytes={} sample_role_group_bytes={} grouped_route_bytes={} canonical_group_plan_capacity_bytes={} canonical_group_sum_capacity_bytes={} canonical_hashmap_estimated_bytes={} tile_planner_known_peak_bytes={} sample_role_group_capacity_bytes={} final_hashmap_estimated_bytes={} aot_group_sum_bytes={} fixed_scale_bytes={} effective_support_hashmap_estimated_bytes={} effective_support_prefix_scratch_bytes={} effective_support_scratch_estimated_bytes={} compile_transient_bytes_peak_estimated={} hashmap_uncertainty_reserve_bytes={} compile_admission_bytes={} compile_admission_limit_bytes={} persisted_tile_bytes={} raw_kernel_atlas_bytes={} compact_kernel_atlas_bytes={} compact_kernel_stencils={} compact_kernel_plan_references={} compact_kernel_scratch_bytes={}",
             segment,
             self.omitted_energy_fraction_bits,
             self.sample_count,
@@ -12577,6 +12582,11 @@ impl AwProjectMetalAotGroupedTileReceipt {
             ledger.compile_admission_bytes,
             ledger.compile_admission_limit_bytes,
             ledger.persisted_tile_bytes,
+            ledger.raw_kernel_atlas_bytes,
+            ledger.compact_kernel_atlas_bytes,
+            ledger.compact_kernel_stencils,
+            ledger.compact_kernel_plan_references,
+            ledger.compact_kernel_scratch_bytes,
         );
     }
 }
@@ -27004,6 +27014,19 @@ fn compile_awproject_metal_aot_grouped_tile(
             persisted_tile_bytes: grouped_plan_bytes
                 .saturating_add(sample_role_group_bytes)
                 .saturating_add(grouped_route_bytes),
+            raw_kernel_atlas_bytes: program
+                .prediction_batch
+                .kernels
+                .capacity()
+                .saturating_mul(std::mem::size_of::<WProjectMetalComplex>()),
+            compact_kernel_atlas_bytes: program
+                .prediction_batch
+                .kernels
+                .capacity()
+                .saturating_mul(std::mem::size_of::<WProjectMetalComplex>()),
+            compact_kernel_stencils: 0,
+            compact_kernel_plan_references: 0,
+            compact_kernel_scratch_bytes: 0,
         },
     };
     let group_sums = vec![[0.0; 4]; grouped.groups.len()];
@@ -27021,6 +27044,256 @@ fn compile_awproject_metal_aot_grouped_tile(
     program.tile_batch.samples = Vec::new();
     program.tile_plan = AwProjectMetalTilePlan::default();
     Ok(effective_support)
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
+struct AwProjectMetalKernelAtlasCompaction {
+    raw_bytes: usize,
+    compact_bytes: usize,
+    stencils: usize,
+    plan_references: usize,
+    scratch_bytes: usize,
+    applied: bool,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn compact_awproject_metal_aot_kernel_atlas(
+    program: &mut AwProjectMetalResidentProgram,
+    compile_admission_limit_bytes: usize,
+) -> Result<AwProjectMetalKernelAtlasCompaction, ImagingError> {
+    let aot = program.aot_grouped_tile.as_ref().ok_or_else(|| {
+        ImagingError::InvalidRequest(
+            "AWProject kernel compaction requires a compiled AOT grouped-tile program".to_string(),
+        )
+    })?;
+    let stencils = program
+        .prediction_batch
+        .samples
+        .iter()
+        .flat_map(|sample| [sample.first_prediction, sample.second_prediction])
+        .map(|plan| {
+            awproject_metal_effective_support_stencil(
+                plan.kernel_base,
+                plan._pad0,
+                plan.x_support,
+                plan.y_support,
+            )
+        })
+        .chain(aot.grouped.groups.iter().map(|group| {
+            awproject_metal_effective_support_stencil(
+                group.plan.kernel_base,
+                group.plan._pad0,
+                group.plan.x_support,
+                group.plan.y_support,
+            )
+        }))
+        .collect::<Vec<_>>();
+    let plan_references = stencils.len();
+    let mut compact_bases = BTreeMap::new();
+    let mut ordered_stencils = Vec::new();
+    let mut compact_value_count = 0usize;
+    for stencil in &stencils {
+        if compact_bases.contains_key(stencil) {
+            continue;
+        }
+        let value_count =
+            awproject_metal_effective_support_tap_count(stencil.x_support, stencil.y_support)
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "AWProject compact kernel-atlas tap count overflowed".to_string(),
+                    )
+                })?;
+        let base = u32::try_from(compact_value_count).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject compact kernel-atlas base exceeds u32".to_string(),
+            )
+        })?;
+        compact_value_count = compact_value_count
+            .checked_add(value_count)
+            .filter(|&count| count <= u32::MAX as usize)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject compact kernel atlas exceeds the u32 Metal address space"
+                        .to_string(),
+                )
+            })?;
+        compact_bases.insert(*stencil, base);
+        ordered_stencils.push(*stencil);
+    }
+    let raw_bytes = program
+        .prediction_batch
+        .kernels
+        .capacity()
+        .saturating_mul(std::mem::size_of::<WProjectMetalComplex>());
+    let planned_compact_bytes = compact_value_count
+        .checked_mul(std::mem::size_of::<WProjectMetalComplex>())
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject compact kernel-atlas byte count overflowed".to_string(),
+            )
+        })?;
+    let mut stats = AwProjectMetalKernelAtlasCompaction {
+        raw_bytes,
+        compact_bytes: planned_compact_bytes,
+        stencils: compact_bases.len(),
+        plan_references,
+        scratch_bytes: 0,
+        applied: planned_compact_bytes < raw_bytes,
+    };
+    if !stats.applied {
+        return Ok(stats);
+    }
+    let scratch_bytes = stencils
+        .capacity()
+        .saturating_add(ordered_stencils.capacity())
+        .saturating_mul(std::mem::size_of::<AwProjectMetalEffectiveSupportStencil>())
+        .saturating_add(
+            compact_bases.len().saturating_mul(
+                std::mem::size_of::<AwProjectMetalEffectiveSupportStencil>()
+                    .saturating_add(std::mem::size_of::<u32>())
+                    .saturating_add(3 * std::mem::size_of::<usize>()),
+            ),
+        );
+    stats.scratch_bytes = scratch_bytes;
+    let overlap_bytes = program
+        .resident_bytes()
+        .checked_add(planned_compact_bytes)
+        .and_then(|bytes| bytes.checked_add(scratch_bytes))
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject compact kernel-atlas overlap overflowed".to_string(),
+            )
+        })?;
+    if overlap_bytes > compile_admission_limit_bytes {
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject compact kernel-atlas overlap {overlap_bytes} exceeds its {compile_admission_limit_bytes}-byte compile ceiling"
+        )));
+    }
+
+    let raw = &program.prediction_batch.kernels;
+    let mut compact = Vec::with_capacity(compact_value_count);
+    for stencil in ordered_stencils {
+        let base = compact_bases[&stencil];
+        if compact.len() != base as usize {
+            return Err(ImagingError::Normalization(
+                "AWProject compact kernel-atlas base order changed".to_string(),
+            ));
+        }
+        let width = usize::try_from(stencil.x_support)
+            .ok()
+            .and_then(|support| support.checked_mul(2))
+            .and_then(|value| value.checked_add(1))
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject compact kernel-atlas width overflowed".to_string(),
+                )
+            })?;
+        let height = usize::try_from(stencil.y_support)
+            .ok()
+            .and_then(|support| support.checked_mul(2))
+            .and_then(|value| value.checked_add(1))
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject compact kernel-atlas height overflowed".to_string(),
+                )
+            })?;
+        for tap_y in 0..height {
+            for tap_x in 0..width {
+                compact.push(awproject_metal_kernel_value(
+                    raw,
+                    stencil.kernel_base,
+                    stencil.kernel_layout,
+                    tap_x,
+                    tap_y,
+                    tap_y * width + tap_x,
+                )?);
+            }
+        }
+    }
+    compact.shrink_to_fit();
+    if compact.len() != compact_value_count {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject compact kernel atlas materialized {} values, expected {compact_value_count}",
+            compact.len(),
+        )));
+    }
+    let compact_bytes = compact
+        .capacity()
+        .checked_mul(std::mem::size_of::<WProjectMetalComplex>())
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject compact kernel-atlas resident bytes overflowed".to_string(),
+            )
+        })?;
+    if compact_bytes >= raw_bytes {
+        return Ok(AwProjectMetalKernelAtlasCompaction {
+            compact_bytes,
+            applied: false,
+            ..stats
+        });
+    }
+    let actual_overlap_bytes = program
+        .resident_bytes()
+        .checked_add(compact_bytes)
+        .and_then(|bytes| bytes.checked_add(scratch_bytes))
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject compact kernel-atlas actual overlap overflowed".to_string(),
+            )
+        })?;
+    if actual_overlap_bytes > compile_admission_limit_bytes {
+        return Err(ImagingError::InvalidRequest(format!(
+            "AWProject compact kernel-atlas actual overlap {actual_overlap_bytes} exceeds its {compile_admission_limit_bytes}-byte compile ceiling"
+        )));
+    }
+    stats.compact_bytes = compact_bytes;
+
+    let remap_prediction = |plan: &mut AwProjectMetalPredictionPlan| -> Result<(), ImagingError> {
+        let stencil = awproject_metal_effective_support_stencil(
+            plan.kernel_base,
+            plan._pad0,
+            plan.x_support,
+            plan.y_support,
+        );
+        plan.kernel_base = *compact_bases.get(&stencil).ok_or_else(|| {
+            ImagingError::Normalization(
+                "AWProject compact kernel atlas lost a prediction stencil".to_string(),
+            )
+        })?;
+        plan._pad0 = 0;
+        Ok(())
+    };
+    for sample in &mut program.prediction_batch.samples {
+        remap_prediction(&mut sample.first_prediction)?;
+        remap_prediction(&mut sample.second_prediction)?;
+    }
+    let aot = program
+        .aot_grouped_tile
+        .as_mut()
+        .expect("AOT checked above");
+    for group in &mut aot.grouped.groups {
+        let stencil = awproject_metal_effective_support_stencil(
+            group.plan.kernel_base,
+            group.plan._pad0,
+            group.plan.x_support,
+            group.plan.y_support,
+        );
+        group.plan.kernel_base = *compact_bases.get(&stencil).ok_or_else(|| {
+            ImagingError::Normalization(
+                "AWProject compact kernel atlas lost a grouped-tile stencil".to_string(),
+            )
+        })?;
+        group.plan._pad0 = 0;
+    }
+    program.prediction_batch.kernels = compact;
+    aot.receipt.grouped_plans_sha256 = hash_awproject_copy_slice(&aot.grouped.groups);
+    aot.receipt.ledger.raw_kernel_atlas_bytes = raw_bytes;
+    aot.receipt.ledger.compact_kernel_atlas_bytes = compact_bytes;
+    aot.receipt.ledger.compact_kernel_stencils = stats.stencils;
+    aot.receipt.ledger.compact_kernel_plan_references = stats.plan_references;
+    aot.receipt.ledger.compact_kernel_scratch_bytes = stats.scratch_bytes;
+    Ok(stats)
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -29253,6 +29526,37 @@ impl AwProjectCompactReplayCache {
                 "direct source-major segment {source_block_ordinal} has no matching source-block ownership receipt"
             )));
         }
+        if let Some(admission) = self.grouped_metal_admission {
+            let segment = self.source_major_direct_segments;
+            let (overlap, raw_recommended_bytes, raw_current_bytes) =
+                awproject_grouped_metal_sealed_dispatch_overlap(&program, admission)?;
+            self.grouped_metal_max_segment_additional_bytes = self
+                .grouped_metal_max_segment_additional_bytes
+                .max(overlap.exact_additional_bytes);
+            eprintln!(
+                "awproject_grouped_metal_admission phase=sealed segment={} source_programs=1 raw_recommended_bytes={} raw_current_bytes={} planner_device_budget_bytes={} residual_output_bytes={} residual_compensation_bytes={} model_wrapper_bytes={} safety_reserve_bytes={} legacy_generic_scratch_bytes={} generic_scratch_bytes=0 segment_ceiling_bytes={} prediction_metal_bytes={} prediction_readback_host_bytes={} prediction_with_readback_bytes={} tile_metal_bytes={} exact_additional_bytes={} peak_bytes={} source_prediction_upper_without_model_bytes={} source_tile_upper_bytes={} source_boundary_upper_bytes={} split_count=0 max_segment_additional_bytes={} precheck=not-dispatched postcheck=not-dispatched all_fit=true",
+                segment,
+                raw_recommended_bytes,
+                raw_current_bytes,
+                admission.planner_device_budget_bytes,
+                admission.residual_output_bytes,
+                admission.residual_compensation_bytes,
+                admission.model_wrapper_bytes,
+                admission.safety_reserve_bytes,
+                admission.legacy_generic_scratch_bytes,
+                admission.segment_ceiling_bytes,
+                overlap.prediction_metal_bytes,
+                overlap.prediction_readback_host_bytes,
+                overlap.prediction_with_readback_bytes,
+                overlap.tile_metal_bytes,
+                overlap.exact_additional_bytes,
+                overlap.peak_bytes,
+                overlap.prediction_with_readback_bytes,
+                overlap.tile_metal_bytes,
+                overlap.exact_additional_bytes,
+                self.grouped_metal_max_segment_additional_bytes,
+            );
+        }
         let program_bytes = program.resident_bytes();
         let retained_after = self
             .resident_bytes
@@ -29306,7 +29610,7 @@ impl AwProjectCompactReplayCache {
         self.source_major_direct_segments += 1;
         self.source_major_initial_receipts += 1;
         eprintln!(
-            "awproject_source_major_retention source_block={source_block_ordinal} segments={} program_bytes={program_bytes} retained_bytes={retained_after} retention_ceiling_bytes={} spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v3-high-only-initial resident=true",
+            "awproject_source_major_retention source_block={source_block_ordinal} segments={} program_bytes={program_bytes} retained_bytes={retained_after} retention_ceiling_bytes={} spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v4-high-only-dense-residual resident=true",
             self.source_major_direct_segments, self.budget_bytes,
         );
         Ok(())
@@ -40458,7 +40762,7 @@ fn accumulate_awproject_source_major_block(
             classification_skipped_samples,
         )?;
         eprintln!(
-            "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples=0 initial_partitions=0 residual_segments=0 compact_windows=0 spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v3-high-only-initial initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
+            "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples=0 initial_partitions=0 residual_segments=0 compact_windows=0 spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v4-high-only-dense-residual initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
             profile::millis(started.elapsed()),
         );
         replay_cache.log();
@@ -40498,6 +40802,16 @@ fn accumulate_awproject_source_major_block(
         request.geometry.image_shape[1],
         compile_limit,
     )?;
+    let kernel_compaction = compact_awproject_metal_aot_kernel_atlas(&mut program, compile_limit)?;
+    eprintln!(
+        "awproject_source_major_kernel_compaction source_block={replay_block_ordinal} raw_bytes={} compact_bytes={} stencils={} plan_references={} scratch_bytes={} applied={} bit_exact=true",
+        kernel_compaction.raw_bytes,
+        kernel_compaction.compact_bytes,
+        kernel_compaction.stencils,
+        kernel_compaction.plan_references,
+        kernel_compaction.scratch_bytes,
+        kernel_compaction.applied,
+    );
     log_awproject_metal_aot_grouped_tile_compile(
         replay_cache.resident_metal_global_programs.len(),
         1,
@@ -40509,7 +40823,7 @@ fn accumulate_awproject_source_major_block(
     let initial_grid_bytes = initial_receipt.metal_stats.fixed_grid_bytes;
 
     eprintln!(
-        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes=0 imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v3-high-only-initial initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
+        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes=0 imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v4-high-only-dense-residual initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
         initial_receipt.imaging_owner_bytes,
         initial_receipt.weight_owner_bytes,
         initial_receipt.concurrent_owner_bytes,
@@ -77420,6 +77734,152 @@ mod tests {
                 aw_sample_census: super::AwProjectSampleStats::default(),
             },
         }
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn source_major_kernel_compaction_preserves_every_referenced_tap_bit() {
+        fn tap_bits(
+            kernels: &[super::WProjectMetalComplex],
+            kernel_base: u32,
+            kernel_layout: u32,
+            x_support: u32,
+            y_support: u32,
+        ) -> Vec<[u32; 2]> {
+            let width = (2 * x_support + 1) as usize;
+            let height = (2 * y_support + 1) as usize;
+            (0..height)
+                .flat_map(|tap_y| {
+                    (0..width).map(move |tap_x| {
+                        let value = super::awproject_metal_kernel_value(
+                            kernels,
+                            kernel_base,
+                            kernel_layout,
+                            tap_x,
+                            tap_y,
+                            tap_y * width + tap_x,
+                        )
+                        .expect("referenced kernel tap");
+                        [value.re.to_bits(), value.im.to_bits()]
+                    })
+                })
+                .collect()
+        }
+
+        let mut program = awproject_effective_support_test_program();
+        super::compile_awproject_metal_aot_grouped_tile(
+            &mut program,
+            super::AwProjectMetalEffectiveSupportConfig {
+                omitted_energy_fraction: 0.0,
+            },
+            8,
+            8,
+            usize::MAX,
+        )
+        .expect("exact AOT compile");
+        let route_before = super::hash_awproject_grouped_route(
+            &program
+                .aot_grouped_tile
+                .as_ref()
+                .expect("compiled AOT")
+                .grouped
+                .tile_plan,
+        );
+        let mapping_before = program
+            .aot_grouped_tile
+            .as_ref()
+            .expect("compiled AOT")
+            .sample_role_groups
+            .clone();
+        let prediction_before = program
+            .prediction_batch
+            .samples
+            .iter()
+            .flat_map(|sample| [sample.first_prediction, sample.second_prediction])
+            .map(|plan| {
+                tap_bits(
+                    &program.prediction_batch.kernels,
+                    plan.kernel_base,
+                    plan._pad0,
+                    plan.x_support,
+                    plan.y_support,
+                )
+            })
+            .collect::<Vec<_>>();
+        let grouped_before = program
+            .aot_grouped_tile
+            .as_ref()
+            .expect("compiled AOT")
+            .grouped
+            .groups
+            .iter()
+            .map(|group| {
+                tap_bits(
+                    &program.prediction_batch.kernels,
+                    group.plan.kernel_base,
+                    group.plan._pad0,
+                    group.plan.x_support,
+                    group.plan.y_support,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let stats = super::compact_awproject_metal_aot_kernel_atlas(&mut program, usize::MAX)
+            .expect("exact kernel compaction");
+
+        assert!(stats.applied);
+        assert_eq!(640, stats.raw_bytes);
+        assert_eq!(400, stats.compact_bytes);
+        assert_eq!(2, stats.stencils);
+        assert_eq!(4, stats.plan_references);
+        let prediction_after = program
+            .prediction_batch
+            .samples
+            .iter()
+            .flat_map(|sample| [sample.first_prediction, sample.second_prediction])
+            .map(|plan| {
+                assert_eq!(plan._pad0, 0);
+                tap_bits(
+                    &program.prediction_batch.kernels,
+                    plan.kernel_base,
+                    plan._pad0,
+                    plan.x_support,
+                    plan.y_support,
+                )
+            })
+            .collect::<Vec<_>>();
+        let aot = program.aot_grouped_tile.as_ref().expect("compacted AOT");
+        let grouped_after = aot
+            .grouped
+            .groups
+            .iter()
+            .map(|group| {
+                assert_eq!(group.plan._pad0, 0);
+                tap_bits(
+                    &program.prediction_batch.kernels,
+                    group.plan.kernel_base,
+                    group.plan._pad0,
+                    group.plan.x_support,
+                    group.plan.y_support,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(prediction_before, prediction_after);
+        assert_eq!(grouped_before, grouped_after);
+        assert_eq!(mapping_before, aot.sample_role_groups);
+        assert_eq!(
+            route_before,
+            super::hash_awproject_grouped_route(&aot.grouped.tile_plan)
+        );
+        assert_eq!(stats.raw_bytes, aot.receipt.ledger.raw_kernel_atlas_bytes);
+        assert_eq!(
+            stats.compact_bytes,
+            aot.receipt.ledger.compact_kernel_atlas_bytes
+        );
+        assert_ne!(
+            aot.receipt.grouped_plans_sha256,
+            aot.receipt.legacy_grouped_plans_sha256
+        );
     }
 
     #[cfg(all(target_os = "macos", not(coverage)))]

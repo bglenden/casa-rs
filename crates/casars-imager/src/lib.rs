@@ -39620,7 +39620,7 @@ fn admit_awproject_multifield_initial_grid(
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_source_major_architecture",
-            value: "direct-source-major-v3-high-only-initial".to_string(),
+            value: "direct-source-major-v4-high-only-dense-residual".to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Workload,
             reason: "one source-major owner interns CF requests, dispatches high-only imaging and PSF-weight partitions, then retains the same source-ordered exact-support compensated residual artifact"
                 .to_string(),
@@ -62903,7 +62903,7 @@ mod tests {
         }));
         assert!(initial.decisions.iter().any(|decision| {
             decision.name == "awproject_source_major_architecture"
-                && decision.value == "direct-source-major-v3-high-only-initial"
+                && decision.value == "direct-source-major-v4-high-only-dense-residual"
         }));
         assert!(initial.decisions.iter().any(|decision| {
             decision.name == "awproject_source_major_initial_accumulation"
@@ -63167,7 +63167,7 @@ mod tests {
     }
 
     #[test]
-    fn awproject_multifield_initial_grid_auto_workers_enable_plan_owned_calibration() {
+    fn awproject_multifield_initial_grid_auto_workers_skip_obsolete_sparse_calibration() {
         let tmp = tempdir().unwrap();
         let cf_cache = tmp.path().join("auto-worker-initial-grid-cf-cache");
         make_awproject_planner_cache(&cf_cache, 8);
@@ -63192,8 +63192,8 @@ mod tests {
             Some(initial.workers)
         );
         assert!(
-            standard_mfs_parallel_worker_calibration_request(&config, &initial).is_some(),
-            "the admitted production path must activate bounded exact-kernel calibration from the resolved plan, not an environment flag"
+            standard_mfs_parallel_worker_calibration_request(&config, &initial).is_none(),
+            "the source-major Metal path must not run the retired CPU sparse-grid calibrator"
         );
         let execution = standard_mfs_execution_config_with_plan(&config, &initial);
         assert_eq!(
@@ -63259,7 +63259,7 @@ mod tests {
         assert!(standard_mfs_plan_decision_is(
             &resolved,
             "awproject_source_major_architecture",
-            "direct-source-major-v3-high-only-initial"
+            "direct-source-major-v4-high-only-dense-residual"
         ));
         let execution = standard_mfs_execution_config_with_plan(&config, &resolved);
         assert_eq!(

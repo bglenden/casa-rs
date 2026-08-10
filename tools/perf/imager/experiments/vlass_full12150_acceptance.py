@@ -813,7 +813,7 @@ def validate_probe_log(
     expected_decisions = {
         "awproject_selected_field_count": "63",
         "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
-        "awproject_source_major_architecture": "direct-source-major-v3-high-only-initial",
+        "awproject_source_major_architecture": "direct-source-major-v4-high-only-dense-residual",
         "awproject_source_major_initial_accumulation": "high-limb-only",
         "awproject_source_major_initial_grid_bytes": "9447840000",
         "awproject_multifield_initial_grid_admission": "admitted",
@@ -1042,6 +1042,7 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
     host = matching_lines(text, "awproject_grouped_metal_host_lifetime ")
     support = matching_lines(text, "awproject_effective_support ")
     aot = matching_lines(text, "awproject_aot_grouped_tile_receipt ")
+    compaction = matching_lines(text, "awproject_source_major_kernel_compaction ")
     retention = matching_lines(text, "awproject_metal_grouped_replay_retention ")
     summaries = matching_lines(text, "awproject_metal_resident_grouped_replay_summary ")
     if not source_blocks:
@@ -1054,7 +1055,8 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
         )
     for entry in source_blocks:
         if (
-            entry.get("architecture") != "direct-source-major-v3-high-only-initial"
+            entry.get("architecture")
+            != "direct-source-major-v4-high-only-dense-residual"
             or entry.get("initial_accumulation") != "high-limb-only"
             or entry.get("initial_partitions") != "2"
             or entry.get("initial_grid_bytes") != "9447840000"
@@ -1107,17 +1109,52 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
             raise AcceptanceError("exact-support compiler changed kernel residency")
     if {int(entry["segment"]) for entry in aot} != segments:
         raise AcceptanceError("AOT receipts do not cover every segment")
+    if {int(entry["source_block"]) for entry in compaction} != segments:
+        raise AcceptanceError("kernel compaction receipts do not cover every segment")
+    compaction_by_segment = {int(entry["source_block"]): entry for entry in compaction}
+    for segment, entry in compaction_by_segment.items():
+        if entry.get("applied") != "true" or entry.get("bit_exact") != "true":
+            raise AcceptanceError("source-major kernel compaction was not exact")
+        raw_bytes = int(entry.get("raw_bytes", "0"))
+        compact_bytes = int(entry.get("compact_bytes", "0"))
+        if compact_bytes <= 0 or compact_bytes >= raw_bytes:
+            raise AcceptanceError(
+                "source-major kernel compaction did not reduce residency"
+            )
+        if (
+            int(entry.get("stencils", "0")) <= 0
+            or int(entry.get("plan_references", "0")) <= 0
+        ):
+            raise AcceptanceError("source-major kernel compaction receipt is empty")
+        if int(entry.get("scratch_bytes", "0")) <= 0:
+            raise AcceptanceError(
+                "source-major kernel compaction omitted scratch admission"
+            )
     if any(entry.get("omitted_energy_fraction_bits") != "0" for entry in aot):
         raise AcceptanceError("AOT receipt is not exact-support")
     for entry in aot:
-        if entry.get("grouped_plans_hash_prefix") != entry.get(
+        segment = int(entry["segment"])
+        compact = compaction_by_segment[segment]
+        if entry.get("grouped_plans_hash_prefix") == entry.get(
             "legacy_grouped_plans_hash_prefix"
         ):
-            raise AcceptanceError("AOT grouped plans differ from the exact compiler")
+            raise AcceptanceError(
+                "compacted AOT grouped plans retained raw atlas bases"
+            )
         if entry.get("grouped_route_hash_prefix") != entry.get(
             "legacy_grouped_route_hash_prefix"
         ):
             raise AcceptanceError("AOT grouped route differs from the exact compiler")
+        if entry.get("raw_kernel_atlas_bytes") != compact.get("raw_bytes") or entry.get(
+            "compact_kernel_atlas_bytes"
+        ) != compact.get("compact_bytes"):
+            raise AcceptanceError("AOT and kernel-compaction byte ledgers differ")
+        if entry.get("compact_kernel_stencils") != compact.get("stencils") or entry.get(
+            "compact_kernel_plan_references"
+        ) != compact.get("plan_references"):
+            raise AcceptanceError("AOT and kernel-compaction cardinalities differ")
+        if entry.get("compact_kernel_scratch_bytes") != compact.get("scratch_bytes"):
+            raise AcceptanceError("AOT and kernel-compaction scratch ledgers differ")
         if int(entry.get("compile_transient_bytes_peak_estimated", "-1")) > int(
             entry.get("compile_admission_limit_bytes", "-2")
         ):

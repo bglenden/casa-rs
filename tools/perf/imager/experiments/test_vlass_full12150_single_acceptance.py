@@ -13,7 +13,7 @@ def valid_probe_log(target_mib: int) -> str:
     decisions = {
         "awproject_selected_field_count": "1",
         "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
-        "awproject_source_major_architecture": "direct-source-major-v3-high-only-initial",
+        "awproject_source_major_architecture": "direct-source-major-v4-high-only-dense-residual",
         "awproject_source_major_initial_accumulation": "high-limb-only",
         "awproject_source_major_initial_grid_bytes": "9447840000",
         "awproject_multifield_initial_grid_admission": "admitted",
@@ -58,7 +58,7 @@ def valid_runtime_log() -> str:
         "awproject_source_major_block source_block=0 accepted_samples=1 "
         "initial_partitions=2 initial_grid_bytes=9447840000 "
         "initial_compensation_bytes=0 spill_bytes=0 reload_bytes=0 "
-        "architecture=direct-source-major-v3-high-only-initial "
+        "architecture=direct-source-major-v4-high-only-dense-residual "
         "initial_accumulation=high-limb-only",
         "awproject_metal_initial_readback products=8 "
         "residency=metal-shared-high-limb-only-grid resident_bytes=9447840000",
@@ -71,10 +71,16 @@ def valid_runtime_log() -> str:
         "tile_original_tap_visits=20 tile_retained_tap_visits=20 "
         "resident_kernel_bytes_before=100 resident_kernel_bytes_after=100",
         "awproject_aot_grouped_tile_receipt segment=0 "
-        "omitted_energy_fraction_bits=0 grouped_plans_hash_prefix=abc "
+        "omitted_energy_fraction_bits=0 grouped_plans_hash_prefix=123 "
         "legacy_grouped_plans_hash_prefix=abc grouped_route_hash_prefix=def "
         "legacy_grouped_route_hash_prefix=def "
-        "compile_transient_bytes_peak_estimated=90 compile_admission_limit_bytes=100",
+        "compile_transient_bytes_peak_estimated=90 compile_admission_limit_bytes=100 "
+        "raw_kernel_atlas_bytes=100 compact_kernel_atlas_bytes=40 "
+        "compact_kernel_stencils=2 compact_kernel_plan_references=4 "
+        "compact_kernel_scratch_bytes=64",
+        "awproject_source_major_kernel_compaction source_block=0 raw_bytes=100 "
+        "compact_bytes=40 stencils=2 plan_references=4 scratch_bytes=64 "
+        "applied=true bit_exact=true",
         "awproject_metal_grouped_replay_retention decision=resident-complete "
         "segments=1 program_bytes=1000",
         "awproject_grouped_metal_admission phase=runtime segment=0 all_fit=true "
@@ -144,7 +150,7 @@ class FullVlassSingleAcceptanceContractTest(unittest.TestCase):
                 "initial_dirty_backend=cpu",
             ),
             ("tile_side=11", "tile_side=16"),
-            ("direct-source-major-v3-high-only-initial", "legacy-windowed"),
+            ("direct-source-major-v4-high-only-dense-residual", "legacy-windowed"),
             ("low_field=1525", "low_field=1107"),
         )
         for old, new in mutations:
@@ -171,6 +177,7 @@ class FullVlassSingleAcceptanceContractTest(unittest.TestCase):
             ),
             ("all_fit=true", "all_fit=false"),
             ("runtime_grouping_builds=0", "runtime_grouping_builds=1"),
+            ("bit_exact=true", "bit_exact=false"),
             (
                 "candidate_result_released_before_tile=true",
                 "candidate_result_released_before_tile=false",
