@@ -59,8 +59,8 @@ def valid_probe_log(
         "awproject_selected_field_count": "63",
         "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
         "awproject_source_major_architecture": "direct-source-major-v10-sealed-f32-residual",
-        "awproject_source_major_initial_accumulation": "high-limb-only",
-        "awproject_source_major_initial_grid_bytes": "9447840000",
+        "awproject_source_major_initial_accumulation": "weight-two-limb",
+        "awproject_source_major_initial_grid_bytes": "12990780000",
         "awproject_multifield_initial_grid_admission": "admitted",
         "awproject_grouped_replay_replaced_generic_caches": "true",
         "awproject_grouped_metal_generic_scratch_bytes": "0",
@@ -96,17 +96,19 @@ def valid_probe_log(
 def valid_runtime_log() -> str:
     lines = [
         "awproject_source_major_block source_block=0 accepted_samples=1 "
-        "initial_partitions=2 initial_grid_bytes=9447840000 "
-        "initial_compensation_bytes=0 spill_bytes=900 reload_bytes=0 "
+        "initial_partitions=2 initial_grid_bytes=12990780000 "
+        "initial_compensation_bytes=3542940000 spill_bytes=900 reload_bytes=0 "
         "architecture=direct-source-major-v10-sealed-f32-residual "
-        "initial_accumulation=high-limb-only",
+        "initial_accumulation=weight-two-limb",
         "awproject_source_major_staging source_block=0 segments=1 "
         "program_bytes=1000 compiled_total_bytes=1000 streaming_live_bytes=1000 "
         "streaming_ceiling_bytes=2000 spill_bytes=900 total_spill_bytes=900 "
         "reload_bytes=0 architecture=direct-source-major-v10-sealed-f32-residual "
         "resident=false staged=true",
         "awproject_metal_initial_readback products=8 "
-        "residency=metal-shared-high-limb-only-grid resident_bytes=9447840000",
+        "residency=metal-shared-selected-two-limb-grid resident_bytes=12990780000 "
+        "compensation_plane_start=5 compensation_plane_count=3 "
+        "compensation_bytes=3542940000",
         "awproject_grouped_metal_admission phase=sealed segment=0 "
         "source_boundary_upper_bytes=100 exact_additional_bytes=90 all_fit=true",
         "awproject_effective_support segment=0 omitted_energy_fraction=0 "
@@ -292,6 +294,12 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
         self.assertEqual(
             "0", environment["CASA_RS_EXPERIMENTAL_AWPROJECT_REPLAY_RETENTION_BYTES"]
         )
+        self.assertEqual(
+            "1",
+            environment[
+                "CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_WEIGHT_COMPENSATION"
+            ],
+        )
 
     def test_probe_contract_is_fail_closed(self) -> None:
         target_mib = 22_000
@@ -370,7 +378,10 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
         self.assertEqual(1, result["segment_count"])
         self.assertEqual(19, result["product_count"])
         mutations = (
-            ("initial_compensation_bytes=0", "initial_compensation_bytes=9447840000"),
+            (
+                "initial_compensation_bytes=3542940000",
+                "initial_compensation_bytes=0",
+            ),
             ("all_fit=true", "all_fit=false"),
             ("prediction_cropped_plans=0", "prediction_cropped_plans=1"),
             (

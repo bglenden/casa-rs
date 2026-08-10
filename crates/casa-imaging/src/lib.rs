@@ -8589,6 +8589,8 @@ fn finish_mosaic_mtmfs_dirty_images(
             source_major_high_only,
             ..
         } => {
+            use objc2_metal::MTLBuffer;
+
             if stored_psf_terms != psf_term_count || residual_term_count != nterms {
                 return Err(ImagingError::Normalization(
                     "direct Metal mosaic MT-MFS dirty-grid term count changed before FFT"
@@ -8605,13 +8607,22 @@ fn finish_mosaic_mtmfs_dirty_images(
                 )?
             {
                 let compensation = aw_compensation.as_ref();
-                let compensated = compensation.is_some();
-                let resident_bytes = grid
+                let grid_resident_bytes = grid
                     .plane_count()
                     .saturating_mul(grid.shape()[0])
                     .saturating_mul(grid.shape()[1])
-                    .saturating_mul(std::mem::size_of::<Complex32>())
-                    .saturating_mul(1 + usize::from(compensated));
+                    .saturating_mul(std::mem::size_of::<Complex32>());
+                let compensation_bytes = compensation.map_or(0, |state| state.buffer.length());
+                let compensation_plane_start = compensation.map(|state| state.plane_start);
+                let compensation_plane_count = compensation.map_or(0, |state| state.plane_count);
+                let compensation_residency = match compensation {
+                    Some(state) if state.plane_count == grid.plane_count() => {
+                        "metal-shared-full-two-limb-grid"
+                    }
+                    Some(_) => "metal-shared-selected-two-limb-grid",
+                    None => "metal-shared-high-limb-only-grid",
+                };
+                let resident_bytes = grid_resident_bytes.saturating_add(compensation_bytes);
                 let one_f64_plane_bytes = grid.shape()[0]
                     .saturating_mul(grid.shape()[1])
                     .saturating_mul(std::mem::size_of::<Complex64>());
@@ -8686,14 +8697,14 @@ fn finish_mosaic_mtmfs_dirty_images(
                 stage_timings.psf_fft += fft_started.elapsed();
                 if profile::standard_mfs_profile_detail_enabled() {
                     eprintln!(
-                        "awproject_metal_initial_readback products={} residency={} fft_precision=f64 readback_strategy=sequential-plane resident_bytes={} host_f64_transient_bytes={} materialized_f32_output_bytes={} modeled_overlap_bytes={} readback_ms={:.3}",
+                        "awproject_metal_initial_readback products={} residency={} fft_precision=f64 readback_strategy=sequential-plane resident_bytes={} compensation_plane_start={} compensation_plane_count={} compensation_bytes={} host_f64_transient_bytes={} materialized_f32_output_bytes={} modeled_overlap_bytes={} readback_ms={:.3}",
                         plane_count,
-                        if compensated {
-                            "metal-shared-two-float-grid"
-                        } else {
-                            "metal-shared-high-limb-only-grid"
-                        },
+                        compensation_residency,
                         resident_bytes,
+                        compensation_plane_start
+                            .map_or("none".to_string(), |start| start.to_string()),
+                        compensation_plane_count,
+                        compensation_bytes,
                         one_f64_plane_bytes,
                         materialized_f32_output_bytes,
                         resident_bytes
@@ -15660,6 +15671,19 @@ impl AwProjectInitialCompensationMode {
             Self::WeightTerms => "weight-two-limb",
             Self::Full => "full-two-limb",
         }
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_initial_compensation_mode() -> AwProjectInitialCompensationMode {
+    if std::env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_FULL_COMPENSATION").is_some() {
+        AwProjectInitialCompensationMode::Full
+    } else if std::env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_WEIGHT_COMPENSATION")
+        .is_some()
+    {
+        AwProjectInitialCompensationMode::WeightTerms
+    } else {
+        AwProjectInitialCompensationMode::HighOnly
     }
 }
 
@@ -41859,6 +41883,8 @@ struct AwProjectSourceMajorInitialReceipt {
     imaging_group_elapsed: Duration,
     weight_group_elapsed: Duration,
     group_wall_elapsed: Duration,
+    compensation_mode: AwProjectInitialCompensationMode,
+    compensation_bytes: usize,
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -42065,20 +42091,7 @@ fn dispatch_awproject_source_major_initial(
     device_budget_bytes: usize,
     safety_reserve_bytes: usize,
 ) -> Result<AwProjectSourceMajorInitialReceipt, ImagingError> {
-    let compensation_mode =
-        if std::env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_FULL_COMPENSATION")
-            .is_some()
-        {
-            AwProjectInitialCompensationMode::Full
-        } else if std::env::var_os(
-            "CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_WEIGHT_COMPENSATION",
-        )
-        .is_some()
-        {
-            AwProjectInitialCompensationMode::WeightTerms
-        } else {
-            AwProjectInitialCompensationMode::HighOnly
-        };
+    let compensation_mode = awproject_initial_compensation_mode();
     let MosaicMtmfsStreamGridStorage::MetalSharedF32 {
         grid,
         aw_compensation,
@@ -42272,6 +42285,8 @@ fn dispatch_awproject_source_major_initial(
         imaging_group_elapsed,
         weight_group_elapsed,
         group_wall_elapsed,
+        compensation_mode,
+        compensation_bytes,
     })
 }
 
@@ -42403,7 +42418,8 @@ fn accumulate_awproject_source_major_block(
             classification_skipped_samples,
         )?;
         eprintln!(
-            "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples=0 initial_partitions=0 residual_segments=0 compact_windows=0 spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v10-sealed-f32-residual initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
+            "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples=0 initial_partitions=0 residual_segments=0 compact_windows=0 spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v10-sealed-f32-residual initial_accumulation={} initial_compensation_bytes=0 exact_support=true elapsed_ms={:.3}",
+            awproject_initial_compensation_mode().label(),
             profile::millis(started.elapsed()),
         );
         replay_cache.log();
@@ -42485,10 +42501,11 @@ fn accumulate_awproject_source_major_block(
         .map_or(0, |program| program.payload_bytes);
 
     eprintln!(
-        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes=0 imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} residual_f32_kernel_bytes={} compiled_total_bytes={} streaming_ceiling_bytes={} spill_bytes={} reload_bytes=0 architecture=direct-source-major-v10-sealed-f32-residual initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
+        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes={} imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} residual_f32_kernel_bytes={} compiled_total_bytes={} streaming_ceiling_bytes={} spill_bytes={} reload_bytes=0 architecture=direct-source-major-v10-sealed-f32-residual initial_accumulation={} exact_support=true elapsed_ms={:.3}",
         initial_receipt.imaging_owner_bytes,
         initial_receipt.weight_owner_bytes,
         initial_receipt.concurrent_owner_bytes,
+        initial_receipt.compensation_bytes,
         initial_receipt.imaging_device_peak_bytes,
         initial_receipt.weight_device_peak_bytes,
         initial_receipt.imaging_groups,
@@ -42507,6 +42524,7 @@ fn accumulate_awproject_source_major_block(
         replay_cache.compiled_total_bytes,
         replay_cache.budget_bytes,
         spill_bytes,
+        initial_receipt.compensation_mode.label(),
         profile::millis(started.elapsed()),
     );
     accumulation
