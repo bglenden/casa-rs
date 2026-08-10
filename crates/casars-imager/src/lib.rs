@@ -39614,9 +39614,9 @@ fn admit_awproject_multifield_initial_grid(
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_source_major_architecture",
-            value: "direct-source-major-v6-staged-i16-residual".to_string(),
+            value: "direct-source-major-v7-streamed-i16-residual".to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Workload,
-            reason: "one source-major owner interns CF requests, dispatches high-only imaging and PSF-weight partitions, stages each scaled-i16 exact-support residual artifact, then reloads the complete set once after releasing the initial grid"
+            reason: "one source-major owner interns CF requests, dispatches high-only imaging and PSF-weight partitions, stages each scaled-i16 exact-support residual artifact, then streams verified current and next segments after releasing the initial grid"
                 .to_string(),
         },
         casa_imaging::ImagingPlanDecision {
@@ -62897,7 +62897,7 @@ mod tests {
         }));
         assert!(initial.decisions.iter().any(|decision| {
             decision.name == "awproject_source_major_architecture"
-                && decision.value == "direct-source-major-v6-staged-i16-residual"
+                && decision.value == "direct-source-major-v7-streamed-i16-residual"
         }));
         assert!(initial.decisions.iter().any(|decision| {
             decision.name == "awproject_source_major_initial_accumulation"
@@ -63250,12 +63250,12 @@ mod tests {
         assert_eq!(resolved.caches.direct_metal_scratch_bytes, 0);
         assert!(
             resolved.allocation_bytes("AWProject compact replay retention") > 0,
-            "single-field source-major execution requires resident grouped replay"
+            "single-field source-major execution requires a bounded grouped replay stream"
         );
         assert!(standard_mfs_plan_decision_is(
             &resolved,
             "awproject_source_major_architecture",
-            "direct-source-major-v6-staged-i16-residual"
+            "direct-source-major-v7-streamed-i16-residual"
         ));
         let execution = standard_mfs_execution_config_with_plan(&config, &resolved);
         assert_eq!(

@@ -13,7 +13,7 @@ def valid_probe_log(target_mib: int) -> str:
     decisions = {
         "awproject_selected_field_count": "1",
         "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
-        "awproject_source_major_architecture": "direct-source-major-v6-staged-i16-residual",
+        "awproject_source_major_architecture": "direct-source-major-v7-streamed-i16-residual",
         "awproject_source_major_initial_accumulation": "high-limb-only",
         "awproject_source_major_initial_grid_bytes": "9447840000",
         "awproject_multifield_initial_grid_admission": "admitted",
@@ -58,12 +58,12 @@ def valid_runtime_log() -> str:
         "awproject_source_major_block source_block=0 accepted_samples=1 "
         "initial_partitions=2 initial_grid_bytes=9447840000 "
         "initial_compensation_bytes=0 spill_bytes=900 reload_bytes=0 "
-        "architecture=direct-source-major-v6-staged-i16-residual "
+        "architecture=direct-source-major-v7-streamed-i16-residual "
         "initial_accumulation=high-limb-only",
         "awproject_source_major_staging source_block=0 segments=1 "
-        "program_bytes=1000 projected_resident_bytes=1000 "
-        "retention_ceiling_bytes=2000 spill_bytes=900 total_spill_bytes=900 "
-        "reload_bytes=0 architecture=direct-source-major-v6-staged-i16-residual "
+        "program_bytes=1000 compiled_total_bytes=1000 streaming_pair_bytes=1000 "
+        "streaming_ceiling_bytes=2000 spill_bytes=900 total_spill_bytes=900 "
+        "reload_bytes=0 architecture=direct-source-major-v7-streamed-i16-residual "
         "resident=false staged=true",
         "awproject_metal_initial_readback products=8 "
         "residency=metal-shared-high-limb-only-grid resident_bytes=9447840000",
@@ -94,12 +94,11 @@ def valid_runtime_log() -> str:
         "max_abs_error=2.0e-5 zeroed_components=0 compile_overlap_bytes=90 "
         "max_kernel_norm=1.0 storage=per-stencil-scaled-i16-complex "
         "range=-32767:32767 conversion=metal-load-to-f32",
-        "awproject_metal_grouped_replay_retention decision=resident-complete "
-        "segments=1 program_bytes=1000 initial_read_bytes=900",
-        "awproject_source_major_staged_reload segments=1 spill_bytes=900 "
-        "reload_bytes=900 resident_bytes=1000 retention_ceiling_bytes=2000 "
-        "architecture=direct-source-major-v6-staged-i16-residual "
-        "lifecycle=after-dirty-grid-release resident=true",
+        "awproject_source_major_staged_streaming_ready segments=1 spill_bytes=900 "
+        "compiled_total_bytes=1000 streaming_pair_peak_bytes=1000 "
+        "streaming_ceiling_bytes=2000 resident_bytes=0 prefetch_slots=2 "
+        "architecture=direct-source-major-v7-streamed-i16-residual "
+        "lifecycle=after-dirty-grid-release resident=false",
         "awproject_grouped_metal_admission phase=runtime segment=0 all_fit=true "
         "prechecks=fit postchecks=fit host_bytes_retained_during_tile=0 "
         "persistent_post_combined_bytes=10 persistent_maximum_current_bytes=20 "
@@ -110,9 +109,10 @@ def valid_runtime_log() -> str:
         "dispatch_released_before_tile=true "
         "candidate_auxiliary_released_before_tile=true "
         "candidate_result_released_before_tile=true",
-        "awproject_metal_resident_grouped_replay_summary segments=1 "
-        "program_bytes=1000 spill_read_bytes=0 runtime_grouping_builds=0 "
-        "runtime_sort_builds=0 runtime_route_builds=0",
+        "awproject_metal_segmented_global_replay_summary segments=1 "
+        "payload_bytes=900 read_bytes=900 spill_read_bytes=900 "
+        "runtime_grouping_builds=0 runtime_sort_builds=0 "
+        "runtime_route_builds=0 source_major_streaming=true",
     ]
     for suffix in single.shared.EXPECTED_PRODUCTS:
         shape = "1x1x1x1" if suffix.startswith(".sumwt") else "12150x12150x1x1"
@@ -167,7 +167,7 @@ class FullVlassSingleAcceptanceContractTest(unittest.TestCase):
                 "initial_dirty_backend=cpu",
             ),
             ("tile_side=11", "tile_side=16"),
-            ("direct-source-major-v6-staged-i16-residual", "legacy-windowed"),
+            ("direct-source-major-v7-streamed-i16-residual", "legacy-windowed"),
             ("low_field=1525", "low_field=1107"),
         )
         for old, new in mutations:
@@ -180,7 +180,7 @@ class FullVlassSingleAcceptanceContractTest(unittest.TestCase):
                         require_target_within_headroom=False,
                     )
 
-    def test_runtime_contract_requires_resident_reuse_release_and_products(
+    def test_runtime_contract_requires_streamed_reuse_release_and_products(
         self,
     ) -> None:
         accepted = valid_runtime_log()
@@ -189,8 +189,8 @@ class FullVlassSingleAcceptanceContractTest(unittest.TestCase):
         mutations = (
             ("initial_compensation_bytes=0", "initial_compensation_bytes=9447840000"),
             (
-                "spill_read_bytes=0",
-                "spill_read_bytes=1",
+                "spill_read_bytes=900",
+                "spill_read_bytes=899",
             ),
             ("all_fit=true", "all_fit=false"),
             ("runtime_grouping_builds=0", "runtime_grouping_builds=1"),

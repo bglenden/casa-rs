@@ -6096,7 +6096,7 @@ where
                 device_budget_bytes,
                 safety_reserve_bytes,
             } => eprintln!(
-                "awproject_initial_grid_plan backend=source-major-grouped-metal-f64 architecture=direct-source-major-v6-staged-i16-residual accumulation=high-limb-only tile_side={tile_side} workers={workers} compile_ceiling_bytes={process_compile_ceiling_bytes} replay_retention_ceiling_bytes={replay_retention_ceiling_bytes} device_budget_bytes={device_budget_bytes} safety_reserve_bytes={safety_reserve_bytes} legacy_tap_scratch_bytes=0 legacy_priming_scratch_bytes=0 staged_replay=true reload_after_dirty_grid_release=true planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
+                "awproject_initial_grid_plan backend=source-major-grouped-metal-f64 architecture=direct-source-major-v7-streamed-i16-residual accumulation=high-limb-only tile_side={tile_side} workers={workers} compile_ceiling_bytes={process_compile_ceiling_bytes} replay_streaming_ceiling_bytes={replay_retention_ceiling_bytes} device_budget_bytes={device_budget_bytes} safety_reserve_bytes={safety_reserve_bytes} legacy_tap_scratch_bytes=0 legacy_priming_scratch_bytes=0 staged_replay=true stream_after_dirty_grid_release=true prefetch_slots=2 planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
                 execution_config.resolved.maximum_planned_resident_bytes,
                 execution_config.resolved.usable_memory_bytes,
             ),
@@ -6294,14 +6294,14 @@ where
     // AWProject derives its normalization/mask weight image from the gridded
     // WTCF product below.  The analytic pointing/PB accumulator belongs to the
     // mosaic gridder and may legitimately contain no entries for an AW run.
-    let mut weight_image_for_mask = if aw_cache.is_some() {
-        Array2::<f32>::zeros((nx, ny))
+    let mut analytic_weight_image_for_mask = if aw_cache.is_some() {
+        None
     } else {
-        initial.pointing_weights.build_image(
+        Some(initial.pointing_weights.build_image(
             request.geometry,
             &config,
             standard_mfs_grid_threads(&execution_config),
-        )?
+        )?)
     };
     let normalize_started = Instant::now();
     let accumulated_in_metal = initial.storage.is_metal_shared();
@@ -6386,14 +6386,14 @@ where
                 "streaming mosaic MT-MFS reported sumwt is non-finite or zero".to_string(),
             ));
         }
-        weight_image_for_mask = if aw_cache.is_some() {
-            Array2::<f32>::zeros((nx, ny))
+        analytic_weight_image_for_mask = if aw_cache.is_some() {
+            None
         } else {
-            initial.pointing_weights.build_image(
+            Some(initial.pointing_weights.build_image(
                 request.geometry,
                 &config,
                 standard_mfs_grid_threads(&execution_config),
-            )?
+            )?)
         };
         dirty_images = finish_mosaic_mtmfs_dirty_images(
             MosaicMtmfsDirtyFinishRequest {
@@ -6419,26 +6419,34 @@ where
             .as_mut()
             .filter(|cache| cache.source_major_direct_segments > 0)
     {
-        cache.materialize_source_major_staged_programs()?;
+        cache.finalize_source_major_staged_streaming()?;
     }
     let MosaicMtmfsDirtyImages {
         psf_terms,
         mut residual_terms,
-        weight_image,
         weight_terms,
         psf_peak,
     } = dirty_images;
-    if aw_cache.is_some() {
-        weight_image_for_mask = weight_image.clone();
-    }
     stage_timings.psf_normalize += normalize_started.elapsed();
 
+    let weight_image = weight_terms.first().ok_or_else(|| {
+        ImagingError::Normalization("streaming mosaic MT-MFS produced no weight terms".to_string())
+    })?;
+    let weight_image_for_mask = if aw_cache.is_some() {
+        weight_image
+    } else {
+        analytic_weight_image_for_mask.as_ref().ok_or_else(|| {
+            ImagingError::Normalization(
+                "mosaic MT-MFS lost its analytic mask-weight image".to_string(),
+            )
+        })?
+    };
     let mosaic_clean_mask = build_mosaic_clean_mask(
-        &weight_image_for_mask,
+        weight_image_for_mask,
         config.pb_limit,
         request.clean_mask.as_ref(),
     )?;
-    drop(weight_image_for_mask);
+    drop(analytic_weight_image_for_mask);
     let mut clean_request = request.clone();
     clean_request.clean_mask = Some(mosaic_clean_mask);
     let clean_mask_pixels = clean_request
@@ -6654,7 +6662,7 @@ where
             .transpose()?;
     let prediction_weight_image = frozen_prediction_weight_image
         .as_ref()
-        .unwrap_or(&weight_image);
+        .unwrap_or(weight_image);
     let sparse_model_casacore_prep =
         env::var_os("CASA_RS_EXPERIMENTAL_SPARSE_AWPROJECT_MODEL_PREP").is_some();
     let mut model_support_positions = BTreeSet::<(usize, usize)>::new();
@@ -7365,7 +7373,7 @@ where
             beam_fit_attempts,
             beam_fit_cutoff_used,
             beam_fit_debug,
-            mosaic_weight_image: Some(weight_image),
+            mosaic_weight_image: weight_terms.first().cloned(),
             stage_timings,
         },
         compatibility: CompatibilityMetadata {
@@ -8076,7 +8084,6 @@ impl AwProjectSampleStats {
 struct MosaicMtmfsDirtyImages {
     psf_terms: Vec<Array2<f32>>,
     residual_terms: Vec<Array2<f32>>,
-    weight_image: Array2<f32>,
     weight_terms: Vec<Array2<f32>>,
     psf_peak: f32,
 }
@@ -8179,11 +8186,6 @@ fn finish_mosaic_mtmfs_dirty_images(
                             .mapv(|value| value * scale)
                     })
                     .collect::<Vec<_>>();
-                let weight_image = weight_terms.first().cloned().ok_or_else(|| {
-                    ImagingError::Normalization(
-                        "streaming mosaic MT-MFS produced no weight terms".to_string(),
-                    )
-                })?;
                 let psf_terms = raw_psf_terms
                     .iter()
                     .map(|raw| {
@@ -8199,7 +8201,6 @@ fn finish_mosaic_mtmfs_dirty_images(
                         .iter()
                         .map(|raw| gridder.corrected_mosaic_image_from_grid(raw, conv_sampling))
                         .collect::<Vec<_>>(),
-                    weight_image,
                     weight_terms,
                     dirty_fft_scale,
                     pb_limit,
@@ -8243,15 +8244,9 @@ fn finish_mosaic_mtmfs_dirty_images(
                 })
                 .collect::<Result<Vec<_>, ImagingError>>()?;
             stage_timings.psf_fft += fft_started.elapsed();
-            let weight_image = weight_terms.first().cloned().ok_or_else(|| {
-                ImagingError::Normalization(
-                    "streaming mosaic MT-MFS produced no weight terms".to_string(),
-                )
-            })?;
             normalize_mosaic_mtmfs_dirty_images(
                 psf_terms,
                 corrected_residual_terms,
-                weight_image,
                 weight_terms,
                 dirty_fft_scale,
                 pb_limit,
@@ -8284,11 +8279,6 @@ fn finish_mosaic_mtmfs_dirty_images(
                             .mapv(|value| value * scale)
                     })
                     .collect::<Vec<_>>();
-                let weight_image = weight_terms.first().cloned().ok_or_else(|| {
-                    ImagingError::Normalization(
-                        "streaming mosaic MT-MFS produced no weight terms".to_string(),
-                    )
-                })?;
                 let psf_terms = raw_psf_terms
                     .iter()
                     .map(|raw| {
@@ -8304,7 +8294,6 @@ fn finish_mosaic_mtmfs_dirty_images(
                         .iter()
                         .map(|raw| gridder.corrected_mosaic_image_from_grid_f64(raw, conv_sampling))
                         .collect::<Vec<_>>(),
-                    weight_image,
                     weight_terms,
                     dirty_fft_scale,
                     pb_limit,
@@ -8367,15 +8356,9 @@ fn finish_mosaic_mtmfs_dirty_images(
                 })
                 .collect::<Result<Vec<_>, ImagingError>>()?;
             stage_timings.psf_fft += fft_started.elapsed();
-            let weight_image = weight_terms.first().cloned().ok_or_else(|| {
-                ImagingError::Normalization(
-                    "streaming mosaic MT-MFS produced no weight terms".to_string(),
-                )
-            })?;
             let psf_peak = normalize_mosaic_mtmfs_dirty_images(
                 psf_terms,
                 corrected_residual_terms,
-                weight_image,
                 weight_terms,
                 dirty_fft_scale,
                 pb_limit,
@@ -8440,15 +8423,9 @@ fn finish_mosaic_mtmfs_dirty_images(
                 })
                 .collect::<Result<Vec<_>, ImagingError>>()?;
             stage_timings.psf_fft += fft_started.elapsed();
-            let weight_image = weight_terms.first().cloned().ok_or_else(|| {
-                ImagingError::Normalization(
-                    "sparse AWProject MT-MFS produced no weight terms".to_string(),
-                )
-            })?;
             normalize_mosaic_mtmfs_dirty_images(
                 psf_terms,
                 corrected_residual_terms,
-                weight_image,
                 weight_terms,
                 dirty_fft_scale,
                 pb_limit,
@@ -8558,11 +8535,6 @@ fn finish_mosaic_mtmfs_dirty_images(
                 drop(aw_compensation);
                 drop(grid);
                 stage_timings.psf_fft += fft_started.elapsed();
-                let weight_image = weight_terms.first().cloned().ok_or_else(|| {
-                    ImagingError::Normalization(
-                        "direct Metal mosaic MT-MFS produced no weight terms".to_string(),
-                    )
-                })?;
                 if profile::standard_mfs_profile_detail_enabled() {
                     eprintln!(
                         "awproject_metal_initial_readback products={} residency={} fft_precision=f64 readback_strategy=sequential-plane resident_bytes={} host_f64_transient_bytes={} materialized_f32_output_bytes={} modeled_overlap_bytes={} readback_ms={:.3}",
@@ -8584,7 +8556,6 @@ fn finish_mosaic_mtmfs_dirty_images(
                 return normalize_mosaic_mtmfs_dirty_images(
                     psf_terms,
                     corrected_residual_terms,
-                    weight_image,
                     weight_terms,
                     dirty_fft_scale,
                     pb_limit,
@@ -8629,11 +8600,6 @@ fn finish_mosaic_mtmfs_dirty_images(
                     image
                 })
                 .collect::<Vec<_>>();
-            let weight_image = weight_terms.first().cloned().ok_or_else(|| {
-                ImagingError::Normalization(
-                    "direct Metal mosaic MT-MFS produced no weight terms".to_string(),
-                )
-            })?;
             let psf_terms = raw_terms[..psf_term_count]
                 .iter()
                 .map(|raw| {
@@ -8649,7 +8615,6 @@ fn finish_mosaic_mtmfs_dirty_images(
             let products = normalize_mosaic_mtmfs_dirty_images(
                 psf_terms,
                 corrected_residual_terms,
-                weight_image,
                 weight_terms,
                 dirty_fft_scale,
                 pb_limit,
@@ -8684,11 +8649,13 @@ fn finish_mosaic_mtmfs_dirty_images(
 fn normalize_mosaic_mtmfs_dirty_images(
     mut psf_terms: Vec<Array2<f32>>,
     corrected_residual_terms: Vec<Array2<f32>>,
-    weight_image: Array2<f32>,
     weight_terms: Vec<Array2<f32>>,
     fft_sumwt_scale: f32,
     pb_limit: f32,
 ) -> Result<MosaicMtmfsDirtyImages, ImagingError> {
+    let weight_image = weight_terms.first().ok_or_else(|| {
+        ImagingError::Normalization("streaming mosaic MT-MFS produced no weight terms".to_string())
+    })?;
     let psf_peak = peak_abs_value(&psf_terms[0]);
     if !(psf_peak.is_finite() && psf_peak > 0.0) {
         return Err(ImagingError::Normalization(
@@ -8702,14 +8669,13 @@ fn normalize_mosaic_mtmfs_dirty_images(
         .into_iter()
         .map(|mut image| {
             image.mapv_inplace(|value| value * fft_sumwt_scale);
-            normalize_mosaic_residual_by_weight(&mut image, &weight_image, pb_limit)?;
+            normalize_mosaic_residual_by_weight(&mut image, weight_image, pb_limit)?;
             Ok(image)
         })
         .collect::<Result<Vec<_>, ImagingError>>()?;
     Ok(MosaicMtmfsDirtyImages {
         psf_terms,
         residual_terms,
-        weight_image,
         weight_terms,
         psf_peak,
     })
@@ -30489,7 +30455,7 @@ impl AwProjectCompactReplayCache {
             );
         }
         let program_bytes = program.resident_bytes();
-        let retained_after = self
+        let compiled_after = self
             .compiled_total_bytes
             .checked_add(program_bytes)
             .ok_or_else(|| {
@@ -30497,9 +30463,22 @@ impl AwProjectCompactReplayCache {
                     "direct source-major staged replay accounting overflowed".to_string(),
                 )
             })?;
-        if retained_after > self.budget_bytes {
+        let previous_program_bytes = self
+            .spilled_metal_global_programs
+            .last()
+            .map(AwProjectMetalSpilledProgram::expected_resident_bytes)
+            .transpose()?
+            .unwrap_or(0);
+        let streaming_pair_bytes = previous_program_bytes
+            .checked_add(program_bytes)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "direct source-major streaming pair accounting overflowed".to_string(),
+                )
+            })?;
+        if streaming_pair_bytes > self.budget_bytes {
             return Err(ImagingError::InvalidRequest(format!(
-                "direct source-major staged replay set {retained_after} exceeds its {}-byte resident ceiling",
+                "direct source-major staged replay pair {streaming_pair_bytes} exceeds its {}-byte streaming ceiling",
                 self.budget_bytes,
             )));
         }
@@ -30564,12 +30543,12 @@ impl AwProjectCompactReplayCache {
         for staged in &mut self.spilled_metal_global_programs {
             staged.residual_scale_plan = global_scale;
         }
-        self.compiled_total_bytes = retained_after;
+        self.compiled_total_bytes = compiled_after;
         self.compiled_total_bytes_complete = true;
         self.source_major_direct_segments += 1;
         self.source_major_initial_receipts += 1;
         eprintln!(
-            "awproject_source_major_staging source_block={source_block_ordinal} segments={} program_bytes={program_bytes} projected_resident_bytes={retained_after} retention_ceiling_bytes={} spill_bytes={} total_spill_bytes={} reload_bytes=0 architecture=direct-source-major-v6-staged-i16-residual resident=false staged=true",
+            "awproject_source_major_staging source_block={source_block_ordinal} segments={} program_bytes={program_bytes} compiled_total_bytes={compiled_after} streaming_pair_bytes={streaming_pair_bytes} streaming_ceiling_bytes={} spill_bytes={} total_spill_bytes={} reload_bytes=0 architecture=direct-source-major-v7-streamed-i16-residual resident=false staged=true",
             self.source_major_direct_segments,
             self.budget_bytes,
             self.spilled_metal_global_programs
@@ -31176,7 +31155,7 @@ impl AwProjectCompactReplayCache {
         Ok(true)
     }
 
-    fn materialize_source_major_staged_programs(&mut self) -> Result<(), ImagingError> {
+    fn finalize_source_major_staged_streaming(&mut self) -> Result<(), ImagingError> {
         if self.source_major_direct_segments == 0 {
             return Err(ImagingError::InvalidRequest(
                 "direct source-major replay produced no staged residual segments".to_string(),
@@ -31194,31 +31173,52 @@ impl AwProjectCompactReplayCache {
             || self.resident_bytes != 0
         {
             return Err(ImagingError::InvalidRequest(
-                "direct source-major replay was materialized more than once".to_string(),
+                "direct source-major streamed replay was finalized more than once".to_string(),
             ));
         }
-        let projected_resident_bytes = self.compiled_total_bytes;
-        if !self.retain_complete_spilled_metal_global_programs()? {
-            return Err(ImagingError::InvalidRequest(format!(
-                "direct source-major staged replay cannot materialize its complete {projected_resident_bytes}-byte working set within the {}-byte ceiling",
-                self.budget_bytes,
-            )));
+        let mut verified_total_bytes = 0usize;
+        let mut streaming_pair_peak_bytes = 0usize;
+        let mut previous_program_bytes = 0usize;
+        for (segment, descriptor) in self.spilled_metal_global_programs.iter().enumerate() {
+            let program_bytes = descriptor.expected_resident_bytes()?;
+            verified_total_bytes =
+                verified_total_bytes
+                    .checked_add(program_bytes)
+                    .ok_or_else(|| {
+                        ImagingError::InvalidRequest(
+                            "direct source-major staged total overflowed".to_string(),
+                        )
+                    })?;
+            let pair_bytes = previous_program_bytes
+                .checked_add(program_bytes)
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "direct source-major staged pair overflowed".to_string(),
+                    )
+                })?;
+            if pair_bytes > self.budget_bytes {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "direct source-major staged pair ending at segment {segment} requires {pair_bytes} bytes, exceeding its {}-byte streaming ceiling",
+                    self.budget_bytes,
+                )));
+            }
+            streaming_pair_peak_bytes = streaming_pair_peak_bytes.max(pair_bytes);
+            previous_program_bytes = program_bytes;
         }
-        if self.resident_bytes != projected_resident_bytes {
+        if verified_total_bytes != self.compiled_total_bytes {
             return Err(ImagingError::Normalization(format!(
-                "direct source-major resident reload materialized {} bytes, expected {projected_resident_bytes}",
-                self.resident_bytes,
+                "direct source-major staged descriptors describe {verified_total_bytes} bytes, expected {}",
+                self.compiled_total_bytes,
             )));
         }
+        self.resident_bytes = 0;
         self.segmented_metal_global_replay_ready = true;
         eprintln!(
-            "awproject_source_major_staged_reload segments={} spill_bytes={} reload_bytes={} resident_bytes={} retention_ceiling_bytes={} architecture=direct-source-major-v6-staged-i16-residual lifecycle=after-dirty-grid-release resident=true",
-            self.resident_metal_global_programs.len(),
+            "awproject_source_major_staged_streaming_ready segments={} spill_bytes={} compiled_total_bytes={} streaming_pair_peak_bytes={} streaming_ceiling_bytes={} resident_bytes=0 prefetch_slots=2 architecture=direct-source-major-v7-streamed-i16-residual lifecycle=after-dirty-grid-release resident=false",
+            self.spilled_metal_global_programs.len(),
             self.spilled_metal_global_payload_bytes,
-            self.metal_global_spill_store
-                .as_ref()
-                .map_or(0, |store| store.bytes_read),
-            self.resident_bytes,
+            verified_total_bytes,
+            streaming_pair_peak_bytes,
             self.budget_bytes,
         );
         Ok(())
@@ -40138,6 +40138,16 @@ fn replay_awproject_metal_spilled_global_programs(
         ));
     }
     let programs = cache.spilled_metal_global_programs.clone();
+    let source_major_streaming = cache.source_major_direct_segments > 0;
+    if source_major_streaming
+        && (programs.len() != cache.source_major_direct_segments
+            || !cache.resident_metal_global_programs.is_empty()
+            || cache.resident_bytes != 0)
+    {
+        return Err(ImagingError::Normalization(
+            "source-major streamed replay lost its complete non-resident segment set".to_string(),
+        ));
+    }
     let total_payload_bytes = cache.spilled_metal_global_payload_bytes;
     let grouped_metal_admission = cache.grouped_metal_admission;
     cache.metal_global_metadata.clone().apply(accumulation);
@@ -40187,19 +40197,47 @@ fn replay_awproject_metal_spilled_global_programs(
         },
     )?;
     store.bytes_read = store.bytes_read.saturating_add(prefetch_stats.bytes_read);
+    let spill_read_bytes = store.bytes_read.saturating_sub(read_bytes_before);
+    if source_major_streaming {
+        if spill_read_bytes != total_payload_bytes as u64 {
+            return Err(ImagingError::Normalization(format!(
+                "source-major streamed replay read {spill_read_bytes} bytes, expected {total_payload_bytes}"
+            )));
+        }
+        if prefetch_stats.aot_use_count != programs.len() {
+            return Err(ImagingError::Normalization(format!(
+                "source-major streamed replay used {} AOT segments, expected {}",
+                prefetch_stats.aot_use_count,
+                programs.len(),
+            )));
+        }
+        if prefetch_stats.runtime_grouping_builds != 0
+            || prefetch_stats.runtime_sort_builds != 0
+            || prefetch_stats.runtime_route_builds != 0
+        {
+            return Err(ImagingError::Normalization(format!(
+                "source-major streamed replay rebuilt runtime topology: grouping={}, sorting={}, routing={}",
+                prefetch_stats.runtime_grouping_builds,
+                prefetch_stats.runtime_sort_builds,
+                prefetch_stats.runtime_route_builds,
+            )));
+        }
+    }
     if profile::standard_mfs_profile_detail_enabled() {
         eprintln!(
             "awproject_metal_segmented_global_replay_summary segments={} \
-             payload_bytes={} read_bytes={} total_ms={:.3} \
+             payload_bytes={} read_bytes={} spill_read_bytes={} total_ms={:.3} \
              effective_support_requested={} effective_support_decision={} \
              effective_support_reason={} effective_support_segment_count={} \
              effective_support_compiled_segment_count={} \
              effective_support_total_compile_ms={:.3} \
              effective_support_initial_prepare_ms={:.3} \
-             effective_support_prefetch_wait_ms={:.3}",
+             effective_support_prefetch_wait_ms={:.3} runtime_grouping_builds={} \
+             runtime_sort_builds={} runtime_route_builds={} source_major_streaming={}",
             programs.len(),
             total_payload_bytes,
-            store.bytes_read.saturating_sub(read_bytes_before),
+            spill_read_bytes,
+            spill_read_bytes,
             profile::millis(started.elapsed()),
             prefetch_stats.requested,
             prefetch_stats.decision.label(),
@@ -40209,6 +40247,10 @@ fn replay_awproject_metal_spilled_global_programs(
             profile::millis(prefetch_stats.total_compile),
             profile::millis(prefetch_stats.initial_prepare),
             profile::millis(prefetch_stats.prefetch_wait),
+            prefetch_stats.runtime_grouping_builds,
+            prefetch_stats.runtime_sort_builds,
+            prefetch_stats.runtime_route_builds,
+            source_major_streaming,
         );
     }
     Ok((programs.len(), largest_samples))
@@ -41779,7 +41821,7 @@ fn accumulate_awproject_source_major_block(
             classification_skipped_samples,
         )?;
         eprintln!(
-            "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples=0 initial_partitions=0 residual_segments=0 compact_windows=0 spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v6-staged-i16-residual initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
+            "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples=0 initial_partitions=0 residual_segments=0 compact_windows=0 spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v7-streamed-i16-residual initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
             profile::millis(started.elapsed()),
         );
         replay_cache.log();
@@ -41868,7 +41910,7 @@ fn accumulate_awproject_source_major_block(
         .map_or(0, |program| program.payload_bytes);
 
     eprintln!(
-        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes=0 imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} residual_i16_kernel_bytes={} residual_i16_scale_bytes={} projected_resident_after_bytes={} retention_ceiling_bytes={} spill_bytes={} reload_bytes=0 architecture=direct-source-major-v6-staged-i16-residual initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
+        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes=0 imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} residual_i16_kernel_bytes={} residual_i16_scale_bytes={} compiled_total_bytes={} streaming_ceiling_bytes={} spill_bytes={} reload_bytes=0 architecture=direct-source-major-v7-streamed-i16-residual initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
         initial_receipt.imaging_owner_bytes,
         initial_receipt.weight_owner_bytes,
         initial_receipt.concurrent_owner_bytes,
@@ -80434,7 +80476,7 @@ mod tests {
 
     #[test]
     #[cfg(all(target_os = "macos", not(coverage)))]
-    fn source_major_stages_then_reloads_one_multi_window_fixture_once() {
+    fn source_major_stages_then_streams_one_multi_window_fixture() {
         let legacy_tap_bytes = [60usize, 60, 60];
         let legacy_budget = 100usize;
         let mut legacy_windows = 1usize;
@@ -80526,40 +80568,51 @@ mod tests {
         assert!(!cache.segmented_metal_global_replay_ready);
         let staged_payload_bytes = cache.spilled_metal_global_payload_bytes;
         assert!(staged_payload_bytes > 0);
-        cache.materialize_source_major_staged_programs().unwrap();
-        assert_eq!(cache.resident_metal_global_programs.len(), 1);
-        assert_eq!(cache.resident_bytes, program_bytes);
-        assert_eq!(
-            cache.resident_metal_global_programs[0]
-                .aot_grouped_tile
-                .as_ref()
-                .unwrap()
-                .receipt
-                .omitted_energy_fraction_bits,
-            0,
-        );
-        assert_eq!(
-            super::hash_awproject_copy_slice(
-                &cache.resident_metal_global_programs[0]
-                    .prediction_batch
-                    .quantized_kernels,
-            ),
-            quantized_hash,
-        );
-        assert_eq!(
-            super::hash_awproject_copy_slice(
-                &cache.resident_metal_global_programs[0]
-                    .prediction_batch
-                    .kernel_scales,
-            ),
-            scale_hash,
-        );
+        cache.finalize_source_major_staged_streaming().unwrap();
+        assert!(cache.resident_metal_global_programs.is_empty());
+        assert_eq!(cache.resident_bytes, 0);
         assert_eq!(
             cache.metal_global_spill_store.as_ref().unwrap().bytes_read,
-            staged_payload_bytes as u64,
+            0
         );
         assert!(cache.block(0).unwrap().windows.is_empty());
         assert!(cache.segmented_metal_global_replay_ready);
+        let stats = super::replay_awproject_metal_prefetched_sequence(
+            cache.metal_global_spill_store.as_ref().unwrap(),
+            &cache.spilled_metal_global_programs,
+            None,
+            |_, _, loaded| {
+                assert_eq!(
+                    loaded
+                        .program
+                        .aot_grouped_tile
+                        .as_ref()
+                        .unwrap()
+                        .receipt
+                        .omitted_energy_fraction_bits,
+                    0,
+                );
+                assert_eq!(
+                    super::hash_awproject_copy_slice(
+                        &loaded.program.prediction_batch.quantized_kernels,
+                    ),
+                    quantized_hash,
+                );
+                assert_eq!(
+                    super::hash_awproject_copy_slice(
+                        &loaded.program.prediction_batch.kernel_scales,
+                    ),
+                    scale_hash,
+                );
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(stats.bytes_read, staged_payload_bytes as u64);
+        assert_eq!(stats.aot_use_count, 1);
+        assert_eq!(stats.runtime_grouping_builds, 0);
+        assert_eq!(stats.runtime_sort_builds, 0);
+        assert_eq!(stats.runtime_route_builds, 0);
 
         let mut rejected =
             super::AwProjectCompactReplayCache::new(program_bytes - 1, Some(grouped), None);
@@ -80579,6 +80632,85 @@ mod tests {
         super::quantize_awproject_metal_aot_kernel_atlas_i16(&mut oversized, usize::MAX).unwrap();
         assert_eq!(oversized.resident_bytes(), program_bytes);
         assert!(rejected.stage_source_major_segment(0, oversized).is_err());
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn source_major_streaming_admits_exactly_one_adjacent_program_pair() {
+        let build_program = || {
+            let mut program = awproject_effective_support_test_program();
+            super::compile_awproject_metal_aot_grouped_tile(
+                &mut program,
+                super::AwProjectMetalEffectiveSupportConfig {
+                    omitted_energy_fraction: 0.0,
+                },
+                16,
+                16,
+                usize::MAX,
+            )
+            .unwrap();
+            super::compact_awproject_metal_aot_kernel_atlas(&mut program, usize::MAX).unwrap();
+            super::quantize_awproject_metal_aot_kernel_atlas_i16(&mut program, usize::MAX).unwrap();
+            program
+        };
+        let block = |ordinal| super::AwProjectCompactReplayBlock {
+            shape: super::AwProjectCompactReplayBlockShape {
+                samples: 1,
+                groups: 1,
+                first_frequency_bits: Some((ordinal as f64).to_bits()),
+                last_frequency_bits: Some((ordinal as f64).to_bits()),
+                first_u_bits: Some(0.0f64.to_bits()),
+                last_u_bits: Some(0.0f64.to_bits()),
+                first_v_bits: Some(0.0f64.to_bits()),
+                last_v_bits: Some(0.0f64.to_bits()),
+                first_w_bits: Some(0.0f64.to_bits()),
+                last_w_bits: Some(0.0f64.to_bits()),
+            },
+            cached_cursor_end: 1,
+            classification_stats: super::AwProjectSampleStats::default(),
+            classification_skipped_samples: 0,
+            windows: Vec::new(),
+            resident_bytes: 0,
+        };
+        let program_bytes = build_program().resident_bytes();
+        let pair_bytes = program_bytes.checked_mul(2).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let grouped = super::AwProjectGroupedReplayPlan {
+            spill_directory: directory.path().to_path_buf(),
+            segment_target_bytes: usize::MAX,
+            compile_admission_bytes: usize::MAX,
+            omitted_energy_fraction: 0.0,
+            tile_side: 8,
+        };
+        let mut admitted =
+            super::AwProjectCompactReplayCache::new(pair_bytes, Some(grouped.clone()), None);
+        for ordinal in 0..2 {
+            admitted.begin_source_major_block(ordinal).unwrap();
+            admitted
+                .stage_source_major_segment(ordinal, build_program())
+                .unwrap();
+            admitted.store(ordinal, block(ordinal)).unwrap();
+        }
+        admitted.finalize_source_major_staged_streaming().unwrap();
+        assert_eq!(admitted.compiled_total_bytes, pair_bytes);
+        assert_eq!(admitted.resident_bytes, 0);
+        assert!(admitted.resident_metal_global_programs.is_empty());
+
+        let mut rejected =
+            super::AwProjectCompactReplayCache::new(pair_bytes - 1, Some(grouped), None);
+        rejected.begin_source_major_block(0).unwrap();
+        rejected
+            .stage_source_major_segment(0, build_program())
+            .unwrap();
+        rejected.store(0, block(0)).unwrap();
+        rejected.begin_source_major_block(1).unwrap();
+        let error = rejected
+            .stage_source_major_segment(1, build_program())
+            .expect_err("one byte below the adjacent-pair peak must fail closed");
+        assert!(
+            error.to_string().contains("staged replay pair"),
+            "unexpected one-byte rejection: {error}"
+        );
     }
 
     #[test]
