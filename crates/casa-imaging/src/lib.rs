@@ -6096,7 +6096,7 @@ where
                 device_budget_bytes,
                 safety_reserve_bytes,
             } => eprintln!(
-                "awproject_initial_grid_plan backend=source-major-grouped-metal-f64 architecture=direct-source-major-v5-high-only-i16-residual accumulation=high-limb-only tile_side={tile_side} workers={workers} compile_ceiling_bytes={process_compile_ceiling_bytes} replay_retention_ceiling_bytes={replay_retention_ceiling_bytes} device_budget_bytes={device_budget_bytes} safety_reserve_bytes={safety_reserve_bytes} legacy_tap_scratch_bytes=0 legacy_priming_scratch_bytes=0 spill_bytes=0 planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
+                "awproject_initial_grid_plan backend=source-major-grouped-metal-f64 architecture=direct-source-major-v6-staged-i16-residual accumulation=high-limb-only tile_side={tile_side} workers={workers} compile_ceiling_bytes={process_compile_ceiling_bytes} replay_retention_ceiling_bytes={replay_retention_ceiling_bytes} device_budget_bytes={device_budget_bytes} safety_reserve_bytes={safety_reserve_bytes} legacy_tap_scratch_bytes=0 legacy_priming_scratch_bytes=0 staged_replay=true reload_after_dirty_grid_release=true planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
                 execution_config.resolved.maximum_planned_resident_bytes,
                 execution_config.resolved.usable_memory_bytes,
             ),
@@ -6413,6 +6413,14 @@ where
         );
     }
     let dirty_images = dirty_images?;
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    if source_major_grouped_initial
+        && let Some(cache) = aw_replay_cache
+            .as_mut()
+            .filter(|cache| cache.source_major_direct_segments > 0)
+    {
+        cache.materialize_source_major_staged_programs()?;
+    }
     let MosaicMtmfsDirtyImages {
         psf_terms,
         mut residual_terms,
@@ -14263,6 +14271,8 @@ struct AwProjectMetalSpilledProgram {
     prediction_samples: AwProjectMetalSpillSection,
     source_sample_indices: AwProjectMetalSpillSection,
     kernels: AwProjectMetalSpillSection,
+    quantized_kernels: AwProjectMetalSpillSection,
+    kernel_scales: AwProjectMetalSpillSection,
     prediction_phases: AwProjectMetalSpillSection,
     tile_samples: AwProjectMetalSpillSection,
     tile_phases: AwProjectMetalSpillSection,
@@ -14642,11 +14652,13 @@ impl AwProjectMetalSpillStore {
         program: AwProjectMetalResidentProgram,
         source_programs: usize,
     ) -> Result<AwProjectMetalSpilledProgram, ImagingError> {
-        if !program.prediction_batch.quantized_kernels.is_empty()
-            || !program.prediction_batch.kernel_scales.is_empty()
+        let float_kernels = !program.prediction_batch.kernels.is_empty();
+        let quantized_kernels = !program.prediction_batch.quantized_kernels.is_empty();
+        if float_kernels == quantized_kernels
+            || quantized_kernels == program.prediction_batch.kernel_scales.is_empty()
         {
             return Err(ImagingError::InvalidRequest(
-                "scaled-i16 source-major replay is resident-only and cannot enter the legacy spill format"
+                "segmented AWProject spill requires exactly one complete f32 or scaled-i16 kernel atlas"
                     .to_string(),
             ));
         }
@@ -14668,6 +14680,14 @@ impl AwProjectMetalSpillStore {
             "source sample indices",
         )?;
         let kernels = self.write_slice(&program.prediction_batch.kernels, "shared kernels")?;
+        let quantized_kernels = self.write_slice(
+            &program.prediction_batch.quantized_kernels,
+            "scaled-i16 shared kernels",
+        )?;
+        let kernel_scales = self.write_slice(
+            &program.prediction_batch.kernel_scales,
+            "scaled-i16 kernel scales",
+        )?;
         let prediction_phases =
             self.write_slice(&program.prediction_batch.phases, "prediction phases")?;
         if !program.tile_batch.kernels.is_empty() {
@@ -14743,6 +14763,8 @@ impl AwProjectMetalSpillStore {
             prediction_samples,
             source_sample_indices,
             kernels,
+            quantized_kernels,
+            kernel_scales,
             prediction_phases,
             tile_samples,
             tile_phases,
@@ -14771,6 +14793,8 @@ impl AwProjectMetalSpillStore {
             prediction_samples,
             source_sample_indices,
             kernels,
+            quantized_kernels,
+            kernel_scales,
             prediction_phases,
             tile_samples,
             tile_phases,
@@ -14847,8 +14871,9 @@ impl AwProjectMetalSpillStore {
                     .read_vec(program.source_sample_indices, "source sample indices")?,
                 cf_metadata: Vec::new(),
                 kernels: self.read_vec(program.kernels, "shared kernels")?,
-                quantized_kernels: Vec::new(),
-                kernel_scales: Vec::new(),
+                quantized_kernels: self
+                    .read_vec(program.quantized_kernels, "scaled-i16 shared kernels")?,
+                kernel_scales: self.read_vec(program.kernel_scales, "scaled-i16 kernel scales")?,
                 phases: self.read_vec(program.prediction_phases, "prediction phases")?,
             },
             tile_batch: AwProjectMetalBatch {
@@ -14928,8 +14953,10 @@ impl AwProjectMetalSpillStore {
                     .read_vec_at(descriptor.source_sample_indices, "source sample indices")?,
                 cf_metadata: Vec::new(),
                 kernels: self.read_vec_at(descriptor.kernels, "shared kernels")?,
-                quantized_kernels: Vec::new(),
-                kernel_scales: Vec::new(),
+                quantized_kernels: self
+                    .read_vec_at(descriptor.quantized_kernels, "scaled-i16 shared kernels")?,
+                kernel_scales: self
+                    .read_vec_at(descriptor.kernel_scales, "scaled-i16 kernel scales")?,
                 phases: self.read_vec_at(descriptor.prediction_phases, "prediction phases")?,
             },
             tile_batch: AwProjectMetalBatch {
@@ -30397,25 +30424,23 @@ impl AwProjectCompactReplayCache {
         Ok(())
     }
 
-    fn retain_source_major_segment(
+    fn stage_source_major_segment(
         &mut self,
         source_block_ordinal: usize,
         program: AwProjectMetalResidentProgram,
     ) -> Result<(), ImagingError> {
         if self.persistent_metal_global_builder.is_some()
             || self.persistent_metal_global_program.is_some()
-            || !self.spilled_metal_global_programs.is_empty()
-            || self.metal_global_spill_store.is_some()
+            || !self.resident_metal_global_programs.is_empty()
         {
             return Err(ImagingError::InvalidRequest(
-                "direct source-major retention cannot mix with legacy builder or spill state"
+                "direct source-major staging cannot mix with a legacy builder or resident replay state"
                     .to_string(),
             ));
         }
         if program.aot_grouped_tile.is_none() {
             return Err(ImagingError::InvalidRequest(
-                "direct source-major retention requires a compiled AOT residual artifact"
-                    .to_string(),
+                "direct source-major staging requires a compiled AOT residual artifact".to_string(),
             ));
         }
         if !program.prediction_batch.kernels.is_empty()
@@ -30423,7 +30448,7 @@ impl AwProjectCompactReplayCache {
             || program.prediction_batch.kernel_scales.is_empty()
         {
             return Err(ImagingError::InvalidRequest(
-                "direct source-major retention requires exclusive scaled-i16 residual kernel ownership"
+                "direct source-major staging requires exclusive scaled-i16 residual kernel ownership"
                     .to_string(),
             ));
         }
@@ -30465,34 +30490,64 @@ impl AwProjectCompactReplayCache {
         }
         let program_bytes = program.resident_bytes();
         let retained_after = self
-            .resident_bytes
+            .compiled_total_bytes
             .checked_add(program_bytes)
             .ok_or_else(|| {
                 ImagingError::InvalidRequest(
-                    "direct source-major replay retention overflowed".to_string(),
+                    "direct source-major staged replay accounting overflowed".to_string(),
                 )
             })?;
         if retained_after > self.budget_bytes {
             return Err(ImagingError::InvalidRequest(format!(
-                "direct source-major replay retention {retained_after} exceeds its {}-byte ceiling",
+                "direct source-major staged replay set {retained_after} exceeds its {}-byte resident ceiling",
                 self.budget_bytes,
             )));
         }
-        self.metal_global_metadata.normalization_sumwt += program.metadata.normalization_sumwt;
+        let spill_directory = self
+            .grouped_replay_plan()
+            .map(|plan| plan.spill_directory().to_path_buf())
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "direct source-major staging lost its grouped replay plan".to_string(),
+                )
+            })?;
+        let metadata = program.metadata.clone();
+        let spill_store = match self.metal_global_spill_store.as_mut() {
+            Some(store) => store,
+            None => self
+                .metal_global_spill_store
+                .insert(AwProjectMetalSpillStore::create(&spill_directory)?),
+        };
+        let spilled = spill_store.spill(program, 1)?;
+        let expected_program_bytes = spilled.expected_resident_bytes()?;
+        if expected_program_bytes != program_bytes {
+            return Err(ImagingError::Normalization(format!(
+                "direct source-major staged segment describes {expected_program_bytes} resident bytes, expected {program_bytes}"
+            )));
+        }
+        self.spilled_metal_global_payload_bytes = self
+            .spilled_metal_global_payload_bytes
+            .checked_add(spilled.payload_bytes)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "direct source-major staged payload accounting overflowed".to_string(),
+                )
+            })?;
+        self.metal_global_metadata.normalization_sumwt += metadata.normalization_sumwt;
         self.metal_global_metadata.gridded_samples = self
             .metal_global_metadata
             .gridded_samples
-            .saturating_add(program.metadata.gridded_samples);
+            .saturating_add(metadata.gridded_samples);
         self.metal_global_metadata.skipped_samples = self
             .metal_global_metadata
             .skipped_samples
-            .saturating_add(program.metadata.skipped_samples);
+            .saturating_add(metadata.skipped_samples);
         add_awproject_sample_stats(
             &mut self.metal_global_metadata.aw_sample_census,
-            &program.metadata.aw_sample_census,
+            &metadata.aw_sample_census,
         );
-        self.resident_metal_global_programs.push(program);
-        let global_scale = self.resident_metal_global_programs.iter().fold(
+        self.spilled_metal_global_programs.push(spilled);
+        let global_scale = self.spilled_metal_global_programs.iter().fold(
             AwProjectMetalResidualScalePlan {
                 max_kernel_norm: 0.0,
                 residual_overlap: 0,
@@ -30506,18 +30561,22 @@ impl AwProjectCompactReplayCache {
                     .max(program.residual_scale_plan.residual_overlap),
             },
         );
-        for retained in &mut self.resident_metal_global_programs {
-            retained.residual_scale_plan = global_scale;
+        for staged in &mut self.spilled_metal_global_programs {
+            staged.residual_scale_plan = global_scale;
         }
-        self.resident_bytes = retained_after;
         self.compiled_total_bytes = retained_after;
         self.compiled_total_bytes_complete = true;
-        self.segmented_metal_global_replay_ready = true;
         self.source_major_direct_segments += 1;
         self.source_major_initial_receipts += 1;
         eprintln!(
-            "awproject_source_major_retention source_block={source_block_ordinal} segments={} program_bytes={program_bytes} retained_bytes={retained_after} retention_ceiling_bytes={} spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v5-high-only-i16-residual resident=true",
-            self.source_major_direct_segments, self.budget_bytes,
+            "awproject_source_major_staging source_block={source_block_ordinal} segments={} program_bytes={program_bytes} projected_resident_bytes={retained_after} retention_ceiling_bytes={} spill_bytes={} total_spill_bytes={} reload_bytes=0 architecture=direct-source-major-v6-staged-i16-residual resident=false staged=true",
+            self.source_major_direct_segments,
+            self.budget_bytes,
+            self.spilled_metal_global_programs
+                .last()
+                .map(|program| program.payload_bytes)
+                .unwrap_or(0),
+            self.spilled_metal_global_payload_bytes,
         );
         Ok(())
     }
@@ -31115,6 +31174,54 @@ impl AwProjectCompactReplayCache {
             );
         }
         Ok(true)
+    }
+
+    fn materialize_source_major_staged_programs(&mut self) -> Result<(), ImagingError> {
+        if self.source_major_direct_segments == 0 {
+            return Err(ImagingError::InvalidRequest(
+                "direct source-major replay produced no staged residual segments".to_string(),
+            ));
+        }
+        if self.spilled_metal_global_programs.len() != self.source_major_direct_segments {
+            return Err(ImagingError::Normalization(format!(
+                "direct source-major replay staged {} descriptors for {} source segments",
+                self.spilled_metal_global_programs.len(),
+                self.source_major_direct_segments,
+            )));
+        }
+        if self.segmented_metal_global_replay_ready
+            || !self.resident_metal_global_programs.is_empty()
+            || self.resident_bytes != 0
+        {
+            return Err(ImagingError::InvalidRequest(
+                "direct source-major replay was materialized more than once".to_string(),
+            ));
+        }
+        let projected_resident_bytes = self.compiled_total_bytes;
+        if !self.retain_complete_spilled_metal_global_programs()? {
+            return Err(ImagingError::InvalidRequest(format!(
+                "direct source-major staged replay cannot materialize its complete {projected_resident_bytes}-byte working set within the {}-byte ceiling",
+                self.budget_bytes,
+            )));
+        }
+        if self.resident_bytes != projected_resident_bytes {
+            return Err(ImagingError::Normalization(format!(
+                "direct source-major resident reload materialized {} bytes, expected {projected_resident_bytes}",
+                self.resident_bytes,
+            )));
+        }
+        self.segmented_metal_global_replay_ready = true;
+        eprintln!(
+            "awproject_source_major_staged_reload segments={} spill_bytes={} reload_bytes={} resident_bytes={} retention_ceiling_bytes={} architecture=direct-source-major-v6-staged-i16-residual lifecycle=after-dirty-grid-release resident=true",
+            self.resident_metal_global_programs.len(),
+            self.spilled_metal_global_payload_bytes,
+            self.metal_global_spill_store
+                .as_ref()
+                .map_or(0, |store| store.bytes_read),
+            self.resident_bytes,
+            self.budget_bytes,
+        );
+        Ok(())
     }
 
     fn require_grouped_metal_resident_complete(
@@ -41672,7 +41779,7 @@ fn accumulate_awproject_source_major_block(
             classification_skipped_samples,
         )?;
         eprintln!(
-            "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples=0 initial_partitions=0 residual_segments=0 compact_windows=0 spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v5-high-only-i16-residual initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
+            "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples=0 initial_partitions=0 residual_segments=0 compact_windows=0 spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v6-staged-i16-residual initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
             profile::millis(started.elapsed()),
         );
         replay_cache.log();
@@ -41746,7 +41853,7 @@ fn accumulate_awproject_source_major_block(
         program.residual_scale_plan.max_kernel_norm,
     );
     log_awproject_metal_aot_grouped_tile_compile(
-        replay_cache.resident_metal_global_programs.len(),
+        replay_cache.source_major_direct_segments,
         1,
         &effective_support,
         &program,
@@ -41754,9 +41861,14 @@ fn accumulate_awproject_source_major_block(
     let program_bytes = program.resident_bytes();
     replay_cache.admit_source_major_compile_peak(program_bytes)?;
     let initial_grid_bytes = initial_receipt.metal_stats.fixed_grid_bytes;
+    replay_cache.stage_source_major_segment(replay_block_ordinal, program)?;
+    let spill_bytes = replay_cache
+        .spilled_metal_global_programs
+        .last()
+        .map_or(0, |program| program.payload_bytes);
 
     eprintln!(
-        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes=0 imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} residual_i16_kernel_bytes={} residual_i16_scale_bytes={} retained_after_bytes={} retention_ceiling_bytes={} spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v5-high-only-i16-residual initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
+        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes=0 imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} residual_i16_kernel_bytes={} residual_i16_scale_bytes={} projected_resident_after_bytes={} retention_ceiling_bytes={} spill_bytes={} reload_bytes=0 architecture=direct-source-major-v6-staged-i16-residual initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
         initial_receipt.imaging_owner_bytes,
         initial_receipt.weight_owner_bytes,
         initial_receipt.concurrent_owner_bytes,
@@ -41776,14 +41888,14 @@ fn accumulate_awproject_source_major_block(
         profile::millis(initial_receipt.group_wall_elapsed),
         quantization.i16_bytes,
         quantization.scale_bytes,
-        replay_cache.resident_bytes.saturating_add(program_bytes),
+        replay_cache.compiled_total_bytes,
         replay_cache.budget_bytes,
+        spill_bytes,
         profile::millis(started.elapsed()),
     );
     accumulation
         .aw_metal_stats
         .add_assign(initial_receipt.metal_stats);
-    replay_cache.retain_source_major_segment(replay_block_ordinal, program)?;
     store_awproject_source_major_block(
         replay_cache,
         replay_block_ordinal,
@@ -78941,13 +79053,31 @@ mod tests {
         assert_eq!(ledger.i16_kernel_values, stats.values);
         assert_eq!(ledger.i16_kernel_stencils, stats.stencils);
         assert_eq!(ledger.i16_kernel_nrmse, stats.nrmse);
+        let quantized_hash =
+            super::hash_awproject_copy_slice(&program.prediction_batch.quantized_kernels);
+        let scale_hash = super::hash_awproject_copy_slice(&program.prediction_batch.kernel_scales);
+        let resident_bytes = program.resident_bytes();
         let directory = tempfile::tempdir().unwrap();
         let mut spill = super::AwProjectMetalSpillStore::create_in(directory.path()).unwrap();
-        let error = spill
-            .spill(program, 1)
-            .err()
-            .expect("scaled-i16 source-major replay must remain resident-only");
-        assert!(error.to_string().contains("resident-only"));
+        let descriptor = spill.spill(program, 1).unwrap();
+        assert_eq!(descriptor.kernels.byte_len, 0);
+        assert_eq!(descriptor.quantized_kernels.byte_len, stats.i16_bytes);
+        assert_eq!(descriptor.kernel_scales.byte_len, stats.scale_bytes);
+        assert_eq!(
+            descriptor.expected_resident_bytes().unwrap(),
+            resident_bytes
+        );
+        let restored = spill.reload(&descriptor).unwrap();
+        assert!(restored.prediction_batch.kernels.is_empty());
+        assert_eq!(
+            super::hash_awproject_copy_slice(&restored.prediction_batch.quantized_kernels),
+            quantized_hash,
+        );
+        assert_eq!(
+            super::hash_awproject_copy_slice(&restored.prediction_batch.kernel_scales),
+            scale_hash,
+        );
+        assert_eq!(restored.resident_bytes(), resident_bytes);
     }
 
     #[cfg(all(target_os = "macos", not(coverage)))]
@@ -80304,7 +80434,7 @@ mod tests {
 
     #[test]
     #[cfg(all(target_os = "macos", not(coverage)))]
-    fn source_major_retains_one_multi_window_fixture_without_spill_or_reload() {
+    fn source_major_stages_then_reloads_one_multi_window_fixture_once() {
         let legacy_tap_bytes = [60usize, 60, 60];
         let legacy_budget = 100usize;
         let mut legacy_windows = 1usize;
@@ -80335,8 +80465,12 @@ mod tests {
         super::compact_awproject_metal_aot_kernel_atlas(&mut program, usize::MAX).unwrap();
         super::quantize_awproject_metal_aot_kernel_atlas_i16(&mut program, usize::MAX).unwrap();
         let program_bytes = program.resident_bytes();
+        let quantized_hash =
+            super::hash_awproject_copy_slice(&program.prediction_batch.quantized_kernels);
+        let scale_hash = super::hash_awproject_copy_slice(&program.prediction_batch.kernel_scales);
+        let directory = tempfile::tempdir().unwrap();
         let grouped = super::AwProjectGroupedReplayPlan {
-            spill_directory: std::path::PathBuf::new(),
+            spill_directory: directory.path().to_path_buf(),
             segment_target_bytes: usize::MAX,
             compile_admission_bytes: usize::MAX,
             omitted_energy_fraction: 0.0,
@@ -80345,7 +80479,7 @@ mod tests {
         let mut cache =
             super::AwProjectCompactReplayCache::new(program_bytes, Some(grouped.clone()), None);
         cache.begin_source_major_block(0).unwrap();
-        cache.retain_source_major_segment(0, program).unwrap();
+        cache.stage_source_major_segment(0, program).unwrap();
         cache
             .store(
                 0,
@@ -80372,7 +80506,29 @@ mod tests {
             .unwrap();
         assert_eq!(cache.source_major_direct_segments, 1);
         assert_eq!(cache.source_major_initial_receipts, 1);
+        assert!(cache.resident_metal_global_programs.is_empty());
+        assert_eq!(cache.resident_bytes, 0);
+        assert_eq!(cache.compiled_total_bytes, program_bytes);
+        assert_eq!(cache.spilled_metal_global_programs.len(), 1);
+        assert_eq!(cache.spilled_metal_global_programs[0].kernels.byte_len, 0);
+        assert!(
+            cache.spilled_metal_global_programs[0]
+                .quantized_kernels
+                .byte_len
+                > 0
+        );
+        assert!(
+            cache.spilled_metal_global_programs[0]
+                .kernel_scales
+                .byte_len
+                > 0
+        );
+        assert!(!cache.segmented_metal_global_replay_ready);
+        let staged_payload_bytes = cache.spilled_metal_global_payload_bytes;
+        assert!(staged_payload_bytes > 0);
+        cache.materialize_source_major_staged_programs().unwrap();
         assert_eq!(cache.resident_metal_global_programs.len(), 1);
+        assert_eq!(cache.resident_bytes, program_bytes);
         assert_eq!(
             cache.resident_metal_global_programs[0]
                 .aot_grouped_tile
@@ -80382,8 +80538,26 @@ mod tests {
                 .omitted_energy_fraction_bits,
             0,
         );
-        assert!(cache.spilled_metal_global_programs.is_empty());
-        assert!(cache.metal_global_spill_store.is_none());
+        assert_eq!(
+            super::hash_awproject_copy_slice(
+                &cache.resident_metal_global_programs[0]
+                    .prediction_batch
+                    .quantized_kernels,
+            ),
+            quantized_hash,
+        );
+        assert_eq!(
+            super::hash_awproject_copy_slice(
+                &cache.resident_metal_global_programs[0]
+                    .prediction_batch
+                    .kernel_scales,
+            ),
+            scale_hash,
+        );
+        assert_eq!(
+            cache.metal_global_spill_store.as_ref().unwrap().bytes_read,
+            staged_payload_bytes as u64,
+        );
         assert!(cache.block(0).unwrap().windows.is_empty());
         assert!(cache.segmented_metal_global_replay_ready);
 
@@ -80404,7 +80578,7 @@ mod tests {
         super::compact_awproject_metal_aot_kernel_atlas(&mut oversized, usize::MAX).unwrap();
         super::quantize_awproject_metal_aot_kernel_atlas_i16(&mut oversized, usize::MAX).unwrap();
         assert_eq!(oversized.resident_bytes(), program_bytes);
-        assert!(rejected.retain_source_major_segment(0, oversized).is_err());
+        assert!(rejected.stage_source_major_segment(0, oversized).is_err());
     }
 
     #[test]

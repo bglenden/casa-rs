@@ -814,7 +814,7 @@ def validate_probe_log(
     expected_decisions = {
         "awproject_selected_field_count": "63",
         "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
-        "awproject_source_major_architecture": "direct-source-major-v5-high-only-i16-residual",
+        "awproject_source_major_architecture": "direct-source-major-v6-staged-i16-residual",
         "awproject_source_major_initial_accumulation": "high-limb-only",
         "awproject_source_major_initial_grid_bytes": "9447840000",
         "awproject_multifield_initial_grid_admission": "admitted",
@@ -1051,6 +1051,8 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
     aot = matching_lines(text, "awproject_aot_grouped_tile_receipt ")
     compaction = matching_lines(text, "awproject_source_major_kernel_compaction ")
     quantization = matching_lines(text, "awproject_source_major_kernel_i16 ")
+    staging = matching_lines(text, "awproject_source_major_staging ")
+    staged_reload = matching_lines(text, "awproject_source_major_staged_reload ")
     retention = matching_lines(text, "awproject_metal_grouped_replay_retention ")
     summaries = matching_lines(text, "awproject_metal_resident_grouped_replay_summary ")
     if not source_blocks:
@@ -1063,15 +1065,35 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
         )
     for entry in source_blocks:
         if (
-            entry.get("architecture") != "direct-source-major-v5-high-only-i16-residual"
+            entry.get("architecture") != "direct-source-major-v6-staged-i16-residual"
             or entry.get("initial_accumulation") != "high-limb-only"
             or entry.get("initial_partitions") != "2"
             or entry.get("initial_grid_bytes") != "9447840000"
             or entry.get("initial_compensation_bytes") != "0"
-            or entry.get("spill_bytes") != "0"
+            or int(entry.get("spill_bytes", "0")) <= 0
             or entry.get("reload_bytes") != "0"
         ):
             raise AcceptanceError("source-major high-only initial receipt differs")
+    if len(staging) != len(source_blocks):
+        raise AcceptanceError("staged replay receipts do not cover every source block")
+    if {int(entry["source_block"]) for entry in staging} != set(
+        range(len(source_blocks))
+    ):
+        raise AcceptanceError(
+            "staged replay source blocks are not unique and contiguous"
+        )
+    for block, staged in zip(source_blocks, staging, strict=True):
+        if (
+            staged.get("architecture") != "direct-source-major-v6-staged-i16-residual"
+            or staged.get("resident") != "false"
+            or staged.get("staged") != "true"
+            or int(staged.get("spill_bytes", "0")) <= 0
+            or staged.get("reload_bytes") != "0"
+            or block.get("spill_bytes") != staged.get("spill_bytes")
+            or int(staged.get("projected_resident_bytes", "-1"))
+            > int(staged.get("retention_ceiling_bytes", "-2"))
+        ):
+            raise AcceptanceError("source-major staged replay receipt differs")
     if (
         len(initial_readback) != 1
         or initial_readback[0].get("residency") != "metal-shared-high-limb-only-grid"
@@ -1212,6 +1234,21 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
         raise AcceptanceError("complete resident grouped retention was not established")
     if int(retention[0].get("segments", "-1")) != len(segments):
         raise AcceptanceError("resident segment count differs from sealed count")
+    if len(staged_reload) != 1:
+        raise AcceptanceError("source-major replay omitted its one-time staged reload")
+    staged = staged_reload[0]
+    if (
+        staged.get("architecture") != "direct-source-major-v6-staged-i16-residual"
+        or staged.get("lifecycle") != "after-dirty-grid-release"
+        or staged.get("resident") != "true"
+        or int(staged.get("segments", "-1")) != len(segments)
+        or staged.get("spill_bytes") != staged.get("reload_bytes")
+        or staged.get("reload_bytes") != retention[0].get("initial_read_bytes")
+        or staged.get("resident_bytes") != retention[0].get("program_bytes")
+        or int(staged.get("resident_bytes", "-1"))
+        > int(staged.get("retention_ceiling_bytes", "-2"))
+    ):
+        raise AcceptanceError("source-major one-time staged reload receipt differs")
     if not runtime or not host or not summaries:
         raise AcceptanceError("runtime grouped replay receipts are incomplete")
     expected_dispatches = len(segments) * len(summaries)

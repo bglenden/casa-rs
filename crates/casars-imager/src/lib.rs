@@ -38698,16 +38698,16 @@ fn standard_mfs_memory_allocation_lifetimes(
                     ProductWrite,
                     NoFurtherUse,
                 )],
-                // Safe automatic execution does not prime compact replay while
-                // the initial compensated grid is resident. Programs begin
-                // accumulating during the first residual-grid pass and remain
-                // pinned, without eviction, through its transform.
+                // Source-major execution stages residual programs on the output
+                // volume while the initial Metal grid is live, then loads the
+                // complete set once after the dirty transform releases that
+                // grid. Other modes begin retaining at the residual grid.
                 "AWProject compact replay retention" => {
                     vec![standard_mfs_memory_residency(
                         host,
                         bytes,
                         if standard_mfs_uses_source_major_awproject(plan) {
-                            InitialGrid
+                            MinorCycle
                         } else {
                             ResidualGrid
                         },
@@ -38859,8 +38859,6 @@ fn admit_awproject_compact_replay_retention(
         return Ok(plan);
     }
     let source_major_replay_stages = [
-        ImagingMemoryStage::InitialGrid,
-        ImagingMemoryStage::DirtyTransform,
         ImagingMemoryStage::MinorCycle,
         ImagingMemoryStage::ModelTransform,
         ImagingMemoryStage::ResidualGrid,
@@ -39015,22 +39013,18 @@ fn awproject_grouped_replay_compile_envelope(
                 .to_string(),
         );
     }
-    let persistent_replay_bytes = if standard_mfs_uses_source_major_awproject(plan) {
-        plan.allocation_bytes("AWProject compact replay retention")
-    } else {
-        0
-    };
+    let persistent_replay_bytes = 0;
     let compile_fixed_overlap_bytes = initial_grid_peak_bytes
         .checked_sub(persistent_replay_bytes)
         .ok_or_else(|| {
             format!(
-                "the source-major AWProject replay retention {persistent_replay_bytes} exceeds the initial-grid peak {initial_grid_peak_bytes}"
+                "the grouped AWProject replay retention overlap {persistent_replay_bytes} exceeds the initial-grid peak {initial_grid_peak_bytes}"
             )
         })?
         .checked_sub(compile_replaced_bytes)
         .ok_or_else(|| {
             format!(
-                "the grouped AWProject replay compile replacement {compile_replaced_bytes} exceeds the initial-grid peak {initial_grid_peak_bytes} after excluding {persistent_replay_bytes} bytes of already-ledgered persistent replay"
+                "the grouped AWProject replay compile replacement {compile_replaced_bytes} exceeds the initial-grid peak {initial_grid_peak_bytes} after excluding {persistent_replay_bytes} bytes of initial-grid replay overlap"
             )
         })?;
     let compile_admission_bytes = plan
@@ -39620,9 +39614,9 @@ fn admit_awproject_multifield_initial_grid(
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_source_major_architecture",
-            value: "direct-source-major-v5-high-only-i16-residual".to_string(),
+            value: "direct-source-major-v6-staged-i16-residual".to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Workload,
-            reason: "one source-major owner interns CF requests, dispatches high-only imaging and PSF-weight partitions, then retains the same source-ordered exact-support compensated residual artifact"
+            reason: "one source-major owner interns CF requests, dispatches high-only imaging and PSF-weight partitions, stages each scaled-i16 exact-support residual artifact, then reloads the complete set once after releasing the initial grid"
                 .to_string(),
         },
         casa_imaging::ImagingPlanDecision {
@@ -39643,7 +39637,7 @@ fn admit_awproject_multifield_initial_grid(
             name: "awproject_source_major_compiler_segment_bytes",
             value: AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES.to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Resources,
-            reason: "reserve one bounded source-major compiler segment beside already retained source-ordered replay segments during InitialGrid"
+            reason: "reserve one bounded source-major compiler segment while completed scaled-i16 replay artifacts are staged off-heap during InitialGrid"
                 .to_string(),
         },
         casa_imaging::ImagingPlanDecision {
@@ -62903,7 +62897,7 @@ mod tests {
         }));
         assert!(initial.decisions.iter().any(|decision| {
             decision.name == "awproject_source_major_architecture"
-                && decision.value == "direct-source-major-v5-high-only-i16-residual"
+                && decision.value == "direct-source-major-v6-staged-i16-residual"
         }));
         assert!(initial.decisions.iter().any(|decision| {
             decision.name == "awproject_source_major_initial_accumulation"
@@ -63042,7 +63036,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             source_major_replay.residencies[0].live_from,
-            ImagingMemoryStage::InitialGrid
+            ImagingMemoryStage::MinorCycle
         );
         let execution = standard_mfs_execution_config_with_plan(&config, &plan);
         assert_eq!(
@@ -63057,7 +63051,6 @@ mod tests {
             .awproject_grouped_replay
             .as_ref()
             .expect("the final retained plan must construct grouped replay");
-        let replay_bytes = plan.allocation_bytes("AWProject compact replay retention");
         let initial_peak_bytes = plan
             .memory_lifetime_ledger
             .stage_peak(ImagingMemoryStage::InitialGrid)
@@ -63065,22 +63058,25 @@ mod tests {
             .resident_bytes;
         let compiler_segment_bytes =
             plan.allocation_bytes("AWProject source-major compiler segment");
-        let expected_compile_admission_bytes = plan.usable_memory_bytes.saturating_sub(
-            initial_peak_bytes
-                .saturating_sub(replay_bytes)
-                .saturating_sub(compiler_segment_bytes),
-        );
+        let expected_compile_admission_bytes = plan
+            .usable_memory_bytes
+            .saturating_sub(initial_peak_bytes.saturating_sub(compiler_segment_bytes));
         assert_eq!(
             grouped.compile_admission_bytes(),
             expected_compile_admission_bytes,
-            "source-major final-plan reconstruction must exclude already-ledgered persistent replay before replacing its explicit compiler segment"
+            "source-major final-plan reconstruction must replace only its explicit compiler segment while staged replay is absent from InitialGrid"
         );
         let final_envelope = awproject_grouped_replay_compile_envelope(&plan).unwrap();
         assert_eq!(
             final_envelope.compile_admission_bytes,
             grouped.compile_admission_bytes()
         );
-        assert_eq!(final_envelope.replay_retention_ceiling_bytes, replay_bytes);
+        assert_eq!(
+            final_envelope.replay_retention_ceiling_bytes,
+            expected_compile_admission_bytes
+                .checked_sub(AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES)
+                .expect("compile admission must reserve one minimum compiler segment")
+        );
         assert!(plan.maximum_planned_resident_bytes <= plan.usable_memory_bytes);
         assert_eq!(
             awproject_grouped_metal_plan_probe_status(&plan, &config, 2, false),
@@ -63259,7 +63255,7 @@ mod tests {
         assert!(standard_mfs_plan_decision_is(
             &resolved,
             "awproject_source_major_architecture",
-            "direct-source-major-v5-high-only-i16-residual"
+            "direct-source-major-v6-staged-i16-residual"
         ));
         let execution = standard_mfs_execution_config_with_plan(&config, &resolved);
         assert_eq!(
@@ -63676,8 +63672,6 @@ mod tests {
         assert!(admitted.maximum_planned_resident_bytes <= admitted.usable_memory_bytes);
 
         let replay_stage_peak_bytes = [
-            ImagingMemoryStage::InitialGrid,
-            ImagingMemoryStage::DirtyTransform,
             ImagingMemoryStage::MinorCycle,
             ImagingMemoryStage::ModelTransform,
             ImagingMemoryStage::ResidualGrid,
@@ -63692,7 +63686,7 @@ mod tests {
             .usable_memory_bytes
             .checked_sub(replay_stage_peak_bytes)
             .expect("admitted replay-lifetime headroom");
-        assert_eq!(replay_lifetime_headroom_bytes, 12_680_933_200);
+        assert_eq!(replay_lifetime_headroom_bytes, 15_195_367_900);
         let compile_envelope = awproject_grouped_replay_compile_envelope(&admitted)
             .expect("full12150/all63 compile envelope");
         assert_eq!(compile_envelope.compile_admission_bytes, 20_947_768_027);
@@ -63706,7 +63700,7 @@ mod tests {
             .expect("jointly bounded full12150/all63 replay retention");
         assert_eq!(
             plan.allocation_bytes("AWProject compact replay retention"),
-            12_680_933_200
+            15_195_367_900
         );
         assert_eq!(plan.maximum_planned_resident_bytes, MEMORY_TARGET_BYTES);
         let execution = standard_mfs_execution_config_with_plan(&config, &plan);
@@ -63715,7 +63709,7 @@ mod tests {
             .as_ref()
             .expect("compile-safe full12150/all63 grouped replay plan");
         assert_eq!(grouped_replay.compile_admission_bytes(), 20_947_768_027);
-        assert_eq!(grouped_replay.segment_target_bytes(), 8_266_834_827);
+        assert_eq!(grouped_replay.segment_target_bytes(), 5_752_400_127);
         assert_eq!(
             grouped_replay.segment_target_bytes()
                 + plan.allocation_bytes("AWProject compact replay retention"),
@@ -63728,7 +63722,7 @@ mod tests {
         );
         assert!(plan.decisions.iter().any(|decision| {
             decision.name == "awproject_compact_replay_retention_bytes"
-                && decision.value == "12680933200"
+                && decision.value == "15195367900"
                 && decision
                     .reason
                     .contains("compile_admission_bytes=20947768027")
@@ -63779,6 +63773,7 @@ mod tests {
                 .any(|lifecycle| {
                     lifecycle.component == "AWProject compact replay retention"
                         && lifecycle.allocation_id == replay_id
+                        && lifecycle.residencies[0].live_from == ImagingMemoryStage::MinorCycle
                 })
         );
 

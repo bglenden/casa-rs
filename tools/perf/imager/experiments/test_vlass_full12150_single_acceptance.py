@@ -13,7 +13,7 @@ def valid_probe_log(target_mib: int) -> str:
     decisions = {
         "awproject_selected_field_count": "1",
         "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
-        "awproject_source_major_architecture": "direct-source-major-v5-high-only-i16-residual",
+        "awproject_source_major_architecture": "direct-source-major-v6-staged-i16-residual",
         "awproject_source_major_initial_accumulation": "high-limb-only",
         "awproject_source_major_initial_grid_bytes": "9447840000",
         "awproject_multifield_initial_grid_admission": "admitted",
@@ -57,9 +57,14 @@ def valid_runtime_log() -> str:
     lines = [
         "awproject_source_major_block source_block=0 accepted_samples=1 "
         "initial_partitions=2 initial_grid_bytes=9447840000 "
-        "initial_compensation_bytes=0 spill_bytes=0 reload_bytes=0 "
-        "architecture=direct-source-major-v5-high-only-i16-residual "
+        "initial_compensation_bytes=0 spill_bytes=900 reload_bytes=0 "
+        "architecture=direct-source-major-v6-staged-i16-residual "
         "initial_accumulation=high-limb-only",
+        "awproject_source_major_staging source_block=0 segments=1 "
+        "program_bytes=1000 projected_resident_bytes=1000 "
+        "retention_ceiling_bytes=2000 spill_bytes=900 total_spill_bytes=900 "
+        "reload_bytes=0 architecture=direct-source-major-v6-staged-i16-residual "
+        "resident=false staged=true",
         "awproject_metal_initial_readback products=8 "
         "residency=metal-shared-high-limb-only-grid resident_bytes=9447840000",
         "awproject_grouped_metal_admission phase=sealed segment=0 "
@@ -90,7 +95,11 @@ def valid_runtime_log() -> str:
         "max_kernel_norm=1.0 storage=per-stencil-scaled-i16-complex "
         "range=-32767:32767 conversion=metal-load-to-f32",
         "awproject_metal_grouped_replay_retention decision=resident-complete "
-        "segments=1 program_bytes=1000",
+        "segments=1 program_bytes=1000 initial_read_bytes=900",
+        "awproject_source_major_staged_reload segments=1 spill_bytes=900 "
+        "reload_bytes=900 resident_bytes=1000 retention_ceiling_bytes=2000 "
+        "architecture=direct-source-major-v6-staged-i16-residual "
+        "lifecycle=after-dirty-grid-release resident=true",
         "awproject_grouped_metal_admission phase=runtime segment=0 all_fit=true "
         "prechecks=fit postchecks=fit host_bytes_retained_during_tile=0 "
         "persistent_post_combined_bytes=10 persistent_maximum_current_bytes=20 "
@@ -158,7 +167,7 @@ class FullVlassSingleAcceptanceContractTest(unittest.TestCase):
                 "initial_dirty_backend=cpu",
             ),
             ("tile_side=11", "tile_side=16"),
-            ("direct-source-major-v5-high-only-i16-residual", "legacy-windowed"),
+            ("direct-source-major-v6-staged-i16-residual", "legacy-windowed"),
             ("low_field=1525", "low_field=1107"),
         )
         for old, new in mutations:
