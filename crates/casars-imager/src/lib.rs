@@ -33,9 +33,9 @@ use casa_imaging::fft_backend::{
     fft_backend_capability,
 };
 use casa_imaging::{
-    AwConvolutionFunctionEntryMetadata, AwParallelHandVisibilityBatch, AwProjectControls,
-    AwProjectGridderConfig, AwProjectGroupedReplayPlan, AwProjectNormalization, AxisKind, BeamFit,
-    BeamFitDebugSummary, CleanConfig, CleanMaskProductRequest, CleanStopReason,
+    AwConvolutionFunctionCache, AwConvolutionFunctionEntryMetadata, AwParallelHandVisibilityBatch,
+    AwProjectControls, AwProjectGridderConfig, AwProjectGroupedReplayPlan, AwProjectNormalization,
+    AxisKind, BeamFit, BeamFitDebugSummary, CleanConfig, CleanMaskProductRequest, CleanStopReason,
     CompatibilityMetadata, CompatibilityMode, CubeAutoMultiThresholdConfig, CubeImagingDiagnostics,
     CubeImagingResult, CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver,
     DirtyImagingResult, DirtyProductFftPolicy, GaussianUvTaper, GridderMode,
@@ -11221,7 +11221,10 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         geometry,
         visibility_batches: Vec::new(),
         sample_frequency_batches_hz: Vec::new(),
-        gridder_mode: first_plane.gridder_mode.clone(),
+        gridder_mode: gridder_mode_with_resolved_awproject_cf_residency(
+            &first_plane.gridder_mode,
+            &strategy,
+        ),
         plane_stokes: first_plane.plane_stokes,
         weighting: config.weighting,
         reffreq_hz: first_plane.reffreq_hz,
@@ -39834,7 +39837,26 @@ fn resolve_awproject_multifield_memory_plan(
         "awproject_multifield_initial_grid_admission",
         "admitted",
     ) {
-        return Ok(resolved);
+        let controls = config
+            .aw_project
+            .as_ref()
+            .expect("eligible AWProject topology has controls");
+        let locality = awproject_cf_frequency_locality_bytes(controls);
+        return Ok(match locality {
+            Ok(locality) => admit_awproject_frequency_local_cf_residency(
+                resolved,
+                controls.cf_resident_bytes,
+                locality,
+            )?,
+            Err(reason) => record_awproject_frequency_local_cf_residency(
+                resolved,
+                controls.cf_resident_bytes,
+                None,
+                controls.cf_resident_bytes,
+                "requested-fallback",
+                reason,
+            ),
+        });
     }
     let grouped_rejection = resolved
         .decisions
@@ -39958,6 +39980,12 @@ fn mosaic_mtmfs_grid_plane_count(nterms: usize) -> Result<usize, String> {
 
 const AWPROJECT_CF_INDEX_HEAP_AND_TREE_ALLOWANCE_BYTES_PER_PAIR: usize = 4096;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AwProjectCfFrequencyLocalityBytes {
+    full_cache_bytes: usize,
+    largest_frequency_slice_bytes: usize,
+}
+
 fn awproject_cf_index_estimate_bytes(controls: &AwProjectControls) -> Result<usize, String> {
     let directory = fs::read_dir(&controls.cf_cache).map_err(|error| {
         format!(
@@ -40010,6 +40038,211 @@ fn awproject_cf_index_estimate_bytes(controls: &AwProjectControls) -> Result<usi
         ],
         "AWProject CF metadata index",
     )
+}
+
+fn awproject_paired_cf_pixel_bytes(
+    imaging_shape: [usize; 2],
+    weight_shape: [usize; 2],
+) -> Result<usize, String> {
+    let imaging_values = checked_imaging_product(imaging_shape, "AWProject imaging CF pixels")?;
+    let weight_values = checked_imaging_product(weight_shape, "AWProject weight CF pixels")?;
+    checked_imaging_sum(
+        [imaging_values, weight_values],
+        "AWProject paired CF pixels",
+    )?
+    .checked_mul(std::mem::size_of::<Complex32>())
+    .ok_or_else(|| "AWProject paired CF pixel bytes overflowed".to_string())
+}
+
+fn awproject_cf_frequency_locality_bytes(
+    controls: &AwProjectControls,
+) -> Result<AwProjectCfFrequencyLocalityBytes, String> {
+    let cache = AwConvolutionFunctionCache::open(&controls.cf_cache).map_err(|error| {
+        format!(
+            "open AWProject CF cache {} for frequency-local residency planning: {error}",
+            controls.cf_cache.display()
+        )
+    })?;
+    let mut bytes_by_frequency = BTreeMap::<u64, usize>::new();
+    let mut full_cache_bytes = 0usize;
+    for key in cache.keys() {
+        let metadata = cache.metadata(key).ok_or_else(|| {
+            format!(
+                "validated AWProject CF cache {} omitted metadata for {key:?}",
+                controls.cf_cache.display()
+            )
+        })?;
+        let cell_bytes =
+            awproject_paired_cf_pixel_bytes(metadata.imaging.shape, metadata.weight.shape)?;
+        full_cache_bytes = full_cache_bytes
+            .checked_add(cell_bytes)
+            .ok_or_else(|| "AWProject full CF cache pixel bytes overflowed".to_string())?;
+        let frequency_bytes = bytes_by_frequency
+            .entry(key.frequency_hz.to_bits())
+            .or_default();
+        *frequency_bytes = frequency_bytes
+            .checked_add(cell_bytes)
+            .ok_or_else(|| "AWProject frequency-slice CF pixel bytes overflowed".to_string())?;
+    }
+    let largest_frequency_slice_bytes = bytes_by_frequency
+        .into_values()
+        .max()
+        .ok_or_else(|| "validated AWProject CF cache contains no frequency slices".to_string())?;
+    Ok(AwProjectCfFrequencyLocalityBytes {
+        full_cache_bytes,
+        largest_frequency_slice_bytes,
+    })
+}
+
+fn record_awproject_frequency_local_cf_residency(
+    mut plan: ImagingResolvedPlan,
+    requested_bytes: usize,
+    locality: Option<AwProjectCfFrequencyLocalityBytes>,
+    effective_bytes: usize,
+    admission: &'static str,
+    reason: String,
+) -> ImagingResolvedPlan {
+    let (full_cache_bytes, largest_frequency_slice_bytes) = locality.map_or((0, 0), |locality| {
+        (
+            locality.full_cache_bytes,
+            locality.largest_frequency_slice_bytes,
+        )
+    });
+    for decision in [
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_cf_resident_requested_bytes",
+            value: requested_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::UserPolicy,
+            reason: "the caller's bounded full-cell CF residency before resource admission"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_cf_full_cache_bytes",
+            value: full_cache_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "sum of exact paired imaging and weight CF pixel shapes".to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_cf_largest_frequency_slice_bytes",
+            value: largest_frequency_slice_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "largest exact cache-frequency slice across all W, Mueller, and PA cells"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_cf_frequency_local_residency_admission",
+            value: admission.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: reason.clone(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_cf_resident_effective_bytes",
+            value: effective_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason,
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_cf_resident_bytes",
+            value: effective_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "resource-admitted frequency-local full-cell LRU residency".to_string(),
+        },
+    ] {
+        replace_standard_mfs_plan_decision(&mut plan, decision);
+    }
+    plan
+}
+
+fn admit_awproject_frequency_local_cf_residency(
+    admitted: ImagingResolvedPlan,
+    requested_bytes: usize,
+    locality: AwProjectCfFrequencyLocalityBytes,
+) -> Result<ImagingResolvedPlan, String> {
+    let planned_bytes = admitted.allocation_bytes("AWProject CF pixels");
+    if planned_bytes != requested_bytes {
+        return Err(format!(
+            "AWProject CF residency request {requested_bytes} differs from the admitted allocation {planned_bytes}"
+        ));
+    }
+    let target_bytes = requested_bytes
+        .checked_add(locality.largest_frequency_slice_bytes)
+        .ok_or_else(|| "AWProject frequency-local CF residency target overflowed".to_string())?
+        .min(locality.full_cache_bytes)
+        .max(requested_bytes);
+    if target_bytes == requested_bytes {
+        return Ok(record_awproject_frequency_local_cf_residency(
+            admitted,
+            requested_bytes,
+            Some(locality),
+            requested_bytes,
+            "requested-sufficient",
+            "the requested CF residency already covers the exact frequency-local target"
+                .to_string(),
+        ));
+    }
+
+    let promotion = (|| {
+        let mut candidate = admitted.clone();
+        if !replace_standard_mfs_memory_allocation(
+            &mut candidate,
+            "AWProject CF pixels",
+            target_bytes,
+        ) {
+            return Err("the admitted AWProject plan omitted its CF pixel allocation".to_string());
+        }
+        rebuild_standard_mfs_memory_lifetime_ledger(&mut candidate, true)?;
+        let replay_peak_bytes = [
+            ImagingMemoryStage::MinorCycle,
+            ImagingMemoryStage::ModelTransform,
+            ImagingMemoryStage::ResidualGrid,
+            ImagingMemoryStage::ResidualTransform,
+        ]
+        .into_iter()
+        .filter_map(|stage| candidate.memory_lifetime_ledger.stage_peak(stage))
+        .map(|peak| peak.resident_bytes)
+        .max()
+        .unwrap_or(candidate.maximum_planned_resident_bytes);
+        let replay_headroom_bytes = candidate
+            .usable_memory_bytes
+            .saturating_sub(replay_peak_bytes);
+        if replay_headroom_bytes < AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES {
+            return Err(format!(
+                "frequency-local CF residency leaves {replay_headroom_bytes} replay-stage bytes, below the {AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES}-byte minimum"
+            ));
+        }
+        let compile_envelope = awproject_grouped_replay_compile_envelope(&candidate)?;
+        if compile_envelope.replay_retention_ceiling_bytes < AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES
+        {
+            return Err(format!(
+                "frequency-local CF residency leaves {} compile-safe replay bytes, below the {}-byte minimum",
+                compile_envelope.replay_retention_ceiling_bytes,
+                AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES,
+            ));
+        }
+        Ok(candidate)
+    })();
+
+    Ok(match promotion {
+        Ok(candidate) => record_awproject_frequency_local_cf_residency(
+            candidate,
+            requested_bytes,
+            Some(locality),
+            target_bytes,
+            "admitted-frequency-slice",
+            format!(
+                "the caller's budget plus one exact {}-byte frequency slice fits the semantic lifetime and compile ledgers",
+                locality.largest_frequency_slice_bytes,
+            ),
+        ),
+        Err(reason) => record_awproject_frequency_local_cf_residency(
+            admitted,
+            requested_bytes,
+            Some(locality),
+            requested_bytes,
+            "requested-fallback",
+            reason,
+        ),
+    })
 }
 
 fn awproject_pointing_index_estimate_bytes(
@@ -42947,6 +43180,22 @@ fn imaging_execution_config_with_plan(
     )
     .with_resolved(standard_mfs.resolved.clone())
     .with_standard_mfs(standard_mfs)
+}
+
+fn gridder_mode_with_resolved_awproject_cf_residency(
+    gridder_mode: &GridderMode,
+    strategy: &ImagingResolvedPlan,
+) -> GridderMode {
+    let Some(effective_bytes) =
+        standard_mfs_plan_decision_usize_value(strategy, "awproject_cf_resident_effective_bytes")
+    else {
+        return gridder_mode.clone();
+    };
+    let mut resolved = gridder_mode.clone();
+    if let GridderMode::AwProject(awproject) = &mut resolved {
+        awproject.controls.cf_resident_bytes = effective_bytes;
+    }
+    resolved
 }
 
 fn standard_mfs_fixed_tile_backend_enabled_for_frontend(config: &CliConfig) -> bool {
@@ -62661,6 +62910,68 @@ mod tests {
             fs::create_dir(root.join(format!("CFS_0_0_CF_{index}_0_0.im"))).unwrap();
             fs::create_dir(root.join(format!("WTCFS_0_0_CF_{index}_0_0.im"))).unwrap();
         }
+    }
+
+    #[test]
+    fn awproject_frequency_local_cf_residency_is_exact_and_reaches_execution() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("frequency-local-cf-cache");
+        fs::create_dir(&cf_cache).unwrap();
+        write_synthetic_awproject_cf_cache(&cf_cache, &[1.1e9, 1.2e9], &[0.0, 2.0]);
+        let paired_bytes = (16 * 16 + 32 * 32) * std::mem::size_of::<Complex32>();
+        let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
+        config.aw_project.as_mut().unwrap().cf_resident_bytes = paired_bytes;
+        let controls = config.aw_project.as_ref().unwrap();
+        let requested_bytes = controls.cf_resident_bytes;
+        let locality = awproject_cf_frequency_locality_bytes(controls).unwrap();
+        assert_eq!(locality.full_cache_bytes, 8 * paired_bytes);
+        assert_eq!(locality.largest_frequency_slice_bytes, 4 * paired_bytes);
+
+        let mut base = standard_mfs_memory_plan(&config, 64, 1024);
+        force_grouped_metal_test_device_budget(&mut base, 16 * 1024 * 1024 * 1024);
+        base.metal.eligible = true;
+        let admitted =
+            admit_awproject_multifield_initial_grid(base, &config, 2, false, true).unwrap();
+        let promoted =
+            admit_awproject_frequency_local_cf_residency(admitted, requested_bytes, locality)
+                .unwrap();
+        let expected_bytes = requested_bytes + locality.largest_frequency_slice_bytes;
+        assert_eq!(
+            promoted.allocation_bytes("AWProject CF pixels"),
+            expected_bytes
+        );
+        assert!(standard_mfs_plan_decision_is(
+            &promoted,
+            "awproject_cf_frequency_local_residency_admission",
+            "admitted-frequency-slice"
+        ));
+        assert_eq!(
+            standard_mfs_plan_decision_usize_value(
+                &promoted,
+                "awproject_cf_resident_effective_bytes"
+            ),
+            Some(expected_bytes)
+        );
+
+        let original_mode = test_mosaic_gridder(1.5e9);
+        let GridderMode::Mosaic(mosaic) = original_mode else {
+            unreachable!();
+        };
+        let original_mode = GridderMode::AwProject(AwProjectGridderConfig {
+            mosaic,
+            controls: controls.clone(),
+        });
+        let effective_mode =
+            gridder_mode_with_resolved_awproject_cf_residency(&original_mode, &promoted);
+        let GridderMode::AwProject(effective) = effective_mode else {
+            panic!("AWProject mode must remain selected");
+        };
+        assert_eq!(effective.controls.cf_resident_bytes, expected_bytes);
+        let GridderMode::AwProject(original) = original_mode else {
+            unreachable!();
+        };
+        assert_eq!(original.controls.cf_resident_bytes, requested_bytes);
     }
 
     fn awproject_mtmfs_planner_config(cf_cache: PathBuf, memory_target_mb: usize) -> CliConfig {

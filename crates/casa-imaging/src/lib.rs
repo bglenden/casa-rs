@@ -83507,6 +83507,67 @@ mod tests {
             high_only_nrmse <= 1.0e-3,
             "source-major high-only initial NRMSE {high_only_nrmse}"
         );
+
+        let mut split_grid = crate::apple_fft::MetalSharedF32DirtyGridBatch::new(8, 8, 8).unwrap();
+        let mut split_compensation = None;
+        for sample_index in 0..exact_batch.samples.len() {
+            let split_imaging_batch = super::AwProjectMetalBatch {
+                samples: vec![imaging_batch.samples[sample_index]],
+                kernels: imaging_batch.kernels.clone(),
+                phases: imaging_batch.phases.clone(),
+                term_weights: imaging_batch.term_weights[sample_index * 2..sample_index * 2 + 2]
+                    .to_vec(),
+                kernel_pack: Duration::ZERO,
+            };
+            let split_imaging = super::group_awproject_source_major_initial_imaging(
+                &split_imaging_batch,
+                &split_imaging_batch.kernels,
+                8,
+                8,
+                8,
+                1,
+            )
+            .unwrap();
+            let split_weight = super::group_awproject_source_major_initial_weight(
+                &weight_samples[sample_index..sample_index + 1],
+                &exact_batch.kernels,
+                &exact_batch.phases,
+                8,
+                8,
+                8,
+                1,
+            )
+            .unwrap();
+            for partition in [&split_imaging, &split_weight] {
+                executor
+                    .dispatch_initial_grouped_tiles(
+                        &mut split_grid,
+                        &mut split_compensation,
+                        super::AwProjectInitialCompensationMode::WeightTerms,
+                        partition,
+                        &exact_batch.kernels,
+                        &exact_batch.phases,
+                        Duration::ZERO,
+                    )
+                    .unwrap();
+            }
+        }
+        let split = super::copy_awproject_metal_centered_f64_planes(
+            &split_grid,
+            split_compensation.as_ref().unwrap(),
+        )
+        .unwrap();
+        let mut split_squared_error = 0.0;
+        for (actual_plane, reference_plane) in split.iter().zip(&weight_compensated) {
+            for (&actual, &reference) in actual_plane.iter().zip(reference_plane) {
+                split_squared_error += (actual - reference).norm_sqr();
+            }
+        }
+        let split_nrmse = (split_squared_error / squared_reference.max(f64::MIN_POSITIVE)).sqrt();
+        assert!(
+            split_nrmse <= 1.0e-3,
+            "source-major split-block initial NRMSE {split_nrmse}"
+        );
     }
 
     #[test]
