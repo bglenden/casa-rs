@@ -929,6 +929,7 @@ def monitor_run(
     telemetry_path: Path,
     interval_seconds: float = MONITOR_INTERVAL_SECONDS,
     max_compressed_growth_bytes: int | None = None,
+    wall_limit_seconds: float = RUST_WALL_LIMIT_SECONDS,
     snapshot_reader: Callable[[], dict[str, Any]] = read_darwin_host_snapshot,
 ) -> MonitorResult:
     samples: list[dict[str, Any]] = []
@@ -1002,7 +1003,7 @@ def monitor_run(
                 swap_used_growth_samples=swap_used_growth_samples,
                 max_compressed_growth_bytes=max_compressed_growth_bytes,
             )
-            if stop_reason is None and now - started >= RUST_WALL_LIMIT_SECONDS:
+            if stop_reason is None and now - started >= wall_limit_seconds:
                 stop_reason = "10x acceptance wall exceeded"
             disk_idle = len(samples) < 2 or (
                 record.get("process_disk_read_bytes")
