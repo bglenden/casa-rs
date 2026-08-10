@@ -38917,7 +38917,6 @@ fn admit_awproject_compact_replay_retention(
 
 const AWPROJECT_MULTIFIELD_INITIAL_GRID_TILE_SIDE: usize = 192;
 const AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES: usize = 512 * 1024 * 1024;
-const AWPROJECT_GROUPED_REPLAY_OMITTED_SQUARED_L2_ENERGY: f64 = 5.0e-7;
 const AWPROJECT_GROUPED_METAL_SAFETY_RESERVE_BYTES: usize = 64 * 1024 * 1024;
 const AWPROJECT_GROUPED_SEGMENT_TARGET_EXPERIMENT: &str =
     "CASA_RS_EXPERIMENTAL_AWPROJECT_GROUPED_SEGMENT_TARGET_BYTES";
@@ -39258,12 +39257,10 @@ fn awproject_grouped_metal_execution_probe_status(
             );
         return AwProjectGroupedMetalProbeStatus::Rejected(reason);
     };
-    if grouped_replay.omitted_energy_fraction() > AWPROJECT_GROUPED_REPLAY_OMITTED_SQUARED_L2_ENERGY
-    {
+    if grouped_replay.omitted_energy_fraction() != 0.0 {
         return AwProjectGroupedMetalProbeStatus::Rejected(format!(
-            "effective grouped replay omits {} squared-L2 energy, above the admitted {} bound",
-            grouped_replay.omitted_energy_fraction(),
-            AWPROJECT_GROUPED_REPLAY_OMITTED_SQUARED_L2_ENERGY,
+            "effective grouped replay omits {} squared-L2 energy; production preflight requires exact support",
+            grouped_replay.omitted_energy_fraction()
         ));
     }
     let generic_storage_absent = plan.workload.direct_metal_scratch_candidate_bytes == 0
@@ -42608,7 +42605,7 @@ fn standard_mfs_execution_config_with_plan(
                 name: "awproject_replay_architecture",
                 value: "source-order-grouped-tile-v1".to_string(),
                 origin: casa_imaging::ImagingPlanOrigin::Workload,
-                reason: "compile bounded effective CF support, the source-role group mapping, and the grouped tile route once before residual replay; runtime preserves source-order f64 accumulation and rebuilds no grouping, sort, or route"
+                reason: "retain exact CF support and compile the source-role group mapping and grouped tile route once before residual replay; runtime preserves source-order f64 accumulation and rebuilds no grouping, sort, or route"
                     .to_string(),
             },
             casa_imaging::ImagingPlanDecision {
@@ -42631,7 +42628,7 @@ fn standard_mfs_execution_config_with_plan(
                 name: "awproject_grouped_replay_omitted_squared_l2_energy",
                 value: format!("{:.9e}", grouped.omitted_energy_fraction()),
                 origin: casa_imaging::ImagingPlanOrigin::Workload,
-                reason: "bound omitted squared-L2 CF support energy while preserving source order, group identity, and route topology; frozen full-product science comparison remains authoritative"
+                reason: "production grouped replay omits no CF support; exact source order, group identity, and route topology remain invariant"
                     .to_string(),
             },
             casa_imaging::ImagingPlanDecision {
@@ -42733,7 +42730,7 @@ fn awproject_grouped_replay_plan(
         spill_directory,
         segment_target_bytes,
         envelope.compile_admission_bytes,
-        AWPROJECT_GROUPED_REPLAY_OMITTED_SQUARED_L2_ENERGY,
+        0.0,
         11,
     )
     .map(Some)
@@ -62999,8 +62996,8 @@ mod tests {
             matches!(wrong_backend_status, AwProjectGroupedMetalProbeStatus::Rejected(ref reason) if reason.contains("effective residual backend")),
             "the effective residual backend is part of grouped preflight admission"
         );
-        let mut excessive_omission_replay = execution;
-        excessive_omission_replay.awproject_grouped_replay = Some(
+        let mut approximate_replay = execution;
+        approximate_replay.awproject_grouped_replay = Some(
             AwProjectGroupedReplayPlan::new(
                 tmp.path().to_path_buf(),
                 512 * 1024 * 1024,
@@ -63010,11 +63007,11 @@ mod tests {
             )
             .unwrap(),
         );
-        let excessive_omission_status =
-            awproject_grouped_metal_execution_probe_status(&plan, &excessive_omission_replay);
+        let approximate_status =
+            awproject_grouped_metal_execution_probe_status(&plan, &approximate_replay);
         assert!(
-            matches!(excessive_omission_status, AwProjectGroupedMetalProbeStatus::Rejected(ref reason) if reason.contains("above the admitted")),
-            "the production preflight must reject support omission above its bounded policy"
+            matches!(approximate_status, AwProjectGroupedMetalProbeStatus::Rejected(ref reason) if reason.contains("requires exact support")),
+            "the production acceptance probe requires an exact-support grouped replay"
         );
     }
 
@@ -63982,10 +63979,7 @@ mod tests {
             grouped.spill_directory(),
             config.imagename.parent().unwrap()
         );
-        assert_eq!(
-            grouped.omitted_energy_fraction(),
-            AWPROJECT_GROUPED_REPLAY_OMITTED_SQUARED_L2_ENERGY
-        );
+        assert_eq!(grouped.omitted_energy_fraction(), 0.0);
         assert_eq!(grouped.tile_side(), 11);
         assert!(execution.resolved.decisions.iter().any(|decision| {
             decision.name == "awproject_replay_architecture"
