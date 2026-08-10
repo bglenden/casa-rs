@@ -26334,11 +26334,24 @@ fn finish_awproject_source_major_initial_partition(
         kernels,
         phases,
     )?;
-    let overlap = awproject_metal_max_plan_overlap(
-        groups.iter().map(|group| group.plan),
+    let (tile_plan, _) = plan_awproject_metal_group_tiles_with_workers(
+        &groups,
         grid_width,
         grid_height,
+        tile_side,
+        workers,
     )?;
+    let overlap = tile_plan
+        .tile_fragment_offsets
+        .windows(2)
+        .map(|offsets| offsets[1] as usize - offsets[0] as usize)
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    eprintln!(
+        "awproject_source_major_initial_fixed_scale overlap={} overlap_source=maximum-tile-fragment-upper max_kernel_norm={:.9e}",
+        overlap, max_kernel_norm,
+    );
     let fixed_limit = i64::MAX as f64 / 16.0;
     let mut fixed_scales = Vec::with_capacity(AWPROJECT_INITIAL_GROUPED_PLANE_COUNT);
     let mut inverse_fixed_scales = Vec::with_capacity(AWPROJECT_INITIAL_GROUPED_PLANE_COUNT);
@@ -26366,13 +26379,6 @@ fn finish_awproject_source_major_initial_partition(
         fixed_scales.push(scale);
         inverse_fixed_scales.push(scale.recip());
     }
-    let (tile_plan, _) = plan_awproject_metal_group_tiles_with_workers(
-        &groups,
-        grid_width,
-        grid_height,
-        tile_side,
-        workers,
-    )?;
     Ok(AwProjectMetalInitialGroupedProgram {
         groups,
         tile_plan,
