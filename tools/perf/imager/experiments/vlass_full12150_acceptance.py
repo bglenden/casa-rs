@@ -1153,8 +1153,14 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
     suffixes = tuple(entry.get("suffix") for entry in products)
     if suffixes != EXPECTED_PRODUCTS:
         raise AcceptanceError("runtime did not write the ordered 19-product inventory")
-    if any(entry.get("shape") != "12150x12150x1x1" for entry in products):
-        raise AcceptanceError("runtime product geometry differs from 12150 square")
+    for entry in products:
+        expected_shape = (
+            "1x1x1x1"
+            if entry.get("suffix", "").startswith(".sumwt")
+            else "12150x12150x1x1"
+        )
+        if entry.get("shape") != expected_shape:
+            raise AcceptanceError("runtime product geometry differs")
     return {
         "segment_count": len(segments),
         "runtime_dispatch_count": len(runtime),

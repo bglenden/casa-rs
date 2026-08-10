@@ -39165,7 +39165,7 @@ fn awproject_grouped_metal_topology_eligible(
     selected_field_count: usize,
     initial_dirty_backend_explicit: bool,
 ) -> bool {
-    selected_field_count > 1
+    selected_field_count > 0
         && config.aw_project.is_some()
         && config.deconvolver == Deconvolver::Mtmfs
         && config.nterms == 2
@@ -39350,7 +39350,7 @@ fn prepare_awproject_grouped_metal_candidate(
             name: "awproject_grouped_replay_replaced_generic_caches",
             value: "true".to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Workload,
-            reason: "the exact resolved CPU-initial/grouped-residual topology replaces generic Metal scratch and replay caches"
+            reason: "the exact resolved source-major-initial/grouped-residual topology replaces generic Metal scratch and replay caches"
                 .to_string(),
         },
         casa_imaging::ImagingPlanDecision {
@@ -39371,7 +39371,7 @@ fn prepare_awproject_grouped_metal_candidate(
             name: "awproject_grouped_metal_generic_scratch_bytes",
             value: "0".to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Workload,
-            reason: "CPU-initial/grouped-residual execution has no generic dense Metal scratch allocation"
+            reason: "source-major-initial/grouped-residual execution has no generic dense Metal scratch allocation"
                 .to_string(),
         },
     ] {
@@ -39481,7 +39481,7 @@ fn admit_awproject_multifield_initial_grid(
             name: "metal",
             value: "eligible".to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Resources,
-            reason: "CPU initial gridding removes the generic dense-grid Metal gate; grouped residual replay is admitted by exact persistent and per-segment overlap"
+            reason: "source-major initial gridding removes the generic dense-grid Metal gate; grouped residual replay is admitted by exact persistent and per-segment overlap"
                 .to_string(),
         },
     );
@@ -63148,7 +63148,7 @@ mod tests {
     }
 
     #[test]
-    fn awproject_resolved_single_field_keeps_the_existing_metal_initial_grid() {
+    fn awproject_resolved_single_field_uses_source_major_grouped_metal() {
         let tmp = tempdir().unwrap();
         let cf_cache = tmp.path().join("single-field-initial-grid-cf-cache");
         make_awproject_planner_cache(&cf_cache, 8);
@@ -63156,6 +63156,7 @@ mod tests {
         assert_eq!(config.field_ids.as_deref(), Some([0, 1].as_slice()));
         config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
         let mut base = standard_mfs_memory_plan(&config, 64, 1024);
+        force_grouped_metal_test_device_budget(&mut base, 16 * 1024 * 1024 * 1024);
         base.metal.eligible = true;
         let legacy_scratch = base.workload.direct_metal_scratch_candidate_bytes;
         assert!(legacy_scratch > 0);
@@ -63179,27 +63180,45 @@ mod tests {
                 && decision.value == "false"
         }));
 
-        let unchanged =
-            admit_awproject_multifield_initial_grid(base.clone(), &config, 1, false, true).unwrap();
-        assert_eq!(unchanged, base);
-        assert!(!standard_mfs_uses_source_major_awproject(&unchanged));
+        let resolved =
+            resolve_awproject_multifield_memory_plan(base.clone(), &config, 1, false, true)
+                .unwrap();
+        let resolved = admit_awproject_compact_replay_retention(resolved, 1)
+            .expect("single-field replay admission");
+        assert_ne!(resolved, base);
+        assert!(standard_mfs_uses_source_major_awproject(&resolved));
         assert_eq!(
-            unchanged.allocation_bytes("AWProject source-major compiler segment"),
-            0
+            resolved.allocation_bytes("AWProject source-major compiler segment"),
+            AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES
         );
-        assert!(unchanged.decisions.iter().all(|decision| {
-            decision.name != "awproject_source_major_architecture"
-                && !(decision.name == "awproject_initial_grid_backend"
-                    && decision.value == "source-major-grouped-metal-f64")
-        }));
+        assert_eq!(resolved.workload.direct_metal_scratch_candidate_bytes, 0);
+        assert_eq!(resolved.caches.direct_metal_scratch_bytes, 0);
+        assert!(
+            resolved.allocation_bytes("AWProject compact replay retention") > 0,
+            "single-field source-major execution requires resident grouped replay"
+        );
+        assert!(standard_mfs_plan_decision_is(
+            &resolved,
+            "awproject_source_major_architecture",
+            "direct-source-major-v2"
+        ));
+        let execution = standard_mfs_execution_config_with_plan(&config, &resolved);
         assert_eq!(
-            standard_mfs_execution_config_with_plan(&config, &unchanged).initial_dirty_backend,
+            execution.initial_dirty_backend,
             Some(StandardMfsBackend::MetalRowRunGrouped)
         );
         assert_eq!(
-            awproject_grouped_metal_plan_probe_status(&unchanged, &config, 1, false),
-            AwProjectGroupedMetalProbeStatus::NotApplicable
+            execution
+                .awproject_grouped_replay
+                .as_ref()
+                .expect("single-field execution must construct grouped replay")
+                .omitted_energy_fraction(),
+            0.0
         );
+        assert!(matches!(
+            awproject_grouped_metal_plan_probe_status(&resolved, &config, 1, false),
+            AwProjectGroupedMetalProbeStatus::Admitted
+        ));
     }
 
     #[test]
@@ -63234,15 +63253,23 @@ mod tests {
         config.standard_mfs_initial_dirty_backend = Some("metal-row-run-grouped".to_string());
         let base = standard_mfs_memory_plan(&config, 64, 1024);
 
-        let unchanged =
-            resolve_awproject_multifield_memory_plan(base.clone(), &config, 2, true, true).unwrap();
-        assert_eq!(unchanged, base);
-        assert!(unchanged.workload.direct_metal_scratch_candidate_bytes > 0);
-        assert!(standard_mfs_plan_decision_is(
-            &unchanged,
-            "awproject_grouped_replay_replaced_generic_caches",
-            "false"
-        ));
+        for selected_field_count in [1, 2] {
+            let unchanged = resolve_awproject_multifield_memory_plan(
+                base.clone(),
+                &config,
+                selected_field_count,
+                true,
+                true,
+            )
+            .unwrap();
+            assert_eq!(unchanged, base);
+            assert!(unchanged.workload.direct_metal_scratch_candidate_bytes > 0);
+            assert!(standard_mfs_plan_decision_is(
+                &unchanged,
+                "awproject_grouped_replay_replaced_generic_caches",
+                "false"
+            ));
+        }
     }
 
     #[test]
@@ -63255,28 +63282,41 @@ mod tests {
         config.standard_mfs_initial_dirty_backend = Some("cpu".to_string());
         let base = standard_mfs_memory_plan(&config, 64, 1024);
 
-        let unchanged =
-            resolve_awproject_multifield_memory_plan(base.clone(), &config, 2, true, true).unwrap();
-        assert_eq!(unchanged, base);
-        assert!(unchanged.workload.direct_metal_scratch_candidate_bytes > 0);
-        assert!(standard_mfs_plan_decision_is(
-            &unchanged,
-            "awproject_grouped_replay_replaced_generic_caches",
-            "false"
-        ));
-        assert!(!unchanged.decisions.iter().any(|decision| {
-            decision.name == "awproject_source_major_architecture"
-                || (decision.name == "awproject_initial_grid_backend"
-                    && decision.value == "source-major-grouped-metal-f64")
-        }));
-        assert_eq!(
-            standard_mfs_execution_config_with_plan(&config, &unchanged).initial_dirty_backend,
-            Some(StandardMfsBackend::Cpu)
-        );
-        assert_eq!(
-            awproject_grouped_metal_plan_probe_status(&unchanged, &config, 2, true),
-            AwProjectGroupedMetalProbeStatus::NotApplicable
-        );
+        for selected_field_count in [1, 2] {
+            let unchanged = resolve_awproject_multifield_memory_plan(
+                base.clone(),
+                &config,
+                selected_field_count,
+                true,
+                true,
+            )
+            .unwrap();
+            assert_eq!(unchanged, base);
+            assert!(unchanged.workload.direct_metal_scratch_candidate_bytes > 0);
+            assert!(standard_mfs_plan_decision_is(
+                &unchanged,
+                "awproject_grouped_replay_replaced_generic_caches",
+                "false"
+            ));
+            assert!(!unchanged.decisions.iter().any(|decision| {
+                decision.name == "awproject_source_major_architecture"
+                    || (decision.name == "awproject_initial_grid_backend"
+                        && decision.value == "source-major-grouped-metal-f64")
+            }));
+            assert_eq!(
+                standard_mfs_execution_config_with_plan(&config, &unchanged).initial_dirty_backend,
+                Some(StandardMfsBackend::Cpu)
+            );
+            assert_eq!(
+                awproject_grouped_metal_plan_probe_status(
+                    &unchanged,
+                    &config,
+                    selected_field_count,
+                    true,
+                ),
+                AwProjectGroupedMetalProbeStatus::NotApplicable
+            );
+        }
     }
 
     #[test]

@@ -121,12 +121,13 @@ def valid_runtime_log() -> str:
         "program_bytes=1000 spill_read_bytes=0 runtime_grouping_builds=0 "
         "runtime_sort_builds=0 runtime_route_builds=0",
     ]
-    lines.extend(
-        "image_product_write "
-        f"suffix={suffix} role=test shape=12150x12150x1x1 elements=147622500 "
-        "elapsed_ms=1.0"
-        for suffix in acceptance.EXPECTED_PRODUCTS
-    )
+    for suffix in acceptance.EXPECTED_PRODUCTS:
+        shape = "1x1x1x1" if suffix.startswith(".sumwt") else "12150x12150x1x1"
+        lines.append(
+            "image_product_write "
+            f"suffix={suffix} role=test shape={shape} elements=147622500 "
+            "elapsed_ms=1.0"
+        )
     return "\n".join(lines)
 
 

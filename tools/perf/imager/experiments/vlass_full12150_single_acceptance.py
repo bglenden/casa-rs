@@ -172,7 +172,7 @@ def validate_probe_log(
             "single-field probe did not emit one admitted preflight"
         )
     expected = {
-        "grouped_metal_status": "not-applicable",
+        "grouped_metal_status": "admitted",
         "rows_total": EXPECTED_ROWS,
         "ddids": "16",
         "selected_channels": "64",
@@ -213,10 +213,14 @@ def validate_probe_log(
         raise shared.AcceptanceError(
             "single-field probe did not select Metal residual replay"
         )
-    if grouped:
-        raise shared.AcceptanceError(
-            "single-field probe unexpectedly selected source-major AOT"
-        )
+    if len(grouped) != 1:
+        raise shared.AcceptanceError("single-field probe omitted grouped replay")
+    if grouped[0].get("architecture") != "source-order-grouped-tile-v1":
+        raise shared.AcceptanceError("single-field grouped architecture differs")
+    if grouped[0].get("tile_side") != "11":
+        raise shared.AcceptanceError("single-field grouped tile side differs")
+    if float(grouped[0].get("omitted_squared_l2_energy", "nan")) != 0.0:
+        raise shared.AcceptanceError("single-field grouped replay is not exact-support")
     if len(frequency_edges) != 16 or any(
         edge.get(endpoint) != FIELD
         for edge in frequency_edges
@@ -226,16 +230,27 @@ def validate_probe_log(
             "single-field probe did not bind every SPW edge to field 1525"
         )
     by_name = {entry.get("name"): entry.get("value") for entry in decisions}
-    if by_name.get("awproject_source_major_architecture") is not None:
-        raise shared.AcceptanceError(
-            "single-field probe entered source-major architecture"
-        )
+    expected_decisions = {
+        "awproject_selected_field_count": "1",
+        "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
+        "awproject_source_major_architecture": "direct-source-major-v2",
+        "awproject_multifield_initial_grid_admission": "admitted",
+        "awproject_grouped_replay_replaced_generic_caches": "true",
+        "awproject_grouped_metal_generic_scratch_bytes": "0",
+        "awproject_grouped_metal_residual_output_bytes": "2361960000",
+        "awproject_grouped_metal_residual_compensation_bytes": "2361960000",
+        "awproject_grouped_metal_model_wrapper_bytes": "2361960000",
+        "awproject_grouped_metal_safety_reserve_bytes": str(64 * shared.MIB),
+    }
+    if any(by_name.get(key) != value for key, value in expected_decisions.items()):
+        raise shared.AcceptanceError("single-field source-major decisions differ")
     return {
         "preflight": preflight[0],
         "resources": resources[0],
         "runtime": runtime[0],
         "frequency_edges": frequency_edges,
         "decisions": by_name,
+        "grouped": grouped[0],
     }
 
 
@@ -272,66 +287,7 @@ def run_probe(
 
 
 def validate_runtime_log(text: str) -> dict[str, Any]:
-    if (
-        "architecture=direct-source-major-v2" in text
-        or "awproject_aot_grouped_tile_receipt " in text
-    ):
-        raise shared.AcceptanceError("single-field execution entered source-major AOT")
-    chains = shared.matching_lines(text, "awproject_metal_resident_tile_chain ")
-    built = [entry for entry in chains if entry.get("built") == "true"]
-    replayed = [
-        entry
-        for entry in chains
-        if entry.get("built") == "false" and entry.get("gpu_residual_replay") == "true"
-    ]
-    if not built or not replayed:
-        raise shared.AcceptanceError(
-            "single-field resident Metal chain was not built and reused"
-        )
-    if any(int(entry.get("program_bytes", "0")) <= 0 for entry in chains):
-        raise shared.AcceptanceError(
-            "single-field resident Metal chain reported no program bytes"
-        )
-    caches = shared.matching_lines(text, "awproject_compact_replay_cache ")
-    if not caches:
-        raise shared.AcceptanceError(
-            "single-field execution omitted replay-cache receipts"
-        )
-    if any(entry.get("rejected_blocks") != "0" for entry in caches):
-        raise shared.AcceptanceError("single-field replay cache rejected a block")
-    final_cache = caches[-1]
-    if int(final_cache.get("resident_blocks", "0")) <= 0:
-        raise shared.AcceptanceError("single-field replay cache retained no blocks")
-    if int(final_cache.get("hits", "0")) <= 0:
-        raise shared.AcceptanceError("single-field replay cache recorded no reuse hits")
-    if final_cache.get("spilled_global_read_bytes") != "0":
-        raise shared.AcceptanceError("single-field replay unexpectedly read spill data")
-    releases = shared.matching_lines(text, "awproject_compact_replay_release ")
-    if len(releases) != 1 or releases[0].get("next_use") != "none":
-        raise shared.AcceptanceError("single-field replay lifetime was not released")
-    if int(releases[0].get("resident_bytes", "0")) <= 0:
-        raise shared.AcceptanceError("single-field release reported no resident replay")
-    products = shared.matching_lines(text, "image_product_write ")
-    suffixes = tuple(entry.get("suffix") for entry in products)
-    if suffixes != shared.EXPECTED_PRODUCTS:
-        raise shared.AcceptanceError(
-            "single-field runtime did not write the ordered 19 products"
-        )
-    for entry in products:
-        expected_shape = (
-            "1x1x1x1"
-            if entry.get("suffix", "").startswith(".sumwt")
-            else "12150x12150x1x1"
-        )
-        if entry.get("shape") != expected_shape:
-            raise shared.AcceptanceError("single-field product geometry differs")
-    return {
-        "built_programs": len(built),
-        "replayed_programs": len(replayed),
-        "resident_blocks": int(final_cache["resident_blocks"]),
-        "cache_hits": int(final_cache["hits"]),
-        "product_count": len(products),
-    }
+    return shared.validate_runtime_log(text)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
