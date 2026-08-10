@@ -11501,6 +11501,10 @@ struct AwProjectMetalSampleRoleGroups {
 #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 struct AwProjectMetalPlanKey([u32; 8]);
 
+#[cfg(all(target_os = "macos", not(coverage)))]
+type AwProjectMetalPlanIndex<T> =
+    HashMap<AwProjectMetalPlanKey, T, BuildHasherDefault<MosaicMetalSampleHasher>>;
+
 impl From<AwProjectMetalPlan> for AwProjectMetalPlanKey {
     fn from(plan: AwProjectMetalPlan) -> Self {
         Self([
@@ -25940,7 +25944,7 @@ fn group_awproject_metal_tile_plans_with_ledger(
     ImagingError,
 > {
     record_awproject_metal_runtime_grouping_build();
-    let mut group_index = HashMap::<AwProjectMetalPlanKey, u32>::new();
+    let mut group_index = AwProjectMetalPlanIndex::<u32>::default();
     let mut groups = Vec::<AwProjectMetalGroupedTilePlan>::new();
     let mut sums = Vec::<[f64; 4]>::new();
     for (sample, weights) in batch.samples.iter().zip(batch.term_weights.chunks_exact(2)) {
@@ -26037,7 +26041,7 @@ fn group_awproject_metal_tile_plans_with_ledger(
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 fn add_awproject_source_major_initial_group(
-    group_index: &mut HashMap<AwProjectMetalPlanKey, usize>,
+    group_index: &mut AwProjectMetalPlanIndex<usize>,
     groups: &mut Vec<AwProjectMetalInitialGroupedPlan>,
     sums: &mut Vec<[f64; AWPROJECT_INITIAL_GROUPED_PLANE_COUNT * 2]>,
     plan: AwProjectMetalPlan,
@@ -26153,7 +26157,7 @@ fn group_awproject_source_major_initial_imaging(
             batch.samples.len(),
         )));
     }
-    let mut group_index = HashMap::<AwProjectMetalPlanKey, usize>::new();
+    let mut group_index = AwProjectMetalPlanIndex::<usize>::default();
     let mut groups = Vec::new();
     let mut sums = Vec::new();
     for (sample, weights) in batch.samples.iter().zip(batch.term_weights.chunks_exact(2)) {
@@ -26199,7 +26203,7 @@ fn group_awproject_source_major_initial_weight(
     grid_height: usize,
     tile_side: usize,
 ) -> Result<AwProjectMetalInitialGroupedProgram, ImagingError> {
-    let mut group_index = HashMap::<AwProjectMetalPlanKey, usize>::new();
+    let mut group_index = AwProjectMetalPlanIndex::<usize>::default();
     let mut groups = Vec::new();
     let mut sums = Vec::new();
     for sample in samples {
@@ -26381,8 +26385,10 @@ fn compile_awproject_metal_aot_grouped_tile(
     grouped.tile_plan.fragments.shrink_to_fit();
     grouped.tile_plan.plan_elapsed = Duration::ZERO;
 
-    let mut final_group_index =
-        HashMap::<AwProjectMetalPlanKey, u32>::with_capacity(grouped.groups.len());
+    let mut final_group_index = AwProjectMetalPlanIndex::<u32>::with_capacity_and_hasher(
+        grouped.groups.len(),
+        BuildHasherDefault::<MosaicMetalSampleHasher>::default(),
+    );
     for (index, group) in grouped.groups.iter().enumerate() {
         let index = u32::try_from(index).map_err(|_| {
             ImagingError::InvalidRequest(
