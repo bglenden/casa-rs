@@ -39649,9 +39649,9 @@ fn admit_awproject_multifield_initial_grid(
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_source_major_architecture",
-            value: "direct-source-major-v10-sealed-f32-residual".to_string(),
+            value: "direct-source-major-v11-sealed-sha-i16-residual".to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Workload,
-            reason: "one source-major owner interns CF requests, dispatches high-only imaging and PSF-weight partitions, stages each compact-f32 exact-support residual artifact, then streams one verified segment at a time after releasing the initial grid"
+            reason: "one source-major owner interns CF requests, dispatches the selected compensated imaging and PSF-weight partitions, stages each scaled-i16 exact-support residual artifact, then streams one verified segment at a time after releasing the initial grid"
                 .to_string(),
         },
         casa_imaging::ImagingPlanDecision {
@@ -39674,7 +39674,7 @@ fn admit_awproject_multifield_initial_grid(
             name: "awproject_source_major_compiler_segment_bytes",
             value: AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES.to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Resources,
-            reason: "reserve one bounded source-major compiler segment while completed compact-f32 replay artifacts are staged off-heap during InitialGrid"
+            reason: "reserve one bounded source-major compiler segment while completed scaled-i16 replay artifacts are staged off-heap during InitialGrid"
                 .to_string(),
         },
         casa_imaging::ImagingPlanDecision {
@@ -63242,7 +63242,7 @@ mod tests {
         }));
         assert!(initial.decisions.iter().any(|decision| {
             decision.name == "awproject_source_major_architecture"
-                && decision.value == "direct-source-major-v10-sealed-f32-residual"
+                && decision.value == "direct-source-major-v11-sealed-sha-i16-residual"
         }));
         assert!(initial.decisions.iter().any(|decision| {
             decision.name == "awproject_source_major_initial_accumulation"
@@ -63600,7 +63600,7 @@ mod tests {
         assert!(standard_mfs_plan_decision_is(
             &resolved,
             "awproject_source_major_architecture",
-            "direct-source-major-v10-sealed-f32-residual"
+            "direct-source-major-v11-sealed-sha-i16-residual"
         ));
         let execution = standard_mfs_execution_config_with_plan(&config, &resolved);
         assert_eq!(

@@ -233,9 +233,9 @@ def validate_probe_log(
     expected_decisions = {
         "awproject_selected_field_count": "1",
         "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
-        "awproject_source_major_architecture": "direct-source-major-v10-sealed-f32-residual",
-        "awproject_source_major_initial_accumulation": "high-limb-only",
-        "awproject_source_major_initial_grid_bytes": "9447840000",
+        "awproject_source_major_architecture": "direct-source-major-v11-sealed-sha-i16-residual",
+        "awproject_source_major_initial_accumulation": "weight-two-limb",
+        "awproject_source_major_initial_grid_bytes": "12990780000",
         "awproject_multifield_initial_grid_admission": "admitted",
         "awproject_grouped_replay_replaced_generic_caches": "true",
         "awproject_grouped_metal_generic_scratch_bytes": "0",
