@@ -814,7 +814,7 @@ def validate_probe_log(
     expected_decisions = {
         "awproject_selected_field_count": "63",
         "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
-        "awproject_source_major_architecture": "direct-source-major-v8-single-slot-i16-residual",
+        "awproject_source_major_architecture": "direct-source-major-v9-sealed-sha-i16-residual",
         "awproject_source_major_initial_accumulation": "high-limb-only",
         "awproject_source_major_initial_grid_bytes": "9447840000",
         "awproject_multifield_initial_grid_admission": "admitted",
@@ -1079,7 +1079,7 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
     for entry in source_blocks:
         if (
             entry.get("architecture")
-            != "direct-source-major-v8-single-slot-i16-residual"
+            != "direct-source-major-v9-sealed-sha-i16-residual"
             or entry.get("initial_accumulation") != "high-limb-only"
             or entry.get("initial_partitions") != "2"
             or entry.get("initial_grid_bytes") != "9447840000"
@@ -1099,7 +1099,7 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
     for block, staged in zip(source_blocks, staging, strict=True):
         if (
             staged.get("architecture")
-            != "direct-source-major-v8-single-slot-i16-residual"
+            != "direct-source-major-v9-sealed-sha-i16-residual"
             or staged.get("resident") != "false"
             or staged.get("staged") != "true"
             or int(staged.get("spill_bytes", "0")) <= 0
@@ -1253,7 +1253,7 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
         raise AcceptanceError("source-major replay omitted its streaming-ready receipt")
     staged = staged_ready[0]
     if (
-        staged.get("architecture") != "direct-source-major-v8-single-slot-i16-residual"
+        staged.get("architecture") != "direct-source-major-v9-sealed-sha-i16-residual"
         or staged.get("lifecycle") != "after-dirty-grid-release"
         or staged.get("resident") != "false"
         or staged.get("resident_bytes") != "0"
@@ -1333,7 +1333,7 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
             raise AcceptanceError(
                 "production grouped replay allocated a candidate audit"
             )
-    for entry in summaries:
+    for refresh, entry in enumerate(summaries):
         if (
             entry.get("source_major_streaming") != "true"
             or entry.get("payload_bytes") != staged.get("spill_bytes")
@@ -1341,6 +1341,13 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
             or entry.get("spill_read_bytes") != staged.get("spill_bytes")
         ):
             raise AcceptanceError("streamed grouped replay byte ledger differs")
+        expected_verification = "full" if refresh == 0 else "sealed-reuse"
+        expected_verified_bytes = staged.get("spill_bytes") if refresh == 0 else "0"
+        if (
+            entry.get("sha256_verification") != expected_verification
+            or entry.get("sha256_verified_bytes") != expected_verified_bytes
+        ):
+            raise AcceptanceError("streamed grouped replay verification ledger differs")
         for name in (
             "runtime_grouping_builds",
             "runtime_sort_builds",

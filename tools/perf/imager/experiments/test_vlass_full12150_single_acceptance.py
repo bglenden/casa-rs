@@ -13,7 +13,7 @@ def valid_probe_log(target_mib: int) -> str:
     decisions = {
         "awproject_selected_field_count": "1",
         "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
-        "awproject_source_major_architecture": "direct-source-major-v8-single-slot-i16-residual",
+        "awproject_source_major_architecture": "direct-source-major-v9-sealed-sha-i16-residual",
         "awproject_source_major_initial_accumulation": "high-limb-only",
         "awproject_source_major_initial_grid_bytes": "9447840000",
         "awproject_multifield_initial_grid_admission": "admitted",
@@ -58,12 +58,12 @@ def valid_runtime_log() -> str:
         "awproject_source_major_block source_block=0 accepted_samples=1 "
         "initial_partitions=2 initial_grid_bytes=9447840000 "
         "initial_compensation_bytes=0 spill_bytes=900 reload_bytes=0 "
-        "architecture=direct-source-major-v8-single-slot-i16-residual "
+        "architecture=direct-source-major-v9-sealed-sha-i16-residual "
         "initial_accumulation=high-limb-only",
         "awproject_source_major_staging source_block=0 segments=1 "
         "program_bytes=1000 compiled_total_bytes=1000 streaming_live_bytes=1000 "
         "streaming_ceiling_bytes=2000 spill_bytes=900 total_spill_bytes=900 "
-        "reload_bytes=0 architecture=direct-source-major-v8-single-slot-i16-residual "
+        "reload_bytes=0 architecture=direct-source-major-v9-sealed-sha-i16-residual "
         "resident=false staged=true",
         "awproject_metal_initial_readback products=8 "
         "residency=metal-shared-high-limb-only-grid resident_bytes=9447840000",
@@ -97,7 +97,7 @@ def valid_runtime_log() -> str:
         "awproject_source_major_staged_streaming_ready segments=1 spill_bytes=900 "
         "compiled_total_bytes=1000 streaming_live_peak_bytes=1000 "
         "streaming_ceiling_bytes=2000 resident_bytes=0 prefetch_slots=1 "
-        "architecture=direct-source-major-v8-single-slot-i16-residual "
+        "architecture=direct-source-major-v9-sealed-sha-i16-residual "
         "lifecycle=after-dirty-grid-release resident=false",
         "awproject_source_major_invariant_weight_spill decision=staged terms=2 "
         "bytes=1180980000 resident_bytes_after=0 "
@@ -121,7 +121,8 @@ def valid_runtime_log() -> str:
         "awproject_metal_segmented_global_replay_summary segments=1 "
         "payload_bytes=900 read_bytes=900 spill_read_bytes=900 "
         "runtime_grouping_builds=0 runtime_sort_builds=0 "
-        "runtime_route_builds=0 source_major_streaming=true",
+        "runtime_route_builds=0 source_major_streaming=true "
+        "sha256_verified_bytes=900 sha256_verification=full",
     ]
     for suffix in single.shared.EXPECTED_PRODUCTS:
         shape = "1x1x1x1" if suffix.startswith(".sumwt") else "12150x12150x1x1"
@@ -176,7 +177,7 @@ class FullVlassSingleAcceptanceContractTest(unittest.TestCase):
                 "initial_dirty_backend=cpu",
             ),
             ("tile_side=11", "tile_side=16"),
-            ("direct-source-major-v8-single-slot-i16-residual", "legacy-windowed"),
+            ("direct-source-major-v9-sealed-sha-i16-residual", "legacy-windowed"),
             ("low_field=1525", "low_field=1107"),
         )
         for old, new in mutations:

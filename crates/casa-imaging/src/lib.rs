@@ -6096,7 +6096,7 @@ where
                 device_budget_bytes,
                 safety_reserve_bytes,
             } => eprintln!(
-                "awproject_initial_grid_plan backend=source-major-grouped-metal-f64 architecture=direct-source-major-v8-single-slot-i16-residual accumulation=high-limb-only tile_side={tile_side} workers={workers} compile_ceiling_bytes={process_compile_ceiling_bytes} replay_streaming_ceiling_bytes={replay_retention_ceiling_bytes} device_budget_bytes={device_budget_bytes} safety_reserve_bytes={safety_reserve_bytes} legacy_tap_scratch_bytes=0 legacy_priming_scratch_bytes=0 staged_replay=true stream_after_dirty_grid_release=true prefetch_slots=1 planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
+                "awproject_initial_grid_plan backend=source-major-grouped-metal-f64 architecture=direct-source-major-v9-sealed-sha-i16-residual accumulation=high-limb-only tile_side={tile_side} workers={workers} compile_ceiling_bytes={process_compile_ceiling_bytes} replay_streaming_ceiling_bytes={replay_retention_ceiling_bytes} device_budget_bytes={device_budget_bytes} safety_reserve_bytes={safety_reserve_bytes} legacy_tap_scratch_bytes=0 legacy_priming_scratch_bytes=0 staged_replay=true stream_after_dirty_grid_release=true prefetch_slots=1 planned_peak_bytes={} usable_memory_bytes={} source=resolved-plan",
                 execution_config.resolved.maximum_planned_resident_bytes,
                 execution_config.resolved.usable_memory_bytes,
             ),
@@ -8205,7 +8205,9 @@ impl MosaicMtmfsInvariantWeightSpill {
         let mut terms = Vec::with_capacity(self.sections.len());
         let mut restored_bytes = 0usize;
         for section in self.sections {
-            let values = self.store.read_vec_at(section, "invariant weight term")?;
+            let values = self
+                .store
+                .read_vec_at(section, "invariant weight term", true)?;
             restored_bytes = restored_bytes
                 .checked_add(section.byte_len)
                 .ok_or_else(|| {
@@ -10853,6 +10855,8 @@ struct AwProjectCompactReplayCache {
     #[cfg(all(target_os = "macos", not(coverage)))]
     source_major_last_block: Option<usize>,
     #[cfg(all(target_os = "macos", not(coverage)))]
+    source_major_payload_sha256_verified: bool,
+    #[cfg(all(target_os = "macos", not(coverage)))]
     incremental_model_probe: Option<AwProjectIncrementalModelProbeCache>,
     #[cfg(all(target_os = "macos", not(coverage)))]
     selected_model_support: Vec<(usize, usize)>,
@@ -10910,6 +10914,8 @@ impl AwProjectCompactReplayCache {
             source_major_initial_receipts: 0,
             #[cfg(all(target_os = "macos", not(coverage)))]
             source_major_last_block: None,
+            #[cfg(all(target_os = "macos", not(coverage)))]
+            source_major_payload_sha256_verified: false,
             #[cfg(all(target_os = "macos", not(coverage)))]
             incremental_model_probe: None,
             #[cfg(all(target_os = "macos", not(coverage)))]
@@ -14439,6 +14445,7 @@ struct AwProjectMetalSpillStore {
     file: File,
     bytes_written: u64,
     bytes_read: u64,
+    sealed: bool,
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -14482,6 +14489,8 @@ impl AwProjectMetalEffectiveSupportAdmissionDecision {
 #[cfg(all(target_os = "macos", not(coverage)))]
 struct AwProjectMetalPrefetchSequenceStats {
     bytes_read: u64,
+    sha256_verified_bytes: u64,
+    reused_sealed_verification: bool,
     requested: bool,
     decision: AwProjectMetalEffectiveSupportAdmissionDecision,
     reason: Option<&'static str>,
@@ -14597,7 +14606,38 @@ impl AwProjectMetalSpillStore {
             file,
             bytes_written: 0,
             bytes_read: 0,
+            sealed: false,
         })
+    }
+
+    fn seal(&mut self) -> Result<(), ImagingError> {
+        if self.sealed {
+            return Err(ImagingError::InvalidRequest(
+                "segmented AWProject spill store was sealed more than once".to_string(),
+            ));
+        }
+        self.file.flush().map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "flush segmented AWProject spill before sealing: {error}"
+            ))
+        })?;
+        let file_bytes = self
+            .file
+            .metadata()
+            .map_err(|error| {
+                ImagingError::InvalidRequest(format!(
+                    "inspect segmented AWProject spill before sealing: {error}"
+                ))
+            })?
+            .len();
+        if file_bytes != self.bytes_written {
+            return Err(ImagingError::Normalization(format!(
+                "segmented AWProject spill has {file_bytes} bytes at seal, expected {}",
+                self.bytes_written,
+            )));
+        }
+        self.sealed = true;
+        Ok(())
     }
 
     fn write_slice<T: Copy>(
@@ -14605,6 +14645,11 @@ impl AwProjectMetalSpillStore {
         values: &[T],
         label: &str,
     ) -> Result<AwProjectMetalSpillSection, ImagingError> {
+        if self.sealed {
+            return Err(ImagingError::InvalidRequest(format!(
+                "cannot write segmented AWProject {label} after sealing"
+            )));
+        }
         let alignment = std::mem::align_of::<T>().max(1) as u64;
         let aligned_offset = self
             .bytes_written
@@ -14713,6 +14758,7 @@ impl AwProjectMetalSpillStore {
         &self,
         section: AwProjectMetalSpillSection,
         label: &str,
+        verify_sha256: bool,
     ) -> Result<Vec<T>, ImagingError> {
         use std::os::unix::fs::FileExt;
 
@@ -14746,11 +14792,13 @@ impl AwProjectMetalSpillStore {
                     "positionally reload segmented AWProject {label} spill: {error}"
                 ))
             })?;
-        let observed_sha256: [u8; 32] = Sha256::digest(&*bytes).into();
-        if observed_sha256 != section.sha256 {
-            return Err(ImagingError::Normalization(format!(
-                "segmented AWProject {label} spill section failed SHA-256 verification"
-            )));
+        if verify_sha256 {
+            let observed_sha256: [u8; 32] = Sha256::digest(&*bytes).into();
+            if observed_sha256 != section.sha256 {
+                return Err(ImagingError::Normalization(format!(
+                    "segmented AWProject {label} spill section failed SHA-256 verification"
+                )));
+            }
         }
         let pointer = values.as_mut_ptr().cast::<T>();
         let len = values.len();
@@ -15015,7 +15063,13 @@ impl AwProjectMetalSpillStore {
     fn reload_prefetched(
         &self,
         descriptor: &AwProjectMetalSpilledProgram,
+        verify_sha256: bool,
     ) -> Result<AwProjectMetalPrefetchedProgram, ImagingError> {
+        if !verify_sha256 && !self.sealed {
+            return Err(ImagingError::InvalidRequest(
+                "segmented AWProject spill verification reuse requires a sealed store".to_string(),
+            ));
+        }
         let reload_started = Instant::now();
         let aot_grouped_tile = match (
             descriptor.aot_grouped_plans,
@@ -15035,18 +15089,33 @@ impl AwProjectMetalSpillStore {
                 Some(receipt),
             ) => Some(AwProjectMetalAotGroupedTileProgram {
                 grouped: AwProjectMetalGroupedTileProgram {
-                    groups: self.read_vec_at(groups, "AOT grouped plans")?,
+                    groups: self.read_vec_at(groups, "AOT grouped plans", verify_sha256)?,
                     tile_plan: AwProjectMetalTilePlan {
                         tile_side: descriptor.tile_side,
                         tiles_y: descriptor.tiles_y,
-                        active_tile_ids: self.read_vec_at(active, "AOT active tile IDs")?,
-                        tile_fragment_offsets: self
-                            .read_vec_at(offsets, "AOT tile fragment offsets")?,
-                        fragments: self.read_vec_at(fragments, "AOT tile fragments")?,
+                        active_tile_ids: self.read_vec_at(
+                            active,
+                            "AOT active tile IDs",
+                            verify_sha256,
+                        )?,
+                        tile_fragment_offsets: self.read_vec_at(
+                            offsets,
+                            "AOT tile fragment offsets",
+                            verify_sha256,
+                        )?,
+                        fragments: self.read_vec_at(
+                            fragments,
+                            "AOT tile fragments",
+                            verify_sha256,
+                        )?,
                         plan_elapsed: Duration::ZERO,
                     },
                 },
-                sample_role_groups: self.read_vec_at(mappings, "AOT sample-role groups")?,
+                sample_role_groups: self.read_vec_at(
+                    mappings,
+                    "AOT sample-role groups",
+                    verify_sha256,
+                )?,
                 group_sums: vec![[0.0; 4]; receipt.group_count],
                 fixed_scales: Vec::with_capacity(2),
                 inverse_fixed_scales: Vec::with_capacity(2),
@@ -15061,31 +15130,67 @@ impl AwProjectMetalSpillStore {
         };
         let program = AwProjectMetalResidentProgram {
             prediction_batch: AwProjectMetalPredictionBatch {
-                samples: self.read_vec_at(descriptor.prediction_samples, "prediction samples")?,
-                source_sample_indices: self
-                    .read_vec_at(descriptor.source_sample_indices, "source sample indices")?,
+                samples: self.read_vec_at(
+                    descriptor.prediction_samples,
+                    "prediction samples",
+                    verify_sha256,
+                )?,
+                source_sample_indices: self.read_vec_at(
+                    descriptor.source_sample_indices,
+                    "source sample indices",
+                    verify_sha256,
+                )?,
                 cf_metadata: Vec::new(),
-                kernels: self.read_vec_at(descriptor.kernels, "shared kernels")?,
-                quantized_kernels: self
-                    .read_vec_at(descriptor.quantized_kernels, "scaled-i16 shared kernels")?,
-                kernel_scales: self
-                    .read_vec_at(descriptor.kernel_scales, "scaled-i16 kernel scales")?,
-                phases: self.read_vec_at(descriptor.prediction_phases, "prediction phases")?,
+                kernels: self.read_vec_at(descriptor.kernels, "shared kernels", verify_sha256)?,
+                quantized_kernels: self.read_vec_at(
+                    descriptor.quantized_kernels,
+                    "scaled-i16 shared kernels",
+                    verify_sha256,
+                )?,
+                kernel_scales: self.read_vec_at(
+                    descriptor.kernel_scales,
+                    "scaled-i16 kernel scales",
+                    verify_sha256,
+                )?,
+                phases: self.read_vec_at(
+                    descriptor.prediction_phases,
+                    "prediction phases",
+                    verify_sha256,
+                )?,
             },
             tile_batch: AwProjectMetalBatch {
-                samples: self.read_vec_at(descriptor.tile_samples, "tile samples")?,
+                samples: self.read_vec_at(
+                    descriptor.tile_samples,
+                    "tile samples",
+                    verify_sha256,
+                )?,
                 kernels: Vec::new(),
-                phases: self.read_vec_at(descriptor.tile_phases, "tile phases")?,
-                term_weights: self.read_vec_at(descriptor.term_weights, "term weights")?,
+                phases: self.read_vec_at(descriptor.tile_phases, "tile phases", verify_sha256)?,
+                term_weights: self.read_vec_at(
+                    descriptor.term_weights,
+                    "term weights",
+                    verify_sha256,
+                )?,
                 kernel_pack: Duration::ZERO,
             },
             tile_plan: AwProjectMetalTilePlan {
                 tile_side: descriptor.tile_side,
                 tiles_y: descriptor.tiles_y,
-                active_tile_ids: self.read_vec_at(descriptor.active_tile_ids, "active tile IDs")?,
-                tile_fragment_offsets: self
-                    .read_vec_at(descriptor.tile_fragment_offsets, "tile fragment offsets")?,
-                fragments: self.read_vec_at(descriptor.fragments, "tile fragments")?,
+                active_tile_ids: self.read_vec_at(
+                    descriptor.active_tile_ids,
+                    "active tile IDs",
+                    verify_sha256,
+                )?,
+                tile_fragment_offsets: self.read_vec_at(
+                    descriptor.tile_fragment_offsets,
+                    "tile fragment offsets",
+                    verify_sha256,
+                )?,
+                fragments: self.read_vec_at(
+                    descriptor.fragments,
+                    "tile fragments",
+                    verify_sha256,
+                )?,
                 plan_elapsed: Duration::ZERO,
             },
             aot_grouped_tile,
@@ -15109,8 +15214,9 @@ impl AwProjectMetalSpillStore {
         &self,
         descriptor: &AwProjectMetalSpilledProgram,
         config: Option<AwProjectMetalEffectiveSupportConfig>,
+        verify_sha256: bool,
     ) -> Result<AwProjectMetalPrefetchedProgram, ImagingError> {
-        let mut loaded = self.reload_prefetched(descriptor)?;
+        let mut loaded = self.reload_prefetched(descriptor, verify_sha256)?;
         if let Some(config) = config {
             if loaded.program.aot_grouped_tile.is_some() {
                 return Err(ImagingError::InvalidRequest(
@@ -15132,6 +15238,7 @@ fn replay_awproject_metal_prefetched_sequence(
     descriptors: &[AwProjectMetalSpilledProgram],
     effective_support: Option<AwProjectMetalEffectiveSupportConfig>,
     prefetch_next: bool,
+    verify_sha256: bool,
     mut consume: impl FnMut(
         usize,
         &AwProjectMetalSpilledProgram,
@@ -15193,14 +15300,22 @@ fn replay_awproject_metal_prefetched_sequence(
         return Ok(stats);
     };
     let initial_prepare_started = Instant::now();
-    let mut current =
-        Some(store.reload_prefetched_with_effective_support(first, admitted_effective_support)?);
+    let mut current = Some(store.reload_prefetched_with_effective_support(
+        first,
+        admitted_effective_support,
+        verify_sha256,
+    )?);
     stats.initial_prepare = initial_prepare_started.elapsed();
     for (segment, descriptor) in descriptors.iter().enumerate() {
         let prefetched = current
             .take()
             .expect("prefetched AWProject sequence must retain its current segment");
         stats.bytes_read = stats.bytes_read.saturating_add(prefetched.bytes_read);
+        if verify_sha256 {
+            stats.sha256_verified_bytes = stats
+                .sha256_verified_bytes
+                .saturating_add(prefetched.bytes_read);
+        }
         if prefetched.program.aot_grouped_tile.is_some() {
             stats.aot_use_count = stats.aot_use_count.saturating_add(1);
         }
@@ -15215,6 +15330,7 @@ fn replay_awproject_metal_prefetched_sequence(
                         store.reload_prefetched_with_effective_support(
                             next,
                             admitted_effective_support,
+                            verify_sha256,
                         )
                     })
                 });
@@ -15237,14 +15353,18 @@ fn replay_awproject_metal_prefetched_sequence(
                 continue;
             };
             let wait_started = Instant::now();
-            let loaded =
-                store.reload_prefetched_with_effective_support(next, admitted_effective_support)?;
+            let loaded = store.reload_prefetched_with_effective_support(
+                next,
+                admitted_effective_support,
+                verify_sha256,
+            )?;
             (Some(loaded), wait_started.elapsed())
         };
         current = next;
         stats.prefetch_wait += prefetch_wait;
     }
     stats.record_runtime_build_delta(runtime_builds_before);
+    stats.reused_sealed_verification = !verify_sha256;
     Ok(stats)
 }
 
@@ -30698,7 +30818,7 @@ impl AwProjectCompactReplayCache {
         self.source_major_direct_segments += 1;
         self.source_major_initial_receipts += 1;
         eprintln!(
-            "awproject_source_major_staging source_block={source_block_ordinal} segments={} program_bytes={program_bytes} compiled_total_bytes={compiled_after} streaming_live_bytes={program_bytes} streaming_ceiling_bytes={} spill_bytes={} total_spill_bytes={} reload_bytes=0 architecture=direct-source-major-v8-single-slot-i16-residual resident=false staged=true",
+            "awproject_source_major_staging source_block={source_block_ordinal} segments={} program_bytes={program_bytes} compiled_total_bytes={compiled_after} streaming_live_bytes={program_bytes} streaming_ceiling_bytes={} spill_bytes={} total_spill_bytes={} reload_bytes=0 architecture=direct-source-major-v9-sealed-sha-i16-residual resident=false staged=true",
             self.source_major_direct_segments,
             self.budget_bytes,
             self.spilled_metal_global_programs
@@ -31258,7 +31378,7 @@ impl AwProjectCompactReplayCache {
         let mut read_bytes = 0u64;
         let mut actual_program_bytes = 0usize;
         for (segment, descriptor) in descriptors.iter().enumerate() {
-            let loaded = store.reload_prefetched(descriptor)?;
+            let loaded = store.reload_prefetched(descriptor, true)?;
             let actual_bytes = loaded.program.resident_bytes();
             let expected_bytes = descriptor.expected_resident_bytes()?;
             if actual_bytes != expected_bytes {
@@ -31352,10 +31472,19 @@ impl AwProjectCompactReplayCache {
                 self.compiled_total_bytes,
             )));
         }
+        self.metal_global_spill_store
+            .as_mut()
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "direct source-major staged replay lost its spill store".to_string(),
+                )
+            })?
+            .seal()?;
         self.resident_bytes = 0;
+        self.source_major_payload_sha256_verified = false;
         self.segmented_metal_global_replay_ready = true;
         eprintln!(
-            "awproject_source_major_staged_streaming_ready segments={} spill_bytes={} compiled_total_bytes={} streaming_live_peak_bytes={} streaming_ceiling_bytes={} resident_bytes=0 prefetch_slots=1 architecture=direct-source-major-v8-single-slot-i16-residual lifecycle=after-dirty-grid-release resident=false",
+            "awproject_source_major_staged_streaming_ready segments={} spill_bytes={} compiled_total_bytes={} streaming_live_peak_bytes={} streaming_ceiling_bytes={} resident_bytes=0 prefetch_slots=1 architecture=direct-source-major-v9-sealed-sha-i16-residual lifecycle=after-dirty-grid-release resident=false",
             self.spilled_metal_global_programs.len(),
             self.spilled_metal_global_payload_bytes,
             verified_total_bytes,
@@ -40291,6 +40420,7 @@ fn replay_awproject_metal_spilled_global_programs(
     }
     let total_payload_bytes = cache.spilled_metal_global_payload_bytes;
     let grouped_metal_admission = cache.grouped_metal_admission;
+    let verify_sha256 = !source_major_streaming || !cache.source_major_payload_sha256_verified;
     cache.metal_global_metadata.clone().apply(accumulation);
     let store = cache.metal_global_spill_store.as_mut().ok_or_else(|| {
         ImagingError::InvalidRequest(
@@ -40305,6 +40435,7 @@ fn replay_awproject_metal_spilled_global_programs(
         &programs,
         AwProjectMetalEffectiveSupportConfig::experiment_from_environment()?,
         !source_major_streaming,
+        verify_sha256,
         |segment, descriptor, loaded| {
             let reload_elapsed = loaded.reload_elapsed;
             if let Some(effective_support) = loaded.effective_support.as_ref() {
@@ -40364,6 +40495,21 @@ fn replay_awproject_metal_spilled_global_programs(
                 prefetch_stats.runtime_route_builds,
             )));
         }
+        if verify_sha256 {
+            if prefetch_stats.sha256_verified_bytes != total_payload_bytes as u64 {
+                return Err(ImagingError::Normalization(format!(
+                    "source-major streamed replay verified {} bytes, expected {total_payload_bytes}",
+                    prefetch_stats.sha256_verified_bytes,
+                )));
+            }
+            cache.source_major_payload_sha256_verified = true;
+        } else if !prefetch_stats.reused_sealed_verification
+            || prefetch_stats.sha256_verified_bytes != 0
+        {
+            return Err(ImagingError::Normalization(
+                "source-major streamed replay lost its sealed verification receipt".to_string(),
+            ));
+        }
     }
     if profile::standard_mfs_profile_detail_enabled() {
         eprintln!(
@@ -40375,7 +40521,8 @@ fn replay_awproject_metal_spilled_global_programs(
              effective_support_total_compile_ms={:.3} \
              effective_support_initial_prepare_ms={:.3} \
              effective_support_prefetch_wait_ms={:.3} runtime_grouping_builds={} \
-             runtime_sort_builds={} runtime_route_builds={} source_major_streaming={}",
+             runtime_sort_builds={} runtime_route_builds={} source_major_streaming={} \
+             sha256_verified_bytes={} sha256_verification={}",
             programs.len(),
             total_payload_bytes,
             spill_read_bytes,
@@ -40393,6 +40540,12 @@ fn replay_awproject_metal_spilled_global_programs(
             prefetch_stats.runtime_sort_builds,
             prefetch_stats.runtime_route_builds,
             source_major_streaming,
+            prefetch_stats.sha256_verified_bytes,
+            if prefetch_stats.reused_sealed_verification {
+                "sealed-reuse"
+            } else {
+                "full"
+            },
         );
     }
     Ok((programs.len(), largest_samples))
@@ -41963,7 +42116,7 @@ fn accumulate_awproject_source_major_block(
             classification_skipped_samples,
         )?;
         eprintln!(
-            "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples=0 initial_partitions=0 residual_segments=0 compact_windows=0 spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v8-single-slot-i16-residual initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
+            "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples=0 initial_partitions=0 residual_segments=0 compact_windows=0 spill_bytes=0 reload_bytes=0 architecture=direct-source-major-v9-sealed-sha-i16-residual initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
             profile::millis(started.elapsed()),
         );
         replay_cache.log();
@@ -42052,7 +42205,7 @@ fn accumulate_awproject_source_major_block(
         .map_or(0, |program| program.payload_bytes);
 
     eprintln!(
-        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes=0 imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} residual_i16_kernel_bytes={} residual_i16_scale_bytes={} compiled_total_bytes={} streaming_ceiling_bytes={} spill_bytes={} reload_bytes=0 architecture=direct-source-major-v8-single-slot-i16-residual initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
+        "awproject_source_major_block source_block={replay_block_ordinal} classified_samples={classified_samples} accepted_samples={accepted_samples} initial_partitions=2 residual_segments=1 compact_windows=0 classification_owner_bytes={classification_owner_bytes} materialized_owner_bytes={materialized_owner_bytes} builder_owner_bytes={builder_owner_bytes} imaging_owner_bytes={} weight_owner_bytes={} concurrent_initial_owner_bytes={} initial_grid_bytes={initial_grid_bytes} initial_compensation_bytes=0 imaging_device_peak_bytes={} weight_device_peak_bytes={} imaging_groups={} weight_groups={} imaging_route_fragments={} weight_route_fragments={} phase_ms={:.3} plan_ms={:.3} materialize_ms={:.3} prepare_ms={:.3} builder_ms={:.3} imaging_group_ms={:.3} weight_group_ms={:.3} initial_group_wall_ms={:.3} residual_program_bytes={program_bytes} residual_i16_kernel_bytes={} residual_i16_scale_bytes={} compiled_total_bytes={} streaming_ceiling_bytes={} spill_bytes={} reload_bytes=0 architecture=direct-source-major-v9-sealed-sha-i16-residual initial_accumulation=high-limb-only exact_support=true elapsed_ms={:.3}",
         initial_receipt.imaging_owner_bytes,
         initial_receipt.weight_owner_bytes,
         initial_receipt.concurrent_owner_bytes,
@@ -80746,11 +80899,13 @@ mod tests {
         );
         assert!(cache.block(0).unwrap().windows.is_empty());
         assert!(cache.segmented_metal_global_replay_ready);
+        assert!(cache.metal_global_spill_store.as_ref().unwrap().sealed);
         let stats = super::replay_awproject_metal_prefetched_sequence(
             cache.metal_global_spill_store.as_ref().unwrap(),
             &cache.spilled_metal_global_programs,
             None,
             false,
+            true,
             |_, _, loaded| {
                 assert_eq!(
                     loaded
@@ -80779,10 +80934,46 @@ mod tests {
         )
         .unwrap();
         assert_eq!(stats.bytes_read, staged_payload_bytes as u64);
+        assert_eq!(stats.sha256_verified_bytes, staged_payload_bytes as u64);
+        assert!(!stats.reused_sealed_verification);
         assert_eq!(stats.aot_use_count, 1);
         assert_eq!(stats.runtime_grouping_builds, 0);
         assert_eq!(stats.runtime_sort_builds, 0);
         assert_eq!(stats.runtime_route_builds, 0);
+        let reused = super::replay_awproject_metal_prefetched_sequence(
+            cache.metal_global_spill_store.as_ref().unwrap(),
+            &cache.spilled_metal_global_programs,
+            None,
+            false,
+            false,
+            |_, _, loaded| {
+                assert_eq!(
+                    super::hash_awproject_copy_slice(
+                        &loaded.program.prediction_batch.quantized_kernels,
+                    ),
+                    quantized_hash,
+                );
+                assert_eq!(
+                    super::hash_awproject_copy_slice(
+                        &loaded.program.prediction_batch.kernel_scales,
+                    ),
+                    scale_hash,
+                );
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(reused.bytes_read, staged_payload_bytes as u64);
+        assert_eq!(reused.sha256_verified_bytes, 0);
+        assert!(reused.reused_sealed_verification);
+        assert!(
+            cache
+                .metal_global_spill_store
+                .as_mut()
+                .unwrap()
+                .write_slice(&[1u8], "post-seal mutation")
+                .is_err()
+        );
 
         let mut rejected =
             super::AwProjectCompactReplayCache::new(program_bytes - 1, Some(grouped), None);
@@ -80979,7 +81170,7 @@ mod tests {
             expected.grouped_route_sha256
         );
 
-        let mut prefetched = store.reload_prefetched(&descriptor).unwrap().program;
+        let mut prefetched = store.reload_prefetched(&descriptor, true).unwrap().program;
         let prefetched_aot = prefetched
             .aot_grouped_tile
             .as_ref()
@@ -81031,6 +81222,7 @@ mod tests {
                     super::AWPROJECT_METAL_EFFECTIVE_SUPPORT_FOCUSED_OMITTED_ENERGY_FRACTION,
             }),
             true,
+            true,
             |segment, _, loaded| {
                 assert_eq!(segment, 0);
                 assert!(loaded.program.aot_grouped_tile.is_some());
@@ -81056,6 +81248,7 @@ mod tests {
                 omitted_energy_fraction: 1.0e-4,
             }),
             true,
+            true,
             |_, _, _| Ok(()),
         )
         .expect_err("a mismatched loader threshold must fail closed");
@@ -81074,6 +81267,7 @@ mod tests {
                 omitted_energy_fraction:
                     super::AWPROJECT_METAL_EFFECTIVE_SUPPORT_FOCUSED_OMITTED_ENERGY_FRACTION,
             }),
+            true,
             true,
             |_, _, _| Ok(()),
         )
@@ -81108,7 +81302,7 @@ mod tests {
             .map(|descriptor| descriptor.expected_resident_bytes().unwrap())
             .sum::<usize>();
         for descriptor in &descriptors {
-            let loaded = store.reload_prefetched(descriptor).unwrap();
+            let loaded = store.reload_prefetched(descriptor, true).unwrap();
             assert_eq!(
                 loaded.program.resident_bytes(),
                 descriptor.expected_resident_bytes().unwrap()
@@ -81640,6 +81834,7 @@ mod tests {
             &descriptors,
             None,
             true,
+            true,
             |segment, descriptor, loaded| {
                 assert_eq!(loaded.bytes_read, descriptor.payload_bytes as u64);
                 positional_markers.push((
@@ -81670,6 +81865,7 @@ mod tests {
             &store,
             &corrupted,
             None,
+            true,
             true,
             |segment, _, _| {
                 completed.push(segment);
@@ -81720,6 +81916,7 @@ mod tests {
             Some(super::AwProjectMetalEffectiveSupportConfig {
                 omitted_energy_fraction: 1.0e-4,
             }),
+            true,
             true,
             |segment, descriptor, loaded| {
                 let support = loaded
@@ -81788,6 +81985,7 @@ mod tests {
             Some(super::AwProjectMetalEffectiveSupportConfig {
                 omitted_energy_fraction: 1.0e-4,
             }),
+            true,
             true,
             |_, _, loaded| {
                 single_segment_compiled = loaded.effective_support.is_some();
