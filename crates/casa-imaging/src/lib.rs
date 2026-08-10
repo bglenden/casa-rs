@@ -25786,6 +25786,30 @@ fn plan_awproject_metal_group_tiles<T: AwProjectMetalTileGroup>(
     grid_height: usize,
     tile_side: usize,
 ) -> Result<(AwProjectMetalTilePlan, usize), ImagingError> {
+    plan_awproject_metal_group_tiles_serial(groups, grid_width, grid_height, tile_side)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn plan_awproject_metal_group_tiles_with_workers<T: AwProjectMetalTileGroup + Sync>(
+    groups: &[T],
+    grid_width: usize,
+    grid_height: usize,
+    tile_side: usize,
+    workers: usize,
+) -> Result<(AwProjectMetalTilePlan, usize), ImagingError> {
+    if workers <= 1 || groups.len() < 65_536 {
+        return plan_awproject_metal_group_tiles_serial(groups, grid_width, grid_height, tile_side);
+    }
+    plan_awproject_metal_group_tiles_parallel(groups, grid_width, grid_height, tile_side, workers)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn plan_awproject_metal_group_tiles_serial<T: AwProjectMetalTileGroup>(
+    groups: &[T],
+    grid_width: usize,
+    grid_height: usize,
+    tile_side: usize,
+) -> Result<(AwProjectMetalTilePlan, usize), ImagingError> {
     record_awproject_metal_runtime_route_build();
     let started = Instant::now();
     let tiles_x = grid_width.div_ceil(tile_side);
@@ -25906,6 +25930,214 @@ fn plan_awproject_metal_group_tiles<T: AwProjectMetalTileGroup>(
                 .capacity()
                 .saturating_mul(std::mem::size_of::<usize>()),
         );
+    Ok((
+        AwProjectMetalTilePlan {
+            tile_side,
+            tiles_y,
+            active_tile_ids,
+            tile_fragment_offsets,
+            fragments,
+            plan_elapsed: started.elapsed(),
+        },
+        known_peak_bytes,
+    ))
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct AwProjectMetalLocalTileRoute {
+    offsets: Vec<usize>,
+    fragments: Vec<u32>,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn plan_awproject_metal_group_tiles_parallel<T: AwProjectMetalTileGroup + Sync>(
+    groups: &[T],
+    grid_width: usize,
+    grid_height: usize,
+    tile_side: usize,
+    workers: usize,
+) -> Result<(AwProjectMetalTilePlan, usize), ImagingError> {
+    record_awproject_metal_runtime_route_build();
+    let started = Instant::now();
+    let tiles_x = grid_width.div_ceil(tile_side);
+    let tiles_y = grid_height.div_ceil(tile_side);
+    let tile_count = tiles_x.checked_mul(tiles_y).ok_or_else(|| {
+        ImagingError::InvalidRequest("AWProject grouped Metal tile count overflowed".to_string())
+    })?;
+    let chunk_size = groups.len().div_ceil(workers.max(1));
+    let local_counts = groups
+        .par_chunks(chunk_size)
+        .map(|chunk| {
+            let mut counts = vec![0usize; tile_count];
+            let mut tile_ids = Vec::with_capacity(64);
+            for group in chunk {
+                awproject_metal_plan_tile_ids(
+                    group.tile_plan(),
+                    grid_width,
+                    grid_height,
+                    tile_side,
+                    tiles_y,
+                    &mut tile_ids,
+                )?;
+                for &tile_id in &tile_ids {
+                    counts[tile_id] = counts[tile_id].checked_add(1).ok_or_else(|| {
+                        ImagingError::InvalidRequest(
+                            "AWProject Metal local tile fragment count overflowed".to_string(),
+                        )
+                    })?;
+                }
+            }
+            Ok::<_, ImagingError>(counts)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut tile_counts = vec![0usize; tile_count];
+    for counts in &local_counts {
+        for (total, &count) in tile_counts.iter_mut().zip(counts) {
+            *total = total.checked_add(count).ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject Metal tile fragment count overflowed".to_string(),
+                )
+            })?;
+        }
+    }
+    let active_tile_ids = tile_counts
+        .iter()
+        .enumerate()
+        .filter(|&(_, &count)| count > 0)
+        .map(|(tile_id, _)| {
+            u32::try_from(tile_id).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "AWProject Metal tile identifier exceeds u32".to_string(),
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut tile_fragment_offsets = Vec::with_capacity(active_tile_ids.len() + 1);
+    tile_fragment_offsets.push(0u32);
+    for &tile_id in &active_tile_ids {
+        let next = usize::try_from(*tile_fragment_offsets.last().unwrap())
+            .unwrap_or(usize::MAX)
+            .checked_add(tile_counts[tile_id as usize])
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject Metal tile fragment arena overflowed".to_string(),
+                )
+            })?;
+        tile_fragment_offsets.push(u32::try_from(next).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "AWProject Metal tile fragment arena exceeds u32".to_string(),
+            )
+        })?);
+    }
+    let local_routes = groups
+        .par_chunks(chunk_size)
+        .zip(local_counts.into_par_iter())
+        .enumerate()
+        .map(|(chunk_index, (chunk, counts))| {
+            let mut offsets = Vec::with_capacity(tile_count + 1);
+            offsets.push(0usize);
+            for &count in &counts {
+                offsets.push(
+                    offsets
+                        .last()
+                        .copied()
+                        .unwrap_or(usize::MAX)
+                        .checked_add(count)
+                        .ok_or_else(|| {
+                            ImagingError::InvalidRequest(
+                                "AWProject Metal local tile route overflowed".to_string(),
+                            )
+                        })?,
+                );
+            }
+            let mut fragments = vec![0u32; *offsets.last().unwrap_or(&0)];
+            let mut cursors = offsets[..tile_count].to_vec();
+            let mut tile_ids = Vec::with_capacity(64);
+            let source_start = chunk_index.checked_mul(chunk_size).ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "AWProject Metal source chunk offset overflowed".to_string(),
+                )
+            })?;
+            for (local_index, group) in chunk.iter().enumerate() {
+                awproject_metal_plan_tile_ids(
+                    group.tile_plan(),
+                    grid_width,
+                    grid_height,
+                    tile_side,
+                    tiles_y,
+                    &mut tile_ids,
+                )?;
+                let group_index = u32::try_from(source_start + local_index).map_err(|_| {
+                    ImagingError::InvalidRequest(
+                        "AWProject grouped Metal tile plan count exceeds u32".to_string(),
+                    )
+                })?;
+                for &tile_id in &tile_ids {
+                    let destination = cursors[tile_id];
+                    fragments[destination] = group_index;
+                    cursors[tile_id] += 1;
+                }
+            }
+            debug_assert!(
+                cursors
+                    .iter()
+                    .zip(offsets.iter().skip(1))
+                    .all(|(&cursor, &end)| cursor == end)
+            );
+            Ok::<_, ImagingError>(AwProjectMetalLocalTileRoute { offsets, fragments })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let fragment_count =
+        usize::try_from(*tile_fragment_offsets.last().unwrap_or(&0)).unwrap_or(usize::MAX);
+    let mut fragments = Vec::with_capacity(fragment_count);
+    for &tile_id in &active_tile_ids {
+        let tile_id = tile_id as usize;
+        for route in &local_routes {
+            fragments.extend_from_slice(
+                &route.fragments[route.offsets[tile_id]..route.offsets[tile_id + 1]],
+            );
+        }
+    }
+    if fragments.len() != fragment_count {
+        return Err(ImagingError::Normalization(format!(
+            "AWProject parallel tile route produced {} fragments for planned count {fragment_count}",
+            fragments.len(),
+        )));
+    }
+    let local_route_bytes = local_routes.iter().fold(0usize, |total, route| {
+        total
+            .saturating_add(
+                route
+                    .offsets
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<usize>()),
+            )
+            .saturating_add(
+                route
+                    .fragments
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<u32>()),
+            )
+    });
+    let known_peak_bytes = tile_counts
+        .capacity()
+        .saturating_mul(std::mem::size_of::<usize>())
+        .saturating_add(
+            active_tile_ids
+                .capacity()
+                .saturating_mul(std::mem::size_of::<u32>()),
+        )
+        .saturating_add(
+            tile_fragment_offsets
+                .capacity()
+                .saturating_mul(std::mem::size_of::<u32>()),
+        )
+        .saturating_add(
+            fragments
+                .capacity()
+                .saturating_mul(std::mem::size_of::<u32>()),
+        )
+        .saturating_add(local_route_bytes);
     Ok((
         AwProjectMetalTilePlan {
             tile_side,
@@ -26073,6 +26305,7 @@ fn add_awproject_source_major_initial_group(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
 fn finish_awproject_source_major_initial_partition(
     mut groups: Vec<AwProjectMetalInitialGroupedPlan>,
     sums: Vec<[f64; AWPROJECT_INITIAL_GROUPED_PLANE_COUNT * 2]>,
@@ -26081,6 +26314,7 @@ fn finish_awproject_source_major_initial_partition(
     grid_width: usize,
     grid_height: usize,
     tile_side: usize,
+    workers: usize,
 ) -> Result<AwProjectMetalInitialGroupedProgram, ImagingError> {
     for (group, sums) in groups.iter_mut().zip(sums) {
         for (plane, value) in group.values.iter_mut().enumerate() {
@@ -26132,8 +26366,13 @@ fn finish_awproject_source_major_initial_partition(
         fixed_scales.push(scale);
         inverse_fixed_scales.push(scale.recip());
     }
-    let (tile_plan, _) =
-        plan_awproject_metal_group_tiles(&groups, grid_width, grid_height, tile_side)?;
+    let (tile_plan, _) = plan_awproject_metal_group_tiles_with_workers(
+        &groups,
+        grid_width,
+        grid_height,
+        tile_side,
+        workers,
+    )?;
     Ok(AwProjectMetalInitialGroupedProgram {
         groups,
         tile_plan,
@@ -26149,6 +26388,7 @@ fn group_awproject_source_major_initial_imaging(
     grid_width: usize,
     grid_height: usize,
     tile_side: usize,
+    workers: usize,
 ) -> Result<AwProjectMetalInitialGroupedProgram, ImagingError> {
     if batch.term_weights.len() != batch.samples.len().saturating_mul(2) {
         return Err(ImagingError::Normalization(format!(
@@ -26191,6 +26431,7 @@ fn group_awproject_source_major_initial_imaging(
         grid_width,
         grid_height,
         tile_side,
+        workers,
     )
 }
 
@@ -26202,6 +26443,7 @@ fn group_awproject_source_major_initial_weight(
     grid_width: usize,
     grid_height: usize,
     tile_side: usize,
+    workers: usize,
 ) -> Result<AwProjectMetalInitialGroupedProgram, ImagingError> {
     let mut group_index = AwProjectMetalPlanIndex::<usize>::default();
     let mut groups = Vec::new();
@@ -26239,6 +26481,7 @@ fn group_awproject_source_major_initial_weight(
         grid_width,
         grid_height,
         tile_side,
+        workers,
     )
 }
 
@@ -39689,6 +39932,7 @@ fn dispatch_awproject_source_major_initial(
     accumulation: &mut MosaicMtmfsStreamGridAccumulation,
     replay_cache: &AwProjectCompactReplayCache,
     tile_side: usize,
+    workers: usize,
     device_budget_bytes: usize,
     safety_reserve_bytes: usize,
 ) -> Result<AwProjectSourceMajorInitialReceipt, ImagingError> {
@@ -39728,32 +39972,45 @@ fn dispatch_awproject_source_major_initial(
         .unwrap_or(grid_bytes);
     let kernels = program.imaging_kernels();
 
+    let group_pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(workers.max(1))
+        .thread_name(|index| format!("casa-aw-initial-group-{index}"))
+        .build()
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!(
+                "failed to create source-major initial grouping pool: {error}"
+            ))
+        })?;
     let group_wall_started = Instant::now();
-    let (imaging_partition, weight_partition) = rayon::join(
-        || {
-            let started = Instant::now();
-            group_awproject_source_major_initial_imaging(
-                &program.tile_batch,
-                kernels,
-                grid_width,
-                grid_height,
-                tile_side,
-            )
-            .map(|partition| (partition, started.elapsed()))
-        },
-        || {
-            let started = Instant::now();
-            group_awproject_source_major_initial_weight(
-                weight_samples,
-                &weight_atlas.values,
-                weight_phases,
-                grid_width,
-                grid_height,
-                tile_side,
-            )
-            .map(|partition| (partition, started.elapsed()))
-        },
-    );
+    let (imaging_partition, weight_partition) = group_pool.install(|| {
+        rayon::join(
+            || {
+                let started = Instant::now();
+                group_awproject_source_major_initial_imaging(
+                    &program.tile_batch,
+                    kernels,
+                    grid_width,
+                    grid_height,
+                    tile_side,
+                    workers,
+                )
+                .map(|partition| (partition, started.elapsed()))
+            },
+            || {
+                let started = Instant::now();
+                group_awproject_source_major_initial_weight(
+                    weight_samples,
+                    &weight_atlas.values,
+                    weight_phases,
+                    grid_width,
+                    grid_height,
+                    tile_side,
+                    workers,
+                )
+                .map(|partition| (partition, started.elapsed()))
+            },
+        )
+    });
     let (imaging_partition, imaging_group_elapsed) = imaging_partition?;
     let (weight_partition, weight_group_elapsed) = weight_partition?;
     let group_wall_elapsed = group_wall_started.elapsed();
@@ -40008,6 +40265,7 @@ fn accumulate_awproject_source_major_block(
         accumulation,
         replay_cache,
         tile_side,
+        workers,
         device_budget_bytes,
         safety_reserve_bytes,
     )?;
@@ -80088,6 +80346,41 @@ mod tests {
 
     #[test]
     #[cfg(all(target_os = "macos", not(coverage)))]
+    fn awproject_parallel_group_tile_route_matches_serial_order() {
+        let groups = (0..65_536usize)
+            .map(|index| super::AwProjectMetalInitialGroupedPlan {
+                plan: super::AwProjectMetalPlan {
+                    loc_x: 3 + (index % 58) as i32,
+                    loc_y: 2 + ((index / 58) % 60) as i32,
+                    x_support: (index % 3) as u32,
+                    y_support: (index % 2) as u32,
+                    kernel_base: (index % 17) as u32,
+                    _pad0: 0,
+                    phase: super::AwProjectMetalPhasePlan::expanded((index % 11) as u32),
+                },
+                values: [super::WProjectMetalComplex { re: 0.0, im: 0.0 };
+                    super::AWPROJECT_INITIAL_GROUPED_PLANE_COUNT],
+            })
+            .collect::<Vec<_>>();
+        let (serial, _) =
+            super::plan_awproject_metal_group_tiles_serial(&groups, 64, 64, 8).unwrap();
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(4)
+            .build()
+            .unwrap();
+        let (parallel, parallel_peak_bytes) = pool
+            .install(|| super::plan_awproject_metal_group_tiles_with_workers(&groups, 64, 64, 8, 4))
+            .unwrap();
+        assert_eq!(parallel.tile_side, serial.tile_side);
+        assert_eq!(parallel.tiles_y, serial.tiles_y);
+        assert_eq!(parallel.active_tile_ids, serial.active_tile_ids);
+        assert_eq!(parallel.tile_fragment_offsets, serial.tile_fragment_offsets);
+        assert_eq!(parallel.fragments, serial.fragments);
+        assert!(parallel_peak_bytes >= parallel.resident_bytes());
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
     fn awproject_source_major_grouped_initial_partitions_match_source_order_reference() {
         if !super::standard_mfs_metal_device_available() {
             return;
@@ -80150,6 +80443,7 @@ mod tests {
             8,
             8,
             8,
+            1,
         )
         .unwrap();
         let weight = super::group_awproject_source_major_initial_weight(
@@ -80159,6 +80453,7 @@ mod tests {
             8,
             8,
             8,
+            1,
         )
         .unwrap();
         for partition in [&imaging, &weight] {
