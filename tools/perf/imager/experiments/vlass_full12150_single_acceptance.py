@@ -398,11 +398,10 @@ def run_acceptance(args: argparse.Namespace) -> Path:
             if args.allow_pressure_experiment
             else shared.MONITOR_INTERVAL_SECONDS
         ),
-        max_compressed_growth_bytes=(
-            shared.PRESSURE_EXPERIMENT_MAX_COMPRESSED_GROWTH_BYTES
-            if args.allow_pressure_experiment
-            else None
-        ),
+        # Compression remains in telemetry; the pressure experiment stops on
+        # destructive swap/throttling/pressure signals instead of compression
+        # alone.
+        max_compressed_growth_bytes=None,
         wall_limit_seconds=RUST_WALL_LIMIT_SECONDS,
     )
     execution = {

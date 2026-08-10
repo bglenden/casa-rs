@@ -58,7 +58,6 @@ MIN_INTERNAL_FREE_BYTES = 20 * GIB
 MIN_OUTPUT_FREE_BYTES = 100 * GIB
 MONITOR_INTERVAL_SECONDS = 15.0
 PRESSURE_EXPERIMENT_MONITOR_INTERVAL_SECONDS = 5.0
-PRESSURE_EXPERIMENT_MAX_COMPRESSED_GROWTH_BYTES = 2 * GIB
 NO_PROGRESS_SECONDS = 1_800.0
 TERMINATE_GRACE_SECONDS = 10.0
 NORMAL_MEMORY_PRESSURE_LEVEL = 1
@@ -1337,11 +1336,10 @@ def run_acceptance(args: argparse.Namespace) -> Path:
             if args.allow_pressure_experiment
             else MONITOR_INTERVAL_SECONDS
         ),
-        max_compressed_growth_bytes=(
-            PRESSURE_EXPERIMENT_MAX_COMPRESSED_GROWTH_BYTES
-            if args.allow_pressure_experiment
-            else None
-        ),
+        # Compression is measured, but is not destructive by itself. The
+        # pressure experiment still fails immediately on swapout, throttling,
+        # non-normal pressure, or loss of the 2 GiB no-swap reserve.
+        max_compressed_growth_bytes=None,
     )
     execution = {
         "monitor": asdict(monitor),
