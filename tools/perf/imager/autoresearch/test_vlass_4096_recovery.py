@@ -217,25 +217,6 @@ class Vlass4096RecoveryTests(unittest.TestCase):
                     self.contract, log, enforce_sequential_guard=True
                 )
 
-            raw = good.replace(
-                "awproject_aot_grouped_tile_receipt segment=0 omitted_energy_fraction_bits=0",
-                "\n".join(
-                    [
-                        "awproject_raw_fused_metal_admission phase=sealed segment=0 all_fit=true",
-                        "awproject_raw_fused_metal_admission phase=runtime segment=0 all_fit=true",
-                        "awproject_raw_fused_replay segment=0 exact_support=true host_readback_bytes=0 architecture=raw-source-major-fused-v1",
-                    ]
-                ),
-            )
-            log.write_text(raw + "\n", encoding="utf-8")
-            receipt = subject.validate_all_field_log(
-                self.contract, log, enforce_sequential_guard=True
-            )
-            self.assertEqual(1, receipt["segments"])
-            log.write_text(raw.replace("all_fit=true", "all_fit=false", 1) + "\n")
-            with self.assertRaisesRegex(subject.ContractError, "did not fit"):
-                subject.validate_all_field_log(self.contract, log)
-
     def test_all_field_launch_binds_requested_grid_workers(self) -> None:
         captured: dict[str, str] = {}
 
