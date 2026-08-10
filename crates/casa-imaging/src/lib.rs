@@ -18652,47 +18652,103 @@ fn awproject_metal_max_effective_kernel_norm(
         if !seen.insert(identity) {
             continue;
         }
-        let tap_count = usize::try_from(plan.x_support)
-            .ok()
-            .and_then(|support| support.checked_mul(2))
-            .and_then(|value| value.checked_add(1))
-            .and_then(|width| {
-                usize::try_from(plan.y_support)
-                    .ok()
-                    .and_then(|support| support.checked_mul(2))
-                    .and_then(|value| value.checked_add(1))
-                    .and_then(|height| width.checked_mul(height))
-            })
-            .ok_or_else(|| {
-                ImagingError::InvalidRequest(
-                    "AWProject Metal effective-kernel tap count overflowed".to_string(),
-                )
-            })?;
-        let tap_width = usize::try_from(plan.x_support)
-            .ok()
-            .and_then(|support| support.checked_mul(2))
-            .and_then(|value| value.checked_add(1))
-            .ok_or_else(|| {
-                ImagingError::InvalidRequest(
-                    "AWProject Metal effective-kernel width overflowed".to_string(),
-                )
-            })?;
-        for tap_offset in 0..tap_count {
-            let tap_x = tap_offset % tap_width;
-            let tap_y = tap_offset / tap_width;
-            let kernel = awproject_metal_kernel_value(
-                kernels,
+        maximum = maximum.max(awproject_metal_effective_kernel_norm_for_plan(
+            plan, kernels, phases,
+        )?);
+    }
+    if !(maximum.is_finite() && maximum > 0.0) {
+        return Err(ImagingError::Normalization(
+            "AWProject Metal effective kernel atlas has no finite non-zero values".to_string(),
+        ));
+    }
+    Ok(maximum)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_metal_effective_kernel_norm_for_plan(
+    plan: AwProjectMetalPlan,
+    kernels: &[WProjectMetalComplex],
+    phases: &[WProjectMetalComplex],
+) -> Result<f64, ImagingError> {
+    let tap_count = usize::try_from(plan.x_support)
+        .ok()
+        .and_then(|support| support.checked_mul(2))
+        .and_then(|value| value.checked_add(1))
+        .and_then(|width| {
+            usize::try_from(plan.y_support)
+                .ok()
+                .and_then(|support| support.checked_mul(2))
+                .and_then(|value| value.checked_add(1))
+                .and_then(|height| width.checked_mul(height))
+        })
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject Metal effective-kernel tap count overflowed".to_string(),
+            )
+        })?;
+    let tap_width = usize::try_from(plan.x_support)
+        .ok()
+        .and_then(|support| support.checked_mul(2))
+        .and_then(|value| value.checked_add(1))
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "AWProject Metal effective-kernel width overflowed".to_string(),
+            )
+        })?;
+    let mut maximum = 0.0f64;
+    for tap_offset in 0..tap_count {
+        let tap_x = tap_offset % tap_width;
+        let tap_y = tap_offset / tap_width;
+        let kernel = awproject_metal_kernel_value(
+            kernels,
+            plan.kernel_base,
+            plan._pad0,
+            tap_x,
+            tap_y,
+            tap_offset,
+        )?;
+        let phase = awproject_metal_phase_value(plan.phase, phases, tap_x, tap_y, tap_offset)?;
+        let value = Complex32::new(kernel.re, kernel.im) * phase;
+        maximum = maximum.max(f64::from(value.re).hypot(f64::from(value.im)));
+    }
+    Ok(maximum)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn awproject_metal_max_effective_kernel_norm_with_workers(
+    plans: &[AwProjectMetalPlan],
+    kernels: &[WProjectMetalComplex],
+    phases: &[WProjectMetalComplex],
+    workers: usize,
+) -> Result<f64, ImagingError> {
+    if workers <= 1 || plans.len() < 65_536 {
+        return awproject_metal_max_effective_kernel_norm(plans.iter().copied(), kernels, phases);
+    }
+    let mut representatives = HashMap::<
+        [u32; 6],
+        AwProjectMetalPlan,
+        BuildHasherDefault<MosaicMetalSampleHasher>,
+    >::with_hasher(
+        BuildHasherDefault::<MosaicMetalSampleHasher>::default()
+    );
+    for &plan in plans {
+        representatives
+            .entry([
                 plan.kernel_base,
                 plan._pad0,
-                tap_x,
-                tap_y,
-                tap_offset,
-            )?;
-            let phase = awproject_metal_phase_value(plan.phase, phases, tap_x, tap_y, tap_offset)?;
-            let value = Complex32::new(kernel.re, kernel.im) * phase;
-            maximum = maximum.max(f64::from(value.re).hypot(f64::from(value.im)));
-        }
+                plan.phase.base,
+                plan.phase.y_base,
+                plan.x_support,
+                plan.y_support,
+            ])
+            .or_insert(plan);
     }
+    let maximum = representatives
+        .into_values()
+        .collect::<Vec<_>>()
+        .par_iter()
+        .map(|&plan| awproject_metal_effective_kernel_norm_for_plan(plan, kernels, phases))
+        .try_reduce(|| 0.0f64, |left, right| Ok(left.max(right)))?;
     if !(maximum.is_finite() && maximum > 0.0) {
         return Err(ImagingError::Normalization(
             "AWProject Metal effective kernel atlas has no finite non-zero values".to_string(),
@@ -26316,7 +26372,10 @@ fn finish_awproject_source_major_initial_partition(
     tile_side: usize,
     workers: usize,
 ) -> Result<AwProjectMetalInitialGroupedProgram, ImagingError> {
-    for (group, sums) in groups.iter_mut().zip(sums) {
+    let finalize_started = Instant::now();
+    let finalize = |group: &mut AwProjectMetalInitialGroupedPlan,
+                    sums: [f64; AWPROJECT_INITIAL_GROUPED_PLANE_COUNT * 2]|
+     -> Result<(), ImagingError> {
         for (plane, value) in group.values.iter_mut().enumerate() {
             *value = WProjectMetalComplex {
                 re: sums[plane * 2] as f32,
@@ -26328,12 +26387,25 @@ fn finish_awproject_source_major_initial_partition(
                 ));
             }
         }
+        Ok(())
+    };
+    if workers > 1 && groups.len() >= 65_536 {
+        groups
+            .par_iter_mut()
+            .zip(sums.into_par_iter())
+            .try_for_each(|(group, sums)| finalize(group, sums))?;
+    } else {
+        for (group, sums) in groups.iter_mut().zip(sums) {
+            finalize(group, sums)?;
+        }
     }
-    let max_kernel_norm = awproject_metal_max_effective_kernel_norm(
-        groups.iter().map(|group| group.plan),
-        kernels,
-        phases,
-    )?;
+    let finalize_elapsed = finalize_started.elapsed();
+    let kernel_norm_started = Instant::now();
+    let plans = groups.iter().map(|group| group.plan).collect::<Vec<_>>();
+    let max_kernel_norm =
+        awproject_metal_max_effective_kernel_norm_with_workers(&plans, kernels, phases, workers)?;
+    let kernel_norm_elapsed = kernel_norm_started.elapsed();
+    drop(plans);
     let (tile_plan, _) = plan_awproject_metal_group_tiles_with_workers(
         &groups,
         grid_width,
@@ -26348,21 +26420,50 @@ fn finish_awproject_source_major_initial_partition(
         .max()
         .unwrap_or(1)
         .max(1);
+    let max_values_started = Instant::now();
+    let max_values = if workers > 1 && groups.len() >= 65_536 {
+        groups
+            .par_iter()
+            .map(|group| {
+                std::array::from_fn(|plane| {
+                    let value = group.values[plane];
+                    f64::from(value.re).hypot(f64::from(value.im))
+                })
+            })
+            .reduce(
+                || [0.0f64; AWPROJECT_INITIAL_GROUPED_PLANE_COUNT],
+                |mut left, right| {
+                    for (left, right) in left.iter_mut().zip(right) {
+                        *left = left.max(right);
+                    }
+                    left
+                },
+            )
+    } else {
+        std::array::from_fn(|plane| {
+            groups
+                .iter()
+                .map(|group| {
+                    let value = group.values[plane];
+                    f64::from(value.re).hypot(f64::from(value.im))
+                })
+                .fold(0.0f64, f64::max)
+        })
+    };
+    let max_values_elapsed = max_values_started.elapsed();
     eprintln!(
-        "awproject_source_major_initial_fixed_scale overlap={} overlap_source=maximum-tile-fragment-upper max_kernel_norm={:.9e}",
-        overlap, max_kernel_norm,
+        "awproject_source_major_initial_fixed_scale overlap={} overlap_source=maximum-tile-fragment-upper max_kernel_norm={:.9e} finalize_ms={:.3} kernel_norm_ms={:.3} route_ms={:.3} max_values_ms={:.3}",
+        overlap,
+        max_kernel_norm,
+        profile::millis(finalize_elapsed),
+        profile::millis(kernel_norm_elapsed),
+        profile::millis(tile_plan.plan_elapsed),
+        profile::millis(max_values_elapsed),
     );
     let fixed_limit = i64::MAX as f64 / 16.0;
     let mut fixed_scales = Vec::with_capacity(AWPROJECT_INITIAL_GROUPED_PLANE_COUNT);
     let mut inverse_fixed_scales = Vec::with_capacity(AWPROJECT_INITIAL_GROUPED_PLANE_COUNT);
-    for plane in 0..AWPROJECT_INITIAL_GROUPED_PLANE_COUNT {
-        let max_value = groups
-            .iter()
-            .map(|group| {
-                let value = group.values[plane];
-                f64::from(value.re).hypot(f64::from(value.im))
-            })
-            .fold(0.0f64, f64::max);
+    for max_value in max_values {
         let bound = max_value * max_kernel_norm * overlap as f64;
         let scale = if bound.is_finite() && bound > 0.0 {
             let maximum_scale = fixed_limit / bound;
