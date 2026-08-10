@@ -661,10 +661,65 @@ def validate_all_field_log(
         for line in lines
         if line.startswith("awproject_aot_grouped_tile_receipt ")
     ]
-    if not receipts or any(
-        receipt.get("omitted_energy_fraction_bits") != "0" for receipt in receipts
-    ):
-        raise ContractError("all-field AOT replay is not exact support")
+    raw_sealed = [
+        parse_key_values(line)
+        for line in lines
+        if line.startswith("awproject_raw_fused_metal_admission phase=sealed ")
+    ]
+    raw_runtime = [
+        parse_key_values(line)
+        for line in lines
+        if line.startswith("awproject_raw_fused_metal_admission phase=runtime ")
+    ]
+    raw_replays = [
+        parse_key_values(line)
+        for line in lines
+        if line.startswith("awproject_raw_fused_replay ")
+    ]
+    if receipts:
+        if raw_sealed or raw_runtime or raw_replays:
+            raise ContractError(
+                "all-field replay mixed AOT and raw fused architectures"
+            )
+        if any(
+            receipt.get("omitted_energy_fraction_bits") != "0" for receipt in receipts
+        ):
+            raise ContractError("all-field AOT replay is not exact support")
+        segment_count = len(receipts)
+    else:
+        if not raw_sealed or not raw_runtime or not raw_replays:
+            raise ContractError("all-field raw fused replay receipts are incomplete")
+        if any(
+            receipt.get("all_fit") != "true" for receipt in raw_sealed + raw_runtime
+        ):
+            raise ContractError("all-field raw fused Metal admission did not fit")
+        if any(
+            receipt.get("exact_support") != "true"
+            or receipt.get("host_readback_bytes") != "0"
+            or receipt.get("architecture") != "raw-source-major-fused-v1"
+            for receipt in raw_replays
+        ):
+            raise ContractError(
+                "all-field raw fused replay changed its exact architecture"
+            )
+        sealed_segments = {int(receipt["segment"]) for receipt in raw_sealed}
+        runtime_segments = {int(receipt["segment"]) for receipt in raw_runtime}
+        replay_segments = {int(receipt["segment"]) for receipt in raw_replays}
+        if sealed_segments != set(range(len(raw_sealed))):
+            raise ContractError(
+                "all-field raw fused sealed segments are not contiguous"
+            )
+        if runtime_segments != sealed_segments or replay_segments != sealed_segments:
+            raise ContractError("all-field raw fused runtime segment coverage changed")
+        segment_count = len(raw_sealed)
+        expected_dispatches = segment_count * len(summaries)
+        if (
+            len(raw_runtime) != expected_dispatches
+            or len(raw_replays) != expected_dispatches
+        ):
+            raise ContractError(
+                "all-field raw fused replay dispatch cardinality changed"
+            )
     counters = parse_time_counters(log_path)
     if enforce_sequential_guard:
         for key, maximum_key in (
@@ -677,7 +732,7 @@ def validate_all_field_log(
                 )
     return {
         "completion": completion,
-        "segments": len(receipts),
+        "segments": segment_count,
         "refreshes": len(summaries),
         "effective_workers": workers,
         **counters,
