@@ -145,7 +145,7 @@ EXPERIMENT_ENVIRONMENT = {
     "CASA_RS_EXPERIMENTAL_PARALLEL_MODEL_TERM_FFT": "1",
     "CASA_RS_EXPERIMENTAL_PARALLEL_RESIDUAL_TERM_FFT": "1",
     "CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_LIVE_CFS_ONLY": "1",
-    "CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_WEIGHT_COMPENSATION": "1",
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_STAGED_WEIGHT_COMPENSATION": "1",
 }
 
 
@@ -816,7 +816,7 @@ def validate_probe_log(
         "awproject_selected_field_count": "63",
         "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
         "awproject_source_major_architecture": "direct-source-major-v10-sealed-f32-residual",
-        "awproject_source_major_initial_accumulation": "weight-two-limb",
+        "awproject_source_major_initial_accumulation": "weight-two-limb-staged-during-compile",
         "awproject_source_major_initial_grid_bytes": "12990780000",
         "awproject_multifield_initial_grid_admission": "admitted",
         "awproject_grouped_replay_replaced_generic_caches": "true",
@@ -1047,6 +1047,12 @@ def monitor_run(
 
 def validate_runtime_log(text: str) -> dict[str, Any]:
     source_blocks = matching_lines(text, "awproject_source_major_block ")
+    compensation_stages = matching_lines(
+        text, "awproject_source_major_initial_compensation_stage "
+    )
+    compensation_restores = matching_lines(
+        text, "awproject_source_major_initial_compensation_restore "
+    )
     initial_readback = matching_lines(text, "awproject_metal_initial_readback ")
     sealed = matching_lines(text, "awproject_grouped_metal_admission phase=sealed ")
     runtime = matching_lines(text, "awproject_grouped_metal_admission phase=runtime ")
@@ -1080,16 +1086,47 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
     for entry in source_blocks:
         if (
             entry.get("architecture") != "direct-source-major-v10-sealed-f32-residual"
-            or entry.get("initial_accumulation") != "weight-two-limb"
+            or entry.get("initial_accumulation")
+            != "weight-two-limb-staged-during-compile"
             or entry.get("initial_partitions") != "2"
             or entry.get("initial_grid_bytes") != "12990780000"
             or entry.get("initial_compensation_bytes") != "3542940000"
+            or entry.get("initial_compensation_staged_bytes") != "3542940000"
+            or entry.get("initial_compensation_restored_bytes") != "3542940000"
             or int(entry.get("spill_bytes", "0")) <= 0
             or entry.get("reload_bytes") != "0"
         ):
             raise AcceptanceError(
                 "source-major weight-compensated initial receipt differs"
             )
+    if len(compensation_stages) != len(source_blocks) or len(
+        compensation_restores
+    ) != len(source_blocks):
+        raise AcceptanceError(
+            "compensation staging/restoration does not cover every source block"
+        )
+    expected_source_blocks = set(range(len(source_blocks)))
+    if {
+        int(entry["source_block"]) for entry in compensation_stages
+    } != expected_source_blocks or {
+        int(entry["source_block"]) for entry in compensation_restores
+    } != expected_source_blocks:
+        raise AcceptanceError(
+            "compensation staging/restoration source blocks are not contiguous"
+        )
+    for staged, restored in zip(
+        compensation_stages, compensation_restores, strict=True
+    ):
+        if (
+            staged.get("bytes") != "3542940000"
+            or staged.get("resident_bytes_after") != "0"
+            or staged.get("release_before_residual_compile") != "true"
+            or staged.get("cache_policy") != "f_nocache"
+            or staged.get("sha256") != "verified"
+            or restored.get("bytes") != "3542940000"
+            or restored.get("sha256") != "verified"
+        ):
+            raise AcceptanceError("compensation staging/restoration receipt differs")
     if len(staging) != len(source_blocks):
         raise AcceptanceError("staged replay receipts do not cover every source block")
     if {int(entry["source_block"]) for entry in staging} != set(
