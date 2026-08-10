@@ -18,8 +18,12 @@ def valid_probe_log(target_mib: int) -> str:
             "no_swap_headroom_bytes=19000000000",
             "standard_mfs_runtime_plan initial_dirty_backend=metal-row-run-grouped "
             "residual_backend=metal-row-run-grouped",
-            "standard_mfs_execution_decision name=awproject_selected_field_count "
-            "value=1 origin=Workload",
+            *(
+                "casa_mfs_frequency_edge_range "
+                f"source_low_hz={spw} source_high_hz={spw + 1} "
+                "low_field=1525 high_field=1525"
+                for spw in range(2, 18)
+            ),
             "standard_mfs_planner_preflight status=admitted "
             "grouped_metal_status=not-applicable rows_total=10400 ddids=16 "
             "selected_channels=64 correlations=4 memory_pressure_policy=oversubscribe "
@@ -86,7 +90,7 @@ class FullVlassSingleAcceptanceContractTest(unittest.TestCase):
             memory_pressure_policy="oversubscribe",
             require_target_within_headroom=False,
         )
-        self.assertEqual("1", result["decisions"]["awproject_selected_field_count"])
+        self.assertEqual(16, len(result["frequency_edges"]))
         mutations = (
             ("grouped_metal_status=not-applicable", "grouped_metal_status=admitted"),
             ("rows_total=10400", "rows_total=655200"),
@@ -94,10 +98,7 @@ class FullVlassSingleAcceptanceContractTest(unittest.TestCase):
                 "initial_dirty_backend=metal-row-run-grouped",
                 "initial_dirty_backend=cpu",
             ),
-            (
-                "awproject_selected_field_count value=1",
-                "awproject_selected_field_count value=63",
-            ),
+            ("low_field=1525", "low_field=1107"),
         )
         for old, new in mutations:
             with self.subTest(mutation=old):

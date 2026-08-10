@@ -166,6 +166,7 @@ def validate_probe_log(
     runtime = shared.matching_lines(text, "standard_mfs_runtime_plan ")
     decisions = shared.matching_lines(text, "standard_mfs_execution_decision ")
     grouped = shared.matching_lines(text, "awproject_grouped_replay_plan ")
+    frequency_edges = shared.matching_lines(text, "casa_mfs_frequency_edge_range ")
     if len(preflight) != 1 or preflight[0].get("status") != "admitted":
         raise shared.AcceptanceError(
             "single-field probe did not emit one admitted preflight"
@@ -216,9 +217,15 @@ def validate_probe_log(
         raise shared.AcceptanceError(
             "single-field probe unexpectedly selected source-major AOT"
         )
+    if len(frequency_edges) != 16 or any(
+        edge.get(endpoint) != FIELD
+        for edge in frequency_edges
+        for endpoint in ("low_field", "high_field")
+    ):
+        raise shared.AcceptanceError(
+            "single-field probe did not bind every SPW edge to field 1525"
+        )
     by_name = {entry.get("name"): entry.get("value") for entry in decisions}
-    if by_name.get("awproject_selected_field_count") != "1":
-        raise shared.AcceptanceError("single-field probe did not resolve one field")
     if by_name.get("awproject_source_major_architecture") is not None:
         raise shared.AcceptanceError(
             "single-field probe entered source-major architecture"
@@ -227,6 +234,7 @@ def validate_probe_log(
         "preflight": preflight[0],
         "resources": resources[0],
         "runtime": runtime[0],
+        "frequency_edges": frequency_edges,
         "decisions": by_name,
     }
 
