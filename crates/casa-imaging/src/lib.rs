@@ -18715,46 +18715,24 @@ fn awproject_metal_effective_kernel_norm_for_plan(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
-fn awproject_metal_max_effective_kernel_norm_with_workers(
-    plans: &[AwProjectMetalPlan],
+fn awproject_metal_effective_kernel_norm_l1_upper(
     kernels: &[WProjectMetalComplex],
     phases: &[WProjectMetalComplex],
-    workers: usize,
 ) -> Result<f64, ImagingError> {
-    if workers <= 1 || plans.len() < 65_536 {
-        return awproject_metal_max_effective_kernel_norm(plans.iter().copied(), kernels, phases);
-    }
-    let mut representatives = HashMap::<
-        [u32; 6],
-        AwProjectMetalPlan,
-        BuildHasherDefault<MosaicMetalSampleHasher>,
-    >::with_hasher(
-        BuildHasherDefault::<MosaicMetalSampleHasher>::default()
-    );
-    for &plan in plans {
-        representatives
-            .entry([
-                plan.kernel_base,
-                plan._pad0,
-                plan.phase.base,
-                plan.phase.y_base,
-                plan.x_support,
-                plan.y_support,
-            ])
-            .or_insert(plan);
-    }
-    let maximum = representatives
-        .into_values()
-        .collect::<Vec<_>>()
-        .par_iter()
-        .map(|&plan| awproject_metal_effective_kernel_norm_for_plan(plan, kernels, phases))
-        .try_reduce(|| 0.0f64, |left, right| Ok(left.max(right)))?;
-    if !(maximum.is_finite() && maximum > 0.0) {
+    let maximum_l1 = |values: &[WProjectMetalComplex]| {
+        values
+            .par_iter()
+            .map(|value| f64::from(value.re).abs() + f64::from(value.im).abs())
+            .reduce(|| 0.0f64, f64::max)
+    };
+    let (kernel_l1, phase_l1) = rayon::join(|| maximum_l1(kernels), || maximum_l1(phases));
+    let upper = kernel_l1 * phase_l1;
+    if !(upper.is_finite() && upper > 0.0) {
         return Err(ImagingError::Normalization(
-            "AWProject Metal effective kernel atlas has no finite non-zero values".to_string(),
+            "AWProject Metal kernel/phase atlases have no finite non-zero L1 bound".to_string(),
         ));
     }
-    Ok(maximum)
+    Ok(upper)
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -26401,11 +26379,8 @@ fn finish_awproject_source_major_initial_partition(
     }
     let finalize_elapsed = finalize_started.elapsed();
     let kernel_norm_started = Instant::now();
-    let plans = groups.iter().map(|group| group.plan).collect::<Vec<_>>();
-    let max_kernel_norm =
-        awproject_metal_max_effective_kernel_norm_with_workers(&plans, kernels, phases, workers)?;
+    let max_kernel_norm = awproject_metal_effective_kernel_norm_l1_upper(kernels, phases)?;
     let kernel_norm_elapsed = kernel_norm_started.elapsed();
-    drop(plans);
     let (tile_plan, _) = plan_awproject_metal_group_tiles_with_workers(
         &groups,
         grid_width,
@@ -26452,7 +26427,7 @@ fn finish_awproject_source_major_initial_partition(
     };
     let max_values_elapsed = max_values_started.elapsed();
     eprintln!(
-        "awproject_source_major_initial_fixed_scale overlap={} overlap_source=maximum-tile-fragment-upper max_kernel_norm={:.9e} finalize_ms={:.3} kernel_norm_ms={:.3} route_ms={:.3} max_values_ms={:.3}",
+        "awproject_source_major_initial_fixed_scale overlap={} overlap_source=maximum-tile-fragment-upper max_kernel_norm={:.9e} kernel_norm_source=kernel-phase-atlas-l1-product-upper finalize_ms={:.3} kernel_norm_ms={:.3} route_ms={:.3} max_values_ms={:.3}",
         overlap,
         max_kernel_norm,
         profile::millis(finalize_elapsed),
