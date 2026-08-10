@@ -815,7 +815,7 @@ def validate_probe_log(
     expected_decisions = {
         "awproject_selected_field_count": "63",
         "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
-        "awproject_source_major_architecture": "direct-source-major-v12-component-scaled-i16-residual",
+        "awproject_source_major_architecture": "direct-source-major-v11-sealed-sha-i16-residual",
         "awproject_source_major_initial_accumulation": "weight-two-limb",
         "awproject_source_major_initial_grid_bytes": "12990780000",
         "awproject_multifield_initial_grid_admission": "admitted",
@@ -1080,7 +1080,7 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
     for entry in source_blocks:
         if (
             entry.get("architecture")
-            != "direct-source-major-v12-component-scaled-i16-residual"
+            != "direct-source-major-v11-sealed-sha-i16-residual"
             or entry.get("initial_accumulation") != "weight-two-limb"
             or entry.get("initial_partitions") != "2"
             or entry.get("initial_grid_bytes") != "12990780000"
@@ -1102,7 +1102,7 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
     for block, staged in zip(source_blocks, staging, strict=True):
         if (
             staged.get("architecture")
-            != "direct-source-major-v12-component-scaled-i16-residual"
+            != "direct-source-major-v11-sealed-sha-i16-residual"
             or staged.get("resident") != "false"
             or staged.get("staged") != "true"
             or int(staged.get("spill_bytes", "0")) <= 0
@@ -1188,7 +1188,7 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
     for segment, entry in quantization_by_segment.items():
         compact = compaction_by_segment[segment]
         if (
-            entry.get("storage") != "per-stencil-component-scaled-i16-complex"
+            entry.get("storage") != "per-stencil-scaled-i16-complex"
             or entry.get("range") != "-32767:32767"
             or entry.get("conversion") != "metal-load-to-f32"
         ):
@@ -1259,7 +1259,7 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
         raise AcceptanceError("source-major replay omitted its streaming-ready receipt")
     staged = staged_ready[0]
     if (
-        staged.get("architecture") != "direct-source-major-v12-component-scaled-i16-residual"
+        staged.get("architecture") != "direct-source-major-v11-sealed-sha-i16-residual"
         or staged.get("lifecycle") != "after-dirty-grid-release"
         or staged.get("resident") != "false"
         or staged.get("resident_bytes") != "0"
