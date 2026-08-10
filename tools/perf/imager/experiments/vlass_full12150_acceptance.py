@@ -814,7 +814,7 @@ def validate_probe_log(
     expected_decisions = {
         "awproject_selected_field_count": "63",
         "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
-        "awproject_source_major_architecture": "direct-source-major-v7-streamed-i16-residual",
+        "awproject_source_major_architecture": "direct-source-major-v8-single-slot-i16-residual",
         "awproject_source_major_initial_accumulation": "high-limb-only",
         "awproject_source_major_initial_grid_bytes": "9447840000",
         "awproject_multifield_initial_grid_admission": "admitted",
@@ -1058,6 +1058,14 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
     staged_ready = matching_lines(
         text, "awproject_source_major_staged_streaming_ready "
     )
+    weight_spill = matching_lines(
+        text, "awproject_source_major_invariant_weight_spill "
+    )
+    weight_restore = matching_lines(
+        text, "awproject_source_major_invariant_weight_restore "
+    )
+    residual_release = matching_lines(text, "awproject_prior_residual_release ")
+    model_grid_release = matching_lines(text, "awproject_model_grid_release ")
     retention = matching_lines(text, "awproject_metal_grouped_replay_retention ")
     summaries = matching_lines(text, "awproject_metal_segmented_global_replay_summary ")
     if not source_blocks:
@@ -1070,7 +1078,8 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
         )
     for entry in source_blocks:
         if (
-            entry.get("architecture") != "direct-source-major-v7-streamed-i16-residual"
+            entry.get("architecture")
+            != "direct-source-major-v8-single-slot-i16-residual"
             or entry.get("initial_accumulation") != "high-limb-only"
             or entry.get("initial_partitions") != "2"
             or entry.get("initial_grid_bytes") != "9447840000"
@@ -1089,13 +1098,14 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
         )
     for block, staged in zip(source_blocks, staging, strict=True):
         if (
-            staged.get("architecture") != "direct-source-major-v7-streamed-i16-residual"
+            staged.get("architecture")
+            != "direct-source-major-v8-single-slot-i16-residual"
             or staged.get("resident") != "false"
             or staged.get("staged") != "true"
             or int(staged.get("spill_bytes", "0")) <= 0
             or staged.get("reload_bytes") != "0"
             or block.get("spill_bytes") != staged.get("spill_bytes")
-            or int(staged.get("streaming_pair_bytes", "-1"))
+            or int(staged.get("streaming_live_bytes", "-1"))
             > int(staged.get("streaming_ceiling_bytes", "-2"))
         ):
             raise AcceptanceError("source-major staged replay receipt differs")
@@ -1243,16 +1253,49 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
         raise AcceptanceError("source-major replay omitted its streaming-ready receipt")
     staged = staged_ready[0]
     if (
-        staged.get("architecture") != "direct-source-major-v7-streamed-i16-residual"
+        staged.get("architecture") != "direct-source-major-v8-single-slot-i16-residual"
         or staged.get("lifecycle") != "after-dirty-grid-release"
         or staged.get("resident") != "false"
         or staged.get("resident_bytes") != "0"
-        or staged.get("prefetch_slots") != "2"
+        or staged.get("prefetch_slots") != "1"
         or int(staged.get("segments", "-1")) != len(segments)
-        or int(staged.get("streaming_pair_peak_bytes", "-1"))
+        or int(staged.get("streaming_live_peak_bytes", "-1"))
         > int(staged.get("streaming_ceiling_bytes", "-2"))
     ):
         raise AcceptanceError("source-major streaming-ready receipt differs")
+    if (
+        len(weight_spill) != 1
+        or weight_spill[0].get("decision") != "staged"
+        or weight_spill[0].get("terms") != "2"
+        or weight_spill[0].get("bytes") != "1180980000"
+        or weight_spill[0].get("resident_bytes_after") != "0"
+        or weight_spill[0].get("lifecycle") != "after-clean-mask-to-final-products"
+        or weight_spill[0].get("sha256") != "per-term"
+    ):
+        raise AcceptanceError("source-major invariant-weight spill receipt differs")
+    if (
+        len(weight_restore) != 1
+        or weight_restore[0].get("terms") != weight_spill[0].get("terms")
+        or weight_restore[0].get("bytes") != weight_spill[0].get("bytes")
+        or weight_restore[0].get("sha256") != "verified"
+    ):
+        raise AcceptanceError("source-major invariant-weight restore receipt differs")
+    if not residual_release or any(
+        entry.get("terms") != "2"
+        or entry.get("bytes") != "1180980000"
+        or entry.get("before_exact_grid_allocation") != "true"
+        for entry in residual_release
+    ):
+        raise AcceptanceError("prior residual release receipt differs")
+    if not model_grid_release or any(
+        entry.get("terms") != "2"
+        or entry.get("bytes") != "2361960000"
+        or entry.get("stage") != "residual-grid-end"
+        or entry.get("before_residual_fft") != "true"
+        or entry.get("host_fallback") != "false"
+        for entry in model_grid_release
+    ):
+        raise AcceptanceError("model-grid release receipt differs")
     if not runtime or not host or not summaries:
         raise AcceptanceError("runtime grouped replay receipts are incomplete")
     expected_dispatches = len(segments) * len(summaries)

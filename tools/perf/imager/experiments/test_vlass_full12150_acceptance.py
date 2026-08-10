@@ -58,7 +58,7 @@ def valid_probe_log(
     decisions = {
         "awproject_selected_field_count": "63",
         "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
-        "awproject_source_major_architecture": "direct-source-major-v7-streamed-i16-residual",
+        "awproject_source_major_architecture": "direct-source-major-v8-single-slot-i16-residual",
         "awproject_source_major_initial_accumulation": "high-limb-only",
         "awproject_source_major_initial_grid_bytes": "9447840000",
         "awproject_multifield_initial_grid_admission": "admitted",
@@ -98,12 +98,12 @@ def valid_runtime_log() -> str:
         "awproject_source_major_block source_block=0 accepted_samples=1 "
         "initial_partitions=2 initial_grid_bytes=9447840000 "
         "initial_compensation_bytes=0 spill_bytes=900 reload_bytes=0 "
-        "architecture=direct-source-major-v7-streamed-i16-residual "
+        "architecture=direct-source-major-v8-single-slot-i16-residual "
         "initial_accumulation=high-limb-only",
         "awproject_source_major_staging source_block=0 segments=1 "
-        "program_bytes=1000 compiled_total_bytes=1000 streaming_pair_bytes=1000 "
+        "program_bytes=1000 compiled_total_bytes=1000 streaming_live_bytes=1000 "
         "streaming_ceiling_bytes=2000 spill_bytes=900 total_spill_bytes=900 "
-        "reload_bytes=0 architecture=direct-source-major-v7-streamed-i16-residual "
+        "reload_bytes=0 architecture=direct-source-major-v8-single-slot-i16-residual "
         "resident=false staged=true",
         "awproject_metal_initial_readback products=8 "
         "residency=metal-shared-high-limb-only-grid resident_bytes=9447840000",
@@ -135,10 +135,19 @@ def valid_runtime_log() -> str:
         "max_kernel_norm=1.0 storage=per-stencil-scaled-i16-complex "
         "range=-32767:32767 conversion=metal-load-to-f32",
         "awproject_source_major_staged_streaming_ready segments=1 spill_bytes=900 "
-        "compiled_total_bytes=1000 streaming_pair_peak_bytes=1000 "
-        "streaming_ceiling_bytes=2000 resident_bytes=0 prefetch_slots=2 "
-        "architecture=direct-source-major-v7-streamed-i16-residual "
+        "compiled_total_bytes=1000 streaming_live_peak_bytes=1000 "
+        "streaming_ceiling_bytes=2000 resident_bytes=0 prefetch_slots=1 "
+        "architecture=direct-source-major-v8-single-slot-i16-residual "
         "lifecycle=after-dirty-grid-release resident=false",
+        "awproject_source_major_invariant_weight_spill decision=staged terms=2 "
+        "bytes=1180980000 resident_bytes_after=0 "
+        "lifecycle=after-clean-mask-to-final-products sha256=per-term",
+        "awproject_source_major_invariant_weight_restore terms=2 bytes=1180980000 "
+        "sha256=verified elapsed_ms=1.0",
+        "awproject_prior_residual_release terms=2 bytes=1180980000 "
+        "before_exact_grid_allocation=true",
+        "awproject_model_grid_release terms=2 bytes=2361960000 "
+        "stage=residual-grid-end before_residual_fft=true host_fallback=false",
         "awproject_grouped_metal_admission phase=runtime segment=0 all_fit=true "
         "prechecks=fit postchecks=fit host_bytes_retained_during_tile=0 "
         "persistent_post_combined_bytes=10 persistent_maximum_current_bytes=20 "
@@ -375,8 +384,8 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
                 "lifecycle=during-initial-grid",
             ),
             (
-                "streaming_pair_peak_bytes=1000",
-                "streaming_pair_peak_bytes=2001",
+                "streaming_live_peak_bytes=1000",
+                "streaming_live_peak_bytes=2001",
             ),
             ("spill_read_bytes=900", "spill_read_bytes=899"),
             ("runtime_route_builds=0", "runtime_route_builds=1"),
