@@ -2902,6 +2902,28 @@ CASA tclean timings (seconds):
         self.assertEqual("out_of_tolerance", investigate_status)
         self.assertEqual("comparison_tolerance", investigate["kind"])
 
+        bounded_status, bounded_failure = run_workload.comparison_evidence_status(
+            {
+                "status": "completed",
+                "products": {".image": {"status": "compared"}},
+                "structured_difference_review": {
+                    "label": "investigate",
+                    "summary": "low-amplitude coherent structure",
+                },
+                "tolerance_evaluation": {
+                    "status": "passed",
+                    "checks": [
+                        {
+                            "name": ".image.coherent_block_rms_over_right_rms",
+                            "status": "passed",
+                        }
+                    ],
+                },
+            }
+        )
+        self.assertEqual("completed", bounded_status)
+        self.assertIsNone(bounded_failure)
+
         completed_status, failure = run_workload.comparison_evidence_status(
             {"status": "unavailable", "reason": "CASA not configured", "products": {}}
         )

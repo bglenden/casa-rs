@@ -20,6 +20,8 @@ from .tree_identity import sha256_file
 
 CASA_IMAGE_COMPARATOR = pathlib.Path(__file__).with_name("casa_image_compare.py")
 COMPARISON_SCHEMA_VERSION = 4
+COORDINATE_RELATIVE_TOLERANCE = 1.0e-12
+COORDINATE_ABSOLUTE_TOLERANCE = 1.0e-12
 FULL_STRUCTURE_EVIDENCE_SCOPE = "full_native_central_spatial_plane_disk_backed"
 FULL_STRUCTURE_EVIDENCE_FIELDS = {
     "method",
@@ -126,6 +128,13 @@ FULL_ARRAY_TOPOLOGY_FIELDS = {
     "left_nonfinite",
     "right_nonfinite",
 }
+FULL_ARRAY_MASK_MISMATCH_SAMPLE_FIELDS = {
+    "location",
+    "left_mask",
+    "right_mask",
+    "left_value",
+    "right_value",
+}
 FULL_ARRAY_NONFINITE_FIELDS = {
     "nan",
     "positive_infinity",
@@ -150,6 +159,10 @@ FULL_ARRAY_DIFFERENCE_FIELDS = {
 }
 FULL_ARRAY_PEAK_FIELDS = {"location", "value", "abs_value"}
 FULL_ARRAY_COMPARISON_DOMAIN = "left_and_right_pixel_masks_and_finite_values"
+SCIENTIFIC_BEAM_TOLERANCE_FIELDS = {
+    "beam_area_relative",
+    "beam_kernel_nrmse",
+}
 LEGACY_FULL_ARRAY_MIRRORS = {
     "rust_min": "left_min",
     "rust_max": "left_max",
@@ -390,6 +403,8 @@ def validate_comparison_output(
                 product,
                 suffix=suffix,
                 required=request["require_metadata_parity"],
+                products=products,
+                tolerance_contract=request["tolerances"],
             )
             _validate_product_source_regions(
                 product,
@@ -407,12 +422,14 @@ def validate_comparison_output(
                 suffix=suffix,
                 requested_chunk_elements=request["full_chunk_elements"],
                 legacy_operand_aliases=request["legacy_operand_aliases"],
+                tolerance_contract=request["tolerances"],
             )
             _validate_full_structure_evidence(
                 product,
                 suffix=suffix,
                 comparison_beam_info=comparison.get("beam_info"),
             )
+    _validate_linked_scientific_beams(products, request["tolerances"])
 
     inventory = comparison.get("product_inventory")
     if not isinstance(inventory, dict):
@@ -507,7 +524,12 @@ def validate_comparison_output(
 
 
 def _validate_product_metadata(
-    product: dict[str, Any], *, suffix: str, required: bool
+    product: dict[str, Any],
+    *,
+    suffix: str,
+    required: bool,
+    products: dict[str, Any],
+    tolerance_contract: dict[str, Any] | None,
 ) -> None:
     label = f"image comparison product {suffix}"
     if product.get("metadata_parity_required") is not required:
@@ -523,8 +545,6 @@ def _validate_product_metadata(
     expected_fields = {"status", "parity", "field_parity", "left", "right"}
     if set(metadata) != expected_fields:
         raise ValueError(f"{label} metadata result fields do not match protocol")
-    if metadata.get("status") != "matched" or metadata.get("parity") is not True:
-        raise ValueError(f"{label} required metadata parity is not matched")
     fields = ("shape", "unit", "coordinates", "restoring_beam", "masks")
     left = metadata.get("left")
     right = metadata.get("right")
@@ -546,11 +566,182 @@ def _validate_product_metadata(
             raise ValueError(f"{label} {side} metadata capture is incomplete")
         if value.get("shape") != product.get("shape"):
             raise ValueError(f"{label} {side} metadata shape does not match product")
-    expected_parity = {field: left.get(field) == right.get(field) for field in fields}
-    if metadata.get("field_parity") != expected_parity or not all(
-        expected_parity.values()
+    expected_parity = {
+        field: (
+            _coordinate_records_equivalent(left.get(field), right.get(field))
+            if field == "coordinates"
+            else left.get(field) == right.get(field)
+        )
+        for field in fields
+    }
+    exact = all(expected_parity.values())
+    expected_status = "matched" if exact else "mismatch"
+    if (
+        metadata.get("field_parity") != expected_parity
+        or metadata.get("status") != expected_status
+        or metadata.get("parity") is not exact
     ):
         raise ValueError(f"{label} metadata parity is not derived from operands")
+    if exact:
+        return
+    beam_only = expected_parity == {
+        "shape": True,
+        "unit": True,
+        "coordinates": True,
+        "restoring_beam": False,
+        "masks": True,
+    }
+    reference = (
+        _scientific_beam_reference(
+            suffix,
+            products,
+            tolerance_contract,
+        )
+        if beam_only
+        else None
+    )
+    if reference is None:
+        raise ValueError(
+            f"{label} required metadata parity is not matched and the restoring "
+            "beam mismatch has no bound scientific-equivalence reference"
+        )
+
+
+def _coordinate_records_equivalent(left: Any, right: Any) -> bool:
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(
+            _coordinate_records_equivalent(left[key], right[key]) for key in left
+        )
+    if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
+        return len(left) == len(right) and all(
+            _coordinate_records_equivalent(left_value, right_value)
+            for left_value, right_value in zip(left, right)
+        )
+    if isinstance(left, bool) or isinstance(right, bool):
+        return left == right
+    if isinstance(left, int) and isinstance(right, int):
+        return left == right
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return math.isclose(
+            float(left),
+            float(right),
+            rel_tol=COORDINATE_RELATIVE_TOLERANCE,
+            abs_tol=COORDINATE_ABSOLUTE_TOLERANCE,
+        )
+    return left == right
+
+
+def _scientific_beam_reference(
+    suffix: str,
+    products: dict[str, Any],
+    contract: dict[str, Any] | None,
+) -> str | None:
+    product = products.get(suffix)
+    metadata = product.get("metadata") if isinstance(product, dict) else None
+    left = metadata.get("left") if isinstance(metadata, dict) else None
+    right = metadata.get("right") if isinstance(metadata, dict) else None
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return None
+    target_left = left.get("restoring_beam")
+    target_right = right.get("restoring_beam")
+    if not isinstance(target_left, dict) or not target_left:
+        return None
+    if not isinstance(target_right, dict) or not target_right:
+        return None
+
+    candidates = [suffix, *sorted(set(products) - {suffix})]
+    for candidate_suffix in candidates:
+        if not _has_scientific_beam_tolerance(contract, candidate_suffix):
+            continue
+        candidate = products.get(candidate_suffix)
+        candidate_metadata = (
+            candidate.get("metadata") if isinstance(candidate, dict) else None
+        )
+        candidate_left = (
+            candidate_metadata.get("left")
+            if isinstance(candidate_metadata, dict)
+            else None
+        )
+        candidate_right = (
+            candidate_metadata.get("right")
+            if isinstance(candidate_metadata, dict)
+            else None
+        )
+        if not isinstance(candidate_left, dict) or not isinstance(
+            candidate_right, dict
+        ):
+            continue
+        if (
+            candidate_left.get("restoring_beam") == target_left
+            and candidate_right.get("restoring_beam") == target_right
+        ):
+            return candidate_suffix
+    return None
+
+
+def _validate_linked_scientific_beams(
+    products: dict[str, Any], contract: dict[str, Any] | None
+) -> None:
+    references = [
+        suffix
+        for suffix in sorted(products)
+        if _has_scientific_beam_tolerance(contract, suffix)
+    ]
+    if not references:
+        return
+    canonical_suffix = references[0]
+    canonical_product = products.get(canonical_suffix)
+    canonical_metadata = (
+        canonical_product.get("metadata")
+        if isinstance(canonical_product, dict)
+        else None
+    )
+    if not isinstance(canonical_metadata, dict):
+        raise ValueError(
+            "scientific restoring-beam reference metadata is missing for "
+            f"{canonical_suffix}"
+        )
+    canonical_beams = {}
+    for side in ("left", "right"):
+        operand = canonical_metadata.get(side)
+        beam = operand.get("restoring_beam") if isinstance(operand, dict) else None
+        if not isinstance(beam, dict) or not beam:
+            raise ValueError(
+                "scientific restoring-beam reference is missing for "
+                f"{canonical_suffix} {side}"
+            )
+        canonical_beams[side] = beam
+
+    for suffix, product in sorted(products.items()):
+        metadata = product.get("metadata") if isinstance(product, dict) else None
+        if not isinstance(metadata, dict):
+            continue
+        for side in ("left", "right"):
+            operand = metadata.get(side)
+            beam = operand.get("restoring_beam") if isinstance(operand, dict) else None
+            if not isinstance(beam, dict) or not beam:
+                continue
+            if beam != canonical_beams[side]:
+                raise ValueError(
+                    f"image comparison product {suffix} {side} linked restoring "
+                    f"beam differs from canonical {canonical_suffix}"
+                )
+
+
+def _has_scientific_beam_tolerance(
+    contract: dict[str, Any] | None, suffix: str
+) -> bool:
+    if not isinstance(contract, dict) or contract.get("contract_version") != 2:
+        return False
+    default = contract.get("default")
+    products = contract.get("products")
+    if not isinstance(default, dict) or not isinstance(products, dict):
+        return False
+    overrides = products.get(suffix, {})
+    if not isinstance(overrides, dict):
+        return False
+    thresholds = {**default, **overrides}
+    return SCIENTIFIC_BEAM_TOLERANCE_FIELDS <= set(thresholds)
 
 
 def _validate_product_source_regions(
@@ -678,6 +869,7 @@ def _validate_full_array_evidence(
     suffix: str,
     requested_chunk_elements: int,
     legacy_operand_aliases: bool,
+    tolerance_contract: dict[str, Any] | None,
 ) -> None:
     """Rebind every passing full-mode scalar to its streamed evidence source."""
 
@@ -775,6 +967,11 @@ def _validate_full_array_evidence(
         product,
         full=full,
         topology_parity=topology_parity,
+        allow_bounded_mask_topology=(
+            _has_bounded_mask_topology_contract(tolerance_contract, suffix)
+            and full["topology"]["finite_equal"]
+            and full["topology"]["nonfinite_kind_equal"]
+        ),
         legacy_operand_aliases=legacy_operand_aliases,
         label=label,
     )
@@ -783,7 +980,10 @@ def _validate_full_array_evidence(
 def _validate_full_array_topology(
     value: Any, *, total_elements: int, count: int, label: str
 ) -> bool:
-    if not isinstance(value, dict) or set(value) != FULL_ARRAY_TOPOLOGY_FIELDS:
+    if not isinstance(value, dict) or not (
+        set(value) == FULL_ARRAY_TOPOLOGY_FIELDS
+        or set(value) == FULL_ARRAY_TOPOLOGY_FIELDS | {"mask_mismatch_samples"}
+    ):
         raise ValueError(f"{label} full_array topology fields do not match protocol")
     count_fields = (
         "mask_mismatch_count",
@@ -815,6 +1015,45 @@ def _validate_full_array_topology(
     left_masked = counts["left_masked_count"]
     right_masked = counts["right_masked_count"]
     mask_mismatch = counts["mask_mismatch_count"]
+    samples = value.get("mask_mismatch_samples", [])
+    if not isinstance(samples, list) or len(samples) > mask_mismatch:
+        raise ValueError(f"{label} full_array mask mismatch samples are invalid")
+    seen_locations: set[tuple[int, ...]] = set()
+    for sample_index, sample in enumerate(samples):
+        sample_label = f"{label} mask mismatch sample {sample_index}"
+        if (
+            not isinstance(sample, dict)
+            or set(sample) != FULL_ARRAY_MASK_MISMATCH_SAMPLE_FIELDS
+        ):
+            raise ValueError(f"{sample_label} fields do not match protocol")
+        location = sample.get("location")
+        if (
+            not isinstance(location, list)
+            or len(location) == 0
+            or any(
+                not isinstance(coordinate, int) or isinstance(coordinate, bool)
+                for coordinate in location
+            )
+        ):
+            raise ValueError(f"{sample_label} location is invalid")
+        location_tuple = tuple(location)
+        if location_tuple in seen_locations:
+            raise ValueError(f"{sample_label} location is duplicated")
+        seen_locations.add(location_tuple)
+        if (
+            not isinstance(sample.get("left_mask"), bool)
+            or not isinstance(sample.get("right_mask"), bool)
+            or sample["left_mask"] is sample["right_mask"]
+        ):
+            raise ValueError(f"{sample_label} masks do not demonstrate a mismatch")
+        for operand in ("left_value", "right_value"):
+            operand_value = sample.get(operand)
+            if operand_value is not None and (
+                not isinstance(operand_value, (int, float))
+                or isinstance(operand_value, bool)
+                or not math.isfinite(float(operand_value))
+            ):
+                raise ValueError(f"{sample_label} {operand} is invalid")
     if (left_masked + right_masked - mask_mismatch) % 2:
         raise ValueError(f"{label} full_array mask topology has fractional regions")
     both_masked = (left_masked + right_masked - mask_mismatch) // 2
@@ -1084,6 +1323,7 @@ def _validate_full_array_product_mirrors(
     *,
     full: dict[str, Any],
     topology_parity: bool,
+    allow_bounded_mask_topology: bool,
     legacy_operand_aliases: bool,
     label: str,
 ) -> None:
@@ -1111,7 +1351,7 @@ def _validate_full_array_product_mirrors(
             raise ValueError(
                 f"{label} {field} is not the authoritative full_array value"
             )
-    if not topology_parity:
+    if not topology_parity and not allow_bounded_mask_topology:
         raise ValueError(f"{label} cannot be compared without topology parity")
 
     present_aliases = set(product) & set(LEGACY_FULL_ARRAY_MIRRORS)
@@ -1123,6 +1363,23 @@ def _validate_full_array_product_mirrors(
     for alias, canonical in LEGACY_FULL_ARRAY_MIRRORS.items():
         if alias in product and product[alias] != product[canonical]:
             raise ValueError(f"{label} legacy alias {alias} is not derived")
+
+
+def _has_bounded_mask_topology_contract(
+    contract: dict[str, Any] | None,
+    suffix: str,
+) -> bool:
+    if not isinstance(contract, dict) or contract.get("contract_version") != 2:
+        return False
+    default = contract.get("default")
+    products = contract.get("products")
+    if not isinstance(default, dict) or not isinstance(products, dict):
+        return False
+    overrides = products.get(suffix, {})
+    if not isinstance(overrides, dict):
+        return False
+    thresholds = {**default, **overrides}
+    return "mask_mismatch_fraction" in thresholds
 
 
 def _nonnegative_integer(value: Any, *, label: str) -> int:
@@ -1735,13 +1992,16 @@ def _validate_structure_basis_fit(
         or not _less_equal_with_roundoff(residual_rms, diff_rms)
     ):
         raise ValueError(f"{label} basis-fit RMS values are inconsistent")
-    expected_r2 = (
-        1.0 - (residual_rms * residual_rms) / (diff_rms * diff_rms)
-        if diff_rms > 0.0
-        else None
-    )
-    if not _optional_numbers_close(r2, expected_r2):
-        raise ValueError(f"{label} basis-fit r2 is not derived")
+    # The producer derives R² from the target's sum of squared deviations
+    # about its mean, while diff_rms is the raw root mean square about zero.
+    # Those values are not interchangeable when the difference has a nonzero
+    # mean, so the serialized fields cannot independently rederive R².
+    # The fitted model contains an offset, hence a finite derived R² must stay
+    # in the closed unit interval apart from roundoff.
+    if r2 is not None and not _less_equal_with_roundoff(0.0, r2):
+        raise ValueError(f"{label} basis-fit r2 is negative")
+    if r2 is not None and not _less_equal_with_roundoff(r2, 1.0):
+        raise ValueError(f"{label} basis-fit r2 exceeds one")
 
 
 def _validate_large_scale_power(
@@ -2363,6 +2623,12 @@ def compare_products(
 def _full_comparison_rejection(comparison: dict[str, Any]) -> str | None:
     if comparison.get("status") != "completed":
         return comparison.get("reason") or "full comparison did not complete"
+    evaluation = comparison.get("tolerance_evaluation")
+    if isinstance(evaluation, dict) and evaluation.get("status") == "passed":
+        # A bound numerical contract is authoritative. Structured-difference
+        # classifications remain useful diagnostics, but only explicitly
+        # declared structure-amplitude ceilings may reject an optimized result.
+        return None
     products = comparison.get("products")
     if not isinstance(products, dict) or not products:
         return "full comparison produced no product reviews"

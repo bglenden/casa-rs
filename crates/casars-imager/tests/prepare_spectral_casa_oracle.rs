@@ -528,6 +528,7 @@ fn base_config(ms_path: PathBuf, spectral_mode: SpectralMode) -> CliConfig {
         standard_mfs_memory_target_mb: None,
         standard_mfs_prepare_buffer_mb: None,
         imaging_memory_target_mb: None,
+        imaging_memory_pressure_policy: Default::default(),
         imaging_prepare_buffer_mb: None,
         imaging_row_block_rows: None,
         imaging_prepare_workers: None,

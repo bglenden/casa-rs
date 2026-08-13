@@ -35,6 +35,33 @@ pub(crate) fn centered_fft2(input: &Array2<Complex32>) -> Array2<Complex32> {
     centered_fft2_timed(input, FftUseCase::ModelDegrid).0
 }
 
+/// Match casacore's first-axis-contiguous storage and transform order.
+///
+/// CASA presents an `(x, y)` lattice to its FFT implementation with `x`
+/// contiguous. An `ndarray::Array2` with the same logical axes stores `y`
+/// contiguously, so the otherwise equivalent separable transforms accumulate
+/// single-precision rounding in the opposite axis order. Transposing into
+/// casacore's physical order before the transform preserves both the CASA
+/// rounding order and the first-axis-contiguous output without a second
+/// image-sized copy.
+pub(crate) fn centered_fft2_casacore_layout_with_backend(
+    input: &Array2<Complex32>,
+    use_case: FftUseCase,
+    backend_choice: FftBackendChoice,
+) -> (Array2<Complex32>, FftTiming) {
+    let pack_started = Instant::now();
+    let casacore_storage = input.view().reversed_axes().as_standard_layout().to_owned();
+    let input_pack = pack_started.elapsed();
+
+    let (casacore_output, mut timing) =
+        centered_fft2_timed_with_backend(&casacore_storage, use_case, backend_choice);
+
+    let output = casacore_output.reversed_axes();
+    timing.pack += input_pack;
+    timing.total += input_pack;
+    (output, timing)
+}
+
 pub(crate) fn centered_fft2_f64(input: &Array2<Complex64>) -> Array2<Complex64> {
     centered_fft2_f64_timed(input, FftUseCase::Benchmark).0
 }
@@ -543,8 +570,7 @@ fn rustfft_centered_transform_f64(
         backend_choice,
     );
     let selection = select_fft_backend(spec);
-    if selection.selected_backend == FftBackendChoice::FftwLocalBench
-        && selection.requested_backend_supported
+    if selection.selected_backend == FftBackendChoice::Fftw && selection.requested_backend_supported
     {
         if let Ok(result) = crate::fftw_local::centered_transform_f64(input, direction, use_case) {
             return result;
@@ -1063,6 +1089,7 @@ mod tests {
 
     use super::{
         centered_fft2, centered_fft2_batch_f32_timed_with_backend,
+        centered_fft2_casacore_layout_with_backend,
         centered_fft2_f64_timed_with_backend_and_policy, centered_fft2_owned,
         centered_fft2_timed_with_backend, centered_ifft2,
         centered_ifft2_batch_f32_timed_with_backend,
@@ -1084,6 +1111,35 @@ mod tests {
         for (expected, actual) in image.iter().zip(restored.iter()) {
             assert!((expected.re - actual.re).abs() < 1.0e-5);
             assert!((expected.im - actual.im).abs() < 1.0e-5);
+        }
+    }
+
+    #[test]
+    fn casacore_layout_fft_keeps_logical_values_and_first_axis_contiguous() {
+        let image = Array2::from_shape_fn((6, 10), |(x, y)| {
+            Complex32::new(
+                (x as f32 * 0.31 + y as f32 * 0.17).sin(),
+                (x as f32 * 0.11 - y as f32 * 0.23).cos(),
+            )
+        });
+        let native = centered_fft2_timed_with_backend(
+            &image,
+            FftUseCase::ModelDegrid,
+            FftBackendChoice::RustFft,
+        )
+        .0;
+        let casacore = centered_fft2_casacore_layout_with_backend(
+            &image,
+            FftUseCase::ModelDegrid,
+            FftBackendChoice::RustFft,
+        )
+        .0;
+
+        assert_eq!(casacore.strides(), &[1, image.shape()[0] as isize]);
+        for x in 0..image.shape()[0] {
+            for y in 0..image.shape()[1] {
+                assert!((native[(x, y)] - casacore[(x, y)]).norm() <= 2.0e-5);
+            }
         }
     }
 

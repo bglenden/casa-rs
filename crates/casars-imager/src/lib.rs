@@ -28,7 +28,10 @@ use casa_coordinates::{
     Coordinate, CoordinateSystem, DirectionCoordinate, Projection, ProjectionType,
 };
 use casa_images::{GaussianBeam, ImageBeamSet, ImageInfo, ImageType, PagedImage};
-use casa_imaging::fft_backend::{FftBackendChoice, FftPrecisionChoice};
+use casa_imaging::fft_backend::{
+    Fft2Spec, FftBackendChoice, FftDirection, FftPrecision, FftPrecisionChoice, FftUseCase,
+    fft_backend_capability,
+};
 use casa_imaging::{
     AwConvolutionFunctionEntryMetadata, AwParallelHandVisibilityBatch, AwProjectControls,
     AwProjectGridderConfig, AwProjectNormalization, AxisKind, BeamFit, BeamFitDebugSummary,
@@ -38,15 +41,18 @@ use casa_imaging::{
     DirtyProductFftPolicy, GaussianUvTaper, GridderMode, GroupedVisibilityMetadata,
     GroupedVisibilityMetadataBatch, HogbomIterationMode, HogbomPlaneMinorCycleControl,
     ImageGeometry, ImageProduct, ImageProductMetadata, ImageProductRole, ImageProductSet,
-    ImagingDiagnostics, ImagingError, ImagingExecutionPlan, ImagingExecutionPolicy,
-    ImagingMemoryAllocation, ImagingPlanAdmission, ImagingRequest, ImagingResolvedPlan,
-    ImagingResources, ImagingResult, ImagingSpectralSchedule, ImagingStageTimings,
-    ImagingTileAnchor, ImagingWorkloadShape, MinorCycleTrace, MosaicGridderConfig,
-    ParallelHandBatch, ParallelWorkerCalibrationRequest, PlaneStokes, PrimaryBeamModel,
-    PrimaryBeamProductRequest, PrimaryBeamWeightSample, ResidualRefreshDiagnostics,
-    RestoringBeamMode, ScalarVisibilitySample, StandardMfsBackend, StandardMfsCleanFinishPlan,
-    StandardMfsCleanPlan, StandardMfsCleanSession, StandardMfsDensitySourcePlan,
-    StandardMfsDensitySourcePlanRequest, StandardMfsDirtyAccumulator,
+    ImagingDetectedResources, ImagingDiagnostics, ImagingError, ImagingExecutionPlan,
+    ImagingExecutionPolicy, ImagingMemoryAllocation, ImagingMemoryAllocationLifecycle,
+    ImagingMemoryBacking, ImagingMemoryLifetimeLedger, ImagingMemoryNextUse,
+    ImagingMemoryPressurePolicy as CoreImagingMemoryPressurePolicy, ImagingMemoryResidency,
+    ImagingMemoryStage, ImagingPlanAdmission, ImagingPlanningContext, ImagingRequest,
+    ImagingResolvedPlan, ImagingResources, ImagingResult, ImagingSpectralSchedule,
+    ImagingStageTimings, ImagingTileAnchor, ImagingWorkloadShape, MinorCycleTrace,
+    MosaicGridderConfig, ParallelHandBatch, ParallelWorkerCalibrationRequest, PlaneStokes,
+    PrimaryBeamModel, PrimaryBeamProductRequest, PrimaryBeamWeightSample,
+    ResidualRefreshDiagnostics, RestoringBeamMode, ScalarVisibilitySample, StandardMfsBackend,
+    StandardMfsCleanFinishPlan, StandardMfsCleanPlan, StandardMfsCleanSession,
+    StandardMfsDensitySourcePlan, StandardMfsDensitySourcePlanRequest, StandardMfsDirtyAccumulator,
     StandardMfsDirtyAccumulatorRequest, StandardMfsDirtyGridResult, StandardMfsDirtyPlan,
     StandardMfsExecutionPlan, StandardMfsMinorCycleBackend, StandardMfsModelPredictor,
     StandardMfsObservabilityCallback, StandardMfsObservabilityEvent,
@@ -60,22 +66,23 @@ use casa_imaging::{
     WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
     accumulate_standard_mfs_density_row_from_arrays,
     accumulate_standard_mfs_density_row_from_visibility_block, admit_imaging_execution,
-    build_image_coordinate_system, casa_cube_briggs_density_cell_from_lambda, casa_cube_briggs_f2,
+    admit_imaging_execution_with_context, build_image_coordinate_system,
+    casa_cube_briggs_density_cell_from_lambda, casa_cube_briggs_f2,
     casa_cube_briggs_gridft_density_cell_from_lambda, casa_cube_briggs_weight_denominator,
     clean_cycle_threshold, clean_mask_pixel_count,
     clean_peak_location_masked_with_relative_tolerance, cube_image_product_set,
     estimate_psf_sidelobe_from_psf, extract_mfs_plane_product,
     finish_standard_mfs_dirty_grid_results, mfs_image_product_peak_abs_masked,
     mfs_image_product_set, mtmfs_image_product_set, phase_rotate_visibility,
-    plan_imaging_execution, plan_standard_mfs_density_source, primary_beam_correct_alpha_product,
-    primary_beam_output_products, primary_beam_product, restore_standard_mfs_model,
-    run_hogbom_plane_minor_cycle, run_imaging, run_mosaic_mfs_from_single_plane_stream,
-    run_mosaic_mtmfs_from_single_plane_stream, run_mtmfs, run_standard_mfs_dirty_grid_plan,
-    run_standard_mfs_plan, single_plane_image_product, standard_mfs_kernel_halo,
-    standard_mfs_materialized_plan_bytes, standard_mfs_metal_grouped_cache_bytes_per_lane,
-    standard_mfs_tile_queue_entry_bytes, topology_parallel_worker_candidates,
-    trace_cube_channel_residual_refresh, trace_cube_channel_residual_refresh_model_channel_lambda,
-    trace_w_project_plan,
+    plan_imaging_execution_with_context, plan_standard_mfs_density_source,
+    primary_beam_correct_alpha_product, primary_beam_output_products, primary_beam_product,
+    restore_standard_mfs_model, run_hogbom_plane_minor_cycle, run_imaging,
+    run_mosaic_mfs_from_single_plane_stream, run_mosaic_mtmfs_from_single_plane_stream, run_mtmfs,
+    run_standard_mfs_dirty_grid_plan, run_standard_mfs_plan, single_plane_image_product,
+    standard_mfs_kernel_halo, standard_mfs_materialized_plan_bytes,
+    standard_mfs_metal_grouped_cache_bytes_per_lane, standard_mfs_tile_queue_entry_bytes,
+    topology_parallel_worker_candidates, trace_cube_channel_residual_refresh,
+    trace_cube_channel_residual_refresh_model_channel_lambda, trace_w_project_plan,
 };
 #[cfg(test)]
 use casa_imaging::{
@@ -96,7 +103,7 @@ use casa_ms::{
     CubeSpectralSetup, MsSelection, MsSelectionIoBudget, ResolvedMsSelectionRow, SourcePartition,
     SubTable, VisibilityBuffer, VisibilityBufferFillReport, VisibilityBufferRequest,
     VisibilityChannelReadRange, VisibilityComplexSamples, VisibilityFloatSamples,
-    VisibilityReadBlockPlan, convert_frequency_to_frame, parse_numeric_id_selector,
+    VisibilityReadBlockPlan, convert_frequency_to_frame_with_frame, parse_numeric_id_selector,
     parse_rest_frequency_hz as parse_ms_rest_frequency_hz, parse_spw_selector,
     resolve_channel_selector_selection, resolve_contiguous_channel_selection,
 };
@@ -132,6 +139,7 @@ use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValu
 use image::{ImageBuffer, Rgb};
 use ndarray::{Array2, Array4, ArrayD, IxDyn, ShapeBuilder, s};
 use num_complex::{Complex32, Complex64};
+use sha2::{Digest, Sha256};
 
 pub use managed_output::{
     ManagedImagingArtifact, ManagedImagingChannelRun, ManagedImagingOutput, ManagedImagingRequest,
@@ -4189,6 +4197,8 @@ fn standard_mfs_observability_extent(config: &CliConfig) -> ImagerObservabilityE
 
 #[derive(Default)]
 struct StandardMfsProgressResourceGuards {
+    last_stage_memory_phase: Option<StandardMfsProgressPhase>,
+    stage_pressure: StandardMfsStagePressureTracker,
     initial_grid_span: Option<ImagerObservationSpanGuard>,
     initial_grid: Option<ImagerProgressResourceGuard>,
     minor_cycle_span: Option<ImagerObservationSpanGuard>,
@@ -4289,16 +4299,408 @@ fn standard_mfs_observability_callback(
     }))
 }
 
+fn standard_mfs_stage_memory_labels(
+    phase: StandardMfsProgressPhase,
+) -> (&'static str, &'static str) {
+    match phase {
+        StandardMfsProgressPhase::InitialGridStart => ("initial_grid_start", "initial-grid"),
+        StandardMfsProgressPhase::InitialGridEnd => ("initial_grid_end", "initial-grid"),
+        StandardMfsProgressPhase::MinorCycleStart => ("minor_cycle_start", "minor-cycle"),
+        StandardMfsProgressPhase::MinorCycleProgress => ("minor_cycle_progress", "minor-cycle"),
+        StandardMfsProgressPhase::MinorCycleEnd => ("minor_cycle_end", "minor-cycle"),
+        StandardMfsProgressPhase::ResidualRefreshStart => {
+            ("residual_refresh_start", "residual-refresh")
+        }
+        StandardMfsProgressPhase::ResidualRefreshEnd => {
+            ("residual_refresh_end", "residual-refresh")
+        }
+        StandardMfsProgressPhase::ResidualGridStart => ("residual_grid_start", "residual-grid"),
+        StandardMfsProgressPhase::ResidualGridEnd => ("residual_grid_end", "residual-grid"),
+        StandardMfsProgressPhase::FftStart => ("fft_start", "fft"),
+        StandardMfsProgressPhase::FftEnd => ("fft_end", "fft"),
+        StandardMfsProgressPhase::WeightedMosaicStart => {
+            ("weighted_mosaic_start", "weighted-mosaic")
+        }
+        StandardMfsProgressPhase::WeightedMosaicEnd => ("weighted_mosaic_end", "weighted-mosaic"),
+    }
+}
+
+fn standard_mfs_stage_memory_optional_bytes(bytes: Option<u64>) -> String {
+    bytes.map_or_else(|| "unavailable".to_string(), |bytes| bytes.to_string())
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct StandardMfsStagePressureSnapshot {
+    process_physical_footprint_bytes: Option<u64>,
+    current_rss_bytes: Option<u64>,
+    lifetime_peak_rss_bytes: Option<u64>,
+    current_cpu_allocated_bytes: Option<u64>,
+    current_metal_allocated_bytes: Option<u64>,
+    current_unified_memory_allocated_bytes: Option<u64>,
+    host_compressed_memory_bytes: Option<u64>,
+    swap_used_bytes: Option<u64>,
+    swapin_bytes_total: Option<u64>,
+    swapout_bytes_total: Option<u64>,
+    process_page_faults_total: Option<u64>,
+    process_disk_read_bytes_total: Option<u64>,
+    process_disk_write_bytes_total: Option<u64>,
+    external_disk_read_bytes_total: Option<u64>,
+    external_disk_write_bytes_total: Option<u64>,
+    gpu_stall_ms_total: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct StandardMfsStagePressureObservation {
+    current: StandardMfsStagePressureSnapshot,
+    stage_observed_peak: StandardMfsStagePressureSnapshot,
+    swapin_bytes_delta: Option<u64>,
+    swapout_bytes_delta: Option<u64>,
+    process_page_faults_delta: Option<u64>,
+    process_disk_read_bytes_delta: Option<u64>,
+    process_disk_write_bytes_delta: Option<u64>,
+    external_disk_read_bytes_delta: Option<u64>,
+    external_disk_write_bytes_delta: Option<u64>,
+    gpu_stall_ms: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct StandardMfsStagePressureTracker {
+    stage: Option<&'static str>,
+    entry: StandardMfsStagePressureSnapshot,
+    observed_peak: StandardMfsStagePressureSnapshot,
+}
+
+fn standard_mfs_stage_observed_max(peak: &mut Option<u64>, current: Option<u64>) {
+    if let Some(current) = current {
+        *peak = Some(peak.map_or(current, |peak| peak.max(current)));
+    }
+}
+
+fn standard_mfs_stage_counter_delta(current: Option<u64>, entry: Option<u64>) -> Option<u64> {
+    current
+        .zip(entry)
+        .and_then(|(current, entry)| current.checked_sub(entry))
+}
+
+impl StandardMfsStagePressureTracker {
+    fn observe(
+        &mut self,
+        stage: &'static str,
+        current: StandardMfsStagePressureSnapshot,
+    ) -> StandardMfsStagePressureObservation {
+        if self.stage != Some(stage) {
+            self.stage = Some(stage);
+            self.entry = current;
+            self.observed_peak = current;
+        } else {
+            standard_mfs_stage_observed_max(
+                &mut self.observed_peak.process_physical_footprint_bytes,
+                current.process_physical_footprint_bytes,
+            );
+            standard_mfs_stage_observed_max(
+                &mut self.observed_peak.current_rss_bytes,
+                current.current_rss_bytes,
+            );
+            standard_mfs_stage_observed_max(
+                &mut self.observed_peak.current_cpu_allocated_bytes,
+                current.current_cpu_allocated_bytes,
+            );
+            standard_mfs_stage_observed_max(
+                &mut self.observed_peak.current_metal_allocated_bytes,
+                current.current_metal_allocated_bytes,
+            );
+            standard_mfs_stage_observed_max(
+                &mut self.observed_peak.current_unified_memory_allocated_bytes,
+                current.current_unified_memory_allocated_bytes,
+            );
+            standard_mfs_stage_observed_max(
+                &mut self.observed_peak.host_compressed_memory_bytes,
+                current.host_compressed_memory_bytes,
+            );
+            standard_mfs_stage_observed_max(
+                &mut self.observed_peak.swap_used_bytes,
+                current.swap_used_bytes,
+            );
+        }
+        StandardMfsStagePressureObservation {
+            current,
+            stage_observed_peak: self.observed_peak,
+            swapin_bytes_delta: standard_mfs_stage_counter_delta(
+                current.swapin_bytes_total,
+                self.entry.swapin_bytes_total,
+            ),
+            swapout_bytes_delta: standard_mfs_stage_counter_delta(
+                current.swapout_bytes_total,
+                self.entry.swapout_bytes_total,
+            ),
+            process_page_faults_delta: standard_mfs_stage_counter_delta(
+                current.process_page_faults_total,
+                self.entry.process_page_faults_total,
+            ),
+            process_disk_read_bytes_delta: standard_mfs_stage_counter_delta(
+                current.process_disk_read_bytes_total,
+                self.entry.process_disk_read_bytes_total,
+            ),
+            process_disk_write_bytes_delta: standard_mfs_stage_counter_delta(
+                current.process_disk_write_bytes_total,
+                self.entry.process_disk_write_bytes_total,
+            ),
+            external_disk_read_bytes_delta: standard_mfs_stage_counter_delta(
+                current.external_disk_read_bytes_total,
+                self.entry.external_disk_read_bytes_total,
+            ),
+            external_disk_write_bytes_delta: standard_mfs_stage_counter_delta(
+                current.external_disk_write_bytes_total,
+                self.entry.external_disk_write_bytes_total,
+            ),
+            gpu_stall_ms: standard_mfs_stage_counter_delta(
+                current.gpu_stall_ms_total,
+                self.entry.gpu_stall_ms_total,
+            ),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn current_standard_mfs_platform_pressure_snapshot() -> StandardMfsStagePressureSnapshot {
+    let mut snapshot = StandardMfsStagePressureSnapshot::default();
+
+    let mut usage = unsafe { std::mem::zeroed::<libc::rusage_info_v4>() };
+    let usage_status = unsafe {
+        libc::proc_pid_rusage(
+            libc::getpid(),
+            libc::RUSAGE_INFO_V4,
+            std::ptr::addr_of_mut!(usage).cast::<libc::rusage_info_t>(),
+        )
+    };
+    if usage_status == 0 {
+        snapshot.process_physical_footprint_bytes = Some(usage.ri_phys_footprint);
+        snapshot.process_disk_read_bytes_total = Some(usage.ri_diskio_bytesread);
+        snapshot.process_disk_write_bytes_total = Some(usage.ri_diskio_byteswritten);
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct ProcTaskInfo {
+        virtual_size: u64,
+        resident_size: u64,
+        total_user: u64,
+        total_system: u64,
+        threads_user: u64,
+        threads_system: u64,
+        policy: i32,
+        faults: i32,
+        pageins: i32,
+        cow_faults: i32,
+        messages_sent: i32,
+        messages_received: i32,
+        syscalls_mach: i32,
+        syscalls_unix: i32,
+        csw: i32,
+        threadnum: i32,
+        numrunning: i32,
+        priority: i32,
+    }
+
+    const PROC_PIDTASKINFO: i32 = 4;
+    unsafe extern "C" {
+        fn proc_pidinfo(
+            pid: libc::c_int,
+            flavor: libc::c_int,
+            arg: u64,
+            buffer: *mut libc::c_void,
+            buffersize: libc::c_int,
+        ) -> libc::c_int;
+    }
+    let mut task_info = ProcTaskInfo::default();
+    let task_info_size = std::mem::size_of::<ProcTaskInfo>();
+    let task_info_status = unsafe {
+        proc_pidinfo(
+            libc::getpid(),
+            PROC_PIDTASKINFO,
+            0,
+            std::ptr::addr_of_mut!(task_info).cast::<libc::c_void>(),
+            task_info_size as libc::c_int,
+        )
+    };
+    if task_info_status == task_info_size as libc::c_int {
+        snapshot.process_page_faults_total = u64::try_from(task_info.faults).ok();
+    }
+
+    #[allow(deprecated)]
+    {
+        let mut statistics = unsafe { std::mem::zeroed::<libc::vm_statistics64>() };
+        let mut count = libc::HOST_VM_INFO64_COUNT;
+        let statistics_status = unsafe {
+            libc::host_statistics64(
+                libc::mach_host_self(),
+                libc::HOST_VM_INFO64,
+                (&mut statistics as *mut libc::vm_statistics64).cast(),
+                &mut count,
+            )
+        };
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        if statistics_status == libc::KERN_SUCCESS && page_size > 0 {
+            let page_size = page_size as u64;
+            snapshot.host_compressed_memory_bytes =
+                u64::from(statistics.compressor_page_count).checked_mul(page_size);
+            snapshot.swapin_bytes_total = statistics.swapins.checked_mul(page_size);
+            snapshot.swapout_bytes_total = statistics.swapouts.checked_mul(page_size);
+        }
+    }
+
+    let mut swap_usage = unsafe { std::mem::zeroed::<libc::xsw_usage>() };
+    let mut swap_usage_size = std::mem::size_of::<libc::xsw_usage>() as libc::size_t;
+    let swap_usage_status = unsafe {
+        libc::sysctlbyname(
+            c"vm.swapusage".as_ptr(),
+            std::ptr::addr_of_mut!(swap_usage).cast(),
+            &mut swap_usage_size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if swap_usage_status == 0 {
+        snapshot.swap_used_bytes = Some(swap_usage.xsu_used);
+    }
+
+    snapshot
+}
+
+#[cfg(not(target_os = "macos"))]
+fn current_standard_mfs_platform_pressure_snapshot() -> StandardMfsStagePressureSnapshot {
+    StandardMfsStagePressureSnapshot::default()
+}
+
+fn current_standard_mfs_stage_pressure_snapshot() -> StandardMfsStagePressureSnapshot {
+    let mut snapshot = current_standard_mfs_platform_pressure_snapshot();
+    let process_memory = spectral_slab::current_process_memory_snapshot();
+    snapshot.current_rss_bytes = process_memory
+        .current_rss_bytes
+        .and_then(|bytes| u64::try_from(bytes).ok());
+    snapshot.lifetime_peak_rss_bytes = process_memory
+        .peak_rss_bytes
+        .and_then(|bytes| u64::try_from(bytes).ok());
+
+    let metal = imaging_metal_memory_detection();
+    snapshot.current_metal_allocated_bytes = metal
+        .current_allocated_bytes
+        .and_then(|bytes| u64::try_from(bytes).ok());
+    if metal.has_unified_memory == Some(true) {
+        snapshot.current_unified_memory_allocated_bytes = snapshot.current_metal_allocated_bytes;
+    }
+    snapshot
+}
+
+fn standard_mfs_stage_memory_line(
+    event: &StandardMfsProgressEvent,
+    pressure: StandardMfsStagePressureObservation,
+    elapsed: Duration,
+) -> String {
+    let (phase, stage) = standard_mfs_stage_memory_labels(event.phase);
+    format!(
+        "standard_mfs_stage_memory phase={} stage={} major_cycle={} minor_iterations={} process_physical_footprint_bytes={} stage_observed_peak_process_physical_footprint_bytes={} current_rss_bytes={} stage_observed_peak_rss_bytes={} lifetime_peak_rss_bytes={} current_cpu_allocated_bytes={} stage_observed_peak_cpu_allocated_bytes={} current_metal_allocated_bytes={} stage_observed_peak_metal_allocated_bytes={} current_unified_memory_allocated_bytes={} stage_observed_peak_unified_memory_allocated_bytes={} host_compressed_memory_bytes={} stage_observed_peak_host_compressed_memory_bytes={} swap_used_bytes={} stage_observed_peak_swap_used_bytes={} swapin_bytes_delta={} swapout_bytes_delta={} process_page_faults_delta={} process_disk_read_bytes_delta={} process_disk_write_bytes_delta={} external_disk_read_bytes_delta={} external_disk_write_bytes_delta={} gpu_stall_ms={} peak_observation_complete=false observation_scope=phase-transition-samples-not-transient-peak elapsed_monotonic_ms={:.3}",
+        phase,
+        stage,
+        event.major_cycle,
+        event.minor_iterations,
+        standard_mfs_stage_memory_optional_bytes(pressure.current.process_physical_footprint_bytes),
+        standard_mfs_stage_memory_optional_bytes(
+            pressure
+                .stage_observed_peak
+                .process_physical_footprint_bytes
+        ),
+        standard_mfs_stage_memory_optional_bytes(pressure.current.current_rss_bytes),
+        standard_mfs_stage_memory_optional_bytes(pressure.stage_observed_peak.current_rss_bytes),
+        standard_mfs_stage_memory_optional_bytes(pressure.current.lifetime_peak_rss_bytes),
+        standard_mfs_stage_memory_optional_bytes(pressure.current.current_cpu_allocated_bytes),
+        standard_mfs_stage_memory_optional_bytes(
+            pressure.stage_observed_peak.current_cpu_allocated_bytes
+        ),
+        standard_mfs_stage_memory_optional_bytes(pressure.current.current_metal_allocated_bytes),
+        standard_mfs_stage_memory_optional_bytes(
+            pressure.stage_observed_peak.current_metal_allocated_bytes
+        ),
+        standard_mfs_stage_memory_optional_bytes(
+            pressure.current.current_unified_memory_allocated_bytes
+        ),
+        standard_mfs_stage_memory_optional_bytes(
+            pressure
+                .stage_observed_peak
+                .current_unified_memory_allocated_bytes
+        ),
+        standard_mfs_stage_memory_optional_bytes(pressure.current.host_compressed_memory_bytes),
+        standard_mfs_stage_memory_optional_bytes(
+            pressure.stage_observed_peak.host_compressed_memory_bytes
+        ),
+        standard_mfs_stage_memory_optional_bytes(pressure.current.swap_used_bytes),
+        standard_mfs_stage_memory_optional_bytes(pressure.stage_observed_peak.swap_used_bytes),
+        standard_mfs_stage_memory_optional_bytes(pressure.swapin_bytes_delta),
+        standard_mfs_stage_memory_optional_bytes(pressure.swapout_bytes_delta),
+        standard_mfs_stage_memory_optional_bytes(pressure.process_page_faults_delta),
+        standard_mfs_stage_memory_optional_bytes(pressure.process_disk_read_bytes_delta),
+        standard_mfs_stage_memory_optional_bytes(pressure.process_disk_write_bytes_delta),
+        standard_mfs_stage_memory_optional_bytes(pressure.external_disk_read_bytes_delta),
+        standard_mfs_stage_memory_optional_bytes(pressure.external_disk_write_bytes_delta),
+        standard_mfs_stage_memory_optional_bytes(pressure.gpu_stall_ms),
+        elapsed.as_secs_f64() * 1_000.0,
+    )
+}
+
+fn standard_mfs_stage_memory_transition_line(
+    last_phase: &mut Option<StandardMfsProgressPhase>,
+    event: &StandardMfsProgressEvent,
+    pressure: StandardMfsStagePressureObservation,
+    elapsed: Duration,
+) -> Option<String> {
+    if *last_phase == Some(event.phase) {
+        return None;
+    }
+    *last_phase = Some(event.phase);
+    Some(standard_mfs_stage_memory_line(event, pressure, elapsed))
+}
+
 fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgressCallback> {
-    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+    standard_mfs_progress_callback_for_modes(
+        config,
+        IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed),
+        standard_mfs_profile_detail_enabled(),
+    )
+}
+
+fn standard_mfs_progress_callback_for_modes(
+    config: &CliConfig,
+    progress_active: bool,
+    profile_detail_enabled: bool,
+) -> Option<StandardMfsProgressCallback> {
+    if !progress_active && !profile_detail_enabled {
         return None;
     }
     let config = config.clone();
     let guards = Arc::new(Mutex::new(StandardMfsProgressResourceGuards::default()));
+    let callback_started_at = Instant::now();
     Some(Arc::new(move |event: StandardMfsProgressEvent| {
         let Ok(mut guards) = guards.lock() else {
             return;
         };
+        if guards.last_stage_memory_phase != Some(event.phase) {
+            let (_, memory_stage) = standard_mfs_stage_memory_labels(event.phase);
+            let current_pressure = current_standard_mfs_stage_pressure_snapshot();
+            let pressure = guards
+                .stage_pressure
+                .observe(memory_stage, current_pressure);
+            if let Some(line) = standard_mfs_stage_memory_transition_line(
+                &mut guards.last_stage_memory_phase,
+                &event,
+                pressure,
+                callback_started_at.elapsed(),
+            ) {
+                eprintln!("{line}");
+            }
+        }
+        if !progress_active {
+            return;
+        }
         let (phase, active_threads) = match event.phase {
             StandardMfsProgressPhase::InitialGridStart => {
                 guards.initial_grid_span = begin_imager_observation_span(
@@ -5249,6 +5651,13 @@ fn oracle_parameter_manifest(config: &CliConfig) -> BTreeMap<String, String> {
             .unwrap_or_else(|| "auto".to_string()),
     );
     manifest.insert(
+        "imaging_memory_pressure_policy".to_string(),
+        config
+            .imaging_memory_pressure_policy
+            .as_cli_value()
+            .to_string(),
+    );
+    manifest.insert(
         "imaging_prepare_buffer_mb".to_string(),
         config
             .imaging_prepare_buffer_mb
@@ -5385,6 +5794,8 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
         extract_option_value(&filtered_args, "--ms-imaging-read-probe")?;
     let (spectral_plan_probe, filtered_args) =
         extract_option_value(&filtered_args, "--spectral-plan-probe")?;
+    let (standard_mfs_plan_probe, filtered_args) =
+        extract_option_value(&filtered_args, "--standard-mfs-plan-probe")?;
     let (managed_output, filtered_args) = extract_option_value(&filtered_args, "--managed-output")?;
     let config = CliConfig::parse(filtered_args)?;
     if read_essentials_probe {
@@ -5404,6 +5815,24 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
         } else {
             println!(
                 "Completed diagnostic imaging run for prefix {} (no CASA image products written)",
+                result.request.image_name.display(),
+            );
+        }
+        return Ok(());
+    }
+    if standard_mfs_plan_probe {
+        let summary = run_standard_mfs_plan_probe_from_config(&config)?;
+        let result =
+            ImagerRunTaskResult::from_run(ImagerRunTaskRequest::from_cli_config(&config), &summary);
+        if managed_output {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&ManagedImagingOutput::from_task_result(&result))
+                    .map_err(|error| format!("serialize managed imaging output: {error}"))?
+            );
+        } else {
+            println!(
+                "Completed standard-MFS planner preflight for prefix {} (no visibility streaming, grids, or CASA image products)",
                 result.request.image_name.display(),
             );
         }
@@ -5461,6 +5890,23 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
         eprintln!(
             "frontend stage=cli/run_from_request_return stage_elapsed_s={:.3}",
             cli_started_at.elapsed().as_secs_f64(),
+        );
+        let frontend = summary.frontend_timings;
+        eprintln!(
+            "frontend stage=run_summary open_measurement_set_ms={:.3} prepare_plane_input_ms={:.3} get_ms_values_into_processing_buffer_ms={:.3} prepare_processing_buffer_ms={:.3} extract_phase_center_ms={:.3} run_imaging_ms={:.3} build_coordinate_system_ms={:.3} write_products_ms={:.3} total_ms={:.3}",
+            duration_ms(frontend.open_measurement_set),
+            duration_ms(frontend.prepare_plane_input),
+            duration_ms(frontend.get_ms_values_into_processing_buffer),
+            duration_ms(frontend.prepare_processing_buffer),
+            duration_ms(frontend.extract_phase_center),
+            duration_ms(frontend.run_imaging),
+            duration_ms(frontend.build_coordinate_system),
+            duration_ms(frontend.write_products),
+            duration_ms(frontend.total),
+        );
+        eprintln!(
+            "core stage=run_summary {}",
+            imaging_stage_timing_detail(summary.stage_timings),
         );
     }
     let result_started_at = Instant::now();
@@ -5771,6 +6217,7 @@ pub fn run_ms_imaging_essentials_read_probe_from_config(config: &CliConfig) -> R
 
 /// Execute only the standard spectral-cube memory planner and source-range logs.
 pub fn run_spectral_plan_probe_from_config(config: &CliConfig) -> Result<RunSummary, String> {
+    validate_imaging_memory_policy_request(config, false)?;
     let total_start = Instant::now();
     let stage_start = Instant::now();
     let ms_paths = measurement_set_paths(config)?;
@@ -5796,6 +6243,182 @@ pub fn run_spectral_plan_probe_from_config(config: &CliConfig) -> Result<RunSumm
         total_start,
         true,
     )
+}
+
+/// Execute the production standard-MFS selection and memory-admission path only.
+///
+/// The probe opens the MeasurementSet and the configured AWProject CF cache,
+/// resolves the real MAIN/DDID/SPW/POINTING selection, detects host and Metal
+/// resources, and emits the same execution/lifetime ledger used by production.
+/// It stops before visibility-column streaming, replay compilation, grid
+/// allocation, FFT execution, deconvolution, or product materialization.
+fn run_standard_mfs_plan_probe_from_config(config: &CliConfig) -> Result<RunSummary, String> {
+    let total_start = Instant::now();
+    let normalized = normalize_awproject_core_projection(config)?;
+    let config = normalized.as_ref();
+    validate_save_model_request(config)?;
+    validate_start_model_request(config)?;
+    validate_auto_mask_config(config.use_mask, &config.auto_mask)?;
+    validate_imaging_memory_policy_request(config, true)?;
+    let ms_paths = measurement_set_paths(config)?;
+    if ms_paths.len() != 1 {
+        return Err(format!(
+            "standard-MFS planner preflight requires exactly one MeasurementSet, found {}",
+            ms_paths.len()
+        ));
+    }
+    let planned_runtime = apply_standard_mfs_runtime_plan(config, false, ms_paths.len());
+    let planned_config = planned_runtime.applied(config);
+    let config = &planned_config;
+    if !can_run_mosaic_mtmfs_from_single_plane_stream(config, false, ms_paths.len()) {
+        return Err(format!(
+            "standard-MFS planner preflight currently requires the shared single-plane \
+             mosaic/AWProject MT-MFS execution path: {}",
+            bounded_source_stream_rejection(config, false, ms_paths.len())
+        ));
+    }
+
+    let open_started = Instant::now();
+    let ms = MeasurementSet::open(&ms_paths[0]).map_err(|error| format!("open MS: {error}"))?;
+    let open_measurement_set = open_started.elapsed();
+    let data_column = resolve_data_column(&ms, config.datacolumn.as_deref())?;
+    let data_description = ms
+        .data_description()
+        .map_err(|error| format!("open DATA_DESCRIPTION: {error}"))?;
+    let ddid_info = data_description_index(&data_description)?;
+    let spectral_window = ms
+        .spectral_window()
+        .map_err(|error| format!("open SPECTRAL_WINDOW: {error}"))?;
+    let polarization = ms
+        .polarization()
+        .map_err(|error| format!("open POLARIZATION: {error}"))?;
+    let selection = select_main_rows(&ms, config, &ddid_info)?;
+    if !can_finish_mfs_mosaic_without_trace(config, &selection) {
+        return Err(
+            "standard-MFS planner preflight resolved an ineligible mosaic row selection"
+                .to_string(),
+        );
+    }
+    let retain_flagged_rows_for_casa_aw_pointing_groups = config
+        .aw_project
+        .as_ref()
+        .is_some_and(|controls| controls.use_pointing);
+    let active_selected_rows = selection
+        .selected_rows
+        .iter()
+        .filter(|selected_row| {
+            retain_flagged_rows_for_casa_aw_pointing_groups
+                || selection
+                    .flag_row
+                    .get(selected_row.row_index)
+                    .copied()
+                    .map(|flagged| !flagged)
+                    .unwrap_or(true)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if active_selected_rows.is_empty() {
+        return Err("selection resolved to no active mosaic MT-MFS rows".to_string());
+    }
+
+    let requires_frequency_engine =
+        selection
+            .selected_ddids
+            .iter()
+            .try_fold(false, |requires, &ddid| {
+                let spw_id = ddid_info
+                    .get(ddid)
+                    .copied()
+                    .flatten()
+                    .map(|(spw_id, _)| spw_id)
+                    .ok_or_else(|| format!("map selected DDID {ddid} to SPW/POLARIZATION"))?;
+                let freq_ref = FrequencyRef::from_casacore_code(
+                    spectral_window
+                        .meas_freq_ref(spw_id)
+                        .map_err(|error| format!("read MEAS_FREQ_REF: {error}"))?,
+                )
+                .unwrap_or(FrequencyRef::TOPO);
+                Ok::<_, String>(requires || freq_ref != FrequencyRef::LSRK)
+            })?;
+    let derived_engine = if selection.needs_geometry_engine || requires_frequency_engine {
+        Some(MsCalEngine::new(&ms).map_err(|error| format!("build derived engine: {error}"))?)
+    } else {
+        None
+    };
+    let active_row_count = active_selected_rows.len();
+    let ddid_plans = prepare_mfs_ddid_plans(
+        config,
+        &selection,
+        active_selected_rows,
+        &ddid_info,
+        &spectral_window,
+        &polarization,
+        derived_engine.as_ref(),
+    )?;
+    let selected_channel_count = ddid_plans
+        .iter()
+        .map(|plan| plan.selected_channel_count)
+        .max()
+        .unwrap_or(1);
+    let correlation_count = ddid_plans
+        .iter()
+        .map(|plan| plan.table_values.corr_types.len())
+        .max()
+        .unwrap_or(1);
+    let base_strategy = standard_mfs_memory_plan_for_ms(
+        config,
+        &ms,
+        data_column,
+        selected_channel_count,
+        active_row_count,
+        correlation_count,
+    )?;
+    let row_block_rows = base_strategy.ingest.source_row_block_rows.max(1);
+    let stream_block_count = ddid_plans
+        .iter()
+        .map(|plan| plan.active_selected_rows.len().div_ceil(row_block_rows))
+        .sum::<usize>();
+    let strategy = if !clean_is_dirty(config) && config.aw_project.is_some() {
+        admit_awproject_compact_replay_retention(base_strategy, stream_block_count)?
+    } else {
+        base_strategy
+    };
+    log_standard_mfs_memory_plan_actual(
+        &strategy,
+        active_row_count,
+        0,
+        0,
+        "planner_preflight_mosaic_mtmfs_single_plane_stream",
+    );
+    let lifetime_peak_stage = strategy
+        .memory_lifetime_ledger
+        .peak_stage
+        .map_or("none", ImagingMemoryStage::label);
+    let lifetime_stored_peak_stage = strategy
+        .memory_lifetime_ledger
+        .peak_stored_stage
+        .map_or("none", ImagingMemoryStage::label);
+    eprintln!(
+        "standard_mfs_planner_preflight status=admitted execution_mode=mosaic_mtmfs_single_plane_stream rows_total={} ddids={} selected_channels={} correlations={} stream_blocks={} row_block_rows={} memory_pressure_policy={} memory_target_bytes={} planned_peak_bytes={} lifetime_peak_bytes={} lifetime_peak_stage={} lifetime_stored_peak_bytes={} lifetime_stored_peak_stage={} lifetime_logical_bytes={} visibility_streamed=false replay_compiled=false grids_allocated=false products_materialized=false",
+        active_row_count,
+        ddid_plans.len(),
+        selected_channel_count,
+        correlation_count,
+        stream_block_count,
+        strategy.ingest.source_row_block_rows,
+        config.imaging_memory_pressure_policy.as_cli_value(),
+        strategy.usable_memory_bytes,
+        strategy.maximum_planned_resident_bytes,
+        strategy.memory_lifetime_ledger.maximum_resident_bytes,
+        lifetime_peak_stage,
+        strategy.memory_lifetime_ledger.maximum_stored_bytes,
+        lifetime_stored_peak_stage,
+        strategy.memory_lifetime_ledger.total_logical_bytes,
+    );
+    Ok(diagnostic_plan_probe_summary(
+        open_measurement_set,
+        total_start,
+    ))
 }
 
 /// Options for exporting a compact standard-MFS sample fixture for Metal experiments.
@@ -6645,7 +7268,2030 @@ pub fn run_from_request(request: &ImagerRunTaskRequest) -> Result<RunSummary, St
     result
 }
 
+const AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV: &str = "CASA_RS_AW_BRACKET_OUTPUT";
+const AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV: &str = "CASA_RS_INTERNAL_AW_BRACKET_SELECTION_V4";
+const AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV: &str =
+    "CASA_RS_AW_TT0_ARITHMETIC_COMPAT_OUTPUT_V1";
+const AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV: &str =
+    "CASA_RS_INTERNAL_AW_TT0_ARITHMETIC_COMPAT_SELECTION_V1";
+const AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV: &str =
+    "CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_OUTPUT_V1";
+const AWPROJECT_LITERAL_COEFFICIENT_AUDIT_SELECTION_ENV: &str =
+    "CASA_RS_INTERNAL_AW_LITERAL_COEFFICIENT_AUDIT_SELECTION_V1";
+const AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV: &str =
+    "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_OUTPUT_V2";
+const AWPROJECT_NATIVE_GEOMETRY_AUDIT_SELECTION_ENV: &str =
+    "CASA_RS_INTERNAL_AW_NATIVE_GEOMETRY_AUDIT_SELECTION_V2";
+const AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV: &str =
+    "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_OUTPUT_V6";
+const AWPROJECT_NATIVE_COMPONENTS_AUDIT_SELECTION_ENV: &str =
+    "CASA_RS_INTERNAL_AW_NATIVE_COMPONENTS_AUDIT_SELECTION_V6";
+#[allow(unexpected_cfgs)]
+const AWPROJECT_LITERAL_COEFFICIENT_AUDIT_CORE_HOOK_COMPILED: bool =
+    cfg!(all(target_os = "macos", not(coverage)));
+const AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS: usize = 325;
+const AWPROJECT_DATATOGRID_BRACKET_FIRST_SELECTED_ROW_IDS_HASH: u64 = 15_058_004_568_616_189_240;
+const AWPROJECT_DATATOGRID_BRACKET_FIRST_ABSOLUTE_ROW_IDS_HASH: u64 = 8_652_707_267_842_020_204;
+const AWPROJECT_DATATOGRID_BRACKET_FIRST_ABSOLUTE_ROW: usize = 353_600;
+const AWPROJECT_DATATOGRID_BRACKET_LAST_ABSOLUTE_ROW: usize = 353_924;
+const AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_FLAGS_HASH: u64 = 3_526_571_572_021_233_857;
+const AWPROJECT_DATATOGRID_BRACKET_FIRST_FLAGGED_ROWS: usize = 48;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AwProjectDataToGridDiagnosticMode {
+    FrozenV4,
+    Tt0ArithmeticCompatV1,
+    LiteralCoefficientAuditV1,
+    NativeGeometryAuditV2,
+    NativeComponentsAuditV6,
+}
+
+impl AwProjectDataToGridDiagnosticMode {
+    fn output_env(self) -> &'static str {
+        match self {
+            Self::FrozenV4 => AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV,
+            Self::Tt0ArithmeticCompatV1 => AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV,
+            Self::LiteralCoefficientAuditV1 => AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV,
+            Self::NativeGeometryAuditV2 => AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV,
+            Self::NativeComponentsAuditV6 => AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV,
+        }
+    }
+
+    fn selection_env(self) -> &'static str {
+        match self {
+            Self::FrozenV4 => AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV,
+            Self::Tt0ArithmeticCompatV1 => AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV,
+            Self::LiteralCoefficientAuditV1 => AWPROJECT_LITERAL_COEFFICIENT_AUDIT_SELECTION_ENV,
+            Self::NativeGeometryAuditV2 => AWPROJECT_NATIVE_GEOMETRY_AUDIT_SELECTION_ENV,
+            Self::NativeComponentsAuditV6 => AWPROJECT_NATIVE_COMPONENTS_AUDIT_SELECTION_ENV,
+        }
+    }
+
+    fn expected_controls(self) -> [(&'static str, &'static str); 3] {
+        match self {
+            Self::FrozenV4 => [
+                ("CASA_RS_AW_BRACKET_EXPECT_NXY", "4096"),
+                ("CASA_RS_AW_BRACKET_BLOCKS", "1"),
+                ("CASA_RS_AW_BRACKET_TERMS", "2"),
+            ],
+            Self::Tt0ArithmeticCompatV1 => [
+                ("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_EXPECT_NXY", "4096"),
+                ("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_BLOCKS", "1"),
+                ("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_TERMS", "1"),
+            ],
+            Self::LiteralCoefficientAuditV1 => [
+                ("CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_EXPECT_NXY", "4096"),
+                ("CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_BLOCKS", "1"),
+                ("CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_TERMS", "1"),
+            ],
+            Self::NativeGeometryAuditV2 => [
+                ("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_EXPECT_NXY_V2", "4096"),
+                ("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_BLOCKS_V2", "1"),
+                ("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_TERMS_V2", "2"),
+            ],
+            Self::NativeComponentsAuditV6 => [
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V6", "4096"),
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V6", "1"),
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V6", "2"),
+            ],
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AwProjectDataToGridDiagnosticRequest {
+    mode: AwProjectDataToGridDiagnosticMode,
+    output: PathBuf,
+}
+
+fn awproject_datatogrid_diagnostic_request()
+-> Result<Option<AwProjectDataToGridDiagnosticRequest>, String> {
+    let frozen_v4_output = env::var_os(AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV);
+    let tt0_arithmetic_compat_output = env::var_os(AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV);
+    let literal_coefficient_audit_output =
+        env::var_os(AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV);
+    let native_geometry_audit_output = env::var_os(AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV);
+    let native_components_audit_output = env::var_os(AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV);
+    let configured = [
+        (
+            AwProjectDataToGridDiagnosticMode::FrozenV4,
+            frozen_v4_output,
+        ),
+        (
+            AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1,
+            tt0_arithmetic_compat_output,
+        ),
+        (
+            AwProjectDataToGridDiagnosticMode::LiteralCoefficientAuditV1,
+            literal_coefficient_audit_output,
+        ),
+        (
+            AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2,
+            native_geometry_audit_output,
+        ),
+        (
+            AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV6,
+            native_components_audit_output,
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(mode, output)| output.map(|output| (mode, output)))
+    .collect::<Vec<_>>();
+    let (mode, output) = match configured.as_slice() {
+        [] => return Ok(None),
+        [(mode, output)] => (*mode, output.clone()),
+        _ => {
+            return Err(format!(
+                "{AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV}, \
+                 {AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV}, and \
+                 {AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV}, and \
+                 {AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV}, and \
+                 {AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV} are mutually exclusive"
+            ));
+        }
+    };
+    if mode == AwProjectDataToGridDiagnosticMode::LiteralCoefficientAuditV1
+        && !AWPROJECT_LITERAL_COEFFICIENT_AUDIT_CORE_HOOK_COMPILED
+    {
+        return Err(
+            "the AWProject literal-coefficient audit requires the macOS casa-imaging \
+             controlled-stop hook and is unavailable in this build"
+                .to_string(),
+        );
+    }
+    Ok(Some(AwProjectDataToGridDiagnosticRequest {
+        mode,
+        output: PathBuf::from(output),
+    }))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AwProjectDataToGridObservedFirstBuffer {
+    selected_row_begin: usize,
+    selected_row_end: usize,
+    selected_row_count: usize,
+    selected_row_hash: u64,
+    selected_row_first: usize,
+    selected_row_last: usize,
+    absolute_main_row_count: usize,
+    absolute_main_row_hash: u64,
+    absolute_main_row_first: usize,
+    absolute_main_row_last: usize,
+    row_flags_count: usize,
+    row_flags_hash: u64,
+    flagged_rows: usize,
+    n_data_chan: usize,
+    n_data_pol: usize,
+    chan_map_count: usize,
+    chan_map_hash: u64,
+    pol_map_count: usize,
+    pol_map_hash: u64,
+    selected_corr_first_index: usize,
+    selected_corr_second_index: usize,
+    selected_corr_first_code: i32,
+    selected_corr_second_code: i32,
+    freq_count: usize,
+    freq_hash: u64,
+    freq_first_bits: u64,
+    freq_last_bits: u64,
+}
+
+fn awproject_datatogrid_bracket_fnv_u64(hash: &mut u64, value: u64) {
+    for byte in value.to_le_bytes() {
+        *hash ^= u64::from(byte);
+        *hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+}
+
+fn awproject_datatogrid_bracket_observed_first_buffer(
+    all_selected_rows: &[SelectedMainRow],
+    first_rows: &[SelectedMainRow],
+    flag_row: &[bool],
+    table_values: &PreparedSelectionTableValues,
+    channel_read_range: Option<SelectedChannelReadRange>,
+    derived_engine: Option<&MsCalEngine>,
+) -> Result<AwProjectDataToGridObservedFirstBuffer, String> {
+    if first_rows.is_empty() {
+        return Err("the AWProject DataToGrid first source block is empty".to_string());
+    }
+    let mut selected_ordinals = BTreeMap::new();
+    for (ordinal, row) in all_selected_rows.iter().enumerate() {
+        if selected_ordinals.insert(row.row_index, ordinal).is_some() {
+            return Err(format!(
+                "the AWProject DataToGrid selection contains duplicate absolute MAIN row {}",
+                row.row_index
+            ));
+        }
+    }
+    let mut selected_row_hash = 0xcbf2_9ce4_8422_2325_u64;
+    let mut absolute_main_row_hash = 0xcbf2_9ce4_8422_2325_u64;
+    let mut row_flags_hash = 0xcbf2_9ce4_8422_2325_u64;
+    awproject_datatogrid_bracket_fnv_u64(&mut selected_row_hash, first_rows.len() as u64);
+    awproject_datatogrid_bracket_fnv_u64(&mut absolute_main_row_hash, first_rows.len() as u64);
+    awproject_datatogrid_bracket_fnv_u64(&mut row_flags_hash, first_rows.len() as u64);
+    let mut selected_row_first = None;
+    let mut selected_row_last = None;
+    let mut flagged_rows = 0usize;
+    for (first_row_offset, row) in first_rows.iter().enumerate() {
+        let selected_ordinal = selected_ordinals
+            .get(&row.row_index)
+            .copied()
+            .ok_or_else(|| {
+                format!(
+                    "absolute MAIN row {} in the AWProject DataToGrid source block is absent from \
+                 the complete selected-row order",
+                    row.row_index
+                )
+            })?;
+        let first_selected_ordinal = *selected_row_first.get_or_insert(selected_ordinal);
+        let expected_ordinal = first_selected_ordinal.saturating_add(first_row_offset);
+        if selected_ordinal != expected_ordinal {
+            return Err(format!(
+                "the AWProject DataToGrid source block is not in complete-selection order: \
+                 source offset {first_row_offset} resolved to selected-row ordinal \
+                 {selected_ordinal}, expected {expected_ordinal}"
+            ));
+        }
+        selected_row_last = Some(selected_ordinal);
+        awproject_datatogrid_bracket_fnv_u64(&mut selected_row_hash, selected_ordinal as u64);
+        awproject_datatogrid_bracket_fnv_u64(&mut absolute_main_row_hash, row.row_index as u64);
+        let flagged = flag_row.get(row.row_index).copied().ok_or_else(|| {
+            format!(
+                "the frozen AWProject DataToGrid first source block row {} has no FLAG_ROW value",
+                row.row_index
+            )
+        })?;
+        row_flags_hash ^= u64::from(flagged);
+        row_flags_hash = row_flags_hash.wrapping_mul(0x0000_0100_0000_01b3);
+        flagged_rows += usize::from(flagged);
+    }
+    let selected_row_first = selected_row_first.expect("non-empty first_rows");
+    let selected_row_last = selected_row_last.expect("non-empty first_rows");
+    let channel_read_range = channel_read_range.ok_or_else(|| {
+        "the AWProject DataToGrid first source block has no contiguous channel read range"
+            .to_string()
+    })?;
+    let channel_end = channel_read_range.end_exclusive();
+    let source_frequencies_hz = table_values
+        .spw_freqs_hz
+        .get(channel_read_range.start..channel_end)
+        .ok_or_else(|| {
+            format!(
+                "the AWProject DataToGrid channel range {}..{} exceeds SPW {} channel count {}",
+                channel_read_range.start,
+                channel_end,
+                table_values.spw_id,
+                table_values.spw_freqs_hz.len()
+            )
+        })?;
+    let mut chan_map_hash = 0xcbf2_9ce4_8422_2325_u64;
+    awproject_datatogrid_bracket_fnv_u64(&mut chan_map_hash, source_frequencies_hz.len() as u64);
+    for _ in source_frequencies_hz {
+        awproject_datatogrid_bracket_fnv_u64(&mut chan_map_hash, 0);
+    }
+    let (parallel_hands, _) = PlaneStokes::I
+        .derive_pair_selection(&table_values.corr_types)
+        .map_err(|error| error.to_string())?;
+    let mut pol_map_hash = 0xcbf2_9ce4_8422_2325_u64;
+    awproject_datatogrid_bracket_fnv_u64(&mut pol_map_hash, table_values.corr_types.len() as u64);
+    for corr_index in 0..table_values.corr_types.len() {
+        let mapped = if corr_index == parallel_hands.0 || corr_index == parallel_hands.1 {
+            0_i64
+        } else {
+            -1_i64
+        };
+        awproject_datatogrid_bracket_fnv_u64(&mut pol_map_hash, mapped as u64);
+    }
+    if source_frequencies_hz.is_empty() {
+        return Err(
+            "the AWProject DataToGrid first source block selected no frequencies".to_string(),
+        );
+    }
+    let imaging_frequencies = mfs_imaging_frequencies(
+        table_values.freq_ref,
+        source_frequencies_hz,
+        &first_rows[0],
+        derived_engine,
+    )?;
+    let mut freq_hash = 0xcbf2_9ce4_8422_2325_u64;
+    awproject_datatogrid_bracket_fnv_u64(&mut freq_hash, source_frequencies_hz.len() as u64);
+    let mut freq_first_bits = None;
+    let mut freq_last_bits = None;
+    for &imaging_frequency_hz in imaging_frequencies.frequency_hz.iter() {
+        let frequency_bits = imaging_frequency_hz.to_bits();
+        freq_first_bits.get_or_insert(frequency_bits);
+        freq_last_bits = Some(frequency_bits);
+        awproject_datatogrid_bracket_fnv_u64(&mut freq_hash, frequency_bits);
+    }
+    Ok(AwProjectDataToGridObservedFirstBuffer {
+        selected_row_begin: selected_row_first,
+        selected_row_end: selected_row_last.saturating_add(1),
+        selected_row_count: first_rows.len(),
+        selected_row_hash,
+        selected_row_first,
+        selected_row_last,
+        absolute_main_row_count: first_rows.len(),
+        absolute_main_row_hash,
+        absolute_main_row_first: first_rows[0].row_index,
+        absolute_main_row_last: first_rows.last().expect("non-empty first_rows").row_index,
+        row_flags_count: first_rows.len(),
+        row_flags_hash,
+        flagged_rows,
+        n_data_chan: source_frequencies_hz.len(),
+        n_data_pol: table_values.corr_types.len(),
+        chan_map_count: source_frequencies_hz.len(),
+        chan_map_hash,
+        pol_map_count: table_values.corr_types.len(),
+        pol_map_hash,
+        selected_corr_first_index: parallel_hands.0,
+        selected_corr_second_index: parallel_hands.1,
+        selected_corr_first_code: table_values.corr_types[parallel_hands.0],
+        selected_corr_second_code: table_values.corr_types[parallel_hands.1],
+        freq_count: source_frequencies_hz.len(),
+        freq_hash,
+        freq_first_bits: freq_first_bits.expect("non-empty source frequencies"),
+        freq_last_bits: freq_last_bits.expect("non-empty source frequencies"),
+    })
+}
+
+fn validate_awproject_datatogrid_bracket_cli(config: &CliConfig) -> Result<(), String> {
+    let Some(request) = awproject_datatogrid_diagnostic_request()? else {
+        return Ok(());
+    };
+    // This marker is process-private state installed only after the actual
+    // selected rows and DDID plans have also passed the checks below.
+    unsafe {
+        env::remove_var(request.mode.selection_env());
+    }
+    if !request.output.is_absolute() {
+        return Err(format!(
+            "{} must be an absolute path",
+            request.mode.output_env()
+        ));
+    }
+    if request.output.exists() {
+        let diagnostic = match request.mode {
+            AwProjectDataToGridDiagnosticMode::FrozenV4 => "DataToGrid bracket",
+            AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1 => {
+                "TT0 arithmetic-compatibility"
+            }
+            AwProjectDataToGridDiagnosticMode::LiteralCoefficientAuditV1 => {
+                "literal-coefficient audit"
+            }
+            AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2 => {
+                "native stream/geometry audit"
+            }
+            AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV6 => "native component audit",
+        };
+        return Err(format!(
+            "refusing to overwrite AWProject {diagnostic} receipt {}",
+            request.output.display()
+        ));
+    }
+    for (name, expected) in request.mode.expected_controls() {
+        if env::var(name).ok().as_deref() != Some(expected) {
+            return Err(format!(
+                "the frozen AWProject DataToGrid bracket requires {name}={expected}"
+            ));
+        }
+    }
+    let expected_spws = (2..=17).collect::<BTreeSet<_>>();
+    if config.imsize != 4096
+        || config.cell_arcsec.to_bits() != 0.6_f64.to_bits()
+        || config.field_ids.as_deref() != Some(&[1525])
+        || config.phasecenter_field != Some(1525)
+        || config.phasecenter.is_some()
+        || selected_spw_ids(config)? != expected_spws
+        || config.ddid.is_some()
+        || config.channel_start != Some(0)
+        || config.channel_count != Some(64)
+        || config.correlation.as_deref() != Some("I")
+        || config.spectral_mode != SpectralMode::Mfs
+        || config.deconvolver != Deconvolver::Mtmfs
+        || config.nterms != 2
+        || config.force_standard_gridder
+        || config.w_term_mode != WTermMode::WProject
+        || config.w_project_planes != Some(32)
+        || config.outlier_file.is_some()
+        || config.imaging_row_block_rows != Some(AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS)
+    {
+        return Err(
+            "the AWProject DataToGrid bracket requires the frozen 4096-square, 0.6-arcsec, field/phasecenter=1525, SPW=2~17, channels=0+64, Stokes-I MT-MFS nterms=2, 32-W-plane single-field row with imaging_row_block_rows=325"
+                .to_string(),
+        );
+    }
+    let controls = config.aw_project.as_ref().ok_or_else(|| {
+        "the AWProject DataToGrid bracket requires gridder='awproject'".to_string()
+    })?;
+    if !config.use_pointing
+        || !controls.use_pointing
+        || !controls.a_term
+        || controls.ps_term
+        || !controls.wb_awp
+        || !controls.conjugate_beams
+        || controls.facets != 1
+        || controls.w_plane_count != Some(32)
+        || controls.normalization != AwProjectNormalization::FlatNoise
+    {
+        return Err(
+            "the AWProject DataToGrid bracket requires POINTING, A/WB/conjugate beams, facets=1, ps_term=false, normtype=flatnoise, and 32 W planes"
+                .to_string(),
+        );
+    }
+    if request.mode == AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV6
+        && (!matches!(
+            config.weighting,
+            WeightingMode::Briggs { robust } if robust.to_bits() == 1.0_f32.to_bits()
+        ) || config.uvrange.as_deref() != Some("<12km")
+            || !config.per_channel_weight_density
+            || controls.mosaic_weighting
+            || standard_mfs_streaming_weight_density_mode(config) != WeightDensityMode::Combined)
+    {
+        return Err(
+            "the AWProject native-component-v6 audit requires the frozen uvrange='<12km', \
+             Briggs robust=1.0, public perchanweightdensity=true MFS request, mosweight=false, \
+             and resolved combined density mode"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+struct AwProjectDataToGridBracketSelectionContext<'a> {
+    actual_field_ids: &'a BTreeSet<i32>,
+    actual_spws: &'a BTreeSet<i32>,
+    all_selected_rows: &'a [SelectedMainRow],
+    first_plan: &'a PreparedMfsDdidPlan,
+    first_rows: &'a [SelectedMainRow],
+    flag_row: &'a [bool],
+    planned_source_blocks: usize,
+    derived_engine: Option<&'a MsCalEngine>,
+}
+
+fn awproject_datatogrid_selection_marker(
+    first_spw: usize,
+    planned_source_blocks: usize,
+    observed: &AwProjectDataToGridObservedFirstBuffer,
+) -> String {
+    format!(
+        "field=1525;spws=2-17;first_spw={first_spw};source_blocks={planned_source_blocks};\
+         selected_row_begin={};selected_row_end={};selected_row_count={};\
+         selected_row_hash={};selected_row_first={};selected_row_last={};\
+         absolute_main_row_count={};absolute_main_row_hash={};\
+         absolute_main_row_first={};absolute_main_row_last={};\
+         row_flags_count={};row_flags_hash={};flagged_rows={};\
+         n_data_chan={};n_data_pol={};chan_map_count={};chan_map_hash={};\
+         pol_map_count={};pol_map_hash={};freq_count={};freq_hash={};\
+         freq_first_bits={};freq_last_bits={}",
+        observed.selected_row_begin,
+        observed.selected_row_end,
+        observed.selected_row_count,
+        observed.selected_row_hash,
+        observed.selected_row_first,
+        observed.selected_row_last,
+        observed.absolute_main_row_count,
+        observed.absolute_main_row_hash,
+        observed.absolute_main_row_first,
+        observed.absolute_main_row_last,
+        observed.row_flags_count,
+        observed.row_flags_hash,
+        observed.flagged_rows,
+        observed.n_data_chan,
+        observed.n_data_pol,
+        observed.chan_map_count,
+        observed.chan_map_hash,
+        observed.pol_map_count,
+        observed.pol_map_hash,
+        observed.freq_count,
+        observed.freq_hash,
+        observed.freq_first_bits,
+        observed.freq_last_bits,
+    )
+}
+
+fn awproject_datatogrid_selection_marker_for_mode(
+    mode: AwProjectDataToGridDiagnosticMode,
+    first_spw: usize,
+    planned_source_blocks: usize,
+    observed: &AwProjectDataToGridObservedFirstBuffer,
+) -> String {
+    let mut marker =
+        awproject_datatogrid_selection_marker(first_spw, planned_source_blocks, observed);
+    if matches!(
+        mode,
+        AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1
+            | AwProjectDataToGridDiagnosticMode::LiteralCoefficientAuditV1
+            | AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2
+            | AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV6
+    ) {
+        marker.push_str(&format!(
+            ";selected_corr_first_index={};selected_corr_second_index={};\
+             selected_corr_first_code={};selected_corr_second_code={}",
+            observed.selected_corr_first_index,
+            observed.selected_corr_second_index,
+            observed.selected_corr_first_code,
+            observed.selected_corr_second_code,
+        ));
+    }
+    marker
+}
+
+fn validate_awproject_tt0_arithmetic_compat_corr_order(
+    observed: &AwProjectDataToGridObservedFirstBuffer,
+) -> Result<(), String> {
+    if (
+        observed.selected_corr_first_index,
+        observed.selected_corr_second_index,
+        observed.selected_corr_first_code,
+        observed.selected_corr_second_code,
+    ) != (0, 3, 5, 8)
+    {
+        return Err(format!(
+            "the AWProject TT0 arithmetic-compatibility diagnostic requires the frozen CASA \
+             input-ipol role order RR(index 0) then LL(index 3), observed indices ({}, {}) and \
+             correlation codes ({}, {})",
+            observed.selected_corr_first_index,
+            observed.selected_corr_second_index,
+            observed.selected_corr_first_code,
+            observed.selected_corr_second_code,
+        ));
+    }
+    Ok(())
+}
+
+fn install_awproject_datatogrid_selection_marker(
+    mode: AwProjectDataToGridDiagnosticMode,
+    marker: &str,
+) {
+    unsafe {
+        env::set_var(mode.selection_env(), marker);
+    }
+}
+
+fn install_awproject_datatogrid_bracket_selection(
+    config: &CliConfig,
+    context: AwProjectDataToGridBracketSelectionContext<'_>,
+) -> Result<(), String> {
+    let Some(request) = awproject_datatogrid_diagnostic_request()? else {
+        return Ok(());
+    };
+    // `run_from_cli_config` validated the user-facing request while it still
+    // carried `wterm='wproject'`. AWProject owns that W projection, so the
+    // shared stream receives the normalized core projection (`None`) rather
+    // than the separate W-only gridder mode.
+    if config.w_term_mode != WTermMode::None || config.w_project_planes != Some(32) {
+        return Err(
+            "the AWProject DataToGrid bracket did not receive the expected normalized \
+             core projection (AWProject-owned W term, 32 W planes)"
+                .to_string(),
+        );
+    }
+    let observed = awproject_datatogrid_bracket_observed_first_buffer(
+        context.all_selected_rows,
+        context.first_rows,
+        context.flag_row,
+        &context.first_plan.table_values,
+        context.first_plan.channel_read_range,
+        context.derived_engine,
+    )?;
+    let expected_spws = (2..=17).collect::<BTreeSet<_>>();
+    if context.actual_field_ids != &BTreeSet::from([1525])
+        || context.actual_spws != &expected_spws
+        || context.first_plan.table_values.spw_id != 2
+        || context.first_rows.len() != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || observed.selected_row_begin != 0
+        || observed.selected_row_end != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || observed.selected_row_count != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || observed.selected_row_hash != AWPROJECT_DATATOGRID_BRACKET_FIRST_SELECTED_ROW_IDS_HASH
+        || observed.selected_row_first != 0
+        || observed.selected_row_last != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS - 1
+        || observed.absolute_main_row_count != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || observed.absolute_main_row_hash
+            != AWPROJECT_DATATOGRID_BRACKET_FIRST_ABSOLUTE_ROW_IDS_HASH
+        || observed.absolute_main_row_first != AWPROJECT_DATATOGRID_BRACKET_FIRST_ABSOLUTE_ROW
+        || observed.absolute_main_row_last != AWPROJECT_DATATOGRID_BRACKET_LAST_ABSOLUTE_ROW
+        || observed.row_flags_count != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || observed.row_flags_hash != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROW_FLAGS_HASH
+        || observed.flagged_rows != AWPROJECT_DATATOGRID_BRACKET_FIRST_FLAGGED_ROWS
+        || observed.n_data_chan != 64
+        || observed.n_data_pol != 4
+        || observed.chan_map_count != 64
+        || observed.pol_map_count != 4
+        || observed.freq_count != 64
+        || context.planned_source_blocks == 0
+    {
+        return Err(format!(
+            "the actual AWProject DataToGrid source plan is not the frozen CASA first-VB boundary: fields={:?} spws={:?} first_spw={} observed={observed:?} source_blocks={}",
+            context.actual_field_ids,
+            context.actual_spws,
+            context.first_plan.table_values.spw_id,
+            context.planned_source_blocks,
+        ));
+    }
+    if matches!(
+        request.mode,
+        AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1
+            | AwProjectDataToGridDiagnosticMode::LiteralCoefficientAuditV1
+            | AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2
+            | AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV6
+    ) {
+        validate_awproject_tt0_arithmetic_compat_corr_order(&observed)?;
+    }
+    let marker = awproject_datatogrid_selection_marker_for_mode(
+        request.mode,
+        context.first_plan.table_values.spw_id,
+        context.planned_source_blocks,
+        &observed,
+    );
+    // The bracket is an explicitly single-process, abort-before-FFT
+    // diagnostic. Install its private selection handoff before any imaging
+    // worker is started; normal execution never mutates the environment.
+    install_awproject_datatogrid_selection_marker(request.mode, &marker);
+    Ok(())
+}
+
+const AWPROJECT_NATIVE_GEOMETRY_FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+const AWPROJECT_NATIVE_GEOMETRY_FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+const AWPROJECT_NATIVE_GEOMETRY_EXPECTED_SOURCE_COUNT: usize = 12_359;
+const AWPROJECT_NATIVE_GEOMETRY_EXPECTED_STREAM_HASH: u64 = 4_740_440_223_154_359_747;
+const AWPROJECT_NATIVE_GEOMETRY_EXPECTED_GEOMETRY_HASHES: [u64; 2] =
+    [15_079_793_846_523_608_377, 14_381_099_959_812_707_833];
+const AWPROJECT_NATIVE_COMPONENTS_EXPECTED_HEADER_HASH: u64 = 6_709_505_723_840_238_374;
+const AWPROJECT_NATIVE_COMPONENTS_EXPECTED_ROW_IDS_HASH: u64 = 15_058_004_568_616_189_240;
+const AWPROJECT_NATIVE_COMPONENTS_EXPECTED_CHANNEL_MAP_HASH: u64 = 2_111_453_637_644_839_429;
+const AWPROJECT_NATIVE_COMPONENTS_EXPECTED_POLARIZATION_MAP_HASH: u64 = 13_222_926_617_229_668_273;
+const AWPROJECT_NATIVE_COMPONENTS_EXPECTED_FREQUENCIES_HASH: u64 = 17_711_728_193_083_539_473;
+const AWPROJECT_NATIVE_COMPONENTS_EXPECTED_ROW_FLAGS_HASH: u64 = 3_526_571_572_021_233_857;
+const AWPROJECT_NATIVE_COMPONENTS_EXPECTED_UVW_DPHASE_HASH: u64 = 6_884_923_150_254_773_287;
+const AWPROJECT_NATIVE_COMPONENTS_EXPECTED_FLAG_MASKS_HASH: u64 = 13_953_846_914_309_385_891;
+const AWPROJECT_NATIVE_COMPONENTS_EXPECTED_IMAGING_WEIGHTS_HASH: u64 = 2_430_234_571_011_807_313;
+const AWPROJECT_NATIVE_COMPONENTS_EXPECTED_ADMISSION_HASH: u64 = 14_184_653_015_859_831_397;
+const AWPROJECT_NATIVE_COMPONENTS_CASA_RECEIPT_SHA256: &str =
+    "cc30d5492f6654336f46617a696f9a7fc8da9006df4e5ae9a3c64a6a9f401644";
+const AWPROJECT_NATIVE_GEOMETRY_UVW_HYPOTHESIS: &str =
+    "casa-awproject-negate-uv-before-girar-assumed-same-field-identity";
+const AWPROJECT_NATIVE_GEOMETRY_PHASE_HYPOTHESIS: &str =
+    "casa-rs-current-same-field-phase-shift-m-retained-not-casa-girar-refocus-bit-replay";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AwProjectNativeGeometryCall {
+    call: usize,
+    block: usize,
+    term: usize,
+    source_count: usize,
+    stream_hash: u64,
+    geometry_hash: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AwProjectNativeGeometryHypothesis {
+    use_conjugate_frequency_cf: bool,
+    calls: [AwProjectNativeGeometryCall; 2],
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AwProjectNativeGeometryHasher(u64);
+
+impl AwProjectNativeGeometryHasher {
+    fn new() -> Self {
+        Self(AWPROJECT_NATIVE_GEOMETRY_FNV_OFFSET)
+    }
+
+    fn bytes(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.0 ^= u64::from(byte);
+            self.0 = self.0.wrapping_mul(AWPROJECT_NATIVE_GEOMETRY_FNV_PRIME);
+        }
+    }
+
+    fn boolean(&mut self, value: bool) {
+        self.bytes(&[u8::from(value)]);
+    }
+
+    fn u64(&mut self, value: u64) {
+        self.bytes(&value.to_le_bytes());
+    }
+
+    fn i64(&mut self, value: i64) {
+        self.u64(value as u64);
+    }
+
+    fn f64(&mut self, value: f64) {
+        self.u64(value.to_bits());
+    }
+
+    fn f32(&mut self, value: f32) {
+        self.bytes(&value.to_bits().to_le_bytes());
+    }
+}
+
+fn awproject_native_geometry_hash_header(
+    hash: &mut AwProjectNativeGeometryHasher,
+    use_conjugate_frequency_cf: bool,
+    row_count: usize,
+    spw_id: usize,
+    im_ref_freq_hz: f64,
+) {
+    hash.boolean(use_conjugate_frequency_cf);
+    hash.u64(0);
+    hash.u64(row_count as u64);
+    hash.u64(row_count as u64);
+    hash.u64(spw_id as u64);
+    hash.f64(im_ref_freq_hz);
+    for extent in [4096_u64, 4096, 1, 1] {
+        hash.u64(extent);
+    }
+    hash.u64(64);
+    for _ in 0..64 {
+        hash.i64(0);
+    }
+    hash.u64(4);
+    for mapped_polarization in [0_i64, -1, -1, 0] {
+        hash.i64(mapped_polarization);
+    }
+    hash.u64(row_count as u64);
+    for row_id in 0..row_count {
+        hash.u64(row_id as u64);
+    }
+}
+
+fn awproject_native_geometry_negate_uv_hypothesis_m(internal_uvw_m: [f64; 3]) -> [f64; 3] {
+    let [u_m, v_m, w_m] = internal_uvw_m;
+    // CASA AWProjectFT::put negates U and V before girarUVW/refocus. This
+    // diagnostic hypothesis assumes those later operations are the same-field
+    // identity; it is not a bit-exact replay of CASA's UVWMachine work.
+    [-u_m, -v_m, w_m]
+}
+
+fn awproject_native_geometry_hypothesis(
+    source_block: &ColumnarPreparedSource,
+    flag_row: &[bool],
+    frequencies_hz: &[f64],
+    im_ref_freq_hz: f64,
+    use_conjugate_frequency_cf: bool,
+) -> Result<AwProjectNativeGeometryHypothesis, String> {
+    if source_block.row_count() != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || source_block.visibility.channel_count != 64
+        || source_block.visibility.corr_count != 4
+        || frequencies_hz.len() != 64
+    {
+        return Err(format!(
+            "the AWProject native-geometry audit requires 325 rows, 64 channels, four \
+             correlations, and 64 imaging frequencies; observed rows={} channels={} \
+             correlations={} frequencies={}",
+            source_block.row_count(),
+            source_block.visibility.channel_count,
+            source_block.visibility.corr_count,
+            frequencies_hz.len(),
+        ));
+    }
+    let spw_id = source_block
+        .geometry_rows
+        .first()
+        .ok_or_else(|| "the AWProject native-geometry source block is empty".to_string())?
+        .selected_row
+        .spw_id;
+    if spw_id != 2
+        || source_block
+            .geometry_rows
+            .iter()
+            .any(|row| row.selected_row.spw_id != spw_id)
+    {
+        return Err(format!(
+            "the AWProject native-geometry audit requires a homogeneous first SPW 2 buffer, \
+             observed first SPW {spw_id}"
+        ));
+    }
+
+    let mut calls = Vec::with_capacity(2);
+    for term in 0..2 {
+        let mut stream = AwProjectNativeGeometryHasher::new();
+        let mut geometry = AwProjectNativeGeometryHasher::new();
+        geometry.u64(term as u64);
+        geometry.u64(0);
+        geometry.u64(term as u64);
+        awproject_native_geometry_hash_header(
+            &mut stream,
+            use_conjugate_frequency_cf,
+            source_block.row_count(),
+            spw_id,
+            im_ref_freq_hz,
+        );
+        awproject_native_geometry_hash_header(
+            &mut geometry,
+            use_conjugate_frequency_cf,
+            source_block.row_count(),
+            spw_id,
+            im_ref_freq_hz,
+        );
+
+        let mut source_count = 0usize;
+        for (row_id, geometry_row) in source_block.geometry_rows.iter().enumerate() {
+            let row_flagged = source_block.flag_row_value(
+                flag_row,
+                row_id,
+                geometry_row.selected_row.row_index,
+            )?;
+            stream.u64(row_id as u64);
+            stream.boolean(row_flagged);
+            geometry.u64(row_id as u64);
+            geometry.boolean(row_flagged);
+            if row_flagged {
+                continue;
+            }
+            for component in
+                awproject_native_geometry_negate_uv_hypothesis_m(geometry_row.transform.uvw_m)
+            {
+                stream.f64(component);
+                geometry.f64(component);
+            }
+            stream.f64(geometry_row.transform.phase_shift_m);
+            geometry.f64(geometry_row.transform.phase_shift_m);
+
+            let flags = source_block.flags_2d(row_id)?;
+            let weights = source_block.weights(row_id)?;
+            for (local_channel, &frequency_hz) in frequencies_hz.iter().enumerate() {
+                let source_channel = source_block.visibility.channel_start + local_channel;
+                let polarization_flags = (0..4)
+                    .map(|corr| flags.get_local(corr, local_channel, source_channel))
+                    .collect::<Result<Vec<_>, _>>()?;
+                stream.u64(local_channel as u64);
+                stream.f64(frequency_hz);
+                for &flagged in &polarization_flags {
+                    stream.boolean(flagged);
+                }
+
+                let (first_weight, _) = weights.get_local(0, local_channel)?;
+                let (second_weight, _) = weights.get_local(3, local_channel)?;
+                let combined_weight = 0.5 * (first_weight + second_weight);
+                let admitted = !polarization_flags[0]
+                    && !polarization_flags[3]
+                    && first_weight.is_finite()
+                    && first_weight > 0.0
+                    && second_weight.is_finite()
+                    && second_weight > 0.0
+                    && combined_weight.is_finite()
+                    && combined_weight > 0.0;
+                if !admitted {
+                    continue;
+                }
+                geometry.u64(source_count as u64);
+                geometry.u64(local_channel as u64);
+                geometry.f64(frequency_hz);
+                for &flagged in &polarization_flags {
+                    geometry.boolean(flagged);
+                }
+                source_count += 1;
+            }
+        }
+        calls.push(AwProjectNativeGeometryCall {
+            call: term,
+            block: 0,
+            term,
+            source_count,
+            stream_hash: stream.0,
+            geometry_hash: geometry.0,
+        });
+    }
+    let calls: [AwProjectNativeGeometryCall; 2] = calls
+        .try_into()
+        .expect("the native geometry audit always evaluates TT0 and TT1");
+    Ok(AwProjectNativeGeometryHypothesis {
+        use_conjugate_frequency_cf,
+        calls,
+    })
+}
+
+fn awproject_native_geometry_result(
+    hypotheses: &[AwProjectNativeGeometryHypothesis; 2],
+) -> Result<&'static str, String> {
+    if hypotheses
+        .iter()
+        .any(|hypothesis| hypothesis.calls[0].source_count != hypothesis.calls[1].source_count)
+    {
+        return Err(
+            "the AWProject native-geometry hypotheses produced different TT0/TT1 source counts"
+                .to_string(),
+        );
+    }
+    for term in 0..2 {
+        if hypotheses[0].calls[term].source_count != hypotheses[1].calls[term].source_count {
+            return Err(format!(
+                "the AWProject native-geometry conjugate-frequency hypotheses produced \
+                 different source counts for TT{term}"
+            ));
+        }
+    }
+    let source_exact = hypotheses
+        .iter()
+        .filter(|hypothesis| {
+            hypothesis
+                .calls
+                .iter()
+                .all(|call| call.source_count == AWPROJECT_NATIVE_GEOMETRY_EXPECTED_SOURCE_COUNT)
+        })
+        .collect::<Vec<_>>();
+    if source_exact.is_empty() {
+        return Ok("completed-source-count-mismatch");
+    }
+    let stream_exact = source_exact
+        .into_iter()
+        .filter(|hypothesis| {
+            hypothesis
+                .calls
+                .iter()
+                .all(|call| call.stream_hash == AWPROJECT_NATIVE_GEOMETRY_EXPECTED_STREAM_HASH)
+        })
+        .collect::<Vec<_>>();
+    if stream_exact.is_empty() {
+        return Ok("completed-native-stream-mismatch");
+    }
+    if stream_exact.len() != 1 {
+        return Err(
+            "the AWProject native-geometry audit could not distinguish the two conjugate-frequency-CF hypotheses"
+                .to_string(),
+        );
+    }
+    let geometry_exact = stream_exact[0]
+        .calls
+        .iter()
+        .enumerate()
+        .all(|(term, call)| {
+            call.geometry_hash == AWPROJECT_NATIVE_GEOMETRY_EXPECTED_GEOMETRY_HASHES[term]
+        });
+    Ok(if geometry_exact {
+        "completed-native-stream-and-geometry-exact"
+    } else {
+        "completed-native-stream-exact-geometry-mismatch"
+    })
+}
+
+fn awproject_native_geometry_atomic_receipt(output: &Path, payload: &[u8]) -> Result<(), String> {
+    let parent = output.parent().ok_or_else(|| {
+        format!(
+            "the AWProject native-geometry receipt path {} has no parent",
+            output.display()
+        )
+    })?;
+    fs::create_dir_all(parent).map_err(|error| {
+        format!(
+            "create AWProject native-geometry receipt parent {}: {error}",
+            parent.display()
+        )
+    })?;
+    let file_name = output
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            format!(
+                "the AWProject native-geometry receipt path {} has no UTF-8 file name",
+                output.display()
+            )
+        })?;
+    let mut temporary = None;
+    for attempt in 0..100_u32 {
+        let candidate = parent.join(format!(".{file_name}.tmp-{}-{attempt}", std::process::id()));
+        match OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&candidate)
+        {
+            Ok(mut file) => {
+                file.write_all(payload).map_err(|error| {
+                    format!(
+                        "write AWProject native-geometry temporary receipt {}: {error}",
+                        candidate.display()
+                    )
+                })?;
+                file.sync_all().map_err(|error| {
+                    format!(
+                        "sync AWProject native-geometry temporary receipt {}: {error}",
+                        candidate.display()
+                    )
+                })?;
+                temporary = Some(candidate);
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(format!(
+                    "create AWProject native-geometry temporary receipt {}: {error}",
+                    candidate.display()
+                ));
+            }
+        }
+    }
+    let temporary = temporary.ok_or_else(|| {
+        format!(
+            "could not reserve a temporary AWProject native-geometry receipt beside {}",
+            output.display()
+        )
+    })?;
+    if let Err(error) = fs::hard_link(&temporary, output) {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!(
+            "publish AWProject native-geometry receipt {} without overwrite: {error}",
+            output.display()
+        ));
+    }
+    fs::remove_file(&temporary).map_err(|error| {
+        format!(
+            "remove AWProject native-geometry temporary receipt {}: {error}",
+            temporary.display()
+        )
+    })?;
+    File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| {
+            format!(
+                "sync AWProject native-geometry receipt parent {}: {error}",
+                parent.display()
+            )
+        })?;
+    Ok(())
+}
+
+fn maybe_run_awproject_native_geometry_audit(
+    source_block: &ColumnarPreparedSource,
+    flag_row: &[bool],
+    table_values: &PreparedSelectionTableValues,
+    derived_engine: Option<&MsCalEngine>,
+    im_ref_freq_hz: Option<f64>,
+) -> Result<(), String> {
+    let Some(request) = awproject_datatogrid_diagnostic_request()? else {
+        return Ok(());
+    };
+    if request.mode != AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2 {
+        return Ok(());
+    }
+    let im_ref_freq_hz = im_ref_freq_hz.ok_or_else(|| {
+        "the AWProject native-geometry audit did not receive the full-selection MT-MFS reference frequency"
+            .to_string()
+    })?;
+    if im_ref_freq_hz.to_bits() != 4_748_556_467_228_999_524 {
+        return Err(format!(
+            "the AWProject native-geometry audit expected imRefFreq bits \
+             4748556467228999524, observed {}",
+            im_ref_freq_hz.to_bits()
+        ));
+    }
+    let selection_marker = env::var(request.mode.selection_env()).map_err(|_| {
+        format!(
+            "the AWProject native-geometry audit requires the live 31-field marker {}",
+            request.mode.selection_env()
+        )
+    })?;
+    let expected_marker = awproject_datatogrid_selection_marker_for_mode(
+        AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2,
+        2,
+        32,
+        &AwProjectDataToGridObservedFirstBuffer {
+            selected_row_begin: 0,
+            selected_row_end: 325,
+            selected_row_count: 325,
+            selected_row_hash: 15_058_004_568_616_189_240,
+            selected_row_first: 0,
+            selected_row_last: 324,
+            absolute_main_row_count: 325,
+            absolute_main_row_hash: 8_652_707_267_842_020_204,
+            absolute_main_row_first: 353_600,
+            absolute_main_row_last: 353_924,
+            row_flags_count: 325,
+            row_flags_hash: 3_526_571_572_021_233_857,
+            flagged_rows: 48,
+            n_data_chan: 64,
+            n_data_pol: 4,
+            chan_map_count: 64,
+            chan_map_hash: 2_111_453_637_644_839_429,
+            pol_map_count: 4,
+            pol_map_hash: 13_222_926_617_229_668_273,
+            selected_corr_first_index: 0,
+            selected_corr_second_index: 3,
+            selected_corr_first_code: 5,
+            selected_corr_second_code: 8,
+            freq_count: 64,
+            freq_hash: 17_711_728_193_083_539_473,
+            freq_first_bits: 4_746_028_312_096_267_298,
+            freq_last_bits: 4_746_556_774_954_748_567,
+        },
+    );
+    if selection_marker != expected_marker {
+        return Err(format!(
+            "the AWProject native-geometry audit expected the exact frozen 31-field selection \
+             marker; observed {selection_marker}"
+        ));
+    }
+    if source_block.visibility.channel_start != 0 {
+        return Err(format!(
+            "the AWProject native-geometry audit expected first source channel 0, observed {}",
+            source_block.visibility.channel_start
+        ));
+    }
+    let channel_start = source_block.visibility.channel_start;
+    let channel_end = channel_start.saturating_add(source_block.visibility.channel_count);
+    let source_frequencies_hz = table_values
+        .spw_freqs_hz
+        .get(channel_start..channel_end)
+        .ok_or_else(|| {
+            format!(
+                "the AWProject native-geometry channel range {channel_start}..{channel_end} \
+                 exceeds SPW {} channel count {}",
+                table_values.spw_id,
+                table_values.spw_freqs_hz.len()
+            )
+        })?;
+    let first_row = source_block
+        .geometry_rows
+        .first()
+        .ok_or_else(|| "the AWProject native-geometry source block is empty".to_string())?;
+    let frequencies_hz = mfs_imaging_frequencies(
+        table_values.freq_ref,
+        source_frequencies_hz,
+        &first_row.selected_row,
+        derived_engine,
+    )?;
+    let hypotheses = [
+        awproject_native_geometry_hypothesis(
+            source_block,
+            flag_row,
+            &frequencies_hz.frequency_hz,
+            im_ref_freq_hz,
+            false,
+        )?,
+        awproject_native_geometry_hypothesis(
+            source_block,
+            flag_row,
+            &frequencies_hz.frequency_hz,
+            im_ref_freq_hz,
+            true,
+        )?,
+    ];
+    let result = awproject_native_geometry_result(&hypotheses)?;
+    let calls_json = |hypothesis: &AwProjectNativeGeometryHypothesis| {
+        hypothesis
+            .calls
+            .iter()
+            .map(|call| {
+                serde_json::json!({
+                    "call": call.call,
+                    "block": call.block,
+                    "term": call.term,
+                    "source_count": call.source_count,
+                    "stream_hash": call.stream_hash,
+                    "geometry_hash": call.geometry_hash,
+                })
+            })
+            .collect::<Vec<_>>()
+    };
+    let result_taxonomy = serde_json::json!([
+        "completed-source-count-mismatch",
+        "completed-native-stream-mismatch",
+        "completed-native-stream-exact-geometry-mismatch",
+        "completed-native-stream-and-geometry-exact"
+    ]);
+    let hash_contracts = serde_json::json!({
+        "algorithm": "fnv1a64",
+        "serialization": "bool-one-byte-u64-little-endian-f32-native-bits-little-endian-f64-native-bits-little-endian",
+        "uvw_hypothesis": AWPROJECT_NATIVE_GEOMETRY_UVW_HYPOTHESIS,
+        "phase_hypothesis": AWPROJECT_NATIVE_GEOMETRY_PHASE_HYPOTHESIS,
+        "stream": "header-then-row-index-row-flag-then-unflagged-negate-uv-before-girar-assumed-same-field-identity-uvw-m-casa-rs-current-phase-shift-m-then-valid-target-channel-index-frequency-and-all-pol-flags",
+        "geometry": "call-block-term-then-header-then-row-index-row-flag-then-unflagged-negate-uv-before-girar-assumed-same-field-identity-uvw-m-casa-rs-current-phase-shift-m-then-positive-weight-source-ordinal-channel-frequency-and-all-pol-flags"
+    });
+    let selection = serde_json::json!({
+        "field_id": 1525,
+        "requested_spws": "2-17",
+        "first_batch_spw": 2,
+        "planned_source_blocks": 32
+    });
+    let observed_first_buffer = serde_json::json!({
+        "begin_row": 0,
+        "end_row": 325,
+        "n_row": 325,
+        "spw_id": 2,
+        "row_ids_count": 325,
+        "row_ids_hash": 15_058_004_568_616_189_240_u64,
+        "row_id_first": 0,
+        "row_id_last": 324,
+        "row_flags_count": 325,
+        "row_flags_hash": 3_526_571_572_021_233_857_u64,
+        "flagged_rows": 48,
+        "n_data_chan": 64,
+        "n_data_pol": 4,
+        "chan_map_count": 64,
+        "chan_map_hash": 2_111_453_637_644_839_429_u64,
+        "pol_map_count": 4,
+        "pol_map_hash": 13_222_926_617_229_668_273_u64,
+        "freq_count": 64,
+        "freq_hash": 17_711_728_193_083_539_473_u64,
+        "freq_first_bits": 4_746_028_312_096_267_298_u64,
+        "freq_last_bits": 4_746_556_774_954_748_567_u64
+    });
+    let absolute_main_rows = serde_json::json!({
+        "semantics": "physical-MAIN-table-row-index",
+        "count": 325,
+        "hash": 8_652_707_267_842_020_204_u64,
+        "first": 353600,
+        "last": 353924
+    });
+    let frozen_parent_receipts = serde_json::json!({
+        "casa_rs_v4_sha256": "1c52961a3058f8f362e9d554c64b69a077f9414a7a44c738bed5351e6df59b40",
+        "casa_rs_v4_embedded_evidence_sha256": "5783293d3401f97b12742d8c89bd98e2b0d1303cabf4e19505f245db7cbe9e0a",
+        "casa_rs_v4_revision": "11cdeec698b63b9023233f3d7855d6c07d47284f",
+        "casa_v5_sha256": "fe3d5ba3bff1ba925f63f0f088df602692655131c86d6319210ffa90e067ea1f",
+        "casa_source_commit": "418bb1a26df7c4aba663ff123b038b75a6fa0295",
+        "arithmetic_v1_sha256": "a9c7fc453d343a48745269744ffd257a5ca8c532ccefe4ac74ba5a85b0ce9271",
+        "arithmetic_v1_embedded_evidence_sha256": "c2b2bc4daafe12aa0090d9d00e8cdd02ca627c2fa671f846fb6625aad912af99",
+        "arithmetic_v1_comparison_sha256": "e50bf9642a442688dc2f5f37390c63e1a04cd0ad19729f4daea4a0bf43be608e",
+        "arithmetic_v1_comparison_embedded_evidence_sha256": "dfcd28767cb60a727f1486a49a9a9b9ad96748114ff69d47d9a8e3c8dec5f73b",
+        "arithmetic_v1_revision": "dc159dc629c5e09c83d2027d06b5d909bf4f4c0a",
+        "literal_v1_sha256": "1dbed734c0f9dc3966038302c673c2ddeae7c812e4507408b4c56647db3d3c2c",
+        "literal_v1_embedded_evidence_sha256": "dfb6f809c9e96b6007321b293ee147b961a39bfc65968c21637f65058afc8d38",
+        "literal_v1_comparison_sha256": "7d5567e9f9d570536dd3406b5a7d8a59a330b29321fd5142b319dbf70d65908d",
+        "literal_v1_comparison_embedded_evidence_sha256": "a8b10b7e5fd73185762a4e55e2883e1422c96a320718e00d26c08bf0a05bdd8c",
+        "literal_v1_revision": "9604e540fb90482774eab20f858ec0930e556a53",
+        "native_geometry_v1_sha256": "9336cc0c0cf96a8efd9c5be5e3225b3beb333a52cb7c8bc19fc29df7bb0866e2",
+        "native_geometry_v1_embedded_evidence_sha256": "5585ced995d75446aee8df3a50a1ea1153d5c0247ad10ab28ba573f817bee148",
+        "native_geometry_v1_comparison_sha256": "86112da1456ea4ad3bb5b9b4da345f4e6dc5bcbac357c19ff720cd17da62f87d",
+        "native_geometry_v1_comparison_embedded_evidence_sha256": "4b1bf691ae33362f986d863a8c386f42473ae5ffb42ec89452bef90fb0a78944",
+        "native_geometry_v1_provenance_sha256": "19fc0ee9d84caae9f630f6867d3bb9250cc24c8a12e492a9cc600c4d8780be00",
+        "native_geometry_v1_revision": "f9079065689910f718884fb80a43b22b320b1bf6"
+    });
+    let hypotheses_json = hypotheses
+        .iter()
+        .map(|hypothesis| {
+            serde_json::json!({
+                "use_conjugate_frequency_cf": hypothesis.use_conjugate_frequency_cf,
+                "calls": calls_json(hypothesis)
+            })
+        })
+        .collect::<Vec<_>>();
+    let evidence = serde_json::json!({
+        "schema": "casa-rs-aw-datatogrid-native-geometry-audit-v2",
+        "status": "completed-controlled-stop",
+        "result": result,
+        "result_taxonomy": result_taxonomy,
+        "role": "bounded-correctness-oracle-not-performance-evidence",
+        "producer": "casa-rs",
+        "diagnostic_hook_added": true,
+        "normal_execution_behavior_changed": false,
+        "production_science_arithmetic_changed": false,
+        "production_dispatch": "not-entered",
+        "cf_selection": "not-entered",
+        "placement": "not-entered",
+        "tap_processing": "not-entered",
+        "grid_dispatch": "not-entered",
+        "sumwt": "not-entered",
+        "formed_image": false,
+        "normalization": "not-entered",
+        "fft": "not-entered",
+        "products": "not-entered",
+        "terms_evaluated": [0, 1],
+        "hash_reference": "casa-6.7.5.18-AWVisResampler-hash_call_inputs-stream-and-geometry-negate-uv-before-girar-same-field-identity-hypothesis",
+        "hash_contracts": hash_contracts,
+        "uvw_hypothesis": AWPROJECT_NATIVE_GEOMETRY_UVW_HYPOTHESIS,
+        "expected_grid_shape": [4096, 4096, 1, 1],
+        "target_blocks": 1,
+        "request_nterms": 2,
+        "selection": selection,
+        "observed_first_buffer": observed_first_buffer,
+        "absolute_main_rows": absolute_main_rows,
+        "im_ref_freq_bits": im_ref_freq_hz.to_bits(),
+        "frozen_parent_receipts": frozen_parent_receipts,
+        "hypotheses": hypotheses_json
+    });
+    let evidence_json = serde_json::to_string(&evidence)
+        .map_err(|error| format!("serialize AWProject native-geometry evidence: {error}"))?;
+    let evidence_sha256 = format!("{:x}", Sha256::digest(evidence_json.as_bytes()));
+    let payload = format!(
+        "{{\"schema\":\"casa-rs-aw-datatogrid-native-geometry-audit-envelope-v2\",\
+         \"content_address\":{{\"algorithm\":\"sha256\",\
+         \"scope\":\"embedded-evidence-json-utf8\",\"digest\":\"{evidence_sha256}\"}},\
+         \"evidence\":{evidence_json}}}\n"
+    );
+    awproject_native_geometry_atomic_receipt(&request.output, payload.as_bytes())?;
+    Err(format!(
+        "AWProject native-geometry-v2 audit stopped before production dispatch; receipt={} \
+         evidence_sha256={evidence_sha256} result={result}",
+        request.output.display()
+    ))
+}
+
+fn awproject_native_components_hash_vector_u64(values: &[u64]) -> u64 {
+    let mut hash = AwProjectNativeGeometryHasher::new();
+    hash.u64(values.len() as u64);
+    for &value in values {
+        hash.u64(value);
+    }
+    hash.0
+}
+
+fn awproject_native_components_hash_frequencies(values: &[f64]) -> u64 {
+    let mut hash = AwProjectNativeGeometryHasher::new();
+    hash.u64(values.len() as u64);
+    for &value in values {
+        hash.f64(value);
+    }
+    hash.0
+}
+
+#[allow(clippy::too_many_arguments)]
+fn awproject_native_components_evidence(
+    source_block: &ColumnarPreparedSource,
+    flag_row: &[bool],
+    frequencies_hz: &[f64],
+    im_ref_freq_hz: f64,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    density_source_blocks: usize,
+) -> Result<serde_json::Value, String> {
+    if source_block.row_count() != AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS
+        || source_block.visibility.channel_start != 0
+        || source_block.visibility.channel_count != 64
+        || source_block.visibility.corr_count != 4
+        || frequencies_hz.len() != 64
+    {
+        return Err(format!(
+            "the AWProject native-component-v6 audit requires a 325-row, 64-channel, \
+             four-correlation source block beginning at channel zero; observed rows={} \
+             channel_start={} channels={} correlations={} frequencies={}",
+            source_block.row_count(),
+            source_block.visibility.channel_start,
+            source_block.visibility.channel_count,
+            source_block.visibility.corr_count,
+            frequencies_hz.len(),
+        ));
+    }
+    let spw_id = source_block
+        .geometry_rows
+        .first()
+        .ok_or_else(|| "the AWProject native-component-v6 source block is empty".to_string())?
+        .selected_row
+        .spw_id;
+    if spw_id != 2
+        || source_block
+            .geometry_rows
+            .iter()
+            .any(|row| row.selected_row.spw_id != spw_id)
+    {
+        return Err(format!(
+            "the AWProject native-component-v6 audit requires homogeneous SPW 2 rows; \
+             observed first SPW {spw_id}"
+        ));
+    }
+
+    let row_ids = (0..source_block.row_count())
+        .map(|row| row as u64)
+        .collect::<Vec<_>>();
+    let channel_map = vec![0_i64; frequencies_hz.len()];
+    let polarization_map = vec![0_i64, -1, -1, 0];
+    let mut header_hash = AwProjectNativeGeometryHasher::new();
+    awproject_native_geometry_hash_header(
+        &mut header_hash,
+        false,
+        source_block.row_count(),
+        spw_id,
+        im_ref_freq_hz,
+    );
+    let row_ids_hash = awproject_native_components_hash_vector_u64(&row_ids);
+    let channel_map_hash = awproject_native_components_hash_vector_u64(
+        &channel_map
+            .iter()
+            .map(|&value| value as u64)
+            .collect::<Vec<_>>(),
+    );
+    let polarization_map_hash = awproject_native_components_hash_vector_u64(
+        &polarization_map
+            .iter()
+            .map(|&value| value as u64)
+            .collect::<Vec<_>>(),
+    );
+    let frequencies_hash = awproject_native_components_hash_frequencies(frequencies_hz);
+
+    let mut row_flags_hash = AwProjectNativeGeometryHasher::new();
+    row_flags_hash.u64(source_block.row_count() as u64);
+    let mut uvw_dphase_hash = AwProjectNativeGeometryHasher::new();
+    uvw_dphase_hash.u64(source_block.row_count() as u64);
+    let mut flag_masks_hash = AwProjectNativeGeometryHasher::new();
+    flag_masks_hash.u64(source_block.row_count() as u64);
+    flag_masks_hash.u64(frequencies_hz.len() as u64);
+    flag_masks_hash.u64(4);
+    let mut imaging_weights_hash = AwProjectNativeGeometryHasher::new();
+    imaging_weights_hash.u64(source_block.row_count() as u64);
+    imaging_weights_hash.u64(frequencies_hz.len() as u64);
+    let mut admission_hash = AwProjectNativeGeometryHasher::new();
+    admission_hash.u64(source_block.row_count() as u64);
+    admission_hash.u64(frequencies_hz.len() as u64);
+
+    let mut stream_hash = AwProjectNativeGeometryHasher::new();
+    awproject_native_geometry_hash_header(
+        &mut stream_hash,
+        false,
+        source_block.row_count(),
+        spw_id,
+        im_ref_freq_hz,
+    );
+    let mut tt0_geometry_hash = AwProjectNativeGeometryHasher::new();
+    tt0_geometry_hash.u64(0);
+    tt0_geometry_hash.u64(0);
+    tt0_geometry_hash.u64(0);
+    awproject_native_geometry_hash_header(
+        &mut tt0_geometry_hash,
+        false,
+        source_block.row_count(),
+        spw_id,
+        im_ref_freq_hz,
+    );
+    let mut tt1_geometry_hash = AwProjectNativeGeometryHasher::new();
+    tt1_geometry_hash.u64(1);
+    tt1_geometry_hash.u64(0);
+    tt1_geometry_hash.u64(1);
+    awproject_native_geometry_hash_header(
+        &mut tt1_geometry_hash,
+        false,
+        source_block.row_count(),
+        spw_id,
+        im_ref_freq_hz,
+    );
+
+    let mut raw_rows = Vec::with_capacity(source_block.row_count());
+    let mut row_checkpoints = Vec::with_capacity(source_block.row_count());
+    let mut source_count = 0usize;
+    let mut flagged_rows = 0usize;
+    let mut zero_imaging_weights = 0usize;
+    let mut nonzero_imaging_weights = 0usize;
+    for (row_id, geometry_row) in source_block.geometry_rows.iter().enumerate() {
+        let row_flagged =
+            source_block.flag_row_value(flag_row, row_id, geometry_row.selected_row.row_index)?;
+        flagged_rows += usize::from(row_flagged);
+        row_flags_hash.boolean(row_flagged);
+        let casa_uvw_m =
+            awproject_native_geometry_negate_uv_hypothesis_m(geometry_row.transform.uvw_m);
+
+        uvw_dphase_hash.u64(row_id as u64);
+        for component in casa_uvw_m {
+            uvw_dphase_hash.f64(component);
+        }
+        uvw_dphase_hash.f64(geometry_row.transform.phase_shift_m);
+
+        stream_hash.u64(row_id as u64);
+        stream_hash.boolean(row_flagged);
+        tt0_geometry_hash.u64(row_id as u64);
+        tt0_geometry_hash.boolean(row_flagged);
+        tt1_geometry_hash.u64(row_id as u64);
+        tt1_geometry_hash.boolean(row_flagged);
+        if !row_flagged {
+            for component in casa_uvw_m {
+                stream_hash.f64(component);
+                tt0_geometry_hash.f64(component);
+                tt1_geometry_hash.f64(component);
+            }
+            stream_hash.f64(geometry_row.transform.phase_shift_m);
+            tt0_geometry_hash.f64(geometry_row.transform.phase_shift_m);
+            tt1_geometry_hash.f64(geometry_row.transform.phase_shift_m);
+        }
+
+        let flags = source_block.flags_2d(row_id)?;
+        let weights = source_block.weights(row_id)?;
+        let mut row_flag_masks = Vec::with_capacity(frequencies_hz.len());
+        let mut row_imaging_weight_bits = Vec::with_capacity(frequencies_hz.len());
+        let mut row_admission = Vec::with_capacity(frequencies_hz.len());
+        let mut first_natural_weight_bits = Vec::with_capacity(frequencies_hz.len());
+        let mut second_natural_weight_bits = Vec::with_capacity(frequencies_hz.len());
+        let mut collapsed_natural_weight_bits = Vec::with_capacity(frequencies_hz.len());
+        for (local_channel, &frequency_hz) in frequencies_hz.iter().enumerate() {
+            let source_channel = source_block.visibility.channel_start + local_channel;
+            let mut polarization_flags = [false; 4];
+            let mut mask = 0_u8;
+            for (polarization, flagged) in polarization_flags.iter_mut().enumerate() {
+                *flagged = flags.get_local(polarization, local_channel, source_channel)?;
+                mask |= u8::from(*flagged) << polarization;
+            }
+            row_flag_masks.push(mask);
+            flag_masks_hash.u64(row_id as u64);
+            flag_masks_hash.u64(local_channel as u64);
+            for &flagged in &polarization_flags {
+                flag_masks_hash.boolean(flagged);
+            }
+
+            let (first_weight, _) = weights.get_local(0, local_channel)?;
+            let (second_weight, _) = weights.get_local(3, local_channel)?;
+            let natural_weight = 0.5_f32 * (first_weight + second_weight);
+            first_natural_weight_bits.push(first_weight.to_bits());
+            second_natural_weight_bits.push(second_weight.to_bits());
+            collapsed_natural_weight_bits.push(natural_weight.to_bits());
+            let pair_admitted = !row_flagged
+                && !polarization_flags[0]
+                && !polarization_flags[3]
+                && first_weight.is_finite()
+                && first_weight > 0.0
+                && second_weight.is_finite()
+                && second_weight > 0.0
+                && natural_weight.is_finite()
+                && natural_weight > 0.0;
+            let final_weight = if pair_admitted {
+                let density_uvw_lambda =
+                    mfs_density_uvw_lambda(frequency_hz, geometry_row.raw_uvw_m);
+                weighting_plan
+                    .weight_sample(density_uvw_lambda[0], density_uvw_lambda[1], natural_weight)
+                    .map_err(|error| error.to_string())?
+            } else {
+                0.0
+            };
+            row_imaging_weight_bits.push(final_weight.to_bits());
+            imaging_weights_hash.u64(row_id as u64);
+            imaging_weights_hash.u64(local_channel as u64);
+            imaging_weights_hash.f32(final_weight);
+
+            let target_valid = true;
+            let weight_nonzero = final_weight != 0.0;
+            let admitted = !row_flagged && target_valid && weight_nonzero;
+            row_admission.push(admitted);
+            admission_hash.u64(row_id as u64);
+            admission_hash.u64(local_channel as u64);
+            admission_hash.boolean(!row_flagged);
+            admission_hash.boolean(target_valid);
+            admission_hash.boolean(weight_nonzero);
+            admission_hash.boolean(admitted);
+            if weight_nonzero {
+                nonzero_imaging_weights += 1;
+            } else {
+                zero_imaging_weights += 1;
+            }
+
+            if !row_flagged {
+                stream_hash.u64(local_channel as u64);
+                stream_hash.f64(frequency_hz);
+                for &flagged in &polarization_flags {
+                    stream_hash.boolean(flagged);
+                }
+                if weight_nonzero {
+                    tt0_geometry_hash.u64(source_count as u64);
+                    tt0_geometry_hash.u64(local_channel as u64);
+                    tt0_geometry_hash.f64(frequency_hz);
+                    tt1_geometry_hash.u64(source_count as u64);
+                    tt1_geometry_hash.u64(local_channel as u64);
+                    tt1_geometry_hash.f64(frequency_hz);
+                    for &flagged in &polarization_flags {
+                        tt0_geometry_hash.boolean(flagged);
+                        tt1_geometry_hash.boolean(flagged);
+                    }
+                    source_count += 1;
+                }
+            }
+        }
+
+        raw_rows.push(serde_json::json!({
+            "row": row_id,
+            "row_flag": row_flagged,
+            "uvw_bits": casa_uvw_m.map(f64::to_bits),
+            "dphase_bits": geometry_row.transform.phase_shift_m.to_bits(),
+            "flag_masks": row_flag_masks,
+            "imaging_weight_bits": row_imaging_weight_bits,
+            "admitted": row_admission,
+            "auxiliary": {
+                "absolute_main_row": geometry_row.selected_row.row_index,
+                "raw_uvw_bits": geometry_row.raw_uvw_m.map(f64::to_bits),
+                "gridft_density_uvw_bits": geometry_row.gridft_density_uvw_m.map(f64::to_bits),
+                "casa_rs_internal_uvw_bits": geometry_row.transform.uvw_m.map(f64::to_bits),
+                "negated_uv_transform_uvw_bits": casa_uvw_m.map(f64::to_bits),
+                "first_parallel_hand_natural_weight_bits": first_natural_weight_bits,
+                "second_parallel_hand_natural_weight_bits": second_natural_weight_bits,
+                "collapsed_natural_weight_bits": collapsed_natural_weight_bits,
+            }
+        }));
+        row_checkpoints.push(serde_json::json!({
+            "row": row_id,
+            "source_count": source_count,
+            "row_flags_hash": row_flags_hash.0,
+            "uvw_dphase_hash": uvw_dphase_hash.0,
+            "flag_masks_hash": flag_masks_hash.0,
+            "imaging_weights_hash": imaging_weights_hash.0,
+            "admission_hash": admission_hash.0,
+            "stream_hash": stream_hash.0,
+            "tt0_geometry_hash": tt0_geometry_hash.0,
+            "tt1_geometry_hash": tt1_geometry_hash.0,
+        }));
+    }
+
+    let component_values = [
+        (
+            "header",
+            header_hash.0,
+            AWPROJECT_NATIVE_COMPONENTS_EXPECTED_HEADER_HASH,
+        ),
+        (
+            "row_ids",
+            row_ids_hash,
+            AWPROJECT_NATIVE_COMPONENTS_EXPECTED_ROW_IDS_HASH,
+        ),
+        (
+            "channel_map",
+            channel_map_hash,
+            AWPROJECT_NATIVE_COMPONENTS_EXPECTED_CHANNEL_MAP_HASH,
+        ),
+        (
+            "polarization_map",
+            polarization_map_hash,
+            AWPROJECT_NATIVE_COMPONENTS_EXPECTED_POLARIZATION_MAP_HASH,
+        ),
+        (
+            "frequencies",
+            frequencies_hash,
+            AWPROJECT_NATIVE_COMPONENTS_EXPECTED_FREQUENCIES_HASH,
+        ),
+        (
+            "row_flags",
+            row_flags_hash.0,
+            AWPROJECT_NATIVE_COMPONENTS_EXPECTED_ROW_FLAGS_HASH,
+        ),
+        (
+            "uvw_dphase",
+            uvw_dphase_hash.0,
+            AWPROJECT_NATIVE_COMPONENTS_EXPECTED_UVW_DPHASE_HASH,
+        ),
+        (
+            "flag_masks",
+            flag_masks_hash.0,
+            AWPROJECT_NATIVE_COMPONENTS_EXPECTED_FLAG_MASKS_HASH,
+        ),
+        (
+            "imaging_weights",
+            imaging_weights_hash.0,
+            AWPROJECT_NATIVE_COMPONENTS_EXPECTED_IMAGING_WEIGHTS_HASH,
+        ),
+        (
+            "admission",
+            admission_hash.0,
+            AWPROJECT_NATIVE_COMPONENTS_EXPECTED_ADMISSION_HASH,
+        ),
+    ];
+    let component_hashes = component_values
+        .iter()
+        .map(|(name, actual, _)| ((*name).to_string(), serde_json::json!(actual)))
+        .collect::<serde_json::Map<_, _>>();
+    let component_comparison = component_values
+        .iter()
+        .map(|(name, actual, expected)| {
+            (
+                (*name).to_string(),
+                serde_json::json!({
+                    "actual": actual,
+                    "expected_casa": expected,
+                    "exact": actual == expected,
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    let mismatched_components = component_values
+        .iter()
+        .filter(|(_, actual, expected)| actual != expected)
+        .map(|(name, _, _)| *name)
+        .collect::<Vec<_>>();
+    let recomputed_calls = [
+        serde_json::json!({
+            "origin": "observed-first-tt0",
+            "call": 0,
+            "block": 0,
+            "term": 0,
+            "source_count": source_count,
+            "stream_hash": stream_hash.0,
+            "geometry_hash": tt0_geometry_hash.0,
+        }),
+        serde_json::json!({
+            "origin": "derived-from-observed-tt0-under-frozen-v5-contract",
+            "call": 1,
+            "block": 0,
+            "term": 1,
+            "source_count": source_count,
+            "stream_hash": stream_hash.0,
+            "geometry_hash": tt1_geometry_hash.0,
+        }),
+    ];
+    let calls_exact = source_count == AWPROJECT_NATIVE_GEOMETRY_EXPECTED_SOURCE_COUNT
+        && stream_hash.0 == AWPROJECT_NATIVE_GEOMETRY_EXPECTED_STREAM_HASH
+        && tt0_geometry_hash.0 == AWPROJECT_NATIVE_GEOMETRY_EXPECTED_GEOMETRY_HASHES[0]
+        && tt1_geometry_hash.0 == AWPROJECT_NATIVE_GEOMETRY_EXPECTED_GEOMETRY_HASHES[1];
+    let exact = mismatched_components.is_empty() && calls_exact;
+    let result = if exact {
+        "completed-native-components-exact-frozen-casa"
+    } else {
+        "completed-native-components-mismatch"
+    };
+
+    Ok(serde_json::json!({
+        "schema": "casa-rs-aw-datatogrid-native-components-audit-v6",
+        "status": "completed-controlled-stop",
+        "result": result,
+        "result_taxonomy": [
+            "completed-native-components-mismatch",
+            "completed-native-components-exact-frozen-casa"
+        ],
+        "role": "bounded-correctness-oracle-not-performance-evidence",
+        "producer": "casa-rs",
+        "diagnostic_hook_added": true,
+        "normal_execution_behavior_changed": true,
+        "production_science_arithmetic_changed": true,
+        "production_change": {
+            "owner": "shared-standard-mfs-briggs",
+            "sumlocwt_term": "f64-from-rounded-f32-density-square",
+            "denominator": "separate-f32-multiply-then-add",
+            "casa_source_contract": "casacore-square-Float-returns-Float-before-Double-accumulation",
+            "casa_binary_contract": {
+                "artifact_sha256": "1a2c9ab9031842466b5d8291c0da35e839a33519b01394e3fcb99c1221b8228a",
+                "symbol": "casa::VisImagingWeight::weightUniform",
+                "architecture": "arm64",
+                "multiply_address": "0x1f6dd0",
+                "add_address": "0x1f6de4",
+                "instructions": ["fmul", "fadd"],
+            },
+            "negative_control": {
+                "case": "casa-rs-aw-datagrid-native-components-4096-full16-first-vb-v5",
+                "receipt_sha256": "3e108cfa315253ae8f1d2861407dd16a6ad85573d9d9e154c98f37d7021aa0da",
+                "embedded_evidence_sha256": "f98ce8b0df66ed2905bb18c0fcf1faa01345aa6a0adfdcf09e8d4b4cc26d69bb",
+                "imaging_weights_hash": 6_417_129_240_768_820_313_u64,
+                "mismatched_slots": 865,
+            }
+        },
+        "density_pass": "diagnostic-only-completed-with-production-weighting-plan",
+        "density_source_blocks": density_source_blocks,
+        "production_dispatch": "not-entered",
+        "cf_cache": "not-opened",
+        "cf_selection": "not-entered",
+        "grid_storage": "not-allocated",
+        "grid_dispatch": "not-entered",
+        "sumwt": "not-entered",
+        "formed_image": false,
+        "normalization": "not-entered",
+        "fft": "not-entered",
+        "products": "not-entered",
+        "completed_calls": 0,
+        "terms_observed": [],
+        "hash_contracts": {
+            "algorithm": "fnv1a64",
+            "offset_basis": AWPROJECT_NATIVE_GEOMETRY_FNV_OFFSET,
+            "prime": AWPROJECT_NATIVE_GEOMETRY_FNV_PRIME,
+            "integer_encoding": "little-endian",
+            "float_encoding": "ieee754-bits-little-endian",
+            "boolean_encoding": "one-byte-0-or-1",
+            "recomposition": "casa-6.7.5.18-bracket-hash-call-inputs",
+            "actual_uvw": "casa-convention-reexpression-of-casa-rs-prepared-geometry-transform-uvw-m",
+            "actual_phase": "casa-rs-prepared-geometry-phase-shift-m",
+            "flag_masks": "unmodified-four-correlation-source-FLAG",
+            "imaging_weights": "production-global-Briggs-plan-with-raw-UVW-f32-rounded-density-lookup",
+        },
+        "frozen_parent_receipts": {
+            "casa_native_components_v1": {
+                "schema": "casa-aw-datagrid-native-components-v1",
+                "receipt_sha256": AWPROJECT_NATIVE_COMPONENTS_CASA_RECEIPT_SHA256,
+            },
+            "casa_rs_native_components_v5": {
+                "schema": "casa-rs-aw-datatogrid-native-components-audit-v5",
+                "receipt_sha256": "3e108cfa315253ae8f1d2861407dd16a6ad85573d9d9e154c98f37d7021aa0da",
+                "embedded_evidence_sha256": "f98ce8b0df66ed2905bb18c0fcf1faa01345aa6a0adfdcf09e8d4b4cc26d69bb",
+            }
+        },
+        "header": {
+            "use_conjugate_frequency_cf": false,
+            "begin_row": 0,
+            "end_row": source_block.row_count(),
+            "n_row": source_block.row_count(),
+            "spw_id": spw_id,
+            "im_ref_freq_bits": im_ref_freq_hz.to_bits(),
+            "grid_shape": [4096, 4096, 1, 1],
+            "channel_map": channel_map,
+            "polarization_map": polarization_map,
+            "row_ids": row_ids,
+            "frequency_bits": frequencies_hz.iter().map(|value| value.to_bits()).collect::<Vec<_>>(),
+        },
+        "component_hashes": component_hashes,
+        "component_comparison": component_comparison,
+        "mismatched_components": mismatched_components,
+        "counts": {
+            "flagged_rows": flagged_rows,
+            "zero_imaging_weights": zero_imaging_weights,
+            "nonzero_imaging_weights": nonzero_imaging_weights,
+            "admitted_channels": source_count,
+        },
+        "recomputed_frozen_hashes": recomputed_calls,
+        "row_checkpoints": row_checkpoints,
+        "rows": raw_rows,
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn maybe_run_awproject_native_components_audit_v6(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column: VisibilityDataColumn,
+    selection: &SelectedRowsContext,
+    ddid_plans: &[PreparedMfsDdidPlan],
+    ddid_info: &[Option<(usize, usize)>],
+    spectral_window: &casa_ms::subtables::spectral_window::MsSpectralWindow<'_>,
+    polarization: &casa_ms::subtables::polarization::MsPolarization<'_>,
+    flag_row: &[bool],
+    derived_engine: Option<&MsCalEngine>,
+    geometry_columns: &PreparedGeometryColumnCache,
+    row_block_rows: usize,
+    max_live_row_blocks: usize,
+    geometry: ImageGeometry,
+    selected_frequency_range_hz: [f64; 2],
+    im_ref_freq_hz: f64,
+    prepare_started_at: Instant,
+    prepare_stage_timings: &mut PreparePlaneInputStageTimings,
+    accumulate_timings: &mut AccumulateRowTimings,
+) -> Result<(), String> {
+    let Some(request) = awproject_datatogrid_diagnostic_request()? else {
+        return Ok(());
+    };
+    if request.mode != AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV6 {
+        return Ok(());
+    }
+    if im_ref_freq_hz.to_bits() != 4_748_556_467_228_999_524 {
+        return Err(format!(
+            "the AWProject native-component-v6 audit expected imRefFreq bits \
+             4748556467228999524, observed {}",
+            im_ref_freq_hz.to_bits()
+        ));
+    }
+    let controls = config.aw_project.as_ref().ok_or_else(|| {
+        "the AWProject native-component-v6 audit requires normalized AWProject controls".to_string()
+    })?;
+    if controls.mosaic_weighting
+        || !matches!(
+            config.weighting,
+            WeightingMode::Briggs { robust } if robust.to_bits() == 1.0_f32.to_bits()
+        )
+        || standard_mfs_streaming_weight_density_mode(config) != WeightDensityMode::Combined
+    {
+        return Err(
+            "the AWProject native-component-v6 audit requires the production global \
+             mosweight=false Briggs robust=1.0 combined-density plan"
+                .to_string(),
+        );
+    }
+    let density_source_blocks = ddid_plans
+        .iter()
+        .map(|plan| plan.active_selected_rows.len().div_ceil(row_block_rows))
+        .sum::<usize>();
+    if density_source_blocks != 32 {
+        return Err(format!(
+            "the AWProject native-component-v6 audit expected 32 density source blocks, \
+             observed {density_source_blocks}"
+        ));
+    }
+    let first_plan = ddid_plans
+        .first()
+        .ok_or_else(|| "the AWProject native-component-v6 audit has no DDID plan".to_string())?;
+    let first_rows = first_plan
+        .active_selected_rows
+        .get(..AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS)
+        .ok_or_else(|| {
+            "the AWProject native-component-v6 audit has fewer than 325 first-SPW rows".to_string()
+        })?;
+    let observed = awproject_datatogrid_bracket_observed_first_buffer(
+        &selection.selected_rows,
+        first_rows,
+        flag_row,
+        &first_plan.table_values,
+        first_plan.channel_read_range,
+        derived_engine,
+    )?;
+    let expected_marker = awproject_datatogrid_selection_marker_for_mode(
+        AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV6,
+        2,
+        32,
+        &observed,
+    );
+    let marker = env::var(request.mode.selection_env()).map_err(|_| {
+        format!(
+            "the AWProject native-component-v6 audit requires the live selection marker {}",
+            request.mode.selection_env()
+        )
+    })?;
+    if marker != expected_marker {
+        return Err(format!(
+            "the AWProject native-component-v6 audit selection marker differs from the \
+             observed frozen first source block: {marker}"
+        ));
+    }
+
+    let mut weighting_plan = StandardMfsStreamingWeightingPlan::new_with_density_mode(
+        geometry,
+        config.weighting,
+        selected_frequency_range_hz,
+        WeightDensityMode::Combined,
+    )
+    .map_err(|error| error.to_string())?;
+    if !weighting_plan.needs_density_pass() {
+        return Err(
+            "the AWProject native-component-v6 audit did not create a Briggs density plan"
+                .to_string(),
+        );
+    }
+    for ddid_plan in ddid_plans {
+        stream_mfs_mosaic_source_row_block_planes(
+            ms,
+            config,
+            data_column,
+            false,
+            selection,
+            &ddid_plan.table_values,
+            ddid_info,
+            spectral_window,
+            polarization,
+            flag_row,
+            &ddid_plan.active_selected_rows,
+            derived_engine,
+            ddid_plan.channel_read_range,
+            geometry_columns,
+            row_block_rows,
+            max_live_row_blocks,
+            ddid_plan.selected_channel_count,
+            prepare_started_at,
+            prepare_stage_timings,
+            accumulate_timings,
+            None,
+            "native_components_v6_density",
+            |plane, _| {
+                let density_batches =
+                    align_optional_density_batches(&plane.batches, plane.density_batches)?;
+                for (visibility, density) in plane.batches.iter().zip(&density_batches) {
+                    let source = density.as_ref().unwrap_or(visibility);
+                    weighting_plan.accumulate_density_batches(std::slice::from_ref(source));
+                }
+                Ok(())
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    weighting_plan.finish_density_pass();
+
+    let source_block = read_columnar_prepared_source(
+        ms,
+        data_column,
+        false,
+        selection,
+        &first_plan.table_values,
+        ddid_info,
+        first_rows,
+        derived_engine,
+        uvw_reprojection_mode_for_selection(config, selection),
+        first_plan.channel_read_range,
+        geometry_columns,
+        None,
+        None,
+    )?;
+    let channel_start = source_block.visibility.channel_start;
+    let channel_end = channel_start.saturating_add(source_block.visibility.channel_count);
+    let source_frequencies_hz = first_plan
+        .table_values
+        .spw_freqs_hz
+        .get(channel_start..channel_end)
+        .ok_or_else(|| {
+            format!(
+                "the AWProject native-component-v6 channel range {channel_start}..{channel_end} \
+                 exceeds SPW {} channel count {}",
+                first_plan.table_values.spw_id,
+                first_plan.table_values.spw_freqs_hz.len()
+            )
+        })?;
+    let frequencies_hz = mfs_imaging_frequencies(
+        first_plan.table_values.freq_ref,
+        source_frequencies_hz,
+        &first_rows[0],
+        derived_engine,
+    )?;
+    let evidence = awproject_native_components_evidence(
+        &source_block,
+        flag_row,
+        &frequencies_hz.frequency_hz,
+        im_ref_freq_hz,
+        &weighting_plan,
+        density_source_blocks,
+    )?;
+    let result = evidence
+        .get("result")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("completed-native-components-mismatch");
+    let evidence_json = serde_json::to_string(&evidence)
+        .map_err(|error| format!("serialize AWProject native-component-v6 evidence: {error}"))?;
+    let evidence_sha256 = format!("{:x}", Sha256::digest(evidence_json.as_bytes()));
+    let payload = format!(
+        "{{\"schema\":\"casa-rs-aw-datatogrid-native-components-audit-envelope-v6\",\
+         \"content_address\":{{\"algorithm\":\"sha256\",\
+         \"scope\":\"embedded-evidence-json-utf8\",\"digest\":\"{evidence_sha256}\"}},\
+         \"evidence\":{evidence_json}}}\n"
+    );
+    awproject_native_geometry_atomic_receipt(&request.output, payload.as_bytes())?;
+    Err(format!(
+        "AWProject native-components-v6 audit stopped before casa-imaging core/CF/cache/grid \
+         dispatch; receipt={} evidence_sha256={evidence_sha256} result={result}",
+        request.output.display()
+    ))
+}
+
 fn run_from_cli_config(config: &CliConfig) -> Result<RunSummary, String> {
+    validate_imaging_memory_policy_request(config, false)?;
+    validate_awproject_datatogrid_bracket_cli(config)?;
     if config.outlier_file.is_some() {
         return run_outlier_file_from_config(config);
     }
@@ -7592,6 +10238,7 @@ fn prepare_mfs_mosaic_source_row_block_plane(
     derived_engine: Option<&MsCalEngine>,
     channel_read_range: Option<SelectedChannelReadRange>,
     geometry_columns: &PreparedGeometryColumnCache,
+    native_geometry_audit_reffreq_hz: Option<f64>,
     prepare_started_at: Instant,
     prepare_stage_timings: &mut PreparePlaneInputStageTimings,
     accumulate_timings: &mut AccumulateRowTimings,
@@ -7614,6 +10261,13 @@ fn prepare_mfs_mosaic_source_row_block_plane(
         None,
     )?;
     prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
+    maybe_run_awproject_native_geometry_audit(
+        &source_block,
+        flag_row,
+        table_values,
+        derived_engine,
+        native_geometry_audit_reffreq_hz,
+    )?;
 
     prepare_mfs_mosaic_source_row_block_plane_from_source(
         ms,
@@ -8370,7 +11024,7 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         .map(|plan| plan.table_values.corr_types.len())
         .max()
         .unwrap_or(1);
-    let strategy = standard_mfs_memory_plan_for_ms(
+    let base_strategy = standard_mfs_memory_plan_for_ms(
         config,
         ms,
         data_column,
@@ -8378,7 +11032,16 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         active_row_count,
         correlation_count,
     )?;
-    let row_block_rows = strategy.ingest.source_row_block_rows.max(1);
+    let row_block_rows = base_strategy.ingest.source_row_block_rows.max(1);
+    let stream_block_count = ddid_plans
+        .iter()
+        .map(|plan| plan.active_selected_rows.len().div_ceil(row_block_rows))
+        .sum::<usize>();
+    let strategy = if !clean_is_dirty(config) && config.aw_project.is_some() {
+        admit_awproject_compact_replay_retention(base_strategy, stream_block_count)?
+    } else {
+        base_strategy
+    };
     log_standard_mfs_memory_plan_actual(
         &strategy,
         active_row_count,
@@ -8422,6 +11085,31 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         first_plan.table_values.spw_id,
     )?;
     let first_rows_len = row_block_rows.min(first_plan.active_selected_rows.len());
+    let actual_field_ids = ddid_plans
+        .iter()
+        .flat_map(|plan| {
+            plan.active_selected_rows
+                .iter()
+                .map(|row| row.field_id as i32)
+        })
+        .collect::<BTreeSet<_>>();
+    let actual_spws = ddid_plans
+        .iter()
+        .map(|plan| plan.table_values.spw_id as i32)
+        .collect::<BTreeSet<_>>();
+    install_awproject_datatogrid_bracket_selection(
+        config,
+        AwProjectDataToGridBracketSelectionContext {
+            actual_field_ids: &actual_field_ids,
+            actual_spws: &actual_spws,
+            all_selected_rows: &selection.selected_rows,
+            first_plan,
+            first_rows: &first_plan.active_selected_rows[..first_rows_len],
+            flag_row,
+            planned_source_blocks: stream_block_count,
+            derived_engine: derived_engine.as_ref(),
+        },
+    )?;
     let mut first_plane = prepare_mfs_mosaic_source_row_block_plane(
         ms,
         config,
@@ -8437,6 +11125,7 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         derived_engine.as_ref(),
         first_plan.channel_read_range,
         &geometry_columns,
+        Some(full_selection_frequency_metadata.reffreq_hz),
         prepare_started_at,
         &mut prepare_stage_timings,
         &mut accumulate_timings,
@@ -8464,6 +11153,27 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         clean_mask: clean_mask.clone(),
         compatibility: CompatibilityMode::CasaStandardMfs,
     };
+    maybe_run_awproject_native_components_audit_v6(
+        ms,
+        config,
+        data_column,
+        &selection,
+        &ddid_plans,
+        &ddid_info,
+        &spectral_window,
+        &polarization,
+        flag_row,
+        derived_engine.as_ref(),
+        &geometry_columns,
+        row_block_rows,
+        strategy.ingest.max_live_row_blocks,
+        geometry,
+        request.selected_frequency_range_hz,
+        request.reffreq_hz,
+        prepare_started_at,
+        &mut prepare_stage_timings,
+        &mut accumulate_timings,
+    )?;
     let prepare_plane_time = prepare_started_at.elapsed();
     maybe_log_frontend_progress(
         "prepare_plane_input",
@@ -8643,6 +11353,7 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         mosaic_weight,
         spectral_delta_hz: spectral_frequency_edge_range_hz.and_then(spectral_delta_from_range),
     }));
+    let effective_clean_mask = clean_mask.map(EffectiveCleanMask::Plane);
     let mut coords = build_image_coordinate_system(
         config.imsize,
         phase_center.angles_rad,
@@ -8679,7 +11390,13 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         Some(run_result.estimated_product_payload_bytes()),
     );
     emit_imager_progress_product_write(config, &run_result, true);
-    write_products(config, &coords, &run_result, None, None)?;
+    write_products(
+        config,
+        &coords,
+        &run_result,
+        effective_clean_mask.as_ref(),
+        None,
+    )?;
     drop(product_guard);
     emit_imager_progress_product_write(config, &run_result, false);
     let write_products_time = stage_start.elapsed();
@@ -8951,6 +11668,7 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
         derived_engine.as_ref(),
         channel_read_range,
         &geometry_columns,
+        None,
         prepare_started_at,
         &mut prepare_stage_timings,
         &mut accumulate_timings,
@@ -21305,6 +24023,36 @@ fn validate_save_model_request(config: &CliConfig) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_imaging_memory_policy_request(
+    config: &CliConfig,
+    planner_probe: bool,
+) -> Result<(), String> {
+    if config.imaging_memory_pressure_policy == ImagingMemoryPressurePolicy::Oversubscribe
+        && config.imaging_memory_target_mb.is_none()
+        && config.standard_mfs_memory_target_mb.is_none()
+    {
+        return Err(
+            "imaging_memory_pressure_policy='oversubscribe' requires an explicit \
+             imaging_memory_target_mb (or the compatibility standard_mfs_memory_target_mb)"
+                .to_string(),
+        );
+    }
+    if !planner_probe
+        && matches!(
+            config.imaging_memory_pressure_policy,
+            ImagingMemoryPressurePolicy::StageAware | ImagingMemoryPressurePolicy::Hybrid
+        )
+    {
+        return Err(format!(
+            "imaging_memory_pressure_policy='{}' is currently available only to \
+             --standard-mfs-plan-probe; production execution remains disabled until product \
+             streaming, replay spill/demotion, and the requested next-use policy are active",
+            config.imaging_memory_pressure_policy.as_cli_value()
+        ));
+    }
+    Ok(())
+}
+
 fn validate_start_model_request(config: &CliConfig) -> Result<(), String> {
     let Some(start_model) = config.start_model.as_ref() else {
         return Ok(());
@@ -22320,8 +25068,9 @@ fn plan_standard_mfs_runtime_with_metal_device(
         };
 
     eprintln!(
-        "standard_mfs_runtime_plan policy={} imaging_fft_precision={} imaging_fft_backend={} eligible={} auto_multi_cpu={} auto_metal={} auto_metal_reason={} metal_device_available={} assigned_cpu_capacity={} backend={} backend_source={} grid_threads={} grid_threads_source={} density_threads={} density_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={} minor_cycle_backend={} minor_cycle_backend_reason={} metal_minor_cycle_chunk={} metal_minor_cycle_chunk_source={} mtmfs_metal_backend={} mtmfs_metal_input_cache={}",
+        "standard_mfs_runtime_plan policy={} imaging_memory_pressure_policy={} imaging_fft_precision={} imaging_fft_backend={} eligible={} auto_multi_cpu={} auto_metal={} auto_metal_reason={} metal_device_available={} assigned_cpu_capacity={} backend={} backend_source={} grid_threads={} grid_threads_source={} density_threads={} density_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={} minor_cycle_backend={} minor_cycle_backend_reason={} metal_minor_cycle_chunk={} metal_minor_cycle_chunk_source={} mtmfs_metal_backend={} mtmfs_metal_input_cache={}",
         standard_mfs_acceleration_policy_label(config.standard_mfs_acceleration),
+        imaging_memory_pressure_policy_label(config.imaging_memory_pressure_policy),
         imaging_fft_precision_policy_label(config.imaging_fft_precision),
         imaging_fft_backend_policy_label(config.imaging_fft_backend),
         eligible,
@@ -22683,6 +25432,10 @@ fn imaging_fft_precision_policy_label(policy: ImagingFftPrecisionPolicy) -> &'st
     }
 }
 
+fn imaging_memory_pressure_policy_label(policy: ImagingMemoryPressurePolicy) -> &'static str {
+    policy.as_cli_value()
+}
+
 fn imaging_fft_backend_policy_label(policy: ImagingFftBackendPolicy) -> &'static str {
     policy.as_env_value()
 }
@@ -22750,7 +25503,9 @@ pub(crate) fn apply_parallel_runtime_control(
     config.standard_mfs_grid_threads = Some("1".to_string());
     config.imaging_prepare_workers = Some(1);
     config.imaging_read_ahead_blocks = Some(1);
-    config.imaging_fft_backend = ImagingFftBackendPolicy::RustFft;
+    if config.imaging_fft_backend == ImagingFftBackendPolicy::Auto {
+        config.imaging_fft_backend = ImagingFftBackendPolicy::RustFft;
+    }
     config.standard_mfs_metal_grouped_input_cache = Some(false);
     Ok(())
 }
@@ -23153,6 +25908,8 @@ pub struct CliConfig {
     pub standard_mfs_prepare_buffer_mb: Option<usize>,
     /// Optional shared imaging source-stream memory target in MiB.
     pub imaging_memory_target_mb: Option<usize>,
+    /// Shared imaging memory-pressure policy.
+    pub imaging_memory_pressure_policy: ImagingMemoryPressurePolicy,
     /// Optional shared imaging source-stream prepare-buffer budget in MiB.
     pub imaging_prepare_buffer_mb: Option<usize>,
     /// Optional shared imaging source-stream row-block override.
@@ -23167,6 +25924,54 @@ pub struct CliConfig {
     pub imaging_fft_backend: ImagingFftBackendPolicy,
     /// Write PNG preview sidecars for the CASA image products.
     pub write_preview_pngs: bool,
+}
+
+/// Imaging-wide memory-pressure and stage-residency policy.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImagingMemoryPressurePolicy {
+    /// Select a safe resource-adaptive policy without intentional swap dependence.
+    #[default]
+    Auto,
+    /// Admit only plans expected to remain within physical-memory headroom.
+    ConservativeNoSwap,
+    /// Use most available physical memory and tolerate compression or modest incidental swapping.
+    Aggressive,
+    /// Intentionally admit a plan beyond physical-memory headroom for bounded experiments.
+    Oversubscribe,
+    /// Request stage-lifetime release/demotion planning.
+    ///
+    /// Currently accepted only by the standard-MFS planner probe; production
+    /// execution remains disabled until every requested action is active.
+    StageAware,
+    /// Request high utilization with explicit next-use-aware eviction.
+    ///
+    /// Currently accepted only by the standard-MFS planner probe; production
+    /// execution remains disabled until every requested action is active.
+    Hybrid,
+}
+
+impl ImagingMemoryPressurePolicy {
+    fn as_cli_value(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::ConservativeNoSwap => "conservative-no-swap",
+            Self::Aggressive => "aggressive",
+            Self::Oversubscribe => "oversubscribe",
+            Self::StageAware => "stage-aware",
+            Self::Hybrid => "hybrid",
+        }
+    }
 }
 
 /// Imaging-wide dirty/residual FFT precision policy.
@@ -23215,8 +26020,8 @@ pub enum ImagingFftBackendPolicy {
     Accelerate,
     /// Use Apple Metal MPSGraph when available for f32 product FFT batches.
     MetalMpsGraph,
-    /// Explicit local-only FFTW experiment; never selected by `auto`.
-    FftwLocalBench,
+    /// Use the dynamically loaded host FFTW backend.
+    Fftw,
 }
 
 impl ImagingFftBackendPolicy {
@@ -23226,7 +26031,7 @@ impl ImagingFftBackendPolicy {
             Self::RustFft => "rustfft",
             Self::Accelerate => "accelerate",
             Self::MetalMpsGraph => "metal-mpsgraph",
-            Self::FftwLocalBench => "fftw-local-bench",
+            Self::Fftw => "fftw",
         }
     }
 }
@@ -23341,6 +26146,7 @@ impl CliConfig {
         let mut standard_mfs_memory_target_mb = None::<usize>;
         let mut standard_mfs_prepare_buffer_mb = None::<usize>;
         let mut imaging_memory_target_mb = None::<usize>;
+        let mut imaging_memory_pressure_policy = ImagingMemoryPressurePolicy::Auto;
         let mut imaging_prepare_buffer_mb = None::<usize>;
         let mut imaging_row_block_rows = None::<usize>;
         let mut imaging_prepare_workers = None::<usize>;
@@ -23935,6 +26741,12 @@ impl CliConfig {
                     imaging_memory_target_mb = Some(value);
                     continue;
                 }
+                "--imaging-memory-pressure-policy" => {
+                    imaging_memory_pressure_policy = parse_imaging_memory_pressure_policy(
+                        &next_value(&mut args, "--imaging-memory-pressure-policy")?,
+                    )?;
+                    continue;
+                }
                 "--standard-mfs-prepare-buffer-mb" => {
                     let value = next_value(&mut args, "--standard-mfs-prepare-buffer-mb")?
                         .parse::<usize>()
@@ -24147,6 +26959,7 @@ impl CliConfig {
             standard_mfs_memory_target_mb,
             standard_mfs_prepare_buffer_mb,
             imaging_memory_target_mb,
+            imaging_memory_pressure_policy,
             imaging_prepare_buffer_mb,
             imaging_row_block_rows,
             imaging_prepare_workers,
@@ -26169,11 +28982,15 @@ fn align_optional_aw_parallel_hand_batches(
     {
         if parallel_hands.len() != visibility.len()
             || parallel_hands.second_visibility.len() != visibility.len()
+            || parallel_hands.source_phase.len() != visibility.len()
+            || parallel_hands.prediction_w_lambda.len() != visibility.len()
         {
             return Err(ImagingError::InvalidRequest(format!(
-                "prepared AW parallel-hand batch {index} has first/second lengths {}/{} for {} visibility samples",
+                "prepared AW parallel-hand batch {index} has first/second/source-phase/prediction-W lengths {}/{}/{}/{} for {} visibility samples",
                 parallel_hands.len(),
                 parallel_hands.second_visibility.len(),
+                parallel_hands.source_phase.len(),
+                parallel_hands.prediction_w_lambda.len(),
                 visibility.len()
             )));
         }
@@ -26300,42 +29117,33 @@ fn mfs_output_frequency_metadata_for_selected_rows(
         );
     }
 
-    let reference_frequency_hz = source_channel_frequencies_hz
-        .first()
-        .copied()
-        .ok_or_else(|| "MFS row metadata resolved to no source frequencies".to_string())?;
-    let mut frequency_range_hz = None::<[f64; 2]>;
-    let mut scale_cache = HashMap::<(u64, usize), f64>::new();
+    let mut converted_frequency_range_hz = None::<[f64; 2]>;
+    let mut frequency_cache = None::<((u64, usize), MfsImagingFrequencies)>;
     for selected_row in selected_rows {
         let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
             "internal error: missing row time for MFS frequency-frame conversion".to_string()
         })?;
         let cache_key = (row_time_mjd_sec.to_bits(), selected_row.field_id);
-        let scale = if let Some(scale) = scale_cache.get(&cache_key) {
-            *scale
+        let frequencies = if let Some((cached_key, frequencies)) = frequency_cache.as_ref()
+            && *cached_key == cache_key
+        {
+            frequencies.clone()
         } else {
-            let scale = mfs_imaging_frequency_scale(
+            let frequencies = mfs_imaging_frequencies(
                 source_freq_ref,
-                reference_frequency_hz,
+                source_channel_frequencies_hz,
                 selected_row,
                 derived_engine,
             )?;
-            scale_cache.insert(cache_key, scale);
-            scale
+            frequency_cache = Some((cache_key, frequencies.clone()));
+            frequencies
         };
-        let converted_range = [
-            source_selected_frequency_range_hz[0] * scale,
-            source_selected_frequency_range_hz[1] * scale,
-        ];
         extend_frequency_range_hz(
-            &mut frequency_range_hz,
-            [
-                converted_range[0].min(converted_range[1]),
-                converted_range[0].max(converted_range[1]),
-            ],
+            &mut converted_frequency_range_hz,
+            frequency_range_hz(&frequencies.frequency_hz)?,
         );
     }
-    let frequency_range_hz = frequency_range_hz
+    let frequency_range_hz = converted_frequency_range_hz
         .ok_or_else(|| "MFS row metadata resolved to no selected rows".to_string())?;
     let edge_range_hz = casa_mfs_frequency_edge_range_for_selected_rows(
         source_freq_ref,
@@ -31215,25 +34023,25 @@ fn accumulate_standard_mfs_density_rows_without_data_parallel(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn standard_mfs_frequency_scales_for_selected_rows(
+fn standard_mfs_imaging_frequencies_for_selected_rows(
     config: &CliConfig,
     table_values: &PreparedSelectionTableValues,
     phase_center: &PhaseCenter,
     selected_rows: &[SelectedMainRow],
     derived_engine: Option<&MsCalEngine>,
-) -> Result<Vec<f64>, String> {
+) -> Result<Vec<MfsImagingFrequencies>, String> {
     let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
         config,
         table_values,
         phase_center.clone(),
         false,
     )?;
-    let mut row_frequency_scales = Vec::with_capacity(selected_rows.len());
+    let mut row_frequencies = Vec::with_capacity(selected_rows.len());
     for selected_row in selected_rows {
-        row_frequency_scales
-            .push(prepared.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?);
+        row_frequencies
+            .push(prepared.mfs_imaging_frequencies_for_row(selected_row, derived_engine)?);
     }
-    Ok(row_frequency_scales)
+    Ok(row_frequencies)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -31243,7 +34051,7 @@ fn accumulate_standard_mfs_density_essentials_rows(
     phase_center: &PhaseCenter,
     selected_rows: &[SelectedMainRow],
     rows: &[MsImagingEssentials],
-    row_frequency_scales: &[f64],
+    row_frequencies: &[MfsImagingFrequencies],
     weighting_plan: &mut StandardMfsStreamingWeightingPlan,
     accumulate_timings: &mut AccumulateRowTimings,
 ) -> Result<usize, String> {
@@ -31254,10 +34062,10 @@ fn accumulate_standard_mfs_density_essentials_rows(
             rows.len()
         ));
     }
-    if row_frequency_scales.len() != rows.len() {
+    if row_frequencies.len() != rows.len() {
         return Err(format!(
-            "internal error: frequency-scale count {} differs from essentials row count {}",
-            row_frequency_scales.len(),
+            "internal error: imaging-frequency count {} differs from essentials row count {}",
+            row_frequencies.len(),
             rows.len()
         ));
     }
@@ -31270,10 +34078,10 @@ fn accumulate_standard_mfs_density_essentials_rows(
             false,
         )?;
         let mut accepted_samples = 0usize;
-        for ((selected_row, row), &mfs_frequency_scale) in selected_rows
+        for ((selected_row, row), mfs_imaging_frequencies) in selected_rows
             .iter()
             .zip(rows.iter())
-            .zip(row_frequency_scales.iter())
+            .zip(row_frequencies.iter())
         {
             if row.spw_id != selected_row.spw_id {
                 return Err(format!(
@@ -31282,9 +34090,9 @@ fn accumulate_standard_mfs_density_essentials_rows(
                 ));
             }
             accepted_samples += prepared
-                .accumulate_standard_mfs_density_essentials_row_with_frequency_scale(
+                .accumulate_standard_mfs_density_essentials_row_with_imaging_frequencies(
                     row,
-                    mfs_frequency_scale,
+                    mfs_imaging_frequencies,
                     weighting_plan,
                     accumulate_timings,
                 )?;
@@ -31298,10 +34106,10 @@ fn accumulate_standard_mfs_density_essentials_rows(
     let worker_results =
         thread::scope(|scope| {
             let mut handles = Vec::with_capacity(thread_count);
-            for ((selected_chunk, row_chunk), scale_chunk) in selected_rows
+            for ((selected_chunk, row_chunk), frequency_chunk) in selected_rows
                 .chunks(chunk_len)
                 .zip(rows.chunks(chunk_len))
-                .zip(row_frequency_scales.chunks(chunk_len))
+                .zip(row_frequencies.chunks(chunk_len))
             {
                 let table_values = table_values.clone();
                 let phase_center = phase_center.clone();
@@ -31317,10 +34125,10 @@ fn accumulate_standard_mfs_density_essentials_rows(
                         .map_err(|error| error.to_string())?;
                     let mut local_timings = AccumulateRowTimings::default();
                     let mut accepted_samples = 0usize;
-                    for ((selected_row, row), &mfs_frequency_scale) in selected_chunk
+                    for ((selected_row, row), mfs_imaging_frequencies) in selected_chunk
                         .iter()
                         .zip(row_chunk.iter())
-                        .zip(scale_chunk.iter())
+                        .zip(frequency_chunk.iter())
                     {
                         if row.spw_id != selected_row.spw_id {
                             return Err(format!(
@@ -31329,12 +34137,12 @@ fn accumulate_standard_mfs_density_essentials_rows(
                             ));
                         }
                         accepted_samples += prepared
-                            .accumulate_standard_mfs_density_essentials_row_with_frequency_scale(
-                                row,
-                                mfs_frequency_scale,
-                                &mut local_plan,
-                                &mut local_timings,
-                            )?;
+                        .accumulate_standard_mfs_density_essentials_row_with_imaging_frequencies(
+                            row,
+                            mfs_imaging_frequencies,
+                            &mut local_plan,
+                            &mut local_timings,
+                        )?;
                     }
                     Ok::<_, String>((accepted_samples, local_timings, local_plan))
                 }));
@@ -31436,7 +34244,7 @@ where
         let mut block_detail = StandardMfsPlannedRowSampleDetailTimings::default();
         let mut routed_block = StandardMfsRoutedVisibilityBlock::default();
         let rows = block.rows;
-        let row_frequency_scales = standard_mfs_frequency_scales_for_selected_rows(
+        let row_frequencies = standard_mfs_imaging_frequencies_for_selected_rows(
             config,
             table_values,
             &selection.phase_center,
@@ -31450,12 +34258,12 @@ where
             &selection.phase_center,
             row_chunk,
             &rows,
-            &row_frequency_scales,
+            &row_frequencies,
             weighting_plan,
             accumulate_timings,
         )?;
-        for ((selected_row, row), &mfs_frequency_scale) in
-            row_chunk.iter().zip(rows).zip(row_frequency_scales.iter())
+        for ((selected_row, row), mfs_imaging_frequencies) in
+            row_chunk.iter().zip(rows).zip(row_frequencies.iter())
         {
             if row.spw_id != selected_row.spw_id {
                 return Err(format!(
@@ -31467,7 +34275,7 @@ where
                 selected_row,
                 row,
                 derived_engine,
-                Some(mfs_frequency_scale),
+                Some(mfs_imaging_frequencies),
                 Arc::clone(&source_channel_indices),
                 planned_sample_builder,
                 &mut next_input_seq,
@@ -31570,7 +34378,7 @@ fn stream_standard_mfs_density_and_metal_grouped_input_cache_row_blocks(
         let mut block_planned_samples = 0usize;
         let mut block_detail = StandardMfsPlannedRowSampleDetailTimings::default();
         let rows = block.rows;
-        let row_frequency_scales = standard_mfs_frequency_scales_for_selected_rows(
+        let row_frequencies = standard_mfs_imaging_frequencies_for_selected_rows(
             config,
             table_values,
             &selection.phase_center,
@@ -31584,12 +34392,12 @@ fn stream_standard_mfs_density_and_metal_grouped_input_cache_row_blocks(
             &selection.phase_center,
             row_chunk,
             &rows,
-            &row_frequency_scales,
+            &row_frequencies,
             weighting_plan,
             accumulate_timings,
         )?;
-        for ((selected_row, row), &mfs_frequency_scale) in
-            row_chunk.iter().zip(rows).zip(row_frequency_scales.iter())
+        for ((selected_row, row), mfs_imaging_frequencies) in
+            row_chunk.iter().zip(rows).zip(row_frequencies.iter())
         {
             if row.spw_id != selected_row.spw_id {
                 return Err(format!(
@@ -31602,7 +34410,7 @@ fn stream_standard_mfs_density_and_metal_grouped_input_cache_row_blocks(
                     selected_row,
                     row,
                     derived_engine,
-                    Some(mfs_frequency_scale),
+                    Some(mfs_imaging_frequencies),
                     Arc::clone(&source_channel_indices),
                     planned_sample_builder,
                     &mut next_input_seq,
@@ -35351,6 +38159,520 @@ fn standard_mfs_memory_plan_for_ms(
     )
 }
 
+fn standard_mfs_memory_allocation_id(component: &str, occurrence: usize) -> String {
+    let mut slug = String::with_capacity(component.len());
+    let mut previous_was_separator = false;
+    for character in component.chars() {
+        if character.is_ascii_alphanumeric() {
+            slug.push(character.to_ascii_lowercase());
+            previous_was_separator = false;
+        } else if !previous_was_separator && !slug.is_empty() {
+            slug.push('-');
+            previous_was_separator = true;
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    if slug.is_empty() {
+        slug.push_str("allocation");
+    }
+    format!("standard-mfs-{slug}-{occurrence}")
+}
+
+fn standard_mfs_memory_residency(
+    backing: ImagingMemoryBacking,
+    bytes: usize,
+    live_from: ImagingMemoryStage,
+    live_through: ImagingMemoryStage,
+    next_use: ImagingMemoryNextUse,
+) -> ImagingMemoryResidency {
+    ImagingMemoryResidency {
+        backing,
+        resident_bytes: bytes,
+        stored_bytes: 0,
+        live_from,
+        live_through,
+        next_use,
+    }
+}
+
+fn standard_mfs_memory_allocation_lifetimes(
+    plan: &ImagingResolvedPlan,
+    has_clean_cycles: bool,
+) -> Result<Vec<ImagingMemoryAllocationLifecycle>, String> {
+    use ImagingMemoryNextUse::{AtStage, NoFurtherUse};
+    use ImagingMemoryStage::{
+        DirtyTransform, Finish, InitialGrid, MinorCycle, ModelTransform, Prepare,
+        ProductMaterialization, ProductWrite, ResidualGrid, ResidualTransform, SourceIngest,
+        Weighting,
+    };
+
+    let host = ImagingMemoryBacking::HostHeap;
+    let grid_backing = if plan.metal.eligible {
+        ImagingMemoryBacking::UnifiedMemory
+    } else {
+        host
+    };
+    let mut component_occurrences = HashMap::<&str, usize>::new();
+
+    plan.memory_allocations
+        .iter()
+        .map(|allocation| {
+            let occurrence = component_occurrences
+                .entry(allocation.component)
+                .and_modify(|count| *count += 1)
+                .or_insert(1);
+            let bytes = allocation.bytes;
+            let backing = match allocation.component {
+                "grids" | "Metal grouped input cache" | "direct Metal host scratch"
+                    if plan.metal.eligible =>
+                {
+                    grid_backing
+                }
+                _ => host,
+            };
+            let residencies = match allocation.component {
+                // The compensated AW grid is reused as one logical
+                // allocation. The initial pass owns all PSF and residual
+                // planes. Residual refreshes physically allocate only one
+                // compensated plane per Taylor residual term, so charging the
+                // original eight-plane MT-MFS grid here would hide replay
+                // headroom that is genuinely available after the dirty
+                // transform.
+                "grids" => {
+                    let initial_plane_count = plan.workload.grid_planes.max(1);
+                    let residual_plane_count =
+                        plan.workload.taylor_terms.max(1).min(initial_plane_count);
+                    if bytes % initial_plane_count != 0 {
+                        return Err(format!(
+                            "standard-MFS grid allocation {bytes} is not divisible by its \
+                             {initial_plane_count}-plane workload shape"
+                        ));
+                    }
+                    let residual_bytes = (bytes / initial_plane_count)
+                        .checked_mul(residual_plane_count)
+                        .ok_or_else(|| {
+                            "standard-MFS residual-grid residency overflowed".to_string()
+                        })?;
+                    let initial_next_use = if has_clean_cycles {
+                        AtStage(ResidualGrid)
+                    } else {
+                        NoFurtherUse
+                    };
+                    let mut residencies = vec![standard_mfs_memory_residency(
+                        backing,
+                        bytes,
+                        InitialGrid,
+                        DirtyTransform,
+                        initial_next_use,
+                    )];
+                    if has_clean_cycles {
+                        residencies.push(standard_mfs_memory_residency(
+                            backing,
+                            residual_bytes,
+                            ResidualGrid,
+                            ResidualTransform,
+                            NoFurtherUse,
+                        ));
+                    }
+                    residencies
+                }
+                "FFT chunks" => {
+                    let mut residencies = vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        DirtyTransform,
+                        DirtyTransform,
+                        if has_clean_cycles {
+                            AtStage(ResidualTransform)
+                        } else {
+                            NoFurtherUse
+                        },
+                    )];
+                    if has_clean_cycles {
+                        residencies.push(standard_mfs_memory_residency(
+                            host,
+                            bytes,
+                            ResidualTransform,
+                            ResidualTransform,
+                            NoFurtherUse,
+                        ));
+                    }
+                    residencies
+                }
+                // A compensated Metal grid is read back into one owned
+                // Complex64 plane at a time. The same bounded host allocation
+                // is reused for the initial products and residual refreshes.
+                "AWProject compensated f64 readback" => {
+                    let mut residencies = vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        DirtyTransform,
+                        DirtyTransform,
+                        if has_clean_cycles {
+                            AtStage(ResidualTransform)
+                        } else {
+                            NoFurtherUse
+                        },
+                    )];
+                    if has_clean_cycles {
+                        residencies.push(standard_mfs_memory_residency(
+                            host,
+                            bytes,
+                            ResidualTransform,
+                            ResidualTransform,
+                            NoFurtherUse,
+                        ));
+                    }
+                    residencies
+                }
+                "MFS imaging frequency cache" => {
+                    let mut residencies = vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        SourceIngest,
+                        InitialGrid,
+                        if has_clean_cycles {
+                            AtStage(ResidualGrid)
+                        } else {
+                            NoFurtherUse
+                        },
+                    )];
+                    if has_clean_cycles {
+                        residencies.push(standard_mfs_memory_residency(
+                            host,
+                            bytes,
+                            ResidualGrid,
+                            ResidualGrid,
+                            NoFurtherUse,
+                        ));
+                    }
+                    residencies
+                }
+                "source row blocks" => {
+                    let mut residencies = vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        SourceIngest,
+                        InitialGrid,
+                        if has_clean_cycles {
+                            AtStage(ResidualGrid)
+                        } else {
+                            NoFurtherUse
+                        },
+                    )];
+                    if has_clean_cycles {
+                        residencies.push(standard_mfs_memory_residency(
+                            host,
+                            bytes,
+                            ResidualGrid,
+                            ResidualGrid,
+                            NoFurtherUse,
+                        ));
+                    }
+                    residencies
+                }
+                "worker scratch"
+                | "resident tiles"
+                | "tile queue"
+                | "direct Metal host scratch" => {
+                    let mut residencies = vec![standard_mfs_memory_residency(
+                        backing,
+                        bytes,
+                        InitialGrid,
+                        InitialGrid,
+                        if has_clean_cycles {
+                            AtStage(ResidualGrid)
+                        } else {
+                            NoFurtherUse
+                        },
+                    )];
+                    if has_clean_cycles {
+                        residencies.push(standard_mfs_memory_residency(
+                            backing,
+                            bytes,
+                            ResidualGrid,
+                            ResidualGrid,
+                            NoFurtherUse,
+                        ));
+                    }
+                    residencies
+                }
+                "weighting density" | "mosaic weighting density maps" => {
+                    vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        Weighting,
+                        if has_clean_cycles {
+                            ResidualGrid
+                        } else {
+                            InitialGrid
+                        },
+                        NoFurtherUse,
+                    )]
+                }
+                // This reflects current production retention. A later
+                // measured stage-aware policy may shorten the interval.
+                "AWProject MT-MFS run state" => vec![standard_mfs_memory_residency(
+                    host,
+                    bytes,
+                    DirtyTransform,
+                    Finish,
+                    NoFurtherUse,
+                )],
+                "AWProject CF pixels" | "AWProject CF index" | "POINTING index" => {
+                    vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        Prepare,
+                        if has_clean_cycles {
+                            ResidualGrid
+                        } else {
+                            InitialGrid
+                        },
+                        NoFurtherUse,
+                    )]
+                }
+                "AWProject source-order tap scratch" => {
+                    vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        InitialGrid,
+                        if has_clean_cycles {
+                            ResidualGrid
+                        } else {
+                            InitialGrid
+                        },
+                        NoFurtherUse,
+                    )]
+                }
+                "AWProject initial-dirty replay-priming tap extension" => {
+                    vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        InitialGrid,
+                        InitialGrid,
+                        NoFurtherUse,
+                    )]
+                }
+                "AWProject safety margin" => vec![standard_mfs_memory_residency(
+                    host,
+                    bytes,
+                    Prepare,
+                    ProductWrite,
+                    NoFurtherUse,
+                )],
+                "AWProject CASA-layout model FFT staging" => {
+                    vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        ModelTransform,
+                        ModelTransform,
+                        NoFurtherUse,
+                    )]
+                }
+                "AWProject MT-MFS bounded multiscale scratch" => {
+                    vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        MinorCycle,
+                        MinorCycle,
+                        NoFurtherUse,
+                    )]
+                }
+                "AWProject MT-MFS finish state" => vec![standard_mfs_memory_residency(
+                    host,
+                    bytes,
+                    Finish,
+                    Finish,
+                    NoFurtherUse,
+                )],
+                "AWProject MT-MFS product state" => {
+                    vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        ProductMaterialization,
+                        ProductWrite,
+                        NoFurtherUse,
+                    )]
+                }
+                "product writer scratch" => vec![standard_mfs_memory_residency(
+                    host,
+                    bytes,
+                    ProductWrite,
+                    ProductWrite,
+                    NoFurtherUse,
+                )],
+                // Safe automatic execution does not prime compact replay while
+                // the initial compensated grid is resident. Programs begin
+                // accumulating during the first residual-grid pass and remain
+                // pinned, without eviction, through its transform.
+                "AWProject compact replay retention" => {
+                    vec![standard_mfs_memory_residency(
+                        host,
+                        bytes,
+                        ResidualGrid,
+                        ResidualTransform,
+                        NoFurtherUse,
+                    )]
+                }
+                // These non-AW caches are currently kept resident across both
+                // gridding passes.
+                "materialized sample plan"
+                | "Metal grouped input cache"
+                | "routed replay cache" => {
+                    vec![standard_mfs_memory_residency(
+                        backing,
+                        bytes,
+                        InitialGrid,
+                        if has_clean_cycles {
+                            ResidualGrid
+                        } else {
+                            InitialGrid
+                        },
+                        NoFurtherUse,
+                    )]
+                }
+                // Unknown application state is conservatively kept for the
+                // entire operation so it cannot silently disappear from a
+                // full-geometry peak.
+                _ => vec![standard_mfs_memory_residency(
+                    backing,
+                    bytes,
+                    Prepare,
+                    ProductWrite,
+                    NoFurtherUse,
+                )],
+            };
+
+            Ok(ImagingMemoryAllocationLifecycle {
+                allocation_id: standard_mfs_memory_allocation_id(allocation.component, *occurrence),
+                component: allocation.component.to_string(),
+                logical_bytes: bytes,
+                residencies,
+            })
+        })
+        .collect()
+}
+
+fn rebuild_standard_mfs_memory_lifetime_ledger(
+    plan: &mut ImagingResolvedPlan,
+    has_clean_cycles: bool,
+) -> Result<Vec<ImagingMemoryAllocationLifecycle>, String> {
+    let lifetimes = standard_mfs_memory_allocation_lifetimes(plan, has_clean_cycles)?;
+    let ledger =
+        ImagingMemoryLifetimeLedger::build(lifetimes.clone()).map_err(|error| error.to_string())?;
+    // Every entry in `memory_allocations` is mapped into the semantic
+    // lifecycle list above. Its exact overlap therefore replaces the older
+    // conservative estimate; retaining the old maximum would make planned
+    // releases and demotions unable to free any admission headroom.
+    plan.maximum_planned_resident_bytes = ledger.maximum_resident_bytes;
+    if plan.maximum_planned_resident_bytes > plan.usable_memory_bytes {
+        return Err(format!(
+            "standard-MFS semantic memory lifetime peak {} exceeds admitted memory target {}",
+            plan.maximum_planned_resident_bytes, plan.usable_memory_bytes
+        ));
+    }
+    plan.memory_lifetime_ledger = ledger;
+    Ok(lifetimes)
+}
+
+fn admit_standard_mfs_plan_with_lifetimes(
+    mut plan: ImagingResolvedPlan,
+    has_clean_cycles: bool,
+) -> Result<ImagingResolvedPlan, String> {
+    let planning_context = plan.planning_context.clone();
+    let memory_lifetimes =
+        rebuild_standard_mfs_memory_lifetime_ledger(&mut plan, has_clean_cycles)?;
+    admit_imaging_execution_with_context(
+        ImagingPlanAdmission {
+            workload: plan.workload,
+            usable_memory_bytes: plan.usable_memory_bytes,
+            workers: plan.workers,
+            worker_partition_rows: plan.worker_partition_rows,
+            ingest: plan.ingest,
+            fft: plan.fft,
+            tile: plan.tile,
+            spectral: plan.spectral,
+            metal: plan.metal,
+            caches: plan.caches,
+            memory_allocations: plan.memory_allocations,
+            maximum_planned_resident_bytes: plan.maximum_planned_resident_bytes,
+            decisions: plan.decisions,
+        },
+        planning_context,
+        Some(memory_lifetimes),
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn admit_awproject_compact_replay_retention(
+    mut plan: ImagingResolvedPlan,
+    stream_block_count: usize,
+) -> Result<ImagingResolvedPlan, String> {
+    if stream_block_count == 0 {
+        return Ok(plan);
+    }
+    let tap_bytes_per_block = plan.allocation_bytes("AWProject source-order tap scratch");
+    if tap_bytes_per_block == 0 {
+        return Ok(plan);
+    }
+    let replay_stage_peak_bytes = [
+        ImagingMemoryStage::ResidualGrid,
+        ImagingMemoryStage::ResidualTransform,
+    ]
+    .into_iter()
+    .filter_map(|stage| plan.memory_lifetime_ledger.stage_peak(stage))
+    .map(|peak| peak.resident_bytes)
+    .max()
+    .unwrap_or(plan.maximum_planned_resident_bytes);
+    let headroom_bytes = plan
+        .usable_memory_bytes
+        .saturating_sub(replay_stage_peak_bytes);
+    // This is a reservation ceiling, not an estimate of replay size.
+    // AwProjectCompactReplayCache charges the actual capacities of compact
+    // source samples, tap requests/values, packed Metal batches, and resident
+    // programs as each block is compiled. Let exact resident bytes consume
+    // only the stage-overlap headroom already assigned to this process; do not
+    // impose a machine-size fraction or a per-sample proxy.
+    let admitted_bytes = headroom_bytes;
+    if admitted_bytes == 0 {
+        plan.decisions.push(casa_imaging::ImagingPlanDecision {
+            name: "awproject_compact_replay_retention_bytes",
+            value: "0".to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason:
+                "the admitted run ledger had no residual headroom for persistent compact replay"
+                    .to_string(),
+        });
+        return Ok(plan);
+    }
+    plan.memory_allocations
+        .push(casa_imaging::ImagingMemoryAllocation {
+            component: "AWProject compact replay retention",
+            stage: "run",
+            bytes: admitted_bytes,
+        });
+    plan.decisions.push(casa_imaging::ImagingPlanDecision {
+        name: "awproject_compact_replay_retention_bytes",
+        value: admitted_bytes.to_string(),
+        origin: casa_imaging::ImagingPlanOrigin::Resources,
+        reason: format!(
+            "reserve residual-grid/transform overlap headroom for exact source-order AW replay; runtime charges actual compact resident-program capacities, pins the full {stream_block_count}-block cyclic working set when it fits, and otherwise retains a pinned no-eviction subset admitted in source order; prior_replay_stage_peak_bytes={replay_stage_peak_bytes}, prior_headroom_bytes={headroom_bytes}, artificial_fraction_cap=none, per_sample_proxy=none"
+        ),
+    });
+    plan.decisions.push(casa_imaging::ImagingPlanDecision {
+        name: "awproject_compact_replay_resident_accounting",
+        value: "runtime-exact-capacities".to_string(),
+        origin: casa_imaging::ImagingPlanOrigin::Workload,
+        reason: "source, tap-request, bundle metadata/value, packed Metal batch, and resident Metal program capacities are charged after compacting each compiled block"
+            .to_string(),
+    });
+    rebuild_standard_mfs_memory_lifetime_ledger(&mut plan, true)?;
+    Ok(plan)
+}
+
 fn standard_mfs_memory_plan_with_cache_channels_for_ms(
     config: &CliConfig,
     ms: &MeasurementSet,
@@ -35585,8 +38907,8 @@ fn awproject_mtmfs_product_state_bytes(
     image_pixels: usize,
 ) -> Result<usize, String> {
     // Returned products plus the mosaic/PB products and shared masks built by
-    // `run_products_to_image_product_set`. Writer scratch is charged
-    // separately because it is reused one product at a time.
+    // `run_products_to_image_product_set`. Product pixels are written through a
+    // borrowed lattice view; mask persistence scratch is charged separately.
     let f32_planes = nterms
         .checked_mul(7)
         .and_then(|value| value.checked_add(4))
@@ -35609,11 +38931,8 @@ fn awproject_mtmfs_product_state_bytes(
 
 fn awproject_product_writer_scratch_bytes(image_pixels: usize) -> Result<usize, String> {
     checked_imaging_product(
-        [
-            image_pixels,
-            std::mem::size_of::<f32>() + std::mem::size_of::<bool>(),
-        ],
-        "AWProject product writer scratch",
+        [image_pixels, std::mem::size_of::<bool>()],
+        "AWProject product mask writer scratch",
     )
 }
 
@@ -35628,9 +38947,11 @@ fn awproject_mtmfs_in_place_fft_eligible(config: &CliConfig) -> bool {
                 | ImagingFftPrecisionPolicy::F32
                 | ImagingFftPrecisionPolicy::F64
         ),
-        ImagingFftBackendPolicy::FftwLocalBench => matches!(
+        ImagingFftBackendPolicy::Fftw => matches!(
             config.imaging_fft_precision,
-            ImagingFftPrecisionPolicy::Auto | ImagingFftPrecisionPolicy::F64
+            ImagingFftPrecisionPolicy::Auto
+                | ImagingFftPrecisionPolicy::F32
+                | ImagingFftPrecisionPolicy::F64
         ),
         ImagingFftBackendPolicy::Auto
         | ImagingFftBackendPolicy::Accelerate
@@ -35659,6 +38980,21 @@ fn standard_mfs_plane_state_requirements(
     } else {
         spectral_slab::PlaneStateRequirements::bounded_clean()
     }
+}
+
+fn awproject_initial_dirty_replay_priming_tap_extension_bytes(
+    logical_tap_budget_bytes: usize,
+) -> Result<usize, String> {
+    let materialized_tap_budget_bytes = checked_imaging_product(
+        [logical_tap_budget_bytes, 8],
+        "AWProject initial-dirty replay-priming tap budget",
+    )?
+    .div_ceil(6);
+    materialized_tap_budget_bytes
+        .checked_sub(logical_tap_budget_bytes)
+        .ok_or_else(|| {
+            "AWProject initial-dirty replay-priming tap extension underflowed".to_string()
+        })
 }
 
 fn plan_standard_mfs_execution_shape(
@@ -35794,6 +39130,16 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     } else {
         0
     };
+    let mfs_imaging_frequency_bytes_per_row = checked_imaging_sum(
+        [
+            checked_imaging_product(
+                [selected_channel_count, 2, std::mem::size_of::<f64>()],
+                "MFS exact frequency and wavelength vectors per source row",
+            )?,
+            256,
+        ],
+        "MFS imaging-frequency source-row upper bound",
+    )?;
     let prepared_bytes_per_row = checked_imaging_sum(
         [
             visibility_shape.live_source_scratch_bytes_for_rows(
@@ -35803,8 +39149,26 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             ),
             aw_cf_locality_index_bytes_per_row,
             aw_parallel_plan_bytes_per_row,
+            std::mem::size_of::<MfsImagingFrequencies>(),
+            mfs_imaging_frequency_bytes_per_row,
         ],
         "prepared source-row scratch",
+    )?;
+    // The row block can retain one exact vector pair for every distinct
+    // (time, field) key, so prepared_bytes_per_row charges the worst case of
+    // one pair per row in addition to each Arc handle. PreparedSelection also
+    // retains the most recent pair between row blocks; this fixed allowance
+    // covers that persistent pair, both Arc fat pointers, the cache key, and
+    // allocator metadata.
+    let mfs_imaging_frequency_cache_bytes = checked_imaging_sum(
+        [
+            checked_imaging_product(
+                [selected_channel_count, 2, std::mem::size_of::<f64>()],
+                "MFS exact frequency and wavelength vectors per row key",
+            )?,
+            256,
+        ],
+        "MFS imaging-frequency cache upper bound",
     )?;
     let sample_count = checked_imaging_product(
         [active_row_count, selected_channel_count],
@@ -36001,6 +39365,13 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         .filter(|&value| value > 0)
         .and_then(|mib| mib.checked_mul(1024 * 1024))
         .unwrap_or(aw_cf_resident_bytes);
+    let aw_initial_dirty_replay_priming_tap_extension_bytes = if awproject_mtmfs
+        && env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_PRIME_REPLAY_INITIAL_DIRTY").is_some()
+    {
+        awproject_initial_dirty_replay_priming_tap_extension_bytes(aw_source_order_tap_bytes)?
+    } else {
+        0
+    };
     let pointing_index_bytes = if awproject_mtmfs && config.use_pointing {
         awproject_pointing_index_estimate_bytes(active_row_count, pointing_table_row_count)?
     } else {
@@ -36011,6 +39382,44 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     } else {
         0
     };
+    let aw_compensated_f64_readback_bytes = if awproject_mtmfs {
+        checked_imaging_product(
+            [image_pixels, std::mem::size_of::<Complex64>()],
+            "AWProject compensated f64 readback plane",
+        )?
+    } else {
+        0
+    };
+    let aw_model_fft_staging_bytes = if awproject_mtmfs && !clean_is_dirty(config) {
+        checked_imaging_product(
+            [
+                image_pixels,
+                config.nterms,
+                std::mem::size_of::<Complex32>(),
+            ],
+            "AWProject CASA-layout model FFT staging",
+        )?
+    } else {
+        0
+    };
+    let aw_model_fft_threads = dirty_product_fft_policy(config)
+        .max_threads
+        .unwrap_or(1)
+        .max(1);
+    let aw_model_fft_fftw_spec = Fft2Spec::centered_c2c(
+        config.imsize,
+        config.imsize,
+        FftPrecision::F32,
+        FftDirection::Forward,
+        FftUseCase::ModelDegrid,
+        FftBackendChoice::Fftw,
+    );
+    let aw_model_fft_backend =
+        if fft_backend_capability(FftBackendChoice::Fftw, aw_model_fft_fftw_spec).supported {
+            "fftw"
+        } else {
+            "rustfft"
+        };
     let mut fixed_allocations = vec![
         ImagingMemoryAllocation {
             component: if awproject_mtmfs {
@@ -36030,6 +39439,11 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             stage: "weighting",
             bytes: mosaic_density_bytes,
         },
+        ImagingMemoryAllocation {
+            component: "MFS imaging frequency cache",
+            stage: "prepare",
+            bytes: mfs_imaging_frequency_cache_bytes,
+        },
     ];
     if awproject_mtmfs {
         fixed_allocations.extend([
@@ -36042,6 +39456,11 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
                 component: "AWProject source-order tap scratch",
                 stage: "run",
                 bytes: aw_source_order_tap_bytes,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject initial-dirty replay-priming tap extension",
+                stage: "initial-grid",
+                bytes: aw_initial_dirty_replay_priming_tap_extension_bytes,
             },
             ImagingMemoryAllocation {
                 component: "AWProject CF index",
@@ -36059,6 +39478,33 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
                 bytes: aw_safety_margin_bytes,
             },
         ]);
+        if aw_model_fft_staging_bytes > 0 {
+            fixed_allocations.push(ImagingMemoryAllocation {
+                component: "AWProject CASA-layout model FFT staging",
+                stage: "major-cycle",
+                bytes: aw_model_fft_staging_bytes,
+            });
+        }
+    }
+    // The generic planner predates semantic allocation lifetimes and treats
+    // every workload fixed allocation as if it overlapped the initial grid.
+    // Keep initial-grid state in that conservative sizing pass, but defer the
+    // two allocations whose production lifetimes begin only after the initial
+    // grid has been consumed. They are restored to the resolved plan below
+    // before the exact lifetime ledger performs final admission.
+    let mut deferred_lifetime_allocations = Vec::new();
+    if awproject_mtmfs {
+        fixed_allocations.retain(|allocation| {
+            if matches!(
+                allocation.component,
+                "AWProject MT-MFS run state" | "AWProject CASA-layout model FFT staging"
+            ) {
+                deferred_lifetime_allocations.push(allocation.clone());
+                false
+            } else {
+                true
+            }
+        });
     }
     let fft_bytes_per_plane = if awproject_mtmfs && awproject_mtmfs_in_place_fft_eligible(config) {
         checked_imaging_product(
@@ -36072,7 +39518,12 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         )?
     };
 
-    let mut plan = plan_imaging_execution(
+    let planning_resources = imaging_planning_resource_assignment(
+        config,
+        memory_target,
+        direct_metal_scratch_candidate_bytes,
+    );
+    let mut plan = plan_imaging_execution_with_context(
         &ImagingWorkloadShape {
             selected_rows: active_row_count,
             correlations: visibility_shape.corr_count,
@@ -36110,8 +39561,8 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         &ImagingResources {
             usable_memory_bytes: memory_target.target_bytes,
             cpu_capacity: imaging_process_cpu_capacity(mosaic_full_grid),
-            metal_available: casa_imaging::standard_mfs_metal_device_available(),
-            metal_device_budget_bytes: memory_target.target_bytes,
+            metal_available: planning_resources.metal_device_available,
+            metal_device_budget_bytes: planning_resources.metal_device_budget_bytes,
         },
         &ImagingExecutionPolicy {
             memory_limit_bytes: Some(memory_target.target_bytes),
@@ -36134,10 +39585,46 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             allow_materialized_sample_plan: materialized_sample_plan_candidate_bytes > 0,
             direct_metal_scratch_limit_bytes: None,
         },
+        &planning_resources.context,
     )
     .map_err(|error| error.to_string())?;
+    if !deferred_lifetime_allocations.is_empty() {
+        plan.workload
+            .fixed_allocations
+            .extend(deferred_lifetime_allocations.iter().cloned());
+        plan.memory_allocations
+            .extend(deferred_lifetime_allocations);
+    }
 
     plan.decisions.extend([
+        casa_imaging::ImagingPlanDecision {
+            name: "memory_target_semantics",
+            value: "incremental-operation-residency".to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "the planner budget covers operation allocations in addition to the already-resident process baseline"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "process_baseline_bytes",
+            value: memory_target.baseline_process_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "measured process physical footprint before operation residency is admitted"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "process_total_ceiling_bytes",
+            value: optional_usize_resource_value(memory_target.process_total_ceiling_bytes),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: memory_target.process_total_ceiling_origin.to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "incremental_operation_budget_bytes",
+            value: optional_usize_resource_value(
+                memory_target.incremental_operation_budget_bytes,
+            ),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "process total ceiling minus the process baseline exactly once".to_string(),
+        },
         casa_imaging::ImagingPlanDecision {
             name: "grid_planes",
             value: grid_planes.to_string(),
@@ -36166,9 +39653,14 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     ]);
 
     if !awproject_mtmfs {
-        return Ok(plan);
+        return admit_standard_mfs_plan_with_lifetimes(plan, !clean_is_dirty(config));
     }
 
+    let aw_compensated_f64_readback_bytes = if plan.metal.eligible {
+        aw_compensated_f64_readback_bytes
+    } else {
+        0
+    };
     let multiscale_minor_cycle_scratch_bytes = if clean_is_dirty(config) {
         0
     } else {
@@ -36181,6 +39673,13 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     let finish_state_bytes = awproject_mtmfs_finish_state_bytes(config.nterms, image_pixels)?;
     let product_state_bytes = awproject_mtmfs_product_state_bytes(config.nterms, image_pixels)?;
     let product_writer_scratch_bytes = awproject_product_writer_scratch_bytes(image_pixels)?;
+    if aw_compensated_f64_readback_bytes > 0 {
+        plan.memory_allocations.push(ImagingMemoryAllocation {
+            component: "AWProject compensated f64 readback",
+            stage: "dirty-transform",
+            bytes: aw_compensated_f64_readback_bytes,
+        });
+    }
     if multiscale_minor_cycle_scratch_bytes > 0 {
         plan.memory_allocations.push(ImagingMemoryAllocation {
             component: "AWProject MT-MFS bounded multiscale scratch",
@@ -36260,6 +39759,13 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             },
         },
         casa_imaging::ImagingPlanDecision {
+            name: "awproject_initial_dirty_replay_priming_tap_extension_bytes",
+            value: aw_initial_dirty_replay_priming_tap_extension_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "two prediction tap roles are materialized only while the six-role initial-grid segmentation remains authoritative"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
             name: "awproject_cf_index_bytes",
             value: aw_cf_index_bytes.to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Workload,
@@ -36303,9 +39809,13 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
                     config.imaging_fft_precision,
                 ) {
                     (
-                        ImagingFftBackendPolicy::FftwLocalBench,
+                        ImagingFftBackendPolicy::Fftw,
                         ImagingFftPrecisionPolicy::Auto | ImagingFftPrecisionPolicy::F64,
                     ) => "in-place-fftw-local-f64",
+                    (
+                        ImagingFftBackendPolicy::Fftw,
+                        ImagingFftPrecisionPolicy::F32,
+                    ) => "in-place-fftw-local-f32",
                     (_, ImagingFftPrecisionPolicy::F32) => "in-place-rustfft-f32",
                     (
                         _,
@@ -36318,6 +39828,46 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             .to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Workload,
             reason: "selected FFT precision/backend and even unpadded grid geometry".to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_compensated_f64_readback_bytes",
+            value: aw_compensated_f64_readback_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: if aw_compensated_f64_readback_bytes == 0 {
+                "the resolved plan does not use the direct Metal compensated-grid path"
+                    .to_string()
+            } else {
+                "one reusable host Complex64 plane overlaps each compensated Metal grid during initial and residual transforms"
+                    .to_string()
+            },
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_model_fft_backend",
+            value: aw_model_fft_backend.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "CASA-parity model prediction prefers configured f32 FFTW and otherwise uses the portable RustFFT fallback"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_model_fft_layout",
+            value: "casacore-first-axis-contiguous".to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "AWProject model prediction preserves casacore transform-axis and rounding semantics"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_model_fft_threads",
+            value: aw_model_fft_threads.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "bounded by the same system-adaptive host worker policy as standard-MFS execution"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_model_fft_staging_bytes",
+            value: aw_model_fft_staging_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: "one prepared Complex32 image plane per Taylor term coexists with the prediction grids already charged to the run state"
+                .to_string(),
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_multiscale_minor_cycle_peak_bytes",
@@ -36342,27 +39892,12 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             name: "awproject_product_peak_bytes",
             value: product_peak_bytes.to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Workload,
-            reason: "returned products, derived PB/masks, and one reusable writer buffer"
+            reason: "returned products and derived PB/masks coexist; product pixels are written through borrowed views and only one reusable mask buffer is charged"
                 .to_string(),
         },
     ]);
 
-    admit_imaging_execution(ImagingPlanAdmission {
-        workload: plan.workload,
-        usable_memory_bytes: plan.usable_memory_bytes,
-        workers: plan.workers,
-        worker_partition_rows: plan.worker_partition_rows,
-        ingest: plan.ingest,
-        fft: plan.fft,
-        tile: plan.tile,
-        spectral: plan.spectral,
-        metal: plan.metal,
-        caches: plan.caches,
-        memory_allocations: plan.memory_allocations,
-        maximum_planned_resident_bytes: plan.maximum_planned_resident_bytes,
-        decisions: plan.decisions,
-    })
-    .map_err(|error| error.to_string())
+    admit_standard_mfs_plan_with_lifetimes(plan, !clean_is_dirty(config))
 }
 
 fn standard_mfs_memory_plan_with_visibility_shape(
@@ -36499,6 +40034,48 @@ fn estimate_standard_mfs_max_abs_w_lambda_from_geometry(
     }
 }
 
+fn standard_mfs_plan_decision_value<'a>(
+    strategy: &'a ImagingResolvedPlan,
+    name: &str,
+) -> Option<&'a str> {
+    strategy
+        .decisions
+        .iter()
+        .find(|decision| decision.name == name)
+        .map(|decision| decision.value.as_str())
+}
+
+fn standard_mfs_plan_decision_usize(strategy: &ImagingResolvedPlan, name: &str) -> Option<usize> {
+    standard_mfs_plan_decision_value(strategy, name)?
+        .parse()
+        .ok()
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct StandardMfsProcessProjection {
+    baseline_bytes: Option<usize>,
+    total_ceiling_bytes: Option<usize>,
+    projected_total_bytes: Option<usize>,
+    projected_excess_bytes: Option<usize>,
+}
+
+fn standard_mfs_process_projection(strategy: &ImagingResolvedPlan) -> StandardMfsProcessProjection {
+    let baseline_bytes = standard_mfs_plan_decision_usize(strategy, "process_baseline_bytes");
+    let total_ceiling_bytes =
+        standard_mfs_plan_decision_usize(strategy, "process_total_ceiling_bytes");
+    let projected_total_bytes = baseline_bytes
+        .and_then(|baseline| baseline.checked_add(strategy.maximum_planned_resident_bytes));
+    let projected_excess_bytes = projected_total_bytes
+        .zip(total_ceiling_bytes)
+        .map(|(projected, ceiling)| projected.saturating_sub(ceiling));
+    StandardMfsProcessProjection {
+        baseline_bytes,
+        total_ceiling_bytes,
+        projected_total_bytes,
+        projected_excess_bytes,
+    }
+}
+
 fn log_standard_mfs_memory_plan_actual(
     strategy: &ImagingResolvedPlan,
     rows_total: usize,
@@ -36509,15 +40086,39 @@ fn log_standard_mfs_memory_plan_actual(
     if !standard_mfs_profile_detail_enabled() {
         return;
     }
+    let lifetime_peak_stage = strategy
+        .memory_lifetime_ledger
+        .peak_stage
+        .map_or("none", ImagingMemoryStage::label);
+    let lifetime_stored_peak_stage = strategy
+        .memory_lifetime_ledger
+        .peak_stored_stage
+        .map_or("none", ImagingMemoryStage::label);
+    let process_projection = standard_mfs_process_projection(strategy);
     eprintln!(
-        "standard_mfs_execution_plan execution_mode={} rows_total={} selected_channels={} row_block_rows={} workers={} memory_target_bytes={} planned_peak_bytes={} fft_chunk_planes={} tile_edge={} resident_tiles={} queue_capacity={} metal_eligible={} executor_plan_bytes_estimate={} local_grid_bytes_estimate={} product_status={}",
+        "standard_mfs_memory_runtime_actions {}",
+        strategy.memory_runtime_action_log_fields(),
+    );
+    eprintln!(
+        "standard_mfs_execution_plan execution_mode={} rows_total={} selected_channels={} row_block_rows={} workers={} memory_target_bytes={} memory_target_semantics={} process_baseline_bytes={} process_total_ceiling_bytes={} projected_process_total_bytes={} projected_process_excess_bytes={} planned_peak_bytes={} lifetime_peak_bytes={} lifetime_peak_stage={} lifetime_stored_peak_bytes={} lifetime_stored_peak_stage={} lifetime_logical_bytes={} fft_chunk_planes={} tile_edge={} resident_tiles={} queue_capacity={} metal_eligible={} executor_plan_bytes_estimate={} local_grid_bytes_estimate={} product_status={}",
         execution_mode,
         rows_total,
         strategy.workload.channels,
         strategy.ingest.source_row_block_rows,
         strategy.workers,
         strategy.usable_memory_bytes,
+        standard_mfs_plan_decision_value(strategy, "memory_target_semantics")
+            .unwrap_or("unavailable"),
+        optional_usize_resource_value(process_projection.baseline_bytes),
+        optional_usize_resource_value(process_projection.total_ceiling_bytes),
+        optional_usize_resource_value(process_projection.projected_total_bytes),
+        optional_usize_resource_value(process_projection.projected_excess_bytes),
         strategy.maximum_planned_resident_bytes,
+        strategy.memory_lifetime_ledger.maximum_resident_bytes,
+        lifetime_peak_stage,
+        strategy.memory_lifetime_ledger.maximum_stored_bytes,
+        lifetime_stored_peak_stage,
+        strategy.memory_lifetime_ledger.total_logical_bytes,
         strategy.fft.chunk_planes,
         strategy.tile.edge,
         strategy.tile.resident_tiles,
@@ -36527,11 +40128,59 @@ fn log_standard_mfs_memory_plan_actual(
         local_grid_bytes_estimate,
         standard_mfs_product_status_for_frontend(strategy),
     );
-    for allocation in &strategy.memory_allocations {
+    for (allocation_index, allocation) in strategy.memory_allocations.iter().enumerate() {
+        let allocation_id = strategy
+            .memory_lifetime_ledger
+            .allocations
+            .get(allocation_index)
+            .map(|lifecycle| lifecycle.allocation_id.as_str())
+            .unwrap_or("missing-lifecycle");
         eprintln!(
-            "standard_mfs_execution_allocation component={} stage={} bytes={}",
-            allocation.component, allocation.stage, allocation.bytes
+            "standard_mfs_execution_allocation allocation_id={} component={} stage={} bytes={}",
+            allocation_id, allocation.component, allocation.stage, allocation.bytes
         );
+    }
+    for stage_peak in &strategy.memory_lifetime_ledger.stage_peaks {
+        eprintln!(
+            "standard_mfs_execution_lifetime_stage stage={} resident_bytes={} stored_bytes={} host_heap_bytes={} unified_memory_bytes={} metal_private_bytes={} memory_mapped_bytes={} temporary_spill_bytes={} memory_mapped_stored_bytes={} temporary_spill_stored_bytes={}",
+            stage_peak.stage.label(),
+            stage_peak.resident_bytes,
+            stage_peak.stored_bytes,
+            stage_peak.bytes_for_backing(ImagingMemoryBacking::HostHeap),
+            stage_peak.bytes_for_backing(ImagingMemoryBacking::UnifiedMemory),
+            stage_peak.bytes_for_backing(ImagingMemoryBacking::MetalPrivate),
+            stage_peak.bytes_for_backing(ImagingMemoryBacking::MemoryMapped),
+            stage_peak.bytes_for_backing(ImagingMemoryBacking::TemporarySpill),
+            stage_peak.stored_bytes_for_backing(ImagingMemoryBacking::MemoryMapped),
+            stage_peak.stored_bytes_for_backing(ImagingMemoryBacking::TemporarySpill),
+        );
+    }
+    for allocation in &strategy.memory_lifetime_ledger.allocations {
+        for (residency_index, residency) in allocation.residencies.iter().enumerate() {
+            let next_use = match residency.next_use {
+                ImagingMemoryNextUse::NoFurtherUse => "none".to_string(),
+                ImagingMemoryNextUse::AtStage(stage) => {
+                    format!("stage:{}", stage.label())
+                }
+                ImagingMemoryNextUse::Cyclic {
+                    next_stage,
+                    intervening_uses,
+                } => format!("cyclic:{}:{intervening_uses}", next_stage.label()),
+            };
+            eprintln!(
+                "standard_mfs_execution_lifetime allocation_id={} component={} logical_bytes={} residency_index={} backing={:?} resident_bytes={} stored_bytes={} live_from={} live_through={} next_use={}",
+                allocation.allocation_id,
+                allocation.component,
+                allocation.logical_bytes,
+                residency_index,
+                residency.backing,
+                residency.resident_bytes,
+                residency.stored_bytes,
+                residency.live_from.label(),
+                residency.live_through.label(),
+                next_use,
+            );
+        }
     }
     for decision in &strategy.decisions {
         eprintln!(
@@ -36545,24 +40194,426 @@ fn log_standard_mfs_memory_plan_actual(
 struct ImagingProcessMemoryLedger {
     system_memory_bytes: Option<usize>,
     available_memory_bytes: Option<usize>,
+    process_physical_footprint_bytes: Option<usize>,
     baseline_process_bytes: usize,
     non_process_resident_bytes: Option<usize>,
+    process_total_ceiling_bytes: Option<usize>,
+    incremental_operation_budget_bytes: Option<usize>,
     target_bytes: usize,
     source: &'static str,
+    process_total_ceiling_origin: &'static str,
+    system_memory_origin: &'static str,
+    available_memory_origin: &'static str,
+    process_physical_footprint_origin: &'static str,
+}
+
+impl ImagingProcessMemoryLedger {
+    fn projected_process_total_bytes(self, planned_resident_bytes: usize) -> Option<usize> {
+        self.baseline_process_bytes
+            .checked_add(planned_resident_bytes)
+    }
+
+    fn projected_process_excess_bytes(self, planned_resident_bytes: usize) -> Option<usize> {
+        self.projected_process_total_bytes(planned_resident_bytes)
+            .zip(self.process_total_ceiling_bytes)
+            .map(|(projected, ceiling)| projected.saturating_sub(ceiling))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ImagingCpuResourceDetection {
+    logical_threads: Option<usize>,
+    performance_cores: Option<usize>,
+    logical_threads_origin: &'static str,
+    performance_cores_origin: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ImagingMetalMemoryDetection {
+    device_available: bool,
+    has_unified_memory: Option<bool>,
+    recommended_working_set_bytes: Option<usize>,
+    current_allocated_bytes: Option<usize>,
+    origin: &'static str,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ImagingPlanningResourceAssignment {
+    context: ImagingPlanningContext,
+    metal_device_available: bool,
+    metal_device_budget_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ImagingStorageBandwidthDetection {
+    read_bytes_per_second: Option<u64>,
+    write_bytes_per_second: Option<u64>,
+    read_origin: &'static str,
+    write_origin: &'static str,
+}
+
+fn core_imaging_memory_pressure_policy(
+    policy: ImagingMemoryPressurePolicy,
+) -> CoreImagingMemoryPressurePolicy {
+    match policy {
+        ImagingMemoryPressurePolicy::Auto => CoreImagingMemoryPressurePolicy::AutoSafe,
+        ImagingMemoryPressurePolicy::ConservativeNoSwap => {
+            CoreImagingMemoryPressurePolicy::ConservativeNoSwap
+        }
+        ImagingMemoryPressurePolicy::Aggressive => {
+            CoreImagingMemoryPressurePolicy::AggressiveMemoryUse
+        }
+        ImagingMemoryPressurePolicy::Oversubscribe => {
+            CoreImagingMemoryPressurePolicy::IntentionalOversubscription
+        }
+        ImagingMemoryPressurePolicy::StageAware => {
+            CoreImagingMemoryPressurePolicy::StageAwareRelease
+        }
+        ImagingMemoryPressurePolicy::Hybrid => CoreImagingMemoryPressurePolicy::Hybrid,
+    }
+}
+
+fn imaging_planning_resource_assignment(
+    config: &CliConfig,
+    memory_target: ImagingProcessMemoryLedger,
+    unified_memory_requirement_bytes: usize,
+) -> ImagingPlanningResourceAssignment {
+    let cpu = imaging_cpu_resource_detection();
+    let metal = imaging_metal_memory_detection();
+    let storage = imaging_storage_bandwidth_detection();
+    let context = imaging_planning_context_from_detection(
+        config,
+        memory_target,
+        unified_memory_requirement_bytes,
+        cpu,
+        metal,
+        storage,
+    );
+    let metal_device_budget_bytes = imaging_metal_device_budget_bytes(memory_target, metal);
+    log_imaging_planning_resource_detection(
+        &context,
+        memory_target,
+        cpu,
+        metal,
+        metal_device_budget_bytes,
+        storage,
+    );
+    ImagingPlanningResourceAssignment {
+        context,
+        metal_device_available: metal.device_available,
+        metal_device_budget_bytes,
+    }
+}
+
+fn imaging_planning_context_from_detection(
+    config: &CliConfig,
+    memory_target: ImagingProcessMemoryLedger,
+    unified_memory_requirement_bytes: usize,
+    cpu: ImagingCpuResourceDetection,
+    metal: ImagingMetalMemoryDetection,
+    storage: ImagingStorageBandwidthDetection,
+) -> ImagingPlanningContext {
+    ImagingPlanningContext {
+        memory_pressure_policy: core_imaging_memory_pressure_policy(
+            config.imaging_memory_pressure_policy,
+        ),
+        detected_resources: ImagingDetectedResources {
+            physical_memory_bytes: memory_target.system_memory_bytes,
+            current_memory_headroom_bytes: memory_target.available_memory_bytes,
+            process_physical_footprint_bytes: memory_target.process_physical_footprint_bytes,
+            logical_cpu_threads: cpu.logical_threads,
+            performance_cpu_cores: cpu.performance_cores,
+            metal_recommended_working_set_bytes: metal.recommended_working_set_bytes,
+            metal_current_allocated_bytes: metal.current_allocated_bytes,
+            unified_memory_requirement_bytes: Some(unified_memory_requirement_bytes),
+            storage_read_bytes_per_second: storage.read_bytes_per_second,
+            storage_write_bytes_per_second: storage.write_bytes_per_second,
+        },
+    }
+}
+
+fn imaging_cpu_resource_detection() -> ImagingCpuResourceDetection {
+    let logical_threads = std::thread::available_parallelism()
+        .ok()
+        .map(|count| count.get());
+    let system_performance_cores = system_performance_cpu_count();
+    let performance_cores = system_performance_cores
+        .zip(logical_threads)
+        .map(|(performance, logical)| performance.min(logical))
+        .or(system_performance_cores);
+    ImagingCpuResourceDetection {
+        logical_threads,
+        performance_cores,
+        logical_threads_origin: if logical_threads.is_some() {
+            "std-available-parallelism"
+        } else {
+            "unavailable"
+        },
+        performance_cores_origin: system_performance_cpu_origin(),
+    }
+}
+
+fn unavailable_imaging_metal_memory_detection(origin: &'static str) -> ImagingMetalMemoryDetection {
+    ImagingMetalMemoryDetection {
+        device_available: false,
+        has_unified_memory: None,
+        recommended_working_set_bytes: None,
+        current_allocated_bytes: None,
+        origin,
+    }
+}
+
+#[allow(unexpected_cfgs)]
+mod imaging_metal_platform_detection {
+    use super::{ImagingMetalMemoryDetection, unavailable_imaging_metal_memory_detection};
+
+    #[cfg(any(test, all(target_os = "macos", not(coverage))))]
+    pub(super) fn from_device_snapshot(
+        has_unified_memory: bool,
+        recommended_working_set_bytes: u64,
+        current_allocated_bytes: usize,
+    ) -> ImagingMetalMemoryDetection {
+        ImagingMetalMemoryDetection {
+            device_available: true,
+            has_unified_memory: Some(has_unified_memory),
+            recommended_working_set_bytes: usize::try_from(recommended_working_set_bytes)
+                .ok()
+                .filter(|bytes| *bytes > 0),
+            current_allocated_bytes: Some(current_allocated_bytes),
+            origin: "metal-default-device-snapshot",
+        }
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    pub(super) fn detect() -> ImagingMetalMemoryDetection {
+        use objc2_metal::{MTLCreateSystemDefaultDevice, MTLDevice};
+
+        let Some(device) = MTLCreateSystemDefaultDevice() else {
+            return unavailable_imaging_metal_memory_detection("metal-device-unavailable");
+        };
+        from_device_snapshot(
+            device.hasUnifiedMemory(),
+            device.recommendedMaxWorkingSetSize(),
+            device.currentAllocatedSize(),
+        )
+    }
+
+    #[cfg(coverage)]
+    pub(super) fn detect() -> ImagingMetalMemoryDetection {
+        unavailable_imaging_metal_memory_detection("metal-detection-disabled-under-coverage")
+    }
+
+    #[cfg(all(not(target_os = "macos"), not(coverage)))]
+    pub(super) fn detect() -> ImagingMetalMemoryDetection {
+        unavailable_imaging_metal_memory_detection("metal-detection-unsupported-on-this-platform")
+    }
+}
+
+fn imaging_metal_memory_detection() -> ImagingMetalMemoryDetection {
+    imaging_metal_platform_detection::detect()
+}
+
+fn assigned_unified_memory_budget_bytes(memory_target: ImagingProcessMemoryLedger) -> usize {
+    memory_target
+        .available_memory_bytes
+        .map_or(memory_target.target_bytes, |headroom| {
+            memory_target.target_bytes.min(headroom)
+        })
+}
+
+fn imaging_metal_device_budget_bytes(
+    memory_target: ImagingProcessMemoryLedger,
+    metal: ImagingMetalMemoryDetection,
+) -> usize {
+    if !metal.device_available {
+        return 0;
+    }
+    let Some(device_headroom_bytes) = metal
+        .recommended_working_set_bytes
+        .zip(metal.current_allocated_bytes)
+        .map(|(recommended, current)| recommended.saturating_sub(current))
+    else {
+        return 0;
+    };
+    match metal.has_unified_memory {
+        Some(true) => {
+            // Unified Metal resources already consume the same physical-memory
+            // headroom assigned to the process. Cap the device view of that
+            // shared pool instead of treating it as an additional budget.
+            device_headroom_bytes.min(assigned_unified_memory_budget_bytes(memory_target))
+        }
+        Some(false) => device_headroom_bytes,
+        None => 0,
+    }
+}
+
+const IMAGING_SPILL_READ_BANDWIDTH_ENV: &str = "CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND";
+const IMAGING_SPILL_WRITE_BANDWIDTH_ENV: &str = "CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND";
+
+fn parse_positive_bytes_per_second(value: &str) -> Option<u64> {
+    value.trim().parse::<u64>().ok().filter(|value| *value > 0)
+}
+
+fn configured_storage_bandwidth(
+    environment_name: &'static str,
+    configured_origin: &'static str,
+) -> (Option<u64>, &'static str) {
+    let Some(value) = env::var_os(environment_name) else {
+        return (None, "unconfigured");
+    };
+    let Some(value) = value.to_str() else {
+        eprintln!(
+            "imaging_planner_resource_warning resource={} reason=non_utf8_value",
+            environment_name
+        );
+        return (None, "invalid-environment-value");
+    };
+    let Some(bytes_per_second) = parse_positive_bytes_per_second(value) else {
+        eprintln!(
+            "imaging_planner_resource_warning resource={} reason=expected_positive_integer_bytes_per_second",
+            environment_name
+        );
+        return (None, "invalid-environment-value");
+    };
+    (Some(bytes_per_second), configured_origin)
+}
+
+fn imaging_storage_bandwidth_detection() -> ImagingStorageBandwidthDetection {
+    let (read_bytes_per_second, read_origin) = configured_storage_bandwidth(
+        IMAGING_SPILL_READ_BANDWIDTH_ENV,
+        "env-CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND",
+    );
+    let (write_bytes_per_second, write_origin) = configured_storage_bandwidth(
+        IMAGING_SPILL_WRITE_BANDWIDTH_ENV,
+        "env-CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND",
+    );
+    ImagingStorageBandwidthDetection {
+        read_bytes_per_second,
+        write_bytes_per_second,
+        read_origin,
+        write_origin,
+    }
+}
+
+fn optional_usize_resource_value(value: Option<usize>) -> String {
+    value.map_or_else(|| "none".to_string(), |value| value.to_string())
+}
+
+fn optional_u64_resource_value(value: Option<u64>) -> String {
+    value.map_or_else(|| "none".to_string(), |value| value.to_string())
+}
+
+fn optional_bool_resource_value(value: Option<bool>) -> &'static str {
+    match value {
+        Some(true) => "true",
+        Some(false) => "false",
+        None => "none",
+    }
+}
+
+fn imaging_planning_resource_log_line(
+    context: &ImagingPlanningContext,
+    memory_target: ImagingProcessMemoryLedger,
+    cpu: ImagingCpuResourceDetection,
+    metal: ImagingMetalMemoryDetection,
+    metal_device_budget_bytes: usize,
+    storage: ImagingStorageBandwidthDetection,
+) -> String {
+    let resources = &context.detected_resources;
+    format!(
+        "standard_mfs_planning_resources memory_pressure_policy={} memory_target_bytes={} memory_target_semantics=incremental-operation-residency memory_target_origin={} incremental_operation_budget_bytes={} process_baseline_bytes={} process_total_ceiling_bytes={} process_total_ceiling_origin={} target_projected_process_total_bytes={} target_projected_process_excess_bytes={} physical_memory_bytes={} physical_memory_origin={} no_swap_headroom_bytes={} no_swap_headroom_origin={} process_physical_footprint_bytes={} process_physical_footprint_origin={} logical_cpu_threads={} logical_cpu_threads_origin={} performance_cpu_cores={} performance_cpu_cores_origin={} metal_device_available={} metal_has_unified_memory={} metal_recommended_working_set_bytes={} metal_current_allocated_bytes={} metal_device_budget_bytes={} metal_memory_origin={} unified_memory_requirement_bytes={} unified_memory_requirement_origin=workload-direct-metal-scratch-candidate storage_read_bytes_per_second={} storage_read_origin={} storage_write_bytes_per_second={} storage_write_origin={}",
+        context.memory_pressure_policy.label(),
+        memory_target.target_bytes,
+        memory_target.source,
+        optional_usize_resource_value(memory_target.incremental_operation_budget_bytes),
+        memory_target.baseline_process_bytes,
+        optional_usize_resource_value(memory_target.process_total_ceiling_bytes),
+        memory_target.process_total_ceiling_origin,
+        optional_usize_resource_value(
+            memory_target.projected_process_total_bytes(memory_target.target_bytes)
+        ),
+        optional_usize_resource_value(
+            memory_target.projected_process_excess_bytes(memory_target.target_bytes)
+        ),
+        optional_usize_resource_value(resources.physical_memory_bytes),
+        memory_target.system_memory_origin,
+        optional_usize_resource_value(resources.current_memory_headroom_bytes),
+        memory_target.available_memory_origin,
+        optional_usize_resource_value(resources.process_physical_footprint_bytes),
+        memory_target.process_physical_footprint_origin,
+        optional_usize_resource_value(resources.logical_cpu_threads),
+        cpu.logical_threads_origin,
+        optional_usize_resource_value(resources.performance_cpu_cores),
+        cpu.performance_cores_origin,
+        metal.device_available,
+        optional_bool_resource_value(metal.has_unified_memory),
+        optional_usize_resource_value(resources.metal_recommended_working_set_bytes),
+        optional_usize_resource_value(resources.metal_current_allocated_bytes),
+        metal_device_budget_bytes,
+        metal.origin,
+        optional_usize_resource_value(resources.unified_memory_requirement_bytes),
+        optional_u64_resource_value(resources.storage_read_bytes_per_second),
+        storage.read_origin,
+        optional_u64_resource_value(resources.storage_write_bytes_per_second),
+        storage.write_origin,
+    )
+}
+
+fn log_imaging_planning_resource_detection(
+    context: &ImagingPlanningContext,
+    memory_target: ImagingProcessMemoryLedger,
+    cpu: ImagingCpuResourceDetection,
+    metal: ImagingMetalMemoryDetection,
+    metal_device_budget_bytes: usize,
+    storage: ImagingStorageBandwidthDetection,
+) {
+    eprintln!(
+        "{}",
+        imaging_planning_resource_log_line(
+            context,
+            memory_target,
+            cpu,
+            metal,
+            metal_device_budget_bytes,
+            storage,
+        )
+    );
 }
 
 fn imaging_process_memory_ledger(config: &CliConfig) -> ImagingProcessMemoryLedger {
     let system_memory_bytes = system_physical_memory_bytes();
     let available_memory_bytes = system_available_memory_bytes();
-    let baseline_process_bytes = spectral_slab::current_process_memory_snapshot()
-        .current_rss_bytes
-        .unwrap_or(0);
-    imaging_process_memory_ledger_from_snapshot(
+    let process_physical_footprint_bytes = current_process_physical_footprint_bytes();
+    let mut ledger = imaging_process_memory_ledger_from_snapshot(
         config,
         system_memory_bytes,
         available_memory_bytes,
-        baseline_process_bytes,
-    )
+        process_physical_footprint_bytes.unwrap_or(0),
+    );
+    ledger.process_physical_footprint_bytes = process_physical_footprint_bytes;
+    ledger.system_memory_origin = system_physical_memory_origin();
+    ledger.available_memory_origin = system_available_memory_origin();
+    ledger.process_physical_footprint_origin = current_process_physical_footprint_origin();
+    ledger
+}
+
+fn process_total_ceiling_from_snapshot(
+    system_memory_bytes: Option<usize>,
+    available_memory_bytes: Option<usize>,
+    baseline_process_bytes: usize,
+) -> (Option<usize>, &'static str) {
+    match (system_memory_bytes, available_memory_bytes) {
+        (Some(physical), Some(available)) => (
+            Some(physical.min(baseline_process_bytes.saturating_add(available))),
+            "baseline-plus-no-swap-headroom-capped-to-physical",
+        ),
+        (Some(physical), None) => (Some(physical), "physical-memory-ceiling"),
+        (None, Some(available)) => (
+            baseline_process_bytes.checked_add(available),
+            "baseline-plus-no-swap-headroom",
+        ),
+        (None, None) => (None, "unavailable"),
+    }
 }
 
 fn imaging_process_memory_ledger_from_snapshot(
@@ -36579,55 +40630,160 @@ fn imaging_process_memory_ledger_from_snapshot(
                     .saturating_sub(available)
                     .saturating_sub(baseline_process_bytes)
             });
-    if let Some(target_mb) = config.imaging_memory_target_mb.filter(|value| *value > 0) {
-        return ImagingProcessMemoryLedger {
+    let (process_total_ceiling_bytes, process_total_ceiling_origin) =
+        process_total_ceiling_from_snapshot(
             system_memory_bytes,
             available_memory_bytes,
             baseline_process_bytes,
-            non_process_resident_bytes,
-            // An explicit target is an operator-selected process budget, not a
-            // request for the kernel's current free-page count. Honoring it is
-            // what permits deliberate, observable swap-backed runs; automatic
-            // planning below remains bounded by the kernel snapshot.
-            target_bytes: target_mb.saturating_mul(1024 * 1024),
-            source: "cli-imaging",
-        };
-    }
-    if let Some(target_mb) = config
-        .standard_mfs_memory_target_mb
+        );
+    let incremental_operation_budget_bytes =
+        process_total_ceiling_bytes.map(|ceiling| ceiling.saturating_sub(baseline_process_bytes));
+    let explicit_target = config
+        .imaging_memory_target_mb
         .filter(|value| *value > 0)
-    {
-        return ImagingProcessMemoryLedger {
-            system_memory_bytes,
-            available_memory_bytes,
-            baseline_process_bytes,
-            non_process_resident_bytes,
-            target_bytes: target_mb.saturating_mul(1024 * 1024),
-            source: "cli-standard-mfs",
-        };
-    }
-    if let Some(target_bytes) = available_memory_bytes {
-        // The runtime snapshot is the resource assignment: it excludes pages
-        // currently needed by this process, the OS, and other applications,
-        // while including only memory the kernel reports as immediately free
-        // or reclaimable. No machine-size percentage is used.
-        return ImagingProcessMemoryLedger {
-            system_memory_bytes,
-            available_memory_bytes,
-            baseline_process_bytes,
-            non_process_resident_bytes,
-            target_bytes,
-            source: "available-memory-ledger",
-        };
-    }
+        .map(|target_mb| {
+            (
+                target_mb.saturating_mul(1024 * 1024),
+                "cli-imaging" as &'static str,
+            )
+        })
+        .or_else(|| {
+            config
+                .standard_mfs_memory_target_mb
+                .filter(|value| *value > 0)
+                .map(|target_mb| {
+                    (
+                        target_mb.saturating_mul(1024 * 1024),
+                        "cli-standard-mfs" as &'static str,
+                    )
+                })
+        });
+
+    let (target_bytes, source) = match config.imaging_memory_pressure_policy {
+        ImagingMemoryPressurePolicy::Oversubscribe => explicit_target
+            .map(|(bytes, _)| (bytes, "cli-intentional-oversubscription"))
+            .unwrap_or((0, "oversubscribe-requires-explicit-target")),
+        ImagingMemoryPressurePolicy::Aggressive | ImagingMemoryPressurePolicy::Hybrid => {
+            let (
+                explicit_ceiling_source,
+                explicit_without_snapshot_source,
+                physical_source,
+                available_source,
+                unavailable_source,
+            ) = if config.imaging_memory_pressure_policy == ImagingMemoryPressurePolicy::Hybrid {
+                (
+                    "cli-hybrid-physical-ceiling",
+                    "cli-hybrid-no-physical-snapshot",
+                    "hybrid-physical-ledger",
+                    "hybrid-available-ledger",
+                    "hybrid-resources-unavailable",
+                )
+            } else {
+                (
+                    "cli-aggressive-physical-ceiling",
+                    "cli-aggressive-no-physical-snapshot",
+                    "aggressive-physical-ledger",
+                    "aggressive-available-ledger",
+                    "aggressive-resources-unavailable",
+                )
+            };
+            match (
+                explicit_target,
+                incremental_operation_budget_bytes,
+                available_memory_bytes,
+            ) {
+                (Some((requested, _)), Some(operation_budget), _) => {
+                    (requested.min(operation_budget), explicit_ceiling_source)
+                }
+                (Some((requested, _)), None, _) => (requested, explicit_without_snapshot_source),
+                (None, Some(operation_budget), _) if system_memory_bytes.is_some() => {
+                    (operation_budget, physical_source)
+                }
+                (None, Some(operation_budget), _) => (operation_budget, available_source),
+                (None, None, Some(available)) => (available, available_source),
+                (None, None, None) => (0, unavailable_source),
+            }
+        }
+        ImagingMemoryPressurePolicy::Auto
+        | ImagingMemoryPressurePolicy::ConservativeNoSwap
+        | ImagingMemoryPressurePolicy::StageAware => {
+            match (
+                explicit_target,
+                available_memory_bytes,
+                incremental_operation_budget_bytes,
+            ) {
+                (Some((requested, requested_source)), _, Some(operation_budget)) => (
+                    requested.min(operation_budget),
+                    if requested <= operation_budget {
+                        requested_source
+                    } else {
+                        "cli-capped-to-no-swap-headroom"
+                    },
+                ),
+                (Some((requested, requested_source)), _, None) => (requested, requested_source),
+                (None, Some(available), Some(operation_budget)) => {
+                    (available.min(operation_budget), "available-memory-ledger")
+                }
+                (None, Some(available), None) => (available, "available-memory-ledger"),
+                (None, None, _) => (0, "unavailable-requires-explicit-target"),
+            }
+        }
+    };
+
     ImagingProcessMemoryLedger {
         system_memory_bytes,
-        available_memory_bytes: None,
+        available_memory_bytes,
+        process_physical_footprint_bytes: (baseline_process_bytes > 0)
+            .then_some(baseline_process_bytes),
         baseline_process_bytes,
         non_process_resident_bytes,
-        target_bytes: 0,
-        source: "unavailable-requires-explicit-target",
+        process_total_ceiling_bytes,
+        incremental_operation_budget_bytes,
+        target_bytes,
+        source,
+        process_total_ceiling_origin,
+        system_memory_origin: "injected-snapshot",
+        available_memory_origin: "injected-snapshot",
+        process_physical_footprint_origin: "injected-snapshot",
     }
+}
+
+#[cfg(target_os = "macos")]
+fn current_process_physical_footprint_bytes() -> Option<usize> {
+    let mut usage = unsafe { std::mem::zeroed::<libc::rusage_info_v0>() };
+    let status = unsafe {
+        libc::proc_pid_rusage(
+            libc::getpid(),
+            libc::RUSAGE_INFO_V0,
+            std::ptr::addr_of_mut!(usage).cast::<libc::rusage_info_t>(),
+        )
+    };
+    if status != 0 {
+        return None;
+    }
+    usize::try_from(usage.ri_phys_footprint)
+        .ok()
+        .filter(|bytes| *bytes > 0)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn current_process_physical_footprint_bytes() -> Option<usize> {
+    // Linux and the other supported targets do not expose Darwin's physical
+    // footprint accounting. RSS is the conservative process-residency fact
+    // already available to this frontend, so use it explicitly as a fallback.
+    spectral_slab::current_process_memory_snapshot()
+        .current_rss_bytes
+        .filter(|bytes| *bytes > 0)
+}
+
+#[cfg(target_os = "macos")]
+const fn current_process_physical_footprint_origin() -> &'static str {
+    "proc-pid-rusage-v0-physical-footprint"
+}
+
+#[cfg(not(target_os = "macos"))]
+const fn current_process_physical_footprint_origin() -> &'static str {
+    "rss-fallback-no-platform-physical-footprint"
 }
 
 #[cfg(target_os = "macos")]
@@ -36686,6 +40842,26 @@ fn system_available_memory_bytes() -> Option<usize> {
 }
 
 #[cfg(target_os = "macos")]
+const fn system_available_memory_origin() -> &'static str {
+    "host-statistics64-free-inactive-speculative"
+}
+
+#[cfg(target_os = "linux")]
+const fn system_available_memory_origin() -> &'static str {
+    "proc-meminfo-MemAvailable"
+}
+
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
+const fn system_available_memory_origin() -> &'static str {
+    "sysconf-available-physical-pages"
+}
+
+#[cfg(not(unix))]
+const fn system_available_memory_origin() -> &'static str {
+    "unavailable"
+}
+
+#[cfg(target_os = "macos")]
 fn system_physical_memory_bytes() -> Option<usize> {
     let mut value = 0u64;
     let mut size = std::mem::size_of::<u64>() as libc::size_t;
@@ -36699,14 +40875,16 @@ fn system_physical_memory_bytes() -> Option<usize> {
             0,
         )
     };
-    (result == 0 && value > 0).then_some(value as usize)
+    (result == 0 && value > 0)
+        .then(|| usize::try_from(value).ok())
+        .flatten()
 }
 
 #[cfg(target_os = "macos")]
 fn system_performance_cpu_count() -> Option<usize> {
     let mut value = 0u32;
     let mut size = std::mem::size_of::<u32>() as libc::size_t;
-    let name = b"hw.perflevel0.logicalcpu\0";
+    let name = b"hw.perflevel0.physicalcpu\0";
     let result = unsafe {
         libc::sysctlbyname(
             name.as_ptr().cast(),
@@ -36722,6 +40900,16 @@ fn system_performance_cpu_count() -> Option<usize> {
 #[cfg(not(target_os = "macos"))]
 fn system_performance_cpu_count() -> Option<usize> {
     None
+}
+
+#[cfg(target_os = "macos")]
+const fn system_performance_cpu_origin() -> &'static str {
+    "sysctl-hw.perflevel0.physicalcpu-capped-to-process-parallelism"
+}
+
+#[cfg(not(target_os = "macos"))]
+const fn system_performance_cpu_origin() -> &'static str {
+    "unavailable-no-portable-performance-core-topology"
 }
 
 fn assigned_cpu_capacity_for_topology(
@@ -36753,11 +40941,10 @@ fn standard_mfs_worker_planner_experiment_enabled() -> bool {
 }
 
 fn standard_mfs_grid_workers_requested_auto(config: &CliConfig) -> bool {
-    config.imaging_prepare_workers.is_none()
-        && config
-            .standard_mfs_grid_threads
-            .as_deref()
-            .is_none_or(|value| value.trim().eq_ignore_ascii_case("auto"))
+    config
+        .standard_mfs_grid_threads
+        .as_deref()
+        .is_none_or(|value| value.trim().eq_ignore_ascii_case("auto"))
 }
 
 fn standard_mfs_parallel_worker_calibration_request(
@@ -36779,13 +40966,12 @@ fn standard_mfs_parallel_worker_calibration_request(
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
-        .unwrap_or(10_000);
+        .unwrap_or(20_000);
     ParallelWorkerCalibrationRequest::new(
         candidates,
         assigned_parallelism,
         highest_capacity_class_boundary,
         Duration::from_millis(maximum_elapsed_ms),
-        20_000,
     )
     .ok()
 }
@@ -36803,6 +40989,21 @@ fn system_physical_memory_bytes() -> Option<usize> {
 #[cfg(not(unix))]
 fn system_physical_memory_bytes() -> Option<usize> {
     None
+}
+
+#[cfg(target_os = "macos")]
+const fn system_physical_memory_origin() -> &'static str {
+    "sysctl-hw.memsize"
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+const fn system_physical_memory_origin() -> &'static str {
+    "sysconf-physical-pages"
+}
+
+#[cfg(not(unix))]
+const fn system_physical_memory_origin() -> &'static str {
+    "unavailable"
 }
 
 fn standard_mfs_grid_threads_for_config(config: &CliConfig) -> usize {
@@ -37129,9 +41330,16 @@ fn dirty_product_fft_policy(config: &CliConfig) -> DirtyProductFftPolicy {
         ImagingFftBackendPolicy::RustFft => FftBackendChoice::RustFft,
         ImagingFftBackendPolicy::Accelerate => FftBackendChoice::Accelerate,
         ImagingFftBackendPolicy::MetalMpsGraph => FftBackendChoice::MetalMpsGraph,
-        ImagingFftBackendPolicy::FftwLocalBench => FftBackendChoice::FftwLocalBench,
+        ImagingFftBackendPolicy::Fftw => FftBackendChoice::Fftw,
     };
-    DirtyProductFftPolicy::new(precision, backend)
+    let max_threads = config
+        .standard_mfs_grid_threads
+        .as_deref()
+        .and_then(parse_standard_mfs_grid_threads)
+        .or(config.imaging_prepare_workers)
+        .unwrap_or_else(|| imaging_process_cpu_capacity(config.aw_project.is_some()))
+        .max(1);
+    DirtyProductFftPolicy::new(precision, backend).with_max_threads(max_threads)
 }
 
 fn imaging_execution_config_with_standard_mfs(
@@ -39043,6 +43251,27 @@ struct PreparedSelectionTableValues {
     corr_types: Vec<i32>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct MfsImagingFrequencies {
+    frequency_hz: Arc<[f64]>,
+    lambda_scales: Arc<[f64]>,
+}
+
+impl MfsImagingFrequencies {
+    fn channels(&self) -> impl Iterator<Item = (f64, f64)> + '_ {
+        self.frequency_hz
+            .iter()
+            .copied()
+            .zip(self.lambda_scales.iter().copied())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum MfsImagingFrequencyCacheKey {
+    Native,
+    Framed { time_bits: u64, field_id: usize },
+}
+
 struct PreparedSelection {
     initialization_error: Option<String>,
     source_channel_indices: Vec<usize>,
@@ -39059,8 +43288,7 @@ struct PreparedSelection {
     cube_row_source_frequency_cache: HashMap<(u64, usize), Arc<Vec<f64>>>,
     cube_row_spectral_reusable_plan: Option<Arc<CubeRowSpectralReusablePlan>>,
     cube_mosaic_pb_frequency_cache: HashMap<(u64, usize, usize, u64), f64>,
-    mfs_frequency_scale_cache: HashMap<(u64, usize), f64>,
-    mfs_channel_lambda_scale_cache: HashMap<u64, Arc<[f64]>>,
+    mfs_imaging_frequency_cache: Option<(MfsImagingFrequencyCacheKey, MfsImagingFrequencies)>,
     mfs_output_frequency_edge_range_hz: Option<[f64; 2]>,
     casa_cube_grid_interpolation: bool,
     cube_visibility_grid_assignments: bool,
@@ -39579,10 +43807,6 @@ enum CachedRowImagingTransform {
         uvrot: [[f64; 3]; 3],
         phrot: [f64; 3],
     },
-    Mosaic {
-        uvrot: [[f64; 3]; 3],
-        phrot: [f64; 3],
-    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -39603,25 +43827,6 @@ impl CachedPreparedGeometryTransform {
                 RowImagingTransform {
                     uvw_m,
                     phase_shift_m: phrot[0] * uvw_m[0] + phrot[1] * uvw_m[1] + phrot[2] * uvw_m[2],
-                }
-            }
-            CachedRowImagingTransform::Mosaic { uvrot, phrot } => {
-                let casa_input_uvw_m = [-raw_uvw_m[0], -raw_uvw_m[1], raw_uvw_m[2]];
-                let casa_output_uvw_m = [
-                    casa_input_uvw_m[0] * uvrot[0][0] + casa_input_uvw_m[1] * uvrot[1][0],
-                    casa_input_uvw_m[1] * uvrot[1][1] + casa_input_uvw_m[0] * uvrot[0][1],
-                    casa_input_uvw_m[0] * uvrot[0][2]
-                        + casa_input_uvw_m[1] * uvrot[1][2]
-                        + casa_input_uvw_m[2] * uvrot[2][2],
-                ];
-                RowImagingTransform {
-                    uvw_m: [
-                        -casa_output_uvw_m[0],
-                        -casa_output_uvw_m[1],
-                        casa_output_uvw_m[2],
-                    ],
-                    phase_shift_m: phrot[0] * casa_output_uvw_m[0]
-                        + phrot[1] * casa_output_uvw_m[1],
                 }
             }
         }
@@ -40017,8 +44222,14 @@ impl CasaAwPointingGroupAccumulator {
                 );
                 bin_by_antenna.insert(antenna_id, bin);
                 let sums = sums_by_bin.entry(bin).or_insert((0.0, 0.0, 0));
-                sums.0 += pixel[0] as f32;
-                sums.1 += pixel[1] as f32;
+                // BaselineType::findAntennaGroups accumulates into
+                // vector<float>, but poAnt1 is vector<double>. C++ usual
+                // arithmetic conversions therefore evaluate each `+=` in
+                // double and narrow only the compound-assignment result.
+                // The frozen VLASS fragment distinguishes this from
+                // pre-narrowing pixel to float by about 0.008 image pixel.
+                sums.0 = (f64::from(sums.0) + pixel[0]) as f32;
+                sums.1 = (f64::from(sums.1) + pixel[1]) as f32;
                 sums.2 += 1;
             }
             let mean_by_bin = sums_by_bin
@@ -40136,10 +44347,32 @@ fn row_imaging_transform(
     derived_engine: Option<&MsCalEngine>,
     reprojection_mode: UvwReprojectionMode,
 ) -> Result<RowImagingTransform, String> {
-    if phase_center.field_id == Some(row_field_id) {
+    if reprojection_mode == UvwReprojectionMode::Standard
+        && phase_center.field_id == Some(row_field_id)
+    {
         return Ok(RowImagingTransform {
             uvw_m: raw_uvw_m,
             phase_shift_m: 0.0,
+        });
+    }
+    if reprojection_mode == UvwReprojectionMode::Mosaic {
+        let derived_engine = derived_engine.ok_or_else(|| {
+            "internal error: missing derived engine for mosaic row reprojection".to_string()
+        })?;
+        let image_phase_center = casa_image_direction_coordinate_angles(phase_center.angles_rad);
+        let target = MDirection::from_angles(
+            image_phase_center[0],
+            image_phase_center[1],
+            phase_center.reference,
+        );
+        let (uvw_m, phase_shift_m) = derived_engine
+            .reproject_raw_uvw_for_mosaic_to_direction(raw_uvw_m, row_field_id, &target)
+            .map_err(|error| {
+                format!("reproject UVW row {row} through CASA mosaic geometry: {error}")
+            })?;
+        return Ok(RowImagingTransform {
+            uvw_m,
+            phase_shift_m,
         });
     }
     let imaging_transform = if let Some(phase_center_field_id) = phase_center.field_id {
@@ -40175,6 +44408,13 @@ fn cached_prepared_geometry_transform_for_field(
     reprojection_mode: UvwReprojectionMode,
 ) -> Option<CachedPreparedGeometryTransform> {
     let density_rot = gridft_uvw_rotation_matrix(row_phase_center_rad, phase_center.angles_rad);
+    if reprojection_mode == UvwReprojectionMode::Mosaic {
+        // The shared casa-ms path preserves CASA's two explicit UVWMachine
+        // stages and their operation order. A single collapsed matrix changes
+        // f64 rounding, so mosaic rows deliberately bypass this frontend cache;
+        // MsCalEngine caches the exact prepared transform by field/direction.
+        return None;
+    }
     if phase_center.field_id == Some(row_field_id) {
         return Some(CachedPreparedGeometryTransform {
             imaging: CachedRowImagingTransform::Identity,
@@ -40193,13 +44433,9 @@ fn cached_prepared_geometry_transform_for_field(
                 row_phase_center_rad,
             ),
         },
-        UvwReprojectionMode::Mosaic => CachedRowImagingTransform::Mosaic {
-            uvrot: gridft_uvw_rotation_matrix(row_phase_center_rad, target_phase_center_rad),
-            phrot: uvw_phase_rotation_vector_from_angles(
-                row_phase_center_rad,
-                target_phase_center_rad,
-            ),
-        },
+        UvwReprojectionMode::Mosaic => {
+            unreachable!("mosaic transforms use the shared casa-ms path")
+        }
     };
     Some(CachedPreparedGeometryTransform {
         imaging,
@@ -40256,6 +44492,18 @@ fn reproject_row_uvw_to_phase_center(
                 .reproject_raw_uvw_for_mosaic_to_direction(raw_uvw_m, source_field_id, &target),
         };
     result.map_err(|error| format!("reproject UVW row {row} to explicit phase center: {error}"))
+}
+
+fn casa_image_direction_coordinate_angles(direction_rad: [f64; 2]) -> [f64; 2] {
+    // SynthesisParamsImage normalizes the longitude through MVAngle before
+    // DirectionCoordinate converts radians to WCS degrees and back. The latter
+    // multiply/divide pair is observable at f64 precision and is also the
+    // exact direction consumed by FTMachine::girarUVW().
+    let to_degrees = 1.0 / (std::f64::consts::PI / 180.0);
+    [
+        (direction_rad[0].rem_euclid(std::f64::consts::TAU) * to_degrees) / to_degrees,
+        (direction_rad[1] * to_degrees) / to_degrees,
+    ]
 }
 
 fn direction_cosines_from_angles(direction_rad: [f64; 2]) -> [f64; 3] {
@@ -40388,31 +44636,50 @@ fn gridft_axis_rotation(angle: f64, axis: GridftAxis) -> [[f64; 3]; 3] {
     }
 }
 
-fn mfs_imaging_frequency_scale(
+fn mfs_imaging_frequencies(
     freq_ref: FrequencyRef,
-    reference_frequency_hz: f64,
+    source_frequencies_hz: &[f64],
     selected_row: &SelectedMainRow,
     derived_engine: Option<&MsCalEngine>,
-) -> Result<f64, String> {
-    if freq_ref == FrequencyRef::LSRK {
-        return Ok(1.0);
-    }
-    let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
-        "internal error: missing row time for MFS frequency-frame conversion".to_string()
-    })?;
-    let derived_engine = derived_engine.ok_or_else(|| {
-        "internal error: missing derived engine for MFS frequency-frame conversion".to_string()
-    })?;
-    convert_frequency_to_frame(
-        freq_ref,
-        FrequencyRef::LSRK,
-        reference_frequency_hz,
-        row_time_mjd_sec,
-        selected_row.field_id,
-        derived_engine,
-    )
-    .map(|converted_hz| converted_hz / reference_frequency_hz)
-    .map_err(|error| error.to_string())
+) -> Result<MfsImagingFrequencies, String> {
+    let frequency_hz = if freq_ref == FrequencyRef::LSRK {
+        source_frequencies_hz.to_vec()
+    } else {
+        let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
+            "internal error: missing row time for MFS frequency-frame conversion".to_string()
+        })?;
+        let derived_engine = derived_engine.ok_or_else(|| {
+            "internal error: missing derived engine for MFS frequency-frame conversion".to_string()
+        })?;
+        let frame = derived_engine
+            .spectral_frame_observatory(row_time_mjd_sec, selected_row.field_id)
+            .map_err(|error| {
+                format!(
+                    "build MFS spectral frame for field {}: {error}",
+                    selected_row.field_id
+                )
+            })?;
+        source_frequencies_hz
+            .iter()
+            .map(|&source_frequency_hz| {
+                convert_frequency_to_frame_with_frame(
+                    freq_ref,
+                    FrequencyRef::LSRK,
+                    source_frequency_hz,
+                    Some(&frame),
+                )
+                .map_err(|error| error.to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let lambda_scales = frequency_hz
+        .iter()
+        .map(|frequency_hz| frequency_hz / SPEED_OF_LIGHT_M_PER_S)
+        .collect::<Vec<_>>();
+    Ok(MfsImagingFrequencies {
+        frequency_hz: Arc::from(frequency_hz.into_boxed_slice()),
+        lambda_scales: Arc::from(lambda_scales.into_boxed_slice()),
+    })
 }
 
 impl PreparedSelection {
@@ -40563,8 +44830,7 @@ impl PreparedSelection {
             cube_row_source_frequency_cache: HashMap::new(),
             cube_row_spectral_reusable_plan: None,
             cube_mosaic_pb_frequency_cache: HashMap::new(),
-            mfs_frequency_scale_cache: HashMap::new(),
-            mfs_channel_lambda_scale_cache: HashMap::new(),
+            mfs_imaging_frequency_cache: None,
             mfs_output_frequency_edge_range_hz: None,
             casa_cube_grid_interpolation: false,
             cube_visibility_grid_assignments: false,
@@ -40633,6 +44899,8 @@ impl PreparedSelection {
                 if let Some(parallel_hands) = aw_parallel_hands {
                     parallel_hands.first_visibility.reserve(sample_capacity);
                     parallel_hands.second_visibility.reserve(sample_capacity);
+                    parallel_hands.source_phase.reserve(sample_capacity);
+                    parallel_hands.prediction_w_lambda.reserve(sample_capacity);
                 }
                 if let Some(density_batch) = density_batch {
                     reserve_visibility_batch(density_batch, sample_capacity);
@@ -41057,6 +45325,8 @@ impl PreparedSelection {
                                 AwParallelHandVisibilityBatch {
                                     first_visibility: Vec::with_capacity(max_samples),
                                     second_visibility: Vec::with_capacity(max_samples),
+                                    source_phase: Vec::with_capacity(max_samples),
+                                    prediction_w_lambda: Vec::with_capacity(max_samples),
                                 }
                             }),
                             density_batch: (trace_free_mfs_mosaic && use_density_batches)
@@ -41125,6 +45395,8 @@ impl PreparedSelection {
                             AwParallelHandVisibilityBatch {
                                 first_visibility: Vec::with_capacity(max_samples),
                                 second_visibility: Vec::with_capacity(max_samples),
+                                source_phase: Vec::with_capacity(max_samples),
+                                prediction_w_lambda: Vec::with_capacity(max_samples),
                             }
                         }),
                         density_batch: (trace_free_mfs_mosaic && use_density_batches)
@@ -41214,8 +45486,7 @@ impl PreparedSelection {
                 cube_row_source_frequency_cache: HashMap::new(),
                 cube_row_spectral_reusable_plan: None,
                 cube_mosaic_pb_frequency_cache: HashMap::new(),
-                mfs_frequency_scale_cache: HashMap::new(),
-                mfs_channel_lambda_scale_cache: HashMap::new(),
+                mfs_imaging_frequency_cache: None,
                 mfs_output_frequency_edge_range_hz: None,
                 casa_cube_grid_interpolation: use_casa_cube_grid_interpolation,
                 cube_visibility_grid_assignments,
@@ -41248,8 +45519,7 @@ impl PreparedSelection {
                 cube_row_source_frequency_cache: HashMap::new(),
                 cube_row_spectral_reusable_plan: None,
                 cube_mosaic_pb_frequency_cache: HashMap::new(),
-                mfs_frequency_scale_cache: HashMap::new(),
-                mfs_channel_lambda_scale_cache: HashMap::new(),
+                mfs_imaging_frequency_cache: None,
                 mfs_output_frequency_edge_range_hz: None,
                 casa_cube_grid_interpolation: false,
                 cube_visibility_grid_assignments: false,
@@ -41289,15 +45559,13 @@ impl PreparedSelection {
         row_slot: usize,
         timings: &mut AccumulateRowTimings,
     ) -> Result<(), String> {
-        self.accumulate_row_with_mfs_frequency_scale(
+        self.accumulate_row_with_imaging_frequencies(
             geometry_row,
             source_block,
             flag_row,
             derived_engine,
             row_slot,
             timings,
-            None,
-            None,
         )
     }
 
@@ -41361,13 +45629,12 @@ impl PreparedSelection {
             geometry_row.antenna1_pointing.angles_rad,
             geometry_row.antenna2_pointing.angles_rad,
         );
-        let mfs_frequency_scale =
-            self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
+        let mfs_imaging_frequencies =
+            self.mfs_imaging_frequencies_for_row(selected_row, derived_engine)?;
         if self.mfs_output_frequency_edge_range_hz.is_none() {
             self.mfs_output_frequency_edge_range_hz =
                 Some(self.mfs_imaging_frequency_edge_range_for_row(selected_row, derived_engine)?);
         }
-        let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
         let zero_visibility = Complex32::new(0.0, 0.0);
         let cube_output_channel_frequencies_hz = self
             .cube_spectral_setup
@@ -41443,17 +45710,15 @@ impl PreparedSelection {
                 let mut mosaic_pointing_id = None;
                 if let Some(weight) = weights.channel_invariant_weight(*corr_index)? {
                     if weight.is_finite() && weight > 0.0 {
-                        for (channel_index, frequency_hz) in self
+                        for (channel_index, (imaging_frequency_hz, lambda_scale)) in self
                             .source_channel_indices
                             .iter()
                             .copied()
-                            .zip(self.source_channel_frequencies_hz.iter().copied())
+                            .zip(mfs_imaging_frequencies.channels())
                         {
                             if flags_2d.get(*corr_index, channel_index)? {
                                 continue;
                             }
-                            let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
-                            let lambda_scale = frequency_hz * mfs_lambda_scale;
                             batch.u_lambda.push(uvw_m[0] * lambda_scale);
                             batch.v_lambda.push(uvw_m[1] * lambda_scale);
                             batch.w_lambda.push(uvw_m[2] * lambda_scale);
@@ -41488,11 +45753,11 @@ impl PreparedSelection {
                         }
                     }
                 } else {
-                    for (channel_index, frequency_hz) in self
+                    for (channel_index, (imaging_frequency_hz, lambda_scale)) in self
                         .source_channel_indices
                         .iter()
                         .copied()
-                        .zip(self.source_channel_frequencies_hz.iter().copied())
+                        .zip(mfs_imaging_frequencies.channels())
                     {
                         if flags_2d.get(*corr_index, channel_index)? {
                             continue;
@@ -41501,8 +45766,6 @@ impl PreparedSelection {
                         if !(weight.is_finite() && weight > 0.0) {
                             continue;
                         }
-                        let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
-                        let lambda_scale = frequency_hz * mfs_lambda_scale;
                         batch.u_lambda.push(uvw_m[0] * lambda_scale);
                         batch.v_lambda.push(uvw_m[1] * lambda_scale);
                         batch.w_lambda.push(uvw_m[2] * lambda_scale);
@@ -41559,19 +45822,17 @@ impl PreparedSelection {
                     {
                         let combined_weight = 0.5 * (first_weight + second_weight);
                         if combined_weight.is_finite() && combined_weight > 0.0 {
-                            for (channel_index, frequency_hz) in self
+                            for (channel_index, (imaging_frequency_hz, lambda_scale)) in self
                                 .source_channel_indices
                                 .iter()
                                 .copied()
-                                .zip(self.source_channel_frequencies_hz.iter().copied())
+                                .zip(mfs_imaging_frequencies.channels())
                             {
                                 if flags_2d.get(pair.0, channel_index)?
                                     || flags_2d.get(pair.1, channel_index)?
                                 {
                                     continue;
                                 }
-                                let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
-                                let lambda_scale = frequency_hz * mfs_lambda_scale;
                                 batch.u_lambda.push(uvw_m[0] * lambda_scale);
                                 batch.v_lambda.push(uvw_m[1] * lambda_scale);
                                 batch.w_lambda.push(uvw_m[2] * lambda_scale);
@@ -41582,6 +45843,14 @@ impl PreparedSelection {
                                 if let Some(parallel_hands) = aw_parallel_hands.as_mut() {
                                     parallel_hands.first_visibility.push(zero_visibility);
                                     parallel_hands.second_visibility.push(zero_visibility);
+                                    parallel_hands.source_phase.push(phase_rotate_visibility(
+                                        Complex32::new(1.0, 0.0),
+                                        transform.phase_shift_m,
+                                        imaging_frequency_hz,
+                                    ));
+                                    parallel_hands
+                                        .prediction_w_lambda
+                                        .push(raw_uvw_m[2] * lambda_scale);
                                 }
                                 sample_frequency_hz.push(imaging_frequency_hz);
                                 if let Some(density_batch) = density_batch.as_mut() {
@@ -41611,11 +45880,11 @@ impl PreparedSelection {
                         }
                     }
                 } else {
-                    for (channel_index, frequency_hz) in self
+                    for (channel_index, (imaging_frequency_hz, lambda_scale)) in self
                         .source_channel_indices
                         .iter()
                         .copied()
-                        .zip(self.source_channel_frequencies_hz.iter().copied())
+                        .zip(mfs_imaging_frequencies.channels())
                     {
                         if flags_2d.get(pair.0, channel_index)?
                             || flags_2d.get(pair.1, channel_index)?
@@ -41637,8 +45906,6 @@ impl PreparedSelection {
                         if !(combined_weight.is_finite() && combined_weight > 0.0) {
                             continue;
                         }
-                        let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
-                        let lambda_scale = frequency_hz * mfs_lambda_scale;
                         batch.u_lambda.push(uvw_m[0] * lambda_scale);
                         batch.v_lambda.push(uvw_m[1] * lambda_scale);
                         batch.w_lambda.push(uvw_m[2] * lambda_scale);
@@ -41649,6 +45916,14 @@ impl PreparedSelection {
                         if let Some(parallel_hands) = aw_parallel_hands.as_mut() {
                             parallel_hands.first_visibility.push(zero_visibility);
                             parallel_hands.second_visibility.push(zero_visibility);
+                            parallel_hands.source_phase.push(phase_rotate_visibility(
+                                Complex32::new(1.0, 0.0),
+                                transform.phase_shift_m,
+                                imaging_frequency_hz,
+                            ));
+                            parallel_hands
+                                .prediction_w_lambda
+                                .push(raw_uvw_m[2] * lambda_scale);
                         }
                         sample_frequency_hz.push(imaging_frequency_hz);
                         if let Some(density_batch) = density_batch.as_mut() {
@@ -41916,7 +46191,7 @@ impl PreparedSelection {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn accumulate_row_with_mfs_frequency_scale(
+    fn accumulate_row_with_imaging_frequencies(
         &mut self,
         geometry_row: &PreparedGeometryRow,
         source_block: &ColumnarPreparedSource,
@@ -41924,8 +46199,6 @@ impl PreparedSelection {
         derived_engine: Option<&MsCalEngine>,
         row_slot: usize,
         timings: &mut AccumulateRowTimings,
-        precomputed_mfs_frequency_scale: Option<f64>,
-        precomputed_mfs_frequency_edge_range_hz: Option<[f64; 2]>,
     ) -> Result<(), String> {
         timings.rows_seen += 1;
         let selected_row = &geometry_row.selected_row;
@@ -42144,31 +46417,22 @@ impl PreparedSelection {
         let use_density_batches = self.use_density_batches;
         let build_cube_briggs_density_samples = self.build_cube_briggs_density_samples;
         let use_model_interpolation_batches = self.use_model_interpolation_batches;
-        let mfs_frequency_scale = if matches!(
+        let mfs_imaging_frequencies = if matches!(
             &self.state,
             PreparedState::ExplicitMfs { .. }
                 | PreparedState::PairedMfs { .. }
                 | PreparedState::CollapsedMfs { .. }
         ) {
-            let scale = match precomputed_mfs_frequency_scale {
-                Some(scale) => scale,
-                None => self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?,
-            };
+            let frequencies = self.mfs_imaging_frequencies_for_row(selected_row, derived_engine)?;
             if self.mfs_output_frequency_edge_range_hz.is_none() {
-                self.mfs_output_frequency_edge_range_hz =
-                    Some(match precomputed_mfs_frequency_edge_range_hz {
-                        Some(range) => range,
-                        None => self.mfs_imaging_frequency_edge_range_for_row(
-                            selected_row,
-                            derived_engine,
-                        )?,
-                    });
+                self.mfs_output_frequency_edge_range_hz = Some(
+                    self.mfs_imaging_frequency_edge_range_for_row(selected_row, derived_engine)?,
+                );
             }
-            scale
+            Some(frequencies)
         } else {
-            1.0
+            None
         };
-        let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
         let cube_output_channel_frequencies_hz = self
             .cube_spectral_setup
             .as_ref()
@@ -42224,15 +46488,23 @@ impl PreparedSelection {
                 },
                 PreparedTraceState::ExplicitMfs { samples },
             ) => {
+                let mfs_imaging_frequencies =
+                    mfs_imaging_frequencies.as_ref().ok_or_else(|| {
+                        "internal error: explicit MFS row has no imaging-frequency vector"
+                            .to_string()
+                    })?;
                 let mut mosaic_pointing_id = None;
-                for (channel_slot, (channel_index, frequency_hz)) in self
+                for (
+                    channel_slot,
+                    ((channel_index, frequency_hz), (imaging_frequency_hz, lambda_scale)),
+                ) in self
                     .source_channel_indices
                     .iter()
                     .copied()
                     .zip(self.source_channel_frequencies_hz.iter().copied())
+                    .zip(mfs_imaging_frequencies.channels())
                     .enumerate()
                 {
-                    let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
                     let local_channel = data_2d.local_channel(channel_index)?;
                     if flags_2d.get_local(*corr_index, local_channel, channel_index)? {
                         continue;
@@ -42246,7 +46518,6 @@ impl PreparedSelection {
                     if !(weight.is_finite() && weight > 0.0) {
                         continue;
                     }
-                    let lambda_scale = frequency_hz * mfs_lambda_scale;
                     batch.u_lambda.push(uvw_m[0] * lambda_scale);
                     batch.v_lambda.push(uvw_m[1] * lambda_scale);
                     batch.w_lambda.push(uvw_m[2] * lambda_scale);
@@ -42636,6 +46907,11 @@ impl PreparedSelection {
                 },
                 PreparedTraceState::PairedMfs { .. },
             ) => {
+                let mfs_imaging_frequencies =
+                    mfs_imaging_frequencies.as_ref().ok_or_else(|| {
+                        "internal error: collapsed MFS row has no imaging-frequency vector"
+                            .to_string()
+                    })?;
                 let sumwt_factor = plane_stokes.paired_sumwt_factor();
                 let mut mosaic_pointing_id = None;
                 if let Some((first_weight, second_weight)) =
@@ -42648,11 +46924,11 @@ impl PreparedSelection {
                     {
                         let combined_weight = 0.5 * (first_weight + second_weight);
                         if combined_weight.is_finite() && combined_weight > 0.0 {
-                            for (channel_index, frequency_hz) in self
+                            for (channel_index, (imaging_frequency_hz, lambda_scale)) in self
                                 .source_channel_indices
                                 .iter()
                                 .copied()
-                                .zip(self.source_channel_frequencies_hz.iter().copied())
+                                .zip(mfs_imaging_frequencies.channels())
                             {
                                 let local_channel = data_2d.local_channel(channel_index)?;
                                 let first_flagged =
@@ -42666,7 +46942,6 @@ impl PreparedSelection {
                                     data_2d.get_local(pair.0, local_channel, channel_index)?;
                                 let second_visibility =
                                     data_2d.get_local(pair.1, local_channel, channel_index)?;
-                                let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
                                 let first_visibility = phase_rotate_visibility(
                                     first_visibility,
                                     transform.phase_shift_m,
@@ -42682,7 +46957,6 @@ impl PreparedSelection {
                                 if !(visibility.re.is_finite() && visibility.im.is_finite()) {
                                     continue;
                                 }
-                                let lambda_scale = frequency_hz * mfs_lambda_scale;
                                 batch.u_lambda.push(uvw_m[0] * lambda_scale);
                                 batch.v_lambda.push(uvw_m[1] * lambda_scale);
                                 batch.w_lambda.push(uvw_m[2] * lambda_scale);
@@ -42693,6 +46967,14 @@ impl PreparedSelection {
                                 if let Some(parallel_hands) = aw_parallel_hands.as_mut() {
                                     parallel_hands.first_visibility.push(first_visibility);
                                     parallel_hands.second_visibility.push(second_visibility);
+                                    parallel_hands.source_phase.push(phase_rotate_visibility(
+                                        Complex32::new(1.0, 0.0),
+                                        transform.phase_shift_m,
+                                        imaging_frequency_hz,
+                                    ));
+                                    parallel_hands
+                                        .prediction_w_lambda
+                                        .push(raw_uvw_m[2] * lambda_scale);
                                 }
                                 sample_frequency_hz.push(imaging_frequency_hz);
                                 if let Some(density_batch) = density_batch.as_mut() {
@@ -42722,13 +47004,12 @@ impl PreparedSelection {
                         }
                     }
                 } else {
-                    for (channel_index, frequency_hz) in self
+                    for (channel_index, (imaging_frequency_hz, lambda_scale)) in self
                         .source_channel_indices
                         .iter()
                         .copied()
-                        .zip(self.source_channel_frequencies_hz.iter().copied())
+                        .zip(mfs_imaging_frequencies.channels())
                     {
-                        let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
                         let local_channel = data_2d.local_channel(channel_index)?;
                         let first_flagged =
                             flags_2d.get_local(pair.0, local_channel, channel_index)?;
@@ -42769,7 +47050,6 @@ impl PreparedSelection {
                         if !(visibility.re.is_finite() && visibility.im.is_finite()) {
                             continue;
                         }
-                        let lambda_scale = frequency_hz * mfs_lambda_scale;
                         batch.u_lambda.push(uvw_m[0] * lambda_scale);
                         batch.v_lambda.push(uvw_m[1] * lambda_scale);
                         batch.w_lambda.push(uvw_m[2] * lambda_scale);
@@ -42780,6 +47060,14 @@ impl PreparedSelection {
                         if let Some(parallel_hands) = aw_parallel_hands.as_mut() {
                             parallel_hands.first_visibility.push(first_visibility);
                             parallel_hands.second_visibility.push(second_visibility);
+                            parallel_hands.source_phase.push(phase_rotate_visibility(
+                                Complex32::new(1.0, 0.0),
+                                transform.phase_shift_m,
+                                imaging_frequency_hz,
+                            ));
+                            parallel_hands
+                                .prediction_w_lambda
+                                .push(raw_uvw_m[2] * lambda_scale);
                         }
                         sample_frequency_hz.push(imaging_frequency_hz);
                         if let Some(density_batch) = density_batch.as_mut() {
@@ -42812,15 +47100,21 @@ impl PreparedSelection {
                 PreparedState::PairedMfs { paired, pair, .. },
                 PreparedTraceState::PairedMfs { samples },
             ) => {
-                for (channel_slot, (channel_index, frequency_hz)) in self
+                let mfs_imaging_frequencies =
+                    mfs_imaging_frequencies.as_ref().ok_or_else(|| {
+                        "internal error: paired MFS row has no imaging-frequency vector".to_string()
+                    })?;
+                for (
+                    channel_slot,
+                    ((channel_index, frequency_hz), (imaging_frequency_hz, lambda_scale)),
+                ) in self
                     .source_channel_indices
                     .iter()
                     .copied()
                     .zip(self.source_channel_frequencies_hz.iter().copied())
+                    .zip(mfs_imaging_frequencies.channels())
                     .enumerate()
                 {
-                    let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
-                    let lambda_scale = frequency_hz * mfs_lambda_scale;
                     let local_channel = data_2d.local_channel(channel_index)?;
                     let first_visibility = phase_rotate_visibility(
                         data_2d.get_local(pair.0, local_channel, channel_index)?,
@@ -43537,10 +47831,10 @@ impl PreparedSelection {
         }
     }
 
-    fn accumulate_standard_mfs_density_essentials_row_with_frequency_scale(
+    fn accumulate_standard_mfs_density_essentials_row_with_imaging_frequencies(
         &mut self,
         row: &MsImagingEssentials,
-        mfs_frequency_scale: f64,
+        mfs_imaging_frequencies: &MfsImagingFrequencies,
         weighting_plan: &mut StandardMfsStreamingWeightingPlan,
         timings: &mut AccumulateRowTimings,
     ) -> Result<usize, String> {
@@ -43549,13 +47843,12 @@ impl PreparedSelection {
         let accepted_samples = accumulate_standard_mfs_density_row_from_arrays(
             weighting_plan,
             [row.u_m, row.v_m, row.w_m],
-            mfs_frequency_scale,
             row.channel_origin,
             &row.flag,
             &row.weight,
             row.weight_spectrum.as_ref(),
             &self.source_channel_indices,
-            &self.source_channel_frequencies_hz,
+            &mfs_imaging_frequencies.frequency_hz,
             self.standard_mfs_density_polarization()?,
         )
         .map_err(|error| error.to_string())?;
@@ -43602,17 +47895,19 @@ impl PreparedSelection {
         timings.weight_spectrum += Duration::ZERO;
 
         let adapt_started_at = Instant::now();
-        let uvw_m = geometry_row.transform.uvw_m;
-        let mfs_frequency_scale =
-            self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
+        // CASA constructs VisImagingWeight before the FTMachine applies any
+        // phase-center UVW reprojection, so combined MFS density uses the raw
+        // MeasurementSet UVW coordinates. Gridding still uses transform.uvw_m.
+        let uvw_m = geometry_row.raw_uvw_m;
+        let mfs_imaging_frequencies =
+            self.mfs_imaging_frequencies_for_row(selected_row, derived_engine)?;
         let accepted_samples = accumulate_standard_mfs_density_row_from_visibility_block(
             weighting_plan,
             source_view,
             row_slot,
             uvw_m,
-            mfs_frequency_scale,
             &self.source_channel_indices,
-            &self.source_channel_frequencies_hz,
+            &mfs_imaging_frequencies.frequency_hz,
             self.standard_mfs_density_polarization()?,
         )
         .map_err(|error| error.to_string())?;
@@ -43665,22 +47960,21 @@ impl PreparedSelection {
         let uvw_m = geometry_row.transform.uvw_m;
         let is_cross = geometry_row.is_cross;
         let transform = geometry_row.transform;
-        let mfs_frequency_scale =
-            self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
+        let mfs_imaging_frequencies =
+            self.mfs_imaging_frequencies_for_row(selected_row, derived_engine)?;
         if self.mfs_output_frequency_edge_range_hz.is_none() {
             self.mfs_output_frequency_edge_range_hz =
                 Some(self.mfs_imaging_frequency_edge_range_for_row(selected_row, derived_engine)?);
         }
-        let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
         let mut counts = StandardMfsPlannedRowSampleCounts::default();
         match &self.state {
             PreparedState::ExplicitMfs { corr_index, .. } => {
                 let channel_invariant_weight = weights.channel_invariant_weight(*corr_index)?;
-                for (channel_index, frequency_hz) in self
+                for (channel_index, (imaging_frequency_hz, lambda_scale)) in self
                     .source_channel_indices
                     .iter()
                     .copied()
-                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                    .zip(mfs_imaging_frequencies.channels())
                 {
                     let local_channel = data_2d.local_channel(channel_index)?;
                     if flags_2d.get_local(*corr_index, local_channel, channel_index)? {
@@ -43689,7 +47983,7 @@ impl PreparedSelection {
                     let visibility = phase_rotate_visibility(
                         data_2d.get_local(*corr_index, local_channel, channel_index)?,
                         transform.phase_shift_m,
-                        frequency_hz * mfs_frequency_scale,
+                        imaging_frequency_hz,
                     );
                     let natural_weight = if let Some(weight) = channel_invariant_weight {
                         weight
@@ -43699,7 +47993,6 @@ impl PreparedSelection {
                     if !(natural_weight.is_finite() && natural_weight > 0.0) {
                         continue;
                     }
-                    let lambda_scale = frequency_hz * mfs_lambda_scale;
                     let u_lambda = uvw_m[0] * lambda_scale;
                     let v_lambda = uvw_m[1] * lambda_scale;
                     let weight = weighting_plan
@@ -43732,11 +48025,11 @@ impl PreparedSelection {
                 let sumwt_factor = plane_stokes.paired_sumwt_factor();
                 let channel_invariant_pair_weights =
                     weights.channel_invariant_pair_weights(pair.0, pair.1)?;
-                for (channel_index, frequency_hz) in self
+                for (channel_index, (imaging_frequency_hz, lambda_scale)) in self
                     .source_channel_indices
                     .iter()
                     .copied()
-                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                    .zip(mfs_imaging_frequencies.channels())
                 {
                     let local_channel = data_2d.local_channel(channel_index)?;
                     if flags_2d.get_local(pair.0, local_channel, channel_index)?
@@ -43772,12 +48065,11 @@ impl PreparedSelection {
                     let visibility = phase_rotate_visibility(
                         pair_transform.collapse(first_visibility, second_visibility),
                         transform.phase_shift_m,
-                        frequency_hz * mfs_frequency_scale,
+                        imaging_frequency_hz,
                     );
                     if !(visibility.re.is_finite() && visibility.im.is_finite()) {
                         continue;
                     }
-                    let lambda_scale = frequency_hz * mfs_lambda_scale;
                     let u_lambda = uvw_m[0] * lambda_scale;
                     let v_lambda = uvw_m[1] * lambda_scale;
                     let weight = weighting_plan
@@ -43821,13 +48113,12 @@ impl PreparedSelection {
         planned_sample_builder: &StandardMfsPlannedSampleBuilder,
         block: &mut StandardMfsPlannedSampleBlock,
     ) -> Result<StandardMfsPlannedRowSampleCounts, String> {
-        let mfs_frequency_scale =
-            self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
+        let mfs_imaging_frequencies =
+            self.mfs_imaging_frequencies_for_row(selected_row, derived_engine)?;
         if self.mfs_output_frequency_edge_range_hz.is_none() {
             self.mfs_output_frequency_edge_range_hz =
                 Some(self.mfs_imaging_frequency_edge_range_for_row(selected_row, derived_engine)?);
         }
-        let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
         let mut counts = StandardMfsPlannedRowSampleCounts::default();
         let collect_detail = standard_mfs_profile_line_detail_enabled();
         macro_rules! detail_time {
@@ -43852,11 +48143,11 @@ impl PreparedSelection {
                     } else {
                         None
                     };
-                for (channel_index, frequency_hz) in self
+                for (channel_index, (imaging_frequency_hz, lambda_scale)) in self
                     .source_channel_indices
                     .iter()
                     .copied()
-                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                    .zip(mfs_imaging_frequencies.channels())
                 {
                     let local_channel = detail_time!(
                         local_channel,
@@ -43877,7 +48168,7 @@ impl PreparedSelection {
                                 format!("DATA index [{corr_index}, {channel_index}] out of bounds")
                             })?,
                             0.0,
-                            frequency_hz * mfs_frequency_scale,
+                            imaging_frequency_hz,
                         )
                     );
                     let natural_weight = detail_time!(
@@ -43901,7 +48192,6 @@ impl PreparedSelection {
                     if !(natural_weight.is_finite() && natural_weight > 0.0) {
                         continue;
                     }
-                    let lambda_scale = frequency_hz * mfs_lambda_scale;
                     let weight = detail_time!(
                         final_weight,
                         weighting_plan.weight_sample(
@@ -43950,11 +48240,11 @@ impl PreparedSelection {
                 } else {
                     None
                 };
-                for (channel_index, frequency_hz) in self
+                for (channel_index, (imaging_frequency_hz, lambda_scale)) in self
                     .source_channel_indices
                     .iter()
                     .copied()
-                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                    .zip(mfs_imaging_frequencies.channels())
                 {
                     let local_channel = detail_time!(
                         local_channel,
@@ -44031,7 +48321,7 @@ impl PreparedSelection {
                         phase_rotate_visibility(
                             pair_transform.collapse(first_visibility, second_visibility),
                             0.0,
-                            frequency_hz * mfs_frequency_scale,
+                            imaging_frequency_hz,
                         )
                     );
                     if detail_time!(
@@ -44040,7 +48330,6 @@ impl PreparedSelection {
                     ) {
                         continue;
                     }
-                    let lambda_scale = frequency_hz * mfs_lambda_scale;
                     let weight = detail_time!(
                         final_weight,
                         weighting_plan.weight_sample(
@@ -44086,7 +48375,7 @@ impl PreparedSelection {
         selected_row: &SelectedMainRow,
         row: MsImagingEssentials,
         derived_engine: Option<&MsCalEngine>,
-        precomputed_mfs_frequency_scale: Option<f64>,
+        precomputed_mfs_imaging_frequencies: Option<&MfsImagingFrequencies>,
         source_channel_indices: Arc<[usize]>,
         planned_sample_builder: &StandardMfsPlannedSampleBuilder,
         next_input_seq: &mut u64,
@@ -44096,7 +48385,7 @@ impl PreparedSelection {
             selected_row,
             row,
             derived_engine,
-            precomputed_mfs_frequency_scale,
+            precomputed_mfs_imaging_frequencies,
             source_channel_indices,
         )?;
         let tap_center_loop_started = standard_mfs_profile_detail_enabled().then(Instant::now);
@@ -44116,21 +48405,25 @@ impl PreparedSelection {
         selected_row: &SelectedMainRow,
         row: MsImagingEssentials,
         derived_engine: Option<&MsCalEngine>,
-        precomputed_mfs_frequency_scale: Option<f64>,
+        precomputed_mfs_imaging_frequencies: Option<&MfsImagingFrequencies>,
         source_channel_indices: Arc<[usize]>,
     ) -> Result<(StandardMfsVisibilityRow, StandardMfsPlannedRowSampleCounts), String> {
         let mut counts = StandardMfsPlannedRowSampleCounts::default();
         let collect_detail = standard_mfs_profile_detail_enabled();
         let frequency_scale_started = collect_detail.then(Instant::now);
-        let mfs_frequency_scale = match precomputed_mfs_frequency_scale {
-            Some(scale) => scale,
-            None => self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?,
+        let computed_mfs_imaging_frequencies = if precomputed_mfs_imaging_frequencies.is_none() {
+            Some(self.mfs_imaging_frequencies_for_row(selected_row, derived_engine)?)
+        } else {
+            None
         };
+        let mfs_imaging_frequencies = precomputed_mfs_imaging_frequencies
+            .or(computed_mfs_imaging_frequencies.as_ref())
+            .expect("precomputed or locally computed MFS imaging frequencies");
         if self.mfs_output_frequency_edge_range_hz.is_none() {
             self.mfs_output_frequency_edge_range_hz =
                 Some(self.mfs_imaging_frequency_edge_range_for_row(selected_row, derived_engine)?);
         }
-        if precomputed_mfs_frequency_scale.is_none()
+        if precomputed_mfs_imaging_frequencies.is_none()
             && let Some(started) = frequency_scale_started
         {
             counts.detail.routed_frequency_scale += started.elapsed();
@@ -44161,7 +48454,7 @@ impl PreparedSelection {
                 );
             }
         };
-        let channel_lambda_scales = self.mfs_channel_lambda_scales_for_scale(mfs_frequency_scale);
+        let channel_lambda_scales = &mfs_imaging_frequencies.lambda_scales;
         if source_channel_indices.len() != channel_lambda_scales.len() {
             return Err(format!(
                 "internal error: source channel index count {} differs from frequency count {}",
@@ -44176,7 +48469,7 @@ impl PreparedSelection {
             spw_id: row.spw_id,
             channel_origin: row.channel_origin,
             source_channel_indices,
-            channel_lambda_scales: Arc::clone(&channel_lambda_scales),
+            channel_lambda_scales: Arc::clone(channel_lambda_scales),
             data: row.data,
             flag: row.flag,
             weight: Arc::from(row.weight.into_boxed_slice()),
@@ -44196,7 +48489,7 @@ impl PreparedSelection {
         selected_row: &SelectedMainRow,
         row: MsImagingEssentials,
         derived_engine: Option<&MsCalEngine>,
-        precomputed_mfs_frequency_scale: Option<f64>,
+        precomputed_mfs_imaging_frequencies: Option<&MfsImagingFrequencies>,
         source_channel_indices: Arc<[usize]>,
         planned_sample_builder: &StandardMfsPlannedSampleBuilder,
         next_input_seq: &mut u64,
@@ -44207,7 +48500,7 @@ impl PreparedSelection {
             selected_row,
             row,
             derived_engine,
-            precomputed_mfs_frequency_scale,
+            precomputed_mfs_imaging_frequencies,
             source_channel_indices,
             planned_sample_builder,
             next_input_seq,
@@ -44223,53 +48516,35 @@ impl PreparedSelection {
         Ok(counts)
     }
 
-    fn mfs_channel_lambda_scales_for_scale(&mut self, mfs_frequency_scale: f64) -> Arc<[f64]> {
-        let cache_key = mfs_frequency_scale.to_bits();
-        if let Some(scales) = self.mfs_channel_lambda_scale_cache.get(&cache_key) {
-            return Arc::clone(scales);
-        }
-        let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
-        let scales = self
-            .source_channel_frequencies_hz
-            .iter()
-            .map(|frequency_hz| frequency_hz * mfs_lambda_scale)
-            .collect::<Vec<_>>();
-        let scales = Arc::<[f64]>::from(scales.into_boxed_slice());
-        self.mfs_channel_lambda_scale_cache
-            .insert(cache_key, Arc::clone(&scales));
-        scales
-    }
-
-    fn mfs_imaging_frequency_scale_for_row(
+    fn mfs_imaging_frequencies_for_row(
         &mut self,
         selected_row: &SelectedMainRow,
         derived_engine: Option<&MsCalEngine>,
-    ) -> Result<f64, String> {
-        if self.freq_ref == FrequencyRef::LSRK {
-            return Ok(1.0);
-        }
-        let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
-            "internal error: missing row time for MFS frequency-frame conversion".to_string()
-        })?;
-        let cache_key = (row_time_mjd_sec.to_bits(), selected_row.field_id);
-        if let Some(scale) = self.mfs_frequency_scale_cache.get(&cache_key) {
-            return Ok(*scale);
-        }
-        let reference_frequency_hz = self
-            .source_channel_frequencies_hz
-            .first()
-            .copied()
-            .ok_or_else(|| {
-                "internal error: MFS preparation has no source frequencies".to_string()
+    ) -> Result<MfsImagingFrequencies, String> {
+        let cache_key = if self.freq_ref == FrequencyRef::LSRK {
+            MfsImagingFrequencyCacheKey::Native
+        } else {
+            let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
+                "internal error: missing row time for MFS frequency-frame conversion".to_string()
             })?;
-        let scale = mfs_imaging_frequency_scale(
+            MfsImagingFrequencyCacheKey::Framed {
+                time_bits: row_time_mjd_sec.to_bits(),
+                field_id: selected_row.field_id,
+            }
+        };
+        if let Some((cached_key, frequencies)) = self.mfs_imaging_frequency_cache.as_ref()
+            && *cached_key == cache_key
+        {
+            return Ok(frequencies.clone());
+        }
+        let frequencies = mfs_imaging_frequencies(
             self.freq_ref,
-            reference_frequency_hz,
+            &self.source_channel_frequencies_hz,
             selected_row,
             derived_engine,
         )?;
-        self.mfs_frequency_scale_cache.insert(cache_key, scale);
-        Ok(scale)
+        self.mfs_imaging_frequency_cache = Some((cache_key, frequencies.clone()));
+        Ok(frequencies)
     }
 
     fn mfs_imaging_frequency_edge_range_for_row(
@@ -44286,22 +48561,26 @@ impl PreparedSelection {
         let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
             "internal error: missing row time for MFS frequency-frame conversion".to_string()
         })?;
-        let low_hz = convert_frequency_to_frame(
+        let frame = derived_engine
+            .spectral_frame_observatory(row_time_mjd_sec, selected_row.field_id)
+            .map_err(|error| {
+                format!(
+                    "build MFS edge spectral frame for field {}: {error}",
+                    selected_row.field_id
+                )
+            })?;
+        let low_hz = convert_frequency_to_frame_with_frame(
             self.freq_ref,
             FrequencyRef::LSRK,
             self.selected_frequency_edge_range_hz[0],
-            row_time_mjd_sec,
-            selected_row.field_id,
-            derived_engine,
+            Some(&frame),
         )
         .map_err(|error| error.to_string())?;
-        let high_hz = convert_frequency_to_frame(
+        let high_hz = convert_frequency_to_frame_with_frame(
             self.freq_ref,
             FrequencyRef::LSRK,
             self.selected_frequency_edge_range_hz[1],
-            row_time_mjd_sec,
-            selected_row.field_id,
-            derived_engine,
+            Some(&frame),
         )
         .map_err(|error| error.to_string())?;
         Ok([low_hz.min(high_hz), low_hz.max(high_hz)])
@@ -44324,8 +48603,7 @@ impl PreparedSelection {
             cube_row_source_frequency_cache: _,
             cube_row_spectral_reusable_plan: _,
             cube_mosaic_pb_frequency_cache: _,
-            mfs_frequency_scale_cache: _,
-            mfs_channel_lambda_scale_cache: _,
+            mfs_imaging_frequency_cache: _,
             mfs_output_frequency_edge_range_hz,
             casa_cube_grid_interpolation: _,
             cube_visibility_grid_assignments: _,
@@ -44465,8 +48743,7 @@ impl PreparedSelection {
             cube_row_source_frequency_cache: _,
             cube_row_spectral_reusable_plan: _,
             cube_mosaic_pb_frequency_cache: _,
-            mfs_frequency_scale_cache: _,
-            mfs_channel_lambda_scale_cache: _,
+            mfs_imaging_frequency_cache: _,
             mfs_output_frequency_edge_range_hz,
             casa_cube_grid_interpolation: _,
             cube_visibility_grid_assignments: _,
@@ -44593,8 +48870,7 @@ impl PreparedSelection {
             cube_row_source_frequency_cache: _,
             cube_row_spectral_reusable_plan: _,
             cube_mosaic_pb_frequency_cache: _,
-            mfs_frequency_scale_cache: _,
-            mfs_channel_lambda_scale_cache: _,
+            mfs_imaging_frequency_cache: _,
             mfs_output_frequency_edge_range_hz: _,
             casa_cube_grid_interpolation: _,
             cube_visibility_grid_assignments: _,
@@ -44837,8 +49113,7 @@ impl PreparedSelection {
             cube_row_source_frequency_cache: _,
             cube_row_spectral_reusable_plan: _,
             cube_mosaic_pb_frequency_cache: _,
-            mfs_frequency_scale_cache: _,
-            mfs_channel_lambda_scale_cache: _,
+            mfs_imaging_frequency_cache: _,
             mfs_output_frequency_edge_range_hz,
             casa_cube_grid_interpolation: _,
             cube_visibility_grid_assignments: _,
@@ -45281,20 +49556,12 @@ fn run_products_to_image_product_set<'a>(
             products.mosaic_weight.clone(),
         )
         .map_err(|error| error.to_string())?,
-        RunProducts::Mtmfs(products) => {
-            let mut set = mtmfs_image_product_set(&products.result);
-            append_mtmfs_primary_beam_products(
-                config,
-                coords,
-                &mut set,
-                products,
-                single_field_pb_context,
-            )?;
-            return Ok(set);
-        }
+        RunProducts::Mtmfs(products) => mtmfs_image_product_set(&products.result),
     };
 
-    if let Some(clean_mask) = clean_mask {
+    if !clean_is_dirty(config)
+        && let Some(clean_mask) = clean_mask
+    {
         match clean_mask {
             EffectiveCleanMask::Plane(mask) => {
                 let channel_count = product_set.metadata().channel_frequencies_hz().len();
@@ -45308,12 +49575,21 @@ fn run_products_to_image_product_set<'a>(
             }
         }
     }
-    append_single_plane_primary_beam_products(
-        config,
-        coords,
-        &mut product_set,
-        single_field_pb_context,
-    )?;
+    match result {
+        RunProducts::Mtmfs(products) => append_mtmfs_primary_beam_products(
+            config,
+            coords,
+            &mut product_set,
+            products,
+            single_field_pb_context,
+        )?,
+        RunProducts::Mfs(_) | RunProducts::Cube(_) => append_single_plane_primary_beam_products(
+            config,
+            coords,
+            &mut product_set,
+            single_field_pb_context,
+        )?,
+    }
     Ok(product_set)
 }
 
@@ -45695,7 +49971,7 @@ fn write_single_product_inner(spec: SingleProductWrite<'_>) -> Result<(), String
     let mut image = PagedImage::<f32>::create(data.shape().to_vec(), coords.clone(), path)
         .map_err(|error| format!("create image {}: {error}", path.display()))?;
     image
-        .put_slice(&data.clone().into_dyn(), &[0, 0, 0, 0])
+        .put_slice_view(data.view().into_dyn(), &[0, 0, 0, 0])
         .map_err(|error| format!("write pixels {}: {error}", path.display()))?;
     if let Some(mask) = mask {
         image
@@ -46079,6 +50355,20 @@ fn parse_imaging_fft_precision_policy(text: &str) -> Result<ImagingFftPrecisionP
     }
 }
 
+fn parse_imaging_memory_pressure_policy(text: &str) -> Result<ImagingMemoryPressurePolicy, String> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "" | "auto" | "default" => Ok(ImagingMemoryPressurePolicy::Auto),
+        "conservative-no-swap" => Ok(ImagingMemoryPressurePolicy::ConservativeNoSwap),
+        "aggressive" => Ok(ImagingMemoryPressurePolicy::Aggressive),
+        "oversubscribe" => Ok(ImagingMemoryPressurePolicy::Oversubscribe),
+        "stage-aware" => Ok(ImagingMemoryPressurePolicy::StageAware),
+        "hybrid" => Ok(ImagingMemoryPressurePolicy::Hybrid),
+        _ => Err(format!(
+            "unsupported --imaging-memory-pressure-policy value {text:?}; expected auto, conservative-no-swap, aggressive, oversubscribe, stage-aware, or hybrid"
+        )),
+    }
+}
+
 fn parse_imaging_fft_backend_policy(text: &str) -> Result<ImagingFftBackendPolicy, String> {
     match text.trim().to_ascii_lowercase().as_str() {
         "" | "auto" | "default" => Ok(ImagingFftBackendPolicy::Auto),
@@ -46087,9 +50377,9 @@ fn parse_imaging_fft_backend_policy(text: &str) -> Result<ImagingFftBackendPolic
         "metal-mpsgraph" | "mpsgraph" | "mps-graph" | "metal" | "gpu" => {
             Ok(ImagingFftBackendPolicy::MetalMpsGraph)
         }
-        "fftw-local-bench" | "fftw-local" | "fftw" => Ok(ImagingFftBackendPolicy::FftwLocalBench),
+        "fftw" => Ok(ImagingFftBackendPolicy::Fftw),
         _ => Err(format!(
-            "unsupported --imaging-fft-backend value {text:?}; expected auto, rustfft, accelerate, metal-mpsgraph, or fftw-local-bench"
+            "unsupported --imaging-fft-backend value {text:?}; expected auto, rustfft, accelerate, metal-mpsgraph, or fftw"
         )),
     }
 }
@@ -49582,22 +53872,21 @@ fn push_mfs_density_sample(
     if !(frequency_hz.is_finite() && frequency_hz > 0.0 && weight.is_finite() && weight > 0.0) {
         return;
     }
-    // VisImagingWeight stores frequency/c and the resulting UV coordinates as
-    // Float before assigning the density cell. Preserve both rounding steps.
-    let lambda_scale = f64::from((frequency_hz / SPEED_OF_LIGHT_M_PER_S) as f32);
-    batch
-        .u_lambda
-        .push(f64::from((uvw_m[0] * lambda_scale) as f32));
-    batch
-        .v_lambda
-        .push(f64::from((uvw_m[1] * lambda_scale) as f32));
-    batch
-        .w_lambda
-        .push(f64::from((uvw_m[2] * lambda_scale) as f32));
+    let uvw_lambda = mfs_density_uvw_lambda(frequency_hz, uvw_m);
+    batch.u_lambda.push(uvw_lambda[0]);
+    batch.v_lambda.push(uvw_lambda[1]);
+    batch.w_lambda.push(uvw_lambda[2]);
     batch.weight.push(weight);
     batch.sumwt_factor.push(sumwt_factor);
     batch.gridable.push(is_cross);
     batch.visibility.push(Complex32::new(0.0, 0.0));
+}
+
+fn mfs_density_uvw_lambda(frequency_hz: f64, uvw_m: [f64; 3]) -> [f64; 3] {
+    // VisImagingWeight stores frequency/c and the resulting UV coordinates as
+    // Float before assigning the density cell. Preserve both rounding steps.
+    let lambda_scale = f64::from((frequency_hz / SPEED_OF_LIGHT_M_PER_S) as f32);
+    uvw_m.map(|component| f64::from((component * lambda_scale) as f32))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -49918,7 +54207,7 @@ Options:
                             override planner use of the grouped Metal input cache
   --imaging-fft-precision auto|f64|f32
                             imaging-wide dirty/residual FFT precision policy
-  --imaging-fft-backend auto|rustfft|accelerate|metal-mpsgraph|fftw-local-bench
+  --imaging-fft-backend auto|rustfft|accelerate|metal-mpsgraph|fftw
                             imaging-wide dirty/residual FFT backend policy
   --standard-mfs-memory-target-mb N
                             compatibility alias for --imaging-memory-target-mb
@@ -49926,6 +54215,11 @@ Options:
                             compatibility alias for --imaging-prepare-buffer-mb
   --imaging-memory-target-mb N
                             override shared bounded source-stream memory target in MiB
+  --imaging-memory-pressure-policy POLICY
+                            auto, conservative-no-swap, aggressive, oversubscribe, stage-aware, or hybrid (default auto)
+  CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND=N
+  CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND=N
+                            measured spill-volume bandwidth evidence; no startup benchmark is run
   --imaging-prepare-buffer-mb N
                             override shared bounded source-stream prepare-buffer budget in MiB
   --imaging-row-block-rows N
@@ -49940,6 +54234,8 @@ Options:
                             read selected MS imaging row blocks and report raw throughput only
   --spectral-plan-probe true|false
                             run the standard spectral cube slab memory/source-read planner and stop before imaging
+  --standard-mfs-plan-probe true|false
+                            open real standard-MFS inputs, emit the production memory/lifetime plan, and stop before allocation or execution
   -h, --help                show this help
 "
     .to_string()
@@ -49961,7 +54257,9 @@ mod tests {
         primary_beam_support_mask_product,
     };
     use casa_ms::spectral_selection::CubeGridChannelContributions;
-    use casa_ms::{MeasurementSetBuilder, OptionalMainColumn, SubtableId};
+    use casa_ms::{
+        MeasurementSetBuilder, OptionalMainColumn, SubtableId, convert_frequency_to_frame,
+    };
     use casa_tables::table_measures::{MeasureType, TableMeasDesc};
     use casa_test_support::gridder_interop::GridderOracle;
     use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -49977,6 +54275,1111 @@ mod tests {
 
     static IMAGER_PROGRESS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
     static SPECTRAL_SLAB_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+    static AWPROJECT_DIAGNOSTIC_ENV_TEST_LOCK: LazyLock<Mutex<()>> =
+        LazyLock::new(|| Mutex::new(()));
+
+    const AWPROJECT_DIAGNOSTIC_TEST_ENV_NAMES: [&str; 25] = [
+        AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV,
+        AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV,
+        AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV,
+        AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV,
+        AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV,
+        AWPROJECT_LITERAL_COEFFICIENT_AUDIT_SELECTION_ENV,
+        AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV,
+        AWPROJECT_NATIVE_GEOMETRY_AUDIT_SELECTION_ENV,
+        AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV,
+        AWPROJECT_NATIVE_COMPONENTS_AUDIT_SELECTION_ENV,
+        "CASA_RS_AW_BRACKET_EXPECT_NXY",
+        "CASA_RS_AW_BRACKET_BLOCKS",
+        "CASA_RS_AW_BRACKET_TERMS",
+        "CASA_RS_AW_TT0_ARITHMETIC_COMPAT_EXPECT_NXY",
+        "CASA_RS_AW_TT0_ARITHMETIC_COMPAT_BLOCKS",
+        "CASA_RS_AW_TT0_ARITHMETIC_COMPAT_TERMS",
+        "CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_EXPECT_NXY",
+        "CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_BLOCKS",
+        "CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_TERMS",
+        "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_EXPECT_NXY_V2",
+        "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_BLOCKS_V2",
+        "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_TERMS_V2",
+        "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V6",
+        "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V6",
+        "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V6",
+    ];
+
+    struct AwProjectDiagnosticTestEnv {
+        previous: Vec<(&'static str, Option<OsString>)>,
+    }
+
+    impl AwProjectDiagnosticTestEnv {
+        fn isolated() -> Self {
+            let previous = AWPROJECT_DIAGNOSTIC_TEST_ENV_NAMES
+                .iter()
+                .map(|&name| (name, env::var_os(name)))
+                .collect::<Vec<_>>();
+            for name in AWPROJECT_DIAGNOSTIC_TEST_ENV_NAMES {
+                unsafe {
+                    env::remove_var(name);
+                }
+            }
+            Self { previous }
+        }
+
+        fn set(&self, name: &str, value: impl AsRef<std::ffi::OsStr>) {
+            unsafe {
+                env::set_var(name, value);
+            }
+        }
+    }
+
+    impl Drop for AwProjectDiagnosticTestEnv {
+        fn drop(&mut self) {
+            for (name, value) in &self.previous {
+                unsafe {
+                    match value {
+                        Some(value) => env::set_var(name, value),
+                        None => env::remove_var(name),
+                    }
+                }
+            }
+        }
+    }
+
+    fn aw_bracket_test_row(row_index: usize) -> SelectedMainRow {
+        SelectedMainRow {
+            row_index,
+            field_id: 1525,
+            ddid: 2,
+            spw_id: 2,
+            polarization_id: 0,
+            antenna1_id: 0,
+            antenna2_id: 1,
+            time_mjd_seconds: Some(0.0),
+        }
+    }
+
+    fn aw_bracket_test_table_values(channel_count: usize) -> PreparedSelectionTableValues {
+        PreparedSelectionTableValues {
+            spw_id: 2,
+            spw_freqs_hz: (0..channel_count)
+                .map(|channel| 1.0e9 + channel as f64 * 2.0e6)
+                .collect(),
+            spw_widths_hz: vec![2.0e6; channel_count],
+            freq_ref: FrequencyRef::LSRK,
+            corr_types: vec![5, 6, 7, 8],
+        }
+    }
+
+    fn aw_bracket_valid_cli_config() -> CliConfig {
+        let mut config = vlass_field_1525_real_cache_config(
+            Path::new("/unused/input.ms"),
+            Path::new("/unused/cf-cache"),
+            Path::new("/unused/output"),
+            4096,
+            "2~17",
+        );
+        config.imaging_row_block_rows = Some(AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS);
+        config
+    }
+
+    fn set_aw_bracket_v4_controls(test_env: &AwProjectDiagnosticTestEnv) {
+        test_env.set("CASA_RS_AW_BRACKET_EXPECT_NXY", "4096");
+        test_env.set("CASA_RS_AW_BRACKET_BLOCKS", "1");
+        test_env.set("CASA_RS_AW_BRACKET_TERMS", "2");
+    }
+
+    fn set_aw_tt0_arithmetic_compat_controls(test_env: &AwProjectDiagnosticTestEnv) {
+        test_env.set("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_EXPECT_NXY", "4096");
+        test_env.set("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_BLOCKS", "1");
+        test_env.set("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_TERMS", "1");
+    }
+
+    fn set_aw_literal_coefficient_audit_controls(test_env: &AwProjectDiagnosticTestEnv) {
+        test_env.set("CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_EXPECT_NXY", "4096");
+        test_env.set("CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_BLOCKS", "1");
+        test_env.set("CASA_RS_AW_LITERAL_COEFFICIENT_AUDIT_TERMS", "1");
+    }
+
+    fn set_aw_native_geometry_audit_controls(test_env: &AwProjectDiagnosticTestEnv) {
+        test_env.set("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_EXPECT_NXY_V2", "4096");
+        test_env.set("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_BLOCKS_V2", "1");
+        test_env.set("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_TERMS_V2", "2");
+    }
+
+    fn set_aw_native_components_audit_controls(test_env: &AwProjectDiagnosticTestEnv) {
+        test_env.set("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V6", "4096");
+        test_env.set("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V6", "1");
+        test_env.set("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V6", "2");
+    }
+
+    #[test]
+    fn awproject_datatogrid_bracket_distinguishes_absolute_and_selected_rows() {
+        let all_rows = (0..4)
+            .map(|offset| aw_bracket_test_row(100 + offset))
+            .collect::<Vec<_>>();
+        let mut flag_row = vec![false; 104];
+        flag_row[100] = true;
+        let observed = awproject_datatogrid_bracket_observed_first_buffer(
+            &all_rows,
+            &all_rows[..2],
+            &flag_row,
+            &aw_bracket_test_table_values(2),
+            Some(SelectedChannelReadRange::new(0, 2)),
+            None,
+        )
+        .expect("observe ordered first source rows");
+        assert_eq!(observed.selected_row_first, 0);
+        assert_eq!(observed.selected_row_last, 1);
+        assert_eq!(observed.absolute_main_row_first, 100);
+        assert_eq!(observed.absolute_main_row_last, 101);
+        assert_ne!(observed.selected_row_hash, observed.absolute_main_row_hash);
+        assert_eq!(observed.flagged_rows, 1);
+
+        let reordered = vec![all_rows[1].clone(), all_rows[0].clone()];
+        assert!(
+            awproject_datatogrid_bracket_observed_first_buffer(
+                &all_rows,
+                &reordered,
+                &flag_row,
+                &aw_bracket_test_table_values(2),
+                Some(SelectedChannelReadRange::new(0, 2)),
+                None,
+            )
+            .is_err()
+        );
+        let missing = vec![aw_bracket_test_row(999)];
+        assert!(
+            awproject_datatogrid_bracket_observed_first_buffer(
+                &all_rows,
+                &missing,
+                &flag_row,
+                &aw_bracket_test_table_values(2),
+                Some(SelectedChannelReadRange::new(0, 2)),
+                None,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn awproject_datatogrid_bracket_observes_production_maps_and_frequencies() {
+        let rows = vec![aw_bracket_test_row(0)];
+        let table_values = aw_bracket_test_table_values(64);
+        let observed = awproject_datatogrid_bracket_observed_first_buffer(
+            &rows,
+            &rows,
+            &[false],
+            &table_values,
+            Some(SelectedChannelReadRange::new(0, 64)),
+            None,
+        )
+        .expect("observe live MFS channel, polarization, and frequency route");
+        assert_eq!(observed.chan_map_count, 64);
+        assert_eq!(observed.chan_map_hash, 2_111_453_637_644_839_429);
+        assert_eq!(observed.pol_map_count, 4);
+        assert_eq!(observed.pol_map_hash, 13_222_926_617_229_668_273);
+        assert_eq!(observed.selected_corr_first_index, 0);
+        assert_eq!(observed.selected_corr_second_index, 3);
+        assert_eq!(observed.selected_corr_first_code, 5);
+        assert_eq!(observed.selected_corr_second_code, 8);
+        validate_awproject_tt0_arithmetic_compat_corr_order(&observed)
+            .expect("frozen circular-basis input-ipol role order");
+        let mut reversed_corr_roles = observed.clone();
+        reversed_corr_roles.selected_corr_first_code = 8;
+        reversed_corr_roles.selected_corr_second_code = 5;
+        assert!(
+            validate_awproject_tt0_arithmetic_compat_corr_order(&reversed_corr_roles).is_err(),
+            "the diagnostic must not silently reverse CASA's RR/LL input-ipol roles"
+        );
+        assert_eq!(observed.freq_count, 64);
+        assert_eq!(
+            observed.freq_first_bits,
+            table_values.spw_freqs_hz[0].to_bits()
+        );
+        assert_eq!(
+            observed.freq_last_bits,
+            table_values.spw_freqs_hz[63].to_bits()
+        );
+    }
+
+    #[test]
+    fn awproject_datatogrid_diagnostic_tt0_uses_separate_live_selection_marker() {
+        let _test_lock = AWPROJECT_DIAGNOSTIC_ENV_TEST_LOCK
+            .lock()
+            .expect("AWProject diagnostic environment lock");
+        let test_env = AwProjectDiagnosticTestEnv::isolated();
+        let temp = tempdir().expect("temporary output parent");
+        let output = temp.path().join("tt0-arithmetic-compat-v1.json");
+        test_env.set(AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV, &output);
+        set_aw_tt0_arithmetic_compat_controls(&test_env);
+        test_env.set(
+            AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV,
+            "frozen-v4-marker",
+        );
+        test_env.set(
+            AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV,
+            "stale-v1-marker",
+        );
+
+        let config = aw_bracket_valid_cli_config();
+        assert_eq!(
+            config.nterms, 2,
+            "the user-facing MT-MFS request remains nterms=2"
+        );
+        validate_awproject_datatogrid_bracket_cli(&config)
+            .expect("validate the private TT0-only diagnostic");
+        let request = awproject_datatogrid_diagnostic_request()
+            .expect("resolve diagnostic")
+            .expect("diagnostic is active");
+        assert_eq!(
+            request,
+            AwProjectDataToGridDiagnosticRequest {
+                mode: AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1,
+                output,
+            }
+        );
+        assert_eq!(
+            env::var(AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV).as_deref(),
+            Ok("frozen-v4-marker"),
+            "the new preflight must not mutate the frozen-v4 marker"
+        );
+        assert!(
+            env::var_os(AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV).is_none(),
+            "the active marker is installed only after observing the live selection"
+        );
+
+        let rows = vec![aw_bracket_test_row(0)];
+        let table_values = aw_bracket_test_table_values(64);
+        let observed = awproject_datatogrid_bracket_observed_first_buffer(
+            &rows,
+            &rows,
+            &[false],
+            &table_values,
+            Some(SelectedChannelReadRange::new(0, 64)),
+            None,
+        )
+        .expect("observe the production map and frequency route");
+        let marker = awproject_datatogrid_selection_marker_for_mode(request.mode, 2, 1, &observed);
+        install_awproject_datatogrid_selection_marker(request.mode, &marker);
+
+        assert_eq!(
+            env::var(AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV).as_deref(),
+            Ok(marker.as_str())
+        );
+        assert_eq!(marker.split(';').count(), 31);
+        assert!(marker.contains(&format!("chan_map_hash={}", observed.chan_map_hash)));
+        assert!(marker.contains(&format!("pol_map_hash={}", observed.pol_map_hash)));
+        assert!(marker.contains("selected_corr_first_index=0"));
+        assert!(marker.contains("selected_corr_second_index=3"));
+        assert!(marker.contains("selected_corr_first_code=5"));
+        assert!(marker.contains("selected_corr_second_code=8"));
+        assert!(marker.contains(&format!("freq_hash={}", observed.freq_hash)));
+        assert!(marker.contains(&format!("freq_first_bits={}", observed.freq_first_bits)));
+        assert!(marker.contains(&format!("freq_last_bits={}", observed.freq_last_bits)));
+    }
+
+    #[test]
+    fn awproject_literal_coefficient_audit_reuses_exact_role_selection_marker() {
+        let _test_lock = AWPROJECT_DIAGNOSTIC_ENV_TEST_LOCK
+            .lock()
+            .expect("AWProject diagnostic environment lock");
+        let test_env = AwProjectDiagnosticTestEnv::isolated();
+        let temp = tempdir().expect("temporary output parent");
+        let output = temp.path().join("literal-coefficient-audit-v1.json");
+        test_env.set(AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV, &output);
+        set_aw_literal_coefficient_audit_controls(&test_env);
+        test_env.set(
+            AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV,
+            "arithmetic-role-marker",
+        );
+        test_env.set(
+            AWPROJECT_LITERAL_COEFFICIENT_AUDIT_SELECTION_ENV,
+            "stale-literal-role-marker",
+        );
+        if !AWPROJECT_LITERAL_COEFFICIENT_AUDIT_CORE_HOOK_COMPILED {
+            let error = awproject_datatogrid_diagnostic_request()
+                .expect_err("a build without the core controlled-stop hook must reject the audit");
+            assert!(error.contains("unavailable in this build"), "{error}");
+            return;
+        }
+
+        let config = aw_bracket_valid_cli_config();
+        validate_awproject_datatogrid_bracket_cli(&config)
+            .expect("validate the private literal-coefficient audit");
+        let request = awproject_datatogrid_diagnostic_request()
+            .expect("resolve diagnostic")
+            .expect("diagnostic is active");
+        assert_eq!(
+            request,
+            AwProjectDataToGridDiagnosticRequest {
+                mode: AwProjectDataToGridDiagnosticMode::LiteralCoefficientAuditV1,
+                output,
+            }
+        );
+        assert!(
+            env::var_os(AWPROJECT_LITERAL_COEFFICIENT_AUDIT_SELECTION_ENV).is_none(),
+            "the exact role marker is installed only after observing the live selection"
+        );
+        assert_eq!(
+            env::var(AWPROJECT_TT0_ARITHMETIC_COMPAT_SELECTION_ENV).as_deref(),
+            Ok("arithmetic-role-marker"),
+            "the literal audit must not mutate the arithmetic diagnostic marker"
+        );
+
+        let rows = vec![aw_bracket_test_row(0)];
+        let table_values = aw_bracket_test_table_values(64);
+        let observed = awproject_datatogrid_bracket_observed_first_buffer(
+            &rows,
+            &rows,
+            &[false],
+            &table_values,
+            Some(SelectedChannelReadRange::new(0, 64)),
+            None,
+        )
+        .expect("observe the production role and frequency route");
+        let marker = awproject_datatogrid_selection_marker_for_mode(request.mode, 2, 32, &observed);
+        let arithmetic_marker = awproject_datatogrid_selection_marker_for_mode(
+            AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1,
+            2,
+            32,
+            &observed,
+        );
+        assert_eq!(
+            marker, arithmetic_marker,
+            "the dedicated literal marker must preserve the exact 31-field arithmetic bytes"
+        );
+        install_awproject_datatogrid_selection_marker(request.mode, &marker);
+
+        assert_eq!(marker.split(';').count(), 31);
+        assert!(marker.contains("source_blocks=32"));
+        assert!(marker.contains("selected_corr_first_index=0"));
+        assert!(marker.contains("selected_corr_second_index=3"));
+        assert!(marker.contains("selected_corr_first_code=5"));
+        assert!(marker.contains("selected_corr_second_code=8"));
+        assert_eq!(
+            env::var(AWPROJECT_LITERAL_COEFFICIENT_AUDIT_SELECTION_ENV).as_deref(),
+            Ok(marker.as_str())
+        );
+    }
+
+    #[test]
+    fn awproject_native_geometry_audit_reuses_exact_31_field_marker() {
+        let _test_lock = AWPROJECT_DIAGNOSTIC_ENV_TEST_LOCK
+            .lock()
+            .expect("AWProject diagnostic environment lock");
+        let test_env = AwProjectDiagnosticTestEnv::isolated();
+        assert_eq!(
+            AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV,
+            "CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_OUTPUT_V2"
+        );
+        assert_eq!(
+            AWPROJECT_NATIVE_GEOMETRY_AUDIT_SELECTION_ENV,
+            "CASA_RS_INTERNAL_AW_NATIVE_GEOMETRY_AUDIT_SELECTION_V2"
+        );
+        assert_eq!(
+            AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2.expected_controls(),
+            [
+                ("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_EXPECT_NXY_V2", "4096"),
+                ("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_BLOCKS_V2", "1"),
+                ("CASA_RS_AW_NATIVE_GEOMETRY_AUDIT_TERMS_V2", "2"),
+            ]
+        );
+        let temp = tempdir().expect("temporary output parent");
+        let output = temp.path().join("native-geometry-audit-v2.json");
+        test_env.set(AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV, &output);
+        set_aw_native_geometry_audit_controls(&test_env);
+
+        let config = aw_bracket_valid_cli_config();
+        validate_awproject_datatogrid_bracket_cli(&config)
+            .expect("validate the private native-geometry audit");
+        let request = awproject_datatogrid_diagnostic_request()
+            .expect("resolve diagnostic")
+            .expect("diagnostic is active");
+        assert_eq!(
+            request,
+            AwProjectDataToGridDiagnosticRequest {
+                mode: AwProjectDataToGridDiagnosticMode::NativeGeometryAuditV2,
+                output,
+            }
+        );
+        assert!(
+            env::var_os(AWPROJECT_NATIVE_GEOMETRY_AUDIT_SELECTION_ENV).is_none(),
+            "the exact marker is installed only after observing the live selection"
+        );
+
+        let rows = vec![aw_bracket_test_row(0)];
+        let table_values = aw_bracket_test_table_values(64);
+        let observed = awproject_datatogrid_bracket_observed_first_buffer(
+            &rows,
+            &rows,
+            &[false],
+            &table_values,
+            Some(SelectedChannelReadRange::new(0, 64)),
+            None,
+        )
+        .expect("observe the production role and frequency route");
+        let marker = awproject_datatogrid_selection_marker_for_mode(request.mode, 2, 32, &observed);
+        let arithmetic_marker = awproject_datatogrid_selection_marker_for_mode(
+            AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1,
+            2,
+            32,
+            &observed,
+        );
+        assert_eq!(marker, arithmetic_marker);
+        assert_eq!(marker.split(';').count(), 31);
+        install_awproject_datatogrid_selection_marker(request.mode, &marker);
+        assert_eq!(
+            env::var(AWPROJECT_NATIVE_GEOMETRY_AUDIT_SELECTION_ENV).as_deref(),
+            Ok(marker.as_str())
+        );
+    }
+
+    #[test]
+    fn awproject_native_components_audit_reuses_exact_31_field_marker() {
+        let _test_lock = AWPROJECT_DIAGNOSTIC_ENV_TEST_LOCK
+            .lock()
+            .expect("AWProject diagnostic environment lock");
+        let test_env = AwProjectDiagnosticTestEnv::isolated();
+        assert_eq!(
+            AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV,
+            "CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_OUTPUT_V6"
+        );
+        assert_eq!(
+            AWPROJECT_NATIVE_COMPONENTS_AUDIT_SELECTION_ENV,
+            "CASA_RS_INTERNAL_AW_NATIVE_COMPONENTS_AUDIT_SELECTION_V6"
+        );
+        assert_eq!(
+            AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV6.expected_controls(),
+            [
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_EXPECT_NXY_V6", "4096"),
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_BLOCKS_V6", "1"),
+                ("CASA_RS_AW_NATIVE_COMPONENTS_AUDIT_TERMS_V6", "2"),
+            ]
+        );
+        let temp = tempdir().expect("temporary output parent");
+        let output = temp.path().join("native-components-audit-v6.json");
+        test_env.set(AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV, &output);
+        set_aw_native_components_audit_controls(&test_env);
+
+        let config = aw_bracket_valid_cli_config();
+        validate_awproject_datatogrid_bracket_cli(&config)
+            .expect("validate the private native-components audit");
+        let request = awproject_datatogrid_diagnostic_request()
+            .expect("resolve diagnostic")
+            .expect("diagnostic is active");
+        assert_eq!(
+            request,
+            AwProjectDataToGridDiagnosticRequest {
+                mode: AwProjectDataToGridDiagnosticMode::NativeComponentsAuditV6,
+                output,
+            }
+        );
+        assert!(
+            env::var_os(AWPROJECT_NATIVE_COMPONENTS_AUDIT_SELECTION_ENV).is_none(),
+            "the exact marker is installed only after observing the live selection"
+        );
+
+        let rows = vec![aw_bracket_test_row(0)];
+        let table_values = aw_bracket_test_table_values(64);
+        let observed = awproject_datatogrid_bracket_observed_first_buffer(
+            &rows,
+            &rows,
+            &[false],
+            &table_values,
+            Some(SelectedChannelReadRange::new(0, 64)),
+            None,
+        )
+        .expect("observe the production role and frequency route");
+        let marker = awproject_datatogrid_selection_marker_for_mode(request.mode, 2, 32, &observed);
+        let arithmetic_marker = awproject_datatogrid_selection_marker_for_mode(
+            AwProjectDataToGridDiagnosticMode::Tt0ArithmeticCompatV1,
+            2,
+            32,
+            &observed,
+        );
+        assert_eq!(marker, arithmetic_marker);
+        assert_eq!(marker.split(';').count(), 31);
+        install_awproject_datatogrid_selection_marker(request.mode, &marker);
+        assert_eq!(
+            env::var(AWPROJECT_NATIVE_COMPONENTS_AUDIT_SELECTION_ENV).as_deref(),
+            Ok(marker.as_str())
+        );
+    }
+
+    #[test]
+    fn awproject_native_components_f32_hash_and_density_rounding_are_stable() {
+        let mut hash = AwProjectNativeGeometryHasher::new();
+        hash.f32(16.767227_f32);
+        assert_eq!(hash.0, 0x1abf_fcd7_2fbb_857d);
+
+        let frequency_hz = 2.1e9;
+        let uvw_m = [12_345.678_901, -2_345.678_901, -0.0];
+        let expected_scale = f64::from((frequency_hz / SPEED_OF_LIGHT_M_PER_S) as f32);
+        let expected = uvw_m.map(|component| f64::from((component * expected_scale) as f32));
+        let observed = mfs_density_uvw_lambda(frequency_hz, uvw_m);
+        assert_eq!(observed.map(f64::to_bits), expected.map(f64::to_bits));
+        assert_eq!(observed[2].to_bits(), (-0.0_f64).to_bits());
+    }
+
+    #[test]
+    fn awproject_native_geometry_fnv_and_result_taxonomy_are_stable() {
+        let mut hash = AwProjectNativeGeometryHasher::new();
+        hash.bytes(b"a");
+        assert_eq!(hash.0, 0xaf63_dc4c_8601_ec8c);
+
+        let hypothesis =
+            |use_conjugate_frequency_cf, source_count, stream_hash, geometry_hashes: [u64; 2]| {
+                AwProjectNativeGeometryHypothesis {
+                    use_conjugate_frequency_cf,
+                    calls: [
+                        AwProjectNativeGeometryCall {
+                            call: 0,
+                            block: 0,
+                            term: 0,
+                            source_count,
+                            stream_hash,
+                            geometry_hash: geometry_hashes[0],
+                        },
+                        AwProjectNativeGeometryCall {
+                            call: 1,
+                            block: 0,
+                            term: 1,
+                            source_count,
+                            stream_hash,
+                            geometry_hash: geometry_hashes[1],
+                        },
+                    ],
+                }
+            };
+        let unrelated = hypothesis(false, 1, 2, [3, 4]);
+        assert_eq!(
+            awproject_native_geometry_result(&[unrelated, unrelated]).unwrap(),
+            "completed-source-count-mismatch"
+        );
+        let source_only = hypothesis(
+            false,
+            AWPROJECT_NATIVE_GEOMETRY_EXPECTED_SOURCE_COUNT,
+            2,
+            [3, 4],
+        );
+        let source_only_true = hypothesis(
+            true,
+            AWPROJECT_NATIVE_GEOMETRY_EXPECTED_SOURCE_COUNT,
+            2,
+            [3, 4],
+        );
+        assert_eq!(
+            awproject_native_geometry_result(&[source_only, source_only_true]).unwrap(),
+            "completed-native-stream-mismatch"
+        );
+        let stream_exact = hypothesis(
+            true,
+            AWPROJECT_NATIVE_GEOMETRY_EXPECTED_SOURCE_COUNT,
+            AWPROJECT_NATIVE_GEOMETRY_EXPECTED_STREAM_HASH,
+            [3, 4],
+        );
+        assert_eq!(
+            awproject_native_geometry_result(&[source_only, stream_exact]).unwrap(),
+            "completed-native-stream-exact-geometry-mismatch"
+        );
+        let fully_exact = hypothesis(
+            true,
+            AWPROJECT_NATIVE_GEOMETRY_EXPECTED_SOURCE_COUNT,
+            AWPROJECT_NATIVE_GEOMETRY_EXPECTED_STREAM_HASH,
+            AWPROJECT_NATIVE_GEOMETRY_EXPECTED_GEOMETRY_HASHES,
+        );
+        assert_eq!(
+            awproject_native_geometry_result(&[source_only, fully_exact]).unwrap(),
+            "completed-native-stream-and-geometry-exact"
+        );
+    }
+
+    #[test]
+    fn awproject_native_geometry_uses_explicit_negate_uv_hypothesis() {
+        assert_eq!(
+            AWPROJECT_NATIVE_GEOMETRY_UVW_HYPOTHESIS,
+            "casa-awproject-negate-uv-before-girar-assumed-same-field-identity"
+        );
+        assert_eq!(
+            AWPROJECT_NATIVE_GEOMETRY_PHASE_HYPOTHESIS,
+            "casa-rs-current-same-field-phase-shift-m-retained-not-casa-girar-refocus-bit-replay"
+        );
+        assert_eq!(
+            awproject_native_geometry_negate_uv_hypothesis_m([1.5, -2.25, 3.75]),
+            [-1.5, 2.25, 3.75]
+        );
+        let signed_zero = awproject_native_geometry_negate_uv_hypothesis_m([0.0, -0.0, -0.0]);
+        assert_eq!(signed_zero[0].to_bits(), (-0.0_f64).to_bits());
+        assert_eq!(signed_zero[1].to_bits(), 0.0_f64.to_bits());
+        assert_eq!(signed_zero[2].to_bits(), (-0.0_f64).to_bits());
+    }
+
+    #[test]
+    fn awproject_native_geometry_receipt_publish_is_atomic_and_no_clobber() {
+        let temp = tempdir().expect("temporary receipt parent");
+        let output = temp.path().join("receipt.json");
+        awproject_native_geometry_atomic_receipt(&output, b"{\"first\":true}\n")
+            .expect("publish first receipt");
+        assert_eq!(fs::read(&output).unwrap(), b"{\"first\":true}\n");
+        let error = awproject_native_geometry_atomic_receipt(&output, b"{\"second\":true}\n")
+            .expect_err("published receipt must not be overwritten");
+        assert!(error.contains("without overwrite"), "{error}");
+        assert_eq!(fs::read(&output).unwrap(), b"{\"first\":true}\n");
+    }
+
+    #[test]
+    fn awproject_datatogrid_diagnostic_modes_are_mutually_exclusive() {
+        let _test_lock = AWPROJECT_DIAGNOSTIC_ENV_TEST_LOCK
+            .lock()
+            .expect("AWProject diagnostic environment lock");
+        let test_env = AwProjectDiagnosticTestEnv::isolated();
+        test_env.set(AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV, "/tmp/v4.json");
+        test_env.set(
+            AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV,
+            "/tmp/tt0-v1.json",
+        );
+        test_env.set(
+            AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV,
+            "/tmp/literal-v1.json",
+        );
+        test_env.set(
+            AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV,
+            "/tmp/native-geometry-v2.json",
+        );
+        test_env.set(
+            AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV,
+            "/tmp/native-components-v6.json",
+        );
+
+        let error = validate_awproject_datatogrid_bracket_cli(&aw_bracket_valid_cli_config())
+            .expect_err("simultaneous private diagnostics must fail closed");
+        assert!(error.contains("mutually exclusive"), "{error}");
+        assert!(error.contains(AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV));
+        assert!(error.contains(AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV));
+        assert!(error.contains(AWPROJECT_LITERAL_COEFFICIENT_AUDIT_OUTPUT_ENV));
+        assert!(error.contains(AWPROJECT_NATIVE_GEOMETRY_AUDIT_OUTPUT_ENV));
+        assert!(error.contains(AWPROJECT_NATIVE_COMPONENTS_AUDIT_OUTPUT_ENV));
+    }
+
+    #[test]
+    fn awproject_datatogrid_diagnostic_tt0_rejects_wrong_output_size_and_mode() {
+        let _test_lock = AWPROJECT_DIAGNOSTIC_ENV_TEST_LOCK
+            .lock()
+            .expect("AWProject diagnostic environment lock");
+        let test_env = AwProjectDiagnosticTestEnv::isolated();
+        set_aw_tt0_arithmetic_compat_controls(&test_env);
+        let config = aw_bracket_valid_cli_config();
+
+        test_env.set(
+            AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV,
+            "relative-receipt.json",
+        );
+        let error = validate_awproject_datatogrid_bracket_cli(&config)
+            .expect_err("relative output must fail closed");
+        assert!(error.contains("must be an absolute path"), "{error}");
+
+        let temp = tempdir().expect("temporary output parent");
+        test_env.set(AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV, temp.path());
+        let error = validate_awproject_datatogrid_bracket_cli(&config)
+            .expect_err("existing output must fail closed");
+        assert!(error.contains("refusing to overwrite"), "{error}");
+
+        let output = temp.path().join("new-receipt.json");
+        test_env.set(AWPROJECT_TT0_ARITHMETIC_COMPAT_OUTPUT_ENV, &output);
+        test_env.set("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_EXPECT_NXY", "8192");
+        let error = validate_awproject_datatogrid_bracket_cli(&config)
+            .expect_err("wrong expected geometry must fail closed");
+        assert!(
+            error.contains("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_EXPECT_NXY=4096"),
+            "{error}"
+        );
+
+        test_env.set("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_EXPECT_NXY", "4096");
+        test_env.set("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_TERMS", "2");
+        let error = validate_awproject_datatogrid_bracket_cli(&config)
+            .expect_err("non-TT0-only diagnostic mode must fail closed");
+        assert!(
+            error.contains("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_TERMS=1"),
+            "{error}"
+        );
+
+        test_env.set("CASA_RS_AW_TT0_ARITHMETIC_COMPAT_TERMS", "1");
+        let mut wrong_user_terms = config.clone();
+        wrong_user_terms.nterms = 1;
+        let error = validate_awproject_datatogrid_bracket_cli(&wrong_user_terms)
+            .expect_err("the user-facing request must remain nterms=2");
+        assert!(error.contains("MT-MFS nterms=2"), "{error}");
+
+        let mut wrong_row_block = config;
+        wrong_row_block.imaging_row_block_rows = Some(AWPROJECT_DATATOGRID_BRACKET_FIRST_ROWS - 1);
+        let error = validate_awproject_datatogrid_bracket_cli(&wrong_row_block)
+            .expect_err("the frozen first-buffer row boundary must remain 325 rows");
+        assert!(error.contains("imaging_row_block_rows=325"), "{error}");
+    }
+
+    #[test]
+    fn awproject_datatogrid_diagnostic_frozen_v4_preflight_and_marker_schema_are_unchanged() {
+        let _test_lock = AWPROJECT_DIAGNOSTIC_ENV_TEST_LOCK
+            .lock()
+            .expect("AWProject diagnostic environment lock");
+        let test_env = AwProjectDiagnosticTestEnv::isolated();
+        let temp = tempdir().expect("temporary output parent");
+        let output = temp.path().join("frozen-v4.json");
+        test_env.set(AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV, &output);
+        set_aw_bracket_v4_controls(&test_env);
+
+        validate_awproject_datatogrid_bracket_cli(&aw_bracket_valid_cli_config())
+            .expect("the frozen v4 preflight remains valid");
+        let request = awproject_datatogrid_diagnostic_request()
+            .expect("resolve diagnostic")
+            .expect("diagnostic is active");
+        assert_eq!(
+            request,
+            AwProjectDataToGridDiagnosticRequest {
+                mode: AwProjectDataToGridDiagnosticMode::FrozenV4,
+                output,
+            }
+        );
+        assert_eq!(
+            request.mode.selection_env(),
+            "CASA_RS_INTERNAL_AW_BRACKET_SELECTION_V4"
+        );
+        assert_eq!(
+            request.mode.expected_controls(),
+            [
+                ("CASA_RS_AW_BRACKET_EXPECT_NXY", "4096"),
+                ("CASA_RS_AW_BRACKET_BLOCKS", "1"),
+                ("CASA_RS_AW_BRACKET_TERMS", "2"),
+            ]
+        );
+
+        let rows = vec![aw_bracket_test_row(0)];
+        let table_values = aw_bracket_test_table_values(64);
+        let observed = awproject_datatogrid_bracket_observed_first_buffer(
+            &rows,
+            &rows,
+            &[false],
+            &table_values,
+            Some(SelectedChannelReadRange::new(0, 64)),
+            None,
+        )
+        .expect("observe the shared live marker fields");
+        let marker = awproject_datatogrid_selection_marker(2, 1, &observed);
+        install_awproject_datatogrid_selection_marker(request.mode, &marker);
+        assert_eq!(
+            env::var(AWPROJECT_DATATOGRID_BRACKET_SELECTION_ENV).as_deref(),
+            Ok(marker.as_str())
+        );
+        assert_eq!(marker.split(';').count(), 27);
+        assert_eq!(
+            marker
+                .split(';')
+                .map(|entry| entry.split_once('=').expect("marker field").0)
+                .collect::<Vec<_>>(),
+            vec![
+                "field",
+                "spws",
+                "first_spw",
+                "source_blocks",
+                "selected_row_begin",
+                "selected_row_end",
+                "selected_row_count",
+                "selected_row_hash",
+                "selected_row_first",
+                "selected_row_last",
+                "absolute_main_row_count",
+                "absolute_main_row_hash",
+                "absolute_main_row_first",
+                "absolute_main_row_last",
+                "row_flags_count",
+                "row_flags_hash",
+                "flagged_rows",
+                "n_data_chan",
+                "n_data_pol",
+                "chan_map_count",
+                "chan_map_hash",
+                "pol_map_count",
+                "pol_map_hash",
+                "freq_count",
+                "freq_hash",
+                "freq_first_bits",
+                "freq_last_bits",
+            ]
+        );
+    }
+
+    #[test]
+    fn mfs_imaging_frequency_cache_preserves_native_bits_without_context() {
+        let mut config = vlass_field_1525_real_cache_config(
+            Path::new("/unused/input.ms"),
+            Path::new("/unused/cf-cache"),
+            Path::new("/unused/output"),
+            64,
+            "2",
+        );
+        config.channel_count = Some(3);
+        let mut table_values = aw_bracket_test_table_values(3);
+        table_values.spw_freqs_hz = vec![1.1e9, 1.0e9, 1.35e9];
+        let phase_center = PhaseCenter {
+            field_id: Some(0),
+            angles_rad: [1.0, 0.5],
+            reference: DirectionRef::J2000,
+        };
+        let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
+            &config,
+            &table_values,
+            phase_center,
+            false,
+        )
+        .unwrap();
+        let mut row = aw_bracket_test_row(0);
+        row.field_id = 0;
+        row.time_mjd_seconds = None;
+
+        let first = prepared
+            .mfs_imaging_frequencies_for_row(&row, None)
+            .unwrap();
+        row.row_index = 1;
+        let second = prepared
+            .mfs_imaging_frequencies_for_row(&row, None)
+            .unwrap();
+
+        assert_eq!(first.frequency_hz.as_ref(), table_values.spw_freqs_hz);
+        assert!(
+            first
+                .lambda_scales
+                .iter()
+                .zip(first.frequency_hz.iter())
+                .all(|(lambda_scale, frequency_hz)| lambda_scale.to_bits()
+                    == (frequency_hz / SPEED_OF_LIGHT_M_PER_S).to_bits())
+        );
+        assert!(Arc::ptr_eq(&first.frequency_hz, &second.frequency_hz));
+        assert!(Arc::ptr_eq(&first.lambda_scales, &second.lambda_scales));
+        assert!(matches!(
+            prepared.mfs_imaging_frequency_cache.as_ref(),
+            Some((MfsImagingFrequencyCacheKey::Native, _))
+        ));
+    }
+
+    #[test]
+    fn mfs_imaging_frequency_cache_converts_each_channel_and_reuses_row_key() {
+        let mut config = vlass_field_1525_real_cache_config(
+            Path::new("/unused/input.ms"),
+            Path::new("/unused/cf-cache"),
+            Path::new("/unused/output"),
+            64,
+            "2",
+        );
+        config.channel_count = Some(3);
+        let mut table_values = aw_bracket_test_table_values(3);
+        table_values.freq_ref = FrequencyRef::TOPO;
+        table_values.spw_freqs_hz = vec![1.1e9, 1.213_456_789e9, 1.35e9];
+        let observatory = MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z);
+        let engine = MsCalEngine::from_parts(
+            vec![observatory.clone()],
+            vec![MDirection::from_angles(1.0, 0.5, DirectionRef::J2000)],
+            observatory,
+            casa_test_support::deterministic_measures_provider(),
+        );
+        let phase_center = PhaseCenter {
+            field_id: Some(0),
+            angles_rad: [1.0, 0.5],
+            reference: DirectionRef::J2000,
+        };
+        let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
+            &config,
+            &table_values,
+            phase_center,
+            false,
+        )
+        .unwrap();
+        let mut row = aw_bracket_test_row(0);
+        row.field_id = 0;
+        row.time_mjd_seconds = Some(TEST_TIME_MJD_SEC);
+
+        let first = prepared
+            .mfs_imaging_frequencies_for_row(&row, Some(&engine))
+            .unwrap();
+        row.row_index = 1;
+        let second = prepared
+            .mfs_imaging_frequencies_for_row(&row, Some(&engine))
+            .unwrap();
+        let expected = table_values
+            .spw_freqs_hz
+            .iter()
+            .map(|&frequency_hz| {
+                convert_frequency_to_frame(
+                    FrequencyRef::TOPO,
+                    FrequencyRef::LSRK,
+                    frequency_hz,
+                    TEST_TIME_MJD_SEC,
+                    0,
+                    &engine,
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            first
+                .frequency_hz
+                .iter()
+                .map(|frequency_hz| frequency_hz.to_bits())
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|frequency_hz| frequency_hz.to_bits())
+                .collect::<Vec<_>>()
+        );
+        assert!(Arc::ptr_eq(&first.frequency_hz, &second.frequency_hz));
+        assert!(Arc::ptr_eq(&first.lambda_scales, &second.lambda_scales));
+        assert!(matches!(
+            prepared.mfs_imaging_frequency_cache.as_ref(),
+            Some((
+                MfsImagingFrequencyCacheKey::Framed {
+                    time_bits,
+                    field_id
+                },
+                _
+            )) if *time_bits == TEST_TIME_MJD_SEC.to_bits() && *field_id == 0
+        ));
+
+        row.time_mjd_seconds = Some(TEST_TIME_MJD_SEC + 1.0);
+        let changed_time = prepared
+            .mfs_imaging_frequencies_for_row(&row, Some(&engine))
+            .unwrap();
+        assert!(!Arc::ptr_eq(
+            &first.frequency_hz,
+            &changed_time.frequency_hz
+        ));
+        assert!(matches!(
+            prepared.mfs_imaging_frequency_cache.as_ref(),
+            Some((
+                MfsImagingFrequencyCacheKey::Framed {
+                    time_bits,
+                    field_id
+                },
+                _
+            )) if *time_bits == (TEST_TIME_MJD_SEC + 1.0).to_bits() && *field_id == 0
+        ));
+    }
+
+    #[test]
+    fn standard_mfs_visibility_row_routes_exact_channel_lambda_scales() {
+        let mut config = vlass_field_1525_real_cache_config(
+            Path::new("/unused/input.ms"),
+            Path::new("/unused/cf-cache"),
+            Path::new("/unused/output"),
+            64,
+            "2",
+        );
+        config.channel_count = Some(3);
+        let mut table_values = aw_bracket_test_table_values(3);
+        table_values.freq_ref = FrequencyRef::TOPO;
+        table_values.spw_freqs_hz = vec![1.1e9, 1.213_456_789e9, 1.35e9];
+        let observatory = MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z);
+        let engine = MsCalEngine::from_parts(
+            vec![observatory.clone()],
+            vec![MDirection::from_angles(1.0, 0.5, DirectionRef::J2000)],
+            observatory,
+            casa_test_support::deterministic_measures_provider(),
+        );
+        let phase_center = PhaseCenter {
+            field_id: Some(0),
+            angles_rad: [1.0, 0.5],
+            reference: DirectionRef::J2000,
+        };
+        let mut selected_row = aw_bracket_test_row(0);
+        selected_row.field_id = 0;
+        selected_row.time_mjd_seconds = Some(TEST_TIME_MJD_SEC);
+        let essentials = MsImagingEssentials {
+            u_m: 12.0,
+            v_m: -7.0,
+            w_m: 3.0,
+            field_phase_center_direction_rad: phase_center.angles_rad,
+            pointing_direction_rad: phase_center.angles_rad,
+            antenna1_id: 0,
+            antenna2_id: 1,
+            gridable: true,
+            spw_id: 2,
+            channel_origin: 0,
+            data: Array2::from_elem((4, 3), Complex32::new(0.0, 0.0)),
+            flag: Array2::from_elem((4, 3), false),
+            weight: vec![1.0; 4],
+            weight_spectrum: None,
+        };
+        let source_channel_indices = Arc::<[usize]>::from([0, 1, 2]);
+        let expected_lambda_scales = table_values
+            .spw_freqs_hz
+            .iter()
+            .map(|&frequency_hz| {
+                convert_frequency_to_frame(
+                    FrequencyRef::TOPO,
+                    FrequencyRef::LSRK,
+                    frequency_hz,
+                    TEST_TIME_MJD_SEC,
+                    0,
+                    &engine,
+                )
+                .unwrap()
+                    / SPEED_OF_LIGHT_M_PER_S
+            })
+            .collect::<Vec<_>>();
+
+        let mut locally_computed = PreparedSelection::new_standard_mfs_from_table_values(
+            &config,
+            &table_values,
+            phase_center.clone(),
+            false,
+        )
+        .unwrap();
+        let (local_row, _) = locally_computed
+            .standard_mfs_visibility_row_from_essentials(
+                &selected_row,
+                essentials.clone(),
+                Some(&engine),
+                None,
+                Arc::clone(&source_channel_indices),
+            )
+            .unwrap();
+        assert_eq!(
+            local_row
+                .channel_lambda_scales
+                .iter()
+                .map(|scale| scale.to_bits())
+                .collect::<Vec<_>>(),
+            expected_lambda_scales
+                .iter()
+                .map(|scale| scale.to_bits())
+                .collect::<Vec<_>>()
+        );
+
+        let precomputed_lambda_scales =
+            Arc::<[f64]>::from([0.25_f64, 0.375_000_000_000_000_06, 0.625]);
+        let precomputed = MfsImagingFrequencies {
+            frequency_hz: Arc::from([10.0, 15.0, 25.0]),
+            lambda_scales: Arc::clone(&precomputed_lambda_scales),
+        };
+        let mut precomputed_route = PreparedSelection::new_standard_mfs_from_table_values(
+            &config,
+            &table_values,
+            phase_center,
+            false,
+        )
+        .unwrap();
+        let (precomputed_row, _) = precomputed_route
+            .standard_mfs_visibility_row_from_essentials(
+                &selected_row,
+                essentials,
+                Some(&engine),
+                Some(&precomputed),
+                source_channel_indices,
+            )
+            .unwrap();
+        assert!(Arc::ptr_eq(
+            &precomputed_row.channel_lambda_scales,
+            &precomputed_lambda_scales
+        ));
+    }
 
     #[test]
     fn casa_obsinfo_longitude_uses_direct_two_pi_wrap() {
@@ -51578,6 +56981,236 @@ mod tests {
         drop(context_guard);
         drop(run_span);
         drop(progress_guard);
+    }
+
+    #[test]
+    fn standard_mfs_profile_detail_preserves_stage_memory_callback_without_ui_progress() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("/tmp/stage-memory.ms"),
+            OsString::from("--imagename"),
+            OsString::from("/tmp/stage-memory-image"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--niter"),
+            OsString::from("100"),
+        ])
+        .expect("parse config");
+        assert!(standard_mfs_progress_callback_for_modes(&config, false, false).is_none());
+        let callback = standard_mfs_progress_callback_for_modes(&config, false, true)
+            .expect("profile detail preserves the stage-memory callback");
+        let event = StandardMfsProgressEvent {
+            phase: StandardMfsProgressPhase::MinorCycleStart,
+            deconvolver: Deconvolver::Clark,
+            minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
+            major_cycle: 2,
+            minor_iterations: 17,
+            minor_iteration_limit: 100,
+            cycle_iteration_limit: 40,
+            peak_residual_jy_per_beam: Some(0.003),
+            cycle_threshold_jy_per_beam: Some(0.001),
+        };
+        callback(event.clone());
+
+        let pressure = StandardMfsStagePressureObservation {
+            current: StandardMfsStagePressureSnapshot {
+                process_physical_footprint_bytes: Some(6_144),
+                current_rss_bytes: Some(4_096),
+                lifetime_peak_rss_bytes: Some(8_192),
+                current_cpu_allocated_bytes: None,
+                current_metal_allocated_bytes: Some(2_048),
+                current_unified_memory_allocated_bytes: Some(2_048),
+                host_compressed_memory_bytes: Some(512),
+                swap_used_bytes: Some(256),
+                ..Default::default()
+            },
+            stage_observed_peak: StandardMfsStagePressureSnapshot {
+                process_physical_footprint_bytes: Some(7_168),
+                current_rss_bytes: Some(5_120),
+                current_cpu_allocated_bytes: None,
+                current_metal_allocated_bytes: Some(3_072),
+                current_unified_memory_allocated_bytes: Some(3_072),
+                host_compressed_memory_bytes: Some(768),
+                swap_used_bytes: Some(384),
+                ..Default::default()
+            },
+            swapin_bytes_delta: Some(64),
+            swapout_bytes_delta: Some(32),
+            process_page_faults_delta: Some(9),
+            process_disk_read_bytes_delta: Some(1_024),
+            process_disk_write_bytes_delta: Some(2_048),
+            external_disk_read_bytes_delta: None,
+            external_disk_write_bytes_delta: None,
+            gpu_stall_ms: None,
+        };
+        let mut last_phase = None;
+        let line = standard_mfs_stage_memory_transition_line(
+            &mut last_phase,
+            &event,
+            pressure,
+            Duration::from_millis(1_250),
+        )
+        .expect("first phase emits a memory line");
+        assert_eq!(
+            line.split_whitespace().next(),
+            Some("standard_mfs_stage_memory")
+        );
+        let fields = line
+            .split_whitespace()
+            .skip(1)
+            .map(|field| field.split_once('=').expect("key=value field"))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(fields.get("phase"), Some(&"minor_cycle_start"));
+        assert_eq!(fields.get("stage"), Some(&"minor-cycle"));
+        assert_eq!(fields.get("major_cycle"), Some(&"2"));
+        assert_eq!(fields.get("minor_iterations"), Some(&"17"));
+        assert_eq!(
+            fields.get("process_physical_footprint_bytes"),
+            Some(&"6144")
+        );
+        assert_eq!(
+            fields.get("stage_observed_peak_process_physical_footprint_bytes"),
+            Some(&"7168")
+        );
+        assert_eq!(fields.get("current_rss_bytes"), Some(&"4096"));
+        assert_eq!(fields.get("stage_observed_peak_rss_bytes"), Some(&"5120"));
+        assert_eq!(fields.get("lifetime_peak_rss_bytes"), Some(&"8192"));
+        assert_eq!(
+            fields.get("current_cpu_allocated_bytes"),
+            Some(&"unavailable")
+        );
+        assert_eq!(fields.get("current_metal_allocated_bytes"), Some(&"2048"));
+        assert_eq!(
+            fields.get("stage_observed_peak_metal_allocated_bytes"),
+            Some(&"3072")
+        );
+        assert_eq!(
+            fields.get("external_disk_read_bytes_delta"),
+            Some(&"unavailable")
+        );
+        assert_eq!(fields.get("gpu_stall_ms"), Some(&"unavailable"));
+        assert_eq!(fields.get("peak_observation_complete"), Some(&"false"));
+        assert_eq!(
+            fields.get("observation_scope"),
+            Some(&"phase-transition-samples-not-transient-peak")
+        );
+        assert_eq!(fields.get("elapsed_monotonic_ms"), Some(&"1250.000"));
+        for required in [
+            "process_physical_footprint_bytes",
+            "stage_observed_peak_process_physical_footprint_bytes",
+            "current_rss_bytes",
+            "stage_observed_peak_rss_bytes",
+            "current_cpu_allocated_bytes",
+            "stage_observed_peak_cpu_allocated_bytes",
+            "current_metal_allocated_bytes",
+            "stage_observed_peak_metal_allocated_bytes",
+            "current_unified_memory_allocated_bytes",
+            "stage_observed_peak_unified_memory_allocated_bytes",
+            "host_compressed_memory_bytes",
+            "stage_observed_peak_host_compressed_memory_bytes",
+            "swap_used_bytes",
+            "stage_observed_peak_swap_used_bytes",
+            "swapin_bytes_delta",
+            "swapout_bytes_delta",
+            "process_page_faults_delta",
+            "process_disk_read_bytes_delta",
+            "process_disk_write_bytes_delta",
+            "external_disk_read_bytes_delta",
+            "external_disk_write_bytes_delta",
+            "gpu_stall_ms",
+            "elapsed_monotonic_ms",
+        ] {
+            assert!(fields.contains_key(required), "missing {required}");
+        }
+        assert!(
+            fields["elapsed_monotonic_ms"].parse::<f64>().is_ok(),
+            "elapsed monotonic time must remain machine-parseable"
+        );
+        assert!(
+            standard_mfs_stage_memory_transition_line(
+                &mut last_phase,
+                &event,
+                pressure,
+                Duration::from_millis(1_500),
+            )
+            .is_none(),
+            "repeated events in one phase stay bounded"
+        );
+
+        let mut next_event = event;
+        next_event.phase = StandardMfsProgressPhase::MinorCycleEnd;
+        assert!(
+            standard_mfs_stage_memory_transition_line(
+                &mut last_phase,
+                &next_event,
+                pressure,
+                Duration::from_millis(1_750),
+            )
+            .is_some(),
+            "the next phase transition emits"
+        );
+    }
+
+    #[test]
+    fn standard_mfs_stage_pressure_tracks_observed_peaks_and_counter_deltas() {
+        let mut tracker = StandardMfsStagePressureTracker::default();
+        let entry = StandardMfsStagePressureSnapshot {
+            process_physical_footprint_bytes: Some(100),
+            current_rss_bytes: Some(80),
+            current_metal_allocated_bytes: Some(20),
+            swap_used_bytes: Some(5),
+            swapin_bytes_total: Some(1_000),
+            process_page_faults_total: Some(200),
+            process_disk_read_bytes_total: Some(3_000),
+            ..Default::default()
+        };
+        let first = tracker.observe("initial-grid", entry);
+        assert_eq!(
+            first.stage_observed_peak.process_physical_footprint_bytes,
+            Some(100)
+        );
+        assert_eq!(first.swapin_bytes_delta, Some(0));
+
+        let later = tracker.observe(
+            "initial-grid",
+            StandardMfsStagePressureSnapshot {
+                process_physical_footprint_bytes: Some(160),
+                current_rss_bytes: Some(120),
+                current_metal_allocated_bytes: Some(15),
+                swap_used_bytes: Some(9),
+                swapin_bytes_total: Some(1_256),
+                process_page_faults_total: Some(230),
+                process_disk_read_bytes_total: Some(4_024),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            later.stage_observed_peak.process_physical_footprint_bytes,
+            Some(160)
+        );
+        assert_eq!(
+            later.stage_observed_peak.current_metal_allocated_bytes,
+            Some(20)
+        );
+        assert_eq!(later.swapin_bytes_delta, Some(256));
+        assert_eq!(later.process_page_faults_delta, Some(30));
+        assert_eq!(later.process_disk_read_bytes_delta, Some(1_024));
+
+        let reset = tracker.observe(
+            "minor-cycle",
+            StandardMfsStagePressureSnapshot {
+                process_physical_footprint_bytes: Some(110),
+                swapin_bytes_total: Some(1_500),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            reset.stage_observed_peak.process_physical_footprint_bytes,
+            Some(110)
+        );
+        assert_eq!(reset.swapin_bytes_delta, Some(0));
     }
 
     #[test]
@@ -53497,6 +59130,8 @@ mod tests {
             OsString::from("512"),
             OsString::from("--imaging-memory-target-mb"),
             OsString::from("2048"),
+            OsString::from("--imaging-memory-pressure-policy"),
+            OsString::from("hybrid"),
             OsString::from("--imaging-prepare-buffer-mb"),
             OsString::from("256"),
             OsString::from("--imaging-row-block-rows"),
@@ -53524,6 +59159,10 @@ mod tests {
         assert_eq!(config.standard_mfs_memory_target_mb, Some(4096));
         assert_eq!(config.standard_mfs_prepare_buffer_mb, Some(512));
         assert_eq!(config.imaging_memory_target_mb, Some(2048));
+        assert_eq!(
+            config.imaging_memory_pressure_policy,
+            ImagingMemoryPressurePolicy::Hybrid
+        );
         assert_eq!(config.imaging_prepare_buffer_mb, Some(256));
         assert_eq!(config.imaging_row_block_rows, Some(8192));
         assert_eq!(config.imaging_prepare_workers, Some(2));
@@ -53532,6 +59171,40 @@ mod tests {
             config.imaging_fft_backend,
             ImagingFftBackendPolicy::MetalMpsGraph
         );
+    }
+
+    #[test]
+    fn cli_memory_pressure_policy_is_safe_by_default_and_rejects_unknown_values() {
+        let default_config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+        ])
+        .expect("parse default memory pressure policy");
+        assert_eq!(
+            default_config.imaging_memory_pressure_policy,
+            ImagingMemoryPressurePolicy::Auto
+        );
+
+        let error = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--imaging-memory-pressure-policy"),
+            OsString::from("lru"),
+        ])
+        .expect_err("unknown memory policy must fail closed");
+        assert!(error.contains("expected auto, conservative-no-swap"));
     }
 
     #[test]
@@ -53565,6 +59238,29 @@ mod tests {
         assert_eq!(config.imaging_fft_backend, ImagingFftBackendPolicy::RustFft);
         assert_eq!(config.standard_mfs_metal_grouped_input_cache, Some(false));
         assert_eq!(config.chanchunks, Some(4));
+    }
+
+    #[test]
+    fn cli_no_parallel_preserves_explicit_fftw_backend() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--imaging-fft-backend"),
+            OsString::from("fftw"),
+            OsString::from("--no-parallel"),
+        ])
+        .expect("parse serial FFTW controls");
+
+        assert_eq!(config.imaging_fft_backend, ImagingFftBackendPolicy::Fftw);
+        assert_eq!(config.standard_mfs_grid_threads.as_deref(), Some("1"));
+        assert_eq!(config.imaging_prepare_workers, Some(1));
+        assert_eq!(config.imaging_read_ahead_blocks, Some(1));
     }
 
     #[test]
@@ -55087,6 +60783,102 @@ mod tests {
 
     #[test]
     #[ignore = "requires the staged frozen VLASS MeasurementSet"]
+    fn vlass_first_buffer_per_channel_frequency_conversion_matches_frozen_casa() {
+        let data_root = env::var_os("CASA_RS_VLASS_DATA_ROOT")
+            .map(PathBuf::from)
+            .expect("set CASA_RS_VLASS_DATA_ROOT to the staged frozen VLASS data root");
+        let ms_path = data_root.join(VLASS_FROZEN_MS_NAME);
+        let config = vlass_field_1525_real_cache_config(
+            &ms_path,
+            Path::new("/unused/cf-cache"),
+            Path::new("/unused/output"),
+            4096,
+            "2~17",
+        );
+        let ms = MeasurementSet::open(&ms_path).expect("open frozen VLASS MeasurementSet");
+        let data_description = ms.data_description().expect("open frozen DATA_DESCRIPTION");
+        let ddid_info = data_description_index(&data_description).expect("index frozen DDIDs");
+        let spectral_window = ms.spectral_window().expect("open frozen SPECTRAL_WINDOW");
+        let polarization = ms.polarization().expect("open frozen POLARIZATION");
+        let selection =
+            select_main_rows(&ms, &config, &ddid_info).expect("select frozen VLASS field 1525");
+        let engine = MsCalEngine::new(&ms).expect("build frozen measures engine");
+        let plans = prepare_mfs_ddid_plans(
+            &config,
+            &selection,
+            selection.selected_rows.clone(),
+            &ddid_info,
+            &spectral_window,
+            &polarization,
+            Some(&engine),
+        )
+        .expect("derive frozen per-DDID metadata");
+        let first_plan = plans.first().expect("first SPW plan");
+        let first_row = first_plan
+            .active_selected_rows
+            .first()
+            .expect("first selected SPW row");
+        let channel_range = first_plan
+            .channel_read_range
+            .expect("contiguous frozen SPW channel range");
+        let source_frequencies_hz = &first_plan.table_values.spw_freqs_hz
+            [channel_range.start..channel_range.end_exclusive()];
+        assert_eq!(first_plan.table_values.spw_id, 2);
+        assert_eq!(source_frequencies_hz.len(), 64);
+
+        let reference_frequency_hz = source_frequencies_hz[0];
+        let imaging_frequencies = mfs_imaging_frequencies(
+            first_plan.table_values.freq_ref,
+            source_frequencies_hz,
+            first_row,
+            Some(&engine),
+        )
+        .expect("derive production per-channel MFS frequencies");
+        let frequency_scale = imaging_frequencies.frequency_hz[0] / reference_frequency_hz;
+        let mut scaled_hash = 0xcbf2_9ce4_8422_2325_u64;
+        awproject_datatogrid_bracket_fnv_u64(&mut scaled_hash, source_frequencies_hz.len() as u64);
+        let mut per_channel_hash = 0xcbf2_9ce4_8422_2325_u64;
+        awproject_datatogrid_bracket_fnv_u64(
+            &mut per_channel_hash,
+            source_frequencies_hz.len() as u64,
+        );
+        let row_time_mjd_sec = first_row.time_mjd_seconds.expect("first selected row time");
+        for ((&source_frequency_hz, &production_frequency_hz), &lambda_scale) in
+            source_frequencies_hz
+                .iter()
+                .zip(imaging_frequencies.frequency_hz.iter())
+                .zip(imaging_frequencies.lambda_scales.iter())
+        {
+            awproject_datatogrid_bracket_fnv_u64(
+                &mut scaled_hash,
+                (source_frequency_hz * frequency_scale).to_bits(),
+            );
+            let converted_hz = convert_frequency_to_frame(
+                first_plan.table_values.freq_ref,
+                FrequencyRef::LSRK,
+                source_frequency_hz,
+                row_time_mjd_sec,
+                first_row.field_id,
+                &engine,
+            )
+            .expect("convert one source channel to the CASA reporting frame");
+            assert_eq!(production_frequency_hz.to_bits(), converted_hz.to_bits());
+            assert_eq!(
+                lambda_scale.to_bits(),
+                (converted_hz / SPEED_OF_LIGHT_M_PER_S).to_bits()
+            );
+            awproject_datatogrid_bracket_fnv_u64(
+                &mut per_channel_hash,
+                production_frequency_hz.to_bits(),
+            );
+        }
+
+        assert_eq!(scaled_hash, 16_545_700_615_609_486_995);
+        assert_eq!(per_channel_hash, 17_711_728_193_083_539_473);
+    }
+
+    #[test]
+    #[ignore = "requires the staged frozen VLASS MeasurementSet"]
     fn vlass_all_fields_mfs_coordinate_metadata_matches_frozen_casa() {
         let data_root = env::var_os("CASA_RS_VLASS_DATA_ROOT")
             .map(PathBuf::from)
@@ -55396,6 +61188,11 @@ mod tests {
             config.aw_project.as_ref().unwrap().cf_resident_bytes,
             "compact taps coexist with and are charged independently from full-cell residency"
         );
+        assert_eq!(
+            plan.allocation_bytes("AWProject initial-dirty replay-priming tap extension"),
+            0,
+            "safe automatic execution does not prime replay during the initial grid"
+        );
         assert!(plan.allocation_bytes("AWProject CF index") > 0);
         assert!(plan.allocation_bytes("POINTING index") > 0);
         assert_eq!(
@@ -55406,7 +61203,14 @@ mod tests {
         assert!(plan.allocation_bytes("AWProject MT-MFS bounded multiscale scratch") > 0);
         assert!(plan.allocation_bytes("AWProject MT-MFS finish state") > 0);
         assert!(plan.allocation_bytes("AWProject MT-MFS product state") > 0);
-        assert!(plan.allocation_bytes("product writer scratch") > 0);
+        assert_eq!(
+            plan.allocation_bytes("product writer scratch"),
+            config.imsize * config.imsize * std::mem::size_of::<bool>()
+        );
+        assert_eq!(
+            plan.allocation_bytes("AWProject CASA-layout model FFT staging"),
+            config.imsize * config.imsize * config.nterms * std::mem::size_of::<Complex32>()
+        );
         assert_eq!(
             plan.allocation_bytes("FFT chunks"),
             config.imsize * config.imsize * std::mem::size_of::<f32>()
@@ -55414,6 +61218,33 @@ mod tests {
         assert!(plan.maximum_planned_resident_bytes <= plan.usable_memory_bytes);
         assert!(plan.decisions.iter().any(|decision| {
             decision.name == "awproject_fft_residency" && decision.value == "in-place-rustfft-f64"
+        }));
+        assert!(plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_model_fft_layout"
+                && decision.value == "casacore-first-axis-contiguous"
+        }));
+        assert!(plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_model_fft_threads" && decision.value == "1"
+        }));
+        assert!(plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_model_fft_staging_bytes"
+                && decision.value
+                    == (config.imsize
+                        * config.imsize
+                        * config.nterms
+                        * std::mem::size_of::<Complex32>())
+                    .to_string()
+        }));
+        assert!(plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_model_fft_backend"
+                && matches!(decision.value.as_str(), "fftw" | "rustfft")
+        }));
+        config.imaging_fft_backend = ImagingFftBackendPolicy::Fftw;
+        config.imaging_fft_precision = ImagingFftPrecisionPolicy::F32;
+        let fftw_f32_plan = standard_mfs_memory_plan(&config, 64, 1024);
+        assert!(fftw_f32_plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_fft_residency"
+                && decision.value == "in-place-fftw-local-f32"
         }));
         assert!(plan.decisions.iter().any(|decision| {
             decision.name == "awproject_cf_locality_index_bytes_per_row"
@@ -55438,12 +61269,364 @@ mod tests {
         config.dirty_only = true;
         let dirty_plan = standard_mfs_memory_plan(&config, 64, 1024);
         assert_eq!(
+            dirty_plan.allocation_bytes("AWProject CASA-layout model FFT staging"),
+            0,
+            "dirty-only execution must not reserve model-prediction FFT staging"
+        );
+        assert_eq!(
             dirty_plan.allocation_bytes("AWProject MT-MFS bounded multiscale scratch"),
             0
         );
         assert!(dirty_plan.decisions.iter().any(|decision| {
             decision.name == "awproject_multiscale_minor_cycle_peak_bytes"
                 && decision.reason.contains("dirty-only")
+        }));
+        assert!(
+            dirty_plan
+                .memory_lifetime_ledger
+                .allocations
+                .iter()
+                .all(|allocation| {
+                    allocation.component != "AWProject CASA-layout model FFT staging"
+                        && allocation.component != "AWProject MT-MFS bounded multiscale scratch"
+                        && allocation.component != "AWProject compact replay retention"
+                        && allocation.residencies.iter().all(|residency| {
+                            !matches!(
+                                residency.live_from,
+                                ImagingMemoryStage::MinorCycle
+                                    | ImagingMemoryStage::ModelTransform
+                                    | ImagingMemoryStage::ResidualGrid
+                                    | ImagingMemoryStage::ResidualTransform
+                            ) && !matches!(
+                                residency.live_through,
+                                ImagingMemoryStage::MinorCycle
+                                    | ImagingMemoryStage::ModelTransform
+                                    | ImagingMemoryStage::ResidualGrid
+                                    | ImagingMemoryStage::ResidualTransform
+                            )
+                        })
+                }),
+            "dirty-only execution must not retain clean-only allocation intervals"
+        );
+        for component in [
+            "grids",
+            "source row blocks",
+            "MFS imaging frequency cache",
+            "FFT chunks",
+        ] {
+            let allocation = dirty_plan
+                .memory_lifetime_ledger
+                .allocations
+                .iter()
+                .find(|allocation| allocation.component == component)
+                .expect("dirty allocation must have a semantic lifetime");
+            assert_eq!(
+                allocation.residencies.len(),
+                1,
+                "{component} must have no residual-cycle residency in dirty mode"
+            );
+            assert_eq!(
+                allocation.residencies[0].next_use,
+                ImagingMemoryNextUse::NoFurtherUse
+            );
+        }
+    }
+
+    #[test]
+    fn awproject_initial_dirty_replay_priming_tap_ledger_is_incremental_and_checked() {
+        assert_eq!(
+            awproject_initial_dirty_replay_priming_tap_extension_bytes(256 * 1024 * 1024).unwrap(),
+            85 * 1024 * 1024 + 349_526
+        );
+        assert_eq!(
+            awproject_initial_dirty_replay_priming_tap_extension_bytes(6).unwrap(),
+            2
+        );
+        assert!(
+            awproject_initial_dirty_replay_priming_tap_extension_bytes(usize::MAX).is_err(),
+            "planner overflow must fail closed"
+        );
+    }
+
+    #[test]
+    fn awproject_mtmfs_full_geometry_lifetime_charges_residual_only_grid() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("full-geometry-lifetime-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let mut config = awproject_mtmfs_planner_config(cf_cache, 65_536);
+        config.imsize = 12_150;
+        config.imaging_memory_pressure_policy = ImagingMemoryPressurePolicy::Oversubscribe;
+
+        let plan = standard_mfs_memory_plan(&config, 64, 1024);
+        let grid = plan
+            .memory_lifetime_ledger
+            .allocations
+            .iter()
+            .find(|allocation| allocation.component == "grids")
+            .expect("full-geometry grid lifetime");
+
+        assert_eq!(grid.logical_bytes, 18_895_680_000);
+        assert_eq!(grid.residencies.len(), 2);
+        assert_eq!(grid.residencies[0].resident_bytes, 18_895_680_000);
+        assert_eq!(
+            grid.residencies[1].resident_bytes, 4_723_920_000,
+            "residual-only storage has two compensated Taylor planes, not the initial eight"
+        );
+    }
+
+    #[test]
+    fn standard_mfs_semantic_memory_lifetimes_record_aw_stage_overlap() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("semantic-ledger-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 2);
+        let config = awproject_mtmfs_planner_config(cf_cache, 4096);
+        let mut plan = standard_mfs_memory_plan(&config, 64, 1024);
+        plan.usable_memory_bytes = usize::MAX;
+        plan.maximum_planned_resident_bytes = 0;
+        plan.metal.eligible = true;
+        plan.memory_allocations = vec![
+            ImagingMemoryAllocation {
+                component: "grids",
+                stage: "run",
+                bytes: 96,
+            },
+            ImagingMemoryAllocation {
+                component: "source row blocks",
+                stage: "ingest",
+                bytes: 31,
+            },
+            ImagingMemoryAllocation {
+                component: "MFS imaging frequency cache",
+                stage: "prepare",
+                bytes: 17,
+            },
+            ImagingMemoryAllocation {
+                component: "FFT chunks",
+                stage: "fft",
+                bytes: 20,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject compensated f64 readback",
+                stage: "dirty-transform",
+                bytes: 13,
+            },
+            ImagingMemoryAllocation {
+                component: "weighting density",
+                stage: "weighting",
+                bytes: 10,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject MT-MFS run state",
+                stage: "run",
+                bytes: 30,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject CF pixels",
+                stage: "run",
+                bytes: 5,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject source-order tap scratch",
+                stage: "run",
+                bytes: 7,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject CASA-layout model FFT staging",
+                stage: "major-cycle",
+                bytes: 11,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject MT-MFS product state",
+                stage: "products",
+                bytes: 19,
+            },
+            ImagingMemoryAllocation {
+                component: "product writer scratch",
+                stage: "products",
+                bytes: 23,
+            },
+            ImagingMemoryAllocation {
+                component: "AWProject compact replay retention",
+                stage: "run",
+                bytes: 29,
+            },
+        ];
+
+        let lifetimes =
+            rebuild_standard_mfs_memory_lifetime_ledger(&mut plan, true).expect("semantic ledger");
+        let grid = lifetimes
+            .iter()
+            .find(|allocation| allocation.component == "grids")
+            .expect("grid lifetime");
+        assert_eq!(grid.allocation_id, "standard-mfs-grids-1");
+        assert_eq!(grid.residencies.len(), 2);
+        assert_eq!(
+            grid.residencies[0].backing,
+            ImagingMemoryBacking::UnifiedMemory
+        );
+        assert_eq!(
+            (
+                grid.residencies[0].live_from,
+                grid.residencies[0].live_through,
+                grid.residencies[0].next_use,
+            ),
+            (
+                ImagingMemoryStage::InitialGrid,
+                ImagingMemoryStage::DirtyTransform,
+                ImagingMemoryNextUse::AtStage(ImagingMemoryStage::ResidualGrid),
+            )
+        );
+        assert_eq!(
+            (
+                grid.residencies[1].live_from,
+                grid.residencies[1].live_through,
+            ),
+            (
+                ImagingMemoryStage::ResidualGrid,
+                ImagingMemoryStage::ResidualTransform,
+            )
+        );
+
+        let imaging_frequency_cache = lifetimes
+            .iter()
+            .find(|allocation| allocation.component == "MFS imaging frequency cache")
+            .expect("MFS imaging-frequency cache lifetime");
+        assert_eq!(imaging_frequency_cache.residencies.len(), 2);
+        assert_eq!(
+            (
+                imaging_frequency_cache.residencies[0].live_from,
+                imaging_frequency_cache.residencies[0].live_through,
+                imaging_frequency_cache.residencies[0].next_use,
+                imaging_frequency_cache.residencies[1].live_from,
+                imaging_frequency_cache.residencies[1].live_through,
+            ),
+            (
+                ImagingMemoryStage::SourceIngest,
+                ImagingMemoryStage::InitialGrid,
+                ImagingMemoryNextUse::AtStage(ImagingMemoryStage::ResidualGrid),
+                ImagingMemoryStage::ResidualGrid,
+                ImagingMemoryStage::ResidualGrid,
+            )
+        );
+
+        let run_state = lifetimes
+            .iter()
+            .find(|allocation| allocation.component == "AWProject MT-MFS run state")
+            .expect("run-state lifetime");
+        assert_eq!(
+            (
+                run_state.residencies[0].live_from,
+                run_state.residencies[0].live_through,
+            ),
+            (
+                ImagingMemoryStage::DirtyTransform,
+                ImagingMemoryStage::Finish,
+            )
+        );
+        let replay = lifetimes
+            .iter()
+            .find(|allocation| allocation.component == "AWProject compact replay retention")
+            .expect("replay lifetime");
+        assert_eq!(
+            (
+                replay.residencies[0].live_from,
+                replay.residencies[0].live_through,
+            ),
+            (
+                ImagingMemoryStage::ResidualGrid,
+                ImagingMemoryStage::ResidualTransform,
+            )
+        );
+        assert_eq!(
+            replay.residencies[0].backing,
+            ImagingMemoryBacking::HostHeap
+        );
+
+        let readback = lifetimes
+            .iter()
+            .find(|allocation| allocation.component == "AWProject compensated f64 readback")
+            .expect("readback lifetime");
+        assert_eq!(readback.residencies.len(), 2);
+        assert!(
+            readback
+                .residencies
+                .iter()
+                .all(|residency| residency.backing == ImagingMemoryBacking::HostHeap)
+        );
+        assert_eq!(
+            (
+                readback.residencies[0].live_from,
+                readback.residencies[0].live_through,
+                readback.residencies[1].live_from,
+                readback.residencies[1].live_through,
+            ),
+            (
+                ImagingMemoryStage::DirtyTransform,
+                ImagingMemoryStage::DirtyTransform,
+                ImagingMemoryStage::ResidualTransform,
+                ImagingMemoryStage::ResidualTransform,
+            )
+        );
+
+        let residual_peak = plan
+            .memory_lifetime_ledger
+            .stage_peaks
+            .iter()
+            .find(|peak| peak.stage == ImagingMemoryStage::ResidualGrid)
+            .expect("residual-grid stage");
+        assert_eq!(
+            residual_peak.bytes_for_backing(ImagingMemoryBacking::UnifiedMemory),
+            24,
+            "nterms=2 residual refreshes must retain only two of the eight initial grid planes"
+        );
+        assert_eq!(
+            plan.maximum_planned_resident_bytes,
+            plan.memory_lifetime_ledger.maximum_resident_bytes
+        );
+    }
+
+    #[test]
+    fn awproject_compact_replay_retention_is_resource_bounded() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("planner-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let config = awproject_mtmfs_planner_config(cf_cache, 4096);
+        let base = standard_mfs_memory_plan(&config, 64, 1024);
+        let base_peak = base.maximum_planned_resident_bytes;
+        let replay_stage_peak = [
+            ImagingMemoryStage::ResidualGrid,
+            ImagingMemoryStage::ResidualTransform,
+        ]
+        .into_iter()
+        .filter_map(|stage| base.memory_lifetime_ledger.stage_peak(stage))
+        .map(|peak| peak.resident_bytes)
+        .max()
+        .expect("replay stage peak");
+
+        let admitted =
+            admit_awproject_compact_replay_retention(base.clone(), 4).expect("replay admission");
+        let retention = admitted.allocation_bytes("AWProject compact replay retention");
+        assert!(retention > 0);
+        assert_eq!(retention, admitted.usable_memory_bytes - replay_stage_peak);
+        assert_eq!(
+            admitted.maximum_planned_resident_bytes,
+            admitted.usable_memory_bytes
+        );
+        assert!(admitted.maximum_planned_resident_bytes >= base_peak);
+        assert!(admitted.maximum_planned_resident_bytes <= admitted.usable_memory_bytes);
+        assert!(admitted.decisions.iter().any(|decision| {
+            decision.name == "awproject_compact_replay_retention_bytes"
+                && decision.value == retention.to_string()
+                && decision.reason.contains("full 4-block cyclic working set")
+                && decision.reason.contains("pinned no-eviction subset")
+                && decision.reason.contains(&format!(
+                    "prior_replay_stage_peak_bytes={replay_stage_peak}"
+                ))
+                && decision.reason.contains("artificial_fraction_cap=none")
+        }));
+        assert!(admitted.decisions.iter().any(|decision| {
+            decision.name == "awproject_compact_replay_resident_accounting"
+                && decision.value == "runtime-exact-capacities"
         }));
     }
 
@@ -55510,11 +61693,14 @@ mod tests {
         assert!(!awproject_mtmfs_in_place_fft_eligible(&config));
 
         config.imaging_fft_precision = ImagingFftPrecisionPolicy::F64;
-        config.imaging_fft_backend = ImagingFftBackendPolicy::FftwLocalBench;
+        config.imaging_fft_backend = ImagingFftBackendPolicy::Fftw;
         assert!(awproject_mtmfs_in_place_fft_eligible(&config));
 
         config.imaging_fft_precision = ImagingFftPrecisionPolicy::F32;
-        assert!(!awproject_mtmfs_in_place_fft_eligible(&config));
+        assert!(
+            awproject_mtmfs_in_place_fft_eligible(&config),
+            "the explicit FFTW F32 backend reuses the admitted AWProject grids in place"
+        );
 
         config.imaging_fft_precision = ImagingFftPrecisionPolicy::F64;
         config.imaging_fft_backend = ImagingFftBackendPolicy::RustFft;
@@ -55533,6 +61719,10 @@ mod tests {
         let mut full = awproject_mtmfs_planner_config(cf_cache.clone(), 32 * 1024);
         full.imsize = 12_150;
         full.imaging_fft_precision = ImagingFftPrecisionPolicy::Auto;
+        // This is a plan-only fixture with an exact synthetic target, not a
+        // production default. Explicit oversubscription prevents live host
+        // headroom from making the 32/24/16 GiB comparison nondeterministic.
+        full.imaging_memory_pressure_policy = ImagingMemoryPressurePolicy::Oversubscribe;
         let visibility_shape =
             prepared_single_plane_visibility_source_shape(&full, active_rows, 64);
         let plan = standard_mfs_memory_plan_with_visibility_shape_and_pointing_rows(
@@ -55544,6 +61734,8 @@ mod tests {
             pointing_table_rows,
         )
         .expect("32 GiB must admit the serial full-geometry AWProject plan");
+        let plan = admit_awproject_compact_replay_retention(plan, 16)
+            .expect("32 GiB must retain its residual-stage replay reservation");
 
         assert_eq!(plan.workload.grid_width, 12_150);
         assert_eq!(plan.workload.grid_planes, 8);
@@ -55557,15 +61749,22 @@ mod tests {
                 + AWPROJECT_CF_INDEX_HEAP_AND_TREE_ALLOWANCE_BYTES_PER_PAIR)
         );
         eprintln!(
-            "vlass_awproject_memory_fixture target_gib=32 decision=admit grid_side={} grid_planes={} grid_bytes={} fft_scratch_bytes={} run_state_bytes={} multiscale_scratch_bytes={} cf_pixel_bytes={} source_order_tap_bytes={} cf_index_bytes={} pointing_index_bytes={} safety_margin_bytes={} source_row_block_rows={} planned_peak_bytes={}",
+            "vlass_awproject_memory_fixture target_gib=32 decision=admit grid_side={} grid_planes={} grid_bytes={} residual_grid_bytes={} fft_scratch_bytes={} run_state_bytes={} multiscale_scratch_bytes={} cf_pixel_bytes={} source_order_tap_bytes={} replay_retention_reservation_bytes={} cf_index_bytes={} pointing_index_bytes={} safety_margin_bytes={} source_row_block_rows={} planned_peak_bytes={}",
             plan.workload.grid_width,
             plan.workload.grid_planes,
             plan.allocation_bytes("grids"),
+            plan.memory_lifetime_ledger
+                .allocations
+                .iter()
+                .find(|allocation| allocation.component == "grids")
+                .and_then(|allocation| allocation.residencies.get(1))
+                .map_or(0, |residency| residency.resident_bytes),
             plan.allocation_bytes("FFT chunks"),
             plan.allocation_bytes("AWProject MT-MFS run state"),
             plan.allocation_bytes("AWProject MT-MFS bounded multiscale scratch"),
             plan.allocation_bytes("AWProject CF pixels"),
             plan.allocation_bytes("AWProject source-order tap scratch"),
+            plan.allocation_bytes("AWProject compact replay retention"),
             plan.allocation_bytes("AWProject CF index"),
             plan.allocation_bytes("POINTING index"),
             plan.allocation_bytes("AWProject safety margin"),
@@ -55584,9 +61783,11 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            error_24.contains("needs")
+            (error_24.contains("needs")
                 && error_24.contains("bytes")
-                && error_24.contains("assigned"),
+                && error_24.contains("assigned"))
+                || (error_24.contains("semantic memory lifetime peak")
+                    && error_24.contains("exceeds admitted memory target")),
             "{error_24}"
         );
         eprintln!("vlass_awproject_memory_fixture target_gib=24 decision=reject reason={error_24}");
@@ -55602,7 +61803,9 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            error.contains("needs") && error.contains("bytes") && error.contains("assigned"),
+            (error.contains("needs") && error.contains("bytes") && error.contains("assigned"))
+                || (error.contains("semantic memory lifetime peak")
+                    && error.contains("exceeds admitted memory target")),
             "{error}"
         );
         eprintln!("vlass_awproject_memory_fixture target_gib=16 decision=reject reason={error}");
@@ -55634,7 +61837,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_imaging_memory_target_can_exceed_kernel_available_memory() {
+    fn safe_auto_memory_target_is_capped_to_kernel_available_memory() {
         let mut config =
             minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
         config.imaging_memory_target_mb = Some(32 * 1024);
@@ -55646,9 +61849,501 @@ mod tests {
             256 * 1024 * 1024,
         );
 
-        assert_eq!(target.target_bytes, 32 * 1024 * 1024 * 1024);
+        assert_eq!(target.target_bytes, 15 * 1024 * 1024 * 1024);
         assert_eq!(target.available_memory_bytes, Some(15 * 1024 * 1024 * 1024));
-        assert_eq!(target.source, "cli-imaging");
+        assert_eq!(target.source, "cli-capped-to-no-swap-headroom");
+    }
+
+    #[test]
+    fn memory_pressure_policies_resolve_distinct_admission_targets() {
+        const GIB: usize = 1024 * 1024 * 1024;
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imaging_memory_target_mb = None;
+        config.standard_mfs_memory_target_mb = None;
+        let system_bytes = Some(32 * GIB);
+        let no_swap_headroom_bytes = Some(12 * GIB);
+        let baseline_process_bytes = 2 * GIB;
+        let process_total_ceiling_bytes = 14 * GIB;
+        let incremental_operation_budget_bytes = 12 * GIB;
+
+        let cases = [
+            (
+                ImagingMemoryPressurePolicy::Auto,
+                12 * GIB,
+                "available-memory-ledger",
+            ),
+            (
+                ImagingMemoryPressurePolicy::ConservativeNoSwap,
+                12 * GIB,
+                "available-memory-ledger",
+            ),
+            (
+                ImagingMemoryPressurePolicy::Aggressive,
+                incremental_operation_budget_bytes,
+                "aggressive-physical-ledger",
+            ),
+            (
+                ImagingMemoryPressurePolicy::Oversubscribe,
+                0,
+                "oversubscribe-requires-explicit-target",
+            ),
+            (
+                ImagingMemoryPressurePolicy::StageAware,
+                12 * GIB,
+                "available-memory-ledger",
+            ),
+            (
+                ImagingMemoryPressurePolicy::Hybrid,
+                incremental_operation_budget_bytes,
+                "hybrid-physical-ledger",
+            ),
+        ];
+        for (policy, expected_bytes, expected_source) in cases {
+            config.imaging_memory_pressure_policy = policy;
+            let target = imaging_process_memory_ledger_from_snapshot(
+                &config,
+                system_bytes,
+                no_swap_headroom_bytes,
+                baseline_process_bytes,
+            );
+            assert_eq!(target.target_bytes, expected_bytes, "policy={policy:?}");
+            assert_eq!(target.source, expected_source, "policy={policy:?}");
+            assert_eq!(
+                target.process_total_ceiling_bytes,
+                Some(process_total_ceiling_bytes),
+                "policy={policy:?}"
+            );
+            assert_eq!(
+                target.incremental_operation_budget_bytes,
+                Some(incremental_operation_budget_bytes),
+                "policy={policy:?}"
+            );
+        }
+
+        config.imaging_memory_pressure_policy = ImagingMemoryPressurePolicy::Oversubscribe;
+        config.imaging_memory_target_mb = Some(20 * 1024);
+        let oversubscribed = imaging_process_memory_ledger_from_snapshot(
+            &config,
+            system_bytes,
+            no_swap_headroom_bytes,
+            baseline_process_bytes,
+        );
+        assert_eq!(oversubscribed.target_bytes, 20 * GIB);
+        assert_eq!(oversubscribed.source, "cli-intentional-oversubscription");
+
+        for (policy, expected_source) in [
+            (
+                ImagingMemoryPressurePolicy::Aggressive,
+                "cli-aggressive-physical-ceiling",
+            ),
+            (
+                ImagingMemoryPressurePolicy::Hybrid,
+                "cli-hybrid-physical-ceiling",
+            ),
+        ] {
+            config.imaging_memory_pressure_policy = policy;
+            let capped = imaging_process_memory_ledger_from_snapshot(
+                &config,
+                system_bytes,
+                no_swap_headroom_bytes,
+                baseline_process_bytes,
+            );
+            assert_eq!(capped.target_bytes, incremental_operation_budget_bytes);
+            assert_eq!(capped.source, expected_source);
+        }
+    }
+
+    #[test]
+    fn incremental_operation_target_never_grows_with_process_baseline() {
+        const GIB: usize = 1024 * 1024 * 1024;
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imaging_memory_target_mb = None;
+        config.standard_mfs_memory_target_mb = None;
+
+        for policy in [
+            ImagingMemoryPressurePolicy::Auto,
+            ImagingMemoryPressurePolicy::ConservativeNoSwap,
+            ImagingMemoryPressurePolicy::Aggressive,
+            ImagingMemoryPressurePolicy::StageAware,
+            ImagingMemoryPressurePolicy::Hybrid,
+        ] {
+            config.imaging_memory_pressure_policy = policy;
+            let ledgers = [GIB, 2 * GIB, 8 * GIB, 24 * GIB, 32 * GIB].map(|baseline| {
+                imaging_process_memory_ledger_from_snapshot(
+                    &config,
+                    Some(32 * GIB),
+                    Some(12 * GIB),
+                    baseline,
+                )
+            });
+            for pair in ledgers.windows(2) {
+                assert!(
+                    pair[1].target_bytes <= pair[0].target_bytes,
+                    "policy={policy:?}: raising the baseline from {} to {} raised the operation target from {} to {}",
+                    pair[0].baseline_process_bytes,
+                    pair[1].baseline_process_bytes,
+                    pair[0].target_bytes,
+                    pair[1].target_bytes,
+                );
+            }
+            for ledger in ledgers {
+                assert!(
+                    ledger
+                        .projected_process_total_bytes(ledger.target_bytes)
+                        .is_some_and(|projected| {
+                            ledger
+                                .process_total_ceiling_bytes
+                                .is_some_and(|ceiling| projected <= ceiling)
+                        }),
+                    "policy={policy:?}: baseline plus operation target must fit the process-total ceiling: {ledger:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn non_oversubscription_explicit_targets_cap_to_incremental_budget() {
+        const GIB: usize = 1024 * 1024 * 1024;
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imaging_memory_target_mb = Some(20 * 1024);
+
+        for policy in [
+            ImagingMemoryPressurePolicy::Auto,
+            ImagingMemoryPressurePolicy::ConservativeNoSwap,
+            ImagingMemoryPressurePolicy::Aggressive,
+            ImagingMemoryPressurePolicy::StageAware,
+            ImagingMemoryPressurePolicy::Hybrid,
+        ] {
+            config.imaging_memory_pressure_policy = policy;
+            let ledger = imaging_process_memory_ledger_from_snapshot(
+                &config,
+                Some(32 * GIB),
+                Some(12 * GIB),
+                2 * GIB,
+            );
+            assert_eq!(ledger.target_bytes, 12 * GIB, "policy={policy:?}");
+            assert_eq!(
+                ledger.projected_process_total_bytes(ledger.target_bytes),
+                ledger.process_total_ceiling_bytes,
+                "policy={policy:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn oversubscription_receipt_reports_projected_process_excess() {
+        const GIB: usize = 1024 * 1024 * 1024;
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imaging_memory_pressure_policy = ImagingMemoryPressurePolicy::Oversubscribe;
+        config.imaging_memory_target_mb = Some(20 * 1024);
+        let ledger = imaging_process_memory_ledger_from_snapshot(
+            &config,
+            Some(32 * GIB),
+            Some(12 * GIB),
+            2 * GIB,
+        );
+        assert_eq!(ledger.target_bytes, 20 * GIB);
+        assert_eq!(ledger.process_total_ceiling_bytes, Some(14 * GIB));
+        assert_eq!(
+            ledger.projected_process_total_bytes(ledger.target_bytes),
+            Some(22 * GIB)
+        );
+        assert_eq!(
+            ledger.projected_process_excess_bytes(ledger.target_bytes),
+            Some(8 * GIB)
+        );
+
+        let cpu = ImagingCpuResourceDetection {
+            logical_threads: Some(4),
+            performance_cores: Some(4),
+            logical_threads_origin: "test",
+            performance_cores_origin: "test",
+        };
+        let metal = unavailable_imaging_metal_memory_detection("test");
+        let storage = ImagingStorageBandwidthDetection {
+            read_bytes_per_second: None,
+            write_bytes_per_second: None,
+            read_origin: "test",
+            write_origin: "test",
+        };
+        let context =
+            imaging_planning_context_from_detection(&config, ledger, 0, cpu, metal, storage);
+        let line = imaging_planning_resource_log_line(&context, ledger, cpu, metal, 0, storage);
+        assert!(line.contains("memory_target_semantics=incremental-operation-residency"));
+        assert!(line.contains(&format!("process_total_ceiling_bytes={}", 14 * GIB)));
+        assert!(line.contains(&format!(
+            "target_projected_process_total_bytes={}",
+            22 * GIB
+        )));
+        assert!(line.contains(&format!(
+            "target_projected_process_excess_bytes={}",
+            8 * GIB
+        )));
+    }
+
+    #[test]
+    fn resolved_plan_projection_adds_baseline_to_planned_residency() {
+        const GIB: usize = 1024 * 1024 * 1024;
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imaging_memory_pressure_policy = ImagingMemoryPressurePolicy::Oversubscribe;
+        config.imaging_memory_target_mb = Some(512);
+        let ledger =
+            imaging_process_memory_ledger_from_snapshot(&config, Some(32 * GIB), Some(1), 2 * GIB);
+        let visibility_shape = prepared_single_plane_visibility_source_shape(&config, 1_000, 64);
+        let plan = plan_standard_mfs_execution_shape_with_memory_ledger(
+            &config,
+            64,
+            64,
+            1_000,
+            &visibility_shape,
+            ledger,
+        )
+        .expect("oversubscription planner fixture");
+        let projection = standard_mfs_process_projection(&plan);
+        assert_eq!(projection.baseline_bytes, Some(2 * GIB));
+        assert_eq!(projection.total_ceiling_bytes, Some(2 * GIB + 1));
+        assert_eq!(
+            projection.projected_total_bytes,
+            Some(2 * GIB + plan.maximum_planned_resident_bytes)
+        );
+        assert_eq!(
+            projection.projected_excess_bytes,
+            Some(plan.maximum_planned_resident_bytes.saturating_sub(1))
+        );
+        assert!(
+            projection
+                .projected_excess_bytes
+                .is_some_and(|value| value > 0)
+        );
+    }
+
+    #[test]
+    fn memory_policy_validation_rejects_unimplemented_execution_and_targetless_oversubscription() {
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+
+        for policy in [
+            ImagingMemoryPressurePolicy::StageAware,
+            ImagingMemoryPressurePolicy::Hybrid,
+        ] {
+            config.imaging_memory_pressure_policy = policy;
+            assert!(
+                validate_imaging_memory_policy_request(&config, false)
+                    .unwrap_err()
+                    .contains("available only to --standard-mfs-plan-probe")
+            );
+            validate_imaging_memory_policy_request(&config, true)
+                .expect("planner probes must preserve truthful negative policy evidence");
+        }
+
+        config.imaging_memory_pressure_policy = ImagingMemoryPressurePolicy::Oversubscribe;
+        assert!(
+            validate_imaging_memory_policy_request(&config, true)
+                .unwrap_err()
+                .contains("requires an explicit imaging_memory_target_mb")
+        );
+        config.imaging_memory_target_mb = Some(40 * 1024);
+        validate_imaging_memory_policy_request(&config, false)
+            .expect("bounded oversubscription with an explicit target is an authorized experiment");
+    }
+
+    #[test]
+    fn resource_detection_metal_snapshot_and_unavailable_reason_are_explicit() {
+        let detected = imaging_metal_platform_detection::from_device_snapshot(
+            true,
+            24 * 1024 * 1024 * 1024,
+            256 * 1024 * 1024,
+        );
+        assert!(detected.device_available);
+        assert_eq!(detected.has_unified_memory, Some(true));
+        assert_eq!(
+            detected.recommended_working_set_bytes,
+            Some(24 * 1024 * 1024 * 1024)
+        );
+        assert_eq!(detected.current_allocated_bytes, Some(256 * 1024 * 1024));
+        assert_eq!(detected.origin, "metal-default-device-snapshot");
+
+        let unavailable = unavailable_imaging_metal_memory_detection("test-device-unavailable");
+        assert!(!unavailable.device_available);
+        assert_eq!(unavailable.has_unified_memory, None);
+        assert_eq!(unavailable.recommended_working_set_bytes, None);
+        assert_eq!(unavailable.current_allocated_bytes, None);
+        assert_eq!(unavailable.origin, "test-device-unavailable");
+    }
+
+    #[test]
+    fn resource_assignment_unified_metal_uses_shared_process_and_device_headroom() {
+        const GIB: usize = 1024 * 1024 * 1024;
+        let memory_target = ImagingProcessMemoryLedger {
+            system_memory_bytes: Some(32 * GIB),
+            available_memory_bytes: Some(12 * GIB),
+            process_physical_footprint_bytes: Some(GIB),
+            baseline_process_bytes: GIB,
+            non_process_resident_bytes: Some(19 * GIB),
+            process_total_ceiling_bytes: Some(13 * GIB),
+            incremental_operation_budget_bytes: Some(12 * GIB),
+            target_bytes: 12 * GIB,
+            source: "test",
+            process_total_ceiling_origin: "test",
+            system_memory_origin: "test",
+            available_memory_origin: "test",
+            process_physical_footprint_origin: "test",
+        };
+        let unified = ImagingMetalMemoryDetection {
+            device_available: true,
+            has_unified_memory: Some(true),
+            recommended_working_set_bytes: Some(24 * GIB),
+            current_allocated_bytes: Some(4 * GIB),
+            origin: "test",
+        };
+        assert_eq!(
+            imaging_metal_device_budget_bytes(memory_target, unified),
+            12 * GIB,
+            "unified allocations share the smaller no-swap process headroom"
+        );
+        let process_target_limited = ImagingProcessMemoryLedger {
+            target_bytes: 8 * GIB,
+            ..memory_target
+        };
+        assert_eq!(
+            imaging_metal_device_budget_bytes(process_target_limited, unified),
+            8 * GIB,
+            "the process assignment remains binding even with more system headroom"
+        );
+
+        let device_limited = ImagingMetalMemoryDetection {
+            current_allocated_bytes: Some(20 * GIB),
+            ..unified
+        };
+        assert_eq!(
+            imaging_metal_device_budget_bytes(memory_target, device_limited),
+            4 * GIB,
+            "recommended working set minus current allocation is also binding"
+        );
+
+        let unknown_memory_topology = ImagingMetalMemoryDetection {
+            has_unified_memory: None,
+            ..unified
+        };
+        assert_eq!(
+            imaging_metal_device_budget_bytes(memory_target, unknown_memory_topology),
+            0,
+            "unknown memory topology must not invent a second memory pool"
+        );
+    }
+
+    #[test]
+    fn resource_detection_storage_bandwidth_requires_positive_integer_bytes_per_second() {
+        assert_eq!(
+            parse_positive_bytes_per_second("1500000000"),
+            Some(1_500_000_000)
+        );
+        assert_eq!(
+            parse_positive_bytes_per_second(" 1000000000 "),
+            Some(1_000_000_000)
+        );
+        assert_eq!(parse_positive_bytes_per_second("0"), None);
+        assert_eq!(parse_positive_bytes_per_second("-1"), None);
+        assert_eq!(parse_positive_bytes_per_second("1.5e9"), None);
+        assert_eq!(
+            parse_positive_bytes_per_second("18446744073709551616"),
+            None
+        );
+    }
+
+    #[test]
+    fn resource_detection_context_preserves_evidence_and_safe_policy() {
+        let config = minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        let memory_target = ImagingProcessMemoryLedger {
+            system_memory_bytes: Some(32 * 1024 * 1024 * 1024),
+            available_memory_bytes: Some(18 * 1024 * 1024 * 1024),
+            process_physical_footprint_bytes: Some(512 * 1024 * 1024),
+            baseline_process_bytes: 512 * 1024 * 1024,
+            non_process_resident_bytes: Some(13_500 * 1024 * 1024),
+            process_total_ceiling_bytes: Some(18_500 * 1024 * 1024),
+            incremental_operation_budget_bytes: Some(18 * 1024 * 1024 * 1024),
+            target_bytes: 16 * 1024 * 1024 * 1024,
+            source: "test",
+            process_total_ceiling_origin: "test",
+            system_memory_origin: "test-physical",
+            available_memory_origin: "test-headroom",
+            process_physical_footprint_origin: "test-footprint",
+        };
+        let cpu = ImagingCpuResourceDetection {
+            logical_threads: Some(10),
+            performance_cores: Some(4),
+            logical_threads_origin: "test-logical",
+            performance_cores_origin: "test-performance",
+        };
+        let metal = ImagingMetalMemoryDetection {
+            device_available: true,
+            has_unified_memory: Some(true),
+            recommended_working_set_bytes: Some(24 * 1024 * 1024 * 1024),
+            current_allocated_bytes: Some(256 * 1024 * 1024),
+            origin: "test-metal",
+        };
+        let storage = ImagingStorageBandwidthDetection {
+            read_bytes_per_second: Some(1_500_000_000),
+            write_bytes_per_second: Some(1_000_000_000),
+            read_origin: "test-read",
+            write_origin: "test-write",
+        };
+
+        let context = imaging_planning_context_from_detection(
+            &config,
+            memory_target,
+            3 * 1024 * 1024 * 1024,
+            cpu,
+            metal,
+            storage,
+        );
+
+        assert_eq!(
+            context.memory_pressure_policy,
+            CoreImagingMemoryPressurePolicy::AutoSafe
+        );
+        assert_eq!(
+            context.detected_resources,
+            ImagingDetectedResources {
+                physical_memory_bytes: Some(32 * 1024 * 1024 * 1024),
+                current_memory_headroom_bytes: Some(18 * 1024 * 1024 * 1024),
+                process_physical_footprint_bytes: Some(512 * 1024 * 1024),
+                logical_cpu_threads: Some(10),
+                performance_cpu_cores: Some(4),
+                metal_recommended_working_set_bytes: Some(24 * 1024 * 1024 * 1024),
+                metal_current_allocated_bytes: Some(256 * 1024 * 1024),
+                unified_memory_requirement_bytes: Some(3 * 1024 * 1024 * 1024),
+                storage_read_bytes_per_second: Some(1_500_000_000),
+                storage_write_bytes_per_second: Some(1_000_000_000),
+            }
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn resource_detection_macos_reports_physical_footprint_and_cpu_bounds() {
+        assert!(
+            current_process_physical_footprint_bytes().is_some_and(|bytes| bytes > 0),
+            "proc_pid_rusage must report a nonzero physical footprint"
+        );
+        let cpu = imaging_cpu_resource_detection();
+        if let (Some(performance), Some(logical)) = (cpu.performance_cores, cpu.logical_threads) {
+            assert!(performance <= logical);
+        }
+        let metal = imaging_metal_memory_detection();
+        if metal.device_available {
+            assert!(metal.has_unified_memory.is_some());
+            assert!(metal.recommended_working_set_bytes.is_some());
+            assert!(metal.current_allocated_bytes.is_some());
+            assert_eq!(metal.origin, "metal-default-device-snapshot");
+        } else {
+            assert_eq!(metal.origin, "metal-device-unavailable");
+        }
     }
 
     #[test]
@@ -55683,6 +62378,21 @@ mod tests {
             standard_mfs_density_prepare_threads_for_config(&config, 4),
             4
         );
+    }
+
+    #[test]
+    fn grid_worker_auto_selection_is_independent_of_prepare_workers() {
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imaging_prepare_workers = Some(1);
+
+        assert!(standard_mfs_grid_workers_requested_auto(&config));
+
+        config.standard_mfs_grid_threads = Some("auto".to_string());
+        assert!(standard_mfs_grid_workers_requested_auto(&config));
+
+        config.standard_mfs_grid_threads = Some("6".to_string());
+        assert!(!standard_mfs_grid_workers_requested_auto(&config));
     }
 
     #[test]
@@ -55785,10 +62495,17 @@ mod tests {
         let ledger = ImagingProcessMemoryLedger {
             system_memory_bytes: Some(32 * 1024 * 1024 * 1024),
             available_memory_bytes: Some(assigned_bytes),
+            process_physical_footprint_bytes: Some(128 * 1024 * 1024),
             baseline_process_bytes: 128 * 1024 * 1024,
             non_process_resident_bytes: Some(30 * 1024 * 1024 * 1024),
+            process_total_ceiling_bytes: Some(assigned_bytes + 128 * 1024 * 1024),
+            incremental_operation_budget_bytes: Some(assigned_bytes),
             target_bytes: assigned_bytes,
             source: "test-snapshot",
+            process_total_ceiling_origin: "test",
+            system_memory_origin: "test",
+            available_memory_origin: "test",
+            process_physical_footprint_origin: "test",
         };
         let visibility_shape = prepared_single_plane_visibility_source_shape(&config, 10_000, 64);
 
@@ -55884,6 +62601,53 @@ mod tests {
                 .iter()
                 .all(|category| category.tracked_live_bytes.is_none())
         );
+    }
+
+    #[test]
+    fn standard_mfs_tiled_grid_lifetime_peak_respects_assigned_memory_slices() {
+        for target_mib in [1024, 2048, 4096] {
+            let config =
+                minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+            let target_bytes = target_mib * 1024 * 1024;
+            let visibility_shape =
+                prepared_single_plane_visibility_source_shape(&config, 20_000, 512);
+            let plan = plan_standard_mfs_execution_shape_with_memory_ledger(
+                &config,
+                512,
+                512,
+                20_000,
+                &visibility_shape,
+                ImagingProcessMemoryLedger {
+                    system_memory_bytes: Some(8 * 1024 * 1024 * 1024),
+                    available_memory_bytes: Some(target_bytes),
+                    process_physical_footprint_bytes: None,
+                    baseline_process_bytes: 0,
+                    non_process_resident_bytes: Some(8 * 1024 * 1024 * 1024 - target_bytes),
+                    process_total_ceiling_bytes: Some(target_bytes),
+                    incremental_operation_budget_bytes: Some(target_bytes),
+                    target_bytes,
+                    source: "test-snapshot",
+                    process_total_ceiling_origin: "test",
+                    system_memory_origin: "test",
+                    available_memory_origin: "test",
+                    process_physical_footprint_origin: "test",
+                },
+            )
+            .expect("assigned memory slice should admit the bounded tile plan");
+            let initial_grid_peak = plan
+                .memory_lifetime_ledger
+                .stage_peak(ImagingMemoryStage::InitialGrid)
+                .expect("initial grid lifetime peak");
+
+            assert_eq!(plan.usable_memory_bytes, target_bytes);
+            assert!(
+                initial_grid_peak.resident_bytes <= plan.usable_memory_bytes,
+                "target_mib={target_mib} peak={} budget={}",
+                initial_grid_peak.resident_bytes,
+                plan.usable_memory_bytes
+            );
+            assert!(plan.maximum_planned_resident_bytes <= plan.usable_memory_bytes);
+        }
     }
 
     #[test]
@@ -56209,6 +62973,17 @@ mod tests {
         let plan = standard_mfs_memory_plan(&config, 512, 2_000_000);
 
         assert_eq!(plan.ingest.source_row_block_rows, 1024);
+        let frequency_bytes_per_row = 512 * 2 * std::mem::size_of::<f64>()
+            + 256
+            + std::mem::size_of::<MfsImagingFrequencies>();
+        assert!(
+            plan.workload.prepared_bytes_per_row >= frequency_bytes_per_row,
+            "each source row must cover a worst-case distinct exact frequency/wavelength pair"
+        );
+        assert_eq!(
+            plan.allocation_bytes("MFS imaging frequency cache"),
+            512 * 2 * std::mem::size_of::<f64>() + 256
+        );
         assert!(plan.maximum_planned_resident_bytes <= plan.usable_memory_bytes);
         assert!(plan.ingest.max_live_row_blocks >= 1);
         assert!(plan.ingest.max_live_row_blocks <= plan.workers);
@@ -56969,7 +63744,7 @@ mod tests {
         let expected = [0, 1].map(|axis| {
             let casa_sum = antenna_pixels
                 .iter()
-                .fold(0.0_f32, |sum, pixel| sum + pixel[axis] as f32);
+                .fold(0.0_f32, |sum, pixel| (f64::from(sum) + pixel[axis]) as f32);
             (casa_sum / antenna_pixels.len() as f32) as f64
         });
         let f64_mean = [0, 1].map(|axis| {
@@ -57000,6 +63775,52 @@ mod tests {
             angles_rad: [1.0, 0.5],
             reference: DirectionRef::J2000,
         }
+    }
+
+    #[test]
+    fn mosaic_same_field_row_matches_frozen_vlass_native_geometry_bits() {
+        let phase_center = PhaseCenter {
+            field_id: Some(0),
+            angles_rad: [-2.737_583_127_275_378, 0.293_215_314_333_100_33],
+            reference: DirectionRef::J2000,
+        };
+        assert_eq!(
+            casa_image_direction_coordinate_angles(phase_center.angles_rad).map(f64::to_bits),
+            [4_615_166_405_128_127_712, 4_598_953_717_439_385_414]
+        );
+        let engine = MsCalEngine::from_parts(
+            vec![MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z)],
+            vec![MDirection::from_angles(
+                phase_center.angles_rad[0],
+                phase_center.angles_rad[1],
+                DirectionRef::J2000,
+            )],
+            MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z),
+            casa_test_support::deterministic_measures_provider(),
+        );
+        let transform = row_imaging_transform(
+            0,
+            0,
+            &phase_center,
+            [
+                -1_236.664_060_532_996_5,
+                -2_033.447_768_019_716_7,
+                1_892.803_548_834_091,
+            ],
+            Some(&engine),
+            UvwReprojectionMode::Mosaic,
+        )
+        .unwrap();
+
+        assert_eq!(
+            transform.uvw_m.map(f64::to_bits),
+            [
+                13_876_525_758_357_962_531,
+                13_880_030_050_162_779_011,
+                4_656_039_453_490_506_920,
+            ]
+        );
+        assert_eq!(transform.phase_shift_m.to_bits(), 4_425_269_780_393_832_168);
     }
 
     fn test_visibility_batch(u_lambda: f64) -> VisibilityBatch {
@@ -58202,6 +65023,7 @@ mod tests {
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -58280,6 +65102,7 @@ mod tests {
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -58374,6 +65197,7 @@ mod tests {
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -58460,6 +65284,7 @@ mod tests {
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -58549,6 +65374,7 @@ mod tests {
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -58635,6 +65461,7 @@ mod tests {
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -58713,6 +65540,7 @@ mod tests {
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -59328,6 +66156,7 @@ mod tests {
             minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
         config.deconvolver = Deconvolver::Mtmfs;
         config.nterms = 2;
+        config.niter = 10;
         config.pbcor = true;
         config.write_pb = true;
         config.mosaic_pb_limit = 0.1;
@@ -59414,9 +66243,17 @@ mod tests {
             None,
         );
 
-        let product_set =
-            run_products_to_image_product_set(&config, &coords, &run_products, None, None)
-                .expect("assemble mosaic MT-MFS PB products");
+        let clean_mask = EffectiveCleanMask::Plane(
+            Array2::from_shape_vec((2, 2), vec![true, false, true, false]).unwrap(),
+        );
+        let product_set = run_products_to_image_product_set(
+            &config,
+            &coords,
+            &run_products,
+            Some(&clean_mask),
+            None,
+        )
+        .expect("assemble mosaic MT-MFS PB products");
         let suffixes = product_set
             .products()
             .iter()
@@ -59430,6 +66267,20 @@ mod tests {
         assert!(suffixes.contains(&".image.tt0.pbcor".to_string()));
         assert!(suffixes.contains(&".image.tt1.pbcor".to_string()));
         assert!(!suffixes.contains(&".alpha.pbcor".to_string()));
+        assert!(suffixes.contains(&".mask".to_string()));
+        let clean_mask_product = product_set
+            .products()
+            .iter()
+            .find(|product| product.suffix() == ".mask")
+            .expect("MT-MFS user clean mask product");
+        assert_eq!(
+            clean_mask_product
+                .data()
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![1.0, 0.0, 1.0, 0.0],
+        );
         for product in product_set.products().iter().filter(|product| {
             product.suffix().starts_with(".residual.tt")
                 || product.suffix().starts_with(".image.tt")
@@ -59453,6 +66304,24 @@ mod tests {
         assert_eq!(pbcor_tt1.data()[[0, 0, 0, 0]], 1.0);
         assert_eq!(pbcor_tt1.data()[[0, 1, 0, 0]], 2.0);
         assert_eq!(pbcor_tt1.data()[[1, 0, 0, 0]], 0.0);
+
+        let mut dirty_config = config.clone();
+        dirty_config.niter = 0;
+        let dirty_product_set = run_products_to_image_product_set(
+            &dirty_config,
+            &coords,
+            &run_products,
+            Some(&clean_mask),
+            None,
+        )
+        .expect("assemble dirty mosaic MT-MFS products");
+        assert!(
+            dirty_product_set
+                .products()
+                .iter()
+                .all(|product| product.suffix() != ".mask"),
+            "CASA does not emit a clean mask for niter=0"
+        );
     }
 
     #[test]
@@ -59699,24 +66568,22 @@ mod tests {
         )
         .unwrap();
 
-        let source_range_hz = frequency_range_hz(&source_frequencies_hz).unwrap();
         let source_edge_range_hz =
             frequency_edge_range_hz(&source_frequencies_hz, &source_widths_hz).unwrap();
-        let reference_frequency_hz = source_frequencies_hz[0];
         let mut expected_range_hz = None::<[f64; 2]>;
         let mut expected_edge_range_hz = None::<[f64; 2]>;
         let mut converter = MFrequencyConverter::new(FrequencyRef::TOPO, FrequencyRef::LSRK);
         for row in &rows {
-            let scale = mfs_imaging_frequency_scale(
+            let frequencies = mfs_imaging_frequencies(
                 FrequencyRef::TOPO,
-                reference_frequency_hz,
+                &source_frequencies_hz,
                 row,
                 Some(&engine),
             )
             .unwrap();
             extend_frequency_range_hz(
                 &mut expected_range_hz,
-                [source_range_hz[0] * scale, source_range_hz[1] * scale],
+                frequency_range_hz(&frequencies.frequency_hz).unwrap(),
             );
             let frame = engine
                 .spectral_frame_observatory(row.time_mjd_seconds.unwrap(), row.field_id)
@@ -60558,6 +67425,7 @@ mod tests {
         assert!(help_text().contains("--json-schema"));
         assert!(help_text().contains("--protocol-info"));
         assert!(help_text().contains("--json-run <SOURCE>"));
+        assert!(help_text().contains("--standard-mfs-plan-probe"));
     }
 
     #[test]
@@ -60693,6 +67561,10 @@ mod tests {
         );
         assert_eq!(manifest.get("mask_boxes").unwrap(), "1,2,3,4");
         assert_eq!(manifest.get("w_term_mode").unwrap(), "direct");
+        assert_eq!(
+            manifest.get("imaging_memory_pressure_policy").unwrap(),
+            "auto"
+        );
 
         let args = vec![
             OsString::from("--managed-output"),
@@ -60786,6 +67658,19 @@ mod tests {
         let (json_run, filtered) = extract_string_option(&filtered, "--json-run").unwrap();
         assert_eq!(json_run.as_deref(), Some("bundle.json"));
         assert_eq!(filtered, vec![non_utf8]);
+
+        let args = vec![
+            OsString::from("--standard-mfs-plan-probe"),
+            OsString::from("true"),
+            OsString::from("--ms"),
+            OsString::from("fixture.ms"),
+        ];
+        let (probe, filtered) = extract_option_value(&args, "--standard-mfs-plan-probe").unwrap();
+        assert!(probe);
+        assert_eq!(
+            filtered,
+            vec![OsString::from("--ms"), OsString::from("fixture.ms")]
+        );
     }
 
     #[test]
@@ -61255,6 +68140,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -61836,6 +68722,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -61959,6 +68846,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -62078,6 +68966,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -62249,6 +69138,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -62400,6 +69290,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -62504,6 +69395,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -62640,6 +69532,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -62771,6 +69664,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -62884,6 +69778,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -63204,7 +70099,7 @@ deconvolver=mtmfs
     }
 
     #[test]
-    fn mosaic_mtmfs_streams_multiple_ddids_and_spws() {
+    fn mosaic_mtmfs_streams_multiple_ddids_spws_and_writes_clean_mask() {
         let tmp = tempdir().unwrap();
         let ms_path = tmp.path().join("multi_spw_mosaic_mtmfs.ms");
         let image_prefix = tmp.path().join("multi_spw_mosaic_mtmfs_image");
@@ -63265,7 +70160,10 @@ deconvolver=mtmfs
             OsString::from("mtmfs"),
             OsString::from("--nterms"),
             OsString::from("2"),
-            OsString::from("--dirty-only"),
+            OsString::from("--niter"),
+            OsString::from("1"),
+            OsString::from("--mask-box"),
+            OsString::from("8,8,23,23"),
             OsString::from("--weighting"),
             OsString::from("natural"),
             OsString::from("--no-parallel"),
@@ -63275,7 +70173,14 @@ deconvolver=mtmfs
         let summary = run_from_config(&config).unwrap();
 
         assert!(summary.gridded_samples >= 8);
-        for suffix in ["psf.tt0", "psf.tt1", "psf.tt2", "image.tt0", "image.tt1"] {
+        for suffix in [
+            "psf.tt0",
+            "psf.tt1",
+            "psf.tt2",
+            "image.tt0",
+            "image.tt1",
+            "mask",
+        ] {
             let path = format!("{}.{}", image_prefix.display(), suffix);
             assert!(
                 Path::new(&path).exists(),
@@ -63378,6 +70283,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -63497,6 +70403,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -63617,6 +70524,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -63732,6 +70640,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -63863,6 +70772,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -64002,6 +70912,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -64118,6 +71029,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -64426,6 +71338,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -64555,6 +71468,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -64701,6 +71615,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -64845,6 +71760,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -65004,6 +71920,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -65341,6 +72258,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -65809,6 +72727,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -66203,6 +73122,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -66448,6 +73368,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -66581,6 +73502,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -66745,6 +73667,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: Some(1),
             imaging_prepare_workers: Some(1),
@@ -66955,6 +73878,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -67097,6 +74021,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -67238,6 +74163,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -67355,6 +74281,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -67468,6 +74395,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -67582,6 +74510,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -67699,6 +74628,7 @@ deconvolver=mtmfs
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,

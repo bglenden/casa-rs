@@ -966,6 +966,12 @@ def _bundle_publication_view(
 
     results = published.get("results")
     if isinstance(results, dict):
+        if isinstance(results.get("host_telemetry_path"), str):
+            results["host_telemetry_path"] = _retained_path(
+                results["host_telemetry_path"],
+                execution_root,
+                retained_root,
+            )
         product_paths = results.get("product_paths")
         if isinstance(product_paths, dict):
             execution_prefix = product_paths.get(

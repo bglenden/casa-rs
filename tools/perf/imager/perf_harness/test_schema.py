@@ -1001,6 +1001,29 @@ class SchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "unknown field"):
             validate_workload_manifest(invalid)
 
+    def test_tolerance_evaluation_accepts_current_and_legacy_contracts(self) -> None:
+        evaluation = {
+            "contract_version": 1,
+            "status": "passed",
+            "checks": [],
+            "failed_checks": [],
+            "incomplete_checks": [],
+        }
+        schema_contract._validate_tolerance_evaluation(
+            evaluation, source="comparison.tolerance_evaluation"
+        )
+
+        evaluation["contract_version"] = 2
+        schema_contract._validate_tolerance_evaluation(
+            evaluation, source="comparison.tolerance_evaluation"
+        )
+
+        evaluation["contract_version"] = 3
+        with self.assertRaisesRegex(ContractError, "must be one of"):
+            schema_contract._validate_tolerance_evaluation(
+                evaluation, source="comparison.tolerance_evaluation"
+            )
+
     def test_source_regions_are_full_mode_and_product_bound(self) -> None:
         workload = {
             "schema_version": 1,

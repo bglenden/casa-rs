@@ -8,11 +8,23 @@ import json
 from pathlib import Path
 import unittest
 
+from perf_harness.tolerances import validate_tolerance_contract
+
 
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT_PATH = ROOT / "tools/perf/imager/vlass_recovery_contract.json"
 LEDGER_PATH = ROOT / "tools/perf/imager/vlass_recovery_launch_ledger.json"
 CATALOG_PATH = ROOT / "tools/perf/imager/vlass_recovery_salvage_catalog.json"
+SCIENTIFIC_EQUIVALENCE_PATH = (
+    ROOT
+    / "tools/perf/imager/contracts/"
+    "vlass-scientific-equivalence-v2-mask-topology.json"
+)
+REDUCED_ALL_FIELDS_CLEAN_PATH = (
+    ROOT
+    / "tools/perf/imager/workloads/"
+    "vlass-fragment-all-fields-clean-4096-four-spw-casa.json"
+)
 
 
 def load_json(path: Path) -> dict[str, object]:
@@ -35,6 +47,97 @@ class RecoveryContractTests(unittest.TestCase):
         self.contract = load_json(CONTRACT_PATH)
         self.ledger = load_json(LEDGER_PATH)
         self.catalog = load_json(CATALOG_PATH)
+
+    def test_scientific_equivalence_contract_is_explicit_and_fail_closed(
+        self,
+    ) -> None:
+        tolerances = load_json(SCIENTIFIC_EQUIVALENCE_PATH)
+        acceptance = self.contract["acceptance"]
+        assert isinstance(acceptance, dict)
+
+        validate_tolerance_contract(tolerances, source=str(SCIENTIFIC_EQUIVALENCE_PATH))
+        self.assertEqual(
+            str(SCIENTIFIC_EQUIVALENCE_PATH.relative_to(ROOT)),
+            acceptance["scientific_equivalence_contract_path"],
+        )
+        self.assertEqual(
+            sha256(SCIENTIFIC_EQUIVALENCE_PATH),
+            acceptance["scientific_equivalence_contract_sha256"],
+        )
+        self.assertIs(
+            True,
+            acceptance["structured_difference_labels_are_diagnostic"],
+        )
+        self.assertEqual(2, tolerances["contract_version"])
+        self.assertIs(True, tolerances["require_full_array"])
+        self.assertEqual(
+            {
+                "coherent_block_rms_over_right_rms": 1.0e-4,
+                "diff_abs_max_over_right_peak": 5.0e-3,
+                "diff_rms_over_right_rms": 1.0e-3,
+                "require_topology_parity": True,
+            },
+            tolerances["default"],
+        )
+        products = tolerances["products"]
+        assert isinstance(products, dict)
+        self.assertEqual(
+            {
+                "beam_area_relative": 1.0e-3,
+                "beam_kernel_nrmse": 1.0e-3,
+                "centroid_beams": 1.0e-2,
+                "integrated_flux_relative": 1.0e-3,
+                "peak_relative": 1.0e-3,
+            },
+            products[".image.tt0"],
+        )
+        self.assertEqual(
+            {
+                "coherent_block_rms_over_right_rms": 1.0e-3,
+                "mask_mismatch_fraction": 1.0e-5,
+            },
+            products[".alpha"],
+        )
+        self.assertEqual(
+            {
+                "coherent_block_rms_over_right_rms": 1.0e-3,
+                "mask_mismatch_fraction": 1.0e-5,
+            },
+            products[".alpha.error"],
+        )
+
+    def test_reduced_all_fields_clean_manifest_binds_approved_contract(self) -> None:
+        manifest = load_json(REDUCED_ALL_FIELDS_CLEAN_PATH)
+        tolerances = load_json(SCIENTIFIC_EQUIVALENCE_PATH)
+        imaging = manifest["imaging"]
+        comparison = manifest["comparison"]
+        run = manifest["run"]
+        assert isinstance(imaging, dict)
+        assert isinstance(comparison, dict)
+        assert isinstance(run, dict)
+
+        self.assertEqual("clean", imaging["mode"])
+        self.assertEqual(4096, imaging["imsize"])
+        self.assertEqual("2,7,12,17", imaging["spw"])
+        self.assertEqual("1107~1127,1512~1532,1542~1562", imaging["field"])
+        self.assertEqual(2000, imaging["niter"])
+        self.assertIs(True, imaging["usepointing"])
+        self.assertEqual(
+            "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/masks/"
+            "vlass-source-box-4096-spectral.mask",
+            imaging["mask_image"],
+        )
+        self.assertEqual(
+            "8490acb911cbbba78f7a20ba4a1d379e227c3a42dfc7eefcc9b7fd5f4139572f",
+            imaging["mask_sha256"],
+        )
+        self.assertEqual(tolerances, comparison["tolerances"])
+        self.assertEqual(19, len(comparison["products"]))
+        self.assertEqual([575, 2125], comparison["source_regions"][0]["blc"])
+        self.assertEqual([638, 2188], comparison["source_regions"][0]["trc"])
+        self.assertEqual("warm", run["cf_cache_role"])
+        self.assertIs(True, run["preverified_warm_cache"])
+        self.assertEqual("1", run["skip_rust"])
 
     def test_contract_binds_reference_manifests_and_cap20000_delta(self) -> None:
         self.assertEqual(1, self.contract["schema_version"])
@@ -116,6 +219,45 @@ class RecoveryContractTests(unittest.TestCase):
             "explicit user approval",
             baseline["unexposed_boundary_policy"],
         )
+
+    def test_landmark_performance_cannot_be_silently_replaced_by_proxy(self) -> None:
+        preservation = self.contract["performance_preservation"]
+        assert isinstance(preservation, dict)
+        landmarks = preservation["landmark_rows"]
+        assert isinstance(landmarks, list)
+        self.assertEqual(
+            [
+                "VLASS-LANDMARK-SINGLE-4096-4SPW-CLEAN-N2000-v1",
+                "VLASS-LANDMARK-SINGLE-4096-16SPW-CLEAN-N2000-v1",
+            ],
+            [row["id"] for row in landmarks],
+        )
+        four_spw = landmarks[0]
+        self.assertAlmostEqual(126.76473748691099, four_spw["historical_ratio"])
+        self.assertEqual(28.65, four_spw["historical_casa_rs_wall_seconds"])
+        self.assertEqual(
+            "f07d3b8721de81ef4aa152f3a3e0747ac597e4b3f25ec609fef279cbec2d0989",
+            four_spw["evidence"]["run_log_sha256"],
+        )
+        activity = four_spw["required_activity"]
+        self.assertIs(False, activity["frozen_model_allowed"])
+        self.assertEqual(2000, activity["actual_minor_iterations"])
+        self.assertGreaterEqual(activity["minimum_image_response_syntheses"], 1)
+        self.assertEqual(1, activity["exact_final_refreshes"])
+
+        proxy = preservation["proxy_policy"]
+        self.assertIs(
+            False,
+            proxy["diagnostic_proxies_may_satisfy_end_to_end_clean_gates"],
+        )
+        self.assertIs(
+            False,
+            proxy["frozen_model_runs_may_satisfy_end_to_end_clean_gates"],
+        )
+        self.assertIs(False, proxy["stage_metrics_may_replace_total_wall_time"])
+        retirement = preservation["retirement_policy"]
+        self.assertIs(False, retirement["silent_retirement_allowed"])
+        self.assertTrue(retirement["landmark_capabilities_remain_in_candidate_lineage"])
 
     def test_launch_ledger_cannot_exceed_the_contract(self) -> None:
         self.assertEqual(self.contract["id"], self.ledger["contract_id"])
@@ -256,6 +398,210 @@ class RecoveryContractTests(unittest.TestCase):
         self.assertEqual(pending["corrected_mask_blc"], source["blc"])
         self.assertEqual(pending["corrected_mask_trc"], source["trc"])
 
+    def test_reduced_ladder_records_matched_release_timing_and_promoted_correctness(
+        self,
+    ) -> None:
+        entries = self.ledger["reduced_ladder_entries"]
+        assert isinstance(entries, list)
+        self.assertEqual(4, len(entries))
+        pair = entries[0]
+        self.assertEqual(
+            "REDUCED-ALL63-DIRTY-4096-4SPW-001",
+            pair["pair_id"],
+        )
+        self.assertEqual(
+            "correctness_promoted_performance_below_target",
+            pair["disposition"],
+        )
+
+        failed_clean = entries[1]
+        self.assertEqual(
+            "REDUCED-ALL63-CLEAN-4096-4SPW-ATTEMPT-001",
+            failed_clean["pair_id"],
+        )
+        self.assertEqual(
+            "rejected_invalid_mask_coordinate_system",
+            failed_clean["disposition"],
+        )
+        correction = failed_clean["correction"]
+        assert isinstance(correction, dict)
+        self.assertEqual(
+            "8490acb911cbbba78f7a20ba4a1d379e227c3a42dfc7eefcc9b7fd5f4139572f",
+            correction["mask_sha256"],
+        )
+        self.assertEqual(
+            ["Direction", "Stokes", "Spectral"],
+            correction["coordinate_types"],
+        )
+        self.assertEqual("completed_and_frozen", correction["retry_status"])
+        self.assertEqual(
+            "REDUCED-ALL63-CLEAN-4096-4SPW-001",
+            correction["retry_pair_id"],
+        )
+
+        selection = pair["selection"]
+        assert isinstance(selection, dict)
+        self.assertEqual(63, selection["field_count"])
+        self.assertEqual(4, selection["spw_count"])
+        self.assertEqual([4096, 4096], selection["imsize"])
+        self.assertEqual(18, selection["product_count"])
+
+        casa = pair["casa"]
+        rust = pair["casa_rs"]
+        performance = pair["performance"]
+        comparison = pair["comparison"]
+        for value in (casa, rust, performance, comparison):
+            assert isinstance(value, dict)
+        manifest = ROOT / casa["manifest_path"]
+        self.assertEqual(casa["manifest_sha256"], sha256(manifest))
+        self.assertEqual(64, len(casa["receipt_sha256"]))
+        self.assertEqual(64, len(rust["binary_sha256"]))
+        self.assertEqual(64, len(rust["run_log_sha256"]))
+        self.assertAlmostEqual(
+            casa["tclean_wall_seconds"] / rust["wall_seconds"],
+            performance["speedup_casa_over_casa_rs"],
+        )
+        self.assertEqual("below_target", performance["status"])
+        self.assertEqual("comparison_failed", comparison["status"])
+        self.assertEqual("matched", comparison["inventory"])
+        self.assertEqual(
+            "mismatch",
+            comparison["restoring_beam_metadata"],
+        )
+        self.assertEqual(
+            [".psf.tt1", ".psf.tt2", ".weight.tt1"],
+            comparison["structured_difference_products"],
+        )
+        scientific = pair["scientific_equivalence"]
+        assert isinstance(scientific, dict)
+        contract = ROOT / scientific["contract_path"]
+        self.assertEqual(scientific["contract_sha256"], sha256(contract))
+        self.assertEqual("passed", scientific["status"])
+        self.assertEqual(18, scientific["product_count"])
+        self.assertEqual([], scientific["failed_checks"])
+        self.assertEqual([], scientific["incomplete_checks"])
+        self.assertLessEqual(scientific["image_tt0_nrmse"], 1.0e-3)
+        self.assertLessEqual(scientific["beam_kernel_nrmse"], 1.0e-3)
+        self.assertLessEqual(scientific["beam_area_relative"], 1.0e-3)
+        self.assertLessEqual(
+            scientific["worst_coherent_block_rms_over_right_rms"],
+            1.0e-4,
+        )
+        self.assertEqual(64, len(scientific["receipt_sha256"]))
+        self.assertEqual(64, len(scientific["raw_output_sha256"]))
+
+        clean = entries[2]
+        self.assertEqual(
+            "REDUCED-ALL63-CLEAN-4096-4SPW-001",
+            clean["pair_id"],
+        )
+        self.assertEqual(
+            "correctness_failed_performance_below_target",
+            clean["disposition"],
+        )
+        clean_casa = clean["casa"]
+        clean_rust = clean["casa_rs"]
+        clean_performance = clean["performance"]
+        clean_scientific = clean["scientific_equivalence"]
+        for value in (
+            clean_casa,
+            clean_rust,
+            clean_performance,
+            clean_scientific,
+        ):
+            assert isinstance(value, dict)
+        self.assertEqual(19, clean["selection"]["product_count"])
+        self.assertEqual(193, clean_casa["minor_iterations"])
+        self.assertEqual(187, clean_rust["minor_iterations"])
+        self.assertEqual(0, clean_rust["swaps"])
+        self.assertAlmostEqual(
+            clean_casa["tclean_wall_seconds"] / clean_rust["wall_seconds"],
+            clean_performance["speedup_casa_over_casa_rs"],
+        )
+        self.assertEqual("below_target", clean_performance["status"])
+        self.assertEqual("failed", clean_scientific["status"])
+        self.assertEqual("matched", clean_scientific["inventory"])
+        self.assertGreater(clean_scientific["image_tt0_nrmse"], 1.0e-3)
+        self.assertGreater(clean_scientific["residual_tt0_nrmse"], 1.0e-3)
+        self.assertEqual(
+            clean_scientific["contract_sha256"],
+            sha256(ROOT / clean_scientific["contract_path"]),
+        )
+        for field in (
+            "comparison_input_sha256",
+            "raw_output_sha256",
+            "log_sha256",
+        ):
+            self.assertEqual(64, len(clean_scientific[field]))
+
+        promoted = entries[3]
+        self.assertEqual(
+            "REDUCED-ALL63-CLEAN-4096-4SPW-SEPARABLE-001",
+            promoted["pair_id"],
+        )
+        self.assertEqual(
+            "passed_reduced_correctness_and_performance",
+            promoted["disposition"],
+        )
+        promoted_casa = promoted["casa"]
+        promoted_rust = promoted["casa_rs"]
+        promoted_performance = promoted["performance"]
+        promoted_scientific = promoted["scientific_equivalence"]
+        for value in (
+            promoted_casa,
+            promoted_rust,
+            promoted_performance,
+            promoted_scientific,
+        ):
+            assert isinstance(value, dict)
+        self.assertEqual(193, promoted_casa["minor_iterations"])
+        self.assertEqual(193, promoted_rust["minor_iterations"])
+        self.assertEqual(12, promoted_rust["major_cycles"])
+        self.assertEqual(0, promoted_rust["process_swaps"])
+        self.assertAlmostEqual(
+            promoted_casa["tclean_wall_seconds"] / promoted_rust["wall_seconds"],
+            promoted_performance["speedup_casa_over_casa_rs"],
+        )
+        self.assertGreaterEqual(
+            promoted_performance["speedup_casa_over_casa_rs"],
+            promoted_performance["required_speedup"],
+        )
+        self.assertEqual("passed", promoted_performance["status"])
+        self.assertEqual("passed", promoted_scientific["status"])
+        self.assertEqual("matched", promoted_scientific["inventory"])
+        self.assertEqual(19, promoted_scientific["product_count"])
+        self.assertLessEqual(promoted_scientific["image_tt0_nrmse"], 1.0e-3)
+        self.assertLessEqual(promoted_scientific["image_tt1_nrmse"], 1.0e-3)
+        self.assertLessEqual(promoted_scientific["alpha_nrmse"], 1.0e-3)
+        self.assertLessEqual(
+            promoted_scientific[
+                "alpha_coherent_block_rms_over_right_rms"
+            ],
+            1.0e-3,
+        )
+        self.assertLessEqual(
+            promoted_scientific["alpha_mask_mismatch_fraction"],
+            1.0e-5,
+        )
+        self.assertEqual(
+            promoted_scientific["contract_sha256"],
+            sha256(ROOT / promoted_scientific["contract_path"]),
+        )
+        for field in (
+            "binary_sha256",
+            "run_log_sha256",
+            "provenance_sha256",
+        ):
+            self.assertEqual(64, len(promoted_rust[field]))
+        for field in (
+            "comparison_input_sha256",
+            "raw_output_sha256",
+            "log_sha256",
+            "comparison_receipt_sha256",
+            "reassessment_receipt_sha256",
+        ):
+            self.assertEqual(64, len(promoted_scientific[field]))
+
     def test_salvage_catalog_selects_at_most_primary_and_reserve(self) -> None:
         self.assertEqual(self.contract["id"], self.catalog["contract_id"])
         entries = self.catalog["entries"]
@@ -323,9 +669,7 @@ class RecoveryContractTests(unittest.TestCase):
                 self.assertEqual(64, len(validation["scientific_floor_sha256"]))
             by_id = {entry["id"]: entry for entry in entries}
             self.assertEqual("retired", by_id["obsolete-9a14-source-seed"]["status"])
-            self.assertEqual(
-                "retired", by_id["db41-obsolete-seed-pr3-trim"]["status"]
-            )
+            self.assertEqual("retired", by_id["db41-obsolete-seed-pr3-trim"]["status"])
             if reserve is not None:
                 assert isinstance(reserve, dict)
                 self.assertEqual(

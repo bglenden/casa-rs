@@ -1413,6 +1413,20 @@ pub struct AwParallelHandVisibilityBatch {
     pub first_visibility: Vec<Complex32>,
     /// Second accepted parallel hand, normally LL for EVLA data.
     pub second_visibility: Vec<Complex32>,
+    /// Geometric phasor already applied to both accepted parallel hands.
+    ///
+    /// AW prediction needs this separately because CASA applies its conjugate
+    /// before convolution-function normalization, then restores the observed
+    /// visibility frame after normalization.
+    pub source_phase: Vec<Complex32>,
+    /// Original visibility-buffer `w` coordinate in wavelengths.
+    ///
+    /// CASA AWProject uses phase-center-rotated `u`/`v` for grid placement,
+    /// but `GridToData` selects and conjugates the prediction convolution
+    /// function from the original visibility-buffer `w`. Keeping this aligned
+    /// sidecar prevents the prediction path from accidentally using the
+    /// rotated gridding `w`.
+    pub prediction_w_lambda: Vec<f64>,
 }
 
 impl AwParallelHandVisibilityBatch {
@@ -1427,21 +1441,38 @@ impl AwParallelHandVisibilityBatch {
     }
 
     pub(crate) fn validate_len(&self, expected: usize) -> Result<(), ImagingError> {
-        if self.first_visibility.len() != expected || self.second_visibility.len() != expected {
+        if self.first_visibility.len() != expected
+            || self.second_visibility.len() != expected
+            || self.source_phase.len() != expected
+            || self.prediction_w_lambda.len() != expected
+        {
             return Err(ImagingError::InvalidRequest(format!(
-                "AW parallel-hand length mismatch: visibility={expected}, first={}, second={}",
+                "AW parallel-hand length mismatch: visibility={expected}, first={}, second={}, source_phase={}, prediction_w={}",
                 self.first_visibility.len(),
-                self.second_visibility.len()
+                self.second_visibility.len(),
+                self.source_phase.len(),
+                self.prediction_w_lambda.len()
             )));
         }
         if self
             .first_visibility
             .iter()
             .chain(&self.second_visibility)
+            .chain(&self.source_phase)
             .any(|visibility| !(visibility.re.is_finite() && visibility.im.is_finite()))
         {
             return Err(ImagingError::InvalidRequest(
-                "AW parallel-hand visibility contains a non-finite value".to_string(),
+                "AW parallel-hand visibility or source phase contains a non-finite value"
+                    .to_string(),
+            ));
+        }
+        if self
+            .prediction_w_lambda
+            .iter()
+            .any(|w_lambda| !w_lambda.is_finite())
+        {
+            return Err(ImagingError::InvalidRequest(
+                "AW prediction W coordinate contains a non-finite value".to_string(),
             ));
         }
         Ok(())

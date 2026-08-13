@@ -361,6 +361,8 @@ impl DirectionCoordinate {
             (self.cdelt[0] * to_degrees) * (self.pc[[0, 0]] * dx + self.pc[[0, 1]] * dy);
         let y_degrees =
             (self.cdelt[1] * to_degrees) * (self.pc[[1, 0]] * dx + self.pc[[1, 1]] * dy);
+        // Keep the D2R multiplication grouped to reproduce CASA's serialized
+        // zero-pixel world replacement exactly.
         let x = x_degrees * (PI / 180.0);
         let y = y_degrees * (PI / 180.0);
 
@@ -734,6 +736,38 @@ mod tests {
             "lat mismatch: {} vs {}",
             world[1],
             coord.crval[1]
+        );
+    }
+
+    #[test]
+    fn vlass_4096_zero_pixel_matches_casa_wcslib() {
+        let coord = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [3.5456021799042077, 0.29321531433310033],
+            [-2.9088820866572157e-6, 2.9088820866572157e-6],
+            [2048.0, 2048.0],
+        );
+
+        assert_eq!(
+            coord.to_world(&[0.0, 0.0]).unwrap(),
+            vec![3.5518141381294104, 0.2872525403597405]
+        );
+    }
+
+    #[test]
+    fn vlass_12150_zero_pixel_matches_casa_wcslib() {
+        let coord = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [3.5456021799042077, 0.29321531433310033],
+            [-2.9088820866572157e-6, 2.9088820866572157e-6],
+            [6075.0, 6075.0],
+        );
+
+        assert_eq!(
+            coord.to_world(&[0.0, 0.0]).unwrap(),
+            vec![3.56396716862884, 0.2754960264910762]
         );
     }
 

@@ -8,6 +8,7 @@ import math
 import unittest
 
 from perf_harness import casa_image_compare as comparator
+from perf_harness import image_compare as validator
 from perf_harness.image_compare import (
     comparison_request_binding,
     normalize_comparison_request,
@@ -19,6 +20,33 @@ SUFFIX = ".image.tt0"
 
 
 class FullArrayOutputValidationTests(unittest.TestCase):
+    def test_basis_fit_r2_uses_variance_not_raw_rms(self) -> None:
+        validator._validate_structure_basis_fit(
+            {
+                "status": "computed",
+                "model": (
+                    "diff ~= scale*reference + offset + "
+                    "dx*d_reference_dx + dy*d_reference_dy"
+                ),
+                "masked_pixels": 16,
+                "fit_pixels": 16,
+                "excluded_nonfinite_basis_pixels": 0,
+                "r2": 0.2702634844904084,
+                "diff_rms": 7.014264027023979e-08,
+                "residual_rms": 5.4108435565271785e-08,
+                "coefficients": {
+                    "scale": 3.8408546992537006e-08,
+                    "offset": 8.669070631143725e-09,
+                    "dx_pixels": -1.9649135434961834e-05,
+                    "dy_pixels": -0.000254591128604875,
+                },
+            },
+            suffix=".pb.tt0",
+            source_shape=[4, 4],
+            analysis_pixels=16,
+            label=".pb.tt0",
+        )
+
     def test_complete_full_array_output_is_accepted(self) -> None:
         request = normalized_request()
 
@@ -284,6 +312,7 @@ def comparison_output(request: dict[str, object]) -> dict[str, object]:
         "topology": {
             "mask_equal": True,
             "mask_mismatch_count": 0,
+            "mask_mismatch_samples": [],
             "left_masked_count": 0,
             "right_masked_count": 0,
             "finite_equal": True,

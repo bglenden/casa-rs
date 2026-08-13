@@ -197,11 +197,7 @@ fn make_casa_gaussian_psf_image(
             let major = cos_pa * (x as f64 - ref_x) * dx + sin_pa * (y as f64 - ref_y) * dy;
             let minor = -sin_pa * (x as f64 - ref_x) * dx + cos_pa * (y as f64 - ref_y) * dy;
             let radius = sbmaj * major.powi(2) + sbmin * minor.powi(2);
-            let value = if radius < 20.0 {
-                (-radius).exp_m1() + 1.0
-            } else {
-                0.0
-            };
+            let value = if radius < 20.0 { (-radius).exp() } else { 0.0 };
             image[(x, y)] = value as f32;
             volume += value;
         }
@@ -871,6 +867,27 @@ mod tests {
     use super::{fit_beam_from_psf, make_casa_gaussian_psf_image, restore_model};
     use crate::BeamFit;
 
+    fn fit_retained_vlass_psf(path: PathBuf, expected_side: usize) -> BeamFit {
+        let image = PagedImage::<f32>::open(path).expect("open retained VLASS PSF");
+        assert_eq!(image.shape(), &[expected_side, expected_side, 1, 1]);
+        let patch_side = 81usize;
+        let patch_start = expected_side / 2 - patch_side / 2;
+        let patch = image
+            .get_slice(
+                &[patch_start, patch_start, 0, 0],
+                &[patch_side, patch_side, 1, 1],
+            )
+            .expect("read retained VLASS PSF patch")
+            .into_dimensionality::<Ix4>()
+            .expect("four-dimensional PSF patch")
+            .index_axis_move(ndarray::Axis(3), 0)
+            .index_axis_move(ndarray::Axis(2), 0);
+        let arcsec_to_rad = std::f64::consts::PI / (180.0 * 3_600.0);
+        fit_beam_from_psf(&patch, [0.6 * arcsec_to_rad, 0.6 * arcsec_to_rad], 0.35)
+            .beam
+            .expect("fit retained VLASS beam")
+    }
+
     fn synthetic_gaussian_psf(
         shape: (usize, usize),
         cell_size_rad: [f64; 2],
@@ -938,30 +955,14 @@ mod tests {
     #[test]
     #[ignore = "requires retained CASA and casa-rs 12150x12150 VLASS PSFs"]
     fn retained_vlass_psf_beams_match_the_casa_fitter() {
-        fn fit_retained_vlass_psf(path: PathBuf) -> BeamFit {
-            let image = PagedImage::<f32>::open(path).expect("open retained VLASS PSF");
-            assert_eq!(image.shape(), &[12_150, 12_150, 1, 1]);
-            let patch = image
-                .get_slice(&[6_035, 6_035, 0, 0], &[81, 81, 1, 1])
-                .expect("read retained VLASS PSF patch")
-                .into_dimensionality::<Ix4>()
-                .expect("four-dimensional PSF patch")
-                .index_axis_move(ndarray::Axis(3), 0)
-                .index_axis_move(ndarray::Axis(2), 0);
-            let arcsec_to_rad = std::f64::consts::PI / (180.0 * 3_600.0);
-            fit_beam_from_psf(&patch, [0.6 * arcsec_to_rad, 0.6 * arcsec_to_rad], 0.35)
-                .beam
-                .expect("fit retained VLASS beam")
-        }
-
         let rust_path = std::env::var_os("CASA_RS_BEAM_PROBE_IMAGE")
             .map(PathBuf::from)
             .expect("set CASA_RS_BEAM_PROBE_IMAGE to the retained casa-rs VLASS PSF");
         let casa_path = std::env::var_os("CASA_RS_BEAM_PROBE_REFERENCE")
             .map(PathBuf::from)
             .expect("set CASA_RS_BEAM_PROBE_REFERENCE to the retained CASA VLASS PSF");
-        let rust_beam = fit_retained_vlass_psf(rust_path);
-        let casa_beam = fit_retained_vlass_psf(casa_path);
+        let rust_beam = fit_retained_vlass_psf(rust_path, 12_150);
+        let casa_beam = fit_retained_vlass_psf(casa_path, 12_150);
         let arcsec_to_rad = std::f64::consts::PI / (180.0 * 3_600.0);
         let rad_to_arcsec = 1.0 / arcsec_to_rad;
         let rad_to_deg = 180.0 / std::f64::consts::PI;
@@ -980,6 +981,38 @@ mod tests {
                 (casa_beam.position_angle_rad * rad_to_deg) as f32,
             ),
             (2.955_340_9_f32, 2.084_298_4_f32, 71.113_64_f32,),
+        );
+    }
+
+    #[test]
+    #[ignore = "requires frozen CASA and casa-rs 4096x4096 VLASS PSFs"]
+    fn retained_vlass_4096_psf_beams_match_the_casa_fitter() {
+        let rust_path = std::env::var_os("CASA_RS_BEAM_PROBE_IMAGE")
+            .map(PathBuf::from)
+            .expect("set CASA_RS_BEAM_PROBE_IMAGE to the retained casa-rs VLASS PSF");
+        let casa_path = std::env::var_os("CASA_RS_BEAM_PROBE_REFERENCE")
+            .map(PathBuf::from)
+            .expect("set CASA_RS_BEAM_PROBE_REFERENCE to the retained CASA VLASS PSF");
+        let rust_beam = fit_retained_vlass_psf(rust_path, 4_096);
+        let casa_beam = fit_retained_vlass_psf(casa_path, 4_096);
+        let arcsec_to_rad = std::f64::consts::PI / (180.0 * 3_600.0);
+        let rad_to_arcsec = 1.0 / arcsec_to_rad;
+        let rad_to_deg = 180.0 / std::f64::consts::PI;
+        assert_eq!(
+            (
+                (rust_beam.major_fwhm_rad * rad_to_arcsec) as f32,
+                (rust_beam.minor_fwhm_rad * rad_to_arcsec) as f32,
+                (rust_beam.position_angle_rad * rad_to_deg) as f32,
+            ),
+            (3.202_949_8_f32, 2.157_604_5_f32, 70.553_505_f32),
+        );
+        assert_eq!(
+            (
+                (casa_beam.major_fwhm_rad * rad_to_arcsec) as f32,
+                (casa_beam.minor_fwhm_rad * rad_to_arcsec) as f32,
+                (casa_beam.position_angle_rad * rad_to_deg) as f32,
+            ),
+            (3.202_949_8_f32, 2.157_604_5_f32, 70.553_5_f32),
         );
     }
 

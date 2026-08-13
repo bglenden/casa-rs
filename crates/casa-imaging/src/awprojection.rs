@@ -1016,8 +1016,10 @@ impl AwConvolutionFunctionCache {
             .transpose()?
             .map(Arc::new);
         #[cfg(unix)]
-        let experimental_direct_sample_select =
-            env::var_os("CASA_RS_AWPROJECT_DIRECT_CF_SELECT_EXPERIMENT").is_some();
+        let experimental_direct_sample_select = !matches!(
+            env::var("CASA_RS_AWPROJECT_DIRECT_CF_SELECT_EXPERIMENT"),
+            Ok(value) if value == "0" || value.eq_ignore_ascii_case("false")
+        );
         #[cfg(unix)]
         if experimental_direct_sample_select {
             eprintln!(
@@ -1166,6 +1168,48 @@ impl AwConvolutionFunctionCache {
         }
         self.select_key_for_sample_scanned(
             requested_cf_frequency_hz,
+            w_lambda,
+            selected_mueller_element,
+            parallactic_angle_deg,
+        )
+    }
+
+    /// Select the CF cell used by CASA `AWVisResampler::GridToData`.
+    ///
+    /// Prediction deliberately does not reuse the forward-gridding cell:
+    /// CASA selects the normal (not conjugate-beam) frequency and swaps the
+    /// direct/conjugate Mueller mapping before applying the W-sign
+    /// conjugation in the degridding loop.
+    pub fn select_key_for_prediction_sample(
+        &self,
+        sample_frequency_hz: f64,
+        w_lambda: f64,
+        mueller_element: i32,
+        parallactic_angle_deg: f64,
+    ) -> Option<AwConvolutionFunctionKey> {
+        if !(sample_frequency_hz.is_finite()
+            && sample_frequency_hz > 0.0
+            && w_lambda.is_finite()
+            && parallactic_angle_deg.is_finite())
+        {
+            return None;
+        }
+        let selected_mueller_element = if w_lambda > 0.0 {
+            15_i32.checked_sub(mueller_element)?
+        } else {
+            mueller_element
+        };
+        #[cfg(unix)]
+        if self.experimental_direct_sample_select {
+            return self.select_key_for_sample_direct(
+                sample_frequency_hz,
+                w_lambda,
+                selected_mueller_element,
+                parallactic_angle_deg,
+            );
+        }
+        self.select_key_for_sample_scanned(
+            sample_frequency_hz,
             w_lambda,
             selected_mueller_element,
             parallactic_angle_deg,
@@ -2087,10 +2131,11 @@ mod tests {
     use crate::{
         AwParallelHandVisibilityBatch, AwProjectControls, AwProjectGridderConfig, CleanConfig,
         CompatibilityMode, DirtyProductFftPolicy, GridderMode, GroupedVisibilityMetadata,
-        GroupedVisibilityMetadataBatch, ImageGeometry, ImagingExecutionPlan, ImagingResolvedPlan,
-        MosaicGridderConfig, MosaicMtmfsVisibilityBlock, MtmfsRequest, PlaneStokes,
-        PrimaryBeamModel, VisibilityBatch, VisibilitySampleRange, WTermMode, WeightDensityMode,
-        WeightingMode, run_mosaic_mtmfs_from_single_plane_stream,
+        GroupedVisibilityMetadataBatch, ImageGeometry, ImagingExecutionPlan,
+        ImagingMemoryAllocation, ImagingResolvedPlan, MosaicGridderConfig,
+        MosaicMtmfsVisibilityBlock, MtmfsRequest, PlaneStokes, PrimaryBeamModel, VisibilityBatch,
+        VisibilitySampleRange, WTermMode, WeightDensityMode, WeightingMode,
+        run_mosaic_mtmfs_from_single_plane_stream,
     };
 
     #[test]
@@ -2382,6 +2427,70 @@ mod tests {
     }
 
     #[test]
+    fn prediction_selection_uses_casa_grid_to_data_mueller_mapping() {
+        let temp = TempDir::new().unwrap();
+        for (mueller_index, mueller_element) in [0, 15].into_iter().enumerate() {
+            for weight in [false, true] {
+                let family = if weight { "WTCFS" } else { "CFS" };
+                write_test_cell_with_mueller(
+                    temp.path(),
+                    &format!("{family}_0_0_CF_0_0_{mueller_index}.im"),
+                    1.1e9,
+                    0.0,
+                    mueller_element,
+                    weight,
+                );
+            }
+        }
+
+        let cache = AwConvolutionFunctionCache::open(temp.path()).unwrap();
+        assert_eq!(
+            cache
+                .select_key_for_prediction_sample(1.1e9, 1.0, 0, 30.0)
+                .unwrap()
+                .mueller_element,
+            15
+        );
+        assert_eq!(
+            cache
+                .select_key_for_prediction_sample(1.1e9, 0.0, 0, 30.0)
+                .unwrap()
+                .mueller_element,
+            0
+        );
+        assert_eq!(
+            cache
+                .select_key_for_prediction_sample(1.1e9, -1.0, 15, 30.0)
+                .unwrap()
+                .mueller_element,
+            15
+        );
+        #[cfg(unix)]
+        {
+            let mut direct_cache = cache.clone();
+            direct_cache.experimental_direct_sample_select = true;
+            for w_lambda in [-1.0, 0.0, 1.0] {
+                for mueller_element in [0, 15] {
+                    assert_eq!(
+                        direct_cache.select_key_for_prediction_sample(
+                            1.1e9,
+                            w_lambda,
+                            mueller_element,
+                            30.0,
+                        ),
+                        cache.select_key_for_prediction_sample(
+                            1.1e9,
+                            w_lambda,
+                            mueller_element,
+                            30.0,
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn sample_selection_uses_casa_forward_conjugate_frequency_map() {
         let temp = TempDir::new().unwrap();
         for (frequency_index, (frequency_hz, conjugate_frequency_hz)) in
@@ -2407,6 +2516,10 @@ mod tests {
             .select_key_for_sample(1.0e9, 2.0e9, 1.0, 0, 30.0, true)
             .unwrap();
         assert_eq!(key.frequency_hz, 2.0e9);
+        let prediction_key = cache
+            .select_key_for_prediction_sample(1.0e9, 0.0, 0, 30.0)
+            .unwrap();
+        assert_eq!(prediction_key.frequency_hz, 1.0e9);
     }
 
     #[test]
@@ -2596,6 +2709,8 @@ mod tests {
                 Complex32::new(0.9, -0.01),
                 Complex32::new(1.2, 0.05),
             ],
+            source_phase: vec![Complex32::new(1.0, 0.0); 6],
+            prediction_w_lambda: visibility.w_lambda.clone(),
         };
         let primary_beam_model = PrimaryBeamModel::EvlaLBandCommon;
         let grouped_metadata = GroupedVisibilityMetadataBatch {
@@ -2652,13 +2767,18 @@ mod tests {
             clean_mask: Some(Array2::from_elem((64, 64), true)),
             compatibility: CompatibilityMode::CasaStandardMfs,
         };
-        let run = |request| {
+        let run_with_replay_retention = |request, replay_retention_bytes| {
+            let mut resolved = ImagingResolvedPlan::default();
+            if replay_retention_bytes > 0 {
+                resolved.memory_allocations.push(ImagingMemoryAllocation {
+                    component: "AWProject compact replay retention",
+                    stage: "run",
+                    bytes: replay_retention_bytes,
+                });
+            }
             run_mosaic_mtmfs_from_single_plane_stream(
                 request,
-                ImagingExecutionPlan::new(
-                    DirtyProductFftPolicy::correctness_first(),
-                    ImagingResolvedPlan::default(),
-                ),
+                ImagingExecutionPlan::new(DirtyProductFftPolicy::correctness_first(), resolved),
                 WeightDensityMode::Combined,
                 |_, consumer| {
                     consumer(MosaicMtmfsVisibilityBlock {
@@ -2678,6 +2798,7 @@ mod tests {
                 },
             )
         };
+        let run = |request| run_with_replay_retention(request, 0);
         let result = run(request.clone()).unwrap();
 
         assert_eq!(result.psf_terms.len(), 3);
@@ -2728,23 +2849,23 @@ mod tests {
         let mut clean_request = request;
         clean_request.clean.niter = 2;
         clean_request.clean.minor_cycle_length = 1;
-        let clean_result = run(clean_request.clone()).unwrap();
-        let repeated_clean_result = run(clean_request).unwrap();
-        assert_eq!(clean_result.psf_terms, repeated_clean_result.psf_terms);
+        let uncached_clean_result = run(clean_request.clone()).unwrap();
+        let clean_result = run_with_replay_retention(clean_request.clone(), 1024 * 1024).unwrap();
+        assert_eq!(clean_result.psf_terms, uncached_clean_result.psf_terms);
         assert_eq!(
             clean_result.residual_terms,
-            repeated_clean_result.residual_terms
+            uncached_clean_result.residual_terms
         );
-        assert_eq!(clean_result.model_terms, repeated_clean_result.model_terms);
-        assert_eq!(clean_result.image_terms, repeated_clean_result.image_terms);
-        assert_eq!(clean_result.sumwt_terms, repeated_clean_result.sumwt_terms);
+        assert_eq!(clean_result.model_terms, uncached_clean_result.model_terms);
+        assert_eq!(clean_result.image_terms, uncached_clean_result.image_terms);
+        assert_eq!(clean_result.sumwt_terms, uncached_clean_result.sumwt_terms);
         assert_eq!(
             clean_result.weight_terms,
-            repeated_clean_result.weight_terms
+            uncached_clean_result.weight_terms
         );
-        assert_eq!(clean_result.alpha, repeated_clean_result.alpha);
-        assert_eq!(clean_result.alpha_error, repeated_clean_result.alpha_error);
-        assert_eq!(clean_result.alpha_mask, repeated_clean_result.alpha_mask);
+        assert_eq!(clean_result.alpha, uncached_clean_result.alpha);
+        assert_eq!(clean_result.alpha_error, uncached_clean_result.alpha_error);
+        assert_eq!(clean_result.alpha_mask, uncached_clean_result.alpha_mask);
         assert_eq!(clean_result.psf_terms.len(), 3);
         assert_eq!(clean_result.residual_terms.len(), 2);
         assert_eq!(clean_result.model_terms.len(), 2);
@@ -2766,12 +2887,60 @@ mod tests {
         assert_eq!(clean_diagnostics.samples.attempted_samples, 6);
         assert_eq!(clean_diagnostics.samples.accepted_samples, 6);
         assert_eq!(
-            clean_diagnostics.resident.loads, 24,
-            "three clean passes each pack the fixture's eight unique cells once"
+            clean_diagnostics.resident.loads, 16,
+            "initial dirty and the first residual pass pack the fixture's cells; the second residual pass reuses the retained exact source-order window"
         );
         assert_eq!(clean_diagnostics.resident.hits, 0);
         assert!(
             clean_diagnostics.resident.resident_bytes <= clean_diagnostics.resident_budget_bytes
+        );
+
+        let mut partial_request = clean_request;
+        let GridderMode::AwProject(partial_config) = &mut partial_request.gridder_mode else {
+            unreachable!("the synthetic replay fixture must remain AWProject");
+        };
+        partial_config.controls.cf_resident_bytes = 14 * 1024;
+        let uncached_partial_result = run(partial_request.clone()).unwrap();
+        let partial_result = run_with_replay_retention(partial_request, 28 * 1024).unwrap();
+        assert_eq!(partial_result.psf_terms, uncached_partial_result.psf_terms);
+        assert_eq!(
+            partial_result.residual_terms,
+            uncached_partial_result.residual_terms
+        );
+        assert_eq!(
+            partial_result.model_terms,
+            uncached_partial_result.model_terms
+        );
+        assert_eq!(
+            partial_result.image_terms,
+            uncached_partial_result.image_terms
+        );
+        assert_eq!(
+            partial_result.sumwt_terms,
+            uncached_partial_result.sumwt_terms
+        );
+        assert_eq!(
+            partial_result.weight_terms,
+            uncached_partial_result.weight_terms
+        );
+        assert_eq!(partial_result.alpha, uncached_partial_result.alpha);
+        assert_eq!(
+            partial_result.alpha_error,
+            uncached_partial_result.alpha_error
+        );
+        assert_eq!(
+            partial_result.alpha_mask,
+            uncached_partial_result.alpha_mask
+        );
+        let uncached_partial_diagnostics = uncached_partial_result
+            .awproject
+            .expect("uncached partial AWProject diagnostics");
+        let partial_diagnostics = partial_result
+            .awproject
+            .expect("partial AWProject diagnostics");
+        assert!(
+            partial_diagnostics.resident.loads < uncached_partial_diagnostics.resident.loads,
+            "a bounded retained prefix must avoid at least one full-cell load"
         );
     }
 

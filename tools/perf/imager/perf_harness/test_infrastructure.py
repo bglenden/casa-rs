@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import pathlib
 import py_compile
 import subprocess
@@ -172,6 +173,37 @@ class CasaProtocolTests(unittest.TestCase):
         self.assertEqual("first\nsecond\n", completed.stdout)
         self.assertEqual(completed.stdout, visible.getvalue())
         self.assertIsNone(completed.stderr)
+
+    def test_shared_process_runner_exposes_spawn_and_pre_reap_boundaries(self) -> None:
+        events: list[tuple[str, int]] = []
+
+        def on_spawn(process):
+            events.append(("spawn", process.pid))
+
+        def before_reap(process):
+            events.append(("before_reap", process.pid))
+            if os.name == "posix" and all(
+                hasattr(os, name)
+                for name in ("P_PID", "WEXITED", "WNOWAIT", "WNOHANG", "waitid")
+            ):
+                self.assertIsNone(process.returncode)
+                self.assertIsNotNone(
+                    os.waitid(
+                        os.P_PID,
+                        process.pid,
+                        os.WEXITED | os.WNOWAIT | os.WNOHANG,
+                    )
+                )
+
+        completed = run_command(
+            [sys.executable, "-c", "print('lifecycle')"],
+            on_spawn=on_spawn,
+            before_reap=before_reap,
+        )
+
+        self.assertEqual(0, completed.returncode)
+        self.assertEqual(["spawn", "before_reap"], [event[0] for event in events])
+        self.assertEqual(events[0][1], events[1][1])
 
     def test_shared_streaming_process_honors_timeout(self) -> None:
         with self.assertRaises(subprocess.TimeoutExpired):

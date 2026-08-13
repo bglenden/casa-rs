@@ -61,17 +61,31 @@ def read_spw_channels(ms_path: str, spw: int) -> tuple[np.ndarray, np.ndarray]:
     return freqs, widths
 
 
-def read_pol_corr_count(ms_path: str, pol_id: int) -> int:
+def read_pol_corr_types(ms_path: str, pol_id: int) -> list[int]:
     tb = table()
     tb.open(os.path.join(ms_path, "POLARIZATION"))
     try:
-        corr_type = np.asarray(tb.getcell("CORR_TYPE", pol_id))
+        corr_type = np.asarray(tb.getcell("CORR_TYPE", pol_id), dtype=np.int64)
     finally:
         tb.close()
-    return int(corr_type.size)
+    return [int(value) for value in corr_type]
 
 
-def selected_source_channels(args: argparse.Namespace, spw_channel_count: int) -> list[int]:
+def stokes_i_parallel_hand_indices(corr_types: list[int]) -> tuple[int, int]:
+    """Return the CASA Stokes-I parallel-hand pair for this polarization basis."""
+
+    for first_type, second_type in ((5, 8), (9, 12)):  # RR/LL, XX/YY
+        if first_type in corr_types and second_type in corr_types:
+            return corr_types.index(first_type), corr_types.index(second_type)
+    raise RuntimeError(
+        "cannot derive strict Stokes-I parallel hands from CORR_TYPE "
+        f"{corr_types}; expected RR/LL or XX/YY"
+    )
+
+
+def selected_source_channels(
+    args: argparse.Namespace, spw_channel_count: int
+) -> list[int]:
     if args.specmode == "cube":
         start = args.start if args.start is not None else args.channel_start
         width = args.width if args.width is not None else 1
@@ -105,7 +119,12 @@ def summarize(args: argparse.Namespace) -> dict[str, Any]:
         for ddid, spw in enumerate(ddid_to_spw)
         if spw in selected_spws and ddid < len(ddid_to_pol)
     }
-    corr_count = read_pol_corr_count(args.ms, ddid_to_pol[min(selected_ddids)])
+    corr_types = read_pol_corr_types(args.ms, ddid_to_pol[min(selected_ddids)])
+    corr_count = len(corr_types)
+    parallel_hand_indices = stokes_i_parallel_hand_indices(corr_types)
+    source_channel_offsets = [
+        source_channel - source_start for source_channel in source_channels
+    ]
 
     tb = table()
     tb.open(args.ms)
@@ -134,6 +153,12 @@ def summarize(args: argparse.Namespace) -> dict[str, Any]:
         raw_weight_max = None
         by_field_any_channel_flag: dict[str, int] = defaultdict(int)
         by_field_clear_rows: dict[str, int] = defaultdict(int)
+        by_field_clear_corr_channel_cells: dict[str, int] = defaultdict(int)
+        by_field_total_corr_channel_cells: dict[str, int] = defaultdict(int)
+        by_field_attempted_stokes_i_samples: dict[str, int] = defaultdict(int)
+        by_field_accepted_stokes_i_samples: dict[str, int] = defaultdict(int)
+        attempted_stokes_i_samples = 0
+        accepted_stokes_i_samples = 0
 
         for start_row in range(0, nrows, block_rows):
             nblock = min(block_rows, nrows - start_row)
@@ -157,24 +182,44 @@ def summarize(args: argparse.Namespace) -> dict[str, Any]:
                 flag_by_row = np.moveaxis(flag, 2, 0)
             else:
                 flag_by_row = flag
-            active_flags = flag_by_row[block_active]
+            active_flags = flag_by_row[block_active][:, :, source_channel_offsets]
             row_any_flag = np.any(active_flags, axis=(1, 2))
+            accepted_by_row_channel = ~np.any(
+                active_flags[:, parallel_hand_indices, :], axis=1
+            )
             rows_with_any_channel_flag += int(np.count_nonzero(row_any_flag))
             rows_with_all_source_channels_clear += int(
                 row_any_flag.size - np.count_nonzero(row_any_flag)
             )
             clear_corr_channel_cells += int(np.count_nonzero(~active_flags))
             total_corr_channel_cells += int(active_flags.size)
+            attempted_stokes_i_samples += int(accepted_by_row_channel.size)
+            accepted_stokes_i_samples += int(np.count_nonzero(accepted_by_row_channel))
 
             active_fields = block_fields[block_active]
-            for field, flagged in zip(active_fields, row_any_flag):
+            for field, flagged, row_flags, row_accepted in zip(
+                active_fields,
+                row_any_flag,
+                active_flags,
+                accepted_by_row_channel,
+            ):
                 key = str(int(field))
                 if bool(flagged):
                     by_field_any_channel_flag[key] += 1
                 else:
                     by_field_clear_rows[key] += 1
+                by_field_clear_corr_channel_cells[key] += int(
+                    np.count_nonzero(~row_flags)
+                )
+                by_field_total_corr_channel_cells[key] += int(row_flags.size)
+                by_field_attempted_stokes_i_samples[key] += int(row_accepted.size)
+                by_field_accepted_stokes_i_samples[key] += int(
+                    np.count_nonzero(row_accepted)
+                )
 
-            weight = np.asarray(tb.getcol("WEIGHT", start_row, nblock), dtype=np.float64)
+            weight = np.asarray(
+                tb.getcol("WEIGHT", start_row, nblock), dtype=np.float64
+            )
             if weight.ndim == 2 and weight.shape[1] == nblock:
                 weight_by_row = weight.T
             elif weight.ndim == 2 and weight.shape[0] == nblock:
@@ -186,13 +231,21 @@ def summarize(args: argparse.Namespace) -> dict[str, Any]:
             block_min = float(np.min(active_weight)) if active_weight.size else None
             block_max = float(np.max(active_weight)) if active_weight.size else None
             if block_min is not None:
-                raw_weight_min = block_min if raw_weight_min is None else min(raw_weight_min, block_min)
-                raw_weight_max = block_max if raw_weight_max is None else max(raw_weight_max, block_max)
+                raw_weight_min = (
+                    block_min
+                    if raw_weight_min is None
+                    else min(raw_weight_min, block_min)
+                )
+                raw_weight_max = (
+                    block_max
+                    if raw_weight_max is None
+                    else max(raw_weight_max, block_max)
+                )
     finally:
         tb.close()
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "probe": "ms_selection_accounting",
         "ms": args.ms,
         "request": {
@@ -225,6 +278,8 @@ def summarize(args: argparse.Namespace) -> dict[str, Any]:
             "source_frequency_end_hz": float(freqs[source_end]),
             "source_width_sum_hz": float(np.sum(widths[source_start : source_end + 1])),
             "corr_count": corr_count,
+            "corr_types": corr_types,
+            "stokes_i_parallel_hand_indices": list(parallel_hand_indices),
             "output_channel_count": args.channel_count,
         },
         "flags": {
@@ -237,8 +292,33 @@ def summarize(args: argparse.Namespace) -> dict[str, Any]:
                 if total_corr_channel_cells
                 else None
             ),
-            "by_field_any_source_channel_flag_rows": dict(sorted(by_field_any_channel_flag.items())),
-            "by_field_all_source_channels_clear_rows": dict(sorted(by_field_clear_rows.items())),
+            "by_field_any_source_channel_flag_rows": dict(
+                sorted(by_field_any_channel_flag.items())
+            ),
+            "by_field_all_source_channels_clear_rows": dict(
+                sorted(by_field_clear_rows.items())
+            ),
+            "by_field_clear_corr_channel_cells": dict(
+                sorted(by_field_clear_corr_channel_cells.items())
+            ),
+            "by_field_total_corr_channel_cells": dict(
+                sorted(by_field_total_corr_channel_cells.items())
+            ),
+        },
+        "samples": {
+            "definition": (
+                "one attempted Stokes-I visibility sample per active row and "
+                "selected source channel; accepted when both CASA-selected "
+                "parallel-hand correlation cells are clear"
+            ),
+            "attempted_stokes_i_samples": attempted_stokes_i_samples,
+            "accepted_stokes_i_samples": accepted_stokes_i_samples,
+            "by_field_attempted_stokes_i_samples": dict(
+                sorted(by_field_attempted_stokes_i_samples.items())
+            ),
+            "by_field_accepted_stokes_i_samples": dict(
+                sorted(by_field_accepted_stokes_i_samples.items())
+            ),
         },
         "weights": {
             "raw_row_weight_sum_active_rows": raw_weight_sum,

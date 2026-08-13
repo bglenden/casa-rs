@@ -1,0 +1,3 @@
+# Preserve the upstream CASA source whitespace embedded in exact-apply patches.
+tools/perf/imager/experiments/casa_aw_degrid_prefix_trace.patch -whitespace
+tools/perf/imager/experiments/casa_aw_model_init_trace.patch -whitespace

@@ -286,6 +286,7 @@ def imager(
     mosweight: bool = ...,
     normtype: Literal['flatnoise', 'flatsky', 'pbsquare'] = ...,
     imaging_memory_target_mb: int | Literal['none'] = ...,
+    imaging_memory_pressure_policy: Literal['auto', 'conservative-no-swap', 'aggressive', 'oversubscribe', 'stage-aware', 'hybrid'] = ...,
     imaging_prepare_buffer_mb: int | Literal['none'] = ...,
     imaging_row_block_rows: int | Literal['none'] = ...,
     imaging_prepare_workers: int | Literal['none'] = ...,

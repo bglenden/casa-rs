@@ -355,7 +355,14 @@ mod tests {
     fn imager_vlass_controls_share_one_catalog_owned_awproject_surface() {
         let catalog = builtin_surface_catalog().unwrap();
         let surface = catalog.surface("imager").unwrap();
-        assert_eq!(surface.contract_version(), 6);
+        assert_eq!(surface.contract_version(), 7);
+        let memory_target = catalog
+            .catalog
+            .concepts
+            .iter()
+            .find(|concept| concept.id.as_str() == "parameter.imaging_memory_target_mb")
+            .expect("imaging memory target concept");
+        assert_eq!(memory_target.semantic_revision, SemanticRevision(2));
 
         let awproject = Predicate::Equals {
             parameter: "gridder".to_string(),
@@ -423,6 +430,7 @@ mod tests {
 
         for name in [
             "imaging_memory_target_mb",
+            "imaging_memory_pressure_policy",
             "imaging_prepare_buffer_mb",
             "imaging_row_block_rows",
             "imaging_prepare_workers",
@@ -440,6 +448,39 @@ mod tests {
             );
             assert!(binding.projections.presentation.advanced, "{name}");
         }
+        let memory_target = surface
+            .bindings()
+            .iter()
+            .find(|binding| binding.name == "imaging_memory_target_mb")
+            .expect("imaging memory target binding");
+        assert_eq!(memory_target.concept.semantic_revision, SemanticRevision(2));
+        assert_eq!(
+            memory_target.required_when,
+            Predicate::Equals {
+                parameter: "imaging_memory_pressure_policy".to_string(),
+                value: ParameterValue::String("oversubscribe".to_string()),
+            }
+        );
+        let memory_policy = surface
+            .bindings()
+            .iter()
+            .find(|binding| binding.name == "imaging_memory_pressure_policy")
+            .expect("imaging memory policy binding");
+        assert!(
+            memory_policy
+                .surface_note
+                .as_deref()
+                .is_some_and(|note| note.contains("planner-probe-only"))
+        );
+        let migration = surface
+            .migrations()
+            .iter()
+            .find(|migration| migration.from_contract == 6)
+            .expect("imager contract 6 to 7 migration");
+        assert_eq!(
+            migration.changed_defaults,
+            vec!["imaging_memory_pressure_policy".to_string()]
+        );
     }
 
     #[test]

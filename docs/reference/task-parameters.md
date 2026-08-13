@@ -10,16 +10,16 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 400
+- Concepts: 401
 - Surfaces: 42 (40 task, 2 session)
-- Surface bindings: 772
+- Surface bindings: 773
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 4 | <code>msexplore</code> | 68 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 3 | <code>calibration</code> | 51 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 3 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Imager](#surface-imager)<br><code>imager</code> | task | 6 | <code>imager</code> | 90 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
+| [Imager](#surface-imager)<br><code>imager</code> | task | 7 | <code>imager</code> | 91 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 3 | <code>simobserve</code> | 43 | Generate a CASA-compatible synthetic VLA MeasurementSet |
 | [Table Browser](#surface-tablebrowser)<br><code>tablebrowser</code> | session | 3 | <code>table_browser</code> | 7 | browse arbitrary casacore tables |
 | [ImExplore](#surface-imexplore)<br><code>imexplore</code> | session | 3 | <code>image_browser</code> | 17 | browse persistent casacore images |
@@ -234,7 +234,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Imager (<code>imager</code>)
 
 - Kind: `task`
-- Contract version: `6`
+- Contract version: `7`
 - Category: Imaging
 - Provider family: `imager`
 - Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet
@@ -324,7 +324,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>pointingoffsetsigdev</code> | <code>parameter.pointingoffsetsigdev@r1</code> | <code>string</code> | <code>"0"</code>; optional | Advanced Wide-Field | Comma-separated AW pointing grouping/refresh thresholds; non-pairs use CASA 600,600 |
 | <code>mosweight</code> | <code>parameter.mosweight@r1</code> | <code>bool</code> | <code>false</code>; optional | Advanced Wide-Field | Use per-pointing mosaic weight-density handling |
 | <code>normtype</code> | <code>parameter.normtype@r1</code> | <code>choice (3 values)</code> | <code>"flatnoise"</code>; optional | Advanced Wide-Field | AWProject sensitivity normalization policy |
-| <code>imaging_memory_target_mb</code> | <code>parameter.imaging_memory_target_mb@r1</code> | <code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code> | <code>"none"</code>; optional | Execution Resources | Optional shared imaging memory target in MiB<br><em>Surface:</em> none delegates the bounded memory choice to the immutable execution plan. |
+| <code>imaging_memory_target_mb</code> | <code>parameter.imaging_memory_target_mb@r2</code> | <code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code> | <code>"none"</code>; required when imaging_memory_pressure_policy="oversubscribe" | Execution Resources | Optional shared imaging memory target in MiB<br><em>Surface:</em> none delegates to the resource-adaptive planner. auto and conservative-no-swap cap to no-swap headroom; aggressive caps to the physical process ceiling. stage-aware and hybrid currently apply their corresponding caps only in planner probes. oversubscribe requires an explicit target and alone may retain it beyond measured headroom. |
+| <code>imaging_memory_pressure_policy</code> | <code>parameter.imaging_memory_pressure_policy@r1</code> | <code>choice (6 values)</code> | <code>"auto"</code>; optional | Execution Resources | Imaging memory-pressure and stage-residency policy<br><em>Surface:</em> auto is the safe resource-adaptive default. conservative-no-swap and aggressive select bounded production admission behavior. oversubscribe is experimental and requires an explicit memory target. stage-aware and hybrid are planner-probe-only until their requested runtime actions are implemented. |
 | <code>imaging_prepare_buffer_mb</code> | <code>parameter.imaging_prepare_buffer_mb@r1</code> | <code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code> | <code>"none"</code>; optional | Execution Resources | Optional source-stream preparation buffer in MiB |
 | <code>imaging_row_block_rows</code> | <code>parameter.imaging_row_block_rows@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Execution Resources | Optional bounded source-stream row-block override |
 | <code>imaging_prepare_workers</code> | <code>parameter.imaging_prepare_workers@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Execution Resources | Optional source-stream preparation worker count |

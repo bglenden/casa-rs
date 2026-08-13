@@ -17,6 +17,12 @@ import numpy as np
 # is derived from this budget; exact full-plane intermediates live in the
 # request-owned disk workspace instead.
 STRUCTURE_WORKING_BYTES = 16 * 1024 * 1024
+SCIENTIFIC_BEAM_TOLERANCE_FIELDS = {
+    "beam_area_relative",
+    "beam_kernel_nrmse",
+}
+COORDINATE_RELATIVE_TOLERANCE = 1.0e-12
+COORDINATE_ABSOLUTE_TOLERANCE = 1.0e-12
 
 
 # Keep this module importable by the ordinary Python test runner.  The
@@ -62,6 +68,9 @@ def main():
     else:
         beam_info = estimate_beam_info(right_prefix + beam_suffix, max_elements)
     panel_displays = product_panel_displays(request, max_elements)
+    allow_scientific_beam_equivalence = has_scientific_beam_contract(
+        request.get("tolerances")
+    )
     try:
         for suffix in expected_products:
             left_path = left_prefix + suffix
@@ -77,6 +86,10 @@ def main():
                 mode=request["mode"],
                 full_chunk_elements=request["full_chunk_elements"],
                 require_metadata_parity=request["require_metadata_parity"],
+                allow_scientific_beam_equivalence=(allow_scientific_beam_equivalence),
+                allow_bounded_mask_topology=has_bounded_mask_topology_contract(
+                    request.get("tolerances"), suffix
+                ),
                 source_regions=[
                     region
                     for region in request["source_regions"]
@@ -597,6 +610,8 @@ def compare_one(
     mode="sampled",
     full_chunk_elements=1_000_000,
     require_metadata_parity=False,
+    allow_scientific_beam_equivalence=False,
+    allow_bounded_mask_topology=False,
     source_regions=None,
     left_label="casa-rs",
     right_label="CASA",
@@ -725,7 +740,13 @@ def compare_one(
         if require_metadata_parity
         else {"status": "not_required", "parity": None}
     )
-    metadata_mismatch = require_metadata_parity and metadata["status"] != "matched"
+    metadata_mismatch = require_metadata_parity and not (
+        metadata["status"] == "matched"
+        or (
+            allow_scientific_beam_equivalence
+            and is_restoring_beam_only_metadata_mismatch(metadata)
+        )
+    )
     result = {
         "status": "metadata_mismatch" if metadata_mismatch else "compared",
         "comparison_mode": mode,
@@ -827,7 +848,12 @@ def compare_one(
                 and topology.get("finite_equal")
                 and topology.get("nonfinite_kind_equal")
             )
-            if not result["topology_parity"]:
+            bounded_mask_topology = bool(
+                allow_bounded_mask_topology
+                and topology.get("finite_equal")
+                and topology.get("nonfinite_kind_equal")
+            )
+            if not result["topology_parity"] and not bounded_mask_topology:
                 result["status"] = "topology_mismatch"
             if not full.get("coverage_complete"):
                 result["status"] = "full_coverage_incomplete"
@@ -1195,7 +1221,14 @@ def compare_image_metadata(left_path, right_path, image_factory=None):
             "parity": False,
         }
     fields = ("shape", "unit", "coordinates", "restoring_beam", "masks")
-    parity = {name: left.get(name) == right.get(name) for name in fields}
+    parity = {
+        name: (
+            coordinate_records_equivalent(left.get(name), right.get(name))
+            if name == "coordinates"
+            else left.get(name) == right.get(name)
+        )
+        for name in fields
+    }
     complete = left["status"] == "complete" and right["status"] == "complete"
     return {
         "status": "matched" if complete and all(parity.values()) else "mismatch",
@@ -1203,6 +1236,84 @@ def compare_image_metadata(left_path, right_path, image_factory=None):
         "field_parity": parity,
         "left": left,
         "right": right,
+    }
+
+
+def coordinate_records_equivalent(left, right):
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(
+            coordinate_records_equivalent(left[key], right[key]) for key in left
+        )
+    if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
+        return len(left) == len(right) and all(
+            coordinate_records_equivalent(left_value, right_value)
+            for left_value, right_value in zip(left, right)
+        )
+    if isinstance(left, bool) or isinstance(right, bool):
+        return left == right
+    if isinstance(left, int) and isinstance(right, int):
+        return left == right
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return math.isclose(
+            float(left),
+            float(right),
+            rel_tol=COORDINATE_RELATIVE_TOLERANCE,
+            abs_tol=COORDINATE_ABSOLUTE_TOLERANCE,
+        )
+    return left == right
+
+
+def has_scientific_beam_contract(contract):
+    if not isinstance(contract, dict) or contract.get("contract_version") != 2:
+        return False
+    default = contract.get("default")
+    products = contract.get("products")
+    if not isinstance(default, dict) or not isinstance(products, dict):
+        return False
+    for overrides in products.values():
+        if not isinstance(overrides, dict):
+            continue
+        thresholds = dict(default)
+        thresholds.update(overrides)
+        if SCIENTIFIC_BEAM_TOLERANCE_FIELDS <= set(thresholds):
+            return True
+    return False
+
+
+def has_bounded_mask_topology_contract(contract, suffix):
+    if not isinstance(contract, dict) or contract.get("contract_version") != 2:
+        return False
+    default = contract.get("default")
+    products = contract.get("products")
+    if not isinstance(default, dict) or not isinstance(products, dict):
+        return False
+    overrides = products.get(suffix, {})
+    if not isinstance(overrides, dict):
+        return False
+    thresholds = dict(default)
+    thresholds.update(overrides)
+    return "mask_mismatch_fraction" in thresholds
+
+
+def is_restoring_beam_only_metadata_mismatch(metadata):
+    if not isinstance(metadata, dict) or metadata.get("status") != "mismatch":
+        return False
+    left = metadata.get("left")
+    right = metadata.get("right")
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return False
+    if left.get("status") != "complete" or right.get("status") != "complete":
+        return False
+    if not isinstance(left.get("restoring_beam"), dict) or not left["restoring_beam"]:
+        return False
+    if not isinstance(right.get("restoring_beam"), dict) or not right["restoring_beam"]:
+        return False
+    return metadata.get("field_parity") == {
+        "shape": True,
+        "unit": True,
+        "coordinates": True,
+        "restoring_beam": False,
+        "masks": True,
     }
 
 
@@ -1453,6 +1564,8 @@ class FullSpatialStructureReducer:
 
 
 class FullArrayReducer:
+    MASK_MISMATCH_SAMPLE_LIMIT = 16_384
+
     def __init__(
         self,
         shape,
@@ -1471,6 +1584,7 @@ class FullArrayReducer:
         self.left_masked = 0
         self.right_masked = 0
         self.mask_mismatch = 0
+        self.mask_mismatch_samples = []
         self.left_finite = 0
         self.right_finite = 0
         self.finite_topology_mismatch = 0
@@ -1530,7 +1644,29 @@ class FullArrayReducer:
         )
         self.left_masked += int(left.size - np.count_nonzero(left_mask))
         self.right_masked += int(right.size - np.count_nonzero(right_mask))
-        self.mask_mismatch += int(np.count_nonzero(left_mask != right_mask))
+        mask_mismatch = left_mask != right_mask
+        self.mask_mismatch += int(np.count_nonzero(mask_mismatch))
+        remaining_sample_capacity = (
+            self.MASK_MISMATCH_SAMPLE_LIMIT - len(self.mask_mismatch_samples)
+        )
+        if remaining_sample_capacity > 0 and np.any(mask_mismatch):
+            for local_location in np.argwhere(mask_mismatch)[
+                :remaining_sample_capacity
+            ]:
+                local_location = tuple(int(value) for value in local_location)
+                location = [
+                    int(origin) + int(offset)
+                    for origin, offset in zip(blc, local_location, strict=True)
+                ]
+                self.mask_mismatch_samples.append(
+                    {
+                        "location": location,
+                        "left_mask": bool(left_mask[local_location]),
+                        "right_mask": bool(right_mask[local_location]),
+                        "left_value": finite_float(float(left[local_location])),
+                        "right_value": finite_float(float(right[local_location])),
+                    }
+                )
 
         left_finite = np.isfinite(left)
         right_finite = np.isfinite(right)
@@ -1631,6 +1767,7 @@ class FullArrayReducer:
             "topology": {
                 "mask_equal": self.mask_mismatch == 0,
                 "mask_mismatch_count": self.mask_mismatch,
+                "mask_mismatch_samples": self.mask_mismatch_samples,
                 "left_masked_count": self.left_masked,
                 "right_masked_count": self.right_masked,
                 "finite_equal": self.finite_topology_mismatch == 0,

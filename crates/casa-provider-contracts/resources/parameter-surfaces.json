@@ -8221,7 +8221,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 6,
+      "contract_version": 7,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -12423,7 +12423,7 @@
           "name": "imaging_memory_target_mb",
           "concept": {
             "id": "parameter.imaging_memory_target_mb",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 83,
           "default": {
@@ -12434,12 +12434,17 @@
             }
           },
           "required_when": {
-            "kind": "never"
+            "kind": "equals",
+            "parameter": "imaging_memory_pressure_policy",
+            "value": {
+              "kind": "string",
+              "value": "oversubscribe"
+            }
           },
           "active_when": {
             "kind": "always"
           },
-          "surface_note": "none delegates the bounded memory choice to the immutable execution plan.",
+          "surface_note": "none delegates to the resource-adaptive planner. auto and conservative-no-swap cap to no-swap headroom; aggressive caps to the physical process ceiling. stage-aware and hybrid currently apply their corresponding caps only in planner probes. oversubscribe requires an explicit target and alone may retain it beyond measured headroom.",
           "projections": {
             "cli": {
               "flags": [
@@ -12463,12 +12468,55 @@
           }
         },
         {
+          "name": "imaging_memory_pressure_policy",
+          "concept": {
+            "id": "parameter.imaging_memory_pressure_policy",
+            "semantic_revision": 1
+          },
+          "order": 84,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "auto"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "surface_note": "auto is the safe resource-adaptive default. conservative-no-swap and aggressive select bounded production admission behavior. oversubscribe is experimental and requires an explicit memory target. stage-aware and hybrid are planner-probe-only until their requested runtime actions are implemented.",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--imaging-memory-pressure-policy"
+              ],
+              "metavar": "POLICY"
+            },
+            "provider": {
+              "field": "imaging_memory_pressure_policy",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "imaging_memory_pressure_policy"
+            },
+            "presentation": {
+              "label": "Memory Pressure Policy",
+              "group": "Execution Resources",
+              "advanced": true,
+              "hidden": false
+            }
+          }
+        },
+        {
           "name": "imaging_prepare_buffer_mb",
           "concept": {
             "id": "parameter.imaging_prepare_buffer_mb",
             "semantic_revision": 1
           },
-          "order": 84,
+          "order": 85,
           "default": {
             "kind": "literal",
             "value": {
@@ -12510,7 +12558,7 @@
             "id": "parameter.imaging_row_block_rows",
             "semantic_revision": 1
           },
-          "order": 85,
+          "order": 86,
           "default": {
             "kind": "literal",
             "value": {
@@ -12552,7 +12600,7 @@
             "id": "parameter.imaging_prepare_workers",
             "semantic_revision": 1
           },
-          "order": 86,
+          "order": 87,
           "default": {
             "kind": "literal",
             "value": {
@@ -12594,7 +12642,7 @@
             "id": "parameter.imaging_fft_precision",
             "semantic_revision": 1
           },
-          "order": 87,
+          "order": 88,
           "default": {
             "kind": "literal",
             "value": {
@@ -12637,7 +12685,7 @@
             "id": "parameter.standard_mfs_grid_threads",
             "semantic_revision": 1
           },
-          "order": 89,
+          "order": 90,
           "default": {
             "kind": "literal",
             "value": {
@@ -12680,7 +12728,7 @@
             "id": "parameter.projection",
             "semantic_revision": 1
           },
-          "order": 88,
+          "order": 89,
           "default": {
             "kind": "literal",
             "value": {
@@ -12754,6 +12802,14 @@
           "to_contract": 6,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 6,
+          "to_contract": 7,
+          "steps": [],
+          "changed_defaults": [
+            "imaging_memory_pressure_policy"
+          ]
         }
       ]
     },

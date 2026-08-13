@@ -25,14 +25,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AutoMultiThresholdConfig, ChannelRunSummary, CleanMaskMode, CliConfig, FrontendStageTimings,
-    ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, RunSummary, SaveModelMode, SpectralMode,
-    StandardMfsAccelerationPolicy, apply_parallel_runtime_control, run_from_request,
+    ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy, RunSummary,
+    SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy, apply_parallel_runtime_control,
+    run_from_request,
 };
 
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
 pub const IMAGER_TASK_PROTOCOL_NAME: &str = "casa_imager_task";
 /// Stable protocol version advertised by `casars-imager --protocol-info`.
-pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 3;
+pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 4;
 /// Version of the newline-delimited imager progress-event payload.
 pub const IMAGER_PROGRESS_EVENT_SCHEMA_VERSION: u32 = 1;
 /// Version of the authoritative observability snapshot embedded in progress events.
@@ -2074,6 +2075,9 @@ pub struct ImagerRunTaskRequest {
     /// Optional shared imaging source-stream memory target in MiB.
     #[serde(default)]
     pub imaging_memory_target_mb: Option<usize>,
+    /// Shared imaging memory-pressure policy.
+    #[serde(default)]
+    pub imaging_memory_pressure_policy: ImagingMemoryPressurePolicy,
     /// Optional shared imaging source-stream prepare-buffer budget in MiB.
     #[serde(default)]
     pub imaging_prepare_buffer_mb: Option<usize>,
@@ -2181,6 +2185,7 @@ impl ImagerRunTaskRequest {
             standard_mfs_memory_target_mb: config.standard_mfs_memory_target_mb,
             standard_mfs_prepare_buffer_mb: config.standard_mfs_prepare_buffer_mb,
             imaging_memory_target_mb: config.imaging_memory_target_mb,
+            imaging_memory_pressure_policy: config.imaging_memory_pressure_policy,
             imaging_prepare_buffer_mb: config.imaging_prepare_buffer_mb,
             imaging_row_block_rows: config.imaging_row_block_rows,
             imaging_prepare_workers: config.imaging_prepare_workers,
@@ -2213,6 +2218,22 @@ impl ImagerRunTaskRequest {
         }
         if self.chanchunks.is_some() && spectral_mode == SpectralMode::Mfs {
             return Err("chanchunks applies only to cube and cubedata imaging".to_string());
+        }
+        if self.imaging_memory_target_mb == Some(0) {
+            return Err("imaging_memory_target_mb must be positive".to_string());
+        }
+        if self.standard_mfs_memory_target_mb == Some(0) {
+            return Err("standard_mfs_memory_target_mb must be positive".to_string());
+        }
+        if self.imaging_memory_pressure_policy == ImagingMemoryPressurePolicy::Oversubscribe
+            && self.imaging_memory_target_mb.is_none()
+            && self.standard_mfs_memory_target_mb.is_none()
+        {
+            return Err(
+                "imaging_memory_pressure_policy='oversubscribe' requires an explicit \
+                 imaging_memory_target_mb (or the compatibility standard_mfs_memory_target_mb)"
+                    .to_string(),
+            );
         }
         if self.imaging_read_ahead_blocks == Some(0) {
             return Err("imaging_read_ahead_blocks must be positive".to_string());
@@ -2334,6 +2355,7 @@ impl ImagerRunTaskRequest {
             standard_mfs_memory_target_mb: self.standard_mfs_memory_target_mb,
             standard_mfs_prepare_buffer_mb: self.standard_mfs_prepare_buffer_mb,
             imaging_memory_target_mb: self.imaging_memory_target_mb,
+            imaging_memory_pressure_policy: self.imaging_memory_pressure_policy,
             imaging_prepare_buffer_mb: self.imaging_prepare_buffer_mb,
             imaging_row_block_rows: self.imaging_row_block_rows,
             imaging_prepare_workers: self.imaging_prepare_workers,
@@ -3021,7 +3043,13 @@ pub(crate) fn build_artifacts(request: &ImagerRunTaskRequest) -> Vec<ImagerArtif
         .to_cli_config()
         .expect("canonical imager request must reconstruct its validated CLI config");
     let plan = crate::single_plane_plan::build_single_plane_execution_plan(&config, false, 1);
-    plan.output_products
+    let mut output_products = plan.output_products;
+    if PathBuf::from(format!("{base}.mask")).exists()
+        && !output_products.iter().any(|suffix| suffix == ".mask")
+    {
+        output_products.push(".mask".to_string());
+    }
+    output_products
         .iter()
         .map(|suffix| {
             let kind = artifact_kind_for_product_suffix(suffix);
@@ -3144,8 +3172,8 @@ mod tests {
         awproject_run_report, imager_task_schema_bundle,
     };
     use crate::{
-        CliConfig, ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, SaveModelMode, SpectralMode,
-        StandardMfsAccelerationPolicy,
+        CliConfig, ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy,
+        SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy,
     };
 
     #[test]
@@ -3396,6 +3424,8 @@ mod tests {
             OsString::from("f32"),
             OsString::from("--imaging-fft-backend"),
             OsString::from("metal-mpsgraph"),
+            OsString::from("--imaging-memory-pressure-policy"),
+            OsString::from("stage-aware"),
             OsString::from("--dirty-only"),
             OsString::from("--no-preview-pngs"),
         ])
@@ -3442,6 +3472,10 @@ mod tests {
             restored.imaging_fft_backend,
             ImagingFftBackendPolicy::MetalMpsGraph
         );
+        assert_eq!(
+            restored.imaging_memory_pressure_policy,
+            ImagingMemoryPressurePolicy::StageAware
+        );
         assert!(restored.dirty_only);
         assert!(!restored.write_preview_pngs);
     }
@@ -3468,6 +3502,55 @@ mod tests {
         let restored = request.to_cli_config().unwrap();
         assert_eq!(restored.spw, Some(3));
         assert_eq!(restored.spw_selector.as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn run_request_validates_memory_policy_combinations() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("demo.ms"),
+            OsString::from("--imagename"),
+            OsString::from("out/demo"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.5"),
+        ])
+        .unwrap();
+        let base = ImagerRunTaskRequest::from_cli_config(&config);
+
+        let mut request = base.clone();
+        request.imaging_memory_target_mb = Some(0);
+        assert_eq!(
+            request.to_cli_config().unwrap_err(),
+            "imaging_memory_target_mb must be positive"
+        );
+
+        let mut request = base.clone();
+        request.standard_mfs_memory_target_mb = Some(0);
+        assert_eq!(
+            request.to_cli_config().unwrap_err(),
+            "standard_mfs_memory_target_mb must be positive"
+        );
+
+        let mut request = base.clone();
+        request.imaging_memory_pressure_policy = ImagingMemoryPressurePolicy::Oversubscribe;
+        assert!(
+            request
+                .to_cli_config()
+                .unwrap_err()
+                .contains("requires an explicit imaging_memory_target_mb")
+        );
+
+        request.imaging_memory_target_mb = Some(1024);
+        let restored = request
+            .to_cli_config()
+            .expect("bounded oversubscribe request");
+        assert_eq!(restored.imaging_memory_target_mb, Some(1024));
+        assert_eq!(
+            restored.imaging_memory_pressure_policy,
+            ImagingMemoryPressurePolicy::Oversubscribe
+        );
     }
 
     #[test]
@@ -3606,6 +3689,7 @@ mod tests {
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -3699,6 +3783,7 @@ mod tests {
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -3968,6 +4053,7 @@ mod tests {
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -4129,6 +4215,7 @@ mod tests {
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
@@ -4143,7 +4230,7 @@ mod tests {
         assert_eq!(standard_config.correlation.as_deref(), Some("XX"));
 
         let standard_artifacts = super::build_artifacts(&standard);
-        assert_eq!(standard_artifacts.len(), 5);
+        assert_eq!(standard_artifacts.len(), 6);
         let standard_psf = standard_artifacts
             .iter()
             .find(|artifact| artifact.kind == ImagerArtifactKind::Psf)
@@ -4164,7 +4251,7 @@ mod tests {
             ..standard
         };
         let mtmfs_artifacts = super::build_artifacts(&mtmfs);
-        assert_eq!(mtmfs_artifacts.len(), 14);
+        assert_eq!(mtmfs_artifacts.len(), 15);
         assert_eq!(
             mtmfs_artifacts
                 .iter()
@@ -4214,7 +4301,7 @@ mod tests {
             ..mtmfs
         };
         let awproject_artifacts = super::build_artifacts(&awproject);
-        assert_eq!(awproject_artifacts.len(), 18);
+        assert_eq!(awproject_artifacts.len(), 19);
         assert_eq!(
             awproject_artifacts
                 .iter()
@@ -4765,6 +4852,7 @@ mod tests {
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
             imaging_memory_target_mb: None,
+            imaging_memory_pressure_policy: Default::default(),
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
