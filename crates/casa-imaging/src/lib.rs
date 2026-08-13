@@ -11473,8 +11473,11 @@ enum AwProjectCompactReplayBlockSlot {
 struct AwProjectCompactReplayCache {
     budget_bytes: usize,
     grouped_replay: Option<AwProjectGroupedReplayPlan>,
+    #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
     grouped_metal_admission: Option<AwProjectGroupedMetalAdmission>,
+    #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
     grouped_metal_segment_split_count: usize,
+    #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
     grouped_metal_max_segment_additional_bytes: usize,
     #[cfg(all(target_os = "macos", not(coverage)))]
     raw_global_builder_last_source_block: Option<usize>,
@@ -13083,6 +13086,7 @@ fn awproject_grouped_metal_host_prediction_lifetime(
 }
 
 #[repr(C)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 struct AwProjectMetalTileParams {
     grid_width: u32,
     grid_height: u32,
@@ -13095,6 +13099,7 @@ struct AwProjectMetalTileParams {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 enum AwProjectSourceMajorInitialRole {
     Combined,
     Psf,
@@ -13104,6 +13109,7 @@ enum AwProjectSourceMajorInitialRole {
     Weight2,
 }
 
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 impl AwProjectSourceMajorInitialRole {
     fn source_plane_range(self) -> std::ops::Range<usize> {
         match self {
@@ -13162,6 +13168,7 @@ struct AwProjectMetalPredictionBatch {
     phases: Vec<WProjectMetalComplex>,
 }
 
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 impl AwProjectMetalPredictionBatch {
     fn resident_bytes(&self) -> usize {
         self.samples
@@ -13239,6 +13246,7 @@ enum AwProjectMetalKernelStorage<'a> {
     },
 }
 
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 impl<'a> AwProjectMetalKernelStorage<'a> {
     fn len(self) -> usize {
         match self {
@@ -13551,6 +13559,7 @@ struct AwProjectMetalResidentProgram {
     metadata: AwProjectMetalResidentMetadata,
 }
 
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 impl AwProjectMetalResidentProgram {
     #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
     fn imaging_kernels(&self) -> &[WProjectMetalComplex] {
@@ -13602,6 +13611,7 @@ struct AwProjectGroupedMetalDispatchOverlap {
     peak_bytes: usize,
 }
 
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 fn awproject_grouped_metal_dispatch_overlap(
     admission: AwProjectGroupedMetalAdmission,
     prediction_metal_bytes: usize,
@@ -13648,6 +13658,7 @@ struct AwProjectGroupedMetalSourceUpper {
     tile_bytes: usize,
 }
 
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 impl AwProjectGroupedMetalSourceUpper {
     fn checked_add(self, incoming: Self) -> Result<Self, ImagingError> {
         Ok(Self {
@@ -13690,6 +13701,7 @@ impl AwProjectGroupedMetalSourceUpper {
     }
 }
 
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 fn awproject_grouped_metal_segment_split_required(
     current: AwProjectGroupedMetalSourceUpper,
     incoming: AwProjectGroupedMetalSourceUpper,
@@ -13706,6 +13718,7 @@ fn awproject_grouped_metal_segment_split_required(
     Ok(!current.is_empty() && combined_bytes > admission.segment_ceiling_bytes)
 }
 
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 fn awproject_grouped_metal_missing_persistent_bytes(
     admission: AwProjectGroupedMetalAdmission,
     compensation_present: bool,
@@ -13717,6 +13730,7 @@ fn awproject_grouped_metal_missing_persistent_bytes(
     }
 }
 
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 fn awproject_grouped_metal_live_additional_bytes(
     dispatch_overlap_bytes: usize,
     missing_persistent_bytes: usize,
@@ -13730,6 +13744,7 @@ fn awproject_grouped_metal_live_additional_bytes(
         })
 }
 
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 fn awproject_grouped_metal_preallocation_required_bytes(
     current_bytes: usize,
     additional_bytes: usize,
@@ -13745,6 +13760,7 @@ fn awproject_grouped_metal_preallocation_required_bytes(
         })
 }
 
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 fn awproject_grouped_metal_maximum_current_bytes(
     recommended_bytes: usize,
     reserve_bytes: usize,
@@ -14122,6 +14138,7 @@ struct AwProjectGroupedMetalLiveCheck {
     maximum_current_bytes: usize,
 }
 
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 fn awproject_grouped_metal_postallocation_combined_bytes(
     current_bytes: usize,
     known_host_overlap_bytes: usize,
