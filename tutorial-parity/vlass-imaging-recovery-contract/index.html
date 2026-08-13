@@ -1,0 +1,1318 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>VLASS Imaging Merge-Recovery Contract - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#vlass-imaging-merge-recovery-contract" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              VLASS Imaging Merge-Recovery Contract
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scientific Workbench
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scientific Workbench
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scientific-notebooks-and-assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks, Tutorials, Python, and AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mac-native-gui-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#recovery-outcome" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recovery outcome
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casa-first-performance-baseline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASA-first performance baseline
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CASA-first performance baseline">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#frozen-4096-square-full-16-spw-residual-refresh-envelope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Frozen 4096-square full-16-SPW residual-refresh envelope
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-baseline-cf-generation-discriminator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Post-baseline CF-generation discriminator
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#preservation-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Preservation boundary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casa-reference-rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASA reference rows
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CASA reference rows">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#casa-b-v1-negative-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASA-B v1 negative evidence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#casa-b-v2-accepted-clean-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASA-B v2 accepted clean reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#casa-a-accepted-clean-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASA-A accepted clean reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#candidate-budget-and-promotion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Candidate budget and promotion
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#correctness-and-performance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Correctness and performance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#finite-delivery-train" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Finite delivery train
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="vlass-imaging-merge-recovery-contract">VLASS Imaging Merge-Recovery Contract<a class="headerlink" href="#vlass-imaging-merge-recovery-contract" title="Permanent link">&para;</a></h1>
+<p>Truth class: approved execution contract</p>
+<p>Approved: 2026-08-02 by Brian Glendenning</p>
+<p>Verification: <code>just docs-check</code> plus the focused recovery-contract and imaging
+harness tests</p>
+<p>This contract turns the existing VLASS imaging wave into a finite,
+merge-oriented recovery. It does not reduce the scientific scope, the
+full-geometry rows, the 19-product clean contract, the 32 GiB laptop
+acceptance host, or the independent 10x performance requirement.</p>
+<p>The machine-readable controlling record is
+<code>tools/perf/imager/vlass_recovery_contract.json</code>. Launches are recorded in
+<code>tools/perf/imager/vlass_recovery_launch_ledger.json</code>; the bounded audit of
+already-created work is recorded in
+<code>tools/perf/imager/vlass_recovery_salvage_catalog.json</code> and summarized in
+<code>vlass-imaging-recovery-salvage-audit.md</code>. The longer historical
+optimization plan remains available at archive commit <code>4c3cf8cc9</code>; current
+<code>main</code> intentionally removed that 10,000-line experimental ledger, and this
+PR does not resurrect it. Where the archived plan's older scheduling language
+conflicts with this document, this recovery contract controls scheduling,
+launch budgets, and closeout.</p>
+<h2 id="recovery-outcome">Recovery outcome<a class="headerlink" href="#recovery-outcome" title="Permanent link">&para;</a></h2>
+<p>The wave terminates in exactly one of two states:</p>
+<ol>
+<li>A reviewable four-PR train whose selected production code passes the
+   applicable repository gates, full CASA science comparisons, bounded-memory
+   laptop execution, and the independent 10x rows.</li>
+<li>A documented blocker after the bounded attempts are exhausted, with the
+   exact failed gate, retained evidence, and one specific decision requested
+   from Brian.</li>
+</ol>
+<p>“Continue optimizing” is not a terminal state. A likely 100x deconvolution
+speedup remains interesting but is not a fixed acceptance target. Once the
+scientific floor and 10x requirement make the train merge-ready, stop and ask
+Brian whether to merge or spend a separately agreed budget pursuing more
+performance.</p>
+<h2 id="casa-first-performance-baseline">CASA-first performance baseline<a class="headerlink" href="#casa-first-performance-baseline" title="Permanent link">&para;</a></h2>
+<p>No casa-rs performance implementation or tuning may begin for a workload or
+component until a corresponding CASA timing has been generated once and frozen.
+The baseline must match the dataset, selection, image geometry, required
+products, and timed boundary. An end-to-end <code>tclean</code> wall time does not anchor a
+residual-refresh, degridding, FFT, or minor-cycle microbenchmark; each optimized
+boundary needs a matched CASA measurement.</p>
+<p>If CASA cannot expose the intended boundary directly, record the closest
+measurable CASA envelope and obtain Brian's explicit approval before using an
+internally chosen target. Once a valid matched CASA baseline exists, do not
+rerun it merely because casa-rs changes.</p>
+<h3 id="frozen-4096-square-full-16-spw-residual-refresh-envelope">Frozen 4096-square full-16-SPW residual-refresh envelope<a class="headerlink" href="#frozen-4096-square-full-16-spw-residual-refresh-envelope" title="Permanent link">&para;</a></h3>
+<p>The first CASA-first baseline generated under this rule is the real VLASS
+4096-square, all-63-field, full-16-SPW MT-MFS residual refresh. CASA 6.7.5.9
+used the frozen MS, fields <code>1107~1127,1512~1532,1542~1562</code>, SPWs <code>2~17</code>,
+POINTING, AWProject with 32 W planes, A/WB/conjugate beams, Briggs robust 1,
+two Taylor terms, and the frozen full-16-SPW CF cache. The timed call used the
+casa-rs Taylor model with <code>restart=True</code>, <code>calcres=True</code>, <code>calcpsf=False</code>,
+<code>niter=0</code>, and no restoration.</p>
+<p>The one-time cold setup/reference receipt SHA-256 is
+<code>0885a1bfbed0f9b4fed23a6fd083b8f30627f9659d587119508e4f3c782520cd</code>.
+Its CF-cache receipt SHA-256 is
+<code>9f9f679fe462055b06f98c56238d058dbf73480b4a95e95c8fc7f84a90ebfe21</code>,
+and the frozen cache tree SHA-256 is
+<code>5c4416819d0dc95856dd46fd2b7ec604ce6e21fbc137ede16927beda31aa0525</code>.</p>
+<p>CASA's measured <code>tclean</code> envelope was <code>1265.700682709 s</code>. Its receipt SHA-256
+is <code>7ffe65735525335562bb59cc168af14a568ae0404bda06fca7dcd70390e4b9ab</code>;
+the CASA log SHA-256 is
+<code>3b8505facdfd65274acdb245f84f261d8b46cf0b1a48704c1be697d8dcfce9f7</code>.
+The protected-product check passed: PSF and sum-weight pixels were unchanged,
+while model writeback differed by relative L2 <code>4.68135e-10</code> for tt0 and
+<code>9.86295e-10</code> for tt1.</p>
+<p>The corresponding release casa-rs exact tile-ready replay took
+<code>132.340522834 s</code>, from binary SHA-256
+<code>8e1e6792a72b5dbae2164ebbb1eebbde8028dac69dd45703d37d129041af5255</code>
+and receipt SHA-256
+<code>1642102ecacb5998d50d745f1d61f8f389c11b02cd5986ae10af89d2f5f8c6e1</code>.
+The numerical full-envelope CASA/casa-rs ratio is <code>9.563969188x</code>.</p>
+<p>CASA's terminal log separately reported degridding timers of <code>266.73 s</code> and
+<code>265.79 s</code> and gridding timers of <code>331.54 s</code> and <code>332.44 s</code>. Their
+<code>1196.50 s</code> sum gives a closer-boundary diagnostic ratio of <code>9.041070523x</code>.
+These are CASA-reported internal stage timers, not an independently measured
+wall-clock boundary, so the outer <code>tclean</code> envelope remains the authoritative
+CASA receipt.</p>
+<p>The <code>9.563969188x</code> ratio is a favorable upper bound, not a matched final speedup:
+CASA exposes prediction, degridding, gridding, FFT/normalization, and residual
+product update together, while this casa-rs measurement stops at its exact
+tile-ready replay boundary. It therefore cannot satisfy the final independent
+10x row by itself or be reported as an exact component speedup. The receipts
+are frozen and must not be rerun merely because casa-rs changes.</p>
+<h3 id="post-baseline-cf-generation-discriminator">Post-baseline CF-generation discriminator<a class="headerlink" href="#post-baseline-cf-generation-discriminator" title="Permanent link">&para;</a></h3>
+<p>After the exact matched CASA timing is frozen, investigate whether the large
+persistent CASA convolution-function cache should remain casa-rs's production
+runtime representation. This is one bounded architectural discriminator, not
+permission to reopen an unbounded architecture tournament.</p>
+<p>First instrument the matched casa-rs workload to separate CF table
+loading/bookkeeping and cold-start I/O from packed-cache setup, replay,
+gridding/degridding, and memory traffic. Then compare:</p>
+<ol>
+<li>the promoted packed precomputed-CF path;</li>
+<li>GPU generation of each distinct scientific CF key once into a packed
+   GPU-resident atlas, including generation in cold end-to-end wall time; and</li>
+<li>warm reuse of the generated atlas, reported separately from the cold result.</li>
+</ol>
+<p>Do not regenerate a CF for every visibility. A generation key must preserve the
+required frequency, W-plane, Mueller/polarization, parallactic-angle, support,
+oversampling, conjugate-beam, normalization, and precision semantics.
+Generated kernels must first pass direct numerical comparison against the
+frozen CASA-cache kernels and then the existing scientific and 19-product
+correctness contract.</p>
+<p>Record CF generation time, bytes read, page faults, cache
+loads/hits/evictions, CPU and GPU memory, GPU stalls, residual-refresh time, and
+total wall time. Preserve CASA-cache import as the correctness/interoperability
+oracle and automatic fallback. Promote GPU generation only if the cold
+end-to-end result materially improves runtime or resource behavior without
+weakening correctness; otherwise retain the packed-cache path and record the
+negative result. Do not perform this investigation before the matched CASA
+timing exists.</p>
+<h2 id="preservation-boundary">Preservation boundary<a class="headerlink" href="#preservation-boundary" title="Permanent link">&para;</a></h2>
+<p>The unique dirty worktree was preserved before cleanup or formatting:</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Identity</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Trusted pre-experiment checkpoint</td>
+<td><code>aea444b5e40fde5486e2ea421e5f8e2cf32d6174</code></td>
+</tr>
+<tr>
+<td>Archive branch</td>
+<td><code>codex/vlass-recovery-archive-20260802</code></td>
+</tr>
+<tr>
+<td>Archive commit</td>
+<td><code>4c3cf8cc916656f1ece6efc9bbd3fb674e401132</code></td>
+</tr>
+<tr>
+<td>Archive tree</td>
+<td><code>d46765f2795d3b4c31edef891f523ddae2433b7b</code></td>
+</tr>
+<tr>
+<td>Verified Git bundle SHA-256</td>
+<td><code>4ff641f50a5d0248288ba480255765a8870b7bbab6ef9842b3cacc14e75dc519</code></td>
+</tr>
+<tr>
+<td>Binary patch SHA-256</td>
+<td><code>55286ec6390dde0552df38abe80e1de2ea84891906d6549675ab0133a57b1aad</code></td>
+</tr>
+</tbody>
+</table>
+<p>The bundle and patch are under
+<code>/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-archive/2026-08-02/</code>.
+The remote archive SHA matches the local commit. The archive commit is
+deliberately non-promotable: its normal commit hook found a missing SPDX
+header in one experimental file, and the exact evidence was committed with
+hooks bypassed rather than edited before preservation.</p>
+<p>Draft PR #451 remains an evidence and handoff record. It is not merged,
+undrafted, force-pushed, or treated as the final review unit. Audited pieces
+move into the recovery PR train; superseded experiments remain reachable from
+the archive.</p>
+<h2 id="casa-reference-rows">CASA reference rows<a class="headerlink" href="#casa-reference-rows" title="Permanent link">&para;</a></h2>
+<p>The old <code>8,183.264 s</code> number is the connected-63-field <strong>dirty</strong> CASA time. It
+is not a matched clean baseline and must never be used to claim a clean
+speedup.</p>
+<p>Two clean references are now required:</p>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Selection and cap</th>
+<th>Manifest</th>
+<th style="text-align: right;">Wall ceiling</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CASA-B-FRAGMENT63-CLEAN-CAP20000-v1</code></td>
+<td>All 63 fields, SPWs 2–17, <code>niter=20000</code></td>
+<td><code>vlass-fragment-all-fields-clean-cap20000-casa.json</code></td>
+<td style="text-align: right;">7 days</td>
+</tr>
+<tr>
+<td><code>CASA-B-FRAGMENT63-CLEAN-CAP20000-v2</code></td>
+<td>All 63 fields, SPWs 2–17, corrected source mask, <code>niter=20000</code></td>
+<td><code>vlass-fragment-all-fields-clean-cap20000-casa-v2.json</code></td>
+<td style="text-align: right;">7 days</td>
+</tr>
+<tr>
+<td><code>CASA-A-SINGLE-CLEAN-N2000-v1</code></td>
+<td>Field 1525, SPWs 2–17, <code>niter=2000</code></td>
+<td><code>vlass-fragment-single-field-clean-casa.json</code></td>
+<td style="text-align: right;">72 hours</td>
+</tr>
+</tbody>
+</table>
+<p>The 63-field CAP20000 row changes only the scientific <code>niter</code> ceiling from
+the checksum-bound <code>niter=2000</code> all-fields manifest. Geometry, data selection,
+mask and mask hash, <code>nsigma</code>, gain, major/minor-cycle controls, AWProject,
+POINTING, W planes, A/WB/conjugate beams, Briggs weighting, MT-MFS, scales,
+restoration, and all 19 products remain unchanged. Identity, description, run
+label, and evidence-role strings distinguish the new reference.</p>
+<p><code>niter=20000</code> is a ceiling, not a claim that CASA will select exactly 20,000
+components. Each CASA and casa-rs receipt records the configured cap, actual
+iterations/components, cycle boundaries, and stop reason.</p>
+<p>The reference launch order is B then A. There is one normal launch for each
+row and one shared retry only for an external invalidation such as power,
+mount, storage, or host failure. CASA parameter changes, scientific failure,
+timeout, or an avoidable harness defect do not silently earn more retries.
+No unchanged dirty or reduced CASA reference is rerun.</p>
+<h3 id="casa-b-v1-negative-evidence">CASA-B v1 negative evidence<a class="headerlink" href="#casa-b-v1-negative-evidence" title="Permanent link">&para;</a></h3>
+<p><code>CASA-B-FRAGMENT63-CLEAN-CAP20000-v1</code> completed its CASA imaging call on
+2026-08-02 in <code>6,902.788125 s</code>, but it is not a valid clean reference. The
+configured mask covered pixels <code>[6243, 6003]</code> through <code>[6306, 6066]</code>, while
+the measured <code>0.431877822 Jy</code> residual peak was at <code>[4633, 6183]</code>. The
+largest residual inside the mask was only <code>0.000659208 Jy</code>, below CASA's
+<code>0.00169344 Jy</code> <code>nsigma</code> threshold. CASA therefore selected zero minor
+iterations, produced an empty model, and performed only the dirty and
+restoration work. The elapsed time must not be reported as an all-fields
+clean baseline.</p>
+<p>The v1 receipt is
+<code>b62daf1de4549d4f5ca186c1b5c02ce501089d97ba72cfc61cefe9fb35084bb5</code>;
+its CASA log is
+<code>535248c9c1910d94666df59a5d45dd5b66e25b759d1587acfa862e1f064671c0</code>.
+The comparator correctly rejected the empty model, but the harness then
+decorated the operational failure with a numerical tolerance result and
+obscured it as a schema error. The regression is covered by the focused
+comparison-protocol test.</p>
+<p>The launch ledger records a proposed v2 amendment using the already existing
+source mask at pixels <code>[4602, 6152]</code> through <code>[4665, 6215]</code>, whose stable tree
+SHA-256 is
+<code>fabf361e6609a4d66c251458c2ed31bc80978d936e78a39a8f449bd1a63dc322</code>.
+The proposed base and CAP20000 manifest SHA-256 values are respectively
+<code>0cabbe5fdc2f687a10fce3653d018e09db7349a0a1299d16a4f6772557f9f5d9</code>
+and
+<code>63948fe140d5c06c00b924eea407e5afe8ccb2f99e2c927290d9de4644002053</code>.
+The original v1 manifests remain unchanged. Because this was an avoidable
+configuration defect rather than an external invalidation, the corrected v2
+launch required separate approval. Brian explicitly approved it on
+2026-08-02. Its fail-closed dry-run receipt is
+<code>ab7b6c3fa142d0cb3d0f54236b142b08b0aa837f120ffbf4314742723be04b27</code>.</p>
+<h3 id="casa-b-v2-accepted-clean-reference">CASA-B v2 accepted clean reference<a class="headerlink" href="#casa-b-v2-accepted-clean-reference" title="Permanent link">&para;</a></h3>
+<p>The separately approved corrected run completed successfully on 2026-08-03.
+It is the frozen CASA-B clean reference. CASA selected 444 cumulative MT-MFS
+minor iterations across eight minor cycles and then stopped on the configured
+5-sigma criterion: the corrected-mask residual fell from <code>0.431878 Jy/beam</code>
+to <code>0.00105339 Jy/beam</code>, below the final <code>0.00106779 Jy/beam</code> n-sigma
+threshold. The final full-image peak was <code>0.0110944 Jy/beam</code>; it lies outside
+the deliberately bounded source mask and did not prevent the valid masked
+stopping condition.</p>
+<p>The measured <code>tclean</code> wall time is <code>82,351.832814 s</code> (22 h 52 m 31.833 s).
+The completed receipt is
+<code>30aaf60c4c29595eb9789bcfe1fdab5723bb761295d4e647e4632b8eb6c31be6</code>;
+the manifest is
+<code>63948fe140d5c06c00b924eea407e5afe8ccb2f99e2c927290d9de4644002053</code>.
+The retained request, result, combined output, CASA log, and host-telemetry
+SHA-256 values are respectively
+<code>dd0c86ce305e07e5d82431bdc69c1c26dd8937f25ea3ae2044220d5195968a01</code>,
+<code>8d2b5edb9835ed2f29b4e9e9591647838a45a30a824e0e362f1c2bb842d9a762</code>,
+<code>1132bff61802078b545fcbcf3e07273c3f473378232a6189911d72e7d99c94f4</code>,
+<code>810406c782347a742f4f88aa93b938e5da9c1f15ea27f4afe7fdc603fb57abe7</code>,
+and
+<code>7ceae0fc8641c08d275ff827e3ecfb08688219eea4221d2b599aebbef9f06bc3</code>.
+All retained hashes were independently re-read after bundle promotion.</p>
+<p>The receipt binds all 63 requested fields, all 16 SPWs, 655,200 selected MS
+rows, 12,150-square geometry, the corrected mask hash
+<code>fabf361e6609a4d66c251458c2ed31bc80978d936e78a39a8f449bd1a63dc322</code>,
+and the frozen AWProject, 32-W-plane, POINTING, A-term, WB A-projection,
+conjugate-beam, Briggs, MT-MFS <code>nterms=2</code>, and scales <code>[0,5,12]</code> controls.
+Bundle validation passed for the exact 19-product inventory. The product trees
+total 9,579,098,756 logical bytes; their individual stable hashes are recorded
+in the launch ledger.</p>
+<p>The CASA process peaked at 12,818,137,088 bytes RSS. Host telemetry recorded a
+minimum 33% free memory, zero throttled pages, 410,894,925,824 bytes of
+swap-in, and 462,597,226,496 bytes of swap-out. Despite the large cumulative
+swap traffic, field/SPW progress remained steady and no throttling or terminal
+memory-pressure stall occurred, so the observed swapping was expensive but
+not destructive. Process I/O was 556,159,590,400 bytes read and
+126,701,232,128 bytes written.</p>
+<p>Two log anomalies do not invalidate the reference. CASA emitted its known
+startup <code>measures_update</code> SEVERE because the local measures tree is not managed
+by <code>casaconfig</code>; the receipt binds the runtime and data trees actually used.
+One major-cycle diagnostic printed <code>1.84467e+17</code> seconds for “time to massage
+data”; surrounding timestamps and the independent stage receipt identify it
+as a timer overflow. No imaging exception, traceback, divergence, or failed
+product was present.</p>
+<p>This evidence accepts CASA-B as the matched reference to which the eventual
+casa-rs all-fields row will be compared. It makes no claim yet about casa-rs
+full-geometry correctness or speedup.</p>
+<h3 id="casa-a-accepted-clean-reference">CASA-A accepted clean reference<a class="headerlink" href="#casa-a-accepted-clean-reference" title="Permanent link">&para;</a></h3>
+<p>The approved single-field run completed successfully on 2026-08-03 and is
+the frozen CASA-A clean reference. CASA selected 1,103 cumulative MT-MFS minor
+iterations across eight minor cycles. The last minor cycle reduced the masked
+peak to <code>0.00235388 Jy/beam</code>, below that cycle's <code>0.00235472 Jy/beam</code> n-sigma
+threshold. After the ninth and final major cycle CASA measured
+<code>0.00234316 Jy/beam</code> in the mask and <code>0.0283284 Jy/beam</code> over the full image,
+reported its global stopping criterion, and completed normally. The full-image
+peak lies outside the deliberately bounded source mask.</p>
+<p>The measured <code>tclean</code> wall time is <code>3,798.068812 s</code> (1 h 3 m 18.069 s), and
+the checked protocol total is <code>3,846.651839 s</code>. The completed receipt is
+<code>f9216878e3372ecb4a81f565e33e6b5b2729abf20d0c1d7313892ac4db6a680d</code>;
+the manifest is
+<code>5da8ce24c92b2d47e53784e8600976bf37708086309820cb1b61af6f8982bd9e</code>.
+The retained request, result, combined output, CASA log, and host-telemetry
+SHA-256 values are respectively
+<code>dc9ee1cb0a985a08a2cfd275905cece050c692636ac45be39d7094c803c6eaad</code>,
+<code>fe5f22cfe2fc7b7b1b3441916114ecb8812df9ac73c13b43a8a5551434fb7936</code>,
+<code>b850a0f44df8a0b4437b0ccaa679de62fb3c113de07b1181724dec69244889f8</code>,
+<code>573dce4f9675a8f1053ad4f8779a1993f6d28eb67bedafa026f0de4e2cfa291c</code>,
+and
+<code>ee59ea9efbd61139194693b57347436e988ad1a1d7288b36455de2a6c158cf38</code>.
+All retained hashes were independently re-read after bundle promotion.</p>
+<p>The receipt binds field 1525, all 16 SPWs, 10,400 selected MS rows,
+12,150-square geometry, <code>niter=2000</code>, corrected mask hash
+<code>fabf361e6609a4d66c251458c2ed31bc80978d936e78a39a8f449bd1a63dc322</code>,
+and the frozen AWProject, 32-W-plane, POINTING, A-term, WB A-projection,
+conjugate-beam, Briggs, MT-MFS <code>nterms=2</code>, and scales <code>[0,5,12]</code> controls.
+Bundle validation passed for the exact 19-product inventory. The product trees
+total 9,579,098,756 logical bytes; their individual stable hashes are recorded
+in the launch ledger.</p>
+<p>The CASA process peaked at 13,784,383,488 bytes RSS. Host telemetry recorded a
+minimum 33% free memory, zero throttled pages, 361,460,219,904 bytes of
+swap-in, and 405,832,564,736 bytes of swap-out. The substantial cumulative
+swap traffic did not produce throttling, convergence loss, or a terminal
+memory-pressure stall. Process I/O was 505,119,948,800 bytes read and
+123,118,936,064 bytes written, with 9,531 major page faults.</p>
+<p>The known startup <code>measures_update</code> SEVERE reports an unmanaged local measures
+tree; it does not invalidate the bound runtime, data, successful imaging call,
+or retained products. This evidence accepts CASA-A as the matched reference to
+which the eventual casa-rs single-field row will be compared. It makes no
+claim yet about casa-rs full-geometry correctness or speedup.</p>
+<h2 id="candidate-budget-and-promotion">Candidate budget and promotion<a class="headerlink" href="#candidate-budget-and-promotion" title="Permanent link">&para;</a></h2>
+<p>The salvage audit receives at most eight engineer-hours. It may select one
+primary candidate and one reserve from code and evidence that already existed
+at archive commit <code>4c3cf8cc9</code>. It does not invent another architecture.
+Retired families stay retired. Positive diagnostic-only work is not promoted
+without an already executable, bounded, scientifically testable route.</p>
+<p>At most two immutable casa-rs candidate freezes may enter the promotion
+ladder. Their full-size budget is four planned rows—A and B for each
+freeze—plus one shared external-invalidation retry. A candidate reaches full
+geometry only after:</p>
+<ol>
+<li>The real 4096-square, four-SPW clean row passes.</li>
+<li>The real 4096-square, full-16-SPW clean row passes.</li>
+<li>Its memory plan and stage projection are credible for the 32 GiB laptop.</li>
+</ol>
+<p>Reduced rows are development gates, never final evidence. Smaller diagnostics
+are permitted only for an isolated semantic regression in the selected
+candidate; they cannot reopen an architecture tournament.</p>
+<h2 id="correctness-and-performance">Correctness and performance<a class="headerlink" href="#correctness-and-performance" title="Permanent link">&para;</a></h2>
+<p>CASA is the scientific reference, not an implementation transcript. Bitwise
+identity, identical component order, and identical major-cycle history remain
+diagnostics rather than gates. Promotion still requires:</p>
+<ul>
+<li>the exact data, field, SPW, POINTING, AWProject, weighting, MT-MFS, mask,
+  scale, and restoration semantics;</li>
+<li>the exact 19-product inventory with correct coordinates and metadata;</li>
+<li>all frozen numerical, topology, beam-aware, source, morphology, flux,
+  residual/noise, dynamic-range, and stable-domain alpha gates;</li>
+<li>stable convergence without divergence or conspicuous coherent artifacts;</li>
+<li>an actual-iteration, component-count, cycle, and stopping receipt; and</li>
+<li>bounded memory, compression, swap, I/O, progress, and end-to-end stage
+  evidence on the 32 GiB laptop.</li>
+</ul>
+<p>Each final row independently requires at least 10x against its corresponding
+matched CASA reference. No speedup is inferred across dirty versus clean,
+single-field versus 63-field, reduced versus full geometry, or different
+product sets.</p>
+<h2 id="finite-delivery-train">Finite delivery train<a class="headerlink" href="#finite-delivery-train" title="Permanent link">&para;</a></h2>
+<p>The merge train has four review boundaries:</p>
+<ol>
+<li>Contract, evidence harness, CAP20000 manifest, launch ledger, and CASA
+   references.</li>
+<li>Audited shared execution substrate: multi-SPW, POINTING, AWProject,
+   MT-MFS, product parity, resource planner/telemetry, and canonical UI/task
+   controls only.</li>
+<li>One selected performance candidate, with the reserve used only after a
+   declared primary failure.</li>
+<li>Final acceptance receipts, bounded refactor, issue #454 experimental
+   cleanup, sidecar reviews, and closeout.</li>
+</ol>
+<p>The recovery budget is eight engineer-hours for salvage and 48 engineer-hours
+total inside a 72-active-hour window. Valid long-running CASA reference wall
+time is excluded from those active-work clocks. CI is run at coherent PR
+boundaries and once for final verification, not after every scientific
+measurement. Existing green evidence is reused whenever intervening changes
+cannot affect it.</p>
+<p>No PR is merged automatically. When the train is merge-ready—or when the
+bounded attempts end in a blocker—the agent presents the evidence and waits
+for Brian’s decision.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
