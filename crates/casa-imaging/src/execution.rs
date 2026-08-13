@@ -9556,28 +9556,25 @@ struct MetalResidualGroupedTileDesc {
     _pad0: [u32; 2],
 }
 
-#[cfg(all(target_os = "macos", not(coverage)))]
 pub(crate) const fn standard_mfs_metal_grouped_cache_bytes_per_lane(
     correlation_count: usize,
 ) -> usize {
     // A one-lane run and a one-lane tile group are the exact worst case.  Real
-    // runs and groups amortize their descriptors across multiple lanes.
-    std::mem::size_of::<MetalResidualRowRunDesc>()
-        + std::mem::size_of::<MetalResidualRowRunLane>()
-        + correlation_count * std::mem::size_of::<MetalComplex32>()
+    // runs and groups amortize their descriptors across multiple lanes. Keep
+    // this ABI accounting platform-neutral so pure planner tests and remote
+    // frontends calculate the same candidate size without linking Metal.
+    const ROW_RUN_DESC_BYTES: usize = 16 * std::mem::size_of::<u32>();
+    const ROW_RUN_LANE_BYTES: usize = 8 * std::mem::size_of::<u32>();
+    const GROUPED_TILE_DESC_BYTES: usize = 8 * std::mem::size_of::<u32>();
+    ROW_RUN_DESC_BYTES
+        + ROW_RUN_LANE_BYTES
+        + correlation_count * 2 * std::mem::size_of::<f32>()
         + correlation_count * std::mem::size_of::<u8>()
         + correlation_count * std::mem::size_of::<f32>()
         + std::mem::size_of::<u32>() // lane_group_ids
         + std::mem::size_of::<u32>() // group_counts
-        + std::mem::size_of::<MetalResidualGroupedTileDesc>()
+        + GROUPED_TILE_DESC_BYTES
         + std::mem::size_of::<u32>() // lane_refs
-}
-
-#[cfg(any(not(target_os = "macos"), coverage))]
-pub(crate) const fn standard_mfs_metal_grouped_cache_bytes_per_lane(
-    _correlation_count: usize,
-) -> usize {
-    0
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -18523,6 +18520,25 @@ mod tests {
         plan.resolved.tile.queue_capacity = queue_capacity;
         plan.fixed_tile_use_planned_run_blocks = use_planned_run_blocks;
         plan
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn grouped_metal_cache_accounting_matches_the_device_abi() {
+        for correlation_count in [1, 2, 4] {
+            let abi_bytes = size_of::<super::MetalResidualRowRunDesc>()
+                + size_of::<super::MetalResidualRowRunLane>()
+                + correlation_count * size_of::<super::MetalComplex32>()
+                + correlation_count * size_of::<u8>()
+                + correlation_count * size_of::<f32>()
+                + 2 * size_of::<u32>()
+                + size_of::<super::MetalResidualGroupedTileDesc>()
+                + size_of::<u32>();
+            assert_eq!(
+                super::standard_mfs_metal_grouped_cache_bytes_per_lane(correlation_count),
+                abi_bytes
+            );
+        }
     }
 
     #[test]

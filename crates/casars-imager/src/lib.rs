@@ -64508,7 +64508,7 @@ mod tests {
         let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
         config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
         config.standard_mfs_grid_threads = Some("7".to_string());
-        let mut base = standard_mfs_memory_plan(&config, 64, 1024);
+        let mut base = standard_mfs_memory_plan_with_metal_available(&config, 64, 64, 1024);
         base.workers = 4;
 
         let initial =
