@@ -6647,6 +6647,7 @@ where
     {
         cache.finalize_source_major_staged_streaming()?;
     }
+    #[cfg_attr(any(not(target_os = "macos"), coverage), allow(unused_mut))]
     let MosaicMtmfsDirtyImages {
         psf_terms,
         mut residual_terms,
@@ -6731,6 +6732,7 @@ where
             .map(|value| value as f32)
             .collect()
     };
+    #[cfg_attr(any(not(target_os = "macos"), coverage), allow(unused_mut))]
     let mut psf_state = MtmfsPsfState {
         psf_terms,
         normalization_sumwt: initial.normalization_sumwt as f32,
@@ -16211,6 +16213,7 @@ enum AwProjectInitialCompensationMode {
 }
 
 impl AwProjectInitialCompensationMode {
+    #[cfg(all(target_os = "macos", not(coverage)))]
     fn plane_range(self) -> Option<std::ops::Range<usize>> {
         match self {
             Self::HighOnly => None,
