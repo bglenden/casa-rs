@@ -654,3 +654,87 @@ The production checkpoint is commit
 This supersedes the previous reduced-row correctness and performance stop
 boundary. It does not satisfy or weaken the required full-16-SPW and
 `12,150`-square acceptance rows. No unchanged CASA reference was rerun.
+
+## 2026-08-07 PR4 grouped-tile integration
+
+Brian explicitly approved recovery and production incorporation of the best
+retained grouped-tile replay candidate. PR4 is stacked on the selected PR3
+candidate and owns only this architecture, planner integration, its tests and
+telemetry, experimental-harness removal, documentation, and final stabilization.
+It does not reopen rejected architecture families or change the scientific,
+19-product, memory, or final-geometry acceptance contract.
+
+For eligible Metal AWProject MT-MFS clean runs, the selected architecture
+compiles bounded effective CF support, exact source-role group ordinals, sorted
+group plans, and the grouped tile route once per admitted segment. Residual
+replay preserves source-order f64 accumulation and the final f32 narrowing while
+performing no grouping, sorting, or route construction. An admitted grouped
+plan has no raw replay fallback: compile, integrity, resource, or reload failure
+fails the run. Dirty imaging and workloads outside the declared capability
+continue to use their existing architecture.
+
+The resource planner separates initial-grid compiler admission from
+residual-stage persistent replay retention, derives segment size from available
+headroom, charges allocator uncertainty, and places the private unlinked spill
+on the `imagename` output volume. Existing UI/task parameters
+`imaging_memory_target_mb`, `imaging_memory_pressure_policy`, and `imagename`
+are the production controls; no grouped-replay toggle or science parameter is
+added.
+
+The frozen residual-replay candidate improved `70.165468583 s` to
+`65.167962583 s` (`7.12%`) with Full16 NRMSE
+`[3.7105927e-4, 4.5706914e-4]`, zero rejected products, lower footprint and
+resident memory, and zero swap-out. Receipt SHA-256:
+`ba720f5a0c588787b8825535c2de3bcbb50a07f9dd564b68aa039ab6ab919cfb`.
+The CASA-derived `19.422x` quotient uses a favorable, non-identical boundary
+and is not a matched clean-speedup claim.
+
+The production FourSPW canary compiled one segment with 112 source programs and
+6,416,526 samples, zero rejected blocks, a `5,660,679,272`-byte builder peak,
+and a `2,532,787,040`-byte payload. Independent grouped-artifact validation
+passed with SHA-256
+`52b77bcccd4e23306c686ce74bacbae451d5682b1022d70817756275beb5e4b9`.
+The enclosing obsolete fixture receipt hash is
+`1e0fb32a9aac72f859f85c01a4ad7aa482cba39a2028c3b1d90d44009404a490`;
+its failure is a retired harness-schema mismatch, not a production compilation
+failure. The canary is topology, compiler, integrity, and memory evidence, not
+an end-to-end performance receipt.
+
+PR4 promotion requires warning-free crate/workspace gates, focused grouped
+compiler/spill/planner tests, documentation checks, a bounded anti-slop pass,
+and known CI state. It does not itself satisfy the remaining `12,150`-square
+single-field or all-63-field acceptance rows. No PR is merged or undrafted
+without Brian's explicit decision.
+
+### PR4 local checkpoint verification
+
+The production-integration checkpoint completed:
+
+- `cargo fmt --all` and `git diff --check`;
+- warning-free `cargo check` and `cargo clippy -- -D warnings` for
+  `casa-imaging` and `casars-imager`, all targets;
+- grouped replay plan validation, topology-only compact-cache ownership,
+  three compiler/source-order/route/spill tests, corrupt-section rejection,
+  and the resource/output-volume planner test;
+- `just docs-check`; and
+- workspace warning-free Clippy through `just verify`.
+
+The full `casa-imaging` library run recorded 434 passed, 12 ignored, and the
+same two reproducible exclusions already outside this diff:
+
+- `awproject_global_replay_requires_metal_storage_without_generic_scratch`
+  could not acquire a default MPSGraph Metal device; and
+- `image_coordinate_system_normalizes_vlass_ra_like_casa` retained inconsistent
+  pre-existing Dec expectations
+  (`0.2754960264910762` versus `0.2754960264910763`).
+
+The full `casars-imager` library run recorded 364 passed, 14 ignored, and one
+inherited failure in unchanged `task_contract.rs`:
+`artifact_generation_covers_layout_branches` found five artifacts while the
+test expected six. A focused retry reproduced it. Because `just verify` stops
+at the earlier `casa-imaging` failures, its remaining commands were run
+directly: frontend generated bindings were current, all 18 task CLI hosts
+passed, seven GUI acceptance tests passed, and the Python package gate passed
+48 tests with one skipped after its isolated build dependency was made
+available. These exclusions are recorded accurately; no unrelated science or
+task-contract test was weakened to make the checkpoint green.

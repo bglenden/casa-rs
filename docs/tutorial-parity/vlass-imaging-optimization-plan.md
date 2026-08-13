@@ -7912,3 +7912,430 @@ This is promoted reduced-row correctness and performance evidence, not final
 the row passes correctness and exceeds the independent `10x` gate. The next
 work is stabilization and the existing full-16-SPW/full-geometry promotion
 ladder, not another speculative optimization family.
+
+### 2026-08-07 grouped-tile production recovery
+
+Brian approved recovering the best retained grouped-tile candidate and making
+it the production architecture for eligible Metal AWProject MT-MFS clean
+workloads. The recovered lineage is intentionally narrow:
+
+- `b0cbb6f73`: bounded effective-support compiler;
+- `46fc37c72`: one-pass exact support compiler; and
+- `c5c31cc66`: source-order grouped-tile artifact and replay.
+
+Rejected trials and their reverts were not imported. The production integration
+replaces fixture-side activation with an explicit resource-admitted execution
+plan. The frontend derives capture-time compiler admission from the
+initial-grid lifetime ledger, derives persistent replay retention from the
+residual stage, chooses 512 MiB to 8 GiB segments from their non-overlapping
+headroom, and places an unlinked integrity-checked spill beside `imagename`.
+The existing `imaging_memory_target_mb`, `imaging_memory_pressure_policy`, and
+`imagename` task/UI parameters therefore govern memory and storage placement.
+There is no new scientific parameter or hidden activation environment variable.
+
+The frozen Full16 residual-replay discriminator improved from
+`70.165468583 s` to `65.167962583 s`, a `7.12%` reduction. FourSPW grouped
+replay took `7.1950275 s`. Full16 image NRMSE was `3.7105927e-4` and
+`4.5706914e-4`, with zero rejected products. Process footprint fell from
+approximately `19.8203 GB` to `17.8247 GB`, resident memory from approximately
+`15.1615 GB` to `9.2865 GB`, and swap-out remained zero. The final measurement
+receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/autoresearch/vlass-full16-replay-v1/runs/20260807T044023Z-measure-a34e1bd410d7/receipt.json`,
+SHA-256
+`ba720f5a0c588787b8825535c2de3bcbb50a07f9dd564b68aa039ab6ab919cfb`.
+The prior retained receipt is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/autoresearch/vlass-full16-replay-v1/runs/20260806T235717Z-measure-2cc30f7402cf/receipt.json`.
+
+The available CASA `1265.700682709 s` figure is only a favorable comparison
+envelope for this residual-replay discriminator; it is not an identical
+end-to-end processing boundary. Dividing it by `65.167962583 s` gives
+`19.422x`, but that number is not promoted as a matched CASA/casa-rs clean
+speedup. No CASA reference was rerun.
+
+Production canary
+`20260807T123908Z-grouped-tile-production-canary-four-spw` proved that the
+shared planner compiled and spilled one grouped segment containing 112 source
+programs and 6,416,526 ordered samples, with zero rejected blocks. The measured
+builder peak was `5,660,679,272` bytes and the payload was `2,532,787,040`
+bytes. The supplemental validator independently rehashed every raw and grouped
+section and passed source/program/sample cardinality, the `1e-6` support bound,
+the compile ledger, and absence of experimental activation flags:
+
+- wrapper receipt SHA-256:
+  `1e0fb32a9aac72f859f85c01a4ad7aa482cba39a2028c3b1d90d44009404a490`;
+- grouped validation SHA-256:
+  `52b77bcccd4e23306c686ce74bacbae451d5682b1022d70817756275beb5e4b9`.
+
+The wrapper reports failure only because its retired raw-fixture schema did not
+count grouped sections. The supplemental production-artifact validation is the
+earned canary result; no end-to-end grouped canary runtime is claimed.
+
+Negative integration evidence is retained rather than hidden:
+
+- a `587 MB` replay allowance and then a `1.642 GB` allowance were both below
+  the `1.654 GB` raw-builder requirement;
+- a `0.5 GB` segment policy produced 63 segments and approximately `20.9 GB`
+  of spill, so it was retired;
+- a `274.304 s` full FourSPW run completed all 63 fields, 2,000 iterations, and
+  products, but legacy compact-block retention prevented grouped finalization,
+  so it is fallback-path negative evidence, not grouped performance; and
+- two subsequent canaries exposed topology-placeholder and fill-budget
+  integration defects before the successful production canary.
+
+No new `12,150`-square clean development workload or unchanged CASA reference
+was run. Full-geometry single-field and all-63-field acceptance remains
+outstanding and retains the existing correctness, product, memory, and matched
+`10x` requirements.
+
+The first end-to-end grouped landmark exposed a distinct production lifetime
+defect and stopped the ladder. Release executable
+`d207e508d4cc3390b0b99eb9c8fc7743a1f7b1555505e4cf44b60a9515b097fb`
+completed the single-field, four-SPW, `4096`-square, `niter=2000` row in
+`58.510 s`, versus frozen CASA `3631.809729 s` (`62.0716x`). It wrote all 19
+products and completed 172 major cycles and 2,000 minor iterations, but no
+correctness promotion is claimed because the performance guard stopped before
+the frozen-product comparison. The run log SHA-256 is
+`9b374c42b6edfab5b95a4d375b34399a940f0809a258a2821b8f1f86ae06a83e`.
+
+The grouped compiler itself was active and passed its internal topology
+receipts. It produced two exact-source-order AOT segments totaling
+`1,192,466,296` payload bytes. The defect was forced eviction: production
+retained only `1,152` bytes and reread the complete payload at every exact
+refresh. Twelve replay summaries recorded `14,309,595,552` aggregate spill
+bytes and approximately `26.442 s` of segmented replay, making the result
+`2.042x` slower than the preserved `28.65 s` casa-rs landmark.
+
+The bounded repair is all-or-nothing, next-use-aware retention after the
+initial-grid peak. Production computes the exact reloaded resident size from
+the sealed segment inventory and AOT ledger, pins every segment in source
+order only when the complete set fits the planner's replay allowance, and
+otherwise keeps the existing spill/prefetch path. Partial and LRU retention
+remain forbidden because every segment is visited cyclically. The landmark
+guard now requires the grouped planner, AOT hash parity, complete resident
+retention, zero runtime grouping/sort/route rebuilds, and zero per-refresh
+spill reads instead of the obsolete monolithic-global flag. It also requires
+an explicit release at residual-grid end, before restoration and 19-product
+materialization. The landmark wrapper no longer exports inert experimental
+replay-retention, residual-only, or global-tile selectors; grouped replay is
+selected solely by the production resource plan. The `31.515 s` ceiling is
+unchanged.
+
+The exact 5,073-byte FFTW wisdom artifact is now durably preserved at
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/fftw-wisdom/vlass-4096-fftw-measure-f6fd873a.wisdom`,
+SHA-256
+`f6fd873a068b68611eabdd598d3628d7fa75af20f451eef29b87b1562629462e`.
+It is a later reproducibility pin rather than an activity claim earned by the
+original 28.65-second log. If it is lost, a new wisdom file requires deliberate
+rebaselining; timed FFTW MEASURE output is not assumed byte-reconstructible.
+The first complete grouped-resident repair at commit `f3bac6cbb` reduced the
+same landmark from `58.510 s` to `38.500 s`. Against the frozen, exactly
+matched CASA `3631.809729 s` reference this is `94.332720x`. The run completed
+2,000 real minor iterations and all 19 products, and the grouped artifact was
+resident with zero replay spill reads or runtime topology rebuilds. It did not
+pass promotion because `38.500 s` exceeds the unchanged `31.515 s` ceiling;
+no correctness claim is inferred from a performance guard that stopped before
+the immutable product comparison. The receipt and log SHA-256 values are
+`d63471d5e41409a03e35ddfa4339f306d811db1ae03b6e6a846f298bc5c1ae39`
+and
+`ac6c85d673790a5fc355ceeb0ddf462706c71c7c017234f9ca4f3992c99cb83f`.
+
+Stage comparison found two bounded architectural mismatches with the preserved
+`28.65 s` row. The grouped compiler displaced the already-proven single-field
+resident tile chains, and compensated Metal residual readback had made the
+two MT-MFS f64 transforms sequential. Historical residual FFT time was
+`2.338 s`; the grouped-resident run recorded `5.778 s`. Requiring the later
+FFTW wisdom also changed the historical-equivalence row: the original log does
+not establish that artifact, so this landmark instead freezes current FFTW
+3.3.11 library hashes and uses the historical `estimate` planner.
+
+The finite discriminator is therefore resource-adaptive rather than a new
+open-ended tournament:
+
+- count distinct FIELD_ID values in the resolved active row selection;
+- for one field, retain the exact resident Metal tile-chain working set in
+  source order when it fits the planner's replay allowance;
+- for multiple fields, retain the promoted grouped source-order architecture;
+  and
+- admit parallel f64 residual-term transforms only when the
+  ResidualTransform lifetime peak plus the additional f64 plane fits usable
+  memory.
+
+The single-field `4096`-square four-SPW canary must use a clean commit-bound
+release build, FFTW f64 estimate with eight threads and the audited library
+hashes, four resident source blocks with stable post-fill reuse, planner
+residual-term parallelism of two, no grouped compiler or spill replay, the
+unchanged scientific/product contract, and wall time at or below `31.515 s`.
+Exactly one run is allowed. A miss is retained as negative evidence and is not
+rerun unchanged. The canary does not by itself close the larger single-field
+case where the complete legacy resident set exceeds retention; production
+closeout must make that boundary transition atomically to grouped replay
+without a partial or LRU cache.
+
+The single authorized canary at commit
+`31b7ead66a1d91f59c98a6ae3538c40674545d7c` completed in `38.730 s`, so the
+finite discriminator is rejected against the unchanged `31.515 s` ceiling
+and will not be rerun unchanged. Against the frozen exactly matched CASA
+runtime of `3631.809729 s`, the release result is `93.772521x`. The release
+executable SHA-256 is
+`450eec1828cc856a630822cd4476856f0a14917979dfde90de5da9a036d18998`.
+The run did exercise the intended architecture: four source blocks filled
+seven resident programs totaling `2,852,422,740` bytes; the final cache
+reported four misses and 40 hits across 11 residual stream replays; all 70
+post-fill program executions were resident; grouped compilation, AOT
+specialization, and spill replay were absent; and all 11 residual transforms
+selected planner-admitted term parallelism of two. The cache was explicitly
+released before product materialization.
+
+The timing model was nevertheless false. The first residual refresh spent
+`3057.481 ms` building the resident programs, and the subsequent ten resident
+refreshes totaled `1953.050 ms`. The instrumented residual FFT stages with
+parallelism two still took approximately `0.53` to `0.59 s` each rather than
+recovering the historical modeled saving. Total casa-rs processing was
+`38.055808 s`, including `34.328509 s` in imaging and `1.564875 s` writing
+products. Because the performance guard failed before the immutable
+19-product comparison, this receipt makes no correctness-promotion claim.
+The immutable landmark receipt and log SHA-256 values are respectively
+`f6c4011c2e9ffd2b34dc74d61ac6bcafc2723f9e72ee3f0506f45b164d3a88d7`
+and
+`c36680a65c9ee2394928eb4b6ac0950ce8e2a6635a484ecf31451a3f17d7783c`.
+
+Brian accepted the recommendation to reject this single-field production
+override after the failed discriminator. Production returns to the single
+grouped source-order architecture; it does not retain the field-count branch,
+the incomplete resident-to-grouped transition, or the ineffective parallel
+residual-FFT experiment. The exact selected-field telemetry, plan-propagation
+repair, explicit replay-cache release, hermetic commit-bound landmark runner,
+and negative receipt remain useful independent evidence. Reconsidering
+single-field resident replay is deferred by explicit signoff until the
+`12,150`-square workload provides the full-geometry memory and stage picture;
+this is not authorization for another reduced-row experiment.
+
+Brian explicitly approved the separate production rebaseline on 2026-08-07.
+The `28.650 s` result remains immutable historical evidence, while the grouped
+production architecture now uses `38.500 s` as its reduced-row baseline and
+`42.350 s` as its ten-percent no-signoff ceiling. This accepts the measured
+cost of the scalable grouped architecture without rewriting the earlier
+resident-tile-chain evidence. The cleanup verification reached
+warning-free workspace Clippy and then stopped in the workspace test phase on
+the same two previously documented, untouched exclusions:
+`awproject_global_replay_requires_metal_storage_without_generic_scratch`
+reported `mpsgraph_no_default_metal_device`, while the two cross-platform
+VLASS WCS regression assertions differed from their CASA declination references
+by at most one `f64` ULP after the imaging-layer test's stale second reference
+was aligned with the canonical CASA WCSLIB value. Brian approved replacing
+exact declination equality with an explicit one-ULP bound while retaining
+bit-exact right ascension and the CASA reference value. Focused grouped replay,
+planner, Python contract, formatting, lint, and documentation gates remained
+green.
+
+The subsequently approved immutable 19-product comparison found that the
+`38.500 s` grouped run is not scientifically promotable. PSF, PB, weight, and
+sum-weight products remained exact or within approximately `1e-7`, and the
+mask was exact, but normalized RMS differences reached `0.053` to `0.064` for
+residual/restored images and `0.104` to `0.149` for model terms. The divergence
+began at the first model-dependent refresh: grouped replay reported
+`0.013050746` versus `0.013047279` for the previously near-CASA exact-support
+run. The `1e-6` per-stencil squared-L2 omission had cropped `152,370` of
+`153,728` prediction plans and every tile plan in the first segment; that
+local energy bound does not bound nonlinear MT-MFS component selection or the
+final CLEAN trajectory. The comparison input, output, and log SHA-256 values
+are respectively
+`7544119055722b5943eff7f3f2630fa034c2c2e98ec3d9dec5b2ad8a1092fa34`,
+`32dae61260d004b0a481de57ea1ee44234b38e7d43239864abfe7c899e795311`,
+and
+`69cf3e5d18baf75e7195538a90d90dc910572c389886a508b1945c75bcd807cf`.
+No all-fields row was launched after this failed gate.
+
+Production grouped replay therefore uses exact CF support with zero omitted
+energy. Threshold zero is a dedicated no-mutation compiler path rather than a
+zero-valued invocation of the approximate cropper, because floating-point
+prefix sums could otherwise select a smaller rectangle. The AOT compiler
+fails closed unless prediction and imaging plan-state hashes remain unchanged;
+its grouped plans and route must match the dense precompile byte for byte.
+Runtime receipts additionally require zero cropped plans, equal original and
+retained tap visits, unchanged kernel residency, and one exact-support receipt
+per AOT segment. The approximate support compiler remains experimental
+evidence only and is not a production scientific default.
+
+The one authorized exact-support grouped landmark at commit
+`9d9cd9ebaf65646bdf406a8382ff0dfeeef03f0d` completed the matched
+single-field, `4096`-square, four-SPW, 2,000-iteration workload in
+`55.400 s`. Against the frozen CASA runtime of `3631.809729 s`, this is
+`65.556132x`, but it fails the approved grouped reduced-row no-signoff ceiling
+of `42.350 s`. The release executable, run log, and immutable landmark receipt
+SHA-256 values are respectively
+`9b398cd9f1c7c376fed369cf13fce387f1c8fa6ab28457f270fcbcdd470f07f0`,
+`240351d08149fc7bfdff28f09592b75db3c721f68ace9093fedf2eb7ffffa0af`,
+and
+`9d6d84011b6da9b14b03a85abe4a960f36e5b616d4e5fd2fd5788ae12635efc6`.
+The run began with approximately `4.65 GB` compressed memory and `7.62 GB`
+swap already in use, but sampled stages recorded no material swap traffic
+during the workload. Compared with the invalid approximate-support run, the
+regression was distributed across controller, PSF, FFT, minor-cycle, and
+major-refresh stages rather than being explained by grouped replay alone.
+The exact resident replay artifact grew by only about `0.31 MB`, and the
+observed exact replay calls added only a small fraction of the total wall-time
+increase. This receipt therefore establishes the measured result but does not
+attribute the broad slowdown to exact CF support or claim a stable replacement
+performance baseline.
+
+The immediate immutable 19-product comparison against the frozen CASA oracle
+completed successfully. Mask and sum-weight products were exact; PSF, PB, and
+weight normalized RMS differences were approximately `9e-9` to `8e-8`;
+alpha, restored-image, model, and residual normalized RMS differences were
+approximately `7.1e-7` to `4.1e-6`. Product inventory, metadata, topology,
+beam, source-location, and flux gates passed. The comparison input, output,
+and log SHA-256 values are respectively
+`3c6d72f16057157cbce88c9121aa16b96632b7e8395959a6589eff7aa54daf1e`,
+`3e8b821e960b8bb3058e300d6f76bf49d1e1a154823a7431a9febbdacc19afd5`,
+and
+`c76c1f45504a03544a35083b2ab87a4352ef7d398db97100d950c29ae63f3c6c`.
+This earns exact-support grouped scientific promotion at the reduced
+single-field boundary, but not performance promotion under the current
+ceiling. No all-fields row was launched. Advancing to full-16-SPW or
+all-63-field acceptance requires Brian's explicit decision to accept this
+measured baseline or authorize another bounded performance investigation.
+
+Brian authorized continuing the finite promotion ladder from that measured
+baseline. Release executable
+`9b398cd9f1c7c376fed369cf13fce387f1c8fa6ab28457f270fcbcdd470f07f0`
+at commit `761a2d8b577245c2583970cd8848bf5aed313f14` then completed the
+single-field, `4096`-square, full-16-SPW clean row in `86.580 s`. The exactly
+matched frozen CASA row took `1690.1155176250031 s`, so the measured release
+speedup is `19.520854x`. The run completed six major cycles and 641 minor
+iterations, stopped on the nsigma threshold, released its
+`9,927,247,204`-byte resident replay program before product materialization,
+and recorded no swap-in or swap-out.
+
+The full-16-SPW 19-product comparison passed after the established scientific
+floor review classified six alpha-cutoff mask cells as boundary-only
+differences. Image and residual normalized RMS differences were approximately
+`1.3e-6`; model differences were approximately `3.7e-7` to `4.4e-7`; and all
+numerical, topology, metadata, beam, source, and flux gates passed. Five CASA
+and five casa-rs major-cycle boundaries aligned with zero discrete mismatches.
+The run log, comparison input, comparison output, trace comparison, and
+scientific-floor receipt SHA-256 values are respectively:
+
+- `a2dd421b5ab2f605ae277d0a7ceedcb8673b40c0de35d814e8b761577c7c58b4`;
+- `19545182ada8d17721bba9390b68e1e9defa061a2e70bdf26102c6ccf02f307f`;
+- `491ad25aadb364a73fa7c8d1f51cac5c17cbbc5ccf48ade576bf2db0a0ef0bd3`;
+- `445446bca33213bbd7cc95e6793386e94a329b1588c8f444e78cd0030f885339`;
+  and
+- `aa5707756312e8215ee67292c108fe25933ee3d7a2dcfa4bbfc3867029236565`.
+
+The next genuinely missing row was the all-63-field, POINTING,
+`4096`-square, four-SPW clean workload. It used all 63 selected fields and SPWs
+`2,7,12,17`, exact CF support, AWProject with 32 W planes, MT-MFS `nterms=2`,
+scales `[0,5,12]`, the frozen deterministic mask, and `niter=2000`. It
+completed in `515.290 s` versus the exactly matched frozen CASA
+`3470.1970449999208 s`, a release speedup of `6.734454x`. The run completed
+12 major cycles and 193 minor iterations, stopped on the nsigma threshold,
+wrote all 19 products, rejected no replay blocks, recorded zero process swaps,
+and peaked at `11,273,830,400` bytes RSS.
+
+This row passes the complete correctness contract. All 19 product gates pass;
+restored-image normalized RMS differences are `7.38e-5` and `9.74e-5`, model
+differences are `5.97e-6` and `1.60e-4`, and the beam-kernel NRMSE is
+`1.70e-7`. Eleven CASA and eleven casa-rs major-cycle boundaries align with
+zero discrete mismatches; the maximum start-peak relative difference is
+`9.79e-5` and the maximum model-flux relative difference is `7.15e-6`.
+The exact-support receipt reports one segment containing 240 source programs,
+zero cropped plans, equal original and retained tap visits, and unchanged
+kernel residency.
+
+Performance is not promoted: `6.734454x` is below the independent `10x`
+requirement. The measured stage boundary is specific rather than speculative:
+`341.943 s` of the `515.290 s` total is initial PSF/dirty gridding, while
+residual degrid/grid contributes `128.358 s`. The initial replay reports
+`155.091 s` of source preparation and `136.187 s` of Metal gridding. The
+larger all-field full-16-SPW row is therefore paused while this exact scaling
+boundary receives one bounded diagnosis; no CASA reference is rerun and no
+larger workload is launched merely to reconfirm the reduced-row miss.
+
+The immutable all-field run log, comparison input, comparison output,
+comparison log, and trace comparison SHA-256 values are respectively:
+
+- `ffdb48967463a88868a358b1d4e61a2be19cf374af730fb8b6fd7ecfb3921c37`;
+- `f08e66556dab4807972ad2924af29174a2ad7b02a442711922bbcd381daa06a7`;
+- `5496053e35b95515a8672af7f77916a3ecc713f4e99e1c4954409939e6744a71`;
+- `f0d6837cada76a45cb666889eb5fccfe9e3782043d7a081e64a57297dd0f59c7`;
+  and
+- `fd0bd4ae8f1596a2455097f853b3131de5591fcf0cdc6dffa6b78dcb27a54519`.
+
+The escalated max-reasoning diagnosis identifies this as an initial-grid
+planner regression, not a general grouped-replay or science failure. The
+current plan selected Metal initial gridding with only `256 MiB` each for CF
+residency and logical tap scratch. That produced 240 source windows, 29,220 CF
+loads, zero hits, 29,170 evictions, and `136.187 s` of Metal initial-grid work.
+The already-correct retained all-field v24 row used the existing exact
+192-pixel dynamic sparse CPU initial-grid path, seven workers on this host,
+AArch64 NEON 2x2 updates, and a `512 MiB` logical tap arena. It required 112
+windows and completed the same initial stage in `119.656 s`.
+
+One bounded production correction is therefore authorized before the
+all-field full-16-SPW row. Exact-support grouped AOT/resident Metal residual
+replay remains unchanged. The resource planner selects the existing sparse CPU
+initial-grid path for resolved multi-field AWProject MT-MFS workloads when its
+lifetime ledger fits, admits the `512 MiB` tap arena independently of the
+`256 MiB` CF-residency ceiling, treats an explicit worker setting as a
+resource-admitted upper bound, and otherwise derives workers from the existing
+resource calibration. Requested and effective workers must be receipted
+separately. Tile size, dynamic scheduling, NEON eligibility, and tap capacity
+must be plan-owned rather than hidden environment activation.
+
+The same-row release falsifier is finite: initial grid must be no more than
+`173.673 s`, total wall no more than `347.0197 s`, exact-support grouped replay
+must remain active with zero replay spill reads, all 19 products and the
+major-cycle trajectory must pass, and memory must remain bounded without
+process swapping. Substituting only the previously measured initial stage
+models `293.003 s`, or `11.844x` CASA. A miss is retained as negative evidence
+and is not rerun unchanged. Increasing CF residency alone is not the selected
+experiment because even removing all measured CF-load-worker time would model
+approximately `421.8 s`.
+
+The commit-bound release falsifier at
+`d2d0c0dad57c88987a2f8021350db6cff856a4bd` passed. Executable
+`7037562364d65f5657f4f6ec9e7fce86a92c7ef635b54f1a48f67bb1221642c8`
+completed the same all-63-field, POINTING, four-SPW, `4096`-square clean row in
+`268.490 s`. Against frozen matched CASA `3470.1970449999208 s`, the measured
+release speedup is `12.924865x`, with `78.530 s` of margin under the independent
+`10x` ceiling. Performance is accepted for this row and is not reopened merely
+to increase that margin.
+
+The resolved plan selected the intended exact `192`-pixel dynamic sparse host
+initial grid, `512 MiB` logical tap arena, AArch64 NEON 2x2 updates, and
+exact-support grouped Metal residual replay. Initial PSF gridding took
+`132.847 s`, below the `173.673 s` stage ceiling; residual degrid/grid took
+`101.277 s`. The grouped replay remained resident as one `2,810,917,176`-byte
+segment, read zero spill bytes, and rebuilt no runtime grouping, sorting, or
+route topology. Peak RSS was `11,193,843,712` bytes, the process recorded zero
+swaps, and all 19 products were written.
+
+All 19 numerical, metadata, topology, beam, source, flux, and inventory gates
+pass. The normalized RMS differences remain approximately `7.38e-5` and
+`9.74e-5` for restored images, `5.97e-6` and `1.60e-4` for models, and
+`1.70e-7` for the restoring-beam kernel. Eleven CASA and eleven casa-rs
+major-cycle boundaries align with zero discrete mismatches; the maximum
+start-peak relative difference is `9.98e-5` and the maximum model-flux relative
+difference is `7.15e-6`.
+
+The run also exposed and bounded a planner-receipt defect without invalidating
+the earned four-worker result. The launch requested seven grid workers, but
+generic full-grid admission capped the resolved plan to the four performance
+cores and the original sparse-grid receipt incorrectly described those four as
+respecting the explicit request. The follow-up telemetry repair records the
+requested value (`7`), effective value (`4`), and
+`explicit-resource-capped` source separately. Because the row passed both
+performance and correctness at four workers, this is not a reason to optimize
+or rerun it; the existing full-grid resource cap remains unchanged.
+
+The immutable run log, provenance, comparison input, comparison output,
+comparison log, and trajectory SHA-256 values are respectively:
+
+- `e32c72addc9e0fc5b5d23be960e91989aeacf557165f4b98e5b2bc8f2540e1f6`;
+- `445e52fb69a597e2ff72d9f00fb0a13c02fb1ced3d1bb6a027c3648e57c2d38f`;
+- `2a57b9ffa63d34515070ca0577aa0104929af773195afc288c632acbc624e703`;
+- `95b587efa276a5ed7c27e7a15b9f88ea16e5ea91caa7bae487dedda2d2213b90`;
+- `b628b252592ffdc855f29ca9aaa05e87870d4b76dc66c0bfb05579fc35c601cf`;
+  and
+- `f162ac041d5d6ff3d715488143c6b791726caac11ca177a3e7ea5ed1cf092fa5`.

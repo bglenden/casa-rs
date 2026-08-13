@@ -4178,7 +4178,7 @@ mod tests {
             nterms: 1,
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
-            niter: 0,
+            niter: 1,
             nmajor: None,
             fullsummary: false,
             gain: 0.1,

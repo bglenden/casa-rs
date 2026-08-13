@@ -407,30 +407,38 @@ dirty moments per complete plan key, applies the Taylor residual identity before
 gridding, and narrows only at the bounded f32 tile. The complete key includes
 grid location, subpixel offset, support, and clipped tap ranges; projector/PB
 identity remains fixed by the metadata group. Ordinary mosaic MT-MFS processes
-one metadata group and bounded compaction chunk at a time. AWProject instead
-builds one strict sample-to-pointing route for each bounded source block and
-replays consecutive source-order windows. Before loading full CF pixels, each
-window admits only the unique `(pointing, cell, kernel role, subpixel offset,
-conjugation)` tap bundles that fit the explicit compact-tap ceiling. Full cells
-are grouped only while packing phase-applied Complex32 taps; the completed
-window then replays ascending row/channel order, RR before LL, while disjoint
-Taylor planes may run on separate workers. Window boundaries do not change
-arithmetic order.
+one metadata group and bounded compaction chunk at a time. Eligible Metal
+AWProject MT-MFS clean runs instead compile each admitted source-order segment
+once after bounded effective-support specialization. The compiler preserves
+the original sample/role order, records the final group ordinal for each role,
+and persists the sorted group plans and grouped tile route. Major-cycle replay
+then performs only the exact-order f64 residual reduction, one f32 narrowing,
+and the unchanged grouped Metal dispatch; it does not rebuild grouping, sorting,
+or route topology. The private spill is integrity-checked, unlinked, and owned
+only for the lifetime of the imaging execution. It is an internal execution
+representation, not a reusable public cache format.
 
 The frontend derives requested scratch from image cells, Taylor plane count,
 and planned workers, then caps it by the run-level memory target after fixed
-products, caches, and one source row block are reserved. AWProject charges its
-full-cell LRU and compact-tap ceiling as independent allocations; neither may
-consume the five-percent safety reserve. The core reduces worker count when a
-support-sized tile cannot fit, subtracts exact worker-tile storage, and converts
-the remainder into a raw-sample limit from the actual compact record layout and
-geometry-derived route-copy bound. Reusable standard-MFS tap plans likewise
-receive an exact byte budget instead of a sample-count cutoff. The frontend
-memory planner and core executor share these formulas; no dataset identity or
-benchmark-specific sample threshold participates in the decision. Image-domain
-correction, PB normalization, and product semantics stay after the FFT. No
-generic compatibility block facade or normal-path host full-grid upload is
-retained.
+products, caches, and one source row block are reserved. For grouped AWProject
+replay it separately admits persistent residual-stage replay bytes and
+capture-time compiler bytes from the initial-grid lifetime ledger. Segment size
+is the remaining compiler headroom after persistent replay retention, bounded
+between 512 MiB and 8 GiB; allocator uncertainty is charged explicitly. The
+spill directory is the output image directory, so the task's output-volume
+choice also owns temporary replay I/O. Existing memory-target and
+memory-pressure parameters govern admission; grouped replay is not a separate
+user-facing science parameter. AWProject charges its full-cell LRU and compact
+tap ceiling as independent allocations; neither may consume the remaining
+safety reserve. The core reduces worker count when a support-sized tile cannot
+fit, subtracts exact worker-tile storage, and converts the remainder into a
+raw-sample limit from the actual compact record layout and geometry-derived
+route-copy bound. Reusable standard-MFS tap plans likewise receive an exact byte
+budget instead of a sample-count cutoff. The frontend memory planner and core
+executor share these formulas; no dataset identity or benchmark-specific sample
+threshold participates in the decision. Image-domain correction, PB
+normalization, and product semantics stay after the FFT. No generic
+compatibility block facade or normal-path host full-grid upload is retained.
 
 ## Persistence / external systems
 

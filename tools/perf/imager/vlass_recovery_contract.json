@@ -112,14 +112,22 @@
         "historical_casa_wall_seconds": 3631.809729,
         "historical_casa_rs_wall_seconds": 28.65,
         "historical_ratio": 126.76473748691099,
+        "production_baseline_casa_rs_wall_seconds": 38.5,
+        "production_baseline_approved_by": "Brian Glendenning",
+        "production_baseline_approved_date": "2026-08-07",
         "release_only": true,
         "maximum_regression_fraction_without_user_approval": 0.1,
         "required_runtime": {
           "fftw_threads": 8,
-          "fftw_f64_wisdom_sha256": "f6fd873a068b68611eabdd598d3628d7fa75af20f451eef29b87b1562629462e",
+          "fftw_f64_planner_flags": "estimate",
+          "fftw_f64_core_sha256": "2eda1ef2b5bd9707a63d38f8d4994513b40e1b0ae475fd8c57cfecf5abb88c2d",
+          "fftw_f64_threads_sha256": "1ceb262b9c62af3f3a8bb10d3459fa36c7a954cd32a4bc9774d4c27e4bea0ecc",
+          "fftw_version": "fftw-3.3.11",
           "image_response_storage": "raw",
           "image_response_bytes": 536870912,
-          "global_metal_program_required": true
+          "grouped_resident_replay_required": true,
+          "grouped_omitted_squared_l2_energy": 0.0,
+          "grouped_tile_side": 16
         },
         "required_activity": {
           "frozen_model_allowed": false,

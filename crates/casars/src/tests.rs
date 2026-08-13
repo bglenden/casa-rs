@@ -9440,7 +9440,6 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
         "residual",
         "model",
         "image",
-        "mask",
         "psf.png",
         "residual.png",
         "model.png",
@@ -9453,6 +9452,10 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
             path.display()
         );
     }
+    assert!(
+        !PathBuf::from(format!("{}.mask", imagename.display())).exists(),
+        "dirty imaging must not write a clean-mask artifact"
+    );
 
     app.set_active_result_tab(ResultTab::Overview);
     let overview = render_app(&app, 140, 32);
@@ -9466,8 +9469,8 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
     assert!(products.contains("PSF"));
     assert!(products.contains("Residual"));
     assert!(
-        products.contains("Clean Mask"),
-        "products tab did not render the written clean mask:\n{products}"
+        !products.contains("Clean Mask"),
+        "dirty imaging must not report a clean-mask product:\n{products}"
     );
 }
 
