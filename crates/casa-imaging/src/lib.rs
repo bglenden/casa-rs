@@ -49078,7 +49078,7 @@ fn should_use_standard_mfs_tiled_backend(
         && standard_mfs_fixed_tile_backend_enabled(execution_config)
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos", not(coverage)))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StandardMfsMetalCapabilityStatus {
     UnsupportedOperatingSystem,
@@ -49087,7 +49087,7 @@ enum StandardMfsMetalCapabilityStatus {
     DeviceCreated,
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos", not(coverage)))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct StandardMfsMetalCapabilityDiagnostic {
     macos: bool,
@@ -49097,7 +49097,7 @@ struct StandardMfsMetalCapabilityDiagnostic {
     status: StandardMfsMetalCapabilityStatus,
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos", not(coverage)))]
 fn standard_mfs_metal_capability_diagnostic() -> StandardMfsMetalCapabilityDiagnostic {
     let macos = cfg!(target_os = "macos");
     let apple_silicon = macos && cfg!(target_arch = "aarch64");
