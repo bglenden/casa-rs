@@ -816,6 +816,39 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#first-reduced-all-fields-pair" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        First reduced all-fields pair
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reduced-all-fields-clean-mask-preflight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reduced all-fields clean mask preflight
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reduced-all-fields-clean-pair" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reduced all-fields clean pair
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -844,6 +877,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#performance-preservation-amendment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance-preservation amendment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#finite-delivery-train" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -851,6 +895,45 @@
       
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2026-08-05-promoted-reduced-all-field-candidate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2026-08-05 promoted reduced all-field candidate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2026-08-07-pr4-grouped-tile-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2026-08-07 PR4 grouped-tile integration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2026-08-07 PR4 grouped-tile integration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pr4-local-checkpoint-verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PR4 local checkpoint verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -873,7 +956,8 @@
 
 <h1 id="vlass-imaging-merge-recovery-contract">VLASS Imaging Merge-Recovery Contract<a class="headerlink" href="#vlass-imaging-merge-recovery-contract" title="Permanent link">&para;</a></h1>
 <p>Truth class: approved execution contract</p>
-<p>Approved: 2026-08-02 by Brian Glendenning</p>
+<p>Approved: 2026-08-02 by Brian Glendenning; scientific-equivalence amendment
+approved 2026-08-03</p>
 <p>Verification: <code>just docs-check</code> plus the focused recovery-contract and imaging
 harness tests</p>
 <p>This contract turns the existing VLASS imaging wave into a finite,
@@ -1200,6 +1284,138 @@ tree; it does not invalidate the bound runtime, data, successful imaging call,
 or retained products. This evidence accepts CASA-A as the matched reference to
 which the eventual casa-rs single-field row will be compared. It makes no
 claim yet about casa-rs full-geometry correctness or speedup.</p>
+<h3 id="first-reduced-all-fields-pair">First reduced all-fields pair<a class="headerlink" href="#first-reduced-all-fields-pair" title="Permanent link">&para;</a></h3>
+<p>The first missing all-63-field ladder row has been executed once and is
+frozen. It retains all 63 fields and POINTING rows, SPWs <code>2,7,12,17</code>,
+<code>4096</code>-square geometry, AWProject with 32 W planes, A/WB/conjugate beams,
+Briggs weighting, MT-MFS <code>nterms=2</code>, and the dirty <code>niter=0</code> 18-product
+contract. No larger row was launched.</p>
+<p>The CASA run
+<code>20260803T203820Z-vlass-fragment-all-fields-dirty-4096-four-spw-casa-ab87a6f1</code>
+took <code>541.352405 s</code> in <code>tclean</code>. Its receipt SHA-256 is
+<code>24c36370670d8c88fcc8849061a34a84a2e25477050bafaeab2cc5317b4fef99</code>.
+The matching release casa-rs executable was built from
+<code>8667b5760d88948548da3e06aa402cd10e11378b</code>; its SHA-256 is
+<code>3a8d671a9935f85379dd1d4418153f1236913b3554fc87e36b9875a4ad372648</code>.
+It took <code>225.10 s</code> wall, yielding a matched CASA/casa-rs speedup of
+<code>2.405x</code>. This is an early performance warning, not acceptance: it is below
+the required <code>10x</code>. The casa-rs core took <code>220.513 s</code>, of which
+<code>217.063 s</code> was the initial PSF grid. Peak RSS was <code>10,045,800,448</code> bytes,
+peak physical footprint was <code>13,899,198,224</code> bytes, and the process recorded
+zero swaps.</p>
+<p>This candidate fixed the two immediately preceding parity defects. Dirty
+imaging no longer emits the clean mask, so the exact 18-product inventory now
+matches CASA. Shape, unit, masks, coordinate topology, WCS operation grouping,
+and all coordinate values also match for every product. The ordinary
+full-array numerical amplitudes remain small: representative RMS ratios are
+about <code>38.2 ppm</code> for <code>.image.tt0</code>, <code>42.0 ppm</code> for <code>.psf.tt0</code>, <code>53.2 ppm</code>
+for <code>.residual.tt1</code>, <code>4.43 ppm</code> for <code>.alpha</code>, and <code>2.10 ppm</code> for
+<code>.weight.tt1</code>; both model terms are exactly zero.</p>
+<p>The row initially failed promotion under the v1 exact-metadata/heuristic
+contract. Five
+beam-bearing products differ in restoring-beam metadata because the
+independently fitted PSFs differ slightly. The casa-rs and CASA major axes are
+respectively <code>2.9585349559783936</code> and <code>2.9585354328155518</code> arcsec; their
+position angles are <code>69.54161071777344</code> and <code>69.54159545898438</code> degrees.
+Feeding the frozen CASA and casa-rs PSFs separately through the shared beam
+fitter reproduces those values, localizing the remaining beam difference to
+the PSF arrays rather than the fitter. The structured-difference review also
+requires investigation for <code>.psf.tt1</code>, <code>.psf.tt2</code>, and <code>.weight.tt1</code>.
+At that point no tolerance had been changed, so the ladder correctly stopped
+at the first unresolved semantic boundary.</p>
+<p>The comparison SHA-256 is
+<code>2cc4cb2636c84551c4bb30f5e81649f746f4dab819757549257416a799903bee</code>;
+the bound input and run-log SHA-256 values are
+<code>2fa493f2557fc69cb84c86579c38227710074f3cb1aa1753a71f9838bdc25568</code>
+and
+<code>6eb766d65cf9c5f66262d14f3342859c2a9b157ac89098bad93584ff4ba94c09</code>.
+The comparison validator was corrected after this row exposed an invalid
+attempt to reconstruct offset-inclusive regression R-squared from raw RMS.
+That historical v1 failure and its artifacts remain recorded.</p>
+<p>Brian subsequently approved
+<code>tools/perf/imager/contracts/vlass-scientific-equivalence-v2.json</code>, SHA-256
+<code>daf1692d23a627d513285cd4c5fc5c81c8e5dd361e6bf2815c74c8897fbc0537</code>.
+It keeps selection, inventory, shape, coordinate, unit, mask, and topology
+semantics exact, while bounding full-array NRMSE at <code>1e-3</code>, peak-normalized
+maximum error at <code>5e-3</code>, source flux at <code>1e-3</code>, centroid separation at <code>0.01</code>
+beams, Gaussian restoring-beam kernel and area differences at <code>1e-3</code>, and
+large-scale coherent error at <code>1e-4</code> of CASA RMS. Raw beam parameters,
+structure classifications, component order, and cycle count are diagnostics
+when their bound scientific checks, stable convergence, stopping, and
+no-divergence requirements pass.</p>
+<p>A comparison-only re-evaluation reused the frozen product trees and launched
+no imaging. All 18 products passed with no failed or incomplete check.
+<code>.image.tt0</code> NRMSE is <code>3.8243114447519807e-5</code>; source flux error is
+<code>1.2287444501503239e-6</code>; centroid separation is
+<code>1.2874159490437483e-6</code> beams; beam-kernel NRMSE is
+<code>1.6982385191835777e-7</code>; beam-area error is
+<code>1.611733808637439e-7</code>; and the worst coherent block error is
+<code>1.524262302280491e-5</code>. The portable receipt SHA-256 is
+<code>187dd20c3c7dc70cbb181c622e7330fdb0c0b09d43947c369e183504cc6af80d</code>.
+Correctness is promoted for this row. The unchanged <code>2.405x</code> release ratio
+remains below the final <code>10x</code> requirement and is explicitly retained as a
+performance warning.</p>
+<h3 id="reduced-all-fields-clean-mask-preflight">Reduced all-fields clean mask preflight<a class="headerlink" href="#reduced-all-fields-clean-mask-preflight" title="Permanent link">&para;</a></h3>
+<p>The first all-63-field <code>4096</code>-square, four-SPW clean attempt stopped before
+minor-cycle iteration because its inherited two-dimensional CASA image mask
+had no Spectral coordinate. CASA run
+<code>20260803T221900Z-vlass-fragment-all-fields-clean-4096-four-spw-casa-186ce59e</code>
+took <code>286.262243 s</code> in <code>tclean</code> before rejecting that mask. It produced no
+matched casa-rs row and therefore no runtime ratio or correctness claim. The
+failure receipt SHA-256 is
+<code>095d214f5a8b453fd91cd26083b5c63575bf8ea088dffe09f358cfb520eaf0e5</code>.</p>
+<p>The correction reuses the existing deterministic source box while copying the
+full coordinate system from the accepted all-fields dirty <code>.image.tt0</code>. The
+new mask has shape <code>[4096,4096,1,1]</code>, Direction, Stokes, and Spectral
+coordinates, BLC <code>[575,2125]</code>, TRC <code>[638,2188]</code>, and exactly 4,096 selected
+pixels. Its portable tree SHA-256 is
+<code>8490acb911cbbba78f7a20ba4a1d379e227c3a42dfc7eefcc9b7fd5f4139572f</code>.
+The corrected manifest SHA-256 is
+<code>05994b8ed3566a8a333e8761aa4cc05b8d0534daccabc57f29100f4cd6f8534c</code>,
+and its dry-run preflight passed. The ledger retains the failed attempt as
+negative evidence.</p>
+<h3 id="reduced-all-fields-clean-pair">Reduced all-fields clean pair<a class="headerlink" href="#reduced-all-fields-clean-pair" title="Permanent link">&para;</a></h3>
+<p>The corrected CASA retry and one matching release casa-rs candidate are
+complete and frozen. Both use all 63 fields and POINTING, SPWs <code>2,7,12,17</code>,
+<code>4096</code>-square geometry, the corrected mask, AWProject with 32 W planes,
+A/WB/conjugate beams, Briggs weighting, MT-MFS <code>nterms=2</code>, scales
+<code>[0,5,12]</code>, <code>niter=2000</code>, and the exact 19-product contract.</p>
+<p>CASA run
+<code>20260803T223749Z-vlass-fragment-all-fields-clean-4096-four-spw-casa-9b96c6ad</code>
+took <code>3470.197045 s</code> in <code>tclean</code>, selected 193 cumulative components across
+11 major cycles, and stopped below its n-sigma threshold. Its receipt SHA-256
+is
+<code>9ff187a87357424cc1509e2f79d6e5c929472d23780f536d589c7289bb076beb</code>.
+This is the one frozen reduced clean oracle; it is not rerun.</p>
+<p>The matching bounded exact-source-order windowed candidate is commit
+<code>388161fd29cf4474100458dc2fa7c4f4768378a3</code>. Its frozen release executable
+SHA-256 is
+<code>2f67dd816714c4c674742f45313df9aa65d7f6d592cfc73edb7cfb9ca3e2bbbe</code>.
+It took <code>2674.88 s</code>, producing an exact matched CASA/casa-rs ratio of
+<code>1.29733x</code>. This is below the required <code>10x</code>. Peak RSS was
+<code>12,230,852,608</code> bytes, peak physical footprint was <code>14,089,727,880</code> bytes,
+and the process recorded zero swaps. The run completed 187 minor iterations
+across 11 major cycles and stopped on the n-sigma criterion without
+divergence. Residual degridding and gridding dominated at <code>2430.742 s</code>;
+minor cycles took only <code>8.661 s</code>.</p>
+<p>The candidate matches the exact inventory and passes the mask, PB, PSF,
+sum-weight, weight, coordinate, restoring-beam kernel, and restoring-beam area
+checks, but it fails the v2 clean science floor. <code>.image.tt0</code> and
+<code>.image.tt1</code> NRMSE are <code>0.00982925</code> and <code>0.0113314</code>; <code>.residual.tt0</code> and
+<code>.residual.tt1</code> NRMSE are <code>0.0108125</code> and <code>0.0109003</code>; and <code>.model.tt1</code>
+NRMSE is <code>0.0260674</code>. These exceed the <code>1e-3</code> ceiling. Alpha and alpha-error
+also retain topology mismatches. The comparison input, raw output, and log
+SHA-256 values are
+<code>9a8771cca77c19307a48c33f6127737cc8e910da98a50cd903939ed3f2ca0d77</code>,
+<code>da18a998ae09699bb8e0ffd1ca98e8542c10fd9c88626ef35f12b472bf22119f</code>,
+and
+<code>f154ec4b8a4f7f08314097e81613111a8b3121211da5e24fc94b5bbd6264706e</code>.</p>
+<p>This is the current finite-recovery stop boundary. No full-16-SPW or
+full-geometry casa-rs clean row is launched until the reduced clean
+model/residual semantic defect is fixed and this row passes. The windowed
+architecture's bounded-memory result is retained as positive evidence; its
+unchanged scientific failure and <code>1.29733x</code> ratio are retained as negative
+evidence.</p>
 <h2 id="candidate-budget-and-promotion">Candidate budget and promotion<a class="headerlink" href="#candidate-budget-and-promotion" title="Permanent link">&para;</a></h2>
 <p>The salvage audit receives at most eight engineer-hours. It may select one
 primary candidate and one reserve from code and evidence that already existed
@@ -1221,7 +1437,9 @@ candidate; they cannot reopen an architecture tournament.</p>
 <h2 id="correctness-and-performance">Correctness and performance<a class="headerlink" href="#correctness-and-performance" title="Permanent link">&para;</a></h2>
 <p>CASA is the scientific reference, not an implementation transcript. Bitwise
 identity, identical component order, and identical major-cycle history remain
-diagnostics rather than gates. Promotion still requires:</p>
+diagnostics rather than gates. The controlling numerical contract is
+<code>tools/perf/imager/contracts/vlass-scientific-equivalence-v2.json</code>.
+Promotion still requires:</p>
 <ul>
 <li>the exact data, field, SPW, POINTING, AWProject, weighting, MT-MFS, mask,
   scale, and restoration semantics;</li>
@@ -1237,6 +1455,62 @@ diagnostics rather than gates. Promotion still requires:</p>
 matched CASA reference. No speedup is inferred across dirty versus clean,
 single-field versus 63-field, reduced versus full geometry, or different
 product sets.</p>
+<p>For every newly completed CASA and release casa-rs pair with identical
+processing, report <code>CASA wall / casa-rs wall</code> immediately. A failing
+correctness pair still reports the ratio as diagnostic evidence, clearly
+labelled non-promotable. This early-warning rule does not turn unmatched or
+debug-build timings into performance evidence.</p>
+<h2 id="performance-preservation-amendment">Performance-preservation amendment<a class="headerlink" href="#performance-preservation-amendment" title="Permanent link">&para;</a></h2>
+<p>Brian approved this amendment on 2026-08-04 after review showed that the
+headline performance had not been lost through a same-workload regression.
+The <code>28.65</code>--<code>29.43</code> second four-SPW result and the <code>101.646</code> second full-16-SPW
+result survived through the single-field ladder. Performance collapsed only
+when execution moved to the connected 63-field clean row, where the
+single-position image-response cache was not admitted and <code>2,430.742</code> of
+<code>2,674.88</code> seconds was spent repeating exact residual degridding/gridding.</p>
+<p>The later five-minute autoresearch row did not cause that loss. It is an
+explicit frozen-model residual-operator proxy. It executes no clean-from-zero
+minor cycle or model update and can never satisfy an end-to-end CLEAN
+performance gate.</p>
+<p>The machine-readable preservation contract is the
+<code>performance_preservation</code> member of
+<code>tools/perf/imager/vlass_recovery_contract.json</code>. It freezes two release-mode
+single-field landmarks:</p>
+<ol>
+<li><code>4,096</code> square, SPWs <code>2,7,12,17</code>, <code>niter=2000</code>: historical casa-rs
+   <code>28.65</code> seconds against CASA <code>3,631.809729</code> seconds, nominally
+   <code>126.7647x</code>.</li>
+<li><code>4,096</code> square, all 16 SPWs, <code>niter=2000</code>: historical casa-rs
+   <code>101.646</code> seconds.</li>
+</ol>
+<p>Every selected production candidate must preserve those workloads before
+all-field promotion. The receipt must bind one release executable and prove
+real CLEAN from zero, real minor-cycle records and model changes, response
+calibration and synthesis, sparse MT-MFS state, radix statistics, and the
+exact final residual refresh. A frozen model, zero-work minor cycle, debug
+binary, isolated stage metric, or proxy wall time cannot substitute.</p>
+<p>A regression of more than ten percent on either landmark blocks silent
+promotion and requires diagnosis plus Brian's direction. A demonstrated
+landmark capability remains in the candidate lineage until it is generalized,
+superseded by a faster same-landmark implementation, or explicitly retired by
+Brian. Branch restructuring, recovery selection, and experimental cleanup are
+not retirement decisions.</p>
+<p>The finite implementation sequence is:</p>
+<ol>
+<li>revalidate the two landmark rows with one frozen release executable;</li>
+<li>run the already-available model-delta census on the real <code>4,096</code>-square,
+   four-SPW, all-63-field CLEAN trajectory;</li>
+<li>generalize the existing frozen-base response cache from one position to a
+   bounded deterministic position set, retaining exact shadow checks,
+   decision-margin admission, invalidation, and exact fallback;</li>
+<li>promote the matched all-field four-SPW and full-16-SPW rows; and</li>
+<li>return to the required <code>12,150</code>-square single-field and 63-field acceptance
+   rows.</li>
+</ol>
+<p>This is not a reopened architecture tournament. It integrates and generalizes
+the already-demonstrated response mechanism while preserving the selected
+exact AW operator, sparse RHS, radix statistics, scientific-equivalence
+contract, memory contract, and finite merge decision.</p>
 <h2 id="finite-delivery-train">Finite delivery train<a class="headerlink" href="#finite-delivery-train" title="Permanent link">&para;</a></h2>
 <p>The merge train has four review boundaries:</p>
 <ol>
@@ -1259,6 +1533,123 @@ cannot affect it.</p>
 <p>No PR is merged automatically. When the train is merge-ready—or when the
 bounded attempts end in a blocker—the agent presents the evidence and waits
 for Brian’s decision.</p>
+<h2 id="2026-08-05-promoted-reduced-all-field-candidate">2026-08-05 promoted reduced all-field candidate<a class="headerlink" href="#2026-08-05-promoted-reduced-all-field-candidate" title="Permanent link">&para;</a></h2>
+<p>The selected exact-source-order candidate now represents replay phase screens
+as separable X and Y complex axes and reconstructs their product in the Metal
+kernel. A fully fused kernel/phase experiment was rejected before execution
+because its projected <code>35.459 GB</code> compile peak exceeded the bounded
+<code>25.770 GB</code> budget. The separable design preserves exact A/W kernels, source
+order, POINTING semantics, and the expanded fallback while reducing the
+resident global replay program from <code>17.688 GB</code> to <code>5.225 GB</code>.
+It is now the production Metal replay representation; no hidden environment
+flag or new scientific/UI control is required.</p>
+<p>The exact matched reduced row is complete:</p>
+<ul>
+<li>CASA: <code>3470.197045 s</code>;</li>
+<li>release casa-rs: <code>257.40 s</code>;</li>
+<li>CASA/casa-rs: <code>13.481729x</code>;</li>
+<li>release executable SHA-256:
+  <code>82b01c3950eac4187c9e88e5282d606fc0743a5398f2da4b22872ad70c95c16b</code>;</li>
+<li>all 63 fields and POINTING, SPWs <code>2,7,12,17</code>, <code>4096</code> square,
+  AWProject/32 W planes, Briggs, MT-MFS <code>nterms=2</code>, scales <code>[0,5,12]</code>,
+  deterministic mask, and <code>niter=2000</code>;</li>
+<li>193 minor components, 12 recorded major cycles, stable n-sigma stop;</li>
+<li>peak RSS <code>12,634,636,288</code> bytes, peak process footprint
+  <code>11,765,475,792</code> bytes, and no destructive runtime swapping; and</li>
+<li>exact 19-product inventory and complete numerical, topology, metadata,
+  source, and restoring-beam contract pass.</li>
+</ul>
+<p>Image tt0 and tt1 NRMSE are <code>7.37654e-5</code> and <code>9.74054e-5</code>. Alpha and
+alpha-error retain only 37 cutoff-edge pixels (<code>2.20537 ppm</code>) and
+<code>4.60017e-4</code> coherent block RMS. Brian's approved optimization-safe contract
+uses <code>1e-3</code> normalized/coherent error and a <code>10 ppm</code> cutoff-mask bound for
+these derived products; it does not require implementation-identity at a
+threshold edge. The contract SHA-256 is
+<code>58cece2f388f6098058598e19e00d4998a8c321f238d062ca8d567cafd29143a</code>.</p>
+<p>The immutable reassessment receipt SHA-256 is
+<code>5defc479822415b1c7cec24ac955a442b0015228f76a5a12b718414156bd8918</code>;
+the source comparison output SHA-256 is
+<code>35d1defac1e026025bdca32a12db61d1a9776b4cc8927382ea42185d72d69c42</code>.
+The production checkpoint is commit
+<code>4d787cb1fb8047d5e3087307db8f03bd37b8b6a4</code>.
+This supersedes the previous reduced-row correctness and performance stop
+boundary. It does not satisfy or weaken the required full-16-SPW and
+<code>12,150</code>-square acceptance rows. No unchanged CASA reference was rerun.</p>
+<h2 id="2026-08-07-pr4-grouped-tile-integration">2026-08-07 PR4 grouped-tile integration<a class="headerlink" href="#2026-08-07-pr4-grouped-tile-integration" title="Permanent link">&para;</a></h2>
+<p>Brian explicitly approved recovery and production incorporation of the best
+retained grouped-tile replay candidate. PR4 is stacked on the selected PR3
+candidate and owns only this architecture, planner integration, its tests and
+telemetry, experimental-harness removal, documentation, and final stabilization.
+It does not reopen rejected architecture families or change the scientific,
+19-product, memory, or final-geometry acceptance contract.</p>
+<p>For eligible Metal AWProject MT-MFS clean runs, the selected architecture
+compiles bounded effective CF support, exact source-role group ordinals, sorted
+group plans, and the grouped tile route once per admitted segment. Residual
+replay preserves source-order f64 accumulation and the final f32 narrowing while
+performing no grouping, sorting, or route construction. An admitted grouped
+plan has no raw replay fallback: compile, integrity, resource, or reload failure
+fails the run. Dirty imaging and workloads outside the declared capability
+continue to use their existing architecture.</p>
+<p>The resource planner separates initial-grid compiler admission from
+residual-stage persistent replay retention, derives segment size from available
+headroom, charges allocator uncertainty, and places the private unlinked spill
+on the <code>imagename</code> output volume. Existing UI/task parameters
+<code>imaging_memory_target_mb</code>, <code>imaging_memory_pressure_policy</code>, and <code>imagename</code>
+are the production controls; no grouped-replay toggle or science parameter is
+added.</p>
+<p>The frozen residual-replay candidate improved <code>70.165468583 s</code> to
+<code>65.167962583 s</code> (<code>7.12%</code>) with Full16 NRMSE
+<code>[3.7105927e-4, 4.5706914e-4]</code>, zero rejected products, lower footprint and
+resident memory, and zero swap-out. Receipt SHA-256:
+<code>ba720f5a0c588787b8825535c2de3bcbb50a07f9dd564b68aa039ab6ab919cfb</code>.
+The CASA-derived <code>19.422x</code> quotient uses a favorable, non-identical boundary
+and is not a matched clean-speedup claim.</p>
+<p>The production FourSPW canary compiled one segment with 112 source programs and
+6,416,526 samples, zero rejected blocks, a <code>5,660,679,272</code>-byte builder peak,
+and a <code>2,532,787,040</code>-byte payload. Independent grouped-artifact validation
+passed with SHA-256
+<code>52b77bcccd4e23306c686ce74bacbae451d5682b1022d70817756275beb5e4b9</code>.
+The enclosing obsolete fixture receipt hash is
+<code>1e0fb32a9aac72f859f85c01a4ad7aa482cba39a2028c3b1d90d44009404a490</code>;
+its failure is a retired harness-schema mismatch, not a production compilation
+failure. The canary is topology, compiler, integrity, and memory evidence, not
+an end-to-end performance receipt.</p>
+<p>PR4 promotion requires warning-free crate/workspace gates, focused grouped
+compiler/spill/planner tests, documentation checks, a bounded anti-slop pass,
+and known CI state. It does not itself satisfy the remaining <code>12,150</code>-square
+single-field or all-63-field acceptance rows. No PR is merged or undrafted
+without Brian's explicit decision.</p>
+<h3 id="pr4-local-checkpoint-verification">PR4 local checkpoint verification<a class="headerlink" href="#pr4-local-checkpoint-verification" title="Permanent link">&para;</a></h3>
+<p>The production-integration checkpoint completed:</p>
+<ul>
+<li><code>cargo fmt --all</code> and <code>git diff --check</code>;</li>
+<li>warning-free <code>cargo check</code> and <code>cargo clippy -- -D warnings</code> for
+  <code>casa-imaging</code> and <code>casars-imager</code>, all targets;</li>
+<li>grouped replay plan validation, topology-only compact-cache ownership,
+  three compiler/source-order/route/spill tests, corrupt-section rejection,
+  and the resource/output-volume planner test;</li>
+<li><code>just docs-check</code>; and</li>
+<li>workspace warning-free Clippy through <code>just verify</code>.</li>
+</ul>
+<p>The full <code>casa-imaging</code> library run recorded 434 passed, 12 ignored, and the
+same two reproducible exclusions already outside this diff:</p>
+<ul>
+<li><code>awproject_global_replay_requires_metal_storage_without_generic_scratch</code>
+  could not acquire a default MPSGraph Metal device; and</li>
+<li><code>image_coordinate_system_normalizes_vlass_ra_like_casa</code> retained inconsistent
+  pre-existing Dec expectations
+  (<code>0.2754960264910762</code> versus <code>0.2754960264910763</code>).</li>
+</ul>
+<p>The full <code>casars-imager</code> library run recorded 364 passed, 14 ignored, and one
+inherited failure in unchanged <code>task_contract.rs</code>:
+<code>artifact_generation_covers_layout_branches</code> found five artifacts while the
+test expected six. A focused retry reproduced it. Because <code>just verify</code> stops
+at the earlier <code>casa-imaging</code> failures, its remaining commands were run
+directly: frontend generated bindings were current, all 18 task CLI hosts
+passed, seven GUI acceptance tests passed, and the Python package gate passed
+48 tests with one skipped after its isolated build dependency was made
+available. These exclusions are recorded accurately; no unrelated science or
+task-contract test was weakened to make the checkpoint green.</p>
 
 
 
