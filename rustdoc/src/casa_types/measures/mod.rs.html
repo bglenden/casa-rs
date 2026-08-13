@@ -51,30 +51,31 @@
 <a href=#51 id=51 data-nosnippet>51</a>//! ```
 <a href=#52 id=52 data-nosnippet>52</a>
 <a href=#53 id=53 data-nosnippet>53</a></span><span class="kw">mod </span>casacore_aberration;
-<a href=#54 id=54 data-nosnippet>54</a>
-<a href=#55 id=55 data-nosnippet>55</a><span class="kw">pub mod </span>direction;
-<a href=#56 id=56 data-nosnippet>56</a><span class="kw">pub mod </span>doppler;
-<a href=#57 id=57 data-nosnippet>57</a><span class="kw">pub mod </span>earth_magnetic;
-<a href=#58 id=58 data-nosnippet>58</a><span class="kw">pub mod </span>epoch;
-<a href=#59 id=59 data-nosnippet>59</a><span class="kw">pub mod </span>error;
-<a href=#60 id=60 data-nosnippet>60</a><span class="kw">pub mod </span>frame;
-<a href=#61 id=61 data-nosnippet>61</a><span class="kw">pub mod </span>frequency;
-<a href=#62 id=62 data-nosnippet>62</a><span class="kw">pub mod </span>position;
-<a href=#63 id=63 data-nosnippet>63</a><span class="kw">pub mod </span>provider;
-<a href=#64 id=64 data-nosnippet>64</a><span class="kw">pub mod </span>radial_velocity;
-<a href=#65 id=65 data-nosnippet>65</a><span class="kw">pub mod </span>record;
-<a href=#66 id=66 data-nosnippet>66</a>
-<a href=#67 id=67 data-nosnippet>67</a><span class="comment">// Re-exports for convenience.
-<a href=#68 id=68 data-nosnippet>68</a></span><span class="kw">pub use </span>earth_magnetic::{EarthMagneticRef, IgrfSample, MEarthMagnetic, calculate_igrf};
-<a href=#69 id=69 data-nosnippet>69</a><span class="kw">pub use </span>epoch::{EpochRef, MEpoch, MjdHighPrec};
-<a href=#70 id=70 data-nosnippet>70</a><span class="kw">pub use </span>error::MeasureError;
-<a href=#71 id=71 data-nosnippet>71</a><span class="kw">pub use </span>frame::{IauModel, MeasFrame};
-<a href=#72 id=72 data-nosnippet>72</a><span class="kw">pub use </span>position::{MPosition, PositionRef};
-<a href=#73 id=73 data-nosnippet>73</a><span class="kw">pub use </span>provider::{EopValues, MeasuresProvider, NamedSourceDirection, ObservatoryPosition};
-<a href=#74 id=74 data-nosnippet>74</a><span class="kw">pub use </span>record::{
-<a href=#75 id=75 data-nosnippet>75</a>    direction_from_record, direction_to_record, doppler_from_record, doppler_to_record,
-<a href=#76 id=76 data-nosnippet>76</a>    epoch_from_record, epoch_to_record, frequency_from_record, frequency_to_record,
-<a href=#77 id=77 data-nosnippet>77</a>    position_from_record, position_to_record, radial_velocity_from_record,
-<a href=#78 id=78 data-nosnippet>78</a>    radial_velocity_to_record,
-<a href=#79 id=79 data-nosnippet>79</a>};
+<a href=#54 id=54 data-nosnippet>54</a><span class="kw">mod </span>casacore_nutation;
+<a href=#55 id=55 data-nosnippet>55</a>
+<a href=#56 id=56 data-nosnippet>56</a><span class="kw">pub mod </span>direction;
+<a href=#57 id=57 data-nosnippet>57</a><span class="kw">pub mod </span>doppler;
+<a href=#58 id=58 data-nosnippet>58</a><span class="kw">pub mod </span>earth_magnetic;
+<a href=#59 id=59 data-nosnippet>59</a><span class="kw">pub mod </span>epoch;
+<a href=#60 id=60 data-nosnippet>60</a><span class="kw">pub mod </span>error;
+<a href=#61 id=61 data-nosnippet>61</a><span class="kw">pub mod </span>frame;
+<a href=#62 id=62 data-nosnippet>62</a><span class="kw">pub mod </span>frequency;
+<a href=#63 id=63 data-nosnippet>63</a><span class="kw">pub mod </span>position;
+<a href=#64 id=64 data-nosnippet>64</a><span class="kw">pub mod </span>provider;
+<a href=#65 id=65 data-nosnippet>65</a><span class="kw">pub mod </span>radial_velocity;
+<a href=#66 id=66 data-nosnippet>66</a><span class="kw">pub mod </span>record;
+<a href=#67 id=67 data-nosnippet>67</a>
+<a href=#68 id=68 data-nosnippet>68</a><span class="comment">// Re-exports for convenience.
+<a href=#69 id=69 data-nosnippet>69</a></span><span class="kw">pub use </span>earth_magnetic::{EarthMagneticRef, IgrfSample, MEarthMagnetic, calculate_igrf};
+<a href=#70 id=70 data-nosnippet>70</a><span class="kw">pub use </span>epoch::{EpochRef, MEpoch, MjdHighPrec};
+<a href=#71 id=71 data-nosnippet>71</a><span class="kw">pub use </span>error::MeasureError;
+<a href=#72 id=72 data-nosnippet>72</a><span class="kw">pub use </span>frame::{IauModel, MeasFrame};
+<a href=#73 id=73 data-nosnippet>73</a><span class="kw">pub use </span>position::{MPosition, PositionRef};
+<a href=#74 id=74 data-nosnippet>74</a><span class="kw">pub use </span>provider::{EopValues, MeasuresProvider, NamedSourceDirection, ObservatoryPosition};
+<a href=#75 id=75 data-nosnippet>75</a><span class="kw">pub use </span>record::{
+<a href=#76 id=76 data-nosnippet>76</a>    direction_from_record, direction_to_record, doppler_from_record, doppler_to_record,
+<a href=#77 id=77 data-nosnippet>77</a>    epoch_from_record, epoch_to_record, frequency_from_record, frequency_to_record,
+<a href=#78 id=78 data-nosnippet>78</a>    position_from_record, position_to_record, radial_velocity_from_record,
+<a href=#79 id=79 data-nosnippet>79</a>    radial_velocity_to_record,
+<a href=#80 id=80 data-nosnippet>80</a>};
 </code></pre></div></section></main></body></html>

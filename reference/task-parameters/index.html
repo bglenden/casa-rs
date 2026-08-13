@@ -1737,9 +1737,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 379</li>
+<li>Concepts: 400</li>
 <li>Surfaces: 42 (40 task, 2 session)</li>
-<li>Surface bindings: 749</li>
+<li>Surface bindings: 772</li>
 </ul>
 <table>
 <thead>
@@ -1780,9 +1780,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-imager">Imager</a><br><code>imager</code></td>
 <td>task</td>
-<td style="text-align: right;">4</td>
+<td style="text-align: right;">6</td>
 <td><code>imager</code></td>
-<td style="text-align: right;">67</td>
+<td style="text-align: right;">90</td>
 <td>Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</td>
 </tr>
 <tr>
@@ -3212,7 +3212,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="imager-imager">Imager (<code>imager</code>)<a class="headerlink" href="#imager-imager" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>4</code></li>
+<li>Contract version: <code>6</code></li>
 <li>Category: Imaging</li>
 <li>Provider family: <code>imager</code></li>
 <li>Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</li>
@@ -3350,12 +3350,12 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Number of selected input channels</td>
 </tr>
 <tr>
-<td><code>polarization</code></td>
-<td><code>parameter.polarization@r1</code></td>
-<td><code>choice (8 values)</code></td>
+<td><code>stokes</code></td>
+<td><code>image.selection.stokes@r1</code></td>
+<td><code>string</code></td>
 <td><code>"I"</code>; optional</td>
 <td>Context</td>
-<td>Scalar Stokes plane or explicit raw-correlation plane</td>
+<td>Stokes selector.</td>
 </tr>
 <tr>
 <td><code>specmode</code></td>
@@ -3666,7 +3666,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>parameter.usepointing@r1</code></td>
 <td><code>bool</code></td>
 <td><code>false</code>; optional</td>
-<td>Stages</td>
+<td>Advanced Wide-Field</td>
 <td>Use POINTING-table directions instead of FIELD phase centers</td>
 </tr>
 <tr>
@@ -3723,7 +3723,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>choice (7 values)</code></td>
 <td><code>"standard"</code>; optional</td>
 <td>Stages</td>
-<td>CASA tclean gridder. casa-rs supports standard, wproject, and mosaic; widefield/AW-family modes are visible but not implemented yet.</td>
+<td>CASA tclean gridder family</td>
 </tr>
 <tr>
 <td><code>standard_mfs_acceleration</code></td>
@@ -3764,6 +3764,190 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>"none"</code>; optional</td>
 <td>Stages</td>
 <td>Requested number of top-level spectral channel chunks; the memory planner may select a larger active plane group when it fits<br><em>Surface:</em> Applies to cube and cubedata imaging; the runtime rejects zero and MFS use.</td>
+</tr>
+<tr>
+<td><code>uvrange</code></td>
+<td><code>ms.selection.uvrange@r1</code></td>
+<td><code>string</code></td>
+<td><code>"none"</code>; optional</td>
+<td>Context</td>
+<td>UV range selector.<br><em>Surface:</em> The complete CASA UV-range selector reaches the shared MeasurementSet selection engine.</td>
+</tr>
+<tr>
+<td><code>intent</code></td>
+<td><code>ms.selection.intent@r1</code></td>
+<td><code>string</code></td>
+<td><code>"none"</code>; optional</td>
+<td>Context</td>
+<td>Intent selector.<br><em>Surface:</em> The complete CASA intent selector reaches the shared MeasurementSet selection engine.</td>
+</tr>
+<tr>
+<td><code>cfcache</code></td>
+<td><code>parameter.cfcache@r1</code></td>
+<td><code>optional&lt;path (directory)&gt; (states: auto)</code></td>
+<td><code>"auto"</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>AWProject convolution-function cache selection<br><em>Surface:</em> auto selects the managed plan-keyed cache; an explicit path preserves CASA cache interoperability.</td>
+</tr>
+<tr>
+<td><code>cf_resident_mb</code></td>
+<td><code>parameter.cf_resident_mb@r1</code></td>
+<td><code>integer; unit dimension: data_size</code></td>
+<td><code>256</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>AW convolution-function working-memory ceiling in MiB<br><em>Surface:</em> Per-allocation full-cell LRU and compact source-order tap ceiling in MiB; the runtime charges both and rejects zero.</td>
+</tr>
+<tr>
+<td><code>facets</code></td>
+<td><code>parameter.facets@r1</code></td>
+<td><code>integer</code></td>
+<td><code>1</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Number of wide-field image facets<br><em>Surface:</em> Unsupported facet layouts fail closed with a capability diagnostic.</td>
+</tr>
+<tr>
+<td><code>psfphasecenter</code></td>
+<td><code>parameter.psfphasecenter@r1</code></td>
+<td><code>optional&lt;string&gt; (states: none); unit dimension: angle</code></td>
+<td><code>"none"</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Optional distinct AWProject PSF phase center</td>
+</tr>
+<tr>
+<td><code>vptable</code></td>
+<td><code>parameter.vptable@r1</code></td>
+<td><code>optional&lt;path (table)&gt; (states: none)</code></td>
+<td><code>"none"</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Optional CASA voltage-pattern table for AWProject</td>
+</tr>
+<tr>
+<td><code>aterm</code></td>
+<td><code>parameter.aterm@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Enable the aperture-illumination A term for AWProject</td>
+</tr>
+<tr>
+<td><code>psterm</code></td>
+<td><code>parameter.psterm@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Enable the prolate-spheroidal term inside AW convolution functions</td>
+</tr>
+<tr>
+<td><code>wbawp</code></td>
+<td><code>parameter.wbawp@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Enable wideband A-projection frequency behavior</td>
+</tr>
+<tr>
+<td><code>conjbeams</code></td>
+<td><code>parameter.conjbeams@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Enable conjugate-beam frequency mapping for wideband AWProject</td>
+</tr>
+<tr>
+<td><code>computepastep</code></td>
+<td><code>parameter.computepastep@r1</code></td>
+<td><code>float; unit dimension: angle</code></td>
+<td><code>360.0</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>AW convolution-function parallactic-angle computation step in degrees</td>
+</tr>
+<tr>
+<td><code>rotatepastep</code></td>
+<td><code>parameter.rotatepastep@r1</code></td>
+<td><code>float; unit dimension: angle</code></td>
+<td><code>360.0</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>AW convolution-function parallactic-angle rotation step in degrees</td>
+</tr>
+<tr>
+<td><code>pointingoffsetsigdev</code></td>
+<td><code>parameter.pointingoffsetsigdev@r1</code></td>
+<td><code>string</code></td>
+<td><code>"0"</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Comma-separated AW pointing grouping/refresh thresholds; non-pairs use CASA 600,600</td>
+</tr>
+<tr>
+<td><code>mosweight</code></td>
+<td><code>parameter.mosweight@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Use per-pointing mosaic weight-density handling</td>
+</tr>
+<tr>
+<td><code>normtype</code></td>
+<td><code>parameter.normtype@r1</code></td>
+<td><code>choice (3 values)</code></td>
+<td><code>"flatnoise"</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>AWProject sensitivity normalization policy</td>
+</tr>
+<tr>
+<td><code>imaging_memory_target_mb</code></td>
+<td><code>parameter.imaging_memory_target_mb@r1</code></td>
+<td><code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code></td>
+<td><code>"none"</code>; optional</td>
+<td>Execution Resources</td>
+<td>Optional shared imaging memory target in MiB<br><em>Surface:</em> none delegates the bounded memory choice to the immutable execution plan.</td>
+</tr>
+<tr>
+<td><code>imaging_prepare_buffer_mb</code></td>
+<td><code>parameter.imaging_prepare_buffer_mb@r1</code></td>
+<td><code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code></td>
+<td><code>"none"</code>; optional</td>
+<td>Execution Resources</td>
+<td>Optional source-stream preparation buffer in MiB</td>
+</tr>
+<tr>
+<td><code>imaging_row_block_rows</code></td>
+<td><code>parameter.imaging_row_block_rows@r1</code></td>
+<td><code>optional&lt;integer&gt; (states: none)</code></td>
+<td><code>"none"</code>; optional</td>
+<td>Execution Resources</td>
+<td>Optional bounded source-stream row-block override</td>
+</tr>
+<tr>
+<td><code>imaging_prepare_workers</code></td>
+<td><code>parameter.imaging_prepare_workers@r1</code></td>
+<td><code>optional&lt;integer&gt; (states: none)</code></td>
+<td><code>"none"</code>; optional</td>
+<td>Execution Resources</td>
+<td>Optional source-stream preparation worker count</td>
+</tr>
+<tr>
+<td><code>imaging_fft_precision</code></td>
+<td><code>parameter.imaging_fft_precision@r1</code></td>
+<td><code>choice (3 values)</code></td>
+<td><code>"auto"</code>; optional</td>
+<td>Execution Resources</td>
+<td>Imaging-wide FFT precision policy<br><em>Surface:</em> auto selects only a correctness-qualified FFT precision and reports any fallback.</td>
+</tr>
+<tr>
+<td><code>projection</code></td>
+<td><code>parameter.projection@r1</code></td>
+<td><code>choice (1 values)</code></td>
+<td><code>"SIN"</code>; optional</td>
+<td>Stage Parameters</td>
+<td>Sky projection used for the image direction coordinate<br><em>Surface:</em> Unsupported projections fail before imaging; the value is never silently rewritten to SIN.</td>
+</tr>
+<tr>
+<td><code>standard_mfs_grid_threads</code></td>
+<td><code>parameter.standard_mfs_grid_threads@r1</code></td>
+<td><code>optional&lt;integer&gt; (states: auto)</code></td>
+<td><code>"auto"</code>; optional</td>
+<td>Execution Resources</td>
+<td>Grid-stage worker selection for standard, mosaic, and AWProject MFS imaging<br><em>Surface:</em> auto delegates to the resource-adaptive execution planner; a positive integer is an explicit override.</td>
 </tr>
 </tbody>
 </table>
