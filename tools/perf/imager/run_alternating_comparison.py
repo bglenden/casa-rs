@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict, dataclass
 import datetime as dt
-import json
 import math
 import os
 import pathlib

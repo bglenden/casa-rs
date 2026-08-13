@@ -10,6 +10,9 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from perf_harness import RUN_RESULT_SCHEMA_VERSION
+from test_support import canonical_test_environment
+
 import wave4_acceleration_matrix
 
 
@@ -20,11 +23,16 @@ class Wave4AccelerationMatrixTests(unittest.TestCase):
         )
         rows = wave4_acceleration_matrix.enumerate_rows(matrix)
 
-        self.assertEqual(wave4_acceleration_matrix.REQUIRED_ROW_IDS, {row["row_id"] for row in rows})
+        self.assertEqual(
+            wave4_acceleration_matrix.REQUIRED_ROW_IDS, {row["row_id"] for row in rows}
+        )
         self.assertEqual(12, len(rows))
         clean_rows = [row for row in rows if row["phase"] == "clean"]
         self.assertTrue(
-            all("metal_vs_multi_worker_cpu" in row["required_speedups"] for row in clean_rows)
+            all(
+                "metal_vs_multi_worker_cpu" in row["required_speedups"]
+                for row in clean_rows
+            )
         )
         mosaic_dirty = next(row for row in rows if row["row_id"] == "mosaic_cube_dirty")
         self.assertIn("auto_vs_single_plane_stream", mosaic_dirty["required_speedups"])
@@ -73,7 +81,9 @@ class Wave4AccelerationMatrixTests(unittest.TestCase):
             workers=8,
         )
 
-        rows = wave4_acceleration_matrix.build_closeout_table(matrix, [serial, multi, metal])
+        rows = wave4_acceleration_matrix.build_closeout_table(
+            matrix, [serial, multi, metal]
+        )
         row = next(row for row in rows if row["row_id"] == "standard_cube_clean_hogbom")
 
         self.assertEqual(3.0, row["speedup_auto_vs_serial"])
@@ -258,7 +268,10 @@ class Wave4AccelerationMatrixTests(unittest.TestCase):
 
         self.assertEqual(2.0, row["speedup_default_vs_large_or_single_plane_baseline"])
         self.assertEqual("mosaic_multi_plane_slab", row["selected_backend"])
-        self.assertIn("| mode_family | phase |", wave4_acceleration_matrix.render_markdown_table(rows))
+        self.assertIn(
+            "| mode_family | phase |",
+            wave4_acceleration_matrix.render_markdown_table(rows),
+        )
 
     def test_mosaic_roles_can_be_inferred_from_worker_count(self) -> None:
         matrix = wave4_acceleration_matrix.load_matrix(
@@ -331,7 +344,9 @@ class Wave4AccelerationMatrixTests(unittest.TestCase):
         self.assertIsNotNone(row["performance_evidence_link"])
         self.assertIsNotNone(row["correctness_evidence_link"])
 
-    def test_correctness_selection_prefers_investigate_over_missing_panels(self) -> None:
+    def test_correctness_selection_prefers_investigate_over_missing_panels(
+        self,
+    ) -> None:
         missing = fake_result(
             "standard_cube_dirty",
             "large_baseline",
@@ -494,7 +509,9 @@ class Wave4AccelerationMatrixTests(unittest.TestCase):
             backend="serial_cpu",
             workers=10,
         )
-        result["benchmark_features"]["backend"]["cube_per_plane_phase"] = "dirty_control"
+        result["benchmark_features"]["backend"]["cube_per_plane_phase"] = (
+            "dirty_control"
+        )
 
         self.assertEqual(
             "cpu_multi_plane_workers",
@@ -552,8 +569,12 @@ class Wave4AccelerationMatrixTests(unittest.TestCase):
             loaded = wave4_acceleration_matrix.load_evidence_list(evidence_path)
 
         self.assertEqual(1, len(loaded))
-        self.assertEqual("cubedata_clean_clark", wave4_acceleration_matrix.explicit_row_id(loaded[0]))
-        self.assertEqual("multi_worker_cpu", wave4_acceleration_matrix.evidence_role(loaded[0]))
+        self.assertEqual(
+            "cubedata_clean_clark", wave4_acceleration_matrix.explicit_row_id(loaded[0])
+        )
+        self.assertEqual(
+            "multi_worker_cpu", wave4_acceleration_matrix.evidence_role(loaded[0])
+        )
 
     def test_duplicate_role_prefers_newer_same_tier_evidence_not_slower_runtime(
         self,
@@ -624,27 +645,38 @@ def fake_result(
         mode["deconvolver"] = "clark"
     if row_id.endswith("_multiscale"):
         mode["deconvolver"] = "multiscale"
+    environment = canonical_test_environment()
+    environment["migration"] = {
+        "source_schema_version": 2,
+        "method": "synthetic historical comparison fixture",
+    }
     return {
-        "schema_version": 2,
+        "schema_version": RUN_RESULT_SCHEMA_VERSION,
         "kind": "workload_run",
         "status": "completed",
         "run_id": f"{row_id}-{role}",
         "created_at": "2026-07-18T00:00:00Z",
-        "environment": {},
-        "artifacts": {},
+        "started_at": "2026-07-18T00:00:01Z",
+        "completed_at": "2026-07-18T00:00:02Z",
+        "exit_code": 0,
+        "environment": environment,
+        "artifacts": {"checked_in_path": f"evidence/{row_id}-{role}.json"},
         "mode": mode,
         "dataset": {"key": "wave1-vla-single-medium"},
         "run": {"storage_label": "medium-row", "evidence_role": role},
         "review": {"evidence_role": role},
-        "benchmark_features": {
-            "backend": backend_features
-        },
+        "benchmark_features": {"backend": backend_features},
         "results": {
             "rust": {"timings_seconds": {"median": rust_seconds}},
             "casa": {"timings_seconds": {"median": casa_seconds}},
             "product_comparison": {
                 "status": "completed",
-                "structured_difference_review": {"label": "good"},
+                "products": {},
+                "beam_info": {"status": "synthetic_fixture"},
+                "structured_difference_review": {
+                    "label": "good",
+                    "summary": "synthetic Wave 4 comparison is accepted",
+                },
             },
         },
         "logs": {"benchmark_log": "/tmp/run.log"},

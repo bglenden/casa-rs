@@ -11,11 +11,10 @@ import pathlib
 import re
 from typing import Any
 
-from perf_harness import (
-    RUN_RESULT_SCHEMA_VERSION,
-    atomic_write_json,
-    load_json_object,
-    validate_run_result,
+from perf_harness import atomic_write_json, load_json_object
+from perf_harness.schema import (
+    LEGACY_RUN_RESULT_SCHEMA_VERSION,
+    validate_legacy_run_result_v2,
 )
 
 
@@ -52,7 +51,7 @@ def migrate_manifest(manifest_path: pathlib.Path) -> None:
             raise ValueError("evidence manifest artifact must be an object")
         path = imager_root / required_string(entry, "checked_in_path")
         old = load_json_object(path, description="v1 evidence artifact")
-        if old.get("schema_version") == RUN_RESULT_SCHEMA_VERSION:
+        if old.get("schema_version") == LEGACY_RUN_RESULT_SCHEMA_VERSION:
             if old.get("kind") == "image_comparison":
                 product = old.get("results", {}).get("product_comparison")
                 if looks_like_workload_run(product):
@@ -62,7 +61,7 @@ def migrate_manifest(manifest_path: pathlib.Path) -> None:
                 if isinstance(product, dict) and "status" not in product:
                     product["status"] = "completed"
                     atomic_write_json(path, old)
-            validate_run_result(old, source=str(path))
+            validate_legacy_run_result_v2(old, source=str(path))
             entry["sha256"] = sha256(path)
             continue
         role = required_string(entry, "artifact_role")
@@ -72,7 +71,7 @@ def migrate_manifest(manifest_path: pathlib.Path) -> None:
                 f"{path}: expected v1 evidence or an unversioned comparison artifact"
             )
         migrated = migrate_artifact(entry, old, path)
-        validate_run_result(migrated, source=str(path))
+        validate_legacy_run_result_v2(migrated, source=str(path))
         atomic_write_json(path, migrated)
         entry["sha256"] = sha256(path)
     atomic_write_json(manifest_path, manifest)
@@ -86,7 +85,7 @@ def migrate_artifact(
     artifact_id = required_string(entry, "artifact_id")
     if role in RUN_ROLES or looks_like_workload_run(old):
         result = dict(old)
-        result["schema_version"] = RUN_RESULT_SCHEMA_VERSION
+        result["schema_version"] = LEGACY_RUN_RESULT_SCHEMA_VERSION
         result["kind"] = "workload_run"
         result["status"] = canonical_status(old.get("status"))
         result.setdefault("run_id", artifact_id)
@@ -145,7 +144,7 @@ def evidence_envelope(
     results: dict[str, Any],
 ) -> dict[str, Any]:
     value = {
-        "schema_version": RUN_RESULT_SCHEMA_VERSION,
+        "schema_version": LEGACY_RUN_RESULT_SCHEMA_VERSION,
         "kind": kind,
         "status": status,
         "run_id": run_id,
@@ -195,7 +194,7 @@ def repair_wrapped_workload_result(
     envelope: dict[str, Any], nested: dict[str, Any]
 ) -> dict[str, Any]:
     repaired = dict(nested)
-    repaired["schema_version"] = RUN_RESULT_SCHEMA_VERSION
+    repaired["schema_version"] = LEGACY_RUN_RESULT_SCHEMA_VERSION
     repaired["kind"] = "workload_run"
     repaired["status"] = canonical_status(nested.get("status"))
     repaired["run_id"] = envelope["run_id"]
@@ -207,9 +206,7 @@ def repair_wrapped_workload_result(
     return repaired
 
 
-def migrate_provenance(
-    old: Any, dataset: Any, run: Any
-) -> dict[str, Any]:
+def migrate_provenance(old: Any, dataset: Any, run: Any) -> dict[str, Any]:
     legacy = old if isinstance(old, dict) else {}
     dataset_record = dataset if isinstance(dataset, dict) else {}
     run_record = run if isinstance(run, dict) else {}

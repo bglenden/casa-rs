@@ -14,6 +14,9 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from perf_harness import RUN_RESULT_SCHEMA_VERSION
+from test_support import canonical_test_environment
+
 import run_alternating_comparison as alternating
 
 
@@ -214,7 +217,9 @@ class OrchestrationTests(unittest.TestCase):
 
     def test_role_specific_imaging_overrides_reach_only_their_role(self) -> None:
         baseline = alternating.ScheduleItem(1, "measured", 1, 1, "baseline", "workload")
-        candidate = alternating.ScheduleItem(2, "measured", 1, 2, "candidate", "workload")
+        candidate = alternating.ScheduleItem(
+            2, "measured", 1, 2, "candidate", "workload"
+        )
 
         baseline_command = alternating.build_run_command(
             baseline,
@@ -231,9 +236,7 @@ class OrchestrationTests(unittest.TestCase):
             imaging_overrides=("chanchunks=4", "parallel=true"),
         )
 
-        self.assertEqual(
-            ["--set-imaging", "chanchunks=1"], baseline_command[-2:]
-        )
+        self.assertEqual(["--set-imaging", "chanchunks=1"], baseline_command[-2:])
         self.assertEqual(
             [
                 "--set-imaging",
@@ -345,20 +348,39 @@ def fake_run(item: alternating.ScheduleItem, wall: float) -> dict:
 
 
 def fake_result(wall: float, output_dir: Path) -> dict:
+    environment = canonical_test_environment()
+    environment["migration"] = {
+        "source_schema_version": 2,
+        "method": "synthetic historical comparison fixture",
+    }
     return {
-        "schema_version": 2,
+        "schema_version": RUN_RESULT_SCHEMA_VERSION,
         "kind": "workload_run",
         "status": "completed",
         "run_id": "fake-run",
         "created_at": "2026-07-18T00:00:00Z",
+        "started_at": "2026-07-18T00:00:01Z",
+        "completed_at": "2026-07-18T00:00:02Z",
+        "exit_code": 0,
         "manifest_path": "/tmp/workload.json",
-        "environment": {},
+        "environment": environment,
         "artifacts": {"products_root": str(output_dir / "products")},
         "benchmark_features": {"backend": {"resolved_backend": "cpu"}},
         "results": {
             "rust": {"timings_seconds": {"runs": [wall], "median": wall}},
             "stage_medians_ms": {"rust": {"total": wall * 1000.0}},
-            "product_comparison": {"panel_dir": str(output_dir / "panels")},
+            "product_comparison": {
+                "status": "completed",
+                "products": {},
+                "beam_info": {"status": "synthetic_fixture"},
+                "structured_difference_review": {
+                    "label": "good",
+                    "summary": "synthetic comparison fixture",
+                },
+                "input": str(output_dir / "comparison-request.json"),
+                "log": str(output_dir / "comparison.log"),
+                "panel_dir": str(output_dir / "panels"),
+            },
         },
     }
 

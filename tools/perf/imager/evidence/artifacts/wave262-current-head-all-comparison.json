@@ -5139,7 +5139,7 @@
     }
   },
   "run_id": "mosaic-mtmfs-final-full-comparison",
-  "schema_version": 2,
+  "schema_version": 3,
   "status": "completed",
   "workload": {
     "id": "wave262-mosaic-mtmfs-small-casa-oracle"

@@ -1024,7 +1024,7 @@
     }
   },
   "run_id": "wprojection-final-casa-comparison",
-  "schema_version": 2,
+  "schema_version": 3,
   "status": "completed",
   "workload": {
     "id": "wave3-wprojection-single-plane-heavy-wave1-medium-auto"

@@ -1,0 +1,217 @@
+{
+  "schema_version": 2,
+  "contract_id": "vlass-merge-recovery-20260802-v1",
+  "archive_commit": "4c3cf8cc916656f1ece6efc9bbd3fb674e401132",
+  "audit_budget_engineer_hours": 8,
+  "audit_status": "complete",
+  "audit_completed_utc": "2026-08-02T17:51:32Z",
+  "decision": "Promote one conservative, science-proven seed and retain one already-measured memory-lifetime reserve. Do not continue the architecture tournament.",
+  "primary_candidate": {
+    "id": "c238-promoted-reduced-clean",
+    "freeze_status": "promoted_source_checkpoint_validated_pending_pr3_freeze",
+    "source_seed_commit": "c23831b081555423e15c76e6f71215251ee68fd9",
+    "shared_substrate_boundary_commit": "95cdb0664f15c32657100057e62531806a801dda",
+    "scientific_promotion_commit": "c23831b081555423e15c76e6f71215251ee68fd9",
+    "candidate_binary_sha256": "4eaa35ae7cbbfcb1f8286dede7d48d0336ac1183c14113292f1f89942c9b6398",
+    "four_spw_runner_sha256": "1a9ba23a044908dd29120fe1137b86d09e5e25491b6f31be938a968bfadfe448",
+    "components": [
+      "shared-aw-mtmfs-substrate",
+      "mask-sparse-mtmfs-minor-cycle",
+      "exact-host-f64-compact-replay",
+      "promoted-metal-replay",
+      "four-spw-hybrid-clean",
+      "full16-v59-clean"
+    ],
+    "selection_reason": "This exact checkpoint contains the already-promoted four-SPW hybrid-clean and full-16-SPW v59 paths, is descended from the exact-host full-geometry dirty parity work, and passed both required reduced gates again from a clean detached build. PR3 must still create and validate the production extraction freeze.",
+    "extraction": {
+      "pr2": "Reconstruct the shared production substrate through 95cdb0664, excluding archived experiments and historical diagnostics.",
+      "pr3": "Apply only the production deltas from 95cdb0664 through c23831b08, remove diagnostic-only controls, expose selected runtime and planner policy through canonical task and UI parameters, and create a new immutable recovery commit before full geometry.",
+      "excluded": [
+        "the post-c23831b08 architecture tournament",
+        "CASA interposition and debugger-only probes",
+        "experimental solver families",
+        "the failed f32 Metal residual default",
+        "the 10000-line historical optimization ledger"
+      ]
+    },
+    "evidence": [
+      {
+        "kind": "reduced_clean_scientific_floor",
+        "workload": "4096-square four-SPW real VLASS clean",
+        "wall_seconds": 29.43,
+        "receipt": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260731-vlass-4096-4spw-scientific-floor-v2.json",
+        "sha256": "dcf405a389acadc6852a74d1086e645bd16adc402817bbaa000a99c65b96dc9f"
+      },
+      {
+        "kind": "reduced_clean_scientific_floor",
+        "workload": "4096-square full-16-SPW real VLASS clean",
+        "wall_seconds": 101.646,
+        "actual_components": 641,
+        "major_cycles": 5,
+        "receipt": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260731-vlass-4096-full16-scientific-floor-v1.json",
+        "sha256": "f06859c9215a26b15dd32731345b9fdb1aaf1ab0fc267938638dd016b99518a1",
+        "run_log_sha256": "1133ccc666de490b74a905e1dd9d99ab99c1e6a8056cb7f2e892464e08d2c893",
+        "comparison_sha256": "fb4a83e321028f50ab5234e07f2dcd30b0bcfc608a6d2bbcba06b4fff2565993"
+      },
+      {
+        "kind": "full_geometry_dirty_parity",
+        "workload": "12150-square single-field full-16-SPW real VLASS dirty",
+        "wall_seconds": 104.542929,
+        "matched_casa_wall_seconds": 1276.157,
+        "speedup": 12.207,
+        "receipt": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260726T173015Z-vlass-fragment-single-field-fftw-f64-experiment-87770c83.json",
+        "sha256": "0faf0102ce09802c234de1880f1bcc4f5da9d8bb34e3678dd5ff09e9adec6e34"
+      },
+      {
+        "kind": "recovery_checkpoint_validation",
+        "host": "bg-mac-mini",
+        "workload": "4096-square four-SPW real VLASS clean",
+        "wall_seconds": 46.14,
+        "actual_components": 2000,
+        "major_cycles": 171,
+        "peak_rss_bytes": 8271118336,
+        "swaps": 0,
+        "run_log": "/Volumes/Extra Storage (not encrypted)/SoftwareProjects/casa-rs-vlass/issue-446/receipts/runs/20260802-vlass-recovery-c238-4096-4spw-n2000-v1.log",
+        "run_log_sha256": "32b54ea0fa067202b502099e88fa8bd2d3b419ba46cd19e46db05b7700e21d46",
+        "comparison_sha256": "f96a1906f584c21d01afc1a43f4fbf9a814f5dfdad095a5c4e863edeed70f9a3",
+        "scientific_floor_sha256": "4fa269de10f0bd29e9dd021e19ae39777fd61231328ab3eacc01ca2352c0aaa6",
+        "decision": "promote"
+      },
+      {
+        "kind": "recovery_checkpoint_validation",
+        "host": "bg-mac-mini",
+        "workload": "4096-square full-16-SPW real VLASS clean",
+        "wall_seconds": 76.23,
+        "actual_components": 641,
+        "major_cycles_including_final_refresh": 6,
+        "peak_rss_bytes": 6573064192,
+        "swaps": 0,
+        "run_log": "/Volumes/Extra Storage (not encrypted)/SoftwareProjects/casa-rs-vlass/issue-446/receipts/runs/20260802-vlass-recovery-c238-4096-full16-n2000-v1.log",
+        "run_log_sha256": "e059da388f70a9d1b735d602fee6e1df66b956f5493359f87ce018eadd5c9b95",
+        "comparison_sha256": "eadfb13466c64d346bf6bec6c30725028f655713568ee0afa952a1fcc31a347a",
+        "scientific_floor_sha256": "a98548ba0f9d96d5fe72304e69e08b8af5c77362aa687cc135115cdde243b057",
+        "decision": "promote"
+      }
+    ]
+  },
+  "reserve_candidate": {
+    "id": "compensation-stage-release",
+    "freeze_status": "conditional_seed_selected_not_default",
+    "source_seed_commit": "aea444b5e40fde5486e2ea421e5f8e2cf32d6174",
+    "activation_condition": "Use only if the primary recovery freeze cannot admit or bound the 12150-square clean row on the 32 GiB laptop.",
+    "selection_reason": "The isolated lifetime transform released one full compensation plane and passed the 4096-square full-16-SPW scientific floor. It is not selected for routine performance and still requires explicit approval before becoming a production default.",
+    "extraction": "Surgically extract only the compensation collapse, planner lifetime accounting, telemetry, and focused tests from aea444b5e; never import the surrounding retired solver and direct-CF experiments.",
+    "evidence": [
+      {
+        "kind": "reduced_clean_scientific_floor",
+        "workload": "4096-square full-16-SPW real VLASS clean",
+        "wall_seconds": 71.386,
+        "actual_components": 641,
+        "released_initial_bytes": 1073741824,
+        "released_residual_bytes_per_refresh": 268435456,
+        "run_log_sha256": "395be24287cc11884cb5c1423b2d4070e2573c79ba9457446c8ea4ed5ed78343",
+        "comparison_sha256": "e41c117fb2ed177547cda7db84cbda722a14c5fc32b69473e896310ee202a05a",
+        "trajectory_comparison_sha256": "ad360a24256329dcf7f924f6bbfda6f33af83c661445d54a4fb5c703cd506d61",
+        "scientific_floor_sha256": "97df719a331d88f890914448cd08c41d7828b62ac5ea247b858b25196b4fc9ad"
+      }
+    ]
+  },
+  "entries": [
+    {
+      "id": "c238-promoted-reduced-clean",
+      "status": "selected_primary",
+      "scope": "The shared AW/MT-MFS substrate and the promoted four-SPW hybrid-clean and full-16-SPW v59 paths at exact checkpoint c23831b08.",
+      "evidence": "A clean detached c238 build passed both 4096-square scientific floors on the Mac mini in 46.14 and 76.23 seconds with zero swaps; the ancestor exact-host full-geometry dirty row passed all 18 dirty products in 104.542929 seconds."
+    },
+    {
+      "id": "shared-aw-mtmfs-substrate",
+      "status": "included_in_primary",
+      "scope": "Shared multi-SPW streaming, POINTING, exact source-order AW replay, MT-MFS products, FFTW, memory planning and telemetry, comparator, and canonical task/UI controls.",
+      "evidence": "Included in the selected primary. PR2 extracts this capability boundary separately from the performance candidate."
+    },
+    {
+      "id": "mask-sparse-mtmfs-minor-cycle",
+      "status": "included_in_primary",
+      "scope": "Mask- and scale-supported sparse MT-MFS minor-cycle state and deterministic selection.",
+      "evidence": "Included in the selected primary. The historical 4096-square four-SPW and full-16-SPW scientific-floor receipts are revalidated above."
+    },
+    {
+      "id": "exact-host-f64-compact-replay",
+      "status": "included_in_primary",
+      "scope": "Exact compact source-order AW operator, promoted Metal replay paths, f64 FFTW, and bounded memory.",
+      "evidence": "Included in the selected primary. The c238 reduced rows passed the scientific floor, and the 12150-square single-field dirty row passed the frozen CASA products in 104.542929 seconds."
+    },
+    {
+      "id": "compensation-stage-release",
+      "status": "selected_reserve",
+      "scope": "Collapse and release the compensated f32 low plane before FFT/readback.",
+      "evidence": "Conditional on a primary 32 GiB admission failure. The 4096-square full-16-SPW scientific-floor receipt passed after releasing 1 GiB at the initial-grid peak."
+    },
+    {
+      "id": "obsolete-9a14-source-seed",
+      "status": "retired",
+      "scope": "The initially misidentified pre-promotion source seed.",
+      "evidence": "A neutral four-SPW run was stopped after 8 minutes 26 seconds while still near major cycle 40. It predates the promoted hybrid-clean and full-16 correctness path. Partial log SHA-256: d3be7d42353b84338106ee3ff76048e832f0e27a1091d226ff640a53c3206df1."
+    },
+    {
+      "id": "db41-obsolete-seed-pr3-trim",
+      "status": "retired",
+      "scope": "The first PR3 extraction made from the obsolete 9a14 source identity.",
+      "evidence": "The four-SPW row took 75.91 seconds, failed image/residual/model science by 28 to 45 percent, and omitted .mask. Run and comparison SHA-256 values: 6a88cba1ab3522d5683664f2269e51303f1396b96ab87832925ade5f65004a0d and 55afa68eecc4e33395908ebb02086131571424ab56e98977a33c9c873243a0b4."
+    },
+    {
+      "id": "exact-metal-direct-cf-f32-residual",
+      "status": "retired",
+      "scope": "Resident exact Metal direct-CF residual replay using f32 PSF/residual arithmetic.",
+      "evidence": "The 12150-square clean row completed in 819.120 seconds but failed scientific comparison decisively and used destructive memory pressure. Workload, comparison, and telemetry SHA-256 values were 3ae18ec7a6dc5521e04294d8a674963417cb2339107349b93d88e0ee7b8a7c04, 973a78ac840275c09bc47ecc9d387d2fd60ed8d4c76669a623e70840939f99cf, and 6eef9f204a283fc801e841d08b87ff21b8971c35ad0f386741de014d554ef279."
+    },
+    {
+      "id": "mmap-or-partial-replay-atlas",
+      "status": "retired",
+      "scope": "File-backed or partially retained full-geometry response/program atlases.",
+      "evidence": "Cyclic reread was destructive; a retained partial-replay completion took 2022.58 seconds, crossed the memory boundary, and failed products."
+    },
+    {
+      "id": "analytic-ordered-response",
+      "status": "retired",
+      "scope": "Analytic physical-screen ordered response and resident Hm.",
+      "evidence": "Executable compact-tap shadow differed by 0.3116/0.1982 relative L2 for TT0/TT1."
+    },
+    {
+      "id": "flexible-gcr",
+      "status": "retired",
+      "scope": "Image-domain and exact weighted-visibility flexible GCR variants.",
+      "evidence": "Image objectives failed science; the corrected visibility solve had only two useful directions and recovered 3.33 percent of the dirty objective."
+    },
+    {
+      "id": "post-weight-spectral-quadrature",
+      "status": "retired",
+      "scope": "Post-Briggs positive spectral quadrature for intermediate residual feedback.",
+      "evidence": "Only 1.0698x sample reduction and percent-level exact-shadow error."
+    },
+    {
+      "id": "butterflypack-executable-cf-factor",
+      "status": "retired",
+      "scope": "ButterflyPACK factorization of the exact executable-CF forward operator.",
+      "evidence": "Missed the fixed forward-only construction gate before adjoint or science execution."
+    },
+    {
+      "id": "two-anchor-multisecant",
+      "status": "retired",
+      "scope": "Two-anchor active-domain multisecant defect transport.",
+      "evidence": "The real controller reached nsigma before either fixed anchor and failed closed."
+    },
+    {
+      "id": "initial-final-only-schedule",
+      "status": "retired",
+      "scope": "Delete all intermediate exact major-cycle refreshes.",
+      "evidence": "The final residual rebounded and the frozen image/model/residual science gates failed."
+    },
+    {
+      "id": "sum-first-spatial-normal-polynomial",
+      "status": "research_only",
+      "scope": "Post-sum spatial polynomial representation of exact normal columns.",
+      "evidence": "Positive scale-zero diagnostic accuracy only; no all-scale executable operator, runtime, products, or science promotion."
+    }
+  ]
+}

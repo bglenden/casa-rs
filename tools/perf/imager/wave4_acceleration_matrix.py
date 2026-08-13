@@ -83,7 +83,9 @@ def main() -> None:
     try:
         matrix = load_matrix(args.matrix)
         rows = enumerate_rows(matrix)
-        results = [load_run_result(path, source_key="_source_path") for path in args.result]
+        results = [
+            load_run_result(path, source_key="_source_path") for path in args.result
+        ]
         for evidence_list in args.evidence_list:
             results.extend(load_evidence_list(evidence_list))
         if results:
@@ -251,7 +253,9 @@ def build_closeout_table(
     ]
 
 
-def index_evidence(results: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, Any]]]:
+def index_evidence(
+    results: list[dict[str, Any]],
+) -> dict[str, dict[str, dict[str, Any]]]:
     indexed: dict[str, dict[str, dict[str, Any]]] = {}
     for result in results:
         row_id = explicit_row_id(result) or infer_row_id(result)
@@ -309,7 +313,9 @@ def build_closeout_row(
     metal = evidence.get("metal_default")
     default = metal or evidence.get("auto_default") or multi
     casa = first_result_with_casa(evidence)
-    baseline = evidence.get("large_baseline") or evidence.get("single_plane_stream_baseline")
+    baseline = evidence.get("large_baseline") or evidence.get(
+        "single_plane_stream_baseline"
+    )
     default_seconds = rust_seconds(default)
     performance_result = default or multi or serial or baseline
     serial_seconds = comparable_rust_seconds(serial, performance_result)
@@ -317,11 +323,14 @@ def build_closeout_row(
     metal_seconds = comparable_rust_seconds(metal, performance_result)
     casa = first_comparable_result_with_casa(evidence, performance_result)
     casa_seconds = casa_seconds_from_result(casa)
-    baseline_seconds = rust_seconds(baseline)
     correctness_result = best_correctness_result(evidence, performance_result)
     correctness = correctness_status(correctness_result)
-    speedup_auto_vs_serial = speedup_between_for_reference(serial, multi, performance_result)
-    speedup_metal_vs_multi = speedup_between_for_reference(multi, metal, performance_result)
+    speedup_auto_vs_serial = speedup_between_for_reference(
+        serial, multi, performance_result
+    )
+    speedup_metal_vs_multi = speedup_between_for_reference(
+        multi, metal, performance_result
+    )
     speedup_default_vs_casa = speedup(casa_seconds, default_seconds)
     speedup_default_vs_baseline = speedup_between(baseline, default)
     row = {
@@ -389,7 +398,8 @@ def target_status(
     if "auto_vs_single_plane_stream" in required:
         checks.append(
             default_vs_baseline is not None
-            and default_vs_baseline >= targets["mosaic_total_speedup_vs_single_plane_stream"]
+            and default_vs_baseline
+            >= targets["mosaic_total_speedup_vs_single_plane_stream"]
         )
     if "metal_vs_multi_worker_cpu" in required:
         checks.append(
@@ -414,7 +424,9 @@ def target_status(
     return "blocked"
 
 
-def brian_accepts_current_status(matrix_row: dict[str, Any], correctness: str | None) -> bool:
+def brian_accepts_current_status(
+    matrix_row: dict[str, Any], correctness: str | None
+) -> bool:
     acceptance = matrix_row.get("brian_acceptance")
     if not isinstance(acceptance, dict):
         return False
@@ -473,7 +485,9 @@ def evidence_role(result: dict[str, Any]) -> str:
     if mosaic_workers is not None:
         if mosaic_metal_backend_selected(backend):
             return "metal_default"
-        return "multi_worker_cpu" if mosaic_workers > 1 else "single_plane_stream_baseline"
+        return (
+            "multi_worker_cpu" if mosaic_workers > 1 else "single_plane_stream_baseline"
+        )
     cube_workers = int_or_none(backend.get("cube_per_plane_workers"))
     if cube_workers is not None:
         selected = str(backend.get("cube_per_plane_backend") or "").lower()
@@ -507,7 +521,9 @@ def normalize_role(role: str) -> str:
     return aliases.get(role, role)
 
 
-def first_result_with_casa(evidence: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+def first_result_with_casa(
+    evidence: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
     for role in ("casa_cpp", "metal_default", "multi_worker_cpu", "serial_cpu"):
         result = evidence.get(role)
         if casa_seconds_from_result(result) is not None:
@@ -522,7 +538,9 @@ def first_comparable_result_with_casa(
         return first_result_with_casa(evidence)
     for role in ("casa_cpp", "metal_default", "multi_worker_cpu", "serial_cpu"):
         result = evidence.get(role)
-        if casa_seconds_from_result(result) is not None and comparable_shape(result, reference):
+        if casa_seconds_from_result(result) is not None and comparable_shape(
+            result, reference
+        ):
             return result
     return None
 
@@ -722,7 +740,9 @@ def stale_non_spatial_only_review(result: dict[str, Any]) -> bool:
     product_details = comparison.get("products")
     if not isinstance(product_details, dict):
         return False
-    return all(non_spatial_amplitude_is_good(product_details.get(suffix)) for suffix in flagged)
+    return all(
+        non_spatial_amplitude_is_good(product_details.get(suffix)) for suffix in flagged
+    )
 
 
 def non_spatial_amplitude_is_good(product: Any) -> bool:
@@ -753,7 +773,9 @@ def best_correctness_result(
 ) -> dict[str, Any] | None:
     ranked: list[tuple[int, dict[str, Any]]] = []
     for result in evidence.values():
-        if reference is not None and not comparable_correctness_evidence(result, reference):
+        if reference is not None and not comparable_correctness_evidence(
+            result, reference
+        ):
             continue
         status = correctness_status(result)
         rank = correctness_rank(status)
@@ -767,7 +789,9 @@ def best_correctness_result(
     return tied[0]
 
 
-def comparable_correctness_evidence(result: dict[str, Any], reference: dict[str, Any]) -> bool:
+def comparable_correctness_evidence(
+    result: dict[str, Any], reference: dict[str, Any]
+) -> bool:
     result_niter = clean_iteration_count(result)
     reference_niter = clean_iteration_count(reference)
     if result_niter != reference_niter:
@@ -868,7 +892,9 @@ def render_markdown_table(rows: list[dict[str, Any]]) -> str:
         "| " + " | ".join(["---"] * len(columns)) + " |",
     ]
     for row in rows:
-        lines.append("| " + " | ".join(format_cell(row.get(column)) for column in columns) + " |")
+        lines.append(
+            "| " + " | ".join(format_cell(row.get(column)) for column in columns) + " |"
+        )
     return "\n".join(lines) + "\n"
 
 

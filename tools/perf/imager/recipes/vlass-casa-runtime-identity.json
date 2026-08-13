@@ -1,0 +1,106 @@
+{
+  "identity": {
+    "configuration": {
+      "datapath": [
+        "/Users/brianglendenning/.casa/data"
+      ],
+      "measurespath": "/Users/brianglendenning/.casa/data"
+    },
+    "data_trees": {
+      "geodetic": {
+        "excluded_count": 10,
+        "excluded_names": [
+          "data_update.lock",
+          "table.lock"
+        ],
+        "file_count": 34,
+        "path": "/Users/brianglendenning/.casa/data/geodetic",
+        "size_bytes": 9985566,
+        "tree_sha256": "52581a103f0959607c2d9fea1e67eb71fc9805ba6268b6b58497b179ba8d9c1f"
+      },
+      "vla": {
+        "excluded_count": 118,
+        "excluded_names": [
+          "data_update.lock",
+          "table.lock"
+        ],
+        "file_count": 438,
+        "path": "/Users/brianglendenning/.casa/data/nrao/VLA",
+        "size_bytes": 34531139,
+        "tree_sha256": "59a64d907c4edccc7937cd84765d386efbf54f0973a60a400c8d3341f6a0aaaa"
+      }
+    },
+    "data_versions": {
+      "casarundata": {
+        "date": "2026-03-20",
+        "version": "casarundata-2026.02.19-1.tar.gz"
+      },
+      "measures": {
+        "date": "",
+        "site": "unknown",
+        "version": "unknown"
+      }
+    },
+    "modules": {
+      "casaconfig": {
+        "code_tree": {
+          "file_count": 28,
+          "policy": "package_files_without_bytecode_v1",
+          "size_bytes": 165978,
+          "tree_sha256": "eb5b3760a503652adb89549a99163332bbfa5976e1501c375b2fa4504673d1fd"
+        },
+        "distribution_version": "1.5.0",
+        "module_file": "/Users/brianglendenning/SoftwareProjects/casa-build/venv/lib/python3.14/site-packages/casaconfig/__init__.py",
+        "module_file_sha256": "d4f8022d25ad9a41e6f246743b4d5151a0dd90fa1d7e997654a5f9877ae3a2d6",
+        "reported_version": null
+      },
+      "casadata": {
+        "code_tree": {
+          "file_count": 2,
+          "policy": "package_files_without_bytecode_v1",
+          "size_bytes": 824,
+          "tree_sha256": "6bb07062f63e3b24fe6b20eb21d5201323624620b85a57084c67171b5cdd6a42"
+        },
+        "distribution_version": "2025.9.22",
+        "module_file": "/Users/brianglendenning/SoftwareProjects/casa-build/venv/lib/python3.14/site-packages/casadata/__init__.py",
+        "module_file_sha256": "147cdd581f39e5e0b886359b32704a398799604be5656c182241df4415e66333",
+        "reported_version": null
+      },
+      "casatasks": {
+        "code_tree": {
+          "file_count": 430,
+          "policy": "package_files_without_bytecode_v1",
+          "size_bytes": 7211102,
+          "tree_sha256": "671f8adca81542baffb79edb67e87eed1fc6d576dd37a568764f298f2741be29"
+        },
+        "distribution_version": "6.7.5.9",
+        "module_file": "/Users/brianglendenning/SoftwareProjects/casa-build/venv/lib/python3.14/site-packages/casatasks/__init__.py",
+        "module_file_sha256": "d1ee40a39181e3b73b8f718280c63bf0d1ab5942fc35288d48d0094814cb3447",
+        "reported_version": "6.7.5.9"
+      },
+      "casatools": {
+        "code_tree": {
+          "file_count": 136,
+          "policy": "package_files_without_bytecode_v1",
+          "size_bytes": 36467555,
+          "tree_sha256": "40efa001958ad87cf42407a40ad3a85ab436e4e1189d5b0bfd8ca58f1dfac2b0"
+        },
+        "distribution_version": "6.7.5.9",
+        "module_file": "/Users/brianglendenning/SoftwareProjects/casa-build/venv/lib/python3.14/site-packages/casatools/__init__.py",
+        "module_file_sha256": "02d4667ce2606bd442d6fab4af23aeed79ebfc2e07bfcd2686f51b85b36d9c97",
+        "reported_version": "6.7.5-9"
+      }
+    },
+    "python": {
+      "executable": "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/bin/python3.14",
+      "executable_sha256": "b502cb4c5b46b8d4192ec6bcb600ce8922f1afc396fcf646e8765c6eba74a0bf",
+      "implementation": "CPython",
+      "version": "3.14.6"
+    },
+    "schema_version": 1
+  },
+  "identity_sha256": "a1dc9a7f2d65f82f9d41e2d0b3f2a0a794b3c112d43b85d36d7b76dd42facfa0",
+  "kind": "casa_runtime_identity_result",
+  "schema_version": 1,
+  "status": "completed"
+}

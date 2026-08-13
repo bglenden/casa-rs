@@ -2143,7 +2143,7 @@
     }
   },
   "run_id": "mosaic-mtmfs-large-direct-comparison",
-  "schema_version": 2,
+  "schema_version": 3,
   "status": "completed",
   "workload": {
     "id": "wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32"

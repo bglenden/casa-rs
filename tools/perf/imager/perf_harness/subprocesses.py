@@ -19,12 +19,18 @@ def run_command(
     merge_stderr: bool = True,
     check: bool = False,
     stream_stdout: bool = False,
+    incremental_output_path: pathlib.Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    if stream_stdout:
+    if stream_stdout or incremental_output_path is not None:
         if input_text is not None or not merge_stderr:
             raise ValueError(
-                "stream_stdout requires merged stderr and does not accept stdin"
+                "incremental output capture requires merged stderr and does not "
+                "accept stdin"
             )
+        output_handle = None
+        if incremental_output_path is not None:
+            incremental_output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_handle = incremental_output_path.open("w", encoding="utf-8")
         process = subprocess.Popen(
             argv,
             cwd=cwd,
@@ -41,8 +47,12 @@ def run_command(
             assert process.stdout is not None
             for line in process.stdout:
                 output_chunks.append(line)
-                sys.stdout.write(line)
-                sys.stdout.flush()
+                if output_handle is not None:
+                    output_handle.write(line)
+                    output_handle.flush()
+                if stream_stdout:
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
 
         reader = threading.Thread(target=drain_stdout, daemon=True)
         reader.start()
@@ -53,9 +63,29 @@ def run_command(
             process.wait()
             reader.join()
             process.stdout.close()
+            if output_handle is not None:
+                output_handle.close()
+            raise
+        except BaseException:
+            # An operator interrupt must not orphan a long-running CASA worker.
+            # Preserve the exception after synchronously closing the process and
+            # its output-draining thread so the caller can write a typed receipt.
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+            reader.join()
+            process.stdout.close()
+            if output_handle is not None:
+                output_handle.close()
             raise
         reader.join()
         process.stdout.close()
+        if output_handle is not None:
+            output_handle.close()
         completed = subprocess.CompletedProcess(
             argv, return_code, "".join(output_chunks), None
         )

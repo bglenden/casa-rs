@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "id": "vlass-merge-recovery-20260802-v1",
+  "approved_by": "Brian Glendenning",
+  "approved_date": "2026-08-02",
+  "wave_issue": 445,
+  "evidence_issue": 446,
+  "cleanup_issue": 454,
+  "legacy_draft_pr": 451,
+  "archive": {
+    "trusted_base_commit": "aea444b5e40fde5486e2ea421e5f8e2cf32d6174",
+    "archive_branch": "codex/vlass-recovery-archive-20260802",
+    "archive_commit": "4c3cf8cc916656f1ece6efc9bbd3fb674e401132",
+    "archive_tree": "d46765f2795d3b4c31edef891f523ddae2433b7b",
+    "bundle_path": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-archive/2026-08-02/vlass-recovery-archive-4c3cf8cc916656f1.bundle",
+    "bundle_sha256": "4ff641f50a5d0248288ba480255765a8870b7bbab6ef9842b3cacc14e75dc519",
+    "binary_patch_path": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-archive/2026-08-02/vlass-recovery-archive-aea444b5-to-4c3cf8cc.patch",
+    "binary_patch_sha256": "55286ec6390dde0552df38abe80e1de2ea84891906d6549675ab0133a57b1aad"
+  },
+  "work_budget": {
+    "salvage_audit_engineer_hours": 8,
+    "total_engineer_hours": 48,
+    "active_window_hours": 72,
+    "exclude_valid_casa_reference_wall_time": true
+  },
+  "casa_reference_schedule": {
+    "runtime": "CASA 6.7.5.9",
+    "max_full_geometry_launches": 3,
+    "shared_external_invalidation_retries": 1,
+    "launch_order": [
+      "CASA-B-FRAGMENT63-CLEAN-CAP20000-v1",
+      "CASA-B-FRAGMENT63-CLEAN-CAP20000-v2",
+      "CASA-A-SINGLE-CLEAN-N2000-v1"
+    ],
+    "rows": [
+      {
+        "id": "CASA-B-FRAGMENT63-CLEAN-CAP20000-v1",
+        "manifest_path": "tools/perf/imager/workloads/vlass-fragment-all-fields-clean-cap20000-casa.json",
+        "manifest_sha256": "d8de70dabf3c1b768a69dc9d0f2a1e8e159b29b67e668079272c7b08bac98bdf",
+        "max_wall_seconds": 604800,
+        "normal_launches": 1,
+        "base_manifest_path": "tools/perf/imager/workloads/vlass-fragment-all-fields-clean-casa.json",
+        "base_manifest_sha256": "06974233a596f857b2877c0a6538caa6fadcab4c1b1bcb33cd66ba98dfe98a23",
+        "only_science_parameter_delta": {
+          "imaging.niter": {
+            "from": 2000,
+            "to": 20000
+          }
+        }
+      },
+      {
+        "id": "CASA-B-FRAGMENT63-CLEAN-CAP20000-v2",
+        "manifest_path": "tools/perf/imager/workloads/vlass-fragment-all-fields-clean-cap20000-casa-v2.json",
+        "manifest_sha256": "63948fe140d5c06c00b924eea407e5afe8ccb2f99e2c927290d9de4644002053",
+        "max_wall_seconds": 604800,
+        "normal_launches": 1,
+        "authorization": "Explicitly approved by Brian Glendenning on 2026-08-02 after CASA-B v1 was rejected because its mask missed the measured source.",
+        "base_manifest_path": "tools/perf/imager/workloads/vlass-fragment-all-fields-clean-casa-v2.json",
+        "base_manifest_sha256": "0cabbe5fdc2f687a10fce3653d018e09db7349a0a1299d16a4f6772557f9f5d9",
+        "only_science_parameter_delta": {
+          "imaging.niter": {
+            "from": 2000,
+            "to": 20000
+          }
+        }
+      },
+      {
+        "id": "CASA-A-SINGLE-CLEAN-N2000-v1",
+        "manifest_path": "tools/perf/imager/workloads/vlass-fragment-single-field-clean-casa.json",
+        "manifest_sha256": "5da8ce24c92b2d47e53784e8600976bf37708086309820cb1b61af6f8982bd9e",
+        "max_wall_seconds": 259200,
+        "normal_launches": 1
+      }
+    ]
+  },
+  "casa_rs_candidate_schedule": {
+    "max_immutable_candidate_freezes": 2,
+    "max_full_geometry_launches": 5,
+    "shared_external_invalidation_retries": 1,
+    "promotion_ladder": [
+      "4096-square four-SPW real VLASS clean",
+      "4096-square full-16-SPW real VLASS clean",
+      "12150-square single-field clean",
+      "12150-square connected-63-field clean"
+    ],
+    "reduced_rows_are_final_evidence": false
+  },
+  "casa_first_performance_baseline": {
+    "required_before_casa_rs_performance_changes": true,
+    "generate_missing_baseline_once": true,
+    "freeze_valid_baseline": true,
+    "required_matching_dimensions": [
+      "dataset",
+      "selection",
+      "image_geometry",
+      "required_products",
+      "timed_boundary"
+    ],
+    "end_to_end_timing_may_anchor_component_target": false,
+    "component_timing_may_anchor_end_to_end_target": false,
+    "unexposed_boundary_policy": "Record the closest measurable CASA envelope and obtain explicit user approval before optimizing against an internally chosen target.",
+    "rerun_when_only_casa_rs_changes": false
+  },
+  "acceptance": {
+    "minimum_independent_speedup": 10.0,
+    "strict_100x_target": false,
+    "require_all_19_clean_products": true,
+    "require_exact_product_inventory": true,
+    "require_metadata_and_coordinate_parity": true,
+    "require_scientific_floor": true,
+    "require_bounded_laptop_memory": true,
+    "exact_component_order_required": false,
+    "exact_major_cycle_history_required": false,
+    "record_actual_iterations_components_cycles_and_stop_reason": true,
+    "stop_for_user_decision_when_merge_ready": true,
+    "continue_optimizing_after_merge_ready_without_user_direction": false
+  },
+  "delivery_train": [
+    {
+      "position": 1,
+      "name": "contract-harness-references",
+      "contents": "Recovery contract, CAP20000 manifest, launch ledger, harness checks, and frozen CASA references."
+    },
+    {
+      "position": 2,
+      "name": "shared-execution-substrate",
+      "contents": "Only audited shared multi-SPW, POINTING, AWProject, MT-MFS, product, planner, telemetry, and canonical UI/task capabilities."
+    },
+    {
+      "position": 3,
+      "name": "selected-performance-candidate",
+      "contents": "One audited primary candidate, with the reserve used only after a declared primary failure."
+    },
+    {
+      "position": 4,
+      "name": "acceptance-cleanup-closeout",
+      "contents": "Final receipts, bounded refactor, issue 454 cleanup, sidecar reviews, and merge-ready closeout."
+    }
+  ],
+  "terminal_outcomes": [
+    "merge-ready four-PR train with accepted evidence",
+    "documented blocker with exhausted bounded attempts and a specific user decision"
+  ]
+}

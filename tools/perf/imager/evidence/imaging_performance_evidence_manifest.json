@@ -4,7 +4,7 @@
       "artifact_id": "standard-mfs-final-baseline",
       "artifact_role": "baseline",
       "checked_in_path": "evidence/artifacts/20260709T193312Z-wave3-standard-mfs-single-term-heavy-wave2-0388d03c.json",
-      "sha256": "99dbc583bc5189fdc450518bc21f793ab66ca472fefb14c82b8a769f43ea53e5",
+      "sha256": "f740a91c467888a88d81c33e09c8af058eb1d50b7ff144bed7419a61f155425a",
       "source_path": "/private/tmp/casa-rs-wave343-standard-final-baseline/20260709T193312Z-wave3-standard-mfs-single-term-heavy-wave2-0388d03c.json",
       "workload_id": "wave3-standard-mfs-single-term-heavy-wave2"
     },
@@ -12,7 +12,7 @@
       "artifact_id": "standard-mfs-final-candidate",
       "artifact_role": "candidate",
       "checked_in_path": "evidence/artifacts/20260709T194937Z-wave3-standard-mfs-single-term-heavy-wave2-58dd109d.json",
-      "sha256": "9c2df2dc67ec6ef81b352deb299c32fdd0f833f2e044d7637b5b79d7e0539d1d",
+      "sha256": "acec4d7adedd8de00d2fbf9742d3e58d829eeb10807e0339f5f527f59853eab7",
       "source_path": "/private/tmp/casa-rs-wave343-standard-final-candidate3/20260709T194937Z-wave3-standard-mfs-single-term-heavy-wave2-58dd109d.json",
       "workload_id": "wave3-standard-mfs-single-term-heavy-wave2"
     },
@@ -20,7 +20,7 @@
       "artifact_id": "standard-mfs-final-comparison",
       "artifact_role": "product_comparison",
       "checked_in_path": "evidence/artifacts/casa-rs-wave343-standard-final-comparison.json",
-      "sha256": "ccb862c7c134f8d989fca127dd2f70256037ca30189dfab24237d133dc20474d",
+      "sha256": "b8f35936baba17cf9ccd85fea036737aeeeea7d2e376b34fc4f85202eec8b87f",
       "source_path": "/private/tmp/casa-rs-wave343-standard-final-comparison.json",
       "workload_id": "wave3-standard-mfs-single-term-heavy-wave2"
     },
@@ -28,7 +28,7 @@
       "artifact_id": "mosaic-mtmfs-large-final-baseline",
       "artifact_role": "baseline",
       "checked_in_path": "evidence/artifacts/20260709T195654Z-wave3-mosaic-mtmfs-alma-large-bounded-06a89dc3.json",
-      "sha256": "6dfb4c3bf4c2e79c8efa3729c446422a33c340b27a53533662969d9267b2a8af",
+      "sha256": "5d5c5f933fc5af9f90ff2b7f23d3d76a631bdc03e99b6f2a4cc773d3e9f2070f",
       "source_path": "/private/tmp/casa-rs-wave343-mosaic-mtmfs-large-final-baseline/20260709T195654Z-wave3-mosaic-mtmfs-alma-large-bounded-06a89dc3.json",
       "workload_id": "wave3-mosaic-mtmfs-alma-large-bounded"
     },
@@ -36,7 +36,7 @@
       "artifact_id": "mosaic-mtmfs-large-final-candidate",
       "artifact_role": "candidate",
       "checked_in_path": "evidence/artifacts/20260709T195437Z-wave3-mosaic-mtmfs-alma-large-bounded-ad12286b.json",
-      "sha256": "e08ae913e5e5d88ffcd1527542b090873dbb5585a018804a5e27222e842cde5b",
+      "sha256": "a34dd5fb5a19a838f1767d9855253a3ab9d4411002d9fa61b0cb2423138c743a",
       "source_path": "/private/tmp/casa-rs-wave343-mosaic-mtmfs-large-final-candidate/20260709T195437Z-wave3-mosaic-mtmfs-alma-large-bounded-ad12286b.json",
       "workload_id": "wave3-mosaic-mtmfs-alma-large-bounded"
     },
@@ -44,7 +44,7 @@
       "artifact_id": "mosaic-mtmfs-large-final-comparison",
       "artifact_role": "product_comparison",
       "checked_in_path": "evidence/artifacts/casa-rs-wave343-mosaic-mtmfs-large-final-comparison.json",
-      "sha256": "a015919ff4ca9576312a65fce36e90177d18add64bf988eea9a79c699694fb23",
+      "sha256": "4e93f8a4b02b4939bf2602e038a202de50ea37623cd6721e8abebf5ade2def16",
       "source_path": "/private/tmp/casa-rs-wave343-mosaic-mtmfs-large-final-comparison.json",
       "workload_id": "wave3-mosaic-mtmfs-alma-large-bounded"
     },
@@ -52,7 +52,7 @@
       "artifact_id": "mosaic-mtmfs-final-casa-oracle",
       "artifact_role": "casa_oracle",
       "checked_in_path": "evidence/artifacts/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d.json",
-      "sha256": "90d5f8c5f9f32d9d38088b98cb543b6e5146ba14f6dcf66facbd2b14722c4f9e",
+      "sha256": "750784bd754e33f16ebecf931e512dc7f223ca3a763153bd28ccab59f88479ad",
       "source_path": "/private/tmp/casa-rs-wave262-current-head-oracle/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d.json",
       "workload_id": "wave262-mosaic-mtmfs-small-casa-oracle"
     },
@@ -60,7 +60,7 @@
       "artifact_id": "mosaic-mtmfs-final-primary-comparison",
       "artifact_role": "primary_comparison",
       "checked_in_path": "evidence/artifacts/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d.comparison.json",
-      "sha256": "dcce5695a5bebb467572758cb1e976f18c2274ab28f8a6f41cb8972150c34075",
+      "sha256": "a4444d0cc8f6018f49f62a30836ac12cd03e81436a509059ff35c5657162cee6",
       "source_path": "/private/tmp/casa-rs-wave262-current-head-oracle/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d.comparison.json",
       "workload_id": "wave262-mosaic-mtmfs-small-casa-oracle"
     },
@@ -68,7 +68,7 @@
       "artifact_id": "mosaic-mtmfs-final-full-comparison",
       "artifact_role": "full_comparison",
       "checked_in_path": "evidence/artifacts/wave262-current-head-all-comparison.json",
-      "sha256": "f9914a09452942824aa84b7fca8e4569754d21c6d7d11a0c6fa24c0ccdb8150f",
+      "sha256": "06b0e5bed92ea3db9fce8528befb58dda3c52f7e475081af7b762534e0a42e1c",
       "source_path": "/private/tmp/wave262-current-head-all-comparison.json",
       "workload_id": "wave262-mosaic-mtmfs-small-casa-oracle"
     },
@@ -76,7 +76,7 @@
       "artifact_id": "mosaic-mfs-large-dirty-product-cpu",
       "artifact_role": "baseline",
       "checked_in_path": "evidence/artifacts/20260710T153654Z-wave352-mosaic-mfs-cpu-f32.json",
-      "sha256": "15e0720bd42eea9e6fc7a05382bfaf3fe2daf185020af06f73fc6ce602b23cb9",
+      "sha256": "0f8f45e967526cb9b47f3994db66a3b7527e2c4905c5d110ec6a5b24c7fe3c3d",
       "source_path": "/private/tmp/wave352-counterbalanced-mfs/20260710T152434Z-wave352-mosaic-mfs-alma-large-dirty-prod-vs-wave352-mosaic-mfs-alma-large-dirty-prod-ae7ee40f/runs/009-measured-03-01-baseline/20260710T153654Z-wave352-mosaic-mfs-alma-large-dirty-product-f32-70147f8e.json",
       "workload_id": "wave352-mosaic-mfs-alma-large-dirty-product-f32"
     },
@@ -84,7 +84,7 @@
       "artifact_id": "mosaic-mfs-large-dirty-product-metal",
       "artifact_role": "candidate",
       "checked_in_path": "evidence/artifacts/20260710T153829Z-wave352-mosaic-mfs-metal-f32.json",
-      "sha256": "86a7230261d4609fc5596f8a0ebfb48d4c0596dfe7b80aa9b9d2c0b136548fc1",
+      "sha256": "7bf7cd7c1e9d7d74437e175e1495061ceadf9966eefe1a70160bda003327a120",
       "source_path": "/private/tmp/wave352-counterbalanced-mfs/20260710T152434Z-wave352-mosaic-mfs-alma-large-dirty-prod-vs-wave352-mosaic-mfs-alma-large-dirty-prod-ae7ee40f/runs/010-measured-03-02-candidate/20260710T153829Z-wave352-mosaic-mfs-alma-large-dirty-product-metal-f32-1b56d03f.json",
       "workload_id": "wave352-mosaic-mfs-alma-large-dirty-product-metal-f32"
     },
@@ -92,7 +92,7 @@
       "artifact_id": "mosaic-mfs-large-dirty-product-comparison",
       "artifact_role": "product_comparison",
       "checked_in_path": "evidence/artifacts/20260710-wave352-mfs-cpu-metal-comparison.json",
-      "sha256": "12fcfaa59bb2a73152fa022973fddc8bdfedf9ba89c339b474d85c051c7e21f0",
+      "sha256": "d7b54e0ead78167c28000a004b54a6cc74178dd1df8f0fa717acc1cd7853a088",
       "source_path": "/private/tmp/wave352-mfs-cpu-metal-comparison.json",
       "workload_id": "wave352-mosaic-mfs-alma-large-dirty-product-metal-f32"
     },
@@ -100,7 +100,7 @@
       "artifact_id": "mosaic-mfs-large-dirty-product-counterbalanced",
       "artifact_role": "counterbalanced_comparison",
       "checked_in_path": "evidence/artifacts/20260710T152434Z-wave352-mfs-cpu-metal-counterbalanced.json",
-      "sha256": "e85c9167f65b88ca324a0bd3baa44e1402bce0d1dc7103e235b4868271b2a904",
+      "sha256": "3faa5ad4f285b829fe0a324436c6e3953a2b2b73ce82461fae5b62214201679f",
       "source_path": "/private/tmp/wave352-counterbalanced-mfs/20260710T152434Z-wave352-mosaic-mfs-alma-large-dirty-prod-vs-wave352-mosaic-mfs-alma-large-dirty-prod-ae7ee40f.json",
       "workload_id": "wave352-mosaic-mfs-alma-large-dirty-product-metal-f32"
     },
@@ -108,7 +108,7 @@
       "artifact_id": "mosaic-mtmfs-large-direct-cpu",
       "artifact_role": "baseline",
       "checked_in_path": "evidence/artifacts/20260710T154201Z-wave352-mosaic-mtmfs-cpu-f32.json",
-      "sha256": "cc351b41a012dbbbb09b5ed0a1f65a0110e7dd02a01482daa003aa48015d48fa",
+      "sha256": "18a28a96df6483a36d260e4643f4b4de16f0a6c66f81e35ceb73c52e4dc7e3ee",
       "source_path": "/private/tmp/wave352-counterbalanced-mtmfs/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/runs/001-measured-01-01-baseline/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-product-f32-270e6b04.json",
       "workload_id": "wave352-mosaic-mtmfs-alma-large-dirty-product-f32"
     },
@@ -116,7 +116,7 @@
       "artifact_id": "mosaic-mtmfs-large-direct-metal",
       "artifact_role": "candidate",
       "checked_in_path": "evidence/artifacts/20260710T154356Z-wave352-mosaic-mtmfs-metal-f32.json",
-      "sha256": "39c5a92c6e132b7c0716f25a9564eb5e8e66a65a7ede95e48bb7e9b0f4fdbb70",
+      "sha256": "b96aad259faa8c5fea5d35b6bd05f6fdff448381209ee800926146e0b51ab103",
       "source_path": "/private/tmp/wave352-counterbalanced-mtmfs/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/runs/002-measured-01-02-candidate/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51.json",
       "workload_id": "wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32"
     },
@@ -124,7 +124,7 @@
       "artifact_id": "mosaic-mtmfs-large-direct-comparison",
       "artifact_role": "product_comparison",
       "checked_in_path": "evidence/artifacts/20260710-wave352-mtmfs-cpu-metal-comparison.json",
-      "sha256": "8dcfdbd9fcad830d0561450d7d3d42bc3d0d5803dbf7b18163fa42c0b2221014",
+      "sha256": "a5597dabbbdb51795c2574696ebf23fd32e3af20e6e0ebf25ca03200919c96ef",
       "source_path": "/private/tmp/wave352-mtmfs-cpu-metal-comparison.json",
       "workload_id": "wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32"
     },
@@ -132,7 +132,7 @@
       "artifact_id": "mosaic-mtmfs-large-direct-counterbalanced",
       "artifact_role": "counterbalanced_comparison",
       "checked_in_path": "evidence/artifacts/20260710T154201Z-wave352-mtmfs-cpu-metal-counterbalanced.json",
-      "sha256": "db319778a59b3cfc1de523bd9364985691a21837a5c70f0437f8480b0e35ba93",
+      "sha256": "b43f6a4acede98b4809cc751ff163bcfbebb460096506ca109c82c6bf8c87ceb",
       "source_path": "/private/tmp/wave352-counterbalanced-mtmfs/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a.json",
       "workload_id": "wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32"
     },
@@ -140,7 +140,7 @@
       "artifact_id": "mosaic-mtmfs-formula-planner-baseline",
       "artifact_role": "baseline",
       "checked_in_path": "evidence/artifacts/20260710T154356Z-wave352-mosaic-mtmfs-metal-formula-baseline-f32.json",
-      "sha256": "39c5a92c6e132b7c0716f25a9564eb5e8e66a65a7ede95e48bb7e9b0f4fdbb70",
+      "sha256": "b96aad259faa8c5fea5d35b6bd05f6fdff448381209ee800926146e0b51ab103",
       "source_path": "/private/tmp/wave352-formula-mtmfs-baseline/20260710T154356Z-wave352-mosaic-mtmfs-metal-formula-baseline-f32.json",
       "workload_id": "wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32"
     },
@@ -148,7 +148,7 @@
       "artifact_id": "mosaic-mtmfs-formula-planner-candidate",
       "artifact_role": "candidate",
       "checked_in_path": "evidence/artifacts/20260710T182534Z-wave352-mosaic-mtmfs-metal-formula-f32.json",
-      "sha256": "e3ca6d0126c968d7103a9b032885456e86ed7628d69484192d64c28acac8775b",
+      "sha256": "11eda424384307c8acf4e13d7f5fe4fe1d6153401eef7b7480f1fc1825c90ac2",
       "source_path": "/private/tmp/wave352-formula-mtmfs-unsandboxed-v2/20260710T182534Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-8ee77a1f.json",
       "workload_id": "wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32"
     },
@@ -156,7 +156,7 @@
       "artifact_id": "mosaic-mtmfs-formula-planner-comparison",
       "artifact_role": "product_comparison",
       "checked_in_path": "evidence/artifacts/20260710T183021Z-wave352-mosaic-mtmfs-metal-formula-comparison.json",
-      "sha256": "1d9dadec60cfc1a13ef23c7c0984229cd0e49c3abe5ef0e4a9302cce6be8a49a",
+      "sha256": "eb4f94d471a102b26307c8e9f6772780d10c43da8c815108b5e36fe445d1c147",
       "source_path": "/private/tmp/wave352-formula-mtmfs-comparison/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938.json",
       "workload_id": "wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32"
     },
@@ -164,7 +164,7 @@
       "artifact_id": "mosaic-cube-chanchunks-formula-baseline",
       "artifact_role": "baseline",
       "checked_in_path": "evidence/artifacts/20260710T200719Z-wave56-mosaic-cube-chanchunks1.json",
-      "sha256": "342f38fefbce0ab5cd5a0e29a3aa374724bc22ea8eadb90157489da837bc8431",
+      "sha256": "d181e3fc0968755121ee35dc755d07ec013109fad8c2d80dbffe94b4a25dd891",
       "source_path": "/private/tmp/wave56-final/alternating/20260710T200719Z-wave4-mosaic-cube-alma-medium-dirty-boun-vs-wave4-mosaic-cube-alma-medium-dirty-boun-3f87984f/runs/001-measured-01-01-baseline/20260710T200719Z-wave4-mosaic-cube-alma-medium-dirty-bounded-c31ba184.json",
       "workload_id": "wave4-mosaic-cube-alma-medium-dirty-bounded"
     },
@@ -172,7 +172,7 @@
       "artifact_id": "mosaic-cube-chanchunks-formula-candidate",
       "artifact_role": "candidate",
       "checked_in_path": "evidence/artifacts/20260710T200748Z-wave56-mosaic-cube-chanchunks4.json",
-      "sha256": "0a0a59ca5595f4e5d4911b2b43f2813257bc15473d13fa7e66fd0be49be5e673",
+      "sha256": "de91a26f78a4c0e23a3315ee5087f86d191a0d7438322ee1cdbe8990d4d00337",
       "source_path": "/private/tmp/wave56-final/alternating/20260710T200719Z-wave4-mosaic-cube-alma-medium-dirty-boun-vs-wave4-mosaic-cube-alma-medium-dirty-boun-3f87984f/runs/002-measured-01-02-candidate/20260710T200748Z-wave4-mosaic-cube-alma-medium-dirty-bounded-0748bceb.json",
       "workload_id": "wave4-mosaic-cube-alma-medium-dirty-bounded"
     },
@@ -180,7 +180,7 @@
       "artifact_id": "mosaic-cube-chanchunks-formula-comparison",
       "artifact_role": "product_comparison",
       "checked_in_path": "evidence/artifacts/20260710-wave56-mosaic-cube-chanchunks-comparison.json",
-      "sha256": "611367427457d6ec17b854e746fba9c14b4c5b0ecdd77998d986bccb6d6c81e7",
+      "sha256": "4b0e9dc3418e303aa157309aa35ca73dec8db4de85d30c5aabf26ba686b490ad",
       "source_path": "/private/tmp/wave56-final/same-path.comparison.json",
       "workload_id": "wave4-mosaic-cube-alma-medium-dirty-bounded"
     },
@@ -188,7 +188,7 @@
       "artifact_id": "mosaic-cube-chanchunks-formula-counterbalanced",
       "artifact_role": "counterbalanced_comparison",
       "checked_in_path": "evidence/artifacts/20260710T200719Z-wave56-mosaic-cube-chanchunks-counterbalanced.json",
-      "sha256": "462948dd2f3f8883f28cdb30384db8eb7bfaf5630d666ce29bc5117c8c2816c8",
+      "sha256": "e233e640d53027da4eb20270000709c0697b37bcc0bb223c324dc79c99379fe7",
       "source_path": "/private/tmp/wave56-final/alternating/20260710T200719Z-wave4-mosaic-cube-alma-medium-dirty-boun-vs-wave4-mosaic-cube-alma-medium-dirty-boun-3f87984f.json",
       "workload_id": "wave4-mosaic-cube-alma-medium-dirty-bounded"
     },
@@ -196,7 +196,7 @@
       "artifact_id": "standard-mfs-single-block-read-ahead-counterbalanced",
       "artifact_role": "counterbalanced_comparison",
       "checked_in_path": "evidence/artifacts/20260710T212004Z-wave1-standard-mfs-single-block-read-ahead-counterbalanced.json",
-      "sha256": "53c5486c9fef9453032e604a0de92d6fa753ac3f44795b0c5ef9c6d4bcffc601",
+      "sha256": "c844c839c5a7e5549976bb6ccefdd8b2fec4f53c7bfca5f58aa9ca11c3748299",
       "source_path": "/private/tmp/casa-rs-current-head-single-block-read-ahead/20260710T212004Z-wave1-standard-mfs-dirty-smoke-vs-wave1-standard-mfs-dirty-smoke-fe4c7599.json",
       "workload_id": "wave1-standard-mfs-dirty-smoke"
     },
@@ -204,7 +204,7 @@
       "artifact_id": "wprojection-medium-multicpu",
       "artifact_role": "baseline",
       "checked_in_path": "evidence/artifacts/20260710T223405Z-wave3-wprojection-multicpu.json",
-      "sha256": "9a9c642b60e4751f522a861629c3e3fc26e0249e44b22a42a474ef74a9ed8156",
+      "sha256": "474c3d1f6b584b37b9684a7c8d02ef9778eb1e46d628c1d63ac88609cf55045a",
       "source_path": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/runs/001-measured-01-01-baseline/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381.json",
       "workload_id": "wave3-wprojection-single-plane-heavy-wave1-medium-multicpu"
     },
@@ -212,7 +212,7 @@
       "artifact_id": "wprojection-medium-metal",
       "artifact_role": "candidate",
       "checked_in_path": "evidence/artifacts/20260710T223425Z-wave3-wprojection-metal.json",
-      "sha256": "ea79a2998fb99eab578226b04859cdfa67af61417361176452090286c6bf5142",
+      "sha256": "96d48e1cb4eebcb79e48d0b37a77265c6abd93a9b5de47243de776c3285f8bfa",
       "source_path": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/runs/002-measured-01-02-candidate/20260710T223425Z-wave3-wprojection-single-plane-heavy-wave1-medium-auto-f1b378b8.json",
       "workload_id": "wave3-wprojection-single-plane-heavy-wave1-medium-auto"
     },
@@ -220,7 +220,7 @@
       "artifact_id": "wprojection-medium-cpu-metal-counterbalanced",
       "artifact_role": "counterbalanced_comparison",
       "checked_in_path": "evidence/artifacts/20260710T223405Z-wave3-wprojection-cpu-metal-counterbalanced.json",
-      "sha256": "8504afd6e9d8db85a7ef3a4f68cf311f7e13c809b96a255d8a1fd0fe27031bf3",
+      "sha256": "3675ccc1fd28ba21fbf144dc095149f7e3fcfe2736f78a5af9ebbf0022f7807d",
       "source_path": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f.json",
       "workload_id": "wave3-wprojection-single-plane-heavy-wave1-medium-auto"
     },
@@ -228,7 +228,7 @@
       "artifact_id": "wprojection-final-casa-oracle",
       "artifact_role": "casa_oracle",
       "checked_in_path": "evidence/artifacts/20260710T224409Z-wave3-wprojection-final-casa-oracle.json",
-      "sha256": "114bbcfc6686d2170825d5faedf8f2e6cd4071871052e75678793f5742d1e830",
+      "sha256": "451f790ade80c4dac5ca1fc56f410910c9350a84b8b89c65b6499d8370116a0b",
       "source_path": "/private/tmp/casa-rs-wprojection-final-casa-oracle/20260710T224409Z-wave3-wprojection-single-plane-heavy-wave1-medium-auto-b4ca9838.json",
       "workload_id": "wave3-wprojection-single-plane-heavy-wave1-medium-auto"
     },
@@ -236,7 +236,7 @@
       "artifact_id": "wprojection-final-casa-comparison",
       "artifact_role": "full_comparison",
       "checked_in_path": "evidence/artifacts/20260710T224409Z-wave3-wprojection-final-casa-comparison.json",
-      "sha256": "6f6f790bf89e364b4c54fd4696d51493530646455891e387b249d83bb7ad3d03",
+      "sha256": "12bb2c3aaf58b63b25e5f0eb5741fa4634b89b0bf347ec16930ea906ee24ff87",
       "source_path": "/private/tmp/casa-rs-wprojection-final-casa-oracle/20260710T224409Z-wave3-wprojection-single-plane-heavy-wave1-medium-auto-b4ca9838.comparison.json",
       "workload_id": "wave3-wprojection-single-plane-heavy-wave1-medium-auto"
     }
