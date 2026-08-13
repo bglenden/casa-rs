@@ -16202,7 +16202,6 @@ impl AwProjectMetalCompensation {
     }
 }
 
-#[cfg(all(target_os = "macos", not(coverage)))]
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AwProjectInitialCompensationMode {
@@ -16211,7 +16210,6 @@ enum AwProjectInitialCompensationMode {
     Full,
 }
 
-#[cfg(all(target_os = "macos", not(coverage)))]
 impl AwProjectInitialCompensationMode {
     fn plane_range(self) -> Option<std::ops::Range<usize>> {
         match self {
@@ -16234,7 +16232,6 @@ impl AwProjectInitialCompensationMode {
     }
 }
 
-#[cfg(all(target_os = "macos", not(coverage)))]
 fn awproject_initial_compensation_mode() -> AwProjectInitialCompensationMode {
     AwProjectInitialCompensationMode::WeightTerms
 }
@@ -42789,7 +42786,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
     replay_cache: Option<&mut AwProjectCompactReplayCache>,
     replay_block_ordinal: usize,
     awproject_initial_grid_plan: Option<AwProjectInitialGridPlan>,
-    source_major_initial_role: AwProjectSourceMajorInitialRole,
+    _source_major_initial_role: AwProjectSourceMajorInitialRole,
 ) -> Result<(), ImagingError> {
     if request.plane_stokes != PlaneStokes::I {
         return Err(ImagingError::Unsupported(
@@ -42812,11 +42809,11 @@ fn accumulate_awproject_mtmfs_metadata_batch(
     let grouped_replay = replay_cache
         .as_deref()
         .is_some_and(AwProjectCompactReplayCache::grouped_replay_enabled);
-    let source_major_grouped_initial = model_grids.is_none()
-        && awproject_initial_grid_plan
-            .is_some_and(AwProjectInitialGridPlan::is_source_major_grouped);
     #[cfg(all(target_os = "macos", not(coverage)))]
-    if source_major_grouped_initial {
+    if model_grids.is_none()
+        && awproject_initial_grid_plan
+            .is_some_and(AwProjectInitialGridPlan::is_source_major_grouped)
+    {
         if !grouped_replay {
             return accumulate_awproject_source_major_initial_only_block(
                 request,
@@ -42833,7 +42830,7 @@ fn accumulate_awproject_mtmfs_metadata_batch(
                 taylor_weights,
                 replay_block_ordinal,
                 awproject_initial_grid_plan.expect("source-major planner variant"),
-                source_major_initial_role,
+                _source_major_initial_role,
             );
         }
         let direct_cache = replay_cache.as_deref_mut().ok_or_else(|| {
@@ -90292,8 +90289,7 @@ mod tests {
         }
 
         // These receipts come from the installed CASA 6.7.5.18
-        // MatrixCleaner::makeScale implementation, invoked directly by
-        // tools/perf/imager/experiments/casa_mtmfs_arithmetic_oracle.cc.
+        // MatrixCleaner::makeScale implementation.
         for (scale_size, expected_nonzero, expected_sum, expected_center, expected_support_hash) in [
             (5.0, 69, 0x3f80_0004, 0x3d8d_eb8a, 0xae2b_09e6_7aa1_603c),
             (12.0, 437, 0x3f7f_fff1, 0x3c45_1bdf, 0x4681_401d_54d1_59e6),

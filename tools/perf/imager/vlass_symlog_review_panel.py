@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render a signed-log full-frame VLASS CASA/casa-rs image comparison."""
+"""Render a signed-log full-frame VLASS CASA/casa-rs image comparison panel."""
 
 from __future__ import annotations
 

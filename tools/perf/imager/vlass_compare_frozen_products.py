@@ -8,7 +8,7 @@ import json
 import pathlib
 import sys
 
-IMAGER_TOOLS = pathlib.Path(__file__).resolve().parents[1]
+IMAGER_TOOLS = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(IMAGER_TOOLS))
 
 from perf_harness.image_compare import compare_products  # noqa: E402

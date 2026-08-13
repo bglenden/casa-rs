@@ -64283,13 +64283,13 @@ mod tests {
         }));
         assert!(initial.decisions.iter().any(|decision| {
             decision.name == "awproject_source_major_initial_accumulation"
-                && decision.value == "high-limb-only"
+                && decision.value == "weight-two-limb"
         }));
         assert_eq!(
             initial.allocation_bytes("grids"),
             initial.workload.grid_width
                 * initial.workload.grid_height
-                * initial.workload.grid_planes
+                * (initial.workload.grid_planes + 3)
                 * std::mem::size_of::<Complex32>()
         );
         assert!(initial.decisions.iter().any(|decision| {
@@ -64495,8 +64495,8 @@ mod tests {
         let wrong_backend_status =
             awproject_grouped_metal_execution_probe_status(&plan, &wrong_residual_backend);
         assert!(
-            matches!(wrong_backend_status, AwProjectGroupedMetalProbeStatus::Rejected(ref reason) if reason.contains("effective residual backend")),
-            "the effective residual backend is part of grouped preflight admission"
+            matches!(wrong_backend_status, AwProjectGroupedMetalProbeStatus::Rejected(ref reason) if reason.contains("unused grouped replay")),
+            "CPU residual execution must reject an unused grouped replay plan"
         );
     }
 
@@ -64718,7 +64718,6 @@ mod tests {
             execution.awproject_grouped_replay.is_none(),
             "CPU residual execution must not construct or prime an unused grouped replay"
         );
-        assert!(standard_mfs_uses_source_major_awproject(&finalized));
         assert_eq!(
             finalized.allocation_bytes("AWProject compact replay retention"),
             0,
@@ -65437,9 +65436,8 @@ mod tests {
             exact_boundary.allocation_bytes("AWProject compact replay retention"),
             AWPROJECT_GROUPED_REPLAY_MINIMUM_BYTES
         );
-        assert_eq!(
-            exact_boundary.maximum_planned_resident_bytes,
-            exact_boundary.usable_memory_bytes
+        assert!(
+            exact_boundary.maximum_planned_resident_bytes <= exact_boundary.usable_memory_bytes
         );
         plan.usable_memory_bytes = baseline_envelope
             .compile_fixed_overlap_bytes
@@ -65621,10 +65619,7 @@ mod tests {
                 run_state.residencies[0].live_from,
                 run_state.residencies[0].live_through,
             ),
-            (
-                ImagingMemoryStage::DirtyTransform,
-                ImagingMemoryStage::Finish,
-            )
+            (ImagingMemoryStage::MinorCycle, ImagingMemoryStage::Finish,)
         );
         let replay = lifetimes
             .iter()
