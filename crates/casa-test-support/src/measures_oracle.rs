@@ -426,6 +426,45 @@ impl MeasuresOracle {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn frequency_convert_via_reset_frame(
+        freq_hz: f64,
+        ref_in: &str,
+        ref_out: &str,
+        initial_dir_lon: f64,
+        initial_dir_lat: f64,
+        initial_epoch_mjd: f64,
+        target_dir_lon: f64,
+        target_dir_lat: f64,
+        target_epoch_mjd: f64,
+        dir_ref: &str,
+        obs_lon: f64,
+        obs_lat: f64,
+        obs_h: f64,
+    ) -> Result<f64, OracleError> {
+        measures_operation!("measures.frequency_convert_via_reset_frame", {
+            cpp_frequency_convert_via_reset_frame(
+                freq_hz,
+                ref_in,
+                ref_out,
+                initial_dir_lon,
+                initial_dir_lat,
+                initial_epoch_mjd,
+                target_dir_lon,
+                target_dir_lat,
+                target_epoch_mjd,
+                dir_ref,
+                obs_lon,
+                obs_lat,
+                obs_h,
+            )
+            .map_err(|message| OracleError::CppFailure {
+                operation: "measures.frequency_convert_via_reset_frame",
+                message,
+            })
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn frequency_convert_between_frames(
         freq_hz: f64,
         ref_in: &str,

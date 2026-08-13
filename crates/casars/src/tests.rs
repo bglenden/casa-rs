@@ -9376,7 +9376,7 @@ fn imager_summary_tabs_do_not_treat_stokes_i_as_ms_correlation_selector() {
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imager_app(), schema, config);
     app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
-    app.set_text_value("polarization", "I");
+    app.set_text_value("stokes", "I");
 
     app.set_active_result_tab(ResultTab::Observations);
 
@@ -9421,7 +9421,8 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
                     || line.starts_with("single_plane_execution_plan ")
                     || line.starts_with("standard_one_channel_cube_acceleration ")
                     || line.starts_with("imaging_source_read_ahead_summary ")
-                    || line.starts_with("image_product_write ")),
+                    || line.starts_with("image_product_write ")
+                    || line.starts_with("WARN casars_imager ")),
         "status={} stderr={}",
         app.status_line_for_test(),
         stderr

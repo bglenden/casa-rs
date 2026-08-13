@@ -813,6 +813,13 @@ struct CasarsMacApp: App {
                 value: standardMFSAcceleration
             )
         }
+        if let standardMFSGridThreads = argumentValue(after: "--standard-mfs-grid-threads", in: arguments) {
+            store.setGenericTaskValue(
+                taskID: "imager",
+                argumentID: "standard_mfs_grid_threads",
+                value: standardMFSGridThreads
+            )
+        }
         if let readAheadBlocks = argumentValue(after: "--imaging-read-ahead-blocks", in: arguments) {
             store.setGenericTaskValue(
                 taskID: "imager",

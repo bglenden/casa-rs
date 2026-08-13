@@ -326,14 +326,17 @@ sets a shared cancellation token, drops the rendezvous receiver to wake a
 blocked producer, and prevents another bounded source read after the current
 in-flight read; the original consumer error remains the returned context.
 
-The first bounded mosaic MT-MFS slice supports one MeasurementSet,
-`specmode='mfs'`, `gridder='mosaic'`, `nterms <= 2`, no W term, natural,
-uniform, or Briggs weighting, user masks, clean or dirty products, and optional
-PB/PB-corrected products. Each weighting, initial-dirty, and residual-refresh
-pass replays the same bounded row stream; Briggs density uses a raw-UVW sidecar
-so CASA's density cell conventions remain independent of mosaic projection
-coordinates. Broader W/AW, pointing, start-model, outlier, multi-MS, and
-higher-term combinations still reject during planning.
+The bounded mosaic MT-MFS path supports one MeasurementSet, `specmode='mfs'`,
+`nterms <= 2`, natural, uniform, or Briggs weighting, user masks, clean or
+dirty products, and optional PB/PB-corrected products. The ordinary mosaic
+gridder remains a no-W path. The EVLA AWProject specialization additionally
+consumes a validated CASA CF cache, aligned RR/LL hands, POINTING-derived phase
+gradients, wideband conjugate-frequency selection, A/W terms, and its distinct
+imaging, PSF, and weight projections. Each weighting, initial-dirty, and
+residual-refresh pass replays the same bounded row stream; Briggs density uses
+a raw-UVW sidecar so CASA's density cell conventions remain independent of
+mosaic projection coordinates. Start-model, outlier, multi-MS, and higher-term
+combinations outside those admitted slices still reject during planning.
 
 Imager task protocol v3 carries the local execution controls (`parallel`,
 `chanchunks`, shared source memory/row-block/worker/read-ahead settings, and
@@ -403,19 +406,31 @@ and the available scratch budget. MT-MFS keeps f64 PSF moments and Complex64
 dirty moments per complete plan key, applies the Taylor residual identity before
 gridding, and narrows only at the bounded f32 tile. The complete key includes
 grid location, subpixel offset, support, and clipped tap ranges; projector/PB
-identity remains fixed by the metadata group. MT-MFS processes one metadata
-group and bounded compaction chunk at a time. The frontend derives the requested
-scratch from image cells, Taylor plane count, and planned workers, then caps it
-by the run-level memory target after fixed products, caches, and one source row
-block are reserved. The core reduces worker count when a support-sized tile
-cannot fit, subtracts exact worker-tile storage, and converts the remainder into
-a raw-sample limit from the actual compact record layout and geometry-derived
-route-copy bound. Reusable standard-MFS tap plans likewise receive an exact byte
-budget instead of a sample-count cutoff. The frontend memory planner and core
-executor share these formulas; no dataset identity or benchmark-specific sample
-threshold participates in the decision. Image-domain correction, PB
-normalization, and product semantics stay after the FFT. No generic
-compatibility block facade or normal-path host full-grid upload is retained.
+identity remains fixed by the metadata group. Ordinary mosaic MT-MFS processes
+one metadata group and bounded compaction chunk at a time. AWProject instead
+builds one strict sample-to-pointing route for each bounded source block and
+replays consecutive source-order windows. Before loading full CF pixels, each
+window admits only the unique `(pointing, cell, kernel role, subpixel offset,
+conjugation)` tap bundles that fit the explicit compact-tap ceiling. Full cells
+are grouped only while packing phase-applied Complex32 taps; the completed
+window then replays ascending row/channel order, RR before LL, while disjoint
+Taylor planes may run on separate workers. Window boundaries do not change
+arithmetic order.
+
+The frontend derives requested scratch from image cells, Taylor plane count,
+and planned workers, then caps it by the run-level memory target after fixed
+products, caches, and one source row block are reserved. AWProject charges its
+full-cell LRU and compact-tap ceiling as independent allocations; neither may
+consume the five-percent safety reserve. The core reduces worker count when a
+support-sized tile cannot fit, subtracts exact worker-tile storage, and converts
+the remainder into a raw-sample limit from the actual compact record layout and
+geometry-derived route-copy bound. Reusable standard-MFS tap plans likewise
+receive an exact byte budget instead of a sample-count cutoff. The frontend
+memory planner and core executor share these formulas; no dataset identity or
+benchmark-specific sample threshold participates in the decision. Image-domain
+correction, PB normalization, and product semantics stay after the FFT. No
+generic compatibility block facade or normal-path host full-grid upload is
+retained.
 
 ## Persistence / external systems
 

@@ -8,10 +8,11 @@
 //!   --backend rustfft --backend accelerate --precision both --shape 1024x1024
 //! ```
 //!
-//! FFTW is intentionally local-benchmark-only and is not part of Apple GPU
-//! backend selection. Set
-//! `CASA_RS_FFTW_BENCH_CMD=/path/to/bench` to run an external executable with
-//! the arguments `--precision`, `--rows`, `--columns`, and `--use-case`.
+//! FFTW is intentionally explicit and local-only. Set
+//! `CASA_RS_FFTW_LIBRARY_DIR=/path/to/lib` to validate the experimental runtime
+//! adapter, or set `CASA_RS_FFTW_BENCH_CMD=/path/to/bench` to run an external
+//! executable with the arguments `--precision`, `--rows`, `--columns`, and
+//! `--use-case`.
 
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -43,8 +44,16 @@ fn run() -> Result<(), String> {
     for &(rows, columns) in &options.shapes {
         for &precision in &options.precisions {
             for &backend in &options.backends {
-                if backend == FftBackendChoice::FftwLocalBench {
+                if backend == FftBackendChoice::FftwLocalBench
+                    && fftw_local_bench_command().is_some()
+                {
                     print_fftw_local_bench(&options, precision, rows, columns);
+                    continue;
+                }
+                if backend == FftBackendChoice::FftwLocalBench
+                    && std::env::var_os("CASA_RS_FFTW_LIBRARY_DIR").is_none()
+                {
+                    print_fftw_unconfigured(options.json, precision, rows, columns);
                     continue;
                 }
                 let spec = Fft2Spec::centered_c2c(
@@ -314,7 +323,7 @@ fn print_fftw_local_bench(options: &Options, precision: FftPrecision, rows: usiz
 fn print_fftw_unconfigured(json: bool, precision: FftPrecision, rows: usize, columns: usize) {
     if json {
         println!(
-            "{{\"backend\":\"{}\",\"precision\":\"{}\",\"rows\":{},\"columns\":{},\"configured\":false,\"reason\":\"set_CASA_RS_FFTW_BENCH_CMD\"}}",
+            "{{\"backend\":\"{}\",\"precision\":\"{}\",\"rows\":{},\"columns\":{},\"configured\":false,\"reason\":\"set_CASA_RS_FFTW_LIBRARY_DIR_or_CASA_RS_FFTW_BENCH_CMD\"}}",
             FftBackendChoice::FftwLocalBench,
             precision,
             rows,
@@ -322,7 +331,7 @@ fn print_fftw_unconfigured(json: bool, precision: FftPrecision, rows: usize, col
         );
     } else {
         println!(
-            "fftw_local_bench precision={} shape={}x{} configured=false reason=set_CASA_RS_FFTW_BENCH_CMD",
+            "fftw_local_bench precision={} shape={}x{} configured=false reason=set_CASA_RS_FFTW_LIBRARY_DIR_or_CASA_RS_FFTW_BENCH_CMD",
             precision, rows, columns,
         );
     }

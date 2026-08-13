@@ -254,6 +254,23 @@ unsafe extern "C" {
         freq_out: *mut f64,
     ) -> i32;
 
+    fn measures_shim_frequency_convert_via_reset_frame(
+        freq_hz: f64,
+        ref_in: *const std::ffi::c_char,
+        ref_out: *const std::ffi::c_char,
+        initial_dir_lon: f64,
+        initial_dir_lat: f64,
+        initial_epoch_mjd: f64,
+        target_dir_lon: f64,
+        target_dir_lat: f64,
+        target_epoch_mjd: f64,
+        dir_ref: *const std::ffi::c_char,
+        obs_lon: f64,
+        obs_lat: f64,
+        obs_h: f64,
+        freq_out: *mut f64,
+    ) -> i32;
+
     fn measures_shim_frequency_convert_between_frames(
         freq_hz: f64,
         ref_in: *const std::ffi::c_char,
@@ -1282,6 +1299,59 @@ pub(crate) fn cpp_frequency_convert_via_mutated_model(
     } else {
         Err(format!(
             "C++ frequency_convert_via_mutated_model failed: rc={rc}"
+        ))
+    }
+}
+
+/// Convert a frequency using CASA `MSUtil::getFreqRangeInSpw`'s persistent
+/// converter and mutable-frame lifecycle.
+#[cfg(has_casacore_cpp)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn cpp_frequency_convert_via_reset_frame(
+    freq_hz: f64,
+    ref_in: &str,
+    ref_out: &str,
+    initial_dir_lon: f64,
+    initial_dir_lat: f64,
+    initial_epoch_mjd: f64,
+    target_dir_lon: f64,
+    target_dir_lat: f64,
+    target_epoch_mjd: f64,
+    dir_ref: &str,
+    obs_lon: f64,
+    obs_lat: f64,
+    obs_h: f64,
+) -> Result<f64, String> {
+    let c_in = CasacoreOracleRuntime::c_string("measures input", ref_in)
+        .map_err(|error| error.to_string())?;
+    let c_out = CasacoreOracleRuntime::c_string("measures input", ref_out)
+        .map_err(|error| error.to_string())?;
+    let c_dir = CasacoreOracleRuntime::c_string("measures input", dir_ref)
+        .map_err(|error| error.to_string())?;
+    let mut freq_out = 0.0;
+    let rc = unsafe {
+        measures_shim_frequency_convert_via_reset_frame(
+            freq_hz,
+            c_in.as_ptr(),
+            c_out.as_ptr(),
+            initial_dir_lon,
+            initial_dir_lat,
+            initial_epoch_mjd,
+            target_dir_lon,
+            target_dir_lat,
+            target_epoch_mjd,
+            c_dir.as_ptr(),
+            obs_lon,
+            obs_lat,
+            obs_h,
+            &mut freq_out,
+        )
+    };
+    if rc == 0 {
+        Ok(freq_out)
+    } else {
+        Err(format!(
+            "C++ frequency_convert_via_reset_frame failed: rc={rc}"
         ))
     }
 }

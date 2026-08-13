@@ -683,6 +683,18 @@ impl MetalSharedF32DirtyGridBatch {
         self.timing
     }
 
+    pub(crate) fn shape(&self) -> [usize; 2] {
+        [self.rows, self.columns]
+    }
+
+    pub(crate) fn plane_count(&self) -> usize {
+        self.batch
+    }
+
+    pub(crate) fn metal_buffer(&self) -> &ProtocolObject<dyn MTLBuffer> {
+        &self.buffer
+    }
+
     pub(crate) fn seal(self) -> MetalSharedF32FftInputBatch {
         MetalSharedF32FftInputBatch {
             buffer: self.buffer,

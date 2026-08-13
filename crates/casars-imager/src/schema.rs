@@ -102,16 +102,20 @@ mod tests {
         assert!(choices.contains(&"metal".to_string()));
         assert!(choices.contains(&"multi-cpu".to_string()));
 
-        let polarization = schema
+        let stokes = schema
             .arguments
             .iter()
-            .find(|argument| argument.id == "polarization")
-            .expect("polarization argument");
-        let UiArgumentParser::Option { choices, .. } = &polarization.parser else {
-            panic!("polarization should use an option parser");
+            .find(|argument| argument.id == "stokes")
+            .expect("stokes argument");
+        let UiArgumentParser::Option { flags, choices, .. } = &stokes.parser else {
+            panic!("stokes should use an option parser");
         };
-        assert!(choices.contains(&"I".to_string()));
-        assert!(choices.contains(&"XX".to_string()));
+        assert!(flags.contains(&"--stokes".to_string()));
+        assert!(flags.contains(&"--corr".to_string()));
+        assert!(
+            choices.is_empty(),
+            "stokes accepts the full CASA selector grammar"
+        );
     }
 
     #[test]

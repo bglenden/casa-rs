@@ -8236,7 +8236,7 @@ public final class WorkbenchStore: ObservableObject {
             contextValues["spw"] = selectorToken(defaultSpectralWindow) ?? defaultSpectralWindow
         }
         if let defaultCorrelation {
-            contextValues["polarization"] = selectorToken(defaultCorrelation) ?? defaultCorrelation
+            contextValues["stokes"] = selectorToken(defaultCorrelation) ?? defaultCorrelation
         }
         applyParameterContext(
             surfaceID: "imager",

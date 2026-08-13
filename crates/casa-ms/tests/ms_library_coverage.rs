@@ -181,6 +181,25 @@ fn measurement_set_accessors_cover_real_fixture_columns_and_subtables() {
 }
 
 #[test]
+fn optional_array_treats_an_undefined_variable_array_cell_as_absent() {
+    let schema = TableSchema::new(vec![ColumnSchema::array_variable(
+        "OPTIONAL_ARRAY",
+        PrimitiveType::Float64,
+        Some(1),
+    )])
+    .unwrap();
+    let mut table = Table::with_schema(schema);
+    table.add_row(RecordValue::default()).unwrap();
+    assert!(!table.is_cell_defined(0, "OPTIONAL_ARRAY").unwrap());
+
+    let observation = casa_ms::MsObservation::new(&table);
+    assert_eq!(
+        observation.optional_array(0, "OPTIONAL_ARRAY").unwrap(),
+        None
+    );
+}
+
+#[test]
 fn generic_subtable_wrappers_cover_common_read_write_paths() {
     let mut builder = MeasurementSetBuilder::new()
         .with_main_column(OptionalMainColumn::Data)

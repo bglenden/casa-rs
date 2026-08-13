@@ -12254,9 +12254,9 @@ impl AppState {
             observation: None,
             array: None,
             timerange: None,
-            uvrange: None,
-            correlation: imager_summary_correlation_selector(self.field_text("polarization")),
-            intent: None,
+            uvrange: selection_value("uvrange"),
+            correlation: imager_summary_correlation_selector(self.field_text("stokes")),
+            intent: selection_value("intent"),
             msselect: None,
             feed: None,
             listunfl: self.listunfl_enabled(),
@@ -16662,7 +16662,9 @@ fn build_workflow_sections(app_id: &str, fields: &[FormField]) -> Vec<FormSectio
             "spw",
             "channel_start",
             "channel_count",
-            "polarization",
+            "uvrange",
+            "intent",
+            "stokes",
         ];
         let product_ids = ["imagename", "write_preview_pngs"];
         let stage_ids = [
@@ -16699,6 +16701,18 @@ fn build_workflow_sections(app_id: &str, fields: &[FormField]) -> Vec<FormSectio
             .filter(|(_, field)| field.schema.group == "Stage Parameters")
             .map(|(index, _)| StaticFormItem::Field(index))
             .collect::<Vec<_>>();
+        let advanced_wide_field = fields
+            .iter()
+            .enumerate()
+            .filter(|(_, field)| field.schema.group == "Advanced Wide-Field")
+            .map(|(index, _)| StaticFormItem::Field(index))
+            .collect::<Vec<_>>();
+        let execution_resources = fields
+            .iter()
+            .enumerate()
+            .filter(|(_, field)| field.schema.group == "Execution Resources")
+            .map(|(index, _)| StaticFormItem::Field(index))
+            .collect::<Vec<_>>();
         return vec![
             FormSection {
                 name: "Context".to_string(),
@@ -16719,6 +16733,16 @@ fn build_workflow_sections(app_id: &str, fields: &[FormField]) -> Vec<FormSectio
                 name: "Stage Parameters".to_string(),
                 content: FormSectionContent::Items(stage_parameters),
                 collapsed: false,
+            },
+            FormSection {
+                name: "Advanced Wide-Field".to_string(),
+                content: FormSectionContent::Items(advanced_wide_field),
+                collapsed: true,
+            },
+            FormSection {
+                name: "Execution Resources".to_string(),
+                content: FormSectionContent::Items(execution_resources),
+                collapsed: true,
             },
         ];
     }
@@ -20138,5 +20162,36 @@ mod tests {
         assert!(stage_ids.contains(&"threshold"));
         assert!(ids.contains(&"imsize"));
         assert!(!ids.contains(&"help"));
+
+        let advanced = sections
+            .iter()
+            .find(|section| section.name == "Advanced Wide-Field")
+            .expect("advanced wide-field section");
+        let FormSectionContent::Items(items) = &advanced.content;
+        let ids = items
+            .iter()
+            .map(|item| match item {
+                StaticFormItem::Field(index) => fields[*index].schema.id.as_str(),
+                other => panic!("unexpected advanced-wide-field item: {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert!(ids.contains(&"cfcache"));
+        assert!(ids.contains(&"aterm"));
+        assert!(ids.contains(&"normtype"));
+
+        let resources = sections
+            .iter()
+            .find(|section| section.name == "Execution Resources")
+            .expect("execution resources section");
+        let FormSectionContent::Items(items) = &resources.content;
+        let ids = items
+            .iter()
+            .map(|item| match item {
+                StaticFormItem::Field(index) => fields[*index].schema.id.as_str(),
+                other => panic!("unexpected execution-resources item: {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert!(ids.contains(&"imaging_memory_target_mb"));
+        assert!(ids.contains(&"imaging_fft_precision"));
     }
 }

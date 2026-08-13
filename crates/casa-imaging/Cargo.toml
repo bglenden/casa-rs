@@ -15,11 +15,17 @@ casa-coordinates = { path = "../casa-coordinates" }
 casa-images = { path = "../casa-images" }
 casa-lattices = { path = "../casa-lattices" }
 casa-types = { path = "../casa-types" }
+libloading = "0.8"
 libm = "0.2"
+nalgebra.workspace = true
 ndarray.workspace = true
 num-complex.workspace = true
+rayon = "1.11"
 rustfft.workspace = true
 thiserror.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+memmap2 = "0.9"
 
 [target.'cfg(all(target_os = "macos", not(coverage)))'.dependencies]
 objc2 = { version = "0.6.4", default-features = false }
@@ -63,3 +69,4 @@ objc2-metal-performance-shaders-graph = { version = "0.3.2", default-features = 
 [dev-dependencies]
 casa-test-support = { path = "../casa-test-support" }
 serial_test = "3"
+tempfile = "3"
