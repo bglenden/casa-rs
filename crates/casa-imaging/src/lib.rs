@@ -13911,7 +13911,6 @@ fn awproject_grouped_metal_fixed_scale_topology_bytes(
     Ok(expected)
 }
 
-#[cfg(all(target_os = "macos", not(coverage)))]
 fn awproject_grouped_metal_padded_prediction_plan_upper(
     samples: &[AwProjectMetalPredictionSample],
     thread_width: usize,
