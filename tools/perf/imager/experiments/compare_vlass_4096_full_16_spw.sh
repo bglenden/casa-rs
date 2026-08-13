@@ -34,7 +34,7 @@ done
 
 comparison_status=0
 trace_status=0
-python3 "$repo_root/tools/perf/imager/experiments/vlass_compare_frozen_products.py" \
+python3 "$repo_root/tools/perf/imager/vlass_compare_frozen_products.py" \
     "$workload" \
     "$rust_prefix" \
     "$casa_prefix" \

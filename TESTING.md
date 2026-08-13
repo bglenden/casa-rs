@@ -72,11 +72,50 @@ Verification: just verify
   suite-install, and CI-like coverage
 - Main-branch pushes run the rustdoc and MkDocs deployment workflow
 
+The AWProject Metal acceptance gate must run outside command
+sandboxes on an Apple-silicon Mac:
+
+- `scripts/test-macos-awproject-metal.sh`
+
+The gate fails when `MTLCreateSystemDefaultDevice()` is unavailable. It runs
+the ignored role-segmented source-major initial-grid and retained grouped-Metal
+integration tests and requires receipts proving device creation, pipeline
+creation, command dispatch, and verified output. The ordinary capability
+diagnostic remains runnable in a command sandbox and distinguishes supported
+Apple-silicon hardware with unavailable process device creation from a
+successfully created device; that diagnostic is not itself evidence that a
+Metal workload ran.
+
 Large spectral-cube storage changes additionally run the sparse logical-capacity
 test and the explicit release throughput guard:
 
 - `cargo test -p casa-images fifty_gib_spectral_cube_streams_selected_planes_with_bounded_storage -- --nocapture`
 - `CASA_RS_CUBE_PERF_DIR=/path/to/volume cargo test -p casa-test-support --features performance-tests --test images_perf_vs_cpp full_spectral_cube_plane_io_tracks_raw_disk_speed --release -- --ignored --nocapture`
+
+The accepted full-resolution VLASS all-field/full-band CLEAN result is a scoped
+resource-contract exception: **12150² science pass; no-new-swap guard waived by user.**
+The completed 19-product scientific contract retained its unchanged
+normalized-RMS ceiling of `1e-3`; the observed global swap-out increase was
+exactly 344,504 16,384-byte pages, or 5,644,353,536 bytes. This waiver applies
+only to that accepted run. It does not weaken the no-new-swap guard for other
+VLASS runs or the general acceptance tooling.
+
+The accepted artifact root is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-candidates/runs/20260812T-12150-all63-full16-clean-r21-r4`.
+It contains the products, `casa-rs.log`, and `comparison.json`; the comparison
+receipt SHA-256 is
+`ebd028a0c3c4a15a6a9733d6917e807bf4aa1522b437cb08ba9f79d963d1f49f`.
+The run completed in approximately 40,412 seconds and its worst normalized RMS
+was `2.2086646e-4`.
+
+The post-cleanup 4096², 16-SPW, all-63-field production acceptance is retained
+under
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-candidates/runs/20260813T-final-cleaned-4096-all63-full16-clean-r22`.
+Its `casa-final4096.validation.json` receipt passed all 19 products with zero
+failed or incomplete products, a worst normalized RMS of
+`9.58363498478996e-5`, 25,030,848 accepted samples, and zero new swap-out. The
+validation-receipt SHA-256 is
+`b2cc4b3b1ce1062f292b3e1ae360da2fac648bf61dc033e2fa377ab0a104a9d0`.
 
 The first test proves a 50 GiB logical cube can access separated planes with
 bounded owned storage. The second physically writes and reads every plane of

@@ -57,7 +57,10 @@ def valid_probe_log(
     )
     decisions = {
         "awproject_selected_field_count": "63",
-        "awproject_initial_grid_backend": "cpu-dynamic-sparse-f64",
+        "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
+        "awproject_source_major_architecture": "direct-source-major-v11-sealed-sha-i16-residual",
+        "awproject_source_major_initial_accumulation": "weight-two-limb",
+        "awproject_source_major_initial_grid_bytes": "12990780000",
         "awproject_multifield_initial_grid_admission": "admitted",
         "awproject_grouped_replay_replaced_generic_caches": "true",
         "awproject_grouped_metal_generic_scratch_bytes": "0",
@@ -70,10 +73,10 @@ def valid_probe_log(
         "standard_mfs_planning_resources "
         f"memory_target_bytes={target_bytes} memory_target_origin={target_origin} "
         f"no_swap_headroom_bytes={headroom_bytes or target_bytes + acceptance.GIB}",
-        "standard_mfs_runtime_plan initial_dirty_backend=cpu "
+        "standard_mfs_runtime_plan initial_dirty_backend=metal-row-run-grouped "
         "residual_backend=metal-row-run-grouped",
         "awproject_grouped_replay_plan architecture=source-order-grouped-tile-v1 "
-        "tile_side=16 omitted_squared_l2_energy=0.000000000e0",
+        "tile_side=11 omitted_squared_l2_energy=0.000000000e0",
     ]
     lines.extend(
         f"standard_mfs_execution_decision name={name} value={value} origin=Planner"
@@ -92,6 +95,20 @@ def valid_probe_log(
 
 def valid_runtime_log() -> str:
     lines = [
+        "awproject_source_major_block source_block=0 accepted_samples=1 "
+        "initial_partitions=2 initial_grid_bytes=12990780000 "
+        "initial_compensation_bytes=3542940000 spill_bytes=900 reload_bytes=0 "
+        "architecture=direct-source-major-v11-sealed-sha-i16-residual "
+        "initial_accumulation=weight-two-limb",
+        "awproject_source_major_staging source_block=0 segments=1 "
+        "program_bytes=1000 compiled_total_bytes=1000 streaming_live_bytes=1000 "
+        "streaming_ceiling_bytes=2000 spill_bytes=900 total_spill_bytes=900 "
+        "reload_bytes=0 architecture=direct-source-major-v11-sealed-sha-i16-residual "
+        "resident=false staged=true",
+        "awproject_metal_initial_readback products=8 "
+        "residency=metal-shared-selected-two-limb-grid resident_bytes=12990780000 "
+        "compensation_plane_start=5 compensation_plane_count=3 "
+        "compensation_bytes=3542940000",
         "awproject_grouped_metal_admission phase=sealed segment=0 "
         "source_boundary_upper_bytes=100 exact_additional_bytes=90 all_fit=true",
         "awproject_effective_support segment=0 omitted_energy_fraction=0 "
@@ -101,12 +118,38 @@ def valid_runtime_log() -> str:
         "tile_original_tap_visits=20 tile_retained_tap_visits=20 "
         "resident_kernel_bytes_before=100 resident_kernel_bytes_after=100",
         "awproject_aot_grouped_tile_receipt segment=0 "
-        "omitted_energy_fraction_bits=0 grouped_plans_hash_prefix=abc "
+        "omitted_energy_fraction_bits=0 grouped_plans_hash_prefix=123 "
         "legacy_grouped_plans_hash_prefix=abc grouped_route_hash_prefix=def "
         "legacy_grouped_route_hash_prefix=def "
-        "compile_transient_bytes_peak_estimated=90 compile_admission_limit_bytes=100",
-        "awproject_metal_grouped_replay_retention decision=resident-complete "
-        "segments=1 program_bytes=1000",
+        "compile_transient_bytes_peak_estimated=90 compile_admission_limit_bytes=100 "
+        "raw_kernel_atlas_bytes=100 compact_kernel_atlas_bytes=40 "
+        "compact_kernel_stencils=2 compact_kernel_plan_references=4 "
+        "compact_kernel_scratch_bytes=64 i16_kernel_atlas_bytes=20 "
+        "i16_kernel_scale_bytes=8 i16_kernel_values=5 i16_kernel_stencils=2 "
+        "i16_kernel_nrmse=1e-4 i16_kernel_max_abs_error=1e-5 "
+        "i16_kernel_zeroed_components=0 i16_kernel_compile_overlap_bytes=68",
+        "awproject_source_major_kernel_compaction source_block=0 raw_bytes=100 "
+        "compact_bytes=40 stencils=2 plan_references=4 scratch_bytes=64 "
+        "applied=true bit_exact=true",
+        "awproject_source_major_kernel_i16 source_block=0 f32_bytes=40 "
+        "i16_bytes=20 scale_bytes=8 values=5 stencils=2 nrmse=1e-4 "
+        "max_abs_error=1e-5 zeroed_components=0 compile_overlap_bytes=68 "
+        "max_kernel_norm=1.0 storage=per-stencil-scaled-i16-complex "
+        "range=-32767:32767 conversion=metal-load-to-f32",
+        "awproject_source_major_staged_streaming_ready segments=1 spill_bytes=900 "
+        "compiled_total_bytes=1000 streaming_live_peak_bytes=1000 "
+        "streaming_ceiling_bytes=2000 resident_bytes=0 prefetch_slots=1 "
+        "architecture=direct-source-major-v11-sealed-sha-i16-residual "
+        "lifecycle=after-dirty-grid-release resident=false",
+        "awproject_source_major_invariant_weight_spill decision=staged terms=2 "
+        "bytes=1180980000 resident_bytes_after=0 "
+        "lifecycle=after-clean-mask-to-final-products sha256=per-term",
+        "awproject_source_major_invariant_weight_restore terms=2 bytes=1180980000 "
+        "sha256=verified elapsed_ms=1.0",
+        "awproject_prior_residual_release terms=2 bytes=1180980000 "
+        "before_exact_grid_allocation=true",
+        "awproject_model_grid_release terms=2 bytes=2361960000 "
+        "stage=residual-grid-end before_residual_fft=true host_fallback=false",
         "awproject_grouped_metal_admission phase=runtime segment=0 all_fit=true "
         "prechecks=fit postchecks=fit host_bytes_retained_during_tile=0 "
         "persistent_post_combined_bytes=10 persistent_maximum_current_bytes=20 "
@@ -117,16 +160,19 @@ def valid_runtime_log() -> str:
         "dispatch_released_before_tile=true "
         "candidate_auxiliary_released_before_tile=true "
         "candidate_result_released_before_tile=true",
-        "awproject_metal_resident_grouped_replay_summary segments=1 "
-        "program_bytes=1000 spill_read_bytes=0 runtime_grouping_builds=0 "
-        "runtime_sort_builds=0 runtime_route_builds=0",
+        "awproject_metal_segmented_global_replay_summary segments=1 "
+        "payload_bytes=900 read_bytes=900 spill_read_bytes=900 "
+        "runtime_grouping_builds=0 runtime_sort_builds=0 "
+        "runtime_route_builds=0 source_major_streaming=true "
+        "sha256_verified_bytes=900 sha256_verification=full",
     ]
-    lines.extend(
-        "image_product_write "
-        f"suffix={suffix} role=test shape=12150x12150x1x1 elements=147622500 "
-        "elapsed_ms=1.0"
-        for suffix in acceptance.EXPECTED_PRODUCTS
-    )
+    for suffix in acceptance.EXPECTED_PRODUCTS:
+        shape = "1x1x1x1" if suffix.startswith(".sumwt") else "12150x12150x1x1"
+        lines.append(
+            "image_product_write "
+            f"suffix={suffix} role=test shape={shape} elements=147622500 "
+            "elapsed_ms=1.0"
+        )
     return "\n".join(lines)
 
 
@@ -232,7 +278,7 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
         self.assertEqual("2~17", value("--spw"))
         self.assertEqual("12150", value("--imsize"))
         self.assertEqual("20000", value("--niter"))
-        self.assertEqual("cpu", value("--standard-mfs-initial-dirty-backend"))
+        self.assertNotIn("--standard-mfs-initial-dirty-backend", common)
         self.assertEqual(
             "metal-row-run-grouped", value("--standard-mfs-residual-backend")
         )
@@ -250,6 +296,12 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
         self.assertEqual(
             "0", environment["CASA_RS_EXPERIMENTAL_AWPROJECT_REPLAY_RETENTION_BYTES"]
         )
+        self.assertEqual(
+            "1",
+            environment[
+                "CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_WEIGHT_COMPENSATION"
+            ],
+        )
 
     def test_probe_contract_is_fail_closed(self) -> None:
         target_mib = 22_000
@@ -261,11 +313,15 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
         mutations = (
             ("grouped_metal_status=admitted", "grouped_metal_status=rejected"),
             ("rows_total=655200", "rows_total=1"),
-            ("initial_dirty_backend=cpu", "initial_dirty_backend=metal"),
+            (
+                "initial_dirty_backend=metal-row-run-grouped",
+                "initial_dirty_backend=cpu",
+            ),
             (
                 "omitted_squared_l2_energy=0.000000000e0",
                 "omitted_squared_l2_energy=1e-6",
             ),
+            ("tile_side=11", "tile_side=16"),
             (
                 "awproject_selected_field_count value=63",
                 "awproject_selected_field_count value=1",
@@ -324,15 +380,35 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
         self.assertEqual(1, result["segment_count"])
         self.assertEqual(19, result["product_count"])
         mutations = (
+            (
+                "initial_compensation_bytes=3542940000",
+                "initial_compensation_bytes=0",
+            ),
             ("all_fit=true", "all_fit=false"),
             ("prediction_cropped_plans=0", "prediction_cropped_plans=1"),
             (
                 "legacy_grouped_route_hash_prefix=def",
                 "legacy_grouped_route_hash_prefix=bad",
             ),
-            ("decision=resident-complete", "decision=spill-prefetch"),
-            ("spill_read_bytes=0", "spill_read_bytes=1"),
+            ("resident=false staged=true", "resident=true staged=true"),
+            (
+                "lifecycle=after-dirty-grid-release",
+                "lifecycle=during-initial-grid",
+            ),
+            (
+                "streaming_live_peak_bytes=1000",
+                "streaming_live_peak_bytes=2001",
+            ),
+            ("spill_read_bytes=900", "spill_read_bytes=899"),
+            ("sha256_verified_bytes=900", "sha256_verified_bytes=0"),
+            ("sha256_verification=full", "sha256_verification=sealed-reuse"),
             ("runtime_route_builds=0", "runtime_route_builds=1"),
+            ("bit_exact=true", "bit_exact=false"),
+            ("i16_bytes=20", "i16_bytes=21"),
+            (
+                "storage=per-stencil-scaled-i16-complex",
+                "storage=float16-complex",
+            ),
             (
                 "candidate_audit_allocation_bytes=0",
                 "candidate_audit_allocation_bytes=16",
@@ -353,14 +429,45 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
                 baseline=baseline,
                 sample=dict(first),
                 pressure_level=1,
+                pressure_warning_samples=0,
                 swap_used_growth_samples=0,
             )
         )
+        self.assertIsNone(
+            acceptance.monitor_stop_reason(
+                baseline=baseline,
+                sample=dict(first),
+                pressure_level=2,
+                pressure_warning_samples=1,
+                swap_used_growth_samples=0,
+            )
+        )
+        self.assertIsNone(
+            acceptance.monitor_stop_reason(
+                baseline=baseline,
+                sample=dict(first),
+                pressure_level=2,
+                pressure_warning_samples=2,
+                swap_used_growth_samples=0,
+                allow_sustained_pressure_warning=True,
+            )
+        )
+        critical_reason = acceptance.monitor_stop_reason(
+            baseline=baseline,
+            sample=dict(first),
+            pressure_level=4,
+            pressure_warning_samples=0,
+            swap_used_growth_samples=0,
+            allow_sustained_pressure_warning=True,
+        )
+        self.assertIsNotNone(critical_reason)
+        self.assertIn("pressure", critical_reason.lower())
         cases = (
-            (dict(first), 2, 0, "pressure"),
-            (dict(first, pages_throttled=1), 1, 0, "throttled"),
-            (dict(first, swapouts=5), 1, 0, "swapout"),
-            (dict(first), 1, 2, "swap-used"),
+            (dict(first), 2, 2, 0, "pressure"),
+            (dict(first), 4, 0, 0, "pressure"),
+            (dict(first, pages_throttled=1), 1, 0, 0, "throttled"),
+            (dict(first, swapouts=5), 1, 0, 0, "swapout"),
+            (dict(first), 1, 0, 2, "swap-used"),
             (
                 dict(
                     first,
@@ -368,16 +475,24 @@ class FullVlassAcceptanceContractTest(unittest.TestCase):
                 ),
                 1,
                 0,
+                0,
                 "compressed",
             ),
-            (host_sample(headroom=acceptance.HOST_RESERVE_BYTES - 1), 1, 0, "headroom"),
+            (
+                host_sample(headroom=acceptance.HOST_RESERVE_BYTES - 1),
+                1,
+                0,
+                0,
+                "headroom",
+            ),
         )
-        for sample, level, growth, expected in cases:
+        for sample, level, warnings, growth, expected in cases:
             with self.subTest(expected=expected):
                 reason = acceptance.monitor_stop_reason(
                     baseline=baseline,
                     sample=sample,
                     pressure_level=level,
+                    pressure_warning_samples=warnings,
                     swap_used_growth_samples=growth,
                     max_compressed_growth_bytes=(
                         2 * acceptance.GIB if expected == "compressed" else None

@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import queue
@@ -58,7 +59,6 @@ MIN_INTERNAL_FREE_BYTES = 20 * GIB
 MIN_OUTPUT_FREE_BYTES = 100 * GIB
 MONITOR_INTERVAL_SECONDS = 15.0
 PRESSURE_EXPERIMENT_MONITOR_INTERVAL_SECONDS = 5.0
-PRESSURE_EXPERIMENT_MAX_COMPRESSED_GROWTH_BYTES = 2 * GIB
 NO_PROGRESS_SECONDS = 1_800.0
 TERMINATE_GRACE_SECONDS = 10.0
 NORMAL_MEMORY_PRESSURE_LEVEL = 1
@@ -145,6 +145,7 @@ EXPERIMENT_ENVIRONMENT = {
     "CASA_RS_EXPERIMENTAL_PARALLEL_MODEL_TERM_FFT": "1",
     "CASA_RS_EXPERIMENTAL_PARALLEL_RESIDUAL_TERM_FFT": "1",
     "CASA_RS_EXPERIMENTAL_AWPROJECT_RESIDUAL_LIVE_CFS_ONLY": "1",
+    "CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_WEIGHT_COMPENSATION": "1",
 }
 
 
@@ -643,8 +644,6 @@ def common_imager_command(
         "mtmfs",
         "--standard-mfs-acceleration",
         "metal",
-        "--standard-mfs-initial-dirty-backend",
-        "cpu",
         "--standard-mfs-residual-backend",
         "metal-row-run-grouped",
         "--imaging-fft-precision",
@@ -795,22 +794,30 @@ def validate_probe_log(
     headroom = int(resources[0].get("no_swap_headroom_bytes", "-1"))
     if require_target_within_headroom and target_bytes > headroom:
         raise AcceptanceError("plan probe target exceeds its fresh no-swap headroom")
-    if len(runtime) != 1 or runtime[0].get("initial_dirty_backend") != "cpu":
-        raise AcceptanceError("plan probe did not select the CPU initial grid")
+    if (
+        len(runtime) != 1
+        or runtime[0].get("initial_dirty_backend") != "metal-row-run-grouped"
+    ):
+        raise AcceptanceError(
+            "plan probe did not select the source-major Metal initial grid"
+        )
     if runtime[0].get("residual_backend") != "metal-row-run-grouped":
         raise AcceptanceError("plan probe did not select grouped Metal residual replay")
     if len(grouped) != 1:
         raise AcceptanceError("plan probe omitted the grouped replay plan")
     if grouped[0].get("architecture") != "source-order-grouped-tile-v1":
         raise AcceptanceError("grouped replay architecture differs")
-    if grouped[0].get("tile_side") != "16":
+    if grouped[0].get("tile_side") != "11":
         raise AcceptanceError("grouped replay tile side differs")
     if float(grouped[0].get("omitted_squared_l2_energy", "nan")) != 0.0:
         raise AcceptanceError("grouped replay is not exact-support")
     by_name = {decision.get("name"): decision.get("value") for decision in decisions}
     expected_decisions = {
         "awproject_selected_field_count": "63",
-        "awproject_initial_grid_backend": "cpu-dynamic-sparse-f64",
+        "awproject_initial_grid_backend": "source-major-grouped-metal-f64",
+        "awproject_source_major_architecture": "direct-source-major-v11-sealed-sha-i16-residual",
+        "awproject_source_major_initial_accumulation": "weight-two-limb",
+        "awproject_source_major_initial_grid_bytes": "12990780000",
         "awproject_multifield_initial_grid_admission": "admitted",
         "awproject_grouped_replay_replaced_generic_caches": "true",
         "awproject_grouped_metal_generic_scratch_bytes": "0",
@@ -891,11 +898,15 @@ def monitor_stop_reason(
     baseline: Baseline,
     sample: dict[str, Any],
     pressure_level: int,
+    pressure_warning_samples: int,
     swap_used_growth_samples: int,
     max_compressed_growth_bytes: int | None = None,
+    allow_sustained_pressure_warning: bool = False,
 ) -> str | None:
-    if pressure_level != NORMAL_MEMORY_PRESSURE_LEVEL:
+    if pressure_level not in (NORMAL_MEMORY_PRESSURE_LEVEL, 2):
         return f"memory pressure escalated to level {pressure_level}"
+    if pressure_warning_samples >= 2 and not allow_sustained_pressure_warning:
+        return "memory pressure remained at warning level for two consecutive samples"
     if int(sample["pages_throttled"]) > int(baseline.second["pages_throttled"]):
         return "Pages throttled increased"
     if int(sample["swapouts"]) > int(baseline.second["swapouts"]):
@@ -926,6 +937,8 @@ def monitor_run(
     telemetry_path: Path,
     interval_seconds: float = MONITOR_INTERVAL_SECONDS,
     max_compressed_growth_bytes: int | None = None,
+    allow_sustained_pressure_warning: bool = False,
+    wall_limit_seconds: float = RUST_WALL_LIMIT_SECONDS,
     snapshot_reader: Callable[[], dict[str, Any]] = read_darwin_host_snapshot,
 ) -> MonitorResult:
     samples: list[dict[str, Any]] = []
@@ -935,6 +948,7 @@ def monitor_run(
     last_progress_mtime = 0
     low_activity_samples = 0
     swap_used_growth_samples = 0
+    pressure_warning_samples = 0
     stop_reason: str | None = None
     with log_path.open("w", encoding="utf-8") as log:
         process = subprocess.Popen(
@@ -979,6 +993,7 @@ def monitor_run(
                 terminate_group(process)
                 break
             swap_used = int(sample["swap_used_bytes"])
+            pressure_warning_samples = pressure_warning_samples + 1 if level == 2 else 0
             swap_used_growth_samples = (
                 swap_used_growth_samples + 1 if swap_used > last_swap_used else 0
             )
@@ -996,10 +1011,12 @@ def monitor_run(
                 baseline=baseline,
                 sample=sample,
                 pressure_level=level,
+                pressure_warning_samples=pressure_warning_samples,
                 swap_used_growth_samples=swap_used_growth_samples,
                 max_compressed_growth_bytes=max_compressed_growth_bytes,
+                allow_sustained_pressure_warning=allow_sustained_pressure_warning,
             )
-            if stop_reason is None and now - started >= RUST_WALL_LIMIT_SECONDS:
+            if stop_reason is None and now - started >= wall_limit_seconds:
                 stop_reason = "10x acceptance wall exceeded"
             disk_idle = len(samples) < 2 or (
                 record.get("process_disk_read_bytes")
@@ -1029,13 +1046,81 @@ def monitor_run(
 
 
 def validate_runtime_log(text: str) -> dict[str, Any]:
+    source_blocks = matching_lines(text, "awproject_source_major_block ")
+    initial_readback = matching_lines(text, "awproject_metal_initial_readback ")
     sealed = matching_lines(text, "awproject_grouped_metal_admission phase=sealed ")
     runtime = matching_lines(text, "awproject_grouped_metal_admission phase=runtime ")
     host = matching_lines(text, "awproject_grouped_metal_host_lifetime ")
     support = matching_lines(text, "awproject_effective_support ")
     aot = matching_lines(text, "awproject_aot_grouped_tile_receipt ")
+    compaction = matching_lines(text, "awproject_source_major_kernel_compaction ")
+    quantization = matching_lines(text, "awproject_source_major_kernel_i16 ")
+    staging = matching_lines(text, "awproject_source_major_staging ")
+    staged_ready = matching_lines(
+        text, "awproject_source_major_staged_streaming_ready "
+    )
+    weight_spill = matching_lines(
+        text, "awproject_source_major_invariant_weight_spill "
+    )
+    weight_restore = matching_lines(
+        text, "awproject_source_major_invariant_weight_restore "
+    )
+    residual_release = matching_lines(text, "awproject_prior_residual_release ")
+    model_grid_release = matching_lines(text, "awproject_model_grid_release ")
     retention = matching_lines(text, "awproject_metal_grouped_replay_retention ")
-    summaries = matching_lines(text, "awproject_metal_resident_grouped_replay_summary ")
+    summaries = matching_lines(text, "awproject_metal_segmented_global_replay_summary ")
+    if not source_blocks:
+        raise AcceptanceError("runtime log omitted source-major initial blocks")
+    if {int(entry["source_block"]) for entry in source_blocks} != set(
+        range(len(source_blocks))
+    ):
+        raise AcceptanceError(
+            "source-major initial blocks are not unique and contiguous"
+        )
+    for entry in source_blocks:
+        if (
+            entry.get("architecture")
+            != "direct-source-major-v11-sealed-sha-i16-residual"
+            or entry.get("initial_accumulation") != "weight-two-limb"
+            or entry.get("initial_partitions") != "2"
+            or entry.get("initial_grid_bytes") != "12990780000"
+            or entry.get("initial_compensation_bytes") != "3542940000"
+            or int(entry.get("spill_bytes", "0")) <= 0
+            or entry.get("reload_bytes") != "0"
+        ):
+            raise AcceptanceError(
+                "source-major weight-compensated initial receipt differs"
+            )
+    if len(staging) != len(source_blocks):
+        raise AcceptanceError("staged replay receipts do not cover every source block")
+    if {int(entry["source_block"]) for entry in staging} != set(
+        range(len(source_blocks))
+    ):
+        raise AcceptanceError(
+            "staged replay source blocks are not unique and contiguous"
+        )
+    for block, staged in zip(source_blocks, staging, strict=True):
+        if (
+            staged.get("architecture")
+            != "direct-source-major-v11-sealed-sha-i16-residual"
+            or staged.get("resident") != "false"
+            or staged.get("staged") != "true"
+            or int(staged.get("spill_bytes", "0")) <= 0
+            or staged.get("reload_bytes") != "0"
+            or block.get("spill_bytes") != staged.get("spill_bytes")
+            or int(staged.get("streaming_live_bytes", "-1"))
+            > int(staged.get("streaming_ceiling_bytes", "-2"))
+        ):
+            raise AcceptanceError("source-major staged replay receipt differs")
+    if (
+        len(initial_readback) != 1
+        or initial_readback[0].get("residency") != "metal-shared-selected-two-limb-grid"
+        or initial_readback[0].get("resident_bytes") != "12990780000"
+        or initial_readback[0].get("compensation_plane_start") != "5"
+        or initial_readback[0].get("compensation_plane_count") != "3"
+        or initial_readback[0].get("compensation_bytes") != "3542940000"
+    ):
+        raise AcceptanceError("weight-compensated initial readback receipt differs")
     if not sealed:
         raise AcceptanceError("runtime log omitted sealed grouped segments")
     segments = {int(entry["segment"]) for entry in sealed}
@@ -1074,35 +1159,156 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
             raise AcceptanceError("exact-support compiler changed kernel residency")
     if {int(entry["segment"]) for entry in aot} != segments:
         raise AcceptanceError("AOT receipts do not cover every segment")
+    if {int(entry["source_block"]) for entry in compaction} != segments:
+        raise AcceptanceError("kernel compaction receipts do not cover every segment")
+    if {int(entry["source_block"]) for entry in quantization} != segments:
+        raise AcceptanceError("scaled-i16 receipts do not cover every segment")
+    compaction_by_segment = {int(entry["source_block"]): entry for entry in compaction}
+    quantization_by_segment = {
+        int(entry["source_block"]): entry for entry in quantization
+    }
+    for segment, entry in compaction_by_segment.items():
+        if entry.get("applied") != "true" or entry.get("bit_exact") != "true":
+            raise AcceptanceError("source-major kernel compaction was not exact")
+        raw_bytes = int(entry.get("raw_bytes", "0"))
+        compact_bytes = int(entry.get("compact_bytes", "0"))
+        if compact_bytes <= 0 or compact_bytes >= raw_bytes:
+            raise AcceptanceError(
+                "source-major kernel compaction did not reduce residency"
+            )
+        if (
+            int(entry.get("stencils", "0")) <= 0
+            or int(entry.get("plan_references", "0")) <= 0
+        ):
+            raise AcceptanceError("source-major kernel compaction receipt is empty")
+        if int(entry.get("scratch_bytes", "0")) <= 0:
+            raise AcceptanceError(
+                "source-major kernel compaction omitted scratch admission"
+            )
+    for segment, entry in quantization_by_segment.items():
+        compact = compaction_by_segment[segment]
+        if (
+            entry.get("storage") != "per-stencil-scaled-i16-complex"
+            or entry.get("range") != "-32767:32767"
+            or entry.get("conversion") != "metal-load-to-f32"
+        ):
+            raise AcceptanceError("scaled-i16 kernel storage contract differs")
+        f32_bytes = int(entry.get("f32_bytes", "0"))
+        i16_bytes = int(entry.get("i16_bytes", "0"))
+        scale_bytes = int(entry.get("scale_bytes", "0"))
+        if f32_bytes != int(compact["compact_bytes"]):
+            raise AcceptanceError("scaled-i16 source bytes differ from compact atlas")
+        if i16_bytes <= 0 or scale_bytes <= 0 or i16_bytes + scale_bytes >= f32_bytes:
+            raise AcceptanceError("scaled-i16 storage did not reduce kernel residency")
+        if int(entry.get("values", "0")) <= 0 or int(entry.get("stencils", "0")) <= 0:
+            raise AcceptanceError("scaled-i16 receipt is empty")
+        nrmse = float(entry.get("nrmse", "nan"))
+        if not math.isfinite(nrmse) or nrmse > 1.0e-3:
+            raise AcceptanceError("scaled-i16 kernel NRMSE exceeds the science budget")
+        if not math.isfinite(float(entry.get("max_abs_error", "nan"))):
+            raise AcceptanceError("scaled-i16 maximum error is not finite")
+        if not math.isfinite(float(entry.get("max_kernel_norm", "nan"))):
+            raise AcceptanceError("scaled-i16 kernel norm is not finite")
     if any(entry.get("omitted_energy_fraction_bits") != "0" for entry in aot):
         raise AcceptanceError("AOT receipt is not exact-support")
     for entry in aot:
-        if entry.get("grouped_plans_hash_prefix") != entry.get(
+        segment = int(entry["segment"])
+        compact = compaction_by_segment[segment]
+        quantized = quantization_by_segment[segment]
+        if entry.get("grouped_plans_hash_prefix") == entry.get(
             "legacy_grouped_plans_hash_prefix"
         ):
-            raise AcceptanceError("AOT grouped plans differ from the exact compiler")
+            raise AcceptanceError(
+                "compacted AOT grouped plans retained raw atlas bases"
+            )
         if entry.get("grouped_route_hash_prefix") != entry.get(
             "legacy_grouped_route_hash_prefix"
         ):
             raise AcceptanceError("AOT grouped route differs from the exact compiler")
+        if entry.get("raw_kernel_atlas_bytes") != compact.get("raw_bytes") or entry.get(
+            "compact_kernel_atlas_bytes"
+        ) != compact.get("compact_bytes"):
+            raise AcceptanceError("AOT and kernel-compaction byte ledgers differ")
+        if entry.get("compact_kernel_stencils") != compact.get("stencils") or entry.get(
+            "compact_kernel_plan_references"
+        ) != compact.get("plan_references"):
+            raise AcceptanceError("AOT and kernel-compaction cardinalities differ")
+        if entry.get("compact_kernel_scratch_bytes") != compact.get("scratch_bytes"):
+            raise AcceptanceError("AOT and kernel-compaction scratch ledgers differ")
+        for aot_name, quantized_name in (
+            ("i16_kernel_atlas_bytes", "i16_bytes"),
+            ("i16_kernel_scale_bytes", "scale_bytes"),
+            ("i16_kernel_values", "values"),
+            ("i16_kernel_stencils", "stencils"),
+            ("i16_kernel_nrmse", "nrmse"),
+            ("i16_kernel_max_abs_error", "max_abs_error"),
+            ("i16_kernel_zeroed_components", "zeroed_components"),
+            ("i16_kernel_compile_overlap_bytes", "compile_overlap_bytes"),
+        ):
+            if entry.get(aot_name) != quantized.get(quantized_name):
+                raise AcceptanceError("AOT and scaled-i16 kernel ledgers differ")
         if int(entry.get("compile_transient_bytes_peak_estimated", "-1")) > int(
             entry.get("compile_admission_limit_bytes", "-2")
         ):
             raise AcceptanceError("AOT compiler exceeded its admitted memory")
-    if len(retention) != 1 or retention[0].get("decision") != "resident-complete":
-        raise AcceptanceError("complete resident grouped retention was not established")
-    if int(retention[0].get("segments", "-1")) != len(segments):
-        raise AcceptanceError("resident segment count differs from sealed count")
+    if retention:
+        raise AcceptanceError(
+            "source-major streamed replay unexpectedly retained all segments"
+        )
+    if len(staged_ready) != 1:
+        raise AcceptanceError("source-major replay omitted its streaming-ready receipt")
+    staged = staged_ready[0]
+    if (
+        staged.get("architecture") != "direct-source-major-v11-sealed-sha-i16-residual"
+        or staged.get("lifecycle") != "after-dirty-grid-release"
+        or staged.get("resident") != "false"
+        or staged.get("resident_bytes") != "0"
+        or staged.get("prefetch_slots") != "1"
+        or int(staged.get("segments", "-1")) != len(segments)
+        or int(staged.get("streaming_live_peak_bytes", "-1"))
+        > int(staged.get("streaming_ceiling_bytes", "-2"))
+    ):
+        raise AcceptanceError("source-major streaming-ready receipt differs")
+    if (
+        len(weight_spill) != 1
+        or weight_spill[0].get("decision") != "staged"
+        or weight_spill[0].get("terms") != "2"
+        or weight_spill[0].get("bytes") != "1180980000"
+        or weight_spill[0].get("resident_bytes_after") != "0"
+        or weight_spill[0].get("lifecycle") != "after-clean-mask-to-final-products"
+        or weight_spill[0].get("sha256") != "per-term"
+    ):
+        raise AcceptanceError("source-major invariant-weight spill receipt differs")
+    if (
+        len(weight_restore) != 1
+        or weight_restore[0].get("terms") != weight_spill[0].get("terms")
+        or weight_restore[0].get("bytes") != weight_spill[0].get("bytes")
+        or weight_restore[0].get("sha256") != "verified"
+    ):
+        raise AcceptanceError("source-major invariant-weight restore receipt differs")
+    if not residual_release or any(
+        entry.get("terms") != "2"
+        or entry.get("bytes") != "1180980000"
+        or entry.get("before_exact_grid_allocation") != "true"
+        for entry in residual_release
+    ):
+        raise AcceptanceError("prior residual release receipt differs")
+    if not model_grid_release or any(
+        entry.get("terms") != "2"
+        or entry.get("bytes") != "2361960000"
+        or entry.get("stage") != "residual-grid-end"
+        or entry.get("before_residual_fft") != "true"
+        or entry.get("host_fallback") != "false"
+        for entry in model_grid_release
+    ):
+        raise AcceptanceError("model-grid release receipt differs")
     if not runtime or not host or not summaries:
         raise AcceptanceError("runtime grouped replay receipts are incomplete")
     expected_dispatches = len(segments) * len(summaries)
     if len(runtime) != expected_dispatches or len(host) != expected_dispatches:
-        raise AcceptanceError("not every resident refresh covered every sealed segment")
+        raise AcceptanceError("not every streamed refresh covered every sealed segment")
     if any(int(entry.get("segments", "-1")) != len(segments) for entry in summaries):
-        raise AcceptanceError("a resident refresh omitted a sealed segment")
-    retained_program_bytes = retention[0].get("program_bytes")
-    if any(entry.get("program_bytes") != retained_program_bytes for entry in summaries):
-        raise AcceptanceError("resident refresh bytes differ from retained bytes")
+        raise AcceptanceError("a streamed refresh omitted a sealed segment")
     for entry in runtime:
         if entry.get("all_fit") != "true" or entry.get("prechecks") != "fit":
             raise AcceptanceError("runtime grouped Metal check failed")
@@ -1133,9 +1339,21 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
             raise AcceptanceError(
                 "production grouped replay allocated a candidate audit"
             )
-    for entry in summaries:
-        if entry.get("spill_read_bytes") != "0":
-            raise AcceptanceError("resident grouped replay read spill during refresh")
+    for refresh, entry in enumerate(summaries):
+        if (
+            entry.get("source_major_streaming") != "true"
+            or entry.get("payload_bytes") != staged.get("spill_bytes")
+            or entry.get("read_bytes") != staged.get("spill_bytes")
+            or entry.get("spill_read_bytes") != staged.get("spill_bytes")
+        ):
+            raise AcceptanceError("streamed grouped replay byte ledger differs")
+        expected_verification = "full" if refresh == 0 else "sealed-reuse"
+        expected_verified_bytes = staged.get("spill_bytes") if refresh == 0 else "0"
+        if (
+            entry.get("sha256_verification") != expected_verification
+            or entry.get("sha256_verified_bytes") != expected_verified_bytes
+        ):
+            raise AcceptanceError("streamed grouped replay verification ledger differs")
         for name in (
             "runtime_grouping_builds",
             "runtime_sort_builds",
@@ -1143,14 +1361,20 @@ def validate_runtime_log(text: str) -> dict[str, Any]:
         ):
             if entry.get(name) != "0":
                 raise AcceptanceError(
-                    "resident grouped replay rebuilt runtime topology"
+                    "streamed grouped replay rebuilt runtime topology"
                 )
     products = matching_lines(text, "image_product_write ")
     suffixes = tuple(entry.get("suffix") for entry in products)
     if suffixes != EXPECTED_PRODUCTS:
         raise AcceptanceError("runtime did not write the ordered 19-product inventory")
-    if any(entry.get("shape") != "12150x12150x1x1" for entry in products):
-        raise AcceptanceError("runtime product geometry differs from 12150 square")
+    for entry in products:
+        expected_shape = (
+            "1x1x1x1"
+            if entry.get("suffix", "").startswith(".sumwt")
+            else "12150x12150x1x1"
+        )
+        if entry.get("shape") != expected_shape:
+            raise AcceptanceError("runtime product geometry differs")
     return {
         "segment_count": len(segments),
         "runtime_dispatch_count": len(runtime),
@@ -1297,11 +1521,11 @@ def run_acceptance(args: argparse.Namespace) -> Path:
             if args.allow_pressure_experiment
             else MONITOR_INTERVAL_SECONDS
         ),
-        max_compressed_growth_bytes=(
-            PRESSURE_EXPERIMENT_MAX_COMPRESSED_GROWTH_BYTES
-            if args.allow_pressure_experiment
-            else None
-        ),
+        # Compression is measured, but is not destructive by itself. The
+        # pressure experiment still fails immediately on swapout, throttling,
+        # critical/unavailable pressure, or loss of the 2 GiB no-swap reserve.
+        max_compressed_growth_bytes=None,
+        allow_sustained_pressure_warning=args.allow_pressure_experiment,
     )
     execution = {
         "monitor": asdict(monitor),
