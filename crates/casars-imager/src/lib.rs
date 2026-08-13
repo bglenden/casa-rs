@@ -64274,7 +64274,7 @@ mod tests {
     fn twhya_second_image_natural_dirty_prepared_samples_match_casacore_gridder() {
         let ms_path = env::var_os("CASA_RS_WAVE3_118_MS")
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("target/wdad-wave3-118/casa/twhya_selfcal.ms"));
+            .unwrap_or_else(|| PathBuf::from("target/issue-118/casa/twhya_selfcal.ms"));
         if !ms_path.exists() {
             return;
         }
@@ -64282,7 +64282,7 @@ mod tests {
             OsString::from("--ms"),
             ms_path.clone().into_os_string(),
             OsString::from("--imagename"),
-            OsString::from("target/wdad-wave3-118/rust/twhya_gridder_diagnostic"),
+            OsString::from("target/issue-118/rust/twhya_gridder_diagnostic"),
             OsString::from("--imsize"),
             OsString::from("250"),
             OsString::from("--cell-arcsec"),
@@ -64470,7 +64470,7 @@ mod tests {
         );
 
         let mut casa_residual_path =
-            PathBuf::from("target/wdad-wave3-118/casa/dirty_natural_second.residual");
+            PathBuf::from("target/issue-118/casa/dirty_natural_second.residual");
         if !casa_residual_path.exists() {
             casa_residual_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../..")
@@ -64512,7 +64512,7 @@ mod tests {
     fn twhya_second_image_briggs_weighting_trace() {
         let ms_path = env::var_os("CASA_RS_WAVE3_118_MS")
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("target/wdad-wave3-118/casa/twhya_selfcal.ms"));
+            .unwrap_or_else(|| PathBuf::from("target/issue-118/casa/twhya_selfcal.ms"));
         if !ms_path.exists() {
             return;
         }
@@ -64520,7 +64520,7 @@ mod tests {
             OsString::from("--ms"),
             ms_path.clone().into_os_string(),
             OsString::from("--imagename"),
-            OsString::from("target/wdad-wave3-118/rust/twhya_briggs_weighting_diagnostic"),
+            OsString::from("target/issue-118/rust/twhya_briggs_weighting_diagnostic"),
             OsString::from("--spw"),
             OsString::from("0"),
             OsString::from("--imsize"),
@@ -64651,19 +64651,19 @@ mod tests {
     fn twhya_second_image_briggs_residual_refresh_trace() {
         let ms_path = env::var_os("CASA_RS_WAVE3_118_MS")
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("target/wdad-wave3-118/casa/twhya_selfcal.ms"));
+            .unwrap_or_else(|| PathBuf::from("target/issue-118/casa/twhya_selfcal.ms"));
         if !ms_path.exists() {
             return;
         }
         let model_path = env::var_os("CASA_RS_WAVE3_118_MODEL")
             .map(PathBuf::from)
             .unwrap_or_else(|| {
-                PathBuf::from("target/wdad-wave3-118/casa/second_image_current_n79.model")
+                PathBuf::from("target/issue-118/casa/second_image_current_n79.model")
             });
         let residual_path = env::var_os("CASA_RS_WAVE3_118_RESIDUAL")
             .map(PathBuf::from)
             .unwrap_or_else(|| {
-                PathBuf::from("target/wdad-wave3-118/casa/second_image_current_n79.residual")
+                PathBuf::from("target/issue-118/casa/second_image_current_n79.residual")
             });
         if !model_path.exists() || !residual_path.exists() {
             return;
@@ -64672,7 +64672,7 @@ mod tests {
             OsString::from("--ms"),
             ms_path.clone().into_os_string(),
             OsString::from("--imagename"),
-            OsString::from("target/wdad-wave3-118/rust/twhya_briggs_residual_diagnostic"),
+            OsString::from("target/issue-118/rust/twhya_briggs_residual_diagnostic"),
             OsString::from("--spw"),
             OsString::from("0"),
             OsString::from("--imsize"),

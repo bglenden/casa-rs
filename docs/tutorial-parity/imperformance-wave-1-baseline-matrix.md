@@ -4,7 +4,7 @@ Truth class: historical evidence snapshot
 Last reality check: 2026-05-19
 Verification: `python3 -m unittest tools/perf/imager/test_run_workload.py tools/perf/imager/test_stage_wave1_datasets.py`; `bash -n scripts/bench-imager-vs-casa.sh`; `tools/perf/imager/stage_wave1_datasets.py --data-root /Volumes/GLENDENNING/casa-rs-imperformance --materialize-workloads --output-dir target/imperformance-wave1/issue251-plan`; `tools/perf/imager/stage_wave1_datasets.py --data-root /Volumes/GLENDENNING/casa-rs-imperformance --materialize-workloads --output-dir target/imperformance-wave1/issue251-medium-large-plan`; selected `tools/perf/imager/run_workload.py` runs listed below; `just docs-check`; `just quick`
 
-Wave issue: #246
+Work issue: #246
 Child issue: #251
 
 This note records the first `casa-rs` versus CASA C++ baseline matrix for

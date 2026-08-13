@@ -75,7 +75,8 @@ Historical phase plans and program-reference docs live under:
 - `docs/Planning/Phase 4 - MeasurementSet and Derived Calibration Workflows/`
 - `docs/Planning/Phase 5 - Lattices Coordinates Images/`
 
-Canonical active planning and wave status live in GitHub Issues / Project.
+Canonical active planning and work status live in GitHub issues, pull requests,
+and the Project `Status` view.
 Treat the planning directories as historical or program-reference docs rather
 than the live backlog. The imaging parity program remains useful reference
 material, but it is not the canonical status surface.

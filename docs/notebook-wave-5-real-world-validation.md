@@ -2,7 +2,7 @@
 
 Truth class: implementation evidence
 Last reality check: 2026-07-16
-Wave issue: #414
+Work issue: #414
 
 Wave 5 validates the production scientific-notebook and assistant workflow
 against real user-like inputs. The deterministic default gates remain offline;

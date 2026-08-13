@@ -4,7 +4,7 @@ Truth class: historical evidence snapshot
 Last reality check: 2026-05-18
 Verification: `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/test_run_workload.py`; `python3 -m unittest tools/perf/imager/test_run_workload.py`; `cargo test -p casars-imager --lib managed_output -- --nocapture`; `cargo check -p casars-imager --example profile_imager`; `tools/perf/imager/run_workload.py --dry-run --output-dir target/imperformance-wave1/stage-instrumentation-dry-run wave1-standard-mfs-dirty-smoke`; `CASA_RS_TESTDATA_ROOT=/Users/brianglendenning/SoftwareProjects/casatestdata CASA_RS_CASA_PYTHON=/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python tools/perf/imager/run_workload.py --repeats 1 --output-dir target/imperformance-wave1/stage-instrumentation-smoke wave1-standard-mfs-dirty-smoke`
 
-Wave issue: #246
+Work issue: #246
 Child issue: #249
 
 This note records the Wave 1 stage-level timing surface used by the benchmark

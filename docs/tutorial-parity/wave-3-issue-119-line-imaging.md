@@ -14,7 +14,7 @@ The tutorial source is:
 
 - key: `alma/first-look/twhya/selfcal-ms`
 - source artifact: `twhya_selfcal.ms.tgz`
-- staged test path: `target/wdad-wave3-119/twhya_selfcal.ms`
+- staged test path: `target/issue-119/twhya_selfcal.ms`
 
 ## CASA Mapping
 
@@ -33,24 +33,24 @@ commands below therefore use `field=5` for both CASA and casa-rs.
 
 ```bash
 cargo build --release -q -p casa-calibration --bin calibrate
-rm -rf target/wdad-wave3-119/twhya_selfcal.ms.contsub
+rm -rf target/issue-119/twhya_selfcal.ms.contsub
 /usr/bin/time -p target/release/calibrate uvcontsub \
-  --ms target/wdad-wave3-119/twhya_selfcal.ms \
-  --out target/wdad-wave3-119/twhya_selfcal.ms.contsub \
+  --ms target/issue-119/twhya_selfcal.ms \
+  --out target/issue-119/twhya_selfcal.ms.contsub \
   --field 5 \
   --fitspw '0:0~239;281~383' \
   --fitorder 0 \
   --datacolumn DATA \
   --format json \
-  -o target/wdad-wave3-119/casars-uvcontsub-release.json \
+  -o target/issue-119/casars-uvcontsub-release.json \
   --overwrite
 ```
 
 ```bash
 cargo build --release -q -p casars-imager --bin casars-imager
 target/release/casars-imager \
-  --ms target/wdad-wave3-119/twhya_selfcal.ms.contsub \
-  --imagename target/wdad-wave3-119/casars-natural-twhya-n2hp \
+  --ms target/issue-119/twhya_selfcal.ms.contsub \
+  --imagename target/issue-119/casars-natural-twhya-n2hp \
   --field 5 \
   --spw 0 \
   --specmode cube \
@@ -117,8 +117,8 @@ Fresh CASA 6.7.5-9 reference command:
 
 ```python
 tclean(
-    vis="target/wdad-wave3-119/twhya_selfcal.ms.contsub",
-    imagename="target/wdad-wave3-119/casa-briggsbwtaper-refresh-twhya-n2hp",
+    vis="target/issue-119/twhya_selfcal.ms.contsub",
+    imagename="target/issue-119/casa-briggsbwtaper-refresh-twhya-n2hp",
     field="5",
     spw="0",
     specmode="cube",
@@ -146,8 +146,8 @@ casa-rs command:
 
 ```bash
 target/release/casars-imager \
-  --ms target/wdad-wave3-119/twhya_selfcal.ms.contsub \
-  --imagename target/wdad-wave3-119/casars-briggsbwtaper-centered-twhya-n2hp-rerun2 \
+  --ms target/issue-119/twhya_selfcal.ms.contsub \
+  --imagename target/issue-119/casars-briggsbwtaper-centered-twhya-n2hp-rerun2 \
   --field 5 \
   --spw 0 \
   --specmode cube \

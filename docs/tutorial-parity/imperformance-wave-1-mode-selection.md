@@ -4,7 +4,7 @@ Truth class: historical evidence snapshot
 Last reality check: 2026-05-19
 Verification: `just docs-check`; `just quick`; #251 baseline evidence in `docs/tutorial-parity/imperformance-wave-1-baseline-matrix.md`
 
-Wave issue: #246
+Work issue: #246
 Child issue: #247
 
 This note fixes the first benchmark targets for ImPerformance Wave 1. The goal

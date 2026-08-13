@@ -4,7 +4,7 @@ Truth class: current descriptive
 Last reality check: 2026-04-26
 Verification: just docs-check
 
-Wave issue: #137
+Work issue: #137
 
 Wave 0 decides what must be cleaned up or mapped before tutorial feature
 implementation starts. It implements the audit portions of:

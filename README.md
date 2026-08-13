@@ -1,7 +1,7 @@
 # casa-rs
 
 Truth class: current descriptive
-Last reality check: 2026-07-04
+Last reality check: 2026-08-04
 Verification: just docs-check
 
 ![casa-rs observatory assistant header](branding/headers/casa-rs-header.png)
@@ -14,9 +14,9 @@ This is a from-scratch Rust experimental re-implementation of pieces of CASA
 and casacore, with Swift for the native macOS UI. It uses CASA and casacore for
 performance comparisons and calculation checks, but does not directly reuse
 their source code. The source code is basically entirely written by AI, first
-Claude and now Codex, prompted by me using various strategies. The current
-workflow is my semi-homebrew Wave Driven Agentic Development process, currently
-using the repo's Scaled WDAD v0.4 contract; see [`AGENTS.md`](AGENTS.md).
+Claude and now Codex, prompted by me using various strategies. Generic
+development procedures come from user-level Matt Pocock skills; the repository
+keeps only its project-specific operating contract in [`AGENTS.md`](AGENTS.md).
 Experimenting with development methodology is part of the hobby.
 
 The project currently has four broad aspects:
@@ -44,7 +44,8 @@ Contributor/developer policy is in `AGENTS.md`.
 - `ARCHITECTURE.md` is the current workspace map and boundary summary.
 - `TESTING.md` defines the test strategy and done gate.
 - `docs/adr/` holds accepted architecture decisions.
-- GitHub Issues / Project are the canonical planning and wave-status surface.
+- GitHub issues and pull requests are the authoritative work record; the
+  Project `Status` field is a derived planning view.
 - `docs/Planning/` is retained as historical or program-reference material only.
 
 ## Documentation
@@ -132,7 +133,8 @@ Status legend:
 | `python`, `python3` | Deferred until needed | No current parity target for casacore Python converters/bindings. |
 | `mirlib` | Deferred/Not planned | Out of scope for this Rust implementation. |
 
-Active planning and current wave status now live in GitHub Issues / Project.
+Active planning and work status live in GitHub issues, pull requests, and the
+Project `Status` view.
 The `docs/Planning/Phase */` tree is retained for historical context and
 program reference, including the imaging parity material that still describes
 current proof boundaries.

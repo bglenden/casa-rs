@@ -153,13 +153,13 @@ def main() -> int:
     parser.add_argument(
         "outdir",
         nargs="?",
-        default="target/wdad-wave4-123-native-profile",
+        default="target/issue-123-native-profile",
         help="output artifact directory",
     )
     parser.add_argument(
         "--issue122-dir",
         default=os.environ.get(
-            "CASA_RS_ISSUE122_ARTIFACTS", "target/wdad-wave4-122-middlefreq"
+            "CASA_RS_ISSUE122_ARTIFACTS", "target/issue-122-middlefreq"
         ),
         help="issue #122 artifact directory with TDRW0001_10s.ms and casa-priorcal",
     )
