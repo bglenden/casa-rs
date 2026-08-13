@@ -4322,6 +4322,8 @@ fn standard_mfs_stage_memory_labels(
             ("weighted_mosaic_start", "weighted-mosaic")
         }
         StandardMfsProgressPhase::WeightedMosaicEnd => ("weighted_mosaic_end", "weighted-mosaic"),
+        StandardMfsProgressPhase::FinishStart => ("finish_start", "finish"),
+        StandardMfsProgressPhase::FinishEnd => ("finish_end", "finish"),
     }
 }
 
@@ -4592,6 +4594,33 @@ fn current_standard_mfs_stage_pressure_snapshot() -> StandardMfsStagePressureSna
     snapshot
 }
 
+fn standard_mfs_product_write_memory_line(
+    phase: &'static str,
+    current: StandardMfsStagePressureSnapshot,
+    entry: StandardMfsStagePressureSnapshot,
+    elapsed: Duration,
+) -> String {
+    format!(
+        "standard_mfs_finish_memory phase={} process_physical_footprint_bytes={} current_rss_bytes={} lifetime_peak_rss_bytes={} current_metal_allocated_bytes={} host_compressed_memory_bytes={} swap_used_bytes={} swapin_bytes_delta={} swapout_bytes_delta={} elapsed_monotonic_ms={:.3}",
+        phase,
+        standard_mfs_stage_memory_optional_bytes(current.process_physical_footprint_bytes),
+        standard_mfs_stage_memory_optional_bytes(current.current_rss_bytes),
+        standard_mfs_stage_memory_optional_bytes(current.lifetime_peak_rss_bytes),
+        standard_mfs_stage_memory_optional_bytes(current.current_metal_allocated_bytes),
+        standard_mfs_stage_memory_optional_bytes(current.host_compressed_memory_bytes),
+        standard_mfs_stage_memory_optional_bytes(current.swap_used_bytes),
+        standard_mfs_stage_memory_optional_bytes(standard_mfs_stage_counter_delta(
+            current.swapin_bytes_total,
+            entry.swapin_bytes_total,
+        )),
+        standard_mfs_stage_memory_optional_bytes(standard_mfs_stage_counter_delta(
+            current.swapout_bytes_total,
+            entry.swapout_bytes_total,
+        )),
+        elapsed.as_secs_f64() * 1_000.0,
+    )
+}
+
 fn standard_mfs_stage_memory_line(
     event: &StandardMfsProgressEvent,
     pressure: StandardMfsStagePressureObservation,
@@ -4854,6 +4883,8 @@ fn standard_mfs_progress_callback_for_modes(
                 guards.weighted_mosaic_span = None;
                 ("weighted mosaic groups complete", 0)
             }
+            StandardMfsProgressPhase::FinishStart => ("forming output products", 0),
+            StandardMfsProgressPhase::FinishEnd => ("output products formed", 0),
         };
         drop(guards);
         let residual_history = event
@@ -6410,7 +6441,11 @@ fn run_standard_mfs_plan_probe_from_config(config: &CliConfig) -> Result<RunSumm
             standard_mfs_initial_dirty_backend_explicit,
             standard_mfs_grid_threads_explicit,
         )?;
-        admit_awproject_compact_replay_retention(initial_grid_strategy, stream_block_count)?
+        admit_awproject_compact_replay_retention_for_execution(
+            initial_grid_strategy,
+            config,
+            stream_block_count,
+        )?
     } else {
         base_strategy
     };
@@ -9250,6 +9285,7 @@ fn maybe_run_awproject_native_components_audit_v6(
             derived_engine,
             ddid_plan.channel_read_range,
             geometry_columns,
+            None,
             row_block_rows,
             max_live_row_blocks,
             ddid_plan.selected_channel_count,
@@ -9987,6 +10023,22 @@ fn plan_cube_per_plane_execution(
     output_planes: usize,
     plane_worker_count: usize,
 ) -> PerPlaneExecutionEligibility {
+    plan_cube_per_plane_execution_with_metal_device(
+        config,
+        output_planes,
+        plane_worker_count,
+        cfg!(target_os = "macos"),
+        casa_imaging::standard_mfs_metal_device_available(),
+    )
+}
+
+fn plan_cube_per_plane_execution_with_metal_device(
+    config: &CliConfig,
+    output_planes: usize,
+    plane_worker_count: usize,
+    metal_runtime_supported: bool,
+    metal_device_available: bool,
+) -> PerPlaneExecutionEligibility {
     let phase = if clean_is_dirty(config) {
         PerPlaneExecutionPhase::DirtyControl
     } else {
@@ -9998,9 +10050,8 @@ fn plan_cube_per_plane_execution(
             config.deconvolver,
             Deconvolver::Hogbom | Deconvolver::Clark | Deconvolver::Multiscale
         );
-    let metal_device_available = casa_imaging::standard_mfs_metal_device_available();
     let metal_eligible = fixed_tile_cpu_eligible
-        && cfg!(target_os = "macos")
+        && metal_runtime_supported
         && metal_device_available
         && matches!(
             config.deconvolver,
@@ -10017,10 +10068,10 @@ fn plan_cube_per_plane_execution(
     if !fixed_tile_cpu_eligible && matches!(phase, PerPlaneExecutionPhase::CleanDeconvolution) {
         fallback_reasons.push("wave3_fixed_tile_cpu_not_semantically_equivalent");
     }
-    if !cfg!(target_os = "macos") {
+    if !metal_runtime_supported {
         fallback_reasons.push("metal_requires_macos");
     }
-    if cfg!(target_os = "macos") && !metal_device_available {
+    if metal_runtime_supported && !metal_device_available {
         fallback_reasons.push("metal_device_unavailable");
     }
     let owned_single_plane_identity_path = cube_clean_uses_owned_single_plane_identity_path(config);
@@ -10290,6 +10341,7 @@ fn prepare_mfs_mosaic_source_row_block_plane(
     derived_engine: Option<&MsCalEngine>,
     channel_read_range: Option<SelectedChannelReadRange>,
     geometry_columns: &PreparedGeometryColumnCache,
+    casa_aw_pointing_epoch_plan: Option<Arc<CasaAwPointingEpochPlan>>,
     native_geometry_audit_reffreq_hz: Option<f64>,
     prepare_started_at: Instant,
     prepare_stage_timings: &mut PreparePlaneInputStageTimings,
@@ -10331,6 +10383,7 @@ fn prepare_mfs_mosaic_source_row_block_plane(
         flag_row,
         &source_block,
         derived_engine,
+        casa_aw_pointing_epoch_plan,
         prepare_started_at,
         prepare_stage_timings,
         accumulate_timings,
@@ -10349,6 +10402,7 @@ fn prepare_mfs_mosaic_source_row_block_plane_from_source(
     flag_row: &[bool],
     source_block: &ColumnarPreparedSource,
     derived_engine: Option<&MsCalEngine>,
+    casa_aw_pointing_epoch_plan: Option<Arc<CasaAwPointingEpochPlan>>,
     _prepare_started_at: Instant,
     prepare_stage_timings: &mut PreparePlaneInputStageTimings,
     accumulate_timings: &mut AccumulateRowTimings,
@@ -10383,6 +10437,7 @@ fn prepare_mfs_mosaic_source_row_block_plane_from_source(
             cube_row_spectral_reusable_plan,
             build_cube_briggs_density_samples: true,
             build_cube_mosaic_metadata: true,
+            casa_aw_pointing_epoch_plan,
         },
         accumulate_timings,
     )?;
@@ -10449,6 +10504,7 @@ fn stream_mfs_mosaic_source_row_block_planes<F>(
     derived_engine: Option<&MsCalEngine>,
     channel_read_range: Option<SelectedChannelReadRange>,
     geometry_columns: &PreparedGeometryColumnCache,
+    casa_aw_pointing_epoch_plan: Option<Arc<CasaAwPointingEpochPlan>>,
     row_block_rows: usize,
     max_live_row_blocks: usize,
     selected_channel_count: usize,
@@ -10514,6 +10570,7 @@ where
                 flag_row,
                 &source_block,
                 derived_engine,
+                casa_aw_pointing_epoch_plan.clone(),
                 prepare_started_at,
                 prepare_stage_timings,
                 accumulate_timings,
@@ -10632,6 +10689,7 @@ fn prepare_mosaic_cube_one_channel_source_row_block(
             cube_row_spectral_reusable_plan,
             build_cube_briggs_density_samples,
             build_cube_mosaic_metadata,
+            casa_aw_pointing_epoch_plan: None,
         },
         accumulate_timings,
     )?;
@@ -10675,6 +10733,7 @@ struct SourceRowBlockPlaneDescriptor<'a> {
     cube_row_spectral_reusable_plan: Option<Arc<CubeRowSpectralReusablePlan>>,
     build_cube_briggs_density_samples: bool,
     build_cube_mosaic_metadata: bool,
+    casa_aw_pointing_epoch_plan: Option<Arc<CasaAwPointingEpochPlan>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -10690,6 +10749,7 @@ fn new_source_row_block_prepared_selection(
     cube_row_spectral_reusable_plan: Option<Arc<CubeRowSpectralReusablePlan>>,
     build_cube_briggs_density_samples: bool,
     build_cube_mosaic_metadata: bool,
+    casa_aw_pointing_epoch_plan: Option<Arc<CasaAwPointingEpochPlan>>,
 ) -> Result<PreparedSelection, String> {
     if matches!(finish, SourceRowBlockFinish::StandardMfs { .. })
         && standard_cube_like_one_channel_can_use_mfs_single_plane_path(config)
@@ -10721,6 +10781,9 @@ fn new_source_row_block_prepared_selection(
     if !build_cube_mosaic_metadata {
         prepared.disable_cube_mosaic_metadata();
     }
+    if let Some(plan) = casa_aw_pointing_epoch_plan {
+        prepared.set_casa_aw_pointing_epoch_plan(plan);
+    }
     if let Some(init_error) = prepared.initialization_error.take() {
         return Err(init_error);
     }
@@ -10747,6 +10810,7 @@ fn prepare_source_row_block_plane_inner(
         cube_row_spectral_reusable_plan,
         build_cube_briggs_density_samples,
         build_cube_mosaic_metadata,
+        casa_aw_pointing_epoch_plan,
     } = descriptor;
     let row_count = source_block.row_count();
     let thread_count = standard_mfs_density_prepare_threads_for_config(config, row_count);
@@ -10763,6 +10827,7 @@ fn prepare_source_row_block_plane_inner(
             cube_row_spectral_reusable_plan.clone(),
             build_cube_briggs_density_samples,
             build_cube_mosaic_metadata,
+            casa_aw_pointing_epoch_plan.clone(),
         )?;
         prepared.reserve_standard_mfs_row_block(row_count);
         for row_slot in 0..row_count {
@@ -10798,6 +10863,7 @@ fn prepare_source_row_block_plane_inner(
         for (chunk_index, row_chunk) in row_slots.chunks(chunk_len).enumerate() {
             let cube_context = cube_context.clone();
             let cube_row_spectral_reusable_plan = cube_row_spectral_reusable_plan.clone();
+            let casa_aw_pointing_epoch_plan = casa_aw_pointing_epoch_plan.clone();
             handles.push(scope.spawn(move || {
                 let mut prepared = new_source_row_block_prepared_selection(
                     config,
@@ -10811,6 +10877,7 @@ fn prepare_source_row_block_plane_inner(
                     cube_row_spectral_reusable_plan,
                     build_cube_briggs_density_samples,
                     build_cube_mosaic_metadata,
+                    casa_aw_pointing_epoch_plan.clone(),
                 )?;
                 prepared.reserve_standard_mfs_row_block(row_chunk.len());
                 let mut timings = AccumulateRowTimings::default();
@@ -11120,7 +11187,11 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
             standard_mfs_initial_dirty_backend_explicit,
             standard_mfs_grid_threads_explicit,
         )?;
-        admit_awproject_compact_replay_retention(initial_grid_strategy, stream_block_count)?
+        admit_awproject_compact_replay_retention_for_execution(
+            initial_grid_strategy,
+            config,
+            stream_block_count,
+        )?
     } else {
         base_strategy
     };
@@ -11140,6 +11211,60 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         &selection.selected_rows,
         derived_engine.as_ref(),
     )?;
+    let casa_aw_pointing_epoch_plans =
+        casa_aw_pointing_group_config(config, &selection.phase_center)
+            .map(|group_config| {
+                ddid_plans
+                    .iter()
+                    .map(|plan| {
+                        build_casa_aw_pointing_epoch_plan(
+                            ms,
+                            &plan.active_selected_rows,
+                            &geometry_columns,
+                            derived_engine.as_ref(),
+                            group_config,
+                        )
+                        .map(|epoch_plan| (plan.ddid, epoch_plan))
+                    })
+                    .collect::<Result<BTreeMap<_, _>, _>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
+    if !casa_aw_pointing_epoch_plans.is_empty() {
+        let epoch_count = casa_aw_pointing_epoch_plans
+            .values()
+            .map(|plan| plan.epoch_count())
+            .sum::<usize>();
+        let antenna_entry_count = casa_aw_pointing_epoch_plans
+            .values()
+            .map(|plan| plan.antenna_entry_count())
+            .sum::<usize>();
+        let modeled_resident_bytes =
+            casa_aw_pointing_epoch_plans
+                .values()
+                .try_fold(0usize, |total, plan| {
+                    total
+                        .checked_add(plan.modeled_resident_bytes()?)
+                        .ok_or_else(|| {
+                            "AWProject POINTING epoch plan aggregate residency overflowed"
+                                .to_string()
+                        })
+                })?;
+        let admitted_upper_bytes = strategy.allocation_bytes("AWProject POINTING epoch plan");
+        if modeled_resident_bytes > admitted_upper_bytes {
+            return Err(format!(
+                "AWProject POINTING epoch plan modeled {modeled_resident_bytes} bytes exceeds its admitted {admitted_upper_bytes}-byte upper bound"
+            ));
+        }
+        eprintln!(
+            "awproject_pointing_epoch_plan ddids={} epochs={} antenna_entries={} modeled_resident_bytes={} admitted_upper_bytes={} source=selected-ddid-field-time-v1",
+            casa_aw_pointing_epoch_plans.len(),
+            epoch_count,
+            antenna_entry_count,
+            modeled_resident_bytes,
+            admitted_upper_bytes,
+        );
+    }
     let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
     prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
     let mut accumulate_timings = AccumulateRowTimings {
@@ -11207,6 +11332,7 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         derived_engine.as_ref(),
         first_plan.channel_read_range,
         &geometry_columns,
+        casa_aw_pointing_epoch_plans.get(&first_plan.ddid).cloned(),
         Some(full_selection_frequency_metadata.reffreq_hz),
         prepare_started_at,
         &mut prepare_stage_timings,
@@ -11308,6 +11434,7 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
                     derived_engine.as_ref(),
                     ddid_plan.channel_read_range,
                     &geometry_columns,
+                    casa_aw_pointing_epoch_plans.get(&ddid_plan.ddid).cloned(),
                     row_block_rows,
                     strategy.ingest.max_live_row_blocks,
                     ddid_plan.selected_channel_count,
@@ -11480,18 +11607,39 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
     );
 
     let stage_start = Instant::now();
+    let product_write_pressure_entry = current_standard_mfs_stage_pressure_snapshot();
+    eprintln!(
+        "{}",
+        standard_mfs_product_write_memory_line(
+            "product_write_start",
+            product_write_pressure_entry,
+            product_write_pressure_entry,
+            total_start.elapsed(),
+        )
+    );
     let product_guard = begin_imager_progress_product_write_observation_with_bytes(
         run_result.channel_frequencies_hz().len().max(1),
         Some(run_result.estimated_product_payload_bytes()),
     );
     emit_imager_progress_product_write(config, &run_result, true);
-    write_products(
+    let write_result = write_products(
         config,
         &coords,
         &run_result,
         effective_clean_mask.as_ref(),
         None,
-    )?;
+    );
+    let product_write_pressure_end = current_standard_mfs_stage_pressure_snapshot();
+    eprintln!(
+        "{}",
+        standard_mfs_product_write_memory_line(
+            "product_write_end",
+            product_write_pressure_end,
+            product_write_pressure_entry,
+            total_start.elapsed(),
+        )
+    );
+    write_result?;
     drop(product_guard);
     emit_imager_progress_product_write(config, &run_result, false);
     let write_products_time = stage_start.elapsed();
@@ -11637,15 +11785,20 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
         );
     }
     let flag_row = selection.flag_row.as_slice();
+    let retain_flagged_rows_for_casa_aw_pointing_groups = read_config
+        .aw_project
+        .as_ref()
+        .is_some_and(|controls| controls.use_pointing);
     let active_selected_rows = selection
         .selected_rows
         .iter()
         .filter(|selected_row| {
-            flag_row
-                .get(selected_row.row_index)
-                .copied()
-                .map(|flagged| !flagged)
-                .unwrap_or(true)
+            retain_flagged_rows_for_casa_aw_pointing_groups
+                || flag_row
+                    .get(selected_row.row_index)
+                    .copied()
+                    .map(|flagged| !flagged)
+                    .unwrap_or(true)
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -11734,6 +11887,18 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
         &selection.selected_rows,
         derived_engine.as_ref(),
     )?;
+    let casa_aw_pointing_epoch_plan =
+        casa_aw_pointing_group_config(read_config, &selection.phase_center)
+            .map(|group_config| {
+                build_casa_aw_pointing_epoch_plan(
+                    ms,
+                    &active_selected_rows,
+                    &geometry_columns,
+                    derived_engine.as_ref(),
+                    group_config,
+                )
+            })
+            .transpose()?;
     let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
     prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
     let mut accumulate_timings = AccumulateRowTimings {
@@ -11763,6 +11928,7 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
         derived_engine.as_ref(),
         channel_read_range,
         &geometry_columns,
+        casa_aw_pointing_epoch_plan.clone(),
         None,
         prepare_started_at,
         &mut prepare_stage_timings,
@@ -11829,6 +11995,7 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
                 derived_engine.as_ref(),
                 channel_read_range,
                 &geometry_columns,
+                casa_aw_pointing_epoch_plan.clone(),
                 row_block_rows,
                 strategy.ingest.max_live_row_blocks,
                 selected_channel_count,
@@ -12056,6 +12223,7 @@ fn run_mfs_mosaic_single_plane_stream_products_from_shared_sources(
                     flag_row,
                     block,
                     derived_engine,
+                    None,
                     prepare_started_at,
                     &mut prepare_stage_timings,
                     &mut accumulate_timings,
@@ -12174,6 +12342,7 @@ fn prepare_mfs_mosaic_single_plane_stream_metadata_from_tables(
         cube_row_spectral_reusable_plan,
         true,
         true,
+        None,
     )?;
     prepared.reserve_standard_mfs_row_block(0);
     let cube = match prepared.finish_cube_without_trace(ms)? {
@@ -33348,6 +33517,83 @@ impl PreparedGeometryColumnCache {
     }
 }
 
+fn build_casa_aw_pointing_epoch_plan(
+    ms: &MeasurementSet,
+    selected_rows: &[SelectedMainRow],
+    geometry_columns: &PreparedGeometryColumnCache,
+    derived_engine: Option<&MsCalEngine>,
+    config: CasaAwPointingGroupConfig,
+) -> Result<Arc<CasaAwPointingEpochPlan>, String> {
+    let row_indices = selected_rows
+        .iter()
+        .map(|row| row.row_index)
+        .collect::<Vec<_>>();
+    let pointing_ids = load_selected_optional_i32_main_column(ms, "POINTING_ID", &row_indices)?;
+    let mut field_phase_centers = BTreeMap::<usize, [f64; 2]>::new();
+    let mut epochs = Vec::<CasaAwPointingEpochInput>::new();
+    for (selected_row, pointing_id) in selected_rows.iter().zip(pointing_ids) {
+        let time_mjd_seconds = selected_row.time_mjd_seconds.ok_or_else(|| {
+            format!(
+                "row {} requires TIME to build CASA AW pointing epochs",
+                selected_row.row_index
+            )
+        })?;
+        let key = CasaAwPointingEpochKey {
+            ddid: selected_row.ddid,
+            field_id: selected_row.field_id,
+            time_bits: time_mjd_seconds.to_bits(),
+        };
+        if epochs.last().is_none_or(|epoch| epoch.key != key) {
+            epochs.push(CasaAwPointingEpochInput {
+                key,
+                row_count: 0,
+                direction_by_antenna: BTreeMap::new(),
+            });
+        }
+        let epoch = epochs.last_mut().expect("pointing epoch was appended");
+        epoch.row_count += 1;
+        let row_phase_center =
+            if let Some(direction) = field_phase_centers.get(&selected_row.field_id) {
+                *direction
+            } else {
+                let direction = resolve_field_phase_direction_j2000(ms, selected_row.field_id)
+                    .map_err(|error| {
+                        format!(
+                            "resolve FIELD.PHASE_DIR[{}] for CASA AW pointing epoch: {error}",
+                            selected_row.field_id
+                        )
+                    })?;
+                let (ra, dec) = direction.as_angles();
+                let angles = [ra, dec];
+                field_phase_centers.insert(selected_row.field_id, angles);
+                angles
+            };
+        for antenna_id in [selected_row.antenna1_id, selected_row.antenna2_id] {
+            if epoch.direction_by_antenna.contains_key(&antenna_id) {
+                continue;
+            }
+            let direction = match geometry_columns.pointing_resolver.as_ref() {
+                Some(resolver) => resolver.resolve(
+                    pointing_id,
+                    antenna_id,
+                    time_mjd_seconds,
+                    row_phase_center,
+                    derived_engine,
+                )?,
+                None => ResolvedPointingDirection {
+                    source_row_index: None,
+                    used_fallback: true,
+                    angles_rad: row_phase_center,
+                },
+            };
+            epoch
+                .direction_by_antenna
+                .insert(antenna_id, direction.angles_rad);
+        }
+    }
+    build_casa_aw_pointing_epoch_plan_from_inputs(config, &epochs).map(Arc::new)
+}
+
 #[derive(Debug, Clone)]
 struct SelectedRowsContext {
     selected_rows: Vec<SelectedMainRow>,
@@ -33933,6 +34179,7 @@ fn prepare_processing_buffer(
             cube_row_spectral_reusable_plan: None,
             build_cube_briggs_density_samples: true,
             build_cube_mosaic_metadata: true,
+            casa_aw_pointing_epoch_plan: None,
         },
         accumulate_timings,
     )?;
@@ -36545,7 +36792,18 @@ fn prepare_mfs_mosaic_without_trace_in_source_row_blocks(
         geometry_columns_elapsed,
         prepare_started_at.elapsed(),
     );
-
+    let casa_aw_pointing_epoch_plan =
+        casa_aw_pointing_group_config(config, &selection.phase_center)
+            .map(|group_config| {
+                build_casa_aw_pointing_epoch_plan(
+                    ms,
+                    active_selected_rows,
+                    &geometry_columns,
+                    derived_engine,
+                    group_config,
+                )
+            })
+            .transpose()?;
     let mut inputs = Vec::<PreparedInput>::new();
     let mut stage_timings = PreparePlaneInputStageTimings::default();
     let mut combined_accumulate_timings = AccumulateRowTimings {
@@ -36614,6 +36872,9 @@ fn prepare_mfs_mosaic_without_trace_in_source_row_blocks(
             );
             if let Some(init_error) = prepared.initialization_error.take() {
                 return Err(init_error);
+            }
+            if let Some(plan) = casa_aw_pointing_epoch_plan.as_ref() {
+                prepared.set_casa_aw_pointing_epoch_plan(Arc::clone(plan));
             }
             for row_slot in 0..columnar_source.row_count() {
                 let row = columnar_source.to_prepared_geometry_row(row_slot);
@@ -37267,6 +37528,7 @@ fn prepare_cube_without_trace_in_source_row_blocks(
                     cube_row_spectral_reusable_plan: None,
                     build_cube_briggs_density_samples: true,
                     build_cube_mosaic_metadata,
+                    casa_aw_pointing_epoch_plan: None,
                 },
                 &mut combined_accumulate_timings,
             )?;
@@ -38244,6 +38506,38 @@ fn standard_mfs_memory_plan_with_cache_channels(
     .expect("test imaging workload must produce a valid execution plan")
 }
 
+#[cfg(test)]
+fn standard_mfs_memory_plan_with_metal_available(
+    config: &CliConfig,
+    selected_channel_count: usize,
+    cache_selected_channel_count: usize,
+    active_row_count: usize,
+) -> ImagingResolvedPlan {
+    let visibility_shape = prepared_single_plane_visibility_source_shape(
+        config,
+        active_row_count,
+        selected_channel_count,
+    );
+    plan_standard_mfs_execution_shape_with_pointing_rows_memory_ledger_and_metal_detection(
+        config,
+        selected_channel_count,
+        cache_selected_channel_count,
+        active_row_count,
+        &visibility_shape,
+        active_row_count,
+        imaging_process_memory_ledger(config),
+        StandardMfsLifetimeAdmission::Immediate,
+        Some(ImagingMetalMemoryDetection {
+            device_available: true,
+            has_unified_memory: Some(true),
+            recommended_working_set_bytes: Some(16 * 1024 * 1024 * 1024),
+            current_allocated_bytes: Some(0),
+            origin: "test-injected-metal-device",
+        }),
+    )
+    .expect("test imaging workload must produce a valid Metal execution plan")
+}
+
 fn standard_mfs_memory_plan_for_ms(
     config: &CliConfig,
     ms: &MeasurementSet,
@@ -38295,6 +38589,23 @@ fn standard_mfs_memory_residency(
         backing,
         resident_bytes: bytes,
         stored_bytes: 0,
+        live_from,
+        live_through,
+        next_use,
+    }
+}
+
+fn standard_mfs_stored_memory_residency(
+    backing: ImagingMemoryBacking,
+    bytes: usize,
+    live_from: ImagingMemoryStage,
+    live_through: ImagingMemoryStage,
+    next_use: ImagingMemoryNextUse,
+) -> ImagingMemoryResidency {
+    ImagingMemoryResidency {
+        backing,
+        resident_bytes: 0,
+        stored_bytes: bytes,
         live_from,
         live_through,
         next_use,
@@ -38359,6 +38670,15 @@ fn standard_mfs_memory_allocation_lifetimes(
                         plan.workload.taylor_terms.max(1).min(initial_plane_count);
                     let source_major_grouped_initial =
                         standard_mfs_uses_source_major_awproject(plan);
+                    let initial_bytes = if source_major_grouped_initial {
+                        standard_mfs_plan_decision_usize_value(
+                            plan,
+                            "awproject_source_major_initial_grid_bytes",
+                        )
+                        .unwrap_or(bytes)
+                    } else {
+                        bytes
+                    };
                     let initial_grid_backing = if standard_mfs_plan_decision_is(
                         plan,
                         "awproject_initial_grid_backend",
@@ -38369,14 +38689,23 @@ fn standard_mfs_memory_allocation_lifetimes(
                     } else {
                         backing
                     };
-                    if bytes % initial_plane_count != 0 {
+                    if !source_major_grouped_initial && bytes % initial_plane_count != 0 {
                         return Err(format!(
                             "standard-MFS grid allocation {bytes} is not divisible by its \
                              {initial_plane_count}-plane workload shape"
                         ));
                     }
+                    let cpu_residual = standard_mfs_plan_decision_is(
+                        plan,
+                        "awproject_residual_grid_backend",
+                        "cpu-host-f64",
+                    );
                     let residual_bytes = if source_major_grouped_initial {
-                        checked_imaging_product(
+                        standard_mfs_plan_decision_usize_value(
+                            plan,
+                            "awproject_residual_grid_bytes",
+                        )
+                        .unwrap_or(checked_imaging_product(
                             [
                                 plan.workload.grid_width,
                                 plan.workload.grid_height,
@@ -38385,7 +38714,7 @@ fn standard_mfs_memory_allocation_lifetimes(
                                 2,
                             ],
                             "source-major compensated residual-grid residency",
-                        )?
+                        )?)
                     } else {
                         (bytes / initial_plane_count)
                             .checked_mul(residual_plane_count)
@@ -38400,16 +38729,20 @@ fn standard_mfs_memory_allocation_lifetimes(
                     };
                     let mut residencies = vec![standard_mfs_memory_residency(
                         initial_grid_backing,
-                        bytes,
+                        initial_bytes,
                         InitialGrid,
                         DirtyTransform,
                         initial_next_use,
                     )];
                     if has_clean_cycles {
                         residencies.push(standard_mfs_memory_residency(
-                            backing,
+                            if cpu_residual { host } else { backing },
                             residual_bytes,
-                            ResidualGrid,
+                            if cpu_residual {
+                                MinorCycle
+                            } else {
+                                ResidualGrid
+                            },
                             ResidualTransform,
                             NoFurtherUse,
                         ));
@@ -38607,7 +38940,20 @@ fn standard_mfs_memory_allocation_lifetimes(
                     Finish,
                     NoFurtherUse,
                 )],
-                "AWProject CF pixels" | "AWProject CF index" | "POINTING index" => {
+                "AWProject MT-MFS cold PSF terms" => vec![
+                    standard_mfs_stored_memory_residency(
+                        ImagingMemoryBacking::TemporarySpill,
+                        bytes,
+                        MinorCycle,
+                        ResidualTransform,
+                        AtStage(Finish),
+                    ),
+                    standard_mfs_memory_residency(host, bytes, Finish, Finish, NoFurtherUse),
+                ],
+                "AWProject CF pixels"
+                | "AWProject CF index"
+                | "POINTING index"
+                | "AWProject POINTING epoch plan" => {
                     vec![standard_mfs_memory_residency(
                         host,
                         bytes,
@@ -38804,6 +39150,26 @@ fn rebuild_standard_mfs_memory_lifetime_ledger(
     has_clean_cycles: bool,
 ) -> Result<Vec<ImagingMemoryAllocationLifecycle>, String> {
     let lifetimes = standard_mfs_memory_allocation_lifetimes(plan, has_clean_cycles)?;
+    if let Some((allocation, residency)) = lifetimes.iter().find_map(|allocation| {
+        allocation
+            .residencies
+            .iter()
+            .find(|residency| {
+                residency.resident_bytes > allocation.logical_bytes
+                    || residency.stored_bytes > allocation.logical_bytes
+            })
+            .map(|residency| (allocation, residency))
+    }) {
+        return Err(format!(
+            "standard-MFS allocation {} has logical_bytes={} but residency at {:?}..={:?} has resident_bytes={} stored_bytes={}",
+            allocation.component,
+            allocation.logical_bytes,
+            residency.live_from,
+            residency.live_through,
+            residency.resident_bytes,
+            residency.stored_bytes,
+        ));
+    }
     let ledger =
         ImagingMemoryLifetimeLedger::build(lifetimes.clone()).map_err(|error| error.to_string())?;
     // Every entry in `memory_allocations` is mapped into the semantic
@@ -38952,6 +39318,29 @@ fn admit_awproject_compact_replay_retention(
     });
     rebuild_standard_mfs_memory_lifetime_ledger(&mut plan, true)?;
     Ok(plan)
+}
+
+fn admit_awproject_compact_replay_retention_for_execution(
+    mut plan: ImagingResolvedPlan,
+    config: &CliConfig,
+    stream_block_count: usize,
+) -> Result<ImagingResolvedPlan, String> {
+    let execution = standard_mfs_execution_config_with_plan(config, &plan);
+    if execution.residual_backend != Some(StandardMfsBackend::MetalRowRunGrouped) {
+        replace_standard_mfs_plan_decision(
+            &mut plan,
+            casa_imaging::ImagingPlanDecision {
+                name: "awproject_compact_replay_retention_bytes",
+                value: "0".to_string(),
+                origin: casa_imaging::ImagingPlanOrigin::Resources,
+                reason: "the effective CPU residual backend consumes streamed visibility blocks directly and retains no grouped replay state"
+                    .to_string(),
+            },
+        );
+        rebuild_standard_mfs_memory_lifetime_ledger(&mut plan, true)?;
+        return Ok(plan);
+    }
+    admit_awproject_compact_replay_retention(plan, stream_block_count)
 }
 
 const AWPROJECT_MULTIFIELD_INITIAL_GRID_TILE_SIDE: usize = 192;
@@ -39175,13 +39564,17 @@ fn awproject_grouped_metal_topology_eligible(
     selected_field_count: usize,
     initial_dirty_backend_explicit: bool,
 ) -> bool {
+    let explicit_source_major_initial = config
+        .standard_mfs_initial_dirty_backend
+        .as_deref()
+        .is_some_and(|backend| backend.eq_ignore_ascii_case("metal-row-run-grouped"));
     selected_field_count > 0
         && config.aw_project.is_some()
         && config.deconvolver == Deconvolver::Mtmfs
         && config.nterms == 2
         && !clean_is_dirty(config)
         && standard_mfs_prefers_metal(config)
-        && !initial_dirty_backend_explicit
+        && (!initial_dirty_backend_explicit || explicit_source_major_initial)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39265,6 +39658,28 @@ fn awproject_grouped_metal_execution_probe_status(
             execution.initial_dirty_backend,
         ));
     }
+    let generic_storage_absent = plan.workload.direct_metal_scratch_candidate_bytes == 0
+        && plan.workload.routed_replay_cache_candidate_bytes == 0
+        && plan.workload.metal_grouped_input_cache_candidate_bytes == 0
+        && plan.caches.direct_metal_scratch_bytes == 0
+        && !plan.caches.routed_replay_enabled
+        && plan.caches.routed_replay_bytes == 0
+        && !plan.caches.metal_grouped_input_enabled
+        && plan.caches.metal_grouped_input_bytes == 0;
+    if execution.residual_backend == Some(StandardMfsBackend::Cpu) {
+        if execution.awproject_grouped_replay.is_some() {
+            return AwProjectGroupedMetalProbeStatus::Rejected(
+                "CPU residual execution retained an unused grouped replay plan".to_string(),
+            );
+        }
+        return if generic_storage_absent {
+            AwProjectGroupedMetalProbeStatus::Admitted
+        } else {
+            AwProjectGroupedMetalProbeStatus::Rejected(
+                "source-major initial execution retained legacy generic Metal storage".to_string(),
+            )
+        };
+    }
     if execution.residual_backend != Some(StandardMfsBackend::MetalRowRunGrouped) {
         return AwProjectGroupedMetalProbeStatus::Rejected(format!(
             "effective residual backend is {:?}, expected grouped row-run Metal",
@@ -39293,14 +39708,6 @@ fn awproject_grouped_metal_execution_probe_status(
             grouped_replay.omitted_energy_fraction()
         ));
     }
-    let generic_storage_absent = plan.workload.direct_metal_scratch_candidate_bytes == 0
-        && plan.workload.routed_replay_cache_candidate_bytes == 0
-        && plan.workload.metal_grouped_input_cache_candidate_bytes == 0
-        && plan.caches.direct_metal_scratch_bytes == 0
-        && !plan.caches.routed_replay_enabled
-        && plan.caches.routed_replay_bytes == 0
-        && !plan.caches.metal_grouped_input_enabled
-        && plan.caches.metal_grouped_input_bytes == 0;
     if !generic_storage_absent {
         return AwProjectGroupedMetalProbeStatus::Rejected(format!(
             "effective grouped topology retained generic storage: direct_candidate={} routed_candidate={} grouped_candidate={} direct_bytes={} routed_enabled={} routed_bytes={} grouped_enabled={} grouped_bytes={}",
@@ -39447,51 +39854,157 @@ fn admit_awproject_multifield_initial_grid(
             ));
         }
     };
-    let source_major_full_compensation =
-        std::env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_FULL_COMPENSATION").is_some();
-    let source_major_weight_compensation =
-        std::env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_WEIGHT_COMPENSATION")
-            .is_some();
-    if source_major_full_compensation && source_major_weight_compensation {
-        return Ok(reject_awproject_multifield_initial_grid(
-            plan,
-            selected_field_count,
-            "source-major full and weight-only compensation experiments are mutually exclusive"
-                .to_string(),
-        ));
-    }
-    let source_major_compensation_planes = if source_major_full_compensation {
-        candidate.workload.grid_planes
-    } else if source_major_weight_compensation {
-        3
+    let role_segmented_initial = config.standard_mfs_residual_backend.as_deref() == Some("cpu");
+    let source_major_compensation_planes = if role_segmented_initial { 0 } else { 3 };
+    let stage_clean_psf =
+        role_segmented_initial && config.niter > 0 && !config.multiscale_scales.is_empty();
+    let image_pixels = checked_imaging_product(
+        [
+            candidate.workload.image_width,
+            candidate.workload.image_height,
+        ],
+        "source-major AWProject image pixels",
+    )?;
+    let cold_psf_bytes = if stage_clean_psf {
+        awproject_mtmfs_psf_term_bytes(config.nterms, image_pixels)?
     } else {
         0
     };
-    let source_major_grid_planes = candidate
-        .workload
-        .grid_planes
-        .checked_add(source_major_compensation_planes)
-        .ok_or_else(|| "source-major initial grid plane count overflowed".to_string())?;
-    let source_major_initial_grid_bytes = checked_imaging_product(
+    let sequential_model_prep_bytes = if role_segmented_initial {
+        checked_imaging_product(
+            [image_pixels, std::mem::size_of::<Complex32>()],
+            "sequential AWProject model FFT preparation",
+        )?
+    } else {
+        0
+    };
+    let cpu_residual_model_grid_release_bytes = if role_segmented_initial {
+        checked_imaging_product(
+            [
+                image_pixels,
+                candidate.workload.taylor_terms,
+                std::mem::size_of::<Complex32>(),
+            ],
+            "CPU residual prediction grids released before residual FFT",
+        )?
+    } else {
+        0
+    };
+    if role_segmented_initial {
+        let run_state_bytes = candidate.allocation_bytes("AWProject MT-MFS run state");
+        let resident_run_state_bytes =
+            run_state_bytes.checked_sub(cold_psf_bytes).ok_or_else(|| {
+                "AWProject MT-MFS run state cannot demote its cold PSF terms".to_string()
+            })?;
+        if !replace_standard_mfs_memory_allocation(
+            &mut candidate,
+            "AWProject MT-MFS run state",
+            resident_run_state_bytes,
+        ) || !replace_standard_mfs_memory_allocation(
+            &mut candidate,
+            "AWProject CASA-layout model FFT staging",
+            sequential_model_prep_bytes,
+        ) {
+            return Ok(reject_awproject_multifield_initial_grid(
+                plan,
+                selected_field_count,
+                "the AWProject MT-MFS ledger omitted run-state or model-FFT staging ownership"
+                    .to_string(),
+            ));
+        }
+        let cold_psf = ImagingMemoryAllocation {
+            component: "AWProject MT-MFS cold PSF terms",
+            stage: "clean",
+            bytes: cold_psf_bytes,
+        };
+        candidate.memory_allocations.push(cold_psf.clone());
+        candidate.workload.fixed_allocations.push(cold_psf);
+    }
+    let source_major_grid_planes = if role_segmented_initial {
+        3
+    } else {
+        candidate
+            .workload
+            .grid_planes
+            .checked_add(source_major_compensation_planes)
+            .ok_or_else(|| "source-major initial grid plane count overflowed".to_string())?
+    };
+    let source_major_metal_grid_bytes = checked_imaging_product(
         [
             candidate.workload.grid_width,
             candidate.workload.grid_height,
             source_major_grid_planes,
             std::mem::size_of::<Complex32>(),
         ],
-        "source-major initial grid and selected compensation limbs",
+        "source-major initial Metal role grid and selected compensation limbs",
     )?;
-    let source_major_initial_accumulation = if source_major_full_compensation {
-        "full-two-limb"
-    } else if source_major_weight_compensation {
-        "weight-two-limb"
+    let source_major_initial_grid_bytes = if role_segmented_initial {
+        let role_finish_overlap = checked_imaging_sum(
+            [
+                checked_imaging_product(
+                    [
+                        candidate.workload.grid_width,
+                        candidate.workload.grid_height,
+                        3,
+                        std::mem::size_of::<Complex32>(),
+                    ],
+                    "source-major PSF role Metal grid",
+                )?,
+                checked_imaging_product(
+                    [
+                        candidate.workload.grid_width,
+                        candidate.workload.grid_height,
+                        std::mem::size_of::<f32>(),
+                    ],
+                    "source-major role finalized f32 plane",
+                )?,
+            ],
+            "source-major PSF role grid plus one finalized f32 spill plane",
+        )?;
+        source_major_metal_grid_bytes.max(role_finish_overlap)
     } else {
-        "high-limb-only"
+        source_major_metal_grid_bytes
     };
+    let source_major_residual_grid_bytes = if role_segmented_initial {
+        checked_imaging_product(
+            [
+                candidate.workload.grid_width,
+                candidate.workload.grid_height,
+                candidate.workload.taylor_terms,
+                std::mem::size_of::<Complex64>(),
+            ],
+            "source-major CPU residual grids",
+        )?
+    } else {
+        checked_imaging_product(
+            [
+                candidate.workload.grid_width,
+                candidate.workload.grid_height,
+                candidate.workload.taylor_terms,
+                std::mem::size_of::<Complex32>(),
+                2,
+            ],
+            "source-major compensated Metal residual grids",
+        )?
+    };
+    let source_major_initial_role_spill_bytes = if role_segmented_initial {
+        checked_imaging_product(
+            [
+                candidate.workload.grid_width,
+                candidate.workload.grid_height,
+                8,
+                std::mem::size_of::<f32>(),
+            ],
+            "source-major finalized role external spill",
+        )?
+    } else {
+        0
+    };
+    let source_major_initial_accumulation = "weight-two-limb";
     if !replace_standard_mfs_memory_allocation(
         &mut candidate,
         "grids",
-        source_major_initial_grid_bytes,
+        source_major_initial_grid_bytes.max(source_major_residual_grid_bytes),
     ) {
         return Ok(reject_awproject_multifield_initial_grid(
             plan,
@@ -39659,16 +40172,114 @@ fn admit_awproject_multifield_initial_grid(
             value: source_major_initial_accumulation.to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Workload,
             reason: format!(
-                "retain the eight-plane Complex32 initial grid plus {source_major_compensation_planes} selected compensation planes; full-product acceptance is bounded by normalized RMS"
+                "{}; full-product acceptance is bounded by normalized RMS",
+                if role_segmented_initial {
+                    "run exact PSF, residual, and per-term weight source passes with at most three high planes or one high plus one low plane resident"
+                } else {
+                    "retain the eight-plane Complex32 initial grid plus the selected compensation planes"
+                }
             ),
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_source_major_initial_grid_bytes",
             value: source_major_initial_grid_bytes.to_string(),
             origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: if role_segmented_initial {
+                "the larger of three-plane PSF Metal residency and its one-plane f32 streaming-finalize overlap"
+                    .to_string()
+            } else {
+                format!(
+                    "{source_major_grid_planes} Complex32 grid and compensation planes form the peak initial role residency"
+                )
+            },
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_residual_grid_backend",
+            value: if role_segmented_initial {
+                "cpu-host-f64"
+            } else {
+                "grouped-metal-fixed64"
+            }
+            .to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: if role_segmented_initial {
+                "the explicit CPU residual backend owns two Taylor Complex64 host grids and allocates no Metal residual grid"
+                    .to_string()
+            } else {
+                "grouped Metal residual replay owns one high and one compensation limb per Taylor term"
+                    .to_string()
+            },
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_residual_grid_bytes",
+            value: source_major_residual_grid_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: if role_segmented_initial {
+                "two Taylor Complex64 CPU residual grids, with host backing recorded separately from the initial Metal role residency"
+                    .to_string()
+            } else {
+                "one Complex32 high and one Complex32 compensation limb per residual Taylor term"
+                    .to_string()
+            },
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_source_major_initial_metal_resident_bytes",
+            value: source_major_metal_grid_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
             reason: format!(
-                "{source_major_grid_planes} Complex32 grid and compensation planes remain resident through the initial dirty transform"
+                "{source_major_grid_planes} Complex32 high or compensation planes form the peak Metal role residency"
             ),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_source_major_initial_role_storage",
+            value: if role_segmented_initial {
+                "psf-3-high-then-residual-2-high-then-weight-terms-1-high-1-low"
+            } else {
+                "combined"
+            }
+            .to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: if role_segmented_initial {
+                "the immutable prepared-input replay is traversed five times; each PSF, residual, or weight-term accumulator is finalized and released before allocating the next"
+                    .to_string()
+            } else {
+                "initial products share the original combined accumulator".to_string()
+            },
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_source_major_initial_role_spill_bytes",
+            value: source_major_initial_role_spill_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "five imaging and three weight f32 products are streamed one plane at a time into typed SHA-verified sections before their role Metal residency is released"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_mtmfs_clean_psf_spill_bytes",
+            value: cold_psf_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "after multiscale cubeA, Hessian, sidelobe, and mask setup, full PSF planes have no cycle use and remain in typed SHA spill until finish"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_model_fft_prepared_peak_bytes",
+            value: sequential_model_prep_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "prepare and transform one Taylor model term at a time while retaining the two final prediction grids"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_model_fft_flat_sky_intermediate_peak_bytes",
+            value: "0".to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "AWProject evaluates CASA flat-sky normalization directly into the single prepared Complex32 term grid with bit-identical pixel arithmetic"
+                .to_string(),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_cpu_residual_model_grid_release_bytes",
+            value: cpu_residual_model_grid_release_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "after CPU DataToGrid completes, the two Complex32 prediction grids have no residual-transform or fallback use and are dropped before the first Complex64 residual FFT"
+                .to_string(),
         },
         casa_imaging::ImagingPlanDecision {
             name: "awproject_source_major_compiler_segment_bytes",
@@ -39775,7 +40386,7 @@ fn admit_awproject_multifield_initial_grid(
     ] {
         replace_standard_mfs_plan_decision(&mut candidate, decision);
     }
-    let admitted = match admit_standard_mfs_plan_with_lifetimes(candidate, true) {
+    let mut admitted = match admit_standard_mfs_plan_with_lifetimes(candidate, true) {
         Ok(admitted) => admitted,
         Err(reason) => {
             return Ok(reject_awproject_multifield_initial_grid(
@@ -39787,6 +40398,21 @@ fn admit_awproject_multifield_initial_grid(
             ));
         }
     };
+    let compile_envelope = awproject_grouped_replay_compile_envelope(&admitted)?;
+    replace_standard_mfs_plan_decision(
+        &mut admitted,
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_source_major_compile_ceiling_bytes",
+            value: compile_envelope.compile_admission_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Resources,
+            reason: "exact InitialGrid headroom after replacing the bounded source-major compiler segment; this ceiling applies whether residual replay is Metal or CPU"
+                .to_string(),
+        },
+    );
+    let effective = standard_mfs_execution_config_with_plan(config, &admitted);
+    if effective.residual_backend != Some(StandardMfsBackend::MetalRowRunGrouped) {
+        return Ok(admitted);
+    }
     let replay_stage_peak_bytes = [
         ImagingMemoryStage::ResidualGrid,
         ImagingMemoryStage::ResidualTransform,
@@ -40273,6 +40899,22 @@ fn awproject_pointing_index_estimate_bytes(
     )
 }
 
+// One selected row can introduce at most one epoch entry, two antenna entries,
+// and its share of the per-DDID plan container. The modeled BTree allowances
+// are 128 + 2*64 bytes; 512 bytes per row therefore also covers the fixed plan
+// header and allocator slack, including the one-row/one-DDID boundary.
+const AWPROJECT_POINTING_EPOCH_PLAN_BYTES_PER_ACTIVE_ROW: usize = 512;
+
+fn awproject_pointing_epoch_plan_upper_bytes(active_row_count: usize) -> Result<usize, String> {
+    checked_imaging_product(
+        [
+            active_row_count,
+            AWPROJECT_POINTING_EPOCH_PLAN_BYTES_PER_ACTIVE_ROW,
+        ],
+        "AWProject POINTING epoch plan",
+    )
+}
+
 fn awproject_mtmfs_run_state_bytes(nterms: usize, image_pixels: usize) -> Result<usize, String> {
     // During a residual refresh the immutable PSF/weight products, current
     // residual/model terms, mosaic weight, clean mask, and nterms Complex32
@@ -40298,6 +40940,17 @@ fn awproject_mtmfs_run_state_bytes(nterms: usize, image_pixels: usize) -> Result
     checked_imaging_product(
         [image_pixels, bytes_per_pixel],
         "AWProject MT-MFS run state",
+    )
+}
+
+fn awproject_mtmfs_psf_term_bytes(nterms: usize, image_pixels: usize) -> Result<usize, String> {
+    let psf_terms = nterms
+        .checked_mul(2)
+        .and_then(|value| value.checked_sub(1))
+        .ok_or_else(|| "AWProject MT-MFS PSF term count overflowed".to_string())?;
+    checked_imaging_product(
+        [image_pixels, psf_terms, std::mem::size_of::<f32>()],
+        "AWProject MT-MFS PSF terms",
     )
 }
 
@@ -40356,12 +41009,14 @@ fn awproject_mtmfs_multiscale_minor_cycle_scratch_bytes(
 }
 
 fn awproject_mtmfs_finish_state_bytes(nterms: usize, image_pixels: usize) -> Result<usize, String> {
-    // `MtmfsResult` expands 2D products into 4D CASA products. Until the
-    // return expression completes, the original products, principal residual
-    // terms, and expanded result coexist.
+    // `MtmfsResult` consumes each 2D product immediately after expanding it
+    // into the corresponding 4D CASA product. The peak therefore retains the
+    // seven output families plus the diagnostic mosaic-weight clone and one
+    // source/destination conversion overlap, rather than both complete 2D and
+    // 4D product sets plus principal residuals.
     let f32_planes = nterms
-        .checked_mul(15)
-        .and_then(|value| value.checked_add(1))
+        .checked_mul(7)
+        .and_then(|value| value.checked_add(2))
         .ok_or_else(|| "AWProject MT-MFS finish plane count overflowed".to_string())?;
     let bytes_per_pixel = checked_imaging_sum(
         [
@@ -40530,6 +41185,31 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     memory_target: ImagingProcessMemoryLedger,
     lifetime_admission: StandardMfsLifetimeAdmission,
 ) -> Result<ImagingResolvedPlan, String> {
+    plan_standard_mfs_execution_shape_with_pointing_rows_memory_ledger_and_metal_detection(
+        config,
+        selected_channel_count,
+        cache_selected_channel_count,
+        active_row_count,
+        visibility_shape,
+        pointing_table_row_count,
+        memory_target,
+        lifetime_admission,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn plan_standard_mfs_execution_shape_with_pointing_rows_memory_ledger_and_metal_detection(
+    config: &CliConfig,
+    selected_channel_count: usize,
+    cache_selected_channel_count: usize,
+    active_row_count: usize,
+    visibility_shape: &spectral_slab::VisibilitySourceShape,
+    pointing_table_row_count: usize,
+    memory_target: ImagingProcessMemoryLedger,
+    lifetime_admission: StandardMfsLifetimeAdmission,
+    metal_detection: Option<ImagingMetalMemoryDetection>,
+) -> Result<ImagingResolvedPlan, String> {
     let selected_channel_count = selected_channel_count.max(1);
     let cache_selected_channel_count = cache_selected_channel_count.max(1);
     if memory_target.target_bytes == 0 {
@@ -40552,8 +41232,10 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         casa_composite_padded_len_estimate(config.imsize, 1.2)
     };
     let grid_cells = checked_imaging_product([grid_side, grid_side], "standard-MFS grid cells")?;
-    let image_working_set_bytes = if awproject_mtmfs {
+    let image_working_set_bytes = if awproject_mtmfs && !clean_is_dirty(config) {
         awproject_mtmfs_run_state_bytes(config.nterms, image_pixels)?
+    } else if awproject_mtmfs {
+        0
     } else {
         standard_mfs_plane_state_requirements(config).estimated_bytes_per_plane(image_pixels)
     };
@@ -40860,6 +41542,11 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     } else {
         0
     };
+    let aw_pointing_epoch_plan_bytes = if awproject_mtmfs && config.use_pointing {
+        awproject_pointing_epoch_plan_upper_bytes(active_row_count)?
+    } else {
+        0
+    };
     let aw_safety_margin_bytes = if awproject_mtmfs {
         memory_target.target_bytes / 20
     } else {
@@ -40961,6 +41648,11 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
                 bytes: pointing_index_bytes,
             },
             ImagingMemoryAllocation {
+                component: "AWProject POINTING epoch plan",
+                stage: "run",
+                bytes: aw_pointing_epoch_plan_bytes,
+            },
+            ImagingMemoryAllocation {
                 component: "AWProject safety margin",
                 stage: "run",
                 bytes: aw_safety_margin_bytes,
@@ -41008,10 +41700,22 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
         )?
     };
 
-    let planning_resources = imaging_planning_resource_assignment(
-        config,
-        memory_target,
-        direct_metal_scratch_candidate_bytes,
+    let planning_resources = metal_detection.map_or_else(
+        || {
+            imaging_planning_resource_assignment(
+                config,
+                memory_target,
+                direct_metal_scratch_candidate_bytes,
+            )
+        },
+        |metal| {
+            imaging_planning_resource_assignment_with_metal_detection(
+                config,
+                memory_target,
+                direct_metal_scratch_candidate_bytes,
+                metal,
+            )
+        },
     );
     let mut plan = plan_imaging_execution_with_context(
         &ImagingWorkloadShape {
@@ -41079,6 +41783,7 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     )
     .map_err(|error| error.to_string())?;
     if !deferred_lifetime_allocations.is_empty() {
+        deferred_lifetime_allocations.retain(|allocation| allocation.bytes > 0);
         plan.workload
             .fixed_allocations
             .extend(deferred_lifetime_allocations.iter().cloned());
@@ -41239,6 +41944,7 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             aw_cf_resident_bytes,
             aw_cf_index_bytes,
             pointing_index_bytes,
+            aw_pointing_epoch_plan_bytes,
             image_working_set_bytes,
             multiscale_minor_cycle_scratch_bytes,
             aw_safety_margin_bytes,
@@ -41250,6 +41956,7 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             aw_cf_resident_bytes,
             aw_cf_index_bytes,
             pointing_index_bytes,
+            aw_pointing_epoch_plan_bytes,
             finish_state_bytes,
             aw_safety_margin_bytes,
         ],
@@ -41258,6 +41965,7 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
     let product_peak_bytes = checked_imaging_sum(
         [
             pointing_index_bytes,
+            aw_pointing_epoch_plan_bytes,
             product_state_bytes,
             product_writer_scratch_bytes,
             aw_safety_margin_bytes,
@@ -41307,6 +42015,14 @@ fn plan_standard_mfs_execution_shape_with_pointing_rows_and_memory_ledger(
             origin: casa_imaging::ImagingPlanOrigin::Workload,
             reason: format!(
                 "bounded by {pointing_table_row_count} POINTING rows and {active_row_count} active MAIN rows"
+            ),
+        },
+        casa_imaging::ImagingPlanDecision {
+            name: "awproject_pointing_epoch_plan_upper_bytes",
+            value: aw_pointing_epoch_plan_bytes.to_string(),
+            origin: casa_imaging::ImagingPlanOrigin::Workload,
+            reason: format!(
+                "at most {AWPROJECT_POINTING_EPOCH_PLAN_BYTES_PER_ACTIVE_ROW} bytes per active MAIN row for immutable DDID/FIELD/TIME grouping and cached antenna pixels"
             ),
         },
         casa_imaging::ImagingPlanDecision {
@@ -41817,8 +42533,22 @@ fn imaging_planning_resource_assignment(
     memory_target: ImagingProcessMemoryLedger,
     unified_memory_requirement_bytes: usize,
 ) -> ImagingPlanningResourceAssignment {
-    let cpu = imaging_cpu_resource_detection();
     let metal = imaging_metal_memory_detection();
+    imaging_planning_resource_assignment_with_metal_detection(
+        config,
+        memory_target,
+        unified_memory_requirement_bytes,
+        metal,
+    )
+}
+
+fn imaging_planning_resource_assignment_with_metal_detection(
+    config: &CliConfig,
+    memory_target: ImagingProcessMemoryLedger,
+    unified_memory_requirement_bytes: usize,
+    metal: ImagingMetalMemoryDetection,
+) -> ImagingPlanningResourceAssignment {
+    let cpu = imaging_cpu_resource_detection();
     let storage = imaging_storage_bandwidth_detection();
     let context = imaging_planning_context_from_detection(
         config,
@@ -42952,8 +43682,25 @@ fn standard_mfs_execution_config_with_plan(
         }
     }
     execution.resolved = strategy.clone();
+    if standard_mfs_uses_source_major_awproject(strategy) {
+        let spill_directory = config
+            .imagename
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        replace_standard_mfs_plan_decision(
+            &mut execution.resolved,
+            casa_imaging::ImagingPlanDecision {
+                name: "awproject_source_major_spill_directory",
+                value: spill_directory.display().to_string(),
+                origin: casa_imaging::ImagingPlanOrigin::UserPolicy,
+                reason: "stage invariant post-grid planes beside the requested products; CPU residual execution writes no replay payload"
+                    .to_string(),
+            },
+        );
+    }
     execution.force_tiled_one_worker = execution.grid_backend == StandardMfsBackend::FixedTile;
-    match awproject_grouped_replay_plan(config, strategy) {
+    match awproject_grouped_replay_plan(config, strategy, execution.residual_backend) {
         Ok(grouped_replay) => execution.awproject_grouped_replay = grouped_replay,
         Err(reason) => replace_standard_mfs_plan_decision(
             &mut execution.resolved,
@@ -43020,8 +43767,10 @@ fn standard_mfs_execution_config_with_plan(
 fn awproject_grouped_replay_plan(
     config: &CliConfig,
     strategy: &ImagingResolvedPlan,
+    residual_backend: Option<StandardMfsBackend>,
 ) -> Result<Option<AwProjectGroupedReplayPlan>, String> {
-    if config.aw_project.is_none()
+    if residual_backend != Some(StandardMfsBackend::MetalRowRunGrouped)
+        || config.aw_project.is_none()
         || clean_is_dirty(config)
         || config.nterms != 2
         || !strategy.metal.eligible
@@ -45694,12 +46443,89 @@ struct CasaAwPointingGroupConfig {
     refresh_sigdev_arcsec: f64,
 }
 
+fn casa_aw_pointing_group_config(
+    config: &CliConfig,
+    phase_center: &PhaseCenter,
+) -> Option<CasaAwPointingGroupConfig> {
+    config.aw_project.as_ref().and_then(|controls| {
+        controls.use_pointing.then(|| {
+            let effective_sigdev = controls.effective_pointing_offset_sigdev_arcsec();
+            let cell_size_rad = config.cell_arcsec.to_radians() / 3600.0;
+            CasaAwPointingGroupConfig {
+                geometry: ImageGeometry {
+                    image_shape: [config.imsize, config.imsize],
+                    cell_size_rad: [cell_size_rad, cell_size_rad],
+                },
+                phase_center_direction_rad: phase_center.angles_rad,
+                grouping_sigdev_arcsec: effective_sigdev[0],
+                refresh_sigdev_arcsec: effective_sigdev[1],
+            }
+        })
+    })
+}
+
 #[derive(Debug, Clone)]
 struct CasaAwPointingGroupAccumulator {
     config: CasaAwPointingGroupConfig,
     first_direction_by_field_antenna: BTreeMap<(usize, i32), [f64; 2]>,
     baseline_by_pointing_id: BTreeMap<usize, (usize, i32, i32)>,
     pointing_id_by_baseline: BTreeMap<(usize, i32, i32), usize>,
+    epoch_plan: Option<Arc<CasaAwPointingEpochPlan>>,
+    planned_pointing_by_id: BTreeMap<usize, EffectivePointing>,
+    pointing_id_by_epoch_baseline: BTreeMap<(CasaAwPointingEpochKey, i32, i32), usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct CasaAwPointingEpochKey {
+    ddid: usize,
+    field_id: usize,
+    time_bits: u64,
+}
+
+#[derive(Debug, Clone)]
+struct CasaAwPointingEpochInput {
+    key: CasaAwPointingEpochKey,
+    row_count: usize,
+    direction_by_antenna: BTreeMap<i32, [f64; 2]>,
+}
+
+#[derive(Debug, Clone)]
+struct CasaAwPointingEpochPlan {
+    config: CasaAwPointingGroupConfig,
+    grouped_pixel_by_epoch: BTreeMap<CasaAwPointingEpochKey, Arc<BTreeMap<i32, [f64; 2]>>>,
+}
+
+impl CasaAwPointingEpochPlan {
+    fn epoch_count(&self) -> usize {
+        self.grouped_pixel_by_epoch.len()
+    }
+
+    fn antenna_entry_count(&self) -> usize {
+        self.grouped_pixel_by_epoch
+            .values()
+            .map(|pixels| pixels.len())
+            .sum()
+    }
+
+    fn modeled_resident_bytes(&self) -> Result<usize, String> {
+        // Count each epoch's shared antenna map independently. This
+        // intentionally overstates cached-epoch Arc sharing and includes
+        // conservative BTree node/allocator allowance in both entry sizes.
+        checked_imaging_sum(
+            [
+                std::mem::size_of::<Self>(),
+                checked_imaging_product(
+                    [self.epoch_count(), 16 * std::mem::size_of::<usize>()],
+                    "AWProject POINTING epoch entries",
+                )?,
+                checked_imaging_product(
+                    [self.antenna_entry_count(), 8 * std::mem::size_of::<usize>()],
+                    "AWProject POINTING epoch antenna entries",
+                )?,
+            ],
+            "AWProject POINTING epoch plan modeled residency",
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -45731,8 +46557,17 @@ impl MfsMosaicMetadataAccumulator {
             first_direction_by_field_antenna: BTreeMap::new(),
             baseline_by_pointing_id: BTreeMap::new(),
             pointing_id_by_baseline: BTreeMap::new(),
+            epoch_plan: None,
+            planned_pointing_by_id: BTreeMap::new(),
+            pointing_id_by_epoch_baseline: BTreeMap::new(),
         });
         metadata
+    }
+
+    fn set_casa_aw_pointing_epoch_plan(&mut self, plan: Arc<CasaAwPointingEpochPlan>) {
+        if let Some(groups) = self.casa_aw_pointing_groups.as_mut() {
+            groups.epoch_plan = Some(plan);
+        }
     }
 
     fn reserve(&mut self, additional: usize) {
@@ -45810,6 +46645,63 @@ impl MfsMosaicMetadataAccumulator {
         let pointing_id = groups.baseline_by_pointing_id.len();
         groups.pointing_id_by_baseline.insert(baseline, pointing_id);
         groups.baseline_by_pointing_id.insert(pointing_id, baseline);
+        Some(pointing_id)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn intern_casa_aw_epoch_baseline_pointing(
+        &mut self,
+        ddid: usize,
+        field_id: usize,
+        time_mjd_seconds: f64,
+        antenna1_id: i32,
+        antenna1_direction_rad: [f64; 2],
+        antenna2_id: i32,
+        antenna2_direction_rad: [f64; 2],
+    ) -> Option<usize> {
+        let groups = self.casa_aw_pointing_groups.as_mut()?;
+        let Some(plan) = groups.epoch_plan.as_ref() else {
+            return self.intern_casa_aw_baseline_pointing(
+                field_id,
+                antenna1_id,
+                antenna1_direction_rad,
+                antenna2_id,
+                antenna2_direction_rad,
+            );
+        };
+        let epoch = CasaAwPointingEpochKey {
+            ddid,
+            field_id,
+            time_bits: time_mjd_seconds.to_bits(),
+        };
+        let baseline = (epoch, antenna1_id, antenna2_id);
+        if let Some(pointing_id) = groups.pointing_id_by_epoch_baseline.get(&baseline).copied() {
+            return Some(pointing_id);
+        }
+        let pixels = plan.grouped_pixel_by_epoch.get(&epoch)?;
+        let antenna1_pixel = pixels.get(&antenna1_id)?;
+        let antenna2_pixel = pixels.get(&antenna2_id)?;
+        let pixel = [
+            0.5 * (antenna1_pixel[0] + antenna2_pixel[0]),
+            0.5 * (antenna1_pixel[1] + antenna2_pixel[1]),
+        ];
+        let direction_rad = sin_direction_for_image_pixel(
+            plan.config.geometry,
+            plan.config.phase_center_direction_rad,
+            pixel,
+        )
+        .ok()?;
+        let pointing_id = groups.planned_pointing_by_id.len();
+        groups
+            .pointing_id_by_epoch_baseline
+            .insert(baseline, pointing_id);
+        groups.planned_pointing_by_id.insert(
+            pointing_id,
+            EffectivePointing {
+                direction_rad,
+                pixel_position: Some(pixel),
+            },
+        );
         Some(pointing_id)
     }
 
@@ -45895,6 +46787,9 @@ impl MfsMosaicMetadataAccumulator {
 
 impl CasaAwPointingGroupAccumulator {
     fn effective_pointing_by_id(&self) -> Result<BTreeMap<usize, EffectivePointing>, String> {
+        if self.epoch_plan.is_some() {
+            return Ok(self.planned_pointing_by_id.clone());
+        }
         let geometry = self.config.geometry;
         let direction_coordinate = DirectionCoordinate::new(
             DirectionRef::J2000,
@@ -46047,6 +46942,126 @@ impl CasaAwPointingGroupAccumulator {
     }
 }
 
+fn casa_aw_epoch_antenna_pixels(
+    config: CasaAwPointingGroupConfig,
+    direction_by_antenna: &BTreeMap<i32, [f64; 2]>,
+) -> Result<BTreeMap<i32, [f64; 2]>, String> {
+    let geometry = config.geometry;
+    let coordinate = DirectionCoordinate::new(
+        DirectionRef::J2000,
+        Projection::new(ProjectionType::SIN),
+        config.phase_center_direction_rad,
+        [-geometry.cell_size_rad[0], geometry.cell_size_rad[1]],
+        [geometry.nx() as f64 / 2.0, geometry.ny() as f64 / 2.0],
+    );
+    direction_by_antenna
+        .iter()
+        .map(|(&antenna_id, &direction)| {
+            coordinate
+                .to_pixel(&direction)
+                .map(|pixel| (antenna_id, [pixel[0], pixel[1]]))
+                .map_err(|error| {
+                    format!(
+                        "convert CASA AW epoch direction for antenna {antenna_id} to pixel: {error}"
+                    )
+                })
+        })
+        .collect()
+}
+
+fn casa_aw_grouped_pixels_for_epoch(
+    config: CasaAwPointingGroupConfig,
+    field_id: usize,
+    direction_by_antenna: &BTreeMap<i32, [f64; 2]>,
+) -> Result<BTreeMap<i32, [f64; 2]>, String> {
+    let mut metadata = MfsMosaicMetadataAccumulator::with_casa_aw_pointing_groups(
+        direction_by_antenna.len(),
+        config,
+    );
+    let mut pointing_id_by_antenna = BTreeMap::new();
+    for (&antenna_id, &direction) in direction_by_antenna {
+        let pointing_id = metadata
+            .intern_casa_aw_baseline_pointing(
+                field_id, antenna_id, direction, antenna_id, direction,
+            )
+            .ok_or_else(|| "CASA AW epoch grouping was not initialized".to_string())?;
+        pointing_id_by_antenna.insert(antenna_id, pointing_id);
+    }
+    let effective = metadata.effective_pointing_by_id()?;
+    pointing_id_by_antenna
+        .into_iter()
+        .map(|(antenna_id, pointing_id)| {
+            effective
+                .get(&pointing_id)
+                .and_then(|pointing| pointing.pixel_position)
+                .map(|pixel| (antenna_id, pixel))
+                .ok_or_else(|| format!("CASA AW epoch grouping omitted antenna {antenna_id}"))
+        })
+        .collect()
+}
+
+fn build_casa_aw_pointing_epoch_plan_from_inputs(
+    config: CasaAwPointingGroupConfig,
+    epochs: &[CasaAwPointingEpochInput],
+) -> Result<CasaAwPointingEpochPlan, String> {
+    let mut grouped_pixel_by_epoch = BTreeMap::new();
+    let mut cached_field_id = None;
+    let mut cached_row_count = 0usize;
+    let mut cached_antenna_pixels = BTreeMap::<i32, [f64; 2]>::new();
+    let mut cached_grouped_pixels = Arc::new(BTreeMap::<i32, [f64; 2]>::new());
+    let pixel_increment_norm =
+        config.geometry.cell_size_rad[0].hypot(config.geometry.cell_size_rad[1]);
+    let refresh_threshold_rad = config.refresh_sigdev_arcsec.to_radians() / 3600.0;
+
+    for epoch in epochs {
+        let antenna_pixels = casa_aw_epoch_antenna_pixels(config, &epoch.direction_by_antenna)?;
+        let same_shape = cached_antenna_pixels.len() == antenna_pixels.len()
+            && cached_antenna_pixels.keys().eq(antenna_pixels.keys());
+        let refresh = if cached_field_id != Some(epoch.key.field_id)
+            || cached_row_count != epoch.row_count
+            || !same_shape
+        {
+            true
+        } else {
+            let residual_sum = cached_antenna_pixels.iter().zip(&antenna_pixels).fold(
+                [0.0, 0.0],
+                |[sum_x, sum_y], ((_, cached), (_, current))| {
+                    [
+                        sum_x + cached[0] - current[0],
+                        sum_y + cached[1] - current[1],
+                    ]
+                },
+            );
+            let average_residual_pixels =
+                residual_sum[0].hypot(residual_sum[1]) / antenna_pixels.len().max(1) as f64;
+            average_residual_pixels * pixel_increment_norm >= refresh_threshold_rad
+        };
+        if refresh {
+            cached_grouped_pixels = Arc::new(casa_aw_grouped_pixels_for_epoch(
+                config,
+                epoch.key.field_id,
+                &epoch.direction_by_antenna,
+            )?);
+        }
+        cached_field_id = Some(epoch.key.field_id);
+        cached_row_count = epoch.row_count;
+        cached_antenna_pixels = antenna_pixels;
+        if grouped_pixel_by_epoch
+            .insert(epoch.key, Arc::clone(&cached_grouped_pixels))
+            .is_some()
+        {
+            return Err(format!(
+                "CASA AW pointing epoch {:?} is not contiguous",
+                epoch.key
+            ));
+        }
+    }
+    Ok(CasaAwPointingEpochPlan {
+        config,
+        grouped_pixel_by_epoch,
+    })
+}
+
 fn sin_direction_for_image_pixel(
     geometry: ImageGeometry,
     phase_center_direction_rad: [f64; 2],
@@ -46073,25 +47088,42 @@ fn mosaic_pointing_id_for_row(
     cached_pointing_id: &mut Option<usize>,
     geometry_row: &PreparedGeometryRow,
     baseline_pointing_direction_rad: [f64; 2],
-) -> usize {
+) -> Result<usize, String> {
     if let Some(pointing_id) = *cached_pointing_id {
-        return pointing_id;
+        return Ok(pointing_id);
     }
     let field_id = geometry_row.selected_row.field_id;
     let antenna1_id = geometry_row.antenna1_id;
     let antenna2_id = geometry_row.antenna2_id;
     metadata.record_selected_antennas(antenna1_id, antenna2_id);
-    let pointing_id = metadata
-        .intern_casa_aw_baseline_pointing(
-            field_id,
-            antenna1_id,
-            geometry_row.antenna1_pointing.angles_rad,
-            antenna2_id,
-            geometry_row.antenna2_pointing.angles_rad,
-        )
-        .unwrap_or_else(|| metadata.intern_pointing_direction(baseline_pointing_direction_rad));
+    let pointing_id = if metadata.casa_aw_pointing_groups.is_some() {
+        let time_mjd_seconds = geometry_row.selected_row.time_mjd_seconds.ok_or_else(|| {
+            format!(
+                "row {} requires TIME for CASA AW pointing epoch lookup",
+                geometry_row.selected_row.row_index
+            )
+        })?;
+        metadata
+            .intern_casa_aw_epoch_baseline_pointing(
+                geometry_row.selected_row.ddid,
+                field_id,
+                time_mjd_seconds,
+                antenna1_id,
+                geometry_row.antenna1_pointing.angles_rad,
+                antenna2_id,
+                geometry_row.antenna2_pointing.angles_rad,
+            )
+            .ok_or_else(|| {
+                format!(
+                    "missing CASA AW pointing epoch for DDID {} field {} time {:.17e}",
+                    geometry_row.selected_row.ddid, field_id, time_mjd_seconds
+                )
+            })?
+    } else {
+        metadata.intern_pointing_direction(baseline_pointing_direction_rad)
+    };
     *cached_pointing_id = Some(pointing_id);
-    pointing_id
+    Ok(pointing_id)
 }
 
 fn row_imaging_transform(
@@ -46780,6 +47812,12 @@ impl PreparedSelection {
         self.cube_row_spectral_reusable_plan = plan;
     }
 
+    fn set_casa_aw_pointing_epoch_plan(&mut self, plan: Arc<CasaAwPointingEpochPlan>) {
+        if let Some(metadata) = self.state.mfs_mosaic_metadata_mut() {
+            metadata.set_casa_aw_pointing_epoch_plan(plan);
+        }
+    }
+
     fn set_build_cube_briggs_density_samples(&mut self, build_samples: bool) {
         self.build_cube_briggs_density_samples = build_samples;
     }
@@ -46979,22 +48017,8 @@ impl PreparedSelection {
                 .corr_type(polarization_id)
                 .map_err(|error| format!("read CORR_TYPE: {error}"))?;
             let max_samples = source_channel_frequencies_hz.len();
-            let casa_aw_pointing_group_config = config.aw_project.as_ref().and_then(|controls| {
-                controls.use_pointing.then(|| {
-                    let effective_sigdev = controls.effective_pointing_offset_sigdev_arcsec();
-                    let cell_size_rad =
-                        config.cell_arcsec * std::f64::consts::PI / (180.0 * 3600.0);
-                    CasaAwPointingGroupConfig {
-                        geometry: ImageGeometry {
-                            image_shape: [config.imsize, config.imsize],
-                            cell_size_rad: [cell_size_rad, cell_size_rad],
-                        },
-                        phase_center_direction_rad: phase_center.angles_rad,
-                        grouping_sigdev_arcsec: effective_sigdev[0],
-                        refresh_sigdev_arcsec: effective_sigdev[1],
-                    }
-                })
-            });
+            let casa_aw_pointing_group_config =
+                casa_aw_pointing_group_config(config, &phase_center);
             let new_mfs_mosaic_metadata = || {
                 if let Some(group_config) = casa_aw_pointing_group_config {
                     MfsMosaicMetadataAccumulator::with_casa_aw_pointing_groups(
@@ -47498,7 +48522,7 @@ impl PreparedSelection {
                                     &mut mosaic_pointing_id,
                                     geometry_row,
                                     baseline_pointing_direction_rad,
-                                );
+                                )?;
                                 metadata.push_sample(
                                     pointing_id,
                                     selected_row.spw_id,
@@ -47545,7 +48569,7 @@ impl PreparedSelection {
                                 &mut mosaic_pointing_id,
                                 geometry_row,
                                 baseline_pointing_direction_rad,
-                            );
+                            )?;
                             metadata.push_sample(
                                 pointing_id,
                                 selected_row.spw_id,
@@ -47624,7 +48648,7 @@ impl PreparedSelection {
                                         &mut mosaic_pointing_id,
                                         geometry_row,
                                         baseline_pointing_direction_rad,
-                                    );
+                                    )?;
                                     metadata.push_sample(
                                         pointing_id,
                                         selected_row.spw_id,
@@ -47697,7 +48721,7 @@ impl PreparedSelection {
                                 &mut mosaic_pointing_id,
                                 geometry_row,
                                 baseline_pointing_direction_rad,
-                            );
+                            )?;
                             metadata.push_sample(
                                 pointing_id,
                                 selected_row.spw_id,
@@ -48297,7 +49321,7 @@ impl PreparedSelection {
                             &mut mosaic_pointing_id,
                             geometry_row,
                             baseline_pointing_direction_rad,
-                        );
+                        )?;
                         metadata.push_sample(
                             pointing_id,
                             selected_row.spw_id,
@@ -48748,7 +49772,7 @@ impl PreparedSelection {
                                         &mut mosaic_pointing_id,
                                         geometry_row,
                                         baseline_pointing_direction_rad,
-                                    );
+                                    )?;
                                     metadata.push_sample(
                                         pointing_id,
                                         selected_row.spw_id,
@@ -48841,7 +49865,7 @@ impl PreparedSelection {
                                 &mut mosaic_pointing_id,
                                 geometry_row,
                                 baseline_pointing_direction_rad,
-                            );
+                            )?;
                             metadata.push_sample(
                                 pointing_id,
                                 selected_row.spw_id,
@@ -58969,6 +59993,60 @@ mod tests {
     }
 
     #[test]
+    fn standard_mfs_finish_telemetry_captures_global_swapout_delta() {
+        assert_eq!(
+            standard_mfs_stage_memory_labels(StandardMfsProgressPhase::FinishStart),
+            ("finish_start", "finish")
+        );
+        assert_eq!(
+            standard_mfs_stage_memory_labels(StandardMfsProgressPhase::FinishEnd),
+            ("finish_end", "finish")
+        );
+        let entry = StandardMfsStagePressureSnapshot {
+            process_physical_footprint_bytes: Some(20_000),
+            current_rss_bytes: Some(15_000),
+            lifetime_peak_rss_bytes: Some(21_000),
+            current_metal_allocated_bytes: Some(1_000),
+            host_compressed_memory_bytes: Some(8_000),
+            swap_used_bytes: Some(2_000),
+            swapin_bytes_total: Some(3_000),
+            swapout_bytes_total: Some(4_000),
+            ..Default::default()
+        };
+        let current = StandardMfsStagePressureSnapshot {
+            process_physical_footprint_bytes: Some(12_000),
+            current_rss_bytes: Some(9_000),
+            lifetime_peak_rss_bytes: Some(22_000),
+            current_metal_allocated_bytes: Some(0),
+            host_compressed_memory_bytes: Some(6_000),
+            swap_used_bytes: Some(2_500),
+            swapin_bytes_total: Some(3_256),
+            swapout_bytes_total: Some(4_512),
+            ..Default::default()
+        };
+        let line = standard_mfs_product_write_memory_line(
+            "product_write_end",
+            current,
+            entry,
+            Duration::from_millis(750),
+        );
+        let fields = line
+            .split_whitespace()
+            .skip(1)
+            .map(|field| field.split_once('=').expect("key=value field"))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(fields.get("phase"), Some(&"product_write_end"));
+        assert_eq!(
+            fields.get("process_physical_footprint_bytes"),
+            Some(&"12000")
+        );
+        assert_eq!(fields.get("lifetime_peak_rss_bytes"), Some(&"22000"));
+        assert_eq!(fields.get("swapin_bytes_delta"), Some(&"256"));
+        assert_eq!(fields.get("swapout_bytes_delta"), Some(&"512"));
+        assert_eq!(fields.get("elapsed_monotonic_ms"), Some(&"750.000"));
+    }
+
+    #[test]
     fn standard_mfs_minor_cycle_progress_keeps_deconvolver_active() {
         let _test_lock = IMAGER_PROGRESS_TEST_LOCK
             .lock()
@@ -61141,25 +62219,24 @@ mod tests {
         ])
         .expect("parse cube clean config");
 
-        let plan = plan_cube_per_plane_execution(&config, output_planes, hardware_threads);
+        let plan = plan_cube_per_plane_execution_with_metal_device(
+            &config,
+            output_planes,
+            hardware_threads,
+            true,
+            true,
+        );
 
         assert_eq!(plan.phase, PerPlaneExecutionPhase::CleanDeconvolution);
-        if cfg!(target_os = "macos") && casa_imaging::standard_mfs_metal_device_available() {
-            assert!(
-                plan.fallback_reasons.is_empty(),
-                "eligible auto clean cube should not report Metal fallback reasons: {:?}",
-                plan.fallback_reasons
-            );
-            assert_eq!(
-                plan.selected_backend,
-                PerPlaneExecutionBackend::Wave3MetalGrouped
-            );
-        } else {
-            assert_eq!(
-                plan.selected_backend,
-                PerPlaneExecutionBackend::OwnedSinglePlaneFixedTileCpu
-            );
-        }
+        assert!(
+            plan.fallback_reasons.is_empty(),
+            "eligible auto clean cube should not report Metal fallback reasons: {:?}",
+            plan.fallback_reasons
+        );
+        assert_eq!(
+            plan.selected_backend,
+            PerPlaneExecutionBackend::Wave3MetalGrouped
+        );
         assert!(plan.fixed_tile_cpu_eligible);
         assert_eq!(plan.per_plane_grid_threads, 1);
     }
@@ -61192,28 +62269,15 @@ mod tests {
         ])
         .expect("parse cube clean metal config");
 
-        let plan = plan_cube_per_plane_execution(&config, 4, 4);
+        let plan = plan_cube_per_plane_execution_with_metal_device(&config, 4, 4, true, true);
 
         assert!(plan.fixed_tile_cpu_eligible);
-        if cfg!(target_os = "macos") && casa_imaging::standard_mfs_metal_device_available() {
-            assert!(plan.metal_eligible);
-            assert_eq!(
-                plan.selected_backend,
-                PerPlaneExecutionBackend::Wave3MetalGrouped
-            );
-            assert!(plan.fallback_reasons.is_empty());
-        } else {
-            assert!(!plan.metal_eligible);
-            assert_eq!(
-                plan.selected_backend,
-                PerPlaneExecutionBackend::OwnedSinglePlaneFixedTileCpu
-            );
-            assert!(
-                plan.fallback_reasons
-                    .iter()
-                    .any(|reason| reason.starts_with("metal_"))
-            );
-        }
+        assert!(plan.metal_eligible);
+        assert_eq!(
+            plan.selected_backend,
+            PerPlaneExecutionBackend::Wave3MetalGrouped
+        );
+        assert!(plan.fallback_reasons.is_empty());
         assert!(
             !plan
                 .fallback_reasons
@@ -61249,20 +62313,15 @@ mod tests {
         ])
         .expect("parse Clark cube clean config");
 
-        let plan = plan_cube_per_plane_execution(&config, 8, 4);
+        let plan = plan_cube_per_plane_execution_with_metal_device(&config, 8, 4, true, true);
 
         assert_eq!(plan.phase, PerPlaneExecutionPhase::CleanDeconvolution);
         assert!(plan.fixed_tile_cpu_eligible);
-        if cfg!(target_os = "macos") && casa_imaging::standard_mfs_metal_device_available() {
-            assert!(plan.metal_eligible);
-            assert_eq!(
-                plan.selected_backend,
-                PerPlaneExecutionBackend::Wave3MetalGrouped
-            );
-        } else {
-            assert!(!plan.metal_eligible);
-            assert_ne!(plan.selected_backend, PerPlaneExecutionBackend::SerialCpu);
-        }
+        assert!(plan.metal_eligible);
+        assert_eq!(
+            plan.selected_backend,
+            PerPlaneExecutionBackend::Wave3MetalGrouped
+        );
         assert!(
             !plan
                 .fallback_reasons
@@ -61298,43 +62357,34 @@ mod tests {
         ])
         .expect("parse explicit Clark Metal cube clean config");
 
-        let plan = plan_cube_per_plane_execution(&config, 8, 4);
+        let plan = plan_cube_per_plane_execution_with_metal_device(&config, 8, 4, true, true);
         let plane_config = cube_per_plane_runtime_config(&config, &plan);
-        let strategy = standard_mfs_memory_plan(&plane_config, 1, 1);
+        let strategy = standard_mfs_memory_plan_with_metal_available(&plane_config, 1, 1, 1);
         let execution_config = standard_mfs_execution_config(&plane_config, &strategy);
 
         assert_eq!(plan.phase, PerPlaneExecutionPhase::CleanDeconvolution);
         assert!(plan.fixed_tile_cpu_eligible);
-        if cfg!(target_os = "macos") && casa_imaging::standard_mfs_metal_device_available() {
-            assert!(plan.metal_eligible);
-            assert_eq!(
-                plan.selected_backend,
-                PerPlaneExecutionBackend::Wave3MetalGrouped
-            );
-            assert_eq!(
-                plane_config.standard_mfs_acceleration,
-                StandardMfsAccelerationPolicy::Metal
-            );
-            assert_eq!(
-                plane_config.standard_mfs_residual_backend.as_deref(),
-                Some("cpu")
-            );
-            assert_eq!(
-                plane_config.standard_mfs_initial_dirty_backend.as_deref(),
-                Some("metal-row-run-grouped")
-            );
-            assert_eq!(
-                execution_config.minor_cycle_backend,
-                StandardMfsMinorCycleBackend::Metal
-            );
-        } else {
-            assert!(!plan.metal_eligible);
-            assert_ne!(plan.selected_backend, PerPlaneExecutionBackend::SerialCpu);
-            assert_eq!(
-                execution_config.minor_cycle_backend,
-                StandardMfsMinorCycleBackend::Cpu
-            );
-        }
+        assert!(plan.metal_eligible);
+        assert_eq!(
+            plan.selected_backend,
+            PerPlaneExecutionBackend::Wave3MetalGrouped
+        );
+        assert_eq!(
+            plane_config.standard_mfs_acceleration,
+            StandardMfsAccelerationPolicy::Metal
+        );
+        assert_eq!(
+            plane_config.standard_mfs_residual_backend.as_deref(),
+            Some("cpu")
+        );
+        assert_eq!(
+            plane_config.standard_mfs_initial_dirty_backend.as_deref(),
+            Some("metal-row-run-grouped")
+        );
+        assert_eq!(
+            execution_config.minor_cycle_backend,
+            StandardMfsMinorCycleBackend::Metal
+        );
     }
 
     #[test]
@@ -61367,41 +62417,29 @@ mod tests {
         ])
         .expect("parse multiscale cube clean config");
 
-        let plan = plan_cube_per_plane_execution(&config, 8, 4);
+        let plan = plan_cube_per_plane_execution_with_metal_device(&config, 8, 4, true, true);
         let plane_config = cube_per_plane_runtime_config(&config, &plan);
-        let strategy = standard_mfs_memory_plan(&plane_config, 1, 1);
+        let strategy = standard_mfs_memory_plan_with_metal_available(&plane_config, 1, 1, 1);
         let execution_config = standard_mfs_execution_config(&plane_config, &strategy);
 
         assert_eq!(plan.phase, PerPlaneExecutionPhase::CleanDeconvolution);
         assert!(plan.fixed_tile_cpu_eligible);
-        if cfg!(target_os = "macos") && casa_imaging::standard_mfs_metal_device_available() {
-            assert!(plan.metal_eligible);
-            assert_eq!(
-                plan.selected_backend,
-                PerPlaneExecutionBackend::Wave3MetalGrouped
-            );
-            assert!(plan.fallback_reasons.is_empty());
-            assert_eq!(
-                plane_config.standard_mfs_acceleration,
-                StandardMfsAccelerationPolicy::Metal
-            );
-            let minor_cycle_plan = standard_mfs_minor_cycle_backend_plan(&plane_config, true);
-            assert_eq!(minor_cycle_plan.reason, "metal_requested_supported");
-        } else {
-            assert!(!plan.metal_eligible);
-            assert_ne!(plan.selected_backend, PerPlaneExecutionBackend::SerialCpu);
-        }
-        if cfg!(target_os = "macos") && casa_imaging::standard_mfs_metal_device_available() {
-            assert_eq!(
-                execution_config.minor_cycle_backend,
-                StandardMfsMinorCycleBackend::Metal
-            );
-        } else {
-            assert_eq!(
-                execution_config.minor_cycle_backend,
-                StandardMfsMinorCycleBackend::Cpu
-            );
-        }
+        assert!(plan.metal_eligible);
+        assert_eq!(
+            plan.selected_backend,
+            PerPlaneExecutionBackend::Wave3MetalGrouped
+        );
+        assert!(plan.fallback_reasons.is_empty());
+        assert_eq!(
+            plane_config.standard_mfs_acceleration,
+            StandardMfsAccelerationPolicy::Metal
+        );
+        let minor_cycle_plan = standard_mfs_minor_cycle_backend_plan(&plane_config, true);
+        assert_eq!(minor_cycle_plan.reason, "metal_requested_supported");
+        assert_eq!(
+            execution_config.minor_cycle_backend,
+            StandardMfsMinorCycleBackend::Metal
+        );
         assert!(
             !plan
                 .fallback_reasons
@@ -61487,32 +62525,27 @@ mod tests {
         ])
         .expect("parse cube clean metal config");
 
-        let eligibility = plan_cube_per_plane_execution(&config, output_planes, hardware_threads);
+        let eligibility = plan_cube_per_plane_execution_with_metal_device(
+            &config,
+            output_planes,
+            hardware_threads,
+            true,
+            true,
+        );
         let plane_config = cube_per_plane_runtime_config(&config, &eligibility);
 
-        if cfg!(target_os = "macos") && casa_imaging::standard_mfs_metal_device_available() {
-            assert_eq!(
-                eligibility.selected_backend,
-                PerPlaneExecutionBackend::Wave3MetalGrouped
-            );
-            assert!(eligibility.fallback_reasons.is_empty());
-            assert_eq!(
-                plane_config.standard_mfs_acceleration,
-                StandardMfsAccelerationPolicy::Metal
-            );
-            assert_eq!(plane_config.standard_mfs_residual_backend, None);
-            assert_eq!(plane_config.standard_mfs_initial_dirty_backend, None);
-            assert_eq!(plane_config.standard_mfs_metal_grouped_input_cache, None);
-        } else {
-            assert_eq!(
-                eligibility.selected_backend,
-                PerPlaneExecutionBackend::OwnedSinglePlaneFixedTileCpu
-            );
-            assert_eq!(
-                plane_config.standard_mfs_acceleration,
-                StandardMfsAccelerationPolicy::MultiCpu
-            );
-        }
+        assert_eq!(
+            eligibility.selected_backend,
+            PerPlaneExecutionBackend::Wave3MetalGrouped
+        );
+        assert!(eligibility.fallback_reasons.is_empty());
+        assert_eq!(
+            plane_config.standard_mfs_acceleration,
+            StandardMfsAccelerationPolicy::Metal
+        );
+        assert_eq!(plane_config.standard_mfs_residual_backend, None);
+        assert_eq!(plane_config.standard_mfs_initial_dirty_backend, None);
+        assert_eq!(plane_config.standard_mfs_metal_grouped_input_cache, None);
     }
 
     #[test]
@@ -62078,7 +63111,8 @@ mod tests {
             OsString::from("100"),
         ])
         .expect("parse cube clean config");
-        let eligibility = plan_cube_per_plane_execution(&config, 64, 10);
+        let eligibility =
+            plan_cube_per_plane_execution_with_metal_device(&config, 64, 10, true, true);
 
         let logical_lanes_per_plane = 1_000usize;
         let residency = cube_per_plane_backend_residency_shape(
@@ -62088,27 +63122,19 @@ mod tests {
             2,
         );
 
-        if cfg!(target_os = "macos") && casa_imaging::standard_mfs_metal_device_available() {
-            assert_eq!(
-                eligibility.selected_backend,
-                PerPlaneExecutionBackend::Wave3MetalGrouped
-            );
-            let input_cache_bytes = logical_lanes_per_plane
-                .saturating_mul(standard_mfs_metal_grouped_cache_bytes_per_lane(2));
-            let grouped_per_worker = input_cache_bytes;
-            assert_eq!(residency.per_worker_bytes, grouped_per_worker);
-            assert_eq!(
-                residency.metal_grouped_input_cache_bytes_per_worker,
-                input_cache_bytes
-            );
-            assert!(residency.metal_grouped_input_cache_enabled);
-        } else {
-            assert_eq!(
-                eligibility.selected_backend,
-                PerPlaneExecutionBackend::OwnedSinglePlaneFixedTileCpu
-            );
-            assert_eq!(residency, CubePerPlaneBackendResidencyShape::default());
-        }
+        assert_eq!(
+            eligibility.selected_backend,
+            PerPlaneExecutionBackend::Wave3MetalGrouped
+        );
+        let input_cache_bytes = logical_lanes_per_plane
+            .saturating_mul(standard_mfs_metal_grouped_cache_bytes_per_lane(2));
+        let grouped_per_worker = input_cache_bytes;
+        assert_eq!(residency.per_worker_bytes, grouped_per_worker);
+        assert_eq!(
+            residency.metal_grouped_input_cache_bytes_per_worker,
+            input_cache_bytes
+        );
+        assert!(residency.metal_grouped_input_cache_enabled);
         assert!(cube_clean_uses_owned_single_plane_identity_path(&config));
     }
 
@@ -62928,9 +63954,7 @@ mod tests {
         assert_eq!(locality.full_cache_bytes, 8 * paired_bytes);
         assert_eq!(locality.largest_frequency_slice_bytes, 4 * paired_bytes);
 
-        let mut base = standard_mfs_memory_plan(&config, 64, 1024);
-        force_grouped_metal_test_device_budget(&mut base, 16 * 1024 * 1024 * 1024);
-        base.metal.eligible = true;
+        let base = standard_mfs_memory_plan_with_metal_available(&config, 64, 64, 1024);
         let admitted =
             admit_awproject_multifield_initial_grid(base, &config, 2, false, true).unwrap();
         let promoted =
@@ -63003,6 +64027,7 @@ mod tests {
         device_budget: usize,
     ) {
         assert!(plan.workload.direct_metal_scratch_candidate_bytes > 0);
+        plan.metal.eligible = true;
         replace_standard_mfs_plan_decision(
             plan,
             casa_imaging::ImagingPlanDecision {
@@ -63043,6 +64068,17 @@ mod tests {
             plan.allocation_bytes("AWProject CF pixels"),
             config.aw_project.as_ref().unwrap().cf_resident_bytes
         );
+        assert_eq!(
+            plan.allocation_bytes("AWProject POINTING epoch plan"),
+            awproject_pointing_epoch_plan_upper_bytes(1024).unwrap()
+        );
+        assert!(plan.decisions.iter().any(|decision| {
+            decision.name == "awproject_pointing_epoch_plan_upper_bytes"
+                && decision.value
+                    == awproject_pointing_epoch_plan_upper_bytes(1024)
+                        .unwrap()
+                        .to_string()
+        }));
         assert_eq!(
             plan.allocation_bytes("AWProject source-order tap scratch"),
             config.aw_project.as_ref().unwrap().cf_resident_bytes,
@@ -63141,32 +64177,35 @@ mod tests {
             decision.name == "awproject_multiscale_minor_cycle_peak_bytes"
                 && decision.reason.contains("dirty-only")
         }));
+        let dirty_clean_only_allocations = dirty_plan
+            .memory_lifetime_ledger
+            .allocations
+            .iter()
+            .filter(|allocation| {
+                !(allocation.component != "AWProject CASA-layout model FFT staging"
+                    && allocation.component != "AWProject MT-MFS bounded multiscale scratch"
+                    && allocation.component != "AWProject compact replay retention"
+                    && allocation.residencies.iter().all(|residency| {
+                        !matches!(
+                            residency.live_from,
+                            ImagingMemoryStage::MinorCycle
+                                | ImagingMemoryStage::ModelTransform
+                                | ImagingMemoryStage::ResidualGrid
+                                | ImagingMemoryStage::ResidualTransform
+                        ) && !matches!(
+                            residency.live_through,
+                            ImagingMemoryStage::MinorCycle
+                                | ImagingMemoryStage::ModelTransform
+                                | ImagingMemoryStage::ResidualGrid
+                                | ImagingMemoryStage::ResidualTransform
+                        )
+                    }))
+            })
+            .map(|allocation| allocation.component.clone())
+            .collect::<Vec<_>>();
         assert!(
-            dirty_plan
-                .memory_lifetime_ledger
-                .allocations
-                .iter()
-                .all(|allocation| {
-                    allocation.component != "AWProject CASA-layout model FFT staging"
-                        && allocation.component != "AWProject MT-MFS bounded multiscale scratch"
-                        && allocation.component != "AWProject compact replay retention"
-                        && allocation.residencies.iter().all(|residency| {
-                            !matches!(
-                                residency.live_from,
-                                ImagingMemoryStage::MinorCycle
-                                    | ImagingMemoryStage::ModelTransform
-                                    | ImagingMemoryStage::ResidualGrid
-                                    | ImagingMemoryStage::ResidualTransform
-                            ) && !matches!(
-                                residency.live_through,
-                                ImagingMemoryStage::MinorCycle
-                                    | ImagingMemoryStage::ModelTransform
-                                    | ImagingMemoryStage::ResidualGrid
-                                    | ImagingMemoryStage::ResidualTransform
-                            )
-                        })
-                }),
-            "dirty-only execution must not retain clean-only allocation intervals"
+            dirty_clean_only_allocations.is_empty(),
+            "dirty-only execution retained clean-only allocation intervals: {dirty_clean_only_allocations:?}"
         );
         for component in [
             "grids",
@@ -63216,9 +64255,7 @@ mod tests {
         let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
         config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
         config.standard_mfs_grid_threads = Some("3".to_string());
-        let mut base = standard_mfs_memory_plan(&config, 64, 1024);
-        force_grouped_metal_test_device_budget(&mut base, 16 * 1024 * 1024 * 1024);
-        base.metal.eligible = true;
+        let base = standard_mfs_memory_plan_with_metal_available(&config, 64, 64, 1024);
 
         let initial =
             admit_awproject_multifield_initial_grid(base, &config, 2, false, true).unwrap();
@@ -63461,23 +64498,6 @@ mod tests {
             matches!(wrong_backend_status, AwProjectGroupedMetalProbeStatus::Rejected(ref reason) if reason.contains("effective residual backend")),
             "the effective residual backend is part of grouped preflight admission"
         );
-        let mut approximate_replay = execution;
-        approximate_replay.awproject_grouped_replay = Some(
-            AwProjectGroupedReplayPlan::new(
-                tmp.path().to_path_buf(),
-                512 * 1024 * 1024,
-                1024 * 1024 * 1024,
-                1.0e-4,
-                16,
-            )
-            .unwrap(),
-        );
-        let approximate_status =
-            awproject_grouped_metal_execution_probe_status(&plan, &approximate_replay);
-        assert!(
-            matches!(approximate_status, AwProjectGroupedMetalProbeStatus::Rejected(ref reason) if reason.contains("requires exact support")),
-            "the production acceptance probe requires an exact-support grouped replay"
-        );
     }
 
     #[test]
@@ -63489,8 +64509,6 @@ mod tests {
         config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
         config.standard_mfs_grid_threads = Some("7".to_string());
         let mut base = standard_mfs_memory_plan(&config, 64, 1024);
-        force_grouped_metal_test_device_budget(&mut base, 16 * 1024 * 1024 * 1024);
-        base.metal.eligible = true;
         base.workers = 4;
 
         let initial =
@@ -63520,7 +64538,6 @@ mod tests {
         let config = runtime.applied(&requested);
         let mut base = standard_mfs_memory_plan(&config, 64, 1024);
         force_grouped_metal_test_device_budget(&mut base, 16 * 1024 * 1024 * 1024);
-        base.metal.eligible = true;
 
         let initial =
             admit_awproject_multifield_initial_grid(base, &config, 2, false, false).unwrap();
@@ -63557,7 +64574,6 @@ mod tests {
         config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
         let mut base = standard_mfs_memory_plan(&config, 64, 1024);
         force_grouped_metal_test_device_budget(&mut base, 16 * 1024 * 1024 * 1024);
-        base.metal.eligible = true;
         let legacy_scratch = base.workload.direct_metal_scratch_candidate_bytes;
         assert!(legacy_scratch > 0);
         assert_eq!(
@@ -63644,17 +64660,18 @@ mod tests {
     }
 
     #[test]
-    fn awproject_explicit_metal_initial_preserves_the_legacy_generic_plan() {
+    fn awproject_explicit_grouped_initial_uses_source_major_storage() {
         let tmp = tempdir().unwrap();
         let cf_cache = tmp.path().join("explicit-metal-initial-grid-cf-cache");
         make_awproject_planner_cache(&cf_cache, 8);
         let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
         config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
         config.standard_mfs_initial_dirty_backend = Some("metal-row-run-grouped".to_string());
-        let base = standard_mfs_memory_plan(&config, 64, 1024);
+        let mut base = standard_mfs_memory_plan(&config, 64, 1024);
+        force_grouped_metal_test_device_budget(&mut base, 16 * 1024 * 1024 * 1024);
 
         for selected_field_count in [1, 2] {
-            let unchanged = resolve_awproject_multifield_memory_plan(
+            let resolved = resolve_awproject_multifield_memory_plan(
                 base.clone(),
                 &config,
                 selected_field_count,
@@ -63662,14 +64679,51 @@ mod tests {
                 true,
             )
             .unwrap();
-            assert_eq!(unchanged, base);
-            assert!(unchanged.workload.direct_metal_scratch_candidate_bytes > 0);
+            assert!(standard_mfs_uses_source_major_awproject(&resolved));
+            assert_eq!(resolved.workload.direct_metal_scratch_candidate_bytes, 0);
+            assert_eq!(resolved.caches.direct_metal_scratch_bytes, 0);
             assert!(standard_mfs_plan_decision_is(
-                &unchanged,
+                &resolved,
                 "awproject_grouped_replay_replaced_generic_caches",
-                "false"
+                "true"
             ));
         }
+    }
+
+    #[test]
+    fn awproject_cpu_residual_final_plan_omits_grouped_replay_with_metal_initial() {
+        let tmp = tempdir().unwrap();
+        let cf_cache = tmp.path().join("cpu-residual-metal-initial-cf-cache");
+        make_awproject_planner_cache(&cf_cache, 8);
+        let mut config = awproject_mtmfs_planner_config(cf_cache, 4096);
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
+        config.standard_mfs_initial_dirty_backend = Some("metal-row-run-grouped".to_string());
+        config.standard_mfs_residual_backend = Some("cpu".to_string());
+        let mut base = standard_mfs_memory_plan(&config, 64, 1024);
+        force_grouped_metal_test_device_budget(&mut base, 16 * 1024 * 1024 * 1024);
+        let resolved =
+            resolve_awproject_multifield_memory_plan(base, &config, 2, true, true).unwrap();
+        let finalized =
+            admit_awproject_compact_replay_retention_for_execution(resolved, &config, 4)
+                .expect("final production memory plan");
+
+        let execution = standard_mfs_execution_config_with_plan(&config, &finalized);
+
+        assert_eq!(
+            execution.initial_dirty_backend,
+            Some(StandardMfsBackend::MetalRowRunGrouped)
+        );
+        assert_eq!(execution.residual_backend, Some(StandardMfsBackend::Cpu));
+        assert!(
+            execution.awproject_grouped_replay.is_none(),
+            "CPU residual execution must not construct or prime an unused grouped replay"
+        );
+        assert!(standard_mfs_uses_source_major_awproject(&finalized));
+        assert_eq!(
+            finalized.allocation_bytes("AWProject compact replay retention"),
+            0,
+        );
+        assert_eq!(finalized.caches.direct_metal_scratch_bytes, 0);
     }
 
     #[test]
@@ -63728,7 +64782,6 @@ mod tests {
         config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
         let mut base = standard_mfs_memory_plan(&config, 64, 1024);
         force_grouped_metal_test_device_budget(&mut base, 16 * 1024 * 1024 * 1024);
-        base.metal.eligible = true;
         base.usable_memory_bytes = base.maximum_planned_resident_bytes;
         let original_tap_bytes = base.allocation_bytes("AWProject source-order tap scratch");
 
@@ -63768,7 +64821,6 @@ mod tests {
         config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
         let mut base = standard_mfs_memory_plan(&config, 64, 1024);
         force_grouped_metal_test_device_budget(&mut base, 1);
-        base.metal.eligible = true;
         base.usable_memory_bytes = base.maximum_planned_resident_bytes - 1;
 
         let error = resolve_awproject_multifield_memory_plan(base, &config, 2, false, true)
@@ -63869,6 +64921,8 @@ mod tests {
         const MEMORY_TARGET_BYTES: usize = 33_554_432_000;
         const GROUPED_DEVICE_BUDGET: usize = 26_575_224_832;
 
+        let _guard = AWPROJECT_DIAGNOSTIC_ENV_TEST_LOCK.lock().unwrap();
+        let _test_env = AwProjectDiagnosticTestEnv::isolated();
         let tmp = tempdir().unwrap();
         let cf_cache = tmp.path().join("grouped-metal-full12150-all63-cf-cache");
         make_awproject_planner_cache(&cf_cache, 1024);
@@ -63965,16 +65019,18 @@ mod tests {
             "the real-shape fixture must stay red-capable for premature legacy admission: {legacy_error}"
         );
 
+        let cpu_base = base.clone();
         let admitted = resolve_awproject_multifield_memory_plan(base, &config, 63, false, true)
             .expect("resolved grouped topology must precede semantic admission");
-        let weight_initial_compensation =
-            std::env::var_os("CASA_RS_EXPERIMENTAL_AWPROJECT_SOURCE_MAJOR_WEIGHT_COMPENSATION")
-                .is_some();
-        let expected_initial_compensation_bytes =
-            usize::from(weight_initial_compensation) * 3_542_940_000;
-        let expected_compile_admission_bytes = 20_947_768_027 - expected_initial_compensation_bytes;
-        let expected_compile_retention_ceiling_bytes =
-            20_410_897_115 - expected_initial_compensation_bytes;
+        let expected_initial_compensation_bytes = 3_542_940_000;
+        let expected_pointing_epoch_plan_bytes =
+            awproject_pointing_epoch_plan_upper_bytes(655_200).unwrap();
+        let expected_compile_admission_bytes = 20_947_768_027
+            - expected_pointing_epoch_plan_bytes
+            - expected_initial_compensation_bytes;
+        let expected_compile_retention_ceiling_bytes = 20_410_897_115
+            - expected_pointing_epoch_plan_bytes
+            - expected_initial_compensation_bytes;
         assert_eq!(admitted.usable_memory_bytes, MEMORY_TARGET_BYTES);
         assert_eq!(admitted.workload.direct_metal_scratch_candidate_bytes, 0);
         assert_eq!(admitted.workload.routed_replay_cache_candidate_bytes, 0);
@@ -63992,21 +65048,23 @@ mod tests {
             5_314_410_000
         );
         assert_eq!(
+            admitted.allocation_bytes("AWProject POINTING epoch plan"),
+            expected_pointing_epoch_plan_bytes
+        );
+        assert_eq!(
             admitted
                 .memory_lifetime_ledger
                 .stage_peak(ImagingMemoryStage::DirtyTransform)
                 .expect("pre-replay dirty-transform peak")
                 .resident_bytes,
-            20_873_498_800 + expected_initial_compensation_bytes
+            20_873_498_800
+                + expected_pointing_epoch_plan_bytes
+                + expected_initial_compensation_bytes
         );
         assert!(standard_mfs_plan_decision_is(
             &admitted,
             "awproject_source_major_initial_accumulation",
-            if weight_initial_compensation {
-                "weight-two-limb"
-            } else {
-                "high-limb-only"
-            }
+            "weight-two-limb"
         ));
         let compensated_readback = admitted
             .memory_lifetime_ledger
@@ -64048,7 +65106,15 @@ mod tests {
             .usable_memory_bytes
             .checked_sub(replay_stage_peak_bytes)
             .expect("admitted replay-lifetime headroom");
-        assert_eq!(replay_lifetime_headroom_bytes, 15_195_367_900);
+        // ResidualTransform remains the replay-stage maximum after the
+        // epoch plan's last logical use at ResidualGrid, so retention
+        // headroom is unchanged. The epoch allocation reduces only the
+        // earlier source compiler envelope.
+        let expected_replay_lifetime_headroom_bytes = 15_195_367_900;
+        assert_eq!(
+            replay_lifetime_headroom_bytes,
+            expected_replay_lifetime_headroom_bytes
+        );
         let compile_envelope = awproject_grouped_replay_compile_envelope(&admitted)
             .expect("full12150/all63 compile envelope");
         assert_eq!(
@@ -64061,11 +65127,11 @@ mod tests {
         );
         assert!(replay_lifetime_headroom_bytes < compile_envelope.replay_retention_ceiling_bytes);
 
-        let plan = admit_awproject_compact_replay_retention(admitted, 32)
+        let plan = admit_awproject_compact_replay_retention(admitted.clone(), 32)
             .expect("jointly bounded full12150/all63 replay retention");
         assert_eq!(
             plan.allocation_bytes("AWProject compact replay retention"),
-            15_195_367_900
+            expected_replay_lifetime_headroom_bytes
         );
         assert_eq!(plan.maximum_planned_resident_bytes, MEMORY_TARGET_BYTES);
         let execution = standard_mfs_execution_config_with_plan(&config, &plan);
@@ -64079,7 +65145,7 @@ mod tests {
         );
         assert_eq!(
             grouped_replay.segment_target_bytes(),
-            expected_compile_admission_bytes - 15_195_367_900
+            expected_compile_admission_bytes - expected_replay_lifetime_headroom_bytes
         );
         assert_eq!(
             grouped_replay.segment_target_bytes()
@@ -64093,7 +65159,7 @@ mod tests {
         );
         assert!(plan.decisions.iter().any(|decision| {
             decision.name == "awproject_compact_replay_retention_bytes"
-                && decision.value == "15195367900"
+                && decision.value == expected_replay_lifetime_headroom_bytes.to_string()
                 && decision.reason.contains(&format!(
                     "compile_admission_bytes={expected_compile_admission_bytes}"
                 ))
@@ -64158,6 +65224,183 @@ mod tests {
             rebuild_standard_mfs_memory_lifetime_ledger(&mut oversized_replay, true).is_err(),
             "one byte above the source-major lifetime ceiling must reject"
         );
+
+        config.standard_mfs_initial_dirty_backend = Some("metal-row-run-grouped".to_string());
+        config.standard_mfs_residual_backend = Some("cpu".to_string());
+        let cpu_admitted =
+            resolve_awproject_multifield_memory_plan(cpu_base, &config, 63, true, true)
+                .expect("full12150/all63 role-segmented initial with CPU residual");
+        assert!(
+            standard_mfs_plan_decision_is(
+                &cpu_admitted,
+                "awproject_multifield_initial_grid_admission",
+                "admitted",
+            ),
+            "CPU-residual role-segmented candidate decisions: {:?}",
+            cpu_admitted.decisions,
+        );
+        let cpu_residual =
+            admit_awproject_compact_replay_retention_for_execution(cpu_admitted, &config, 240)
+                .expect("full12150/all63 source-major initial with CPU residual");
+        assert_eq!(
+            cpu_residual.allocation_bytes("AWProject compact replay retention"),
+            0,
+        );
+        assert_eq!(cpu_residual.allocation_bytes("grids"), 4_723_920_000);
+        let cpu_grid_lifetime = cpu_residual
+            .memory_lifetime_ledger
+            .allocations
+            .iter()
+            .find(|allocation| allocation.component == "grids")
+            .expect("CPU residual grid lifecycle");
+        assert_eq!(cpu_grid_lifetime.logical_bytes, 4_723_920_000);
+        assert_eq!(cpu_grid_lifetime.residencies.len(), 2);
+        assert_eq!(
+            cpu_grid_lifetime.residencies[0].resident_bytes,
+            4_133_430_000
+        );
+        assert_eq!(
+            cpu_grid_lifetime.residencies[0].backing,
+            ImagingMemoryBacking::UnifiedMemory
+        );
+        assert_eq!(
+            cpu_grid_lifetime.residencies[1].resident_bytes,
+            4_723_920_000
+        );
+        assert_eq!(
+            cpu_grid_lifetime.residencies[1].backing,
+            ImagingMemoryBacking::HostHeap
+        );
+        assert_eq!(
+            cpu_grid_lifetime.residencies[1].live_from,
+            ImagingMemoryStage::MinorCycle,
+            "reusable CPU residual grids remain allocated between exact refreshes",
+        );
+        assert_eq!(
+            cpu_grid_lifetime.residencies[1].live_through,
+            ImagingMemoryStage::ResidualTransform,
+        );
+        assert!(cpu_residual.maximum_planned_resident_bytes < MEMORY_TARGET_BYTES);
+        assert_eq!(cpu_residual.caches.direct_metal_scratch_bytes, 0);
+        let cpu_execution = standard_mfs_execution_config_with_plan(&config, &cpu_residual);
+        assert_eq!(
+            cpu_execution.residual_backend,
+            Some(StandardMfsBackend::Cpu)
+        );
+        assert!(cpu_execution.awproject_grouped_replay.is_none());
+        eprintln!(
+            "awproject_full12150_cpu_residual_residency initial_metal_resident_bytes={} initial_role_finish_overlap_bytes={} maximum_planned_resident_bytes={} usable_memory_bytes={} static_margin_bytes={}",
+            standard_mfs_plan_decision_usize_value(
+                &cpu_residual,
+                "awproject_source_major_initial_metal_resident_bytes"
+            )
+            .expect("initial Metal residency decision"),
+            standard_mfs_plan_decision_usize_value(
+                &cpu_residual,
+                "awproject_source_major_initial_grid_bytes"
+            )
+            .expect("initial role finish overlap decision"),
+            cpu_residual.maximum_planned_resident_bytes,
+            cpu_residual.usable_memory_bytes,
+            cpu_residual
+                .usable_memory_bytes
+                .saturating_sub(cpu_residual.maximum_planned_resident_bytes),
+        );
+        let psf_bytes = awproject_mtmfs_psf_term_bytes(2, 12_150 * 12_150).unwrap();
+        assert_eq!(psf_bytes, 1_771_470_000);
+        assert_eq!(
+            cpu_residual.allocation_bytes("AWProject MT-MFS cold PSF terms"),
+            psf_bytes
+        );
+        assert_eq!(
+            cpu_residual.allocation_bytes("AWProject CASA-layout model FFT staging"),
+            1_180_980_000
+        );
+        let cold_psf = cpu_residual
+            .memory_lifetime_ledger
+            .allocations
+            .iter()
+            .find(|allocation| allocation.component == "AWProject MT-MFS cold PSF terms")
+            .expect("cold PSF lifecycle");
+        assert_eq!(cold_psf.residencies.len(), 2);
+        assert_eq!(cold_psf.residencies[0].resident_bytes, 0);
+        assert_eq!(cold_psf.residencies[0].stored_bytes, psf_bytes);
+        assert_eq!(
+            cold_psf.residencies[0].backing,
+            ImagingMemoryBacking::TemporarySpill
+        );
+        assert_eq!(
+            cold_psf.residencies[0].next_use,
+            ImagingMemoryNextUse::AtStage(ImagingMemoryStage::Finish)
+        );
+        assert_eq!(cold_psf.residencies[1].resident_bytes, psf_bytes);
+        let finish_state_bytes = cpu_residual.allocation_bytes("AWProject MT-MFS finish state");
+        assert_eq!(finish_state_bytes, 9_743_085_000);
+        let finish_peak = cpu_residual
+            .memory_lifetime_ledger
+            .stage_peak(ImagingMemoryStage::Finish)
+            .expect("finish peak");
+        assert_eq!(
+            finish_peak.resident_bytes,
+            cpu_residual
+                .allocation_bytes("AWProject MT-MFS run state")
+                .saturating_add(psf_bytes)
+                .saturating_add(finish_state_bytes)
+                .saturating_add(cpu_residual.allocation_bytes("AWProject safety margin")),
+            "finish must retain only run state, restored PSF terms, the consume-per-plane conversion peak, and the fixed safety margin",
+        );
+        assert_eq!(18_600_435_000usize - finish_state_bytes, 8_857_350_000);
+        let model_transform = cpu_residual
+            .memory_lifetime_ledger
+            .stage_peak(ImagingMemoryStage::ModelTransform)
+            .expect("model-transform peak");
+        assert_eq!(
+            model_transform.stored_bytes_for_backing(ImagingMemoryBacking::TemporarySpill),
+            psf_bytes
+        );
+        assert!(
+            model_transform.resident_bytes <= MEMORY_TARGET_BYTES - psf_bytes - 1_180_980_000,
+            "model transform must exclude the cold PSFs and all but one prepared model grid"
+        );
+        eprintln!(
+            "awproject_full12150_cpu_residual_model_transform_peak resident_bytes={} stored_bytes={} projected_observed_peak_bytes={}",
+            model_transform.resident_bytes,
+            model_transform.stored_bytes,
+            25_368_825_464usize - 3_542_940_000,
+        );
+        assert_eq!(
+            standard_mfs_plan_decision_usize_value(
+                &cpu_residual,
+                "awproject_model_fft_prepared_peak_bytes"
+            ),
+            Some(1_180_980_000)
+        );
+        assert_eq!(
+            standard_mfs_plan_decision_usize_value(
+                &cpu_residual,
+                "awproject_model_fft_flat_sky_intermediate_peak_bytes"
+            ),
+            Some(0)
+        );
+        assert_eq!(
+            standard_mfs_plan_decision_usize_value(
+                &cpu_residual,
+                "awproject_cpu_residual_model_grid_release_bytes"
+            ),
+            Some(2_361_960_000)
+        );
+        let residual_transform = cpu_residual
+            .memory_lifetime_ledger
+            .stage_peak(ImagingMemoryStage::ResidualTransform)
+            .expect("residual-transform peak");
+        assert!(
+            residual_transform.resident_bytes <= cpu_residual.usable_memory_bytes - 2_361_960_000,
+            "CPU prediction grids must not be charged beyond ResidualGrid",
+        );
+        assert_eq!(
+            awproject_grouped_metal_execution_probe_status(&cpu_residual, &cpu_execution),
+            AwProjectGroupedMetalProbeStatus::Admitted,
+        );
     }
 
     #[test]
@@ -64169,7 +65412,6 @@ mod tests {
         config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
         let mut base = standard_mfs_memory_plan(&config, 64, 1024);
         force_grouped_metal_test_device_budget(&mut base, 16 * 1024 * 1024 * 1024);
-        base.metal.eligible = true;
         let mut plan = admit_awproject_multifield_initial_grid(base, &config, 2, false, true)
             .expect("grouped initial-grid boundary fixture");
         let baseline_envelope = awproject_grouped_replay_compile_envelope(&plan)
@@ -64526,9 +65768,6 @@ mod tests {
 
     #[test]
     fn awproject_grouped_replay_plan_uses_admitted_memory_and_output_volume() {
-        if !casa_imaging::standard_mfs_metal_device_available() {
-            return;
-        }
         let tmp = tempdir().unwrap();
         let cf_cache = tmp.path().join("planner-cf-cache");
         make_awproject_planner_cache(&cf_cache, 8);
@@ -64536,7 +65775,9 @@ mod tests {
         config.imagename = tmp.path().join("products").join("vlass");
         fs::create_dir_all(config.imagename.parent().unwrap()).unwrap();
         config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
-        let base_plan = standard_mfs_memory_plan(&config, 64, 1024);
+        let base_plan = standard_mfs_memory_plan_with_metal_available(&config, 64, 64, 1024);
+        let base_plan = admit_awproject_multifield_initial_grid(base_plan, &config, 2, false, true)
+            .expect("deterministic grouped-Metal planner fixture");
         assert_eq!(base_plan.allocation_bytes("Metal grouped input cache"), 0);
         assert_eq!(base_plan.allocation_bytes("routed replay cache"), 0);
         assert!(base_plan.decisions.iter().any(|decision| {
@@ -64545,9 +65786,7 @@ mod tests {
         }));
         assert!(base_plan.decisions.iter().any(|decision| {
             decision.name == "awproject_safety_margin_bytes"
-                && decision
-                    .reason
-                    .contains("minimum allocator-uncertainty reserve of 67108864 bytes")
+                && decision.reason.contains("five percent")
         }));
         let plan = admit_awproject_compact_replay_retention(base_plan, 4)
             .expect("grouped replay retention");
@@ -64562,19 +65801,25 @@ mod tests {
             .stage_peak(ImagingMemoryStage::InitialGrid)
             .unwrap()
             .resident_bytes;
-        let replaced_bytes = plan
-            .allocation_bytes("source row blocks")
-            .saturating_add(plan.allocation_bytes("direct Metal host scratch"));
+        let replaced_bytes = plan.allocation_bytes("AWProject source-major compiler segment");
         let compile_admission_bytes = plan
             .usable_memory_bytes
             .saturating_sub(initial_peak_bytes.saturating_sub(replaced_bytes));
-        assert_eq!(grouped.compile_admission_bytes(), compile_admission_bytes);
+        let envelope = awproject_grouped_replay_compile_envelope(&plan).unwrap();
+        assert_eq!(envelope.compile_replaced_bytes, replaced_bytes);
+        assert_eq!(envelope.compile_admission_bytes, compile_admission_bytes);
+        assert_eq!(
+            grouped.compile_admission_bytes(),
+            envelope.compile_admission_bytes
+        );
         assert!(grouped.compile_admission_bytes() > replay_bytes);
         assert_eq!(
             grouped.segment_target_bytes(),
-            compile_admission_bytes
-                .saturating_sub(replay_bytes)
-                .clamp(512 * 1024 * 1024, 8 * 1024 * 1024 * 1024)
+            envelope
+                .compile_admission_bytes
+                .checked_sub(replay_bytes)
+                .expect("compile admission must exceed retained replay")
+                .min(8 * 1024 * 1024 * 1024)
         );
         assert_eq!(
             grouped.spill_directory(),
@@ -65704,25 +66949,17 @@ mod tests {
         config.niter = 2;
         config.dirty_only = false;
 
-        let plan = standard_mfs_memory_plan(&config, 64, 1024);
+        let plan = standard_mfs_memory_plan_with_metal_available(&config, 64, 64, 1024);
 
-        if casa_imaging::standard_mfs_metal_device_available() {
-            assert!(plan.caches.metal_grouped_input_enabled);
-            assert_eq!(
-                plan.caches.metal_grouped_input_bytes,
-                plan.workload.metal_grouped_input_cache_candidate_bytes
-            );
-        } else {
-            assert!(!plan.caches.metal_grouped_input_enabled);
-            assert_eq!(plan.caches.metal_grouped_input_bytes, 0);
-        }
+        assert!(plan.caches.metal_grouped_input_enabled);
+        assert_eq!(
+            plan.caches.metal_grouped_input_bytes,
+            plan.workload.metal_grouped_input_cache_candidate_bytes
+        );
         assert_eq!(plan.caches.routed_replay_bytes, 0);
         assert!(!plan.caches.routed_replay_enabled);
         let execution = standard_mfs_execution_config_with_plan(&config, &plan);
-        assert_eq!(
-            execution.resolved.caches.metal_grouped_input_enabled,
-            casa_imaging::standard_mfs_metal_device_available()
-        );
+        assert!(execution.resolved.caches.metal_grouped_input_enabled);
     }
 
     #[test]
@@ -65759,19 +66996,14 @@ mod tests {
         config.niter = 2;
         config.dirty_only = false;
 
-        let plan = standard_mfs_memory_plan_with_cache_channels(&config, 512, 1, 1024);
+        let plan = standard_mfs_memory_plan_with_metal_available(&config, 512, 1, 1024);
 
         assert_eq!(plan.workload.channels, 512);
+        assert!(plan.caches.metal_grouped_input_enabled);
         assert_eq!(
-            plan.caches.metal_grouped_input_enabled,
-            casa_imaging::standard_mfs_metal_device_available()
+            plan.caches.metal_grouped_input_bytes,
+            plan.workload.metal_grouped_input_cache_candidate_bytes
         );
-        if plan.caches.metal_grouped_input_enabled {
-            assert_eq!(
-                plan.caches.metal_grouped_input_bytes,
-                plan.workload.metal_grouped_input_cache_candidate_bytes
-            );
-        }
         assert!(plan.caches.routed_replay_enabled);
         assert_eq!(
             plan.caches.routed_replay_bytes,
@@ -65793,12 +67025,9 @@ mod tests {
         config.niter = 2;
         config.dirty_only = false;
 
-        let plan = standard_mfs_memory_plan(&config, 64, 1024);
+        let plan = standard_mfs_memory_plan_with_metal_available(&config, 64, 64, 1024);
 
-        assert_eq!(
-            plan.caches.metal_grouped_input_enabled,
-            casa_imaging::standard_mfs_metal_device_available()
-        );
+        assert!(plan.caches.metal_grouped_input_enabled);
         assert!(plan.caches.routed_replay_enabled);
         assert_eq!(
             plan.caches.routed_replay_bytes,
@@ -66744,6 +67973,99 @@ mod tests {
         assert!(
             (effective_pixel[1] - expected[1]).abs() < 1.0e-5,
             "effective pixel was {effective_pixel:?}, expected {expected:?}"
+        );
+    }
+
+    #[test]
+    fn casa_aw_same_vb_epochs_are_invariant_to_a_source_block_split_at_402() {
+        let cell_size_rad = 0.6_f64.to_radians() / 3600.0;
+        let config = CasaAwPointingGroupConfig {
+            geometry: ImageGeometry {
+                image_shape: [4_096, 4_096],
+                cell_size_rad: [cell_size_rad, cell_size_rad],
+            },
+            phase_center_direction_rad: [1.0, 0.5],
+            grouping_sigdev_arcsec: 600.0,
+            refresh_sigdev_arcsec: 600.0,
+        };
+        let coordinate = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            config.phase_center_direction_rad,
+            [-cell_size_rad, cell_size_rad],
+            [2_048.0, 2_048.0],
+        );
+        let direction_at = |pixel: [f64; 2]| {
+            let direction = coordinate.to_world(&pixel).unwrap();
+            [direction[0], direction[1]]
+        };
+        let epoch_pixels = [
+            [[2_040.0, 2_041.0], [2_042.0, 2_043.0]],
+            [[2_040.25, 2_041.0], [2_042.25, 2_043.0]],
+        ];
+        let epochs = (0..2)
+            .map(|epoch| CasaAwPointingEpochInput {
+                key: CasaAwPointingEpochKey {
+                    ddid: 2,
+                    field_id: 7,
+                    time_bits: (epoch as f64 + 1.0).to_bits(),
+                },
+                row_count: 325,
+                direction_by_antenna: BTreeMap::from([
+                    (0, direction_at(epoch_pixels[epoch][0])),
+                    (1, direction_at(epoch_pixels[epoch][1])),
+                ]),
+            })
+            .collect::<Vec<_>>();
+        let plan =
+            Arc::new(build_casa_aw_pointing_epoch_plan_from_inputs(config, &epochs).unwrap());
+        let observe = |metadata: &mut MfsMosaicMetadataAccumulator, epoch: usize, rows: usize| {
+            let first = direction_at(epoch_pixels[epoch][0]);
+            let second = direction_at(epoch_pixels[epoch][1]);
+            let mut last = None;
+            for _ in 0..rows {
+                last = metadata.intern_casa_aw_epoch_baseline_pointing(
+                    2,
+                    7,
+                    epoch as f64 + 1.0,
+                    0,
+                    first,
+                    1,
+                    second,
+                );
+            }
+            last.unwrap()
+        };
+
+        let mut complete = MfsMosaicMetadataAccumulator::with_casa_aw_pointing_groups(650, config);
+        complete.set_casa_aw_pointing_epoch_plan(Arc::clone(&plan));
+        observe(&mut complete, 0, 325);
+        let complete_late_id = observe(&mut complete, 1, 325);
+        let complete_pointing = complete.effective_pointing_by_id().unwrap()[&complete_late_id];
+
+        let mut first_block =
+            MfsMosaicMetadataAccumulator::with_casa_aw_pointing_groups(402, config);
+        first_block.set_casa_aw_pointing_epoch_plan(Arc::clone(&plan));
+        observe(&mut first_block, 0, 325);
+        observe(&mut first_block, 1, 77);
+        let mut second_block =
+            MfsMosaicMetadataAccumulator::with_casa_aw_pointing_groups(248, config);
+        second_block.set_casa_aw_pointing_epoch_plan(Arc::clone(&plan));
+        let split_late_id = observe(&mut second_block, 1, 248);
+        let split_pointing = second_block.effective_pointing_by_id().unwrap()[&split_late_id];
+
+        let phase_identity = |pointing: EffectivePointing| {
+            let pixel = pointing.pixel_position.unwrap();
+            let gradient = [
+                -(pixel[0] - 2_048.0) * std::f64::consts::TAU / (4_096.0 * 10.0),
+                -(pixel[1] - 2_048.0) * std::f64::consts::TAU / (4_096.0 * 10.0),
+            ];
+            gradient.map(f64::to_bits)
+        };
+        assert_eq!(split_pointing, complete_pointing);
+        assert_eq!(
+            phase_identity(split_pointing),
+            phase_identity(complete_pointing)
         );
     }
 
@@ -76519,6 +77841,23 @@ deconvolver=mtmfs
 
     #[test]
     fn awproject_mtmfs_bounded_stream_writes_complete_persisted_product_topology() {
+        awproject_mtmfs_bounded_stream_writes_complete_persisted_product_topology_impl(false);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    #[ignore = "requires the unsandboxed macOS Metal acceptance gate"]
+    fn awproject_mtmfs_bounded_stream_metal_matches_cpu_products() {
+        assert!(
+            casa_imaging::standard_mfs_metal_device_available(),
+            "AWProject Metal product parity requires an unsandboxed process that can create the default Metal device"
+        );
+        awproject_mtmfs_bounded_stream_writes_complete_persisted_product_topology_impl(true);
+    }
+
+    fn awproject_mtmfs_bounded_stream_writes_complete_persisted_product_topology_impl(
+        run_metal: bool,
+    ) {
         let tmp = tempdir().unwrap();
         let ms_path = tmp.path().join("tiny_awproject_mtmfs.ms");
         let cf_cache = tmp.path().join("synthetic-cf-cache");
@@ -76714,7 +78053,11 @@ deconvolver=mtmfs
         }
 
         #[cfg(target_os = "macos")]
-        if casa_imaging::standard_mfs_metal_device_available() {
+        if run_metal {
+            assert!(
+                casa_imaging::standard_mfs_metal_device_available(),
+                "the dedicated Metal product-parity path cannot silently skip device creation"
+            );
             let metal_prefix = tmp.path().join("tiny_awproject_mtmfs_metal_image");
             let mut metal = config.clone();
             metal.imagename = metal_prefix.clone();
@@ -76726,21 +78069,26 @@ deconvolver=mtmfs
             assert_eq!(metal_summary.gridded_samples, summary.gridded_samples);
             assert_eq!(metal_summary.minor_iterations, summary.minor_iterations);
             for suffix in &expected_suffixes {
-                // Alpha products are ratios of already-compared Taylor terms,
-                // so preserve the absolute bound and also bound ratio amplification.
+                // This integration gate verifies the accepted Metal science
+                // envelope rather than bitwise CPU accumulation order.
                 let relative_tolerance = if matches!(*suffix, "alpha" | "alpha.error") {
-                    1.0e-5
+                    1.0e-3
                 } else {
                     0.0
                 };
                 assert_f32_images_close_scaled(
                     format!("{}.{}", image_prefix.display(), suffix),
                     format!("{}.{}", metal_prefix.display(), suffix),
-                    1.0e-5,
+                    1.0e-3,
                     relative_tolerance,
                 );
             }
+            println!(
+                "macos_metal_acceptance_receipt test=awproject_mtmfs_bounded_stream_metal_matches_cpu_products device_created=true pipeline_created=true dispatch_completed=true output_verified=true"
+            );
         }
+        #[cfg(not(target_os = "macos"))]
+        assert!(!run_metal, "Metal product parity requires macOS");
     }
 
     #[test]

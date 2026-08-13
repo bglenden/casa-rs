@@ -1609,6 +1609,7 @@ impl StandardGridder {
         apodized
     }
 
+    #[cfg(test)]
     pub(crate) fn prepare_awproject_model(&self, model: &Array2<f32>) -> Array2<Complex32> {
         // CASA 6.7.5.18 AWProjectFT::initializeToVis computes the legacy
         // sampling-sinc correction and then explicitly assigns
@@ -1775,15 +1776,15 @@ impl StandardGridder {
         raw: &Array2<Complex64>,
         conv_sampling: usize,
     ) -> Array2<f32> {
-        // refim::AWProjectWBFT retains separate parallel-hand WTCF planes, then
-        // overwrites `tmp` while iterating them and converts the final plane to
-        // Float with `real(tmp)`. This grid is instead the shared paired-hand
-        // representation accumulated by casa-rs. Its corresponding
-        // non-negative sensitivity is the complex magnitude; applying
-        // `real()` to the shared representation produces a structured MT-MFS
-        // weight.tt1 error. Narrow to Float before the reciprocal sinc
-        // correction because low weights are later square rooted for
-        // flat-noise normalization.
+        // The active CASA 6 refim AWProjectWBFT2 path FFT-scales each WTCF
+        // plane, averages the polarization planes, and copies `abs(p0)` to the
+        // sensitivity image. Stokes I has one grid polarization plane: its
+        // RR/LL contributions are already paired by the polarization map, as
+        // they are in this grid. The older, inactive TransformMachines path
+        // that retained the final polarization plane and used `real(tmp)` is
+        // not the tclean implementation being matched here. Narrow to Float
+        // before the reciprocal sinc correction because low weights are later
+        // square rooted for flat-noise normalization.
         let sinc = build_sinc_axis(self.grid_shape[0].max(self.grid_shape[1]), conv_sampling);
         let fft_scale_x = self.grid_shape[0] as f32;
         let fft_scale_y = self.grid_shape[1] as f32;
@@ -1819,8 +1820,8 @@ impl StandardGridder {
         raw: &Array2<Complex32>,
         conv_sampling: usize,
     ) -> Array2<f32> {
-        // See the f64 path above: this is the shared paired-hand WTCF
-        // representation, not CASA's final individual polarization plane.
+        // See the f64 path above: this is the active CASA refim
+        // AWProjectWBFT2 single-Stokes-plane magnitude operation.
         let sinc = build_sinc_axis(self.grid_shape[0].max(self.grid_shape[1]), conv_sampling);
         let fft_scale_x = self.grid_shape[0] as f32;
         let fft_scale_y = self.grid_shape[1] as f32;
@@ -4994,7 +4995,7 @@ mod tests {
     }
 
     #[test]
-    fn aw_weight_image_uses_shared_parallel_hand_magnitude_and_sampling_sinc_correction() {
+    fn aw_weight_image_matches_casa_tm2_stokes_i_magnitude_not_legacy_real_plane() {
         let geometry = ImageGeometry {
             image_shape: [8, 8],
             cell_size_rad: [
@@ -5010,10 +5011,14 @@ mod tests {
         let weight_f64 = gridder.aw_weight_image_from_grid_f64(&raw_f64, conv_sampling);
         let weight_f32 = gridder.aw_weight_image_from_grid(&raw_f32, conv_sampling);
         let sinc = super::build_sinc_axis(8, conv_sampling);
+        let casa_tm2_sensitivity = Complex64::new(3.0, 4.0).norm() as f32;
+        let legacy_tm_final_plane_real = 3.0f32;
 
-        assert_eq!(weight_f64[(4, 4)], 5.0 * 8.0 * 8.0);
-        assert_eq!(weight_f32[(4, 4)], 5.0 * 8.0 * 8.0);
-        let expected_corner = 5.0 * 8.0 * 8.0 * (1.0 / (sinc[0] * sinc[0]));
+        assert_eq!(weight_f64[(4, 4)], casa_tm2_sensitivity * 8.0 * 8.0);
+        assert_eq!(weight_f32[(4, 4)], casa_tm2_sensitivity * 8.0 * 8.0);
+        assert_ne!(weight_f64[(4, 4)], legacy_tm_final_plane_real * 8.0 * 8.0);
+        assert_ne!(weight_f32[(4, 4)], legacy_tm_final_plane_real * 8.0 * 8.0);
+        let expected_corner = casa_tm2_sensitivity * 8.0 * 8.0 * (1.0 / (sinc[0] * sinc[0]));
         assert_eq!(weight_f64[(0, 0)], expected_corner);
         assert_eq!(weight_f32[(0, 0)], expected_corner);
         assert!(weight_f64[(0, 0)] > weight_f64[(4, 4)]);

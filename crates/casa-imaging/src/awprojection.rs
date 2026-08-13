@@ -2887,8 +2887,8 @@ mod tests {
         assert_eq!(clean_diagnostics.samples.attempted_samples, 6);
         assert_eq!(clean_diagnostics.samples.accepted_samples, 6);
         assert_eq!(
-            clean_diagnostics.resident.loads, 16,
-            "initial dirty and the first residual pass pack the fixture's cells; the second residual pass reuses the retained exact source-order window"
+            clean_diagnostics.resident.loads, 24,
+            "the CPU residual route reloads the fixture's eight bounded CF cells for initial dirty and both exact residual refreshes"
         );
         assert_eq!(clean_diagnostics.resident.hits, 0);
         assert!(
@@ -2938,9 +2938,11 @@ mod tests {
         let partial_diagnostics = partial_result
             .awproject
             .expect("partial AWProject diagnostics");
-        assert!(
-            partial_diagnostics.resident.loads < uncached_partial_diagnostics.resident.loads,
-            "a bounded retained prefix must avoid at least one full-cell load"
+        assert_eq!(partial_diagnostics.resident.loads, 36);
+        assert_eq!(partial_diagnostics.resident.hits, 0);
+        assert_eq!(
+            partial_diagnostics.resident.loads, uncached_partial_diagnostics.resident.loads,
+            "the production CPU residual route must bypass Metal replay retention"
         );
     }
 
