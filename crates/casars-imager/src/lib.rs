@@ -39912,13 +39912,15 @@ fn admit_awproject_multifield_initial_grid(
                     .to_string(),
             ));
         }
-        let cold_psf = ImagingMemoryAllocation {
-            component: "AWProject MT-MFS cold PSF terms",
-            stage: "clean",
-            bytes: cold_psf_bytes,
-        };
-        candidate.memory_allocations.push(cold_psf.clone());
-        candidate.workload.fixed_allocations.push(cold_psf);
+        if cold_psf_bytes > 0 {
+            let cold_psf = ImagingMemoryAllocation {
+                component: "AWProject MT-MFS cold PSF terms",
+                stage: "clean",
+                bytes: cold_psf_bytes,
+            };
+            candidate.memory_allocations.push(cold_psf.clone());
+            candidate.workload.fixed_allocations.push(cold_psf);
+        }
     }
     let source_major_grid_planes = if role_segmented_initial {
         3
@@ -64773,7 +64775,7 @@ mod tests {
     }
 
     #[test]
-    fn awproject_multifield_initial_grid_fails_closed_when_the_ledger_cannot_admit_it() {
+    fn awproject_multifield_initial_grid_uses_exact_lifetime_headroom() {
         let tmp = tempdir().unwrap();
         let cf_cache = tmp.path().join("rejected-multifield-initial-grid-cf-cache");
         make_awproject_planner_cache(&cf_cache, 8);
@@ -64782,33 +64784,28 @@ mod tests {
         let mut base = standard_mfs_memory_plan(&config, 64, 1024);
         force_grouped_metal_test_device_budget(&mut base, 16 * 1024 * 1024 * 1024);
         base.usable_memory_bytes = base.maximum_planned_resident_bytes;
-        let original_tap_bytes = base.allocation_bytes("AWProject source-order tap scratch");
-
-        let rejected =
+        let admitted =
             resolve_awproject_multifield_memory_plan(base, &config, 2, false, true).unwrap();
         assert_eq!(
-            rejected.allocation_bytes("AWProject source-order tap scratch"),
-            original_tap_bytes
+            admitted.allocation_bytes("AWProject source-order tap scratch"),
+            0
         );
-        assert!(rejected.maximum_planned_resident_bytes <= rejected.usable_memory_bytes);
-        assert!(rejected.decisions.iter().any(|decision| {
+        assert!(standard_mfs_uses_source_major_awproject(&admitted));
+        assert_eq!(admitted.workload.direct_metal_scratch_candidate_bytes, 0);
+        assert_eq!(admitted.caches.direct_metal_scratch_bytes, 0);
+        assert!(admitted.maximum_planned_resident_bytes <= admitted.usable_memory_bytes);
+        assert!(admitted.decisions.iter().any(|decision| {
             decision.name == "awproject_multifield_initial_grid_admission"
-                && decision.value == "rejected"
-                && decision.reason.contains("lifetime admission rejected")
+                && decision.value == "admitted"
         }));
-        assert!(!rejected.decisions.iter().any(|decision| {
+        assert!(!admitted.decisions.iter().any(|decision| {
             decision.name == "awproject_initial_grid_backend"
                 && decision.value == "cpu-dynamic-sparse-f64"
         }));
         assert_eq!(
-            standard_mfs_execution_config_with_plan(&config, &rejected).initial_dirty_backend,
+            standard_mfs_execution_config_with_plan(&config, &admitted).initial_dirty_backend,
             Some(StandardMfsBackend::MetalRowRunGrouped)
         );
-        assert!(matches!(
-            awproject_grouped_metal_plan_probe_status(&rejected, &config, 2, false),
-            AwProjectGroupedMetalProbeStatus::Rejected(reason)
-                if reason.contains("lifetime admission rejected")
-        ));
     }
 
     #[test]
