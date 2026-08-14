@@ -19364,6 +19364,45 @@ fn direct_cube_plane_has_usable_sample(
     Ok(false)
 }
 
+fn direct_cube_plane_accepted_sample(
+    block: &ColumnarPreparedSource,
+    row_slot: usize,
+    output_channel: usize,
+    spectral_plan: &CubeRowSpectralReusablePlan,
+    polarization: DirectCubePlanePolarization,
+    collect_detail: bool,
+    timings: &mut DirectDirtyCubePlaneReplayTimings,
+) -> Result<Option<ScalarVisibilitySample>, String> {
+    timings.rows_seen = timings.rows_seen.saturating_add(1);
+    let sample = direct_cube_plane_weighted_sample_from_shared_source(
+        block,
+        row_slot,
+        output_channel,
+        spectral_plan,
+        polarization,
+        collect_detail.then_some(&mut *timings),
+    )?;
+    Ok(match sample {
+        DirectCubePlaneSampleBuild::Accepted(sample) => Some(sample),
+        DirectCubePlaneSampleBuild::RowFlagged => {
+            timings.rows_flagged = timings.rows_flagged.saturating_add(1);
+            None
+        }
+        DirectCubePlaneSampleBuild::AssignmentMissing => {
+            timings.assignments_missing = timings.assignments_missing.saturating_add(1);
+            None
+        }
+        DirectCubePlaneSampleBuild::AssignmentEmpty => {
+            timings.assignments_empty = timings.assignments_empty.saturating_add(1);
+            None
+        }
+        DirectCubePlaneSampleBuild::Rejected => {
+            timings.samples_rejected = timings.samples_rejected.saturating_add(1);
+            None
+        }
+    })
+}
+
 fn direct_dirty_cube_shared_source_eligible(
     config: &CliConfig,
     clean: CleanConfig,
@@ -19402,32 +19441,17 @@ fn direct_dirty_cube_plane_push_planned_samples(
         planned.clear();
         let run_start = planned.begin_run();
         for row_slot in 0..block.visibility.row_count() {
-            block_timings.rows_seen += 1;
-            let sample = match direct_cube_plane_weighted_sample_from_shared_source(
+            let Some(sample) = direct_cube_plane_accepted_sample(
                 block,
                 row_slot,
                 output_channel,
                 spectral_plan,
                 polarization,
-                collect_detail.then_some(&mut block_timings),
-            )? {
-                DirectCubePlaneSampleBuild::Accepted(sample) => sample,
-                DirectCubePlaneSampleBuild::RowFlagged => {
-                    block_timings.rows_flagged += 1;
-                    continue;
-                }
-                DirectCubePlaneSampleBuild::AssignmentMissing => {
-                    block_timings.assignments_missing += 1;
-                    continue;
-                }
-                DirectCubePlaneSampleBuild::AssignmentEmpty => {
-                    block_timings.assignments_empty += 1;
-                    continue;
-                }
-                DirectCubePlaneSampleBuild::Rejected => {
-                    block_timings.samples_rejected += 1;
-                    continue;
-                }
+                collect_detail,
+                &mut block_timings,
+            )?
+            else {
+                continue;
             };
             if collect_detail {
                 let plan_started = Instant::now();
@@ -19493,32 +19517,17 @@ fn direct_dirty_cube_plane_push_weighted_batches(
             ..Default::default()
         };
         for row_slot in 0..row_count {
-            block_timings.rows_seen += 1;
-            let sample = match direct_cube_plane_weighted_sample_from_shared_source(
+            let Some(sample) = direct_cube_plane_accepted_sample(
                 block,
                 row_slot,
                 output_channel,
                 spectral_plan,
                 polarization,
-                collect_detail.then_some(&mut block_timings),
-            )? {
-                DirectCubePlaneSampleBuild::Accepted(sample) => sample,
-                DirectCubePlaneSampleBuild::RowFlagged => {
-                    block_timings.rows_flagged += 1;
-                    continue;
-                }
-                DirectCubePlaneSampleBuild::AssignmentMissing => {
-                    block_timings.assignments_missing += 1;
-                    continue;
-                }
-                DirectCubePlaneSampleBuild::AssignmentEmpty => {
-                    block_timings.assignments_empty += 1;
-                    continue;
-                }
-                DirectCubePlaneSampleBuild::Rejected => {
-                    block_timings.samples_rejected += 1;
-                    continue;
-                }
+                collect_detail,
+                &mut block_timings,
+            )?
+            else {
+                continue;
             };
             batch.u_lambda.push(sample.u_lambda);
             batch.v_lambda.push(sample.v_lambda);
@@ -19599,32 +19608,17 @@ fn direct_cube_plane_replay_planned_run_blocks(
         run_block.clear();
         let run_start = run_block.begin_run();
         for row_slot in 0..block.visibility.row_count() {
-            block_timings.rows_seen += 1;
-            let mut sample = match direct_cube_plane_weighted_sample_from_shared_source(
+            let Some(mut sample) = direct_cube_plane_accepted_sample(
                 block,
                 row_slot,
                 output_channel,
                 spectral_plan,
                 polarization,
-                collect_detail.then_some(&mut block_timings),
-            )? {
-                DirectCubePlaneSampleBuild::Accepted(sample) => sample,
-                DirectCubePlaneSampleBuild::RowFlagged => {
-                    block_timings.rows_flagged += 1;
-                    continue;
-                }
-                DirectCubePlaneSampleBuild::AssignmentMissing => {
-                    block_timings.assignments_missing += 1;
-                    continue;
-                }
-                DirectCubePlaneSampleBuild::AssignmentEmpty => {
-                    block_timings.assignments_empty += 1;
-                    continue;
-                }
-                DirectCubePlaneSampleBuild::Rejected => {
-                    block_timings.samples_rejected += 1;
-                    continue;
-                }
+                collect_detail,
+                &mut block_timings,
+            )?
+            else {
+                continue;
             };
             sample.weight = weighting_plan
                 .weight_sample(sample.u_lambda, sample.v_lambda, sample.weight)
@@ -19989,10 +19983,20 @@ fn skip_direct_clean_cube_plane_from_resident_state(
     ))
 }
 
+enum SharedDirtyCubePlaneOutput {
+    StandardGrid(StandardMfsDirtyGridResult),
+    WProject(DirtyCubeImagingResult),
+    Blank(DirtyCubeImagingResult),
+}
+
+impl SharedDirtyCubePlaneOutput {
+    fn is_blank(&self) -> bool {
+        matches!(self, Self::Blank(_))
+    }
+}
+
 struct SharedDirtyCubePlaneGridRunResult {
-    grid_result: Option<StandardMfsDirtyGridResult>,
-    complete_result: Option<DirtyCubeImagingResult>,
-    blank_plane: bool,
+    output: SharedDirtyCubePlaneOutput,
     direct_replay_timings: DirectDirtyCubePlaneReplayTimings,
     run_imaging_elapsed: Duration,
     visibility_batches: usize,
@@ -20011,7 +20015,12 @@ struct SharedDirtyCubePlaneProductMetadata {
     visibility_samples: usize,
     direct_replay_timings: DirectDirtyCubePlaneReplayTimings,
     channel_frequency_hz: f64,
-    complete_result: Option<DirtyCubeImagingResult>,
+    source: SharedDirtyCubePlaneProductSource,
+}
+
+enum SharedDirtyCubePlaneProductSource {
+    StandardGrid,
+    Complete(DirtyCubeImagingResult),
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -20054,6 +20063,16 @@ fn flush_ready_dirty_grid_products(
                 format!("direct dirty cube product flush missing plane {plane_index}")
             })?;
             *next_grid_product_plane = next_grid_product_plane.saturating_add(1);
+            let source = match plane_result.result.output {
+                SharedDirtyCubePlaneOutput::StandardGrid(grid_result) => {
+                    grid_results.push(grid_result);
+                    SharedDirtyCubePlaneProductSource::StandardGrid
+                }
+                SharedDirtyCubePlaneOutput::WProject(result)
+                | SharedDirtyCubePlaneOutput::Blank(result) => {
+                    SharedDirtyCubePlaneProductSource::Complete(result)
+                }
+            };
             product_metadata.push(SharedDirtyCubePlaneProductMetadata {
                 plane_index: plane_result.plane_index,
                 batch_index: plane_result.batch_index,
@@ -20065,11 +20084,8 @@ fn flush_ready_dirty_grid_products(
                 visibility_samples: plane_result.result.visibility_samples,
                 direct_replay_timings: plane_result.result.direct_replay_timings,
                 channel_frequency_hz: plane_result.result.channel_frequency_hz,
-                complete_result: plane_result.result.complete_result,
+                source,
             });
-            if let Some(grid_result) = plane_result.result.grid_result {
-                grid_results.push(grid_result);
-            }
         }
 
         let dirty_product_finalize_started = Instant::now();
@@ -20078,7 +20094,12 @@ fn flush_ready_dirty_grid_products(
         *dirty_product_finalize_elapsed += dirty_product_finalize_started.elapsed();
         let expected_grid_products = product_metadata
             .iter()
-            .filter(|metadata| metadata.complete_result.is_none())
+            .filter(|metadata| {
+                matches!(
+                    metadata.source,
+                    SharedDirtyCubePlaneProductSource::StandardGrid
+                )
+            })
             .count();
         if dirty_plane_results.len() != expected_grid_products {
             return Err(format!(
@@ -20090,19 +20111,20 @@ fn flush_ready_dirty_grid_products(
 
         let mut dirty_plane_results = dirty_plane_results.into_iter();
         for plane_meta in product_metadata {
-            let mut cube_result = if let Some(complete_result) = plane_meta.complete_result {
-                complete_result
-            } else {
-                let plane_result = dirty_plane_results.next().ok_or_else(|| {
-                    format!(
-                        "direct dirty cube product flush missing supported plane {}",
-                        plane_meta.plane_index
+            let mut cube_result = match plane_meta.source {
+                SharedDirtyCubePlaneProductSource::Complete(result) => result,
+                SharedDirtyCubePlaneProductSource::StandardGrid => {
+                    let plane_result = dirty_plane_results.next().ok_or_else(|| {
+                        format!(
+                            "direct dirty cube product flush missing supported plane {}",
+                            plane_meta.plane_index
+                        )
+                    })?;
+                    single_plane_dirty_imaging_result_to_cube_result(
+                        plane_meta.channel_frequency_hz,
+                        plane_result,
                     )
-                })?;
-                single_plane_dirty_imaging_result_to_cube_result(
-                    plane_meta.channel_frequency_hz,
-                    plane_result,
-                )
+                }
             };
             cube_result.direct_replay_timings = plane_meta.direct_replay_timings;
             let stage_timings_for_plane = cube_result.diagnostics.stage_timings;
@@ -20962,14 +20984,12 @@ fn run_independent_shared_cube_slab_planes(
             )? {
                 return Ok((
                     SharedDirtyCubePlaneGridRunResult {
-                        grid_result: None,
-                        complete_result: Some(blank_dirty_cube_plane_result(
+                        output: SharedDirtyCubePlaneOutput::Blank(blank_dirty_cube_plane_result(
                             geometry,
                             clean,
                             plane_stokes,
                             payload.channel_frequency_hz,
                         )),
-                        blank_plane: true,
                         direct_replay_timings: DirectDirtyCubePlaneReplayTimings::default(),
                         run_imaging_elapsed: worker_started.elapsed(),
                         visibility_batches: 0,
@@ -20980,8 +21000,7 @@ fn run_independent_shared_cube_slab_planes(
                 ));
             }
             let (
-                grid_result,
-                complete_result,
+                output,
                 replay_timings,
                 stage_timings,
                 gridded_samples,
@@ -21015,8 +21034,7 @@ fn run_independent_shared_cube_slab_planes(
                     let normalization_sumwt = grid_result.normalization_sumwt();
                     let reported_sumwt = grid_result.reported_sumwt();
                     (
-                        Some(grid_result),
-                        None,
+                        SharedDirtyCubePlaneOutput::StandardGrid(grid_result),
                         replay_timings,
                         stage_timings,
                         gridded_samples,
@@ -21053,11 +21071,12 @@ fn run_independent_shared_cube_slab_planes(
                     let normalization_sumwt = f64::from(diagnostics.normalization_sumwt);
                     let reported_sumwt = f64::from(diagnostics.reported_sumwt);
                     (
-                        None,
-                        Some(single_plane_imaging_result_to_dirty_cube_result(
-                            payload.channel_frequency_hz,
-                            plane_result,
-                        )),
+                        SharedDirtyCubePlaneOutput::WProject(
+                            single_plane_imaging_result_to_dirty_cube_result(
+                                payload.channel_frequency_hz,
+                                plane_result,
+                            ),
+                        ),
                         replay_timings,
                         stage_timings,
                         gridded_samples,
@@ -21112,9 +21131,7 @@ fn run_independent_shared_cube_slab_planes(
             }
             Ok((
                 SharedDirtyCubePlaneGridRunResult {
-                    grid_result,
-                    complete_result,
-                    blank_plane: false,
+                    output,
                     direct_replay_timings: replay_timings,
                     run_imaging_elapsed: worker_started.elapsed(),
                     visibility_batches: shared_source.blocks.len(),
@@ -21150,7 +21167,7 @@ fn run_independent_shared_cube_slab_planes(
             worker_count,
             run_plane,
             |plane_result| {
-                if plane_result.result.blank_plane {
+                if plane_result.result.output.is_blank() {
                     blank_plane_count = blank_plane_count.saturating_add(1);
                 } else {
                     active_plane_count = active_plane_count.saturating_add(1);
@@ -21274,9 +21291,83 @@ fn run_independent_shared_cube_slab_planes(
                 .fold(0.0f64, |maximum, diagnostics| {
                     maximum.max(diagnostics.max_abs_w_lambda)
                 });
+            let max_frequency_hz = slab_channel_frequencies_hz
+                .iter()
+                .copied()
+                .fold(0.0f64, f64::max);
+            let mut field_routes = Vec::new();
+            let mut sorted_field_ids = field_ids.iter().copied().collect::<Vec<_>>();
+            sorted_field_ids.sort_unstable();
+            for field_id in sorted_field_ids {
+                let rows = shared_source
+                    .blocks
+                    .iter()
+                    .flat_map(|block| block.geometry_rows.iter())
+                    .filter(|row| row.selected_row.field_id == field_id)
+                    .collect::<Vec<_>>();
+                let phase_centers = rows
+                    .iter()
+                    .map(|row| {
+                        (
+                            row.field_phase_center_direction_rad[0].to_bits(),
+                            row.field_phase_center_direction_rad[1].to_bits(),
+                        )
+                    })
+                    .collect::<BTreeSet<_>>();
+                let target_phase_fields = rows
+                    .iter()
+                    .map(|row| row.phase_center_field_id)
+                    .collect::<BTreeSet<_>>();
+                let shifted_rows = rows
+                    .iter()
+                    .filter(|row| row.transform.phase_shift_m != 0.0)
+                    .count();
+                let field_max_abs_w_lambda = rows.iter().fold(0.0f64, |maximum, row| {
+                    maximum.max(
+                        row.transform.uvw_m[2].abs() * max_frequency_hz / SPEED_OF_LIGHT_M_PER_S,
+                    )
+                });
+                let mut source_channels = BTreeSet::new();
+                let mut contribution_count = 0usize;
+                for ((_, spectral_field_id), contributions) in &spectral_plan.spectral {
+                    if *spectral_field_id != field_id {
+                        continue;
+                    }
+                    let contribution_groups = if spectral_plan.use_visibility_grid_assignments {
+                        contributions
+                            .grid_channel_contributions
+                            .iter()
+                            .map(|grid| grid.contributions.as_slice())
+                            .collect::<Vec<_>>()
+                    } else {
+                        contributions
+                            .output_channel_contributions
+                            .iter()
+                            .map(Vec::as_slice)
+                            .collect::<Vec<_>>()
+                    };
+                    for group in contribution_groups {
+                        contribution_count = contribution_count.saturating_add(group.len());
+                        for contribution in group {
+                            if let Some(source_channel) = spectral_plan
+                                .source_channel_indices
+                                .get(contribution.source_channel)
+                            {
+                                source_channels.insert(*source_channel);
+                            }
+                        }
+                    }
+                }
+                field_routes.push(format!(
+                    "field={field_id}:rows={}:shifted_rows={shifted_rows}:source_phase_bits={phase_centers:?}:target_phase_fields={target_phase_fields:?}:source_channels={source_channels:?}:spectral_contributions={contribution_count}:w_plan=requested_{:?},max_abs_w_lambda_{field_max_abs_w_lambda:.9e}",
+                    rows.len(),
+                    slab_config.w_project_planes,
+                ));
+            }
             eprintln!(
-                "cube_wproject_bounded_receipt fields={} phase_shifted_rows={} source_channels={} spectral_entries={} active_planes={} blank_planes={} requested_w_planes={:?} max_abs_w_lambda={:.9e} bounded_replay_passes={} row_blocks_per_pass={} selected_backend=wproject-cpu-streaming planned_grid_backend={:?} product_groups={} product_planes={} product_bytes={}",
+                "cube_wproject_bounded_receipt fields={} field_routes={:?} phase_shifted_rows={} source_channels={} spectral_entries={} active_planes={} blank_planes={} requested_w_planes={:?} max_abs_w_lambda={:.9e} bounded_replay_passes={} row_blocks_per_pass={} selected_backend=wproject-cpu-streaming planned_grid_backend={:?} product_groups={} product_planes={} product_bytes={}",
                 field_ids.len(),
+                field_routes,
                 phase_shifted_rows,
                 spectral_plan.source_channel_indices.len(),
                 spectral_plan.spectral_entries(),
@@ -23608,6 +23699,20 @@ fn run_mtmfs_from_bounded_stream_open_ms(
     accumulate_timings.log(prepare_started_at.elapsed());
     let estimated_cache_bytes =
         estimated_mtmfs_visibility_cache_bytes(&visibility_batches, &sample_frequency_batches_hz);
+    let source_weight_provenance = if ms
+        .main_table()
+        .schema()
+        .is_some_and(|schema| schema.contains_column("WEIGHT_SPECTRUM"))
+    {
+        "weight_spectrum"
+    } else {
+        "weight"
+    };
+    let source_batch_count = visibility_batches.len();
+    let source_sample_count = visibility_batches
+        .iter()
+        .map(VisibilityBatch::len)
+        .sum::<usize>();
     if frontend_progress_enabled() || standard_mfs_profile_detail_enabled() {
         let sample_count = visibility_batches
             .iter()
@@ -23668,6 +23773,39 @@ fn run_mtmfs_from_bounded_stream_open_ms(
         &execution_config,
     )
     .map_err(|error| error.to_string())?;
+    let reported_sumwt_terms = result
+        .sumwt_terms
+        .iter()
+        .map(|term| term.first().copied().unwrap_or(0.0))
+        .collect::<Vec<_>>();
+    let bounded_replay_passes =
+        2usize.saturating_add(result.diagnostics.major_cycles.saturating_sub(1));
+    eprintln!(
+        "mtmfs_bounded_receipt source_weight_provenance={} source_stream_passes=1 source_batches={} source_samples={} taylor_terms={} taylor_density_state={} normalization_state={} normalization_sumwt={:.9e} reported_sumwt_terms={:?} bounded_replay_passes={} selected_backend={:?} retained_ms_materialization=false",
+        source_weight_provenance,
+        source_batch_count,
+        source_sample_count,
+        config.nterms,
+        match config.weighting {
+            WeightingMode::Natural => "natural_no_density_grid",
+            WeightingMode::Uniform => "uniform_density_applied",
+            WeightingMode::Briggs { .. } | WeightingMode::BriggsBwTaper { .. } => {
+                "briggs_density_applied"
+            }
+        },
+        if result.diagnostics.normalization_sumwt.is_finite()
+            && result.diagnostics.normalization_sumwt > 0.0
+            && reported_sumwt_terms.iter().all(|sumwt| sumwt.is_finite())
+        {
+            "finite"
+        } else {
+            "invalid"
+        },
+        result.diagnostics.normalization_sumwt,
+        reported_sumwt_terms,
+        bounded_replay_passes,
+        execution_config.standard_mfs.grid_backend,
+    );
     let run_imaging_time = run_started_at.elapsed();
     maybe_log_frontend_progress("run_imaging", run_imaging_time, total_start.elapsed());
 
@@ -24514,6 +24652,84 @@ fn add_frontend_timings(target: &mut FrontendStageTimings, extra: FrontendStageT
     target.write_products += extra.write_products;
 }
 
+struct ModelDataWriteTransaction<'a> {
+    ms: &'a mut MeasurementSet,
+    changed_rows: Vec<usize>,
+}
+
+impl ModelDataWriteTransaction<'_> {
+    fn stage_row_block(&mut self, rows: BTreeMap<usize, ArrayD<Complex32>>) -> Result<(), String> {
+        self.changed_rows.extend(rows.keys().copied());
+        let mut writer = self
+            .ms
+            .main_table_mut()
+            .row_accessor_mut()
+            .prepare(&[VisibilityDataColumn::ModelData.name()])
+            .map_err(|error| format!("prepare MODEL_DATA writes: {error}"))?;
+        let slot = writer
+            .column_index(VisibilityDataColumn::ModelData.name())
+            .expect("prepared MODEL_DATA slot");
+        for (row_index, row_model) in rows {
+            writer
+                .seek(row_index)
+                .and_then(|()| {
+                    writer.set_value_at(slot, Value::Array(ArrayValue::Complex32(row_model)))
+                })
+                .map_err(|error| format!("write MODEL_DATA row {row_index}: {error}"))?;
+        }
+        Ok(())
+    }
+
+    fn commit(&mut self, created_model_data_column: bool) -> Result<(), String> {
+        if created_model_data_column {
+            let ms_path = self
+                .ms
+                .path()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "<memory>".to_string());
+            self.ms.save_main_table_only().map_err(|error| {
+                format!("finalize bounded MODEL_DATA writes to {ms_path}: {error}")
+            })
+        } else {
+            self.changed_rows.sort_unstable();
+            self.changed_rows.dedup();
+            self.ms
+                .main_table_mut()
+                .prepare_write()
+                .save_selected_rows(
+                    &[VisibilityDataColumn::ModelData.name()],
+                    &self.changed_rows,
+                )
+                .map_err(|error| format!("save bounded MODEL_DATA transaction: {error}"))
+        }
+    }
+}
+
+fn run_model_data_write_transaction(
+    ms: &mut MeasurementSet,
+    read_ms_path: &Path,
+    created_model_data_column: bool,
+    expected_changed_rows: usize,
+    stage: impl FnOnce(&mut ModelDataWriteTransaction<'_>) -> Result<(), String>,
+) -> Result<(), String> {
+    let result = {
+        let mut transaction = ModelDataWriteTransaction {
+            ms,
+            changed_rows: Vec::with_capacity(expected_changed_rows),
+        };
+        stage(&mut transaction).and_then(|()| transaction.commit(created_model_data_column))
+    };
+    if let Err(error) = result {
+        *ms = MeasurementSet::open(read_ms_path).map_err(|restore_error| {
+            format!(
+                "{error}; additionally failed to restore the in-memory MeasurementSet after MODEL_DATA staging: {restore_error}"
+            )
+        })?;
+        return Err(error);
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn write_standard_mfs_model_column_bounded(
     ms: &mut MeasurementSet,
@@ -24553,15 +24769,6 @@ fn write_standard_mfs_model_column_bounded(
         model,
     )
     .map_err(|error| error.to_string())?;
-    let created_model_data_column = ensure_model_data_column(ms)?;
-    if created_model_data_column {
-        let ms_path = ms
-            .path()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "<memory>".to_string());
-        ms.save_main_table_only()
-            .map_err(|error| format!("save new MODEL_DATA column to {ms_path}: {error}"))?;
-    }
     let read_ms_path = ms
         .path()
         .ok_or_else(|| {
@@ -24570,123 +24777,119 @@ fn write_standard_mfs_model_column_bounded(
         .to_path_buf();
     let read_ms = MeasurementSet::open(&read_ms_path)
         .map_err(|error| format!("reopen MS for bounded MODEL_DATA source reads: {error}"))?;
+    let model_data_existed = read_ms
+        .main_table()
+        .schema()
+        .is_some_and(|schema| schema.contains_column(VisibilityDataColumn::ModelData.name()));
+    let created_model_data_column = ensure_model_data_column(ms)?;
 
     let flag_row = selection.flag_row.as_slice();
     let row_block_rows = row_block_rows.max(1);
     let mut written_samples = 0usize;
     let mut accumulate_timings = AccumulateRowTimings::default();
-    for row_chunk in active_selected_rows.chunks(row_block_rows) {
-        let rows = {
-            let spectral_window = read_ms
-                .spectral_window()
-                .map_err(|error| format!("open SPECTRAL_WINDOW: {error}"))?;
-            let polarization = read_ms
-                .polarization()
-                .map_err(|error| format!("open POLARIZATION: {error}"))?;
-            let source_block = read_columnar_prepared_source(
-                &read_ms,
-                data_column,
-                true,
-                selection,
-                &table_values,
-                ddid_info,
-                row_chunk,
-                derived_engine,
-                uvw_reprojection_mode_for_selection(config, selection),
-                channel_read_range,
-                geometry_columns,
-                None,
-                None,
-            )?;
-            let (_prepared, trace) = prepare_source_row_block_trace_inner(
-                &read_ms,
-                config,
-                data_column,
-                selection,
-                ddid_info,
-                &spectral_window,
-                &polarization,
-                &source_block,
-                flag_row,
-                derived_engine,
-                None,
-                Some(1),
-                &mut accumulate_timings,
-            )?;
-            let mut rows = trace
-                .selected_rows
-                .iter()
-                .map(|row| {
-                    zero_model_row_like_data(&read_ms, row.row_index)
-                        .map(|model_row| (row.row_index, model_row))
-                })
-                .collect::<Result<BTreeMap<_, _>, _>>()?;
-            for sample in &trace.samples {
-                if !sample.gridable || sample.source_contributions.is_empty() {
-                    continue;
-                }
-                let Some(row_model) = rows.get_mut(&sample.row_index) else {
-                    return Err(format!(
-                        "prepared model sample row {} was not present in its source block",
-                        sample.row_index
-                    ));
-                };
-                let row_shape = row_model.shape().to_vec();
-                for contribution in &sample.source_contributions {
-                    let lambda_scale = contribution.source_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
-                    let predicted = predictor.predict(
-                        sample.imaging_uvw_m[0] * lambda_scale,
-                        sample.imaging_uvw_m[1] * lambda_scale,
-                    );
-                    let predicted = phase_rotate_visibility(
-                        predicted,
-                        -sample.phase_shift_m,
-                        contribution.source_frequency_hz,
-                    );
-                    for &corr_index in &sample.correlation_indices {
-                        if corr_index < row_shape[0]
-                            && contribution.source_channel_index < row_shape[1]
-                        {
-                            row_model[[corr_index, contribution.source_channel_index]] += predicted;
-                            written_samples = written_samples.saturating_add(1);
+    run_model_data_write_transaction(
+        ms,
+        &read_ms_path,
+        created_model_data_column,
+        active_selected_rows.len(),
+        |transaction| {
+            for row_chunk in active_selected_rows.chunks(row_block_rows) {
+                let rows = {
+                    let spectral_window = read_ms
+                        .spectral_window()
+                        .map_err(|error| format!("open SPECTRAL_WINDOW: {error}"))?;
+                    let polarization = read_ms
+                        .polarization()
+                        .map_err(|error| format!("open POLARIZATION: {error}"))?;
+                    let source_block = read_columnar_prepared_source(
+                        &read_ms,
+                        data_column,
+                        true,
+                        selection,
+                        &table_values,
+                        ddid_info,
+                        row_chunk,
+                        derived_engine,
+                        uvw_reprojection_mode_for_selection(config, selection),
+                        channel_read_range,
+                        geometry_columns,
+                        None,
+                        None,
+                    )?;
+                    let (_prepared, trace) = prepare_source_row_block_trace_inner(
+                        &read_ms,
+                        config,
+                        data_column,
+                        selection,
+                        ddid_info,
+                        &spectral_window,
+                        &polarization,
+                        &source_block,
+                        flag_row,
+                        derived_engine,
+                        None,
+                        Some(1),
+                        &mut accumulate_timings,
+                    )?;
+                    let mut rows = trace
+                        .selected_rows
+                        .iter()
+                        .map(|row| {
+                            model_row_for_bounded_write(&read_ms, row.row_index, model_data_existed)
+                                .map(|model_row| (row.row_index, model_row))
+                        })
+                        .collect::<Result<BTreeMap<_, _>, _>>()?;
+                    let mut touched_cells = BTreeMap::<usize, BTreeSet<(usize, usize)>>::new();
+                    for sample in &trace.samples {
+                        if !sample.gridable || sample.source_contributions.is_empty() {
+                            continue;
+                        }
+                        let Some(row_model) = rows.get_mut(&sample.row_index) else {
+                            return Err(format!(
+                                "prepared model sample row {} was not present in its source block",
+                                sample.row_index
+                            ));
+                        };
+                        let row_shape = row_model.shape().to_vec();
+                        for contribution in &sample.source_contributions {
+                            let lambda_scale =
+                                contribution.source_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+                            let predicted = predictor.predict(
+                                sample.imaging_uvw_m[0] * lambda_scale,
+                                sample.imaging_uvw_m[1] * lambda_scale,
+                            );
+                            let predicted = phase_rotate_visibility(
+                                predicted,
+                                -sample.phase_shift_m,
+                                contribution.source_frequency_hz,
+                            );
+                            for &corr_index in &sample.correlation_indices {
+                                if corr_index < row_shape[0]
+                                    && contribution.source_channel_index < row_shape[1]
+                                {
+                                    let cell = (corr_index, contribution.source_channel_index);
+                                    let index = IxDyn(&[cell.0, cell.1]);
+                                    if touched_cells
+                                        .entry(sample.row_index)
+                                        .or_default()
+                                        .insert(cell)
+                                    {
+                                        row_model[index.clone()] = predicted;
+                                    } else {
+                                        row_model[index] += predicted;
+                                    }
+                                    written_samples = written_samples.saturating_add(1);
+                                }
+                            }
                         }
                     }
-                }
+                    rows
+                };
+                transaction.stage_row_block(rows)?;
             }
-            rows
-        };
-        let changed_rows = rows.keys().copied().collect::<Vec<_>>();
-        {
-            let mut writer = ms
-                .main_table_mut()
-                .row_accessor_mut()
-                .prepare(&[VisibilityDataColumn::ModelData.name()])
-                .map_err(|error| format!("prepare MODEL_DATA writes: {error}"))?;
-            let slot = writer
-                .column_index(VisibilityDataColumn::ModelData.name())
-                .expect("prepared MODEL_DATA slot");
-            for (row_index, row_model) in rows {
-                writer
-                    .seek(row_index)
-                    .and_then(|()| {
-                        writer.set_value_at(slot, Value::Array(ArrayValue::Complex32(row_model)))
-                    })
-                    .map_err(|error| format!("write MODEL_DATA row {row_index}: {error}"))?;
-            }
-        }
-        ms.main_table_mut()
-            .prepare_write()
-            .save_selected_rows(&[VisibilityDataColumn::ModelData.name()], &changed_rows)
-            .map_err(|error| format!("save bounded MODEL_DATA row block: {error}"))?;
-    }
-    if created_model_data_column {
-        let ms_path = ms
-            .path()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "<memory>".to_string());
-        ms.save_main_table_only()
-            .map_err(|error| format!("finalize bounded MODEL_DATA writes to {ms_path}: {error}"))?;
-    }
+            Ok(())
+        },
+    )?;
     Ok(written_samples)
 }
 
@@ -24702,95 +24905,107 @@ fn write_joint_outlier_model_column(
         .map(|field| StandardMfsModelPredictor::new(field.request.geometry, &field.model))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())?;
-    let created_model_data_column = ensure_model_data_column(ms)?;
-    let mut rows = first
-        .trace
-        .selected_rows
-        .iter()
-        .map(|row| {
-            zero_model_row_like_data(ms, row.row_index).map(|model_row| (row.row_index, model_row))
-        })
-        .collect::<Result<BTreeMap<_, _>, _>>()?;
-    let mut written_samples = 0usize;
-    for sample_index in 0..first.trace.samples.len() {
-        let target_sample = &first.trace.samples[sample_index];
-        if !target_sample.gridable {
-            continue;
-        }
-        let row_shape = rows
-            .get(&target_sample.row_index)
-            .ok_or_else(|| {
-                format!(
-                    "prepared sample row {} was not present in selected rows",
-                    target_sample.row_index
-                )
-            })?
-            .shape()
-            .to_vec();
-        let row_model = rows
-            .get_mut(&target_sample.row_index)
-            .expect("row model shape was just read");
-        for (field, predictor) in fields.iter().zip(predictors.iter()) {
-            let source_sample = &field.trace.samples[sample_index];
-            if source_sample.source_contributions.is_empty() {
-                continue;
-            }
-            for contribution in &source_sample.source_contributions {
-                let lambda_scale = contribution.source_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
-                let predicted = predictor.predict(
-                    source_sample.imaging_uvw_m[0] * lambda_scale,
-                    source_sample.imaging_uvw_m[1] * lambda_scale,
-                );
-                let predicted = phase_rotate_visibility(
-                    predicted,
-                    -source_sample.phase_shift_m,
-                    contribution.source_frequency_hz,
-                );
-                for &corr_index in &source_sample.correlation_indices {
-                    if corr_index >= row_shape[0]
-                        || contribution.source_channel_index >= row_shape[1]
-                    {
-                        continue;
-                    }
-                    row_model[[corr_index, contribution.source_channel_index]] += predicted;
-                    written_samples += 1;
-                }
-            }
-        }
-    }
-
-    let changed_rows = rows.keys().copied().collect::<Vec<_>>();
-    {
-        let mut writer = ms
-            .main_table_mut()
-            .row_accessor_mut()
-            .prepare(&[VisibilityDataColumn::ModelData.name()])
-            .map_err(|error| format!("prepare MODEL_DATA writes: {error}"))?;
-        let slot = writer
-            .column_index(VisibilityDataColumn::ModelData.name())
-            .expect("prepared MODEL_DATA slot");
-        for (row_index, row_model) in rows {
-            writer
-                .seek(row_index)
-                .and_then(|()| {
-                    writer.set_value_at(slot, Value::Array(ArrayValue::Complex32(row_model)))
-                })
-                .map_err(|error| format!("write MODEL_DATA row {row_index}: {error}"))?;
-        }
-    }
-    let ms_path = ms
+    let read_ms_path = ms
         .path()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| "<memory>".to_string());
-    if created_model_data_column {
-        ms.save_main_table_only()
-            .map_err(|error| format!("save MODEL_DATA updates to {ms_path}: {error}"))?;
-    } else {
-        ms.main_table_mut()
-            .prepare_write()
-            .save_selected_rows(&[VisibilityDataColumn::ModelData.name()], &changed_rows)
-            .map_err(|error| format!("save MODEL_DATA updates to {ms_path}: {error}"))?;
+        .ok_or_else(|| {
+            "bounded joint-outlier MODEL_DATA writeback requires a persisted MeasurementSet"
+                .to_string()
+        })?
+        .to_path_buf();
+    let read_ms = MeasurementSet::open(&read_ms_path)
+        .map_err(|error| format!("reopen MS for joint-outlier MODEL_DATA source reads: {error}"))?;
+    let model_data_existed = read_ms
+        .main_table()
+        .schema()
+        .is_some_and(|schema| schema.contains_column(VisibilityDataColumn::ModelData.name()));
+    let created_model_data_column = ensure_model_data_column(ms)?;
+    let row_block_rows = standard_mfs_plan_for_prepared_request(&first.config, &first.request)?
+        .ingest
+        .source_row_block_rows
+        .max(1);
+    let mut sample_indices_by_row = BTreeMap::<usize, Vec<usize>>::new();
+    for (sample_index, sample) in first.trace.samples.iter().enumerate() {
+        sample_indices_by_row
+            .entry(sample.row_index)
+            .or_default()
+            .push(sample_index);
     }
+    let mut written_samples = 0usize;
+    run_model_data_write_transaction(
+        ms,
+        &read_ms_path,
+        created_model_data_column,
+        first.trace.selected_rows.len(),
+        |transaction| {
+            for row_chunk in first.trace.selected_rows.chunks(row_block_rows) {
+                let mut rows = row_chunk
+                    .iter()
+                    .map(|row| {
+                        model_row_for_bounded_write(&read_ms, row.row_index, model_data_existed)
+                            .map(|model_row| (row.row_index, model_row))
+                    })
+                    .collect::<Result<BTreeMap<_, _>, _>>()?;
+                let mut touched_cells = BTreeMap::<usize, BTreeSet<(usize, usize)>>::new();
+                for selected_row in row_chunk {
+                    let Some(sample_indices) = sample_indices_by_row.get(&selected_row.row_index)
+                    else {
+                        continue;
+                    };
+                    for &sample_index in sample_indices {
+                        let target_sample = &first.trace.samples[sample_index];
+                        if !target_sample.gridable {
+                            continue;
+                        }
+                        let row_model =
+                            rows.get_mut(&target_sample.row_index).ok_or_else(|| {
+                                format!(
+                                    "prepared sample row {} was not present in selected rows",
+                                    target_sample.row_index
+                                )
+                            })?;
+                        let row_shape = row_model.shape().to_vec();
+                        for (field, predictor) in fields.iter().zip(predictors.iter()) {
+                            let source_sample = &field.trace.samples[sample_index];
+                            for contribution in &source_sample.source_contributions {
+                                let lambda_scale =
+                                    contribution.source_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+                                let predicted = predictor.predict(
+                                    source_sample.imaging_uvw_m[0] * lambda_scale,
+                                    source_sample.imaging_uvw_m[1] * lambda_scale,
+                                );
+                                let predicted = phase_rotate_visibility(
+                                    predicted,
+                                    -source_sample.phase_shift_m,
+                                    contribution.source_frequency_hz,
+                                );
+                                for &corr_index in &source_sample.correlation_indices {
+                                    if corr_index >= row_shape[0]
+                                        || contribution.source_channel_index >= row_shape[1]
+                                    {
+                                        continue;
+                                    }
+                                    let cell = (corr_index, contribution.source_channel_index);
+                                    let index = IxDyn(&[cell.0, cell.1]);
+                                    if touched_cells
+                                        .entry(source_sample.row_index)
+                                        .or_default()
+                                        .insert(cell)
+                                    {
+                                        row_model[index.clone()] = predicted;
+                                    } else {
+                                        row_model[index] += predicted;
+                                    }
+                                    written_samples = written_samples.saturating_add(1);
+                                }
+                            }
+                        }
+                    }
+                }
+                transaction.stage_row_block(rows)?;
+            }
+            Ok(())
+        },
+    )?;
     Ok(written_samples)
 }
 
@@ -53264,6 +53479,42 @@ fn zero_model_row_like_data(
     Ok(ArrayD::from_elem(IxDyn(&shape), Complex32::new(0.0, 0.0)))
 }
 
+fn model_row_for_bounded_write(
+    source_ms: &MeasurementSet,
+    row_index: usize,
+    model_data_existed: bool,
+) -> Result<ArrayD<Complex32>, String> {
+    if !model_data_existed {
+        return zero_model_row_like_data(source_ms, row_index);
+    }
+    let data_shape = source_ms
+        .main_table()
+        .cell_accessor(row_index, VisibilityDataColumn::Data.name())
+        .and_then(|cell| cell.array())
+        .map_err(|error| format!("read DATA row {row_index} for MODEL_DATA validation: {error}"))?
+        .shape()
+        .to_vec();
+    let model = match source_ms
+        .main_table()
+        .cell_accessor(row_index, VisibilityDataColumn::ModelData.name())
+        .and_then(|cell| cell.array())
+        .map_err(|error| format!("read existing MODEL_DATA row {row_index}: {error}"))?
+    {
+        ArrayValue::Complex32(values) => values.clone(),
+        other => Err(format!(
+            "MODEL_DATA row {row_index} must contain Complex32 values, found {:?}",
+            other.primitive_type()
+        ))?,
+    };
+    if model.shape() != data_shape {
+        return Err(format!(
+            "MODEL_DATA row {row_index} shape {:?} does not match DATA shape {data_shape:?}",
+            model.shape()
+        ));
+    }
+    Ok(model)
+}
+
 struct SingleProductWrite<'a> {
     path: &'a Path,
     data: &'a Array4<f32>,
@@ -57582,6 +57833,8 @@ mod tests {
         MeasurementSetBuilder, OptionalMainColumn, SubtableId, convert_frequency_to_frame,
     };
     use casa_tables::table_measures::{MeasureType, TableMeasDesc};
+    #[cfg(all(target_os = "macos", feature = "slow-tests"))]
+    use casa_test_support::casatestdata_path;
     use casa_test_support::gridder_interop::GridderOracle;
     use casa_types::measures::direction::{DirectionRef, MDirection};
     use casa_types::measures::epoch::{EpochRef, MEpoch};
@@ -79490,9 +79743,28 @@ deconvolver=mtmfs
             [-12.0, 18.0, 0.0],
             [Complex32::new(0.8, 0.0), Complex32::new(0.8, 0.0)],
         );
+        ensure_model_data_column(&mut ms).unwrap();
+        let preserved = Complex32::new(7.0, -3.0);
+        for row_index in 0..ms.row_count() {
+            ms.main_table_mut()
+                .cell_accessor_mut(row_index, "MODEL_DATA")
+                .unwrap()
+                .set(Value::Array(ArrayValue::Complex32(ArrayD::from_elem(
+                    IxDyn(&[2, 1]),
+                    preserved,
+                ))))
+                .unwrap();
+        }
+        ms.main_table_mut()
+            .cell_accessor_mut(2, "FLAG")
+            .unwrap()
+            .set(Value::Array(ArrayValue::Bool(
+                ArrayD::from_shape_vec(vec![2, 1], vec![true, false]).unwrap(),
+            )))
+            .unwrap();
         ms.save().unwrap();
 
-        let summary = run_from_config(&CliConfig {
+        let config = CliConfig {
             ms: ms_path.clone(),
             imagename: image_prefix.clone(),
             imsize: 32,
@@ -79511,7 +79783,7 @@ deconvolver=mtmfs
             save_model: SaveModelMode::ModelColumn,
             start_model: None,
             outlier_file: None,
-            correlation: None,
+            correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
@@ -79567,31 +79839,126 @@ deconvolver=mtmfs
             imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             imaging_fft_backend: ImagingFftBackendPolicy::Auto,
             write_preview_pngs: false,
-        })
-        .unwrap();
+        };
+        let summary = run_from_config(&config).unwrap();
         assert!(summary.minor_iterations > 0);
         assert!(
             Path::new(&format!("{}.image", image_prefix.display())).exists(),
             "bounded savemodel run must write image products"
         );
-        let ms = MeasurementSet::open(&ms_path).unwrap();
+        let mut ms = MeasurementSet::open(&ms_path).unwrap();
         assert!(
             ms.main_table()
                 .schema()
                 .is_some_and(|schema| schema.contains_column("MODEL_DATA"))
         );
-        let model_has_signal = (0..ms.row_count()).any(|row_index| {
+        let predicted_supported_sample = (0..ms.row_count()).any(|row_index| {
             ms.main_table()
                 .cell_accessor(row_index, "MODEL_DATA")
                 .and_then(|cell| cell.array())
                 .ok()
                 .is_some_and(|values| match values {
-                    ArrayValue::Complex32(values) => values.iter().any(|value| value.norm() > 0.0),
-                    ArrayValue::Complex64(values) => values.iter().any(|value| value.norm() > 0.0),
+                    ArrayValue::Complex32(values) => values[[0, 0]] != preserved,
                     _ => false,
                 })
         });
-        assert!(model_has_signal, "bounded MODEL_DATA writeback stayed zero");
+        assert!(
+            predicted_supported_sample,
+            "bounded MODEL_DATA writeback did not replace a supported XX sample"
+        );
+        for row_index in 0..ms.row_count() {
+            let ArrayValue::Complex32(model) = ms
+                .main_table()
+                .cell_accessor(row_index, "MODEL_DATA")
+                .unwrap()
+                .array()
+                .unwrap()
+            else {
+                panic!("expected Complex32 MODEL_DATA");
+            };
+            assert_eq!(
+                model[[1, 0]],
+                preserved,
+                "unsupported YY correlation changed in row {row_index}"
+            );
+            if row_index == 2 {
+                assert_eq!(
+                    model[[0, 0]],
+                    preserved,
+                    "flagged XX sample changed in row {row_index}"
+                );
+            }
+        }
+
+        let ArrayValue::Complex32(first_row_before_failed_write) = ms
+            .main_table()
+            .cell_accessor(1, "MODEL_DATA")
+            .unwrap()
+            .array()
+            .unwrap()
+        else {
+            panic!("expected Complex32 MODEL_DATA");
+        };
+        let first_row_before_failed_write = first_row_before_failed_write.clone();
+
+        let staged_value = Complex32::new(-91.0, 17.0);
+        let mut staged_rows = BTreeMap::new();
+        for row_index in [0, 1] {
+            let ArrayValue::Complex32(mut model) = ms
+                .main_table()
+                .cell_accessor(row_index, "MODEL_DATA")
+                .unwrap()
+                .array()
+                .unwrap()
+                .clone()
+            else {
+                panic!("expected Complex32 MODEL_DATA");
+            };
+            model[[0, 0]] = staged_value;
+            staged_rows.insert(row_index, model);
+        }
+        let mut staged_block_count = 0;
+        let error = run_model_data_write_transaction(
+            &mut ms,
+            &ms_path,
+            false,
+            staged_rows.len(),
+            |transaction| {
+                transaction.stage_row_block(staged_rows)?;
+                staged_block_count += 1;
+                let ArrayValue::Complex32(staged_row) = transaction
+                    .ms
+                    .main_table()
+                    .cell_accessor(1, "MODEL_DATA")
+                    .map_err(|error| error.to_string())?
+                    .array()
+                    .map_err(|error| error.to_string())?
+                else {
+                    return Err("expected Complex32 MODEL_DATA".to_string());
+                };
+                assert_eq!(staged_row[[0, 0]], staged_value);
+                Err("injected failure after first staged MODEL_DATA row block".to_string())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            "injected failure after first staged MODEL_DATA row block"
+        );
+        assert_eq!(staged_block_count, 1);
+        let ArrayValue::Complex32(first_row_after_failed_write) = ms
+            .main_table()
+            .cell_accessor(1, "MODEL_DATA")
+            .unwrap()
+            .array()
+            .unwrap()
+        else {
+            panic!("expected Complex32 MODEL_DATA");
+        };
+        assert_eq!(
+            first_row_after_failed_write, &first_row_before_failed_write,
+            "a failed later MODEL_DATA row must not partially publish an earlier staged row"
+        );
     }
 
     #[test]
@@ -79985,21 +80352,17 @@ deconvolver=mtmfs
         );
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "slow-tests"))]
     #[test]
     fn refim_point_cube20_cpu_and_metal_agree_on_active_and_blank_planes() {
         if !casa_imaging::standard_mfs_metal_device_available() {
             return;
         }
-        let Some(root) = env::var_os("CASA_RS_TESTDATA_ROOT") else {
-            return;
-        };
-        let root = PathBuf::from(root);
         let candidates = [
-            root.join("unittest/tclean/refim_point.ms"),
-            root.join("measurementset/vla/refim_point.ms"),
+            casatestdata_path("unittest/tclean/refim_point.ms"),
+            casatestdata_path("measurementset/vla/refim_point.ms"),
         ];
-        let Some(ms_path) = candidates.into_iter().find(|path| path.exists()) else {
+        let Some(ms_path) = candidates.into_iter().flatten().find(|path| path.exists()) else {
             return;
         };
         let tmp = tempdir().unwrap();
@@ -80013,6 +80376,34 @@ deconvolver=mtmfs
         metal_config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
 
         let ms = MeasurementSet::open(ms_path).unwrap();
+        let source_routes = [&cpu_config, &metal_config].map(|config| {
+            let trace = build_prepare_plane_trace_from_config(config).unwrap();
+            trace
+                .samples
+                .iter()
+                .map(|sample| {
+                    (
+                        sample.row_index,
+                        sample.output_channel_index,
+                        sample.gridable,
+                        sample
+                            .source_contributions
+                            .iter()
+                            .map(|contribution| {
+                                (
+                                    contribution.source_channel_index,
+                                    contribution.factor.to_bits(),
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            source_routes[0], source_routes[1],
+            "CPU and Metal preparation selected different source-channel contributions"
+        );
         let source_sample_counts = [&cpu_config, &metal_config].map(|config| {
             let PreparedInput::Cube(cube) =
                 prepare_plane_input(&ms, config, VisibilityDataColumn::Data).unwrap()
@@ -80060,6 +80451,19 @@ deconvolver=mtmfs
         let cpu_active_planes = classify_sumwt(&cpu_sumwt);
         let metal_active_planes = classify_sumwt(&metal_sumwt);
         assert_eq!(cpu_active_planes, metal_active_planes);
+        let routed_active_planes = (0..cpu_active_planes.len())
+            .map(|output_channel| {
+                source_routes[0]
+                    .iter()
+                    .any(|(_, channel, gridable, contributions)| {
+                        *gridable && *channel == Some(output_channel) && !contributions.is_empty()
+                    })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            cpu_active_planes, routed_active_planes,
+            "published blank-plane decisions differ from exact prepared source routing"
+        );
         assert!(cpu_active_planes.iter().any(|active| *active));
         assert!(cpu_active_planes.iter().any(|active| !*active));
         assert!(

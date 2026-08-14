@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![cfg(feature = "slow-tests")]
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -446,6 +447,37 @@ fn savemodel_modelcolumn_writes_casa_comparable_model_data() {
         stage_measurement_set(&ms_path, temp.path(), "casa-ngc5921.ms").expect("stage casa ms");
     let rust_prefix = temp.path().join("rust-ngc5921-savemodel");
     let casa_prefix = temp.path().join("casa-ngc5921-savemodel");
+    let rust_config = rust_imager_savemodel_config(&rust_ms_path, &rust_prefix);
+    let source_trace = build_prepare_plane_trace_from_config(&rust_config)
+        .expect("build savemodel source-selection trace");
+    let selected_rows = source_trace
+        .samples
+        .iter()
+        .map(|sample| sample.row_index)
+        .collect::<BTreeSet<_>>();
+    let selected_channels = source_trace
+        .samples
+        .iter()
+        .flat_map(|sample| {
+            sample
+                .source_contributions
+                .iter()
+                .map(|contribution| contribution.source_channel_index)
+        })
+        .collect::<BTreeSet<_>>();
+    let selected_correlations = source_trace
+        .samples
+        .iter()
+        .flat_map(|sample| sample.correlation_indices.iter().copied())
+        .collect::<BTreeSet<_>>();
+    let flagged_rejections = source_trace
+        .rejected_samples
+        .iter()
+        .filter(|sample| sample.first_flagged || sample.second_flagged)
+        .count();
+    assert!(!selected_rows.is_empty(), "savemodel selected no rows");
+    assert_eq!(selected_channels, BTreeSet::from([0]));
+    assert_eq!(selected_correlations, BTreeSet::from([0, 1]));
 
     let rust_start = Instant::now();
     run_rust_imager_savemodel(&rust_ms_path, &rust_prefix).expect("run rust savemodel");
@@ -457,6 +489,16 @@ fn savemodel_modelcolumn_writes_casa_comparable_model_data() {
     let rust_stats = read_model_column_stats(&rust_ms_path, 0, 0, 0).expect("read Rust MODEL_DATA");
     let casa_stats = read_model_column_stats(&casa_ms_path, 0, 0, 0).expect("read CASA MODEL_DATA");
     let diff_stats = compare_model_column_values(&rust_stats, &casa_stats);
+    let predicted_nonzero_values = rust_stats
+        .values
+        .iter()
+        .filter(|value| value.re != 0.0 || value.im != 0.0)
+        .count();
+    eprintln!(
+        "savemodel_modelcolumn_receipt selected_rows={} selected_channels={selected_channels:?} selected_correlations={selected_correlations:?} flagged_rejections={flagged_rejections} predicted_nonzero_values={predicted_nonzero_values} compared_model_cells={} writeback_provenance=bounded_row_blocks_atomic_publish source_model=final_image_predictor",
+        selected_rows.len(),
+        rust_stats.total_values,
+    );
     eprintln!(
         "savemodel=modelcolumn parity: rust_elapsed={:.3}s casa_elapsed={:.3}s total_values={} rust_max_abs={:.6e} casa_max_abs={:.6e} max_abs_diff={:.6e} rms_abs_diff={:.6e} normalized_max_diff={:.6e} normalized_rms_diff={:.6e} max_location={:?}",
         duration_seconds(rust_elapsed),
@@ -528,7 +570,10 @@ fn startmodel_seeds_single_image_model_like_casa() {
     let no_start_model = read_image(&rust_product(&no_start_prefix, "model"));
     let rust_model = read_image(&rust_product(&rust_prefix, "model"));
     let casa_model = read_image(&casa_product(&casa_prefix, "model"));
+    let rust_residual = read_image(&rust_product(&rust_prefix, "residual"));
+    let casa_residual = read_image(&casa_product(&casa_prefix, "residual"));
     let stats = image_difference_stats(&rust_model, &casa_model);
+    let residual_stats = image_difference_stats(&rust_residual, &casa_residual);
     let rust_peak = max_abs_image(&rust_model);
     let no_start_peak = max_abs_image(&no_start_model);
     let casa_peak = max_abs_image(&casa_model);
@@ -555,6 +600,10 @@ fn startmodel_seeds_single_image_model_like_casa() {
         stats.rms <= 1.0e-6 && stats.max_abs <= 1.0e-5,
         "Rust and CASA startmodel products diverged: {stats:?}"
     );
+    assert!(
+        residual_stats.rms <= 2.0e-2 && residual_stats.max_abs <= 1.0e-1,
+        "first residual after startmodel prediction diverged: {residual_stats:?}"
+    );
 }
 
 #[test]
@@ -579,28 +628,41 @@ fn startmodel_continues_deconvolution_from_seed_like_casa() {
     let seed_model = read_image(&seed_model_path);
 
     let rust_start = Instant::now();
-    run_rust_imager_startmodel(&rust_ms_path, &rust_prefix, Some(&seed_model_path), 2)
-        .expect("run rust startmodel clean");
+    let rust_summary =
+        run_rust_imager_startmodel(&rust_ms_path, &rust_prefix, Some(&seed_model_path), 2)
+            .expect("run rust startmodel clean");
     let rust_elapsed = rust_start.elapsed();
     let casa_start = Instant::now();
-    run_casa_tclean_startmodel(&casa_ms_path, &casa_prefix, &seed_model_path, 2)
+    let casa_summary = run_casa_tclean_startmodel(&casa_ms_path, &casa_prefix, &seed_model_path, 2)
         .expect("run CASA startmodel clean");
     let casa_elapsed = casa_start.elapsed();
 
     let rust_model = read_image(&rust_product(&rust_prefix, "model"));
     let casa_model = read_image(&casa_product(&casa_prefix, "model"));
+    let rust_residual = read_image(&rust_product(&rust_prefix, "residual"));
+    let casa_residual = read_image(&casa_product(&casa_prefix, "residual"));
+    let rust_image = read_image(&rust_product(&rust_prefix, "image"));
+    let casa_image = read_image(&casa_product(&casa_prefix, "image"));
     let model_stats = image_difference_stats(&rust_model, &casa_model);
+    let residual_stats = image_difference_stats(&rust_residual, &casa_residual);
+    let image_stats = image_difference_stats(&rust_image, &casa_image);
     let rust_seed_delta = image_difference_stats(&rust_model, &seed_model);
     let casa_seed_delta = image_difference_stats(&casa_model, &seed_model);
     eprintln!(
-        "startmodel clean parity: rust_elapsed={:.3}s casa_elapsed={:.3}s rust_seed_delta_max={:.6e} casa_seed_delta_max={:.6e} model_rms={:.6e} model_max_abs={:.6e} model_corr={:.6e}",
+        "startmodel clean parity: rust_elapsed={:.3}s casa_elapsed={:.3}s rust_seed_delta_max={:.6e} casa_seed_delta_max={:.6e} model_rms={:.6e} model_max_abs={:.6e} model_corr={:.6e} residual_rms={:.6e} residual_max_abs={:.6e} residual_corr={:.6e} image_rms={:.6e} image_max_abs={:.6e} image_corr={:.6e}",
         duration_seconds(rust_elapsed),
         duration_seconds(casa_elapsed),
         rust_seed_delta.max_abs,
         casa_seed_delta.max_abs,
         model_stats.rms,
         model_stats.max_abs,
-        model_stats.correlation
+        model_stats.correlation,
+        residual_stats.rms,
+        residual_stats.max_abs,
+        residual_stats.correlation,
+        image_stats.rms,
+        image_stats.max_abs,
+        image_stats.correlation,
     );
 
     assert!(
@@ -611,6 +673,39 @@ fn startmodel_continues_deconvolution_from_seed_like_casa() {
         model_stats.rms <= 1.0e-6 && model_stats.max_abs <= 1.0e-5,
         "Rust and CASA startmodel niter>0 products diverged: {model_stats:?}"
     );
+    assert!(
+        residual_stats.rms <= 2.0e-2 && residual_stats.max_abs <= 1.0e-1,
+        "final residual visibility-prediction proxy diverged: {residual_stats:?}"
+    );
+    assert!(
+        image_stats.rms <= 2.0e-2 && image_stats.max_abs <= 1.0e-1,
+        "final restored startmodel image diverged: {image_stats:?}"
+    );
+    let casa_traces = extract_casa_cube_minor_cycle_traces(&casa_summary)
+        .expect("CASA startmodel minor-cycle trace");
+    let casa_mfs_traces = casa_traces.first().cloned().unwrap_or_default();
+    assert_eq!(rust_summary.minor_cycle_traces.len(), casa_mfs_traces.len());
+    for (rust_trace, casa_trace) in rust_summary.minor_cycle_traces.iter().zip(&casa_mfs_traces) {
+        assert_eq!(
+            rust_trace.start_reported_iteration,
+            casa_trace.start_reported_iteration
+        );
+        assert_eq!(rust_trace.reported_updates, casa_trace.reported_updates);
+        assert_close(
+            rust_trace.start_peak_residual_jy_per_beam,
+            casa_trace.start_peak_residual_jy_per_beam,
+            4.0e-2,
+            8.0e-2,
+            "startmodel first predicted residual/minor-cycle start",
+        );
+        assert_close(
+            rust_trace.end_peak_residual_jy_per_beam,
+            casa_trace.end_peak_residual_jy_per_beam,
+            4.0e-2,
+            8.0e-2,
+            "startmodel refreshed residual/minor-cycle end",
+        );
+    }
 }
 
 #[test]
@@ -8634,6 +8729,108 @@ fn multiscale_scales_zero_matches_casa_component_support() {
 }
 
 #[test]
+fn multiscale_first_cycle_trace_matches_casa_on_simulated_jet() {
+    let case = ParityCase {
+        dataset_rel: "measurementset/vla/sim_data_VLA_jet.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 5,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 512,
+        cell_arcsec: 12.0,
+    };
+    if !parity_case_available(case) {
+        eprintln!("{}", skip_reason_for_case(case));
+        return;
+    }
+
+    let ms_path = dataset_path(case.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path =
+        stage_measurement_set(&ms_path, temp.path(), "sim_data_VLA_jet.ms").expect("stage ms");
+    let rust_prefix = temp.path().join("rust-simjet-ms-first-cycle");
+    let casa_prefix = temp.path().join("casa-simjet-ms-first-cycle");
+    let scales = [0.0_f32, 5.0, 15.0];
+
+    let rust_summary = run_rust_imager_case_with_solver_summary(
+        case,
+        &staged_ms_path,
+        &rust_prefix,
+        false,
+        1,
+        Deconvolver::Multiscale,
+        &scales,
+    )
+    .expect("run Rust first-cycle multiscale");
+    let casa_summary = run_casa_tclean_case_with_solver(
+        case,
+        &staged_ms_path,
+        &casa_prefix,
+        1,
+        "multiscale",
+        &scales,
+    )
+    .expect("run CASA first-cycle multiscale");
+
+    let rust_trace = rust_summary
+        .minor_cycle_traces
+        .first()
+        .expect("Rust first-cycle multiscale trace");
+    let casa_traces = extract_casa_cube_minor_cycle_traces(&casa_summary)
+        .expect("CASA first-cycle multiscale trace");
+    let casa_trace = casa_traces
+        .first()
+        .and_then(|traces| traces.first())
+        .expect("CASA first-cycle MFS trace");
+    assert_eq!(rust_trace.reported_updates, casa_trace.reported_updates);
+    assert_close(
+        rust_trace.start_peak_residual_jy_per_beam,
+        casa_trace.start_peak_residual_jy_per_beam,
+        4.0e-2,
+        8.0e-2,
+        "multiscale first-cycle start residual",
+    );
+    assert_close(
+        rust_trace.end_peak_residual_jy_per_beam,
+        casa_trace.end_peak_residual_jy_per_beam,
+        4.0e-2,
+        8.0e-2,
+        "multiscale first-cycle refreshed residual",
+    );
+
+    let rust_model = read_image(&rust_product(&rust_prefix, "model"));
+    let casa_model = read_image(&casa_product(&casa_prefix, "model"));
+    let rust_peak = peak_location(&rust_model).expect("Rust multiscale component peak");
+    let casa_peak = peak_location(&casa_model).expect("CASA multiscale component peak");
+    assert_eq!(
+        rust_peak, casa_peak,
+        "multiscale component placement drifted"
+    );
+    assert_eq!(
+        rust_trace.initial_candidate_position,
+        Some([rust_peak.0, rust_peak.1]),
+        "Rust trace did not identify the published first component"
+    );
+    let selected_scale = rust_trace
+        .initial_scale_pixels
+        .expect("Rust multiscale trace selected scale");
+    let rust_support = nonzero_support_bounds(&rust_model, 1.0e-6).expect("Rust support");
+    let casa_support = nonzero_support_bounds(&casa_model, 1.0e-6).expect("CASA support");
+    assert_eq!(
+        rust_support, casa_support,
+        "CASA and Rust selected different first-cycle component support"
+    );
+    assert_eq!(
+        selected_scale == 0.0,
+        rust_support.0 == rust_support.1 && rust_support.2 == rust_support.3,
+        "trace scale selection disagrees with the published component support"
+    );
+}
+
+#[test]
 fn multiscale_products_track_casa_on_simulated_jet() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/sim_data_VLA_jet.ms",
@@ -9527,7 +9724,11 @@ fn run_rust_imager_outlierfile_with_niter(
 
 fn run_rust_imager_savemodel(ms_path: &Path, prefix: &Path) -> Result<(), String> {
     let _ = (casa_source_root(), casacore_source_root());
-    run_from_config(&CliConfig {
+    run_from_config(&rust_imager_savemodel_config(ms_path, prefix)).map(|_| ())
+}
+
+fn rust_imager_savemodel_config(ms_path: &Path, prefix: &Path) -> CliConfig {
+    CliConfig {
         ms: ms_path.to_path_buf(),
         imagename: prefix.to_path_buf(),
         imsize: 128,
@@ -9602,8 +9803,7 @@ fn run_rust_imager_savemodel(ms_path: &Path, prefix: &Path) -> Result<(), String
         imaging_read_ahead_blocks: None,
         imaging_fft_backend: ImagingFftBackendPolicy::Auto,
         write_preview_pngs: false,
-    })
-    .map(|_| ())
+    }
 }
 
 fn run_rust_imager_startmodel(
@@ -9611,7 +9811,7 @@ fn run_rust_imager_startmodel(
     prefix: &Path,
     start_model: Option<&Path>,
     niter: usize,
-) -> Result<(), String> {
+) -> Result<RunSummary, String> {
     let _ = (casa_source_root(), casacore_source_root());
     run_from_config(&CliConfig {
         ms: ms_path.to_path_buf(),
@@ -9646,7 +9846,7 @@ fn run_rust_imager_startmodel(
         small_scale_bias: 0.0,
         niter,
         nmajor: None,
-        fullsummary: false,
+        fullsummary: true,
         gain: 0.1,
         threshold_jy: 0.0,
         nsigma: 0.0,
@@ -9689,7 +9889,6 @@ fn run_rust_imager_startmodel(
         imaging_fft_backend: ImagingFftBackendPolicy::Auto,
         write_preview_pngs: false,
     })
-    .map(|_| ())
 }
 
 fn run_rust_imager_case(
@@ -9741,6 +9940,29 @@ fn run_rust_imager_case_with_solver(
         WTermMode::None,
         None,
     )
+    .map(|_| ())
+}
+
+fn run_rust_imager_case_with_solver_summary(
+    case: ParityCase<'_>,
+    ms_path: &Path,
+    prefix: &Path,
+    dirty_only: bool,
+    niter: usize,
+    deconvolver: Deconvolver,
+    multiscale_scales: &[f32],
+) -> Result<RunSummary, String> {
+    run_rust_imager_case_with_solver_and_w_term_mode(
+        case,
+        ms_path,
+        prefix,
+        dirty_only,
+        niter,
+        deconvolver,
+        multiscale_scales,
+        WTermMode::None,
+        None,
+    )
 }
 
 fn run_rust_imager_case_with_w_term_mode(
@@ -9763,6 +9985,7 @@ fn run_rust_imager_case_with_w_term_mode(
         w_term_mode,
         w_project_planes,
     )
+    .map(|_| ())
 }
 
 fn run_rust_imager_case_with_explicit_phasecenter_and_w_term_mode(
@@ -9774,7 +9997,7 @@ fn run_rust_imager_case_with_explicit_phasecenter_and_w_term_mode(
     explicit_phasecenter: &str,
     w_term_mode: WTermMode,
     w_project_planes: Option<usize>,
-) -> Result<(), String> {
+) -> Result<RunSummary, String> {
     let _ = (casa_source_root(), casacore_source_root());
     run_from_config(&CliConfig {
         ms: ms_path.to_path_buf(),
@@ -9852,7 +10075,6 @@ fn run_rust_imager_case_with_explicit_phasecenter_and_w_term_mode(
         imaging_fft_backend: ImagingFftBackendPolicy::Auto,
         write_preview_pngs: false,
     })
-    .map(|_| ())
 }
 
 fn run_rust_imager_case_with_solver_and_w_term_mode(
@@ -9865,7 +10087,7 @@ fn run_rust_imager_case_with_solver_and_w_term_mode(
     multiscale_scales: &[f32],
     w_term_mode: WTermMode,
     w_project_planes: Option<usize>,
-) -> Result<(), String> {
+) -> Result<RunSummary, String> {
     let _ = (casa_source_root(), casacore_source_root());
     run_from_config(&CliConfig {
         ms: ms_path.to_path_buf(),
@@ -9943,7 +10165,6 @@ fn run_rust_imager_case_with_solver_and_w_term_mode(
         imaging_fft_backend: ImagingFftBackendPolicy::Auto,
         write_preview_pngs: false,
     })
-    .map(|_| ())
 }
 
 fn run_rust_imager_case_with_mtmfs(
@@ -10707,7 +10928,7 @@ fn run_casa_tclean_startmodel(
     prefix: &Path,
     start_model: &Path,
     niter: usize,
-) -> Result<(), String> {
+) -> Result<Value, String> {
     let _guard = casa_tclean_lock().lock().expect("lock CASA tclean");
     let casa = discover_casa_python().ok_or_else(skip_reason)?;
     let prefix_text = prefix
@@ -10717,9 +10938,10 @@ fn run_casa_tclean_startmodel(
         .to_str()
         .ok_or_else(|| format!("non-utf8 startmodel {}", start_model.display()))?;
     let script = r#"
+import json
 import os
 from casatasks import tclean
-tclean(
+ret = tclean(
     vis=os.environ["CASA_VIS"],
     imagename=os.environ["CASA_IMAGENAME"],
     datacolumn="data",
@@ -10747,7 +10969,14 @@ tclean(
     mask="",
     savemodel="none",
     psfcutoff=0.35,
+    fullsummary=True,
 )
+print(json.dumps({
+    "iterdone": int(ret.get("iterdone", 0)),
+    "nmajordone": int(ret.get("nmajordone", 0)),
+    "stopcode": int(ret.get("stopcode", 0)),
+    "summaryminor": ret.get("summaryminor"),
+}))
 "#;
     let output = Command::new(&casa.program)
         .arg("-c")
@@ -10766,7 +10995,14 @@ tclean(
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    Ok(())
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let summary_line = stdout
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .ok_or_else(|| "missing CASA startmodel tclean JSON summary".to_string())?;
+    serde_json::from_str(summary_line)
+        .map_err(|error| format!("decode CASA startmodel summary: {error}; stdout={stdout}"))
 }
 
 #[derive(Debug, PartialEq)]
@@ -11008,7 +11244,7 @@ fn run_casa_tclean_case(
     prefix: &Path,
     niter: usize,
 ) -> Result<(), String> {
-    run_casa_tclean_case_with_solver(case, ms_path, prefix, niter, "hogbom", &[])
+    run_casa_tclean_case_with_solver(case, ms_path, prefix, niter, "hogbom", &[]).map(|_| ())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -11118,7 +11354,7 @@ fn run_casa_tclean_case_with_deconvolver(
     niter: usize,
     deconvolver: &str,
 ) -> Result<(), String> {
-    run_casa_tclean_case_with_solver(case, ms_path, prefix, niter, deconvolver, &[])
+    run_casa_tclean_case_with_solver(case, ms_path, prefix, niter, deconvolver, &[]).map(|_| ())
 }
 
 fn run_casa_tclean_case_with_mtmfs(
@@ -11493,7 +11729,7 @@ fn run_casa_tclean_case_with_solver(
     niter: usize,
     deconvolver: &str,
     multiscale_scales: &[f32],
-) -> Result<(), String> {
+) -> Result<Value, String> {
     let _guard = casa_tclean_lock().lock().expect("lock CASA tclean");
     let casa = discover_casa_python().ok_or_else(|| skip_reason_for_case(case))?;
     let prefix_text = prefix
@@ -11511,9 +11747,10 @@ fn run_casa_tclean_case_with_solver(
         .collect::<Vec<_>>()
         .join(",");
     let script = r#"
+import json
 import os
 from casatasks import tclean
-tclean(
+ret = tclean(
     vis=os.environ["CASA_VIS"],
     imagename=os.environ["CASA_IMAGENAME"],
     datacolumn="data",
@@ -11549,7 +11786,14 @@ tclean(
     mask="",
     savemodel="none",
     psfcutoff=0.35,
+    fullsummary=True,
 )
+print(json.dumps({
+    "iterdone": int(ret.get("iterdone", 0)),
+    "nmajordone": int(ret.get("nmajordone", 0)),
+    "stopcode": int(ret.get("stopcode", 0)),
+    "summaryminor": ret.get("summaryminor"),
+}))
 "#;
     let output = Command::new(&casa.program)
         .arg("-c")
@@ -11580,7 +11824,14 @@ tclean(
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).to_string());
     }
-    Ok(())
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let summary_line = stdout
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .ok_or_else(|| "missing CASA solver tclean JSON summary".to_string())?;
+    serde_json::from_str(summary_line)
+        .map_err(|error| format!("decode CASA solver summary: {error}; stdout={stdout}"))
 }
 
 #[derive(Clone)]
@@ -13436,6 +13687,28 @@ fn image_difference_stats(left: &ArrayD<f32>, right: &ArrayD<f32>) -> ImageDiffe
 
 fn count_nonzero_pixels(image: &ArrayD<f32>, threshold: f32) -> usize {
     image.iter().filter(|value| value.abs() > threshold).count()
+}
+
+fn nonzero_support_bounds(
+    image: &ArrayD<f32>,
+    threshold: f32,
+) -> Option<(usize, usize, usize, usize)> {
+    let mut bounds = None::<(usize, usize, usize, usize)>;
+    for (index, value) in image.indexed_iter() {
+        if value.abs() <= threshold {
+            continue;
+        }
+        bounds = Some(match bounds {
+            None => (index[0], index[0], index[1], index[1]),
+            Some((min_x, max_x, min_y, max_y)) => (
+                min_x.min(index[0]),
+                max_x.max(index[0]),
+                min_y.min(index[1]),
+                max_y.max(index[1]),
+            ),
+        });
+    }
+    bounds
 }
 
 fn sum_image(image: &ArrayD<f32>) -> f32 {
