@@ -61,6 +61,17 @@ enum StagedFieldLayout {
     DistinctPhaseMultiField { ra_offset_rad: f64 },
 }
 
+const CASA_DEFAULT_CUBE_INTERPOLATION: casa_ms::CubeInterpolation =
+    casa_ms::CubeInterpolation::Linear;
+
+fn casa_cube_interpolation_name(interpolation: casa_ms::CubeInterpolation) -> &'static str {
+    match interpolation {
+        casa_ms::CubeInterpolation::Nearest => "nearest",
+        casa_ms::CubeInterpolation::Linear => "linear",
+        casa_ms::CubeInterpolation::Cubic => "cubic",
+    }
+}
+
 impl<'a> ParityCase<'a> {
     fn field_selector(self) -> String {
         if self.field_ids.is_empty() {
@@ -1079,6 +1090,18 @@ fn parity_case_spw_selector_preserves_explicit_channel_ranges() {
         ..case
     };
     assert_eq!(later.cube_channel_spw_selector(), "3:5~8");
+}
+
+#[test]
+fn cube_parity_default_interpolation_matches_casa_linear_contract() {
+    assert_eq!(
+        casa_ms::CubeAxisConfig::default().interpolation,
+        CASA_DEFAULT_CUBE_INTERPOLATION
+    );
+    assert_eq!(
+        casa_cube_interpolation_name(CASA_DEFAULT_CUBE_INTERPOLATION),
+        "linear"
+    );
 }
 
 #[test]
@@ -10250,7 +10273,7 @@ fn run_rust_imager_cube_case_with_solver_and_w_term_mode(
             },
             outframe: FrequencyRef::LSRK,
             veltype: casa_types::measures::doppler::DopplerRef::RADIO,
-            interpolation: casa_ms::CubeInterpolation::Linear,
+            interpolation: CASA_DEFAULT_CUBE_INTERPOLATION,
             rest_frequency_hz: Some(1.25e9),
             start: Some(casa_ms::CubeAxisValue::Channel(case.channel_start as i32)),
             width: Some(casa_ms::CubeAxisValue::Channel(1)),
@@ -11756,7 +11779,7 @@ fn run_casa_tclean_cube_dirty_case_with_wproject(
             start: Some(start),
             width: Some(width),
             outframe: "LSRK",
-            interpolation: "nearest",
+            interpolation: casa_cube_interpolation_name(CASA_DEFAULT_CUBE_INTERPOLATION),
             veltype: "radio",
             restfreq: "1.25GHz",
         },
