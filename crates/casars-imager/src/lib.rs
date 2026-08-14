@@ -12664,7 +12664,6 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
     let nplanes = config
         .channel_count
         .ok_or_else(|| "mosaic cube slab runner requires explicit channel_count".to_string())?;
-    let channel_start = effective_cube_channel_start(config)?;
     let (mut active_planes, mut worker_count) =
         mosaic_cube_slab_plane_worker_shape(config, nplanes);
     let mut slab_manifest = spectral_slab::SpectralSlabManifest::for_planes(nplanes, active_planes);
@@ -12707,6 +12706,7 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
         &spectral_window,
         &polarization,
     )?;
+    let channel_start = effective_cube_channel_start_for_selection(config, &table_values)?;
     let flag_row = selection.flag_row.as_slice();
     let active_selected_rows = selection
         .selected_rows
@@ -15971,7 +15971,11 @@ fn run_standard_spectral_cube_slab_from_open_ms(
     let derived_engine =
         MsCalEngine::new(ms).map_err(|error| format!("build derived engine: {error}"))?;
     let normalized_cube_config;
-    let config = if cube_axis_is_channel_mode(config) {
+    let descending_channel_axis = matches!(
+        config.cube_axis.width,
+        Some(CubeAxisValue::Channel(width)) if width < 0
+    );
+    let config = if cube_axis_is_channel_mode(config) && !descending_channel_axis {
         config
     } else {
         normalized_cube_config = normalize_cube_axis_for_bounded_slabs(
@@ -15982,7 +15986,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
         )?;
         &normalized_cube_config
     };
-    let channel_start = effective_cube_channel_start(config)?;
+    let channel_start = effective_cube_channel_start_for_selection(config, &table_values)?;
     let direct_plane_read_ranges = direct_nearest_cube_source_read_ranges_by_output_plane(
         config,
         nplanes,
@@ -16494,38 +16498,51 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                     "sampling_uv_coverage",
                 );
             }
-            let (slab_planes, _, slab_prepare_elapsed) = with_imager_progress_spectral_stage(
-                config,
-                spectral_slab::SpectralEventStage::RowBlockPreparation,
-                Some(slab.slab_id),
-                slab.plane_start,
-                slab.plane_end,
-                execution_plan.workers,
-                progress_compute_backend,
-                None,
-                true,
-                || {
-                    prepare_independent_shared_cube_slab_resident_clean_planes(
-                        config,
-                        geometry,
-                        clean,
-                        slab.plane_start,
-                        slab.plane_end,
-                        channel_start,
-                        slab_channel_frequencies_hz,
-                        channel_read_range.map_or(0, |range| range.start),
-                        Arc::clone(&direct_spectral_plan),
-                        &table_values.corr_types,
-                        plane_execution_config.clone(),
-                        execution_plan.workers,
-                        progress_selected_backend,
-                        Arc::clone(&shared_source),
-                    )
-                },
-            )?;
+            let (slab_planes, blank_planes, _, slab_prepare_elapsed) =
+                with_imager_progress_spectral_stage(
+                    config,
+                    spectral_slab::SpectralEventStage::RowBlockPreparation,
+                    Some(slab.slab_id),
+                    slab.plane_start,
+                    slab.plane_end,
+                    execution_plan.workers,
+                    progress_compute_backend,
+                    None,
+                    true,
+                    || {
+                        prepare_independent_shared_cube_slab_resident_clean_planes(
+                            config,
+                            geometry,
+                            clean,
+                            slab.plane_start,
+                            slab.plane_end,
+                            channel_start,
+                            slab_channel_frequencies_hz,
+                            channel_read_range.map_or(0, |range| range.start),
+                            Arc::clone(&direct_spectral_plan),
+                            &table_values.corr_types,
+                            plane_execution_config.clone(),
+                            execution_plan.workers,
+                            progress_selected_backend,
+                            Arc::clone(&shared_source),
+                        )
+                    },
+                )?;
             prepare_elapsed += slab_prepare_elapsed;
             let clean_control_started_at = Instant::now();
-            prepared_planes = prepared_planes.saturating_add(slab_planes.len());
+            prepared_planes = prepared_planes
+                .saturating_add(slab_planes.len())
+                .saturating_add(blank_planes.len());
+            skipped_minor_cycle_planes =
+                skipped_minor_cycle_planes.saturating_add(blank_planes.len());
+            for (plane_index, result) in blank_planes {
+                product_publisher.accept(
+                    plane_index,
+                    result,
+                    &mut product_writers,
+                    &mut aggregate,
+                )?;
+            }
             pending_candidate_planes.extend(slab_planes);
             for state in &pending_candidate_planes {
                 let stats = state.prepared.clean_control_stats();
@@ -19320,6 +19337,32 @@ fn direct_cube_plane_weighted_sample_from_shared_source(
     ))
 }
 
+fn direct_cube_plane_has_usable_sample(
+    shared_source: &SharedColumnarCubeSlabSource,
+    output_channel: usize,
+    spectral_plan: &CubeRowSpectralReusablePlan,
+    polarization: DirectCubePlanePolarization,
+) -> Result<bool, String> {
+    for block in &shared_source.blocks {
+        for row_slot in 0..block.visibility.row_count() {
+            if matches!(
+                direct_cube_plane_weighted_sample_from_shared_source(
+                    block,
+                    row_slot,
+                    output_channel,
+                    spectral_plan,
+                    polarization,
+                    None,
+                )?,
+                DirectCubePlaneSampleBuild::Accepted(_)
+            ) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
 fn direct_dirty_cube_shared_source_eligible(
     config: &CliConfig,
     clean: CleanConfig,
@@ -19990,6 +20033,21 @@ struct ResidentCleanCubePlaneState {
     visibility_batches: usize,
 }
 
+enum ResidentCleanCubePlaneCandidate {
+    Prepared(Box<ResidentCleanCubePlaneState>),
+    Blank {
+        plane_index: usize,
+        result: Box<CubeImagingResult>,
+    },
+}
+
+type ResidentCleanCubeSlabPreparation = (
+    Vec<ResidentCleanCubePlaneState>,
+    Vec<(usize, CubeImagingResult)>,
+    ImagingStageTimings,
+    Duration,
+);
+
 struct ResidentCleanCubePlaneFinishResult {
     cube_result: CubeImagingResult,
     skipped_minor_cycle: bool,
@@ -20245,14 +20303,7 @@ fn prepare_independent_shared_cube_slab_resident_clean_planes(
     worker_count: usize,
     selected_backend: Option<PerPlaneExecutionBackend>,
     shared_source: Arc<SharedColumnarCubeSlabSource>,
-) -> Result<
-    (
-        Vec<ResidentCleanCubePlaneState>,
-        ImagingStageTimings,
-        Duration,
-    ),
-    String,
-> {
+) -> Result<ResidentCleanCubeSlabPreparation, String> {
     let mut slab_config =
         slab_config_for_cube_planes(config, base_channel_start, slab_plane_start, slab_plane_end)?;
     if slab_config.imaging_prepare_workers.is_none() && worker_count > 1 {
@@ -20271,6 +20322,7 @@ fn prepare_independent_shared_cube_slab_resident_clean_planes(
         .map(parse_plane_stokes)
         .transpose()?
         .unwrap_or(PlaneStokes::I);
+    let polarization = direct_cube_plane_polarization(plane_stokes, corr_types)?;
     let tasks = slab_channel_frequencies_hz
         .iter()
         .copied()
@@ -20299,6 +20351,25 @@ fn prepare_independent_shared_cube_slab_resident_clean_planes(
     }
     let run_plane = |payload: DirectCleanCubePlaneTaskPayload| {
         let worker_started = Instant::now();
+        if !direct_cube_plane_has_usable_sample(
+            &shared_source,
+            payload.output_channel,
+            &direct_spectral_plan,
+            polarization,
+        )? {
+            return Ok((
+                ResidentCleanCubePlaneCandidate::Blank {
+                    plane_index: payload.plane_index,
+                    result: Box::new(blank_clean_cube_plane_result(
+                        geometry,
+                        clean,
+                        plane_stokes,
+                        payload.channel_frequency_hz,
+                    )),
+                },
+                ImagingStageTimings::default(),
+            ));
+        }
         let (prepared, direct_replay_timings) = prepare_direct_clean_cube_plane_from_shared_source(
             geometry,
             clean,
@@ -20350,9 +20421,13 @@ fn prepare_independent_shared_cube_slab_resident_clean_planes(
             prepare_elapsed: worker_started.elapsed(),
             visibility_batches: shared_source.blocks.len(),
         };
-        Ok((state, ImagingStageTimings::default()))
+        Ok((
+            ResidentCleanCubePlaneCandidate::Prepared(Box::new(state)),
+            ImagingStageTimings::default(),
+        ))
     };
     let mut prepared = Vec::<ResidentCleanCubePlaneState>::with_capacity(tasks.len());
+    let mut blank = Vec::<(usize, CubeImagingResult)>::new();
     let mut stage_timings = ImagingStageTimings::default();
     let plane_execution_stats = run_owned_independent_imaging_planes_with_consumer(
         tasks,
@@ -20360,11 +20435,18 @@ fn prepare_independent_shared_cube_slab_resident_clean_planes(
         run_plane,
         |plane_result| {
             add_imaging_stage_timings(&mut stage_timings, plane_result.stage_timings);
-            prepared.push(plane_result.result);
+            match plane_result.result {
+                ResidentCleanCubePlaneCandidate::Prepared(state) => prepared.push(*state),
+                ResidentCleanCubePlaneCandidate::Blank {
+                    plane_index,
+                    result,
+                } => blank.push((plane_index, *result)),
+            }
             Ok(())
         },
     )?;
     prepared.sort_by_key(|state| state.plane_index);
+    blank.sort_by_key(|(plane_index, _)| *plane_index);
     let prepared_peak = prepared
         .iter()
         .map(|state| {
@@ -20401,7 +20483,12 @@ fn prepare_independent_shared_cube_slab_resident_clean_planes(
             duration_ms(plane_execution_stats.worker_elapsed_max),
         );
     }
-    Ok((prepared, stage_timings, plane_execution_stats.elapsed))
+    Ok((
+        prepared,
+        blank,
+        stage_timings,
+        plane_execution_stats.elapsed,
+    ))
 }
 
 fn single_plane_imaging_result_to_cube_result(
@@ -20571,6 +20658,28 @@ fn blank_dirty_cube_plane_result(
     }
 }
 
+fn blank_clean_cube_plane_result(
+    geometry: ImageGeometry,
+    clean: CleanConfig,
+    plane_stokes: PlaneStokes,
+    channel_frequency_hz: f64,
+) -> CubeImagingResult {
+    let dirty = blank_dirty_cube_plane_result(geometry, clean, plane_stokes, channel_frequency_hz);
+    let model = Array4::<f32>::zeros(dirty.residual.raw_dim().f());
+    CubeImagingResult {
+        psf: dirty.psf,
+        residual: dirty.residual,
+        image: model.clone(),
+        model,
+        sumwt: dirty.sumwt,
+        clean_mask: None,
+        beams: dirty.beams,
+        restored_beams: dirty.restored_beams,
+        diagnostics: dirty.diagnostics,
+        compatibility: dirty.compatibility,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_independent_shared_cube_slab_planes(
     config: &CliConfig,
@@ -20670,7 +20779,13 @@ fn run_independent_shared_cube_slab_planes(
                 .map(parse_plane_stokes)
                 .transpose()?
                 .unwrap_or(PlaneStokes::I);
-            if !spectral_plan.output_channel_has_support(payload.output_channel) {
+            let polarization = direct_cube_plane_polarization(plane_stokes, corr_types)?;
+            if !direct_cube_plane_has_usable_sample(
+                &shared_source,
+                payload.output_channel,
+                spectral_plan,
+                polarization,
+            )? {
                 return Ok((
                     SharedDirtyCubePlaneGridRunResult {
                         grid_result: None,
@@ -22595,6 +22710,18 @@ fn cube_axis_is_channel_mode(config: &CliConfig) -> bool {
     )
 }
 
+fn resolve_casa_cube_channel_selector_selection(
+    all_frequencies_hz: &[f64],
+    selector: &casa_ms::ChannelSelection,
+) -> Result<casa_ms::ResolvedChannelSelection, String> {
+    let mut channel_mode_selector = selector.clone();
+    for segment in &mut channel_mode_selector.segments {
+        segment.stride = 1;
+    }
+    resolve_channel_selector_selection(all_frequencies_hz, &channel_mode_selector)
+        .map_err(|error| error.to_string())
+}
+
 fn normalize_cube_axis_for_bounded_slabs(
     config: &CliConfig,
     table_values: &PreparedSelectionTableValues,
@@ -22653,6 +22780,23 @@ fn effective_cube_channel_start(config: &CliConfig) -> Result<usize, String> {
         Some(_) => Ok(config.channel_start.unwrap_or(0)),
         None => Ok(config.channel_start.unwrap_or(0)),
     }
+}
+
+fn effective_cube_channel_start_for_selection(
+    config: &CliConfig,
+    table_values: &PreparedSelectionTableValues,
+) -> Result<usize, String> {
+    if config.cube_axis.start.is_some() || config.channel_start.is_some() {
+        return effective_cube_channel_start(config);
+    }
+    let Some(selector) = selected_spw_channel_selector(config, table_values.spw_id)? else {
+        return Ok(0);
+    };
+    resolve_casa_cube_channel_selector_selection(&table_values.spw_freqs_hz, &selector)?
+        .indices
+        .first()
+        .copied()
+        .ok_or_else(|| "cube channel selector resolved to no source channels".to_string())
 }
 
 fn effective_cube_channel_width(config: &CliConfig) -> Result<usize, String> {
@@ -46007,28 +46151,6 @@ struct CubeRowSpectralReusablePlan {
 const MISSING_CUBE_GRID_ASSIGNMENT: usize = usize::MAX;
 
 impl CubeRowSpectralReusablePlan {
-    fn output_channel_has_support(&self, output_channel: usize) -> bool {
-        let has_support = |contributions: &CubeRowSpectralContributions| {
-            if self.use_visibility_grid_assignments {
-                contributions.grid_channel_contributions.iter().any(|grid| {
-                    grid.output_channel == output_channel && !grid.contributions.is_empty()
-                })
-            } else {
-                contributions
-                    .output_channel_contributions
-                    .get(output_channel)
-                    .is_some_and(|contributions| !contributions.is_empty())
-            }
-        };
-        self.shared_spectral_binding
-            .as_ref()
-            .is_some_and(|binding| has_support(binding.contributions.as_ref()))
-            || self
-                .spectral
-                .values()
-                .any(|contributions| has_support(contributions.as_ref()))
-    }
-
     fn spectral(&self, cache_key: &(u64, usize)) -> Option<Arc<CubeRowSpectralContributions>> {
         self.spectral.get(cache_key).map(Arc::clone)
     }
@@ -47872,6 +47994,11 @@ impl PreparedSelection {
                 selected_spw_channel_selector(config, spw_id).map_err(|error| error.to_string())?;
             let mut source_channel_selection =
                 match (&config.spectral_mode, explicit_channel_selector.as_ref()) {
+                    (SpectralMode::Cube | SpectralMode::Cubedata, Some(selector))
+                        if cube_axis_is_channel_mode(config) =>
+                    {
+                        resolve_casa_cube_channel_selector_selection(&spw_freqs, selector)?
+                    }
                     (_, Some(selector)) => resolve_channel_selector_selection(&spw_freqs, selector)
                         .map_err(|error| error.to_string())?,
                     (SpectralMode::Mfs, None) => resolve_contiguous_channel_selection(
@@ -57058,6 +57185,53 @@ mod tests {
     static SPECTRAL_SLAB_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
     static AWPROJECT_DIAGNOSTIC_ENV_TEST_LOCK: LazyLock<Mutex<()>> =
         LazyLock::new(|| Mutex::new(()));
+
+    #[test]
+    fn casa_cube_channel_selector_ignores_stride_but_preserves_gaps() {
+        let selector = casa_ms::ChannelSelection {
+            segments: vec![
+                casa_ms::ChannelSelectionSegment {
+                    start: 0,
+                    end: 4,
+                    stride: 2,
+                },
+                casa_ms::ChannelSelectionSegment {
+                    start: 7,
+                    end: 8,
+                    stride: 1,
+                },
+            ],
+        };
+        assert_eq!(
+            resolve_casa_cube_channel_selector_selection(
+                &[10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0],
+                &selector,
+            )
+            .unwrap()
+            .indices,
+            vec![0, 1, 2, 3, 4, 7, 8]
+        );
+    }
+
+    #[test]
+    fn omitted_cube_start_begins_at_first_selected_channel() {
+        let mut config = refim_point_default_cube_config(PathBuf::from("unused.ms"));
+        config.spw_selector = Some("0:4~13".to_string());
+        let table_values = PreparedSelectionTableValues {
+            spw_id: 0,
+            spw_freqs_hz: (0..20)
+                .map(|channel| 1.0e9 + channel as f64 * 50.0e6)
+                .collect(),
+            spw_widths_hz: vec![50.0e6; 20],
+            freq_ref: FrequencyRef::TOPO,
+            corr_types: vec![9, 12],
+        };
+
+        assert_eq!(
+            effective_cube_channel_start_for_selection(&config, &table_values).unwrap(),
+            4
+        );
+    }
 
     const AWPROJECT_DIAGNOSTIC_TEST_ENV_NAMES: [&str; 25] = [
         AWPROJECT_DATATOGRID_BRACKET_OUTPUT_ENV,
@@ -79369,6 +79543,91 @@ deconvolver=mtmfs
             "expected cube20 output plane 4 to remain populated; channel frequencies={:?}, sample counts={:?}",
             channel_frequencies_hz,
             sample_counts
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn refim_point_cube20_cpu_and_metal_agree_on_active_and_blank_planes() {
+        if !casa_imaging::standard_mfs_metal_device_available() {
+            return;
+        }
+        let Some(root) = env::var_os("CASA_RS_TESTDATA_ROOT") else {
+            return;
+        };
+        let root = PathBuf::from(root);
+        let candidates = [
+            root.join("unittest/tclean/refim_point.ms"),
+            root.join("measurementset/vla/refim_point.ms"),
+        ];
+        let Some(ms_path) = candidates.into_iter().find(|path| path.exists()) else {
+            return;
+        };
+        let tmp = tempdir().unwrap();
+        let mut cpu_config = refim_point_cube20_config(ms_path.clone());
+        cpu_config.imagename = tmp.path().join("cpu");
+        cpu_config.dirty_only = false;
+        cpu_config.niter = 10;
+        cpu_config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Cpu;
+        let mut metal_config = cpu_config.clone();
+        metal_config.imagename = tmp.path().join("metal");
+        metal_config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
+
+        let ms = MeasurementSet::open(ms_path).unwrap();
+        let source_sample_counts = [&cpu_config, &metal_config].map(|config| {
+            let PreparedInput::Cube(cube) =
+                prepare_plane_input(&ms, config, VisibilityDataColumn::Data).unwrap()
+            else {
+                panic!("expected cube prepared input");
+            };
+            cube.channels
+                .iter()
+                .map(cube_channel_sample_count)
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(source_sample_counts[0], source_sample_counts[1]);
+
+        let cpu_summary = run_from_config(&cpu_config).unwrap();
+        let metal_summary = run_from_config(&metal_config).unwrap();
+        let active_from_summary = |summary: &RunSummary| {
+            summary
+                .channel_summaries
+                .iter()
+                .map(|channel| channel.initial_residual_peak_jy_per_beam > 0.0)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            active_from_summary(&cpu_summary),
+            active_from_summary(&metal_summary)
+        );
+
+        let sumwt_values = |prefix: &Path| {
+            let image = PagedImage::<f32>::open(format!("{}.sumwt", prefix.display())).unwrap();
+            image
+                .get_slice(&vec![0; image.shape().len()], image.shape())
+                .unwrap()
+                .iter()
+                .copied()
+                .collect::<Vec<_>>()
+        };
+        let cpu_sumwt = sumwt_values(&cpu_config.imagename);
+        let metal_sumwt = sumwt_values(&metal_config.imagename);
+        let classify_sumwt = |values: &[f32]| {
+            values
+                .iter()
+                .map(|value| value.is_finite() && *value > 0.0)
+                .collect::<Vec<_>>()
+        };
+        let cpu_active_planes = classify_sumwt(&cpu_sumwt);
+        let metal_active_planes = classify_sumwt(&metal_sumwt);
+        assert_eq!(cpu_active_planes, metal_active_planes);
+        assert!(cpu_active_planes.iter().any(|active| *active));
+        assert!(cpu_active_planes.iter().any(|active| !*active));
+        assert!(
+            cpu_sumwt
+                .iter()
+                .chain(&metal_sumwt)
+                .all(|value| value.is_finite() && *value >= 0.0)
         );
     }
 
