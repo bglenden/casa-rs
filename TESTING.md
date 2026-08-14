@@ -152,6 +152,7 @@ the commits after the tested revision and reuse the result when they contain
 only documentation, planning, or workflow-policy changes. Do not rerun a gate
 solely because review started; if executable changes intervened, rerun only the
 affected gate.
+
 - Native macOS GUI prototype and frontend services:
   `scripts/generate-frontend-bindings.sh --check`,
   `cargo test -p casa-notebook --test wave1_contract`,
@@ -273,6 +274,45 @@ tied to a one-build ad-hoc `cdhash`. This lets macOS retain a one-time
 removable-volume decision while the large Cargo target, task executables, and
 test artifacts stay on external storage. Override the config location with
 `CASA_RS_GUI_TEST_REMOTE_SIGNING_CONFIG`.
+
+## Long performance campaigns
+
+Every performance run projected over 30 minutes must use a checked-in workload
+harness or campaign controller and produce a launch receipt. The receipt binds:
+
+- run and candidate identity, clean source revision or recorded tree state, and
+  binary hash;
+- dataset selection, source ordering and blocking, reference products, CASA
+  runtime, convolution-function cache, and other mode-specific fixture
+  identities;
+- effective backend and runtime configuration plus required CPU, Metal device,
+  pipeline, dispatch, and output receipts;
+- a same-revision mode-faithful turnaround receipt;
+- scientific tolerances, stage forecast, hard wall limit, and memory, disk,
+  swap, and other resource ceilings;
+- exclusive host ownership for the long run; and
+- artifact-retention class and cleanup disposition.
+
+Only one long performance run may be active on a host. A terminal receipt must
+classify it as passed, scientifically failed, resource-aborted, rate-aborted,
+fixture-invalid, or execution-failed before another candidate launches. Mere
+log activity does not satisfy progress: the controller must report completed
+and total stage units, update a conservative completion forecast, and abort
+when that forecast exceeds the declared wall ceiling.
+
+A run projected over 90 minutes is final evidence, not a diagnostic. After a
+long-run failure, the same stage must be reproduced by a bounded probe before
+another long run. Two failed full-resolution launches in one campaign require
+an explicit continuation, fallback, or waiver decision. Executable or
+runtime-configuration changes invalidate prior turnaround authorization, but
+unchanged accepted reference products and CASA baselines remain reusable.
+
+Complete generated products are retained only for accepted evidence, the first
+unresolved scientific failure, or an explicitly named forensic case. Rejected
+or diagnosed runs retain compact provenance, logs, telemetry, comparisons, and
+hashes; their generated products, spill files, frozen binaries, and workspaces
+then become cleanup candidates. Cleanup remains fail-closed and must never
+remove an active run or unresolved first scientific failure.
 
 ## Coverage / confidence policy
 
