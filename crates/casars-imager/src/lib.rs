@@ -137,7 +137,7 @@ use casa_types::measures::frequency::{FrequencyRef, MFrequencyConverter};
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use image::{ImageBuffer, Rgb};
-use ndarray::{Array2, Array4, ArrayD, IxDyn, ShapeBuilder, s};
+use ndarray::{Array2, Array4, ArrayD, Axis, IxDyn, ShapeBuilder, s};
 use num_complex::{Complex32, Complex64};
 use sha2::{Digest, Sha256};
 
@@ -21118,6 +21118,7 @@ struct CubeSlabProductWriters {
     sumwt: PagedImage<f32>,
     beams: Vec<Option<BeamFit>>,
     restored_beams: Vec<Option<BeamFit>>,
+    cell_size_rad: [f64; 2],
     include_model: bool,
     dirty_image_alias: bool,
     stats: CubeProductWriteStats,
@@ -21259,6 +21260,10 @@ impl CubeSlabProductWriters {
             sumwt,
             beams: vec![None; nplanes],
             restored_beams: vec![None; nplanes],
+            cell_size_rad: [
+                config.cell_arcsec.to_radians() / 3600.0,
+                config.cell_arcsec.to_radians() / 3600.0,
+            ],
             include_model,
             dirty_image_alias,
             stats: CubeProductWriteStats::default(),
@@ -21485,6 +21490,9 @@ impl CubeSlabProductWriters {
     }
 
     fn finish(mut self, config: &CliConfig) -> Result<(), String> {
+        if config.restoring_beam_mode == RestoringBeamMode::Common {
+            self.rewrite_clean_images_with_common_beam()?;
+        }
         let psf_beams = beam_set_from_channel_beams(&self.beams, RestoringBeamMode::PerPlane)?;
         let image_beams =
             beam_set_from_channel_beams(&self.restored_beams, config.restoring_beam_mode)?;
@@ -21498,6 +21506,72 @@ impl CubeSlabProductWriters {
             alias_tiled_product_payload(&self.residual_path, &self.image_path, "image")?;
         }
         set_tiled_product_info_and_save(&mut self.sumwt, ImageBeamSet::default(), "sumwt")?;
+        Ok(())
+    }
+
+    fn rewrite_clean_images_with_common_beam(&mut self) -> Result<(), String> {
+        let Some(model) = self.model.as_ref() else {
+            return Ok(());
+        };
+        let Some(common_beam) = common_restoring_beam(&self.beams)? else {
+            return Ok(());
+        };
+        let image_shape = self.image.shape().to_vec();
+        let [nx, ny, _, nplanes]: [usize; 4] = image_shape.try_into().map_err(|shape| {
+            format!("common restoring beam requires a four-dimensional cube, got {shape:?}")
+        })?;
+        for channel in 0..nplanes {
+            let start = [0, 0, 0, channel];
+            let shape = [nx, ny, 1, 1];
+            let model_plane = model
+                .get_slice(&start, &shape)
+                .map_err(|error| format!("read model plane {channel} for common beam: {error}"))?
+                .into_dimensionality::<ndarray::Ix4>()
+                .map_err(|error| format!("reshape model plane {channel}: {error}"))?
+                .slice(s![.., .., 0, 0])
+                .to_owned();
+            let residual_plane = self
+                .residual
+                .get_slice(&start, &shape)
+                .map_err(|error| format!("read residual plane {channel} for common beam: {error}"))?
+                .into_dimensionality::<ndarray::Ix4>()
+                .map_err(|error| format!("reshape residual plane {channel}: {error}"))?
+                .slice(s![.., .., 0, 0])
+                .to_owned();
+            let restored_model = casa_imaging::restore_standard_mfs_model(
+                &model_plane,
+                self.cell_size_rad,
+                Some(common_beam),
+            );
+            let restored_residual = match self.beams.get(channel).copied().flatten() {
+                Some(fitted_beam) => rescale_frontend_residual_to_beam(
+                    &residual_plane,
+                    self.cell_size_rad,
+                    common_beam,
+                    fitted_beam,
+                )?,
+                None => residual_plane,
+            };
+            let image_plane = (restored_model + restored_residual)
+                .insert_axis(Axis(2))
+                .insert_axis(Axis(3));
+            let image_started = Instant::now();
+            self.image
+                .put_slice_view(image_plane.view().into_dyn(), &start)
+                .map_err(|error| {
+                    format!("write image plane {channel} with common restoring beam: {error}")
+                })?;
+            let image_elapsed = image_started.elapsed();
+            self.stats.image_elapsed += image_elapsed;
+            log_image_product_write(
+                ".image",
+                "image.common_beam",
+                image_plane.shape(),
+                image_plane.len(),
+                image_elapsed,
+            );
+        }
+        self.restored_beams.fill(Some(common_beam));
         Ok(())
     }
 
@@ -53571,13 +53645,33 @@ fn beam_to_gaussian(beam: BeamFit) -> GaussianBeam {
     )
 }
 
-#[cfg(test)]
 fn gaussian_to_beamfit(beam: GaussianBeam) -> BeamFit {
     BeamFit {
         major_fwhm_rad: beam.major,
         minor_fwhm_rad: beam.minor,
         position_angle_rad: beam.position_angle,
     }
+}
+
+fn common_restoring_beam(beams: &[Option<BeamFit>]) -> Result<Option<BeamFit>, String> {
+    let Some(first) = beams.iter().flatten().next().copied() else {
+        return Ok(None);
+    };
+    let mut beam_set = ImageBeamSet::with_shape(beams.len().max(1), 1, beam_to_gaussian(first));
+    for (channel, beam) in beams.iter().enumerate() {
+        if let Some(beam) = beam {
+            beam_set
+                .set_beam(Some(channel), Some(0), beam_to_gaussian(*beam))
+                .map_err(|error| {
+                    format!("set common restoring beam input for channel {channel}: {error}")
+                })?;
+        }
+    }
+    beam_set
+        .common_beam()
+        .map(gaussian_to_beamfit)
+        .map(Some)
+        .map_err(|error| format!("determine common restoring beam: {error}"))
 }
 
 fn frontend_dirty_clean_config(psf_cutoff: f32) -> CleanConfig {
@@ -53604,26 +53698,8 @@ fn select_frontend_restored_cube_beams(
     match mode {
         RestoringBeamMode::PerPlane => Ok(fitted_beams.to_vec()),
         RestoringBeamMode::Common => {
-            let Some(first) = fitted_beams.iter().flatten().next().copied() else {
-                return Ok(vec![None; fitted_beams.len()]);
-            };
-            let mut beam_set =
-                ImageBeamSet::with_shape(fitted_beams.len().max(1), 1, beam_to_gaussian(first));
-            for (channel, beam) in fitted_beams.iter().enumerate() {
-                if let Some(beam) = beam {
-                    beam_set
-                        .set_beam(Some(channel), Some(0), beam_to_gaussian(*beam))
-                        .map_err(|error| {
-                            format!(
-                                "set common restoring beam input for channel {channel}: {error}"
-                            )
-                        })?;
-                }
-            }
-            let common = beam_set
-                .common_beam()
-                .map_err(|error| format!("determine common restoring beam: {error}"))?;
-            Ok(vec![Some(gaussian_to_beamfit(common)); fitted_beams.len()])
+            let common = common_restoring_beam(fitted_beams)?;
+            Ok(vec![common; fitted_beams.len()])
         }
     }
 }
@@ -53646,7 +53722,6 @@ fn restore_frontend_model(
     apply_frontend_kernel(model, &kernel)
 }
 
-#[cfg(test)]
 fn rescale_frontend_residual_to_beam(
     residual: &Array2<f32>,
     cell_size_rad: [f64; 2],
@@ -53676,7 +53751,6 @@ fn rescale_frontend_residual_to_beam(
     Ok(rescaled)
 }
 
-#[cfg(test)]
 fn frontend_gaussian_kernel(
     beam: BeamFit,
     cell_size_rad: [f64; 2],
@@ -53718,7 +53792,6 @@ fn frontend_gaussian_kernel(
     Some(kernel)
 }
 
-#[cfg(test)]
 fn make_frontend_casa_gaussian_psf_image(
     nx: usize,
     ny: usize,
@@ -53765,7 +53838,6 @@ fn make_frontend_casa_gaussian_psf_image(
     image
 }
 
-#[cfg(test)]
 fn apply_frontend_kernel(model: &Array2<f32>, kernel: &[(isize, isize, f32)]) -> Array2<f32> {
     let mut restored = Array2::<f32>::zeros(model.raw_dim());
     for ((center_x, center_y), flux) in model.indexed_iter() {
