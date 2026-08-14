@@ -20020,7 +20020,7 @@ struct SharedDirtyCubePlaneProductMetadata {
 
 enum SharedDirtyCubePlaneProductSource {
     StandardGrid,
-    Complete(DirtyCubeImagingResult),
+    Complete(Box<DirtyCubeImagingResult>),
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -20070,7 +20070,7 @@ fn flush_ready_dirty_grid_products(
                 }
                 SharedDirtyCubePlaneOutput::WProject(result)
                 | SharedDirtyCubePlaneOutput::Blank(result) => {
-                    SharedDirtyCubePlaneProductSource::Complete(result)
+                    SharedDirtyCubePlaneProductSource::Complete(Box::new(result))
                 }
             };
             product_metadata.push(SharedDirtyCubePlaneProductMetadata {
@@ -20112,7 +20112,7 @@ fn flush_ready_dirty_grid_products(
         let mut dirty_plane_results = dirty_plane_results.into_iter();
         for plane_meta in product_metadata {
             let mut cube_result = match plane_meta.source {
-                SharedDirtyCubePlaneProductSource::Complete(result) => result,
+                SharedDirtyCubePlaneProductSource::Complete(result) => *result,
                 SharedDirtyCubePlaneProductSource::StandardGrid => {
                     let plane_result = dirty_plane_results.next().ok_or_else(|| {
                         format!(
