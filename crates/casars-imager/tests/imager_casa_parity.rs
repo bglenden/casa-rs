@@ -2860,7 +2860,7 @@ fn cube_common_restoringbeam_tracks_casa_on_refim_point() {
 }
 
 #[test]
-#[ignore = "diagnostic for Backlog 11.6 common-beam parity on refim_point"]
+#[ignore = "issue #473 diagnostic: common-beam parity on refim_point"]
 fn cube_common_restoringbeam_algorithm_matches_casa_on_casa_beamset_refim_point() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point.ms",
@@ -2935,7 +2935,7 @@ fn cube_common_restoringbeam_algorithm_matches_casa_on_casa_beamset_refim_point(
 }
 
 #[test]
-#[ignore = "diagnostic for Backlog 11.6 compare Rust and CASA derived common beamsets on refim_point"]
+#[ignore = "issue #473 diagnostic: compare Rust and CASA derived common beamsets on refim_point"]
 fn cube_common_restoringbeam_algorithm_compares_rust_and_casa_beamsets_on_refim_point() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point.ms",
@@ -3020,7 +3020,7 @@ fn cube_common_restoringbeam_algorithm_compares_rust_and_casa_beamsets_on_refim_
 }
 
 #[test]
-#[ignore = "diagnostic for Backlog 11.6 compare uniform common-beam PSF beamsets on refim_point_withline"]
+#[ignore = "issue #473 diagnostic: compare uniform common-beam PSF beamsets on refim_point_withline"]
 fn cube_uniform_common_beam_diagnostics_on_refim_point_withline() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point_withline.ms",
@@ -3108,7 +3108,7 @@ fn cube_uniform_common_beam_diagnostics_on_refim_point_withline() {
 }
 
 #[test]
-#[ignore = "diagnostic for Backlog 11.6 per-plane PSF beam parity on refim_point_withline"]
+#[ignore = "issue #473 diagnostic: per-plane PSF beam parity on refim_point_withline"]
 fn cube_uniform_per_plane_psf_beam_diagnostics_on_refim_point_withline() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point_withline.ms",
@@ -3214,7 +3214,7 @@ fn cube_uniform_per_plane_psf_beam_diagnostics_on_refim_point_withline() {
 }
 
 #[test]
-#[ignore = "diagnostic for Backlog 11.6 compare Rust fitter against CASA PSF beam headers on refim_point_withline"]
+#[ignore = "issue #473 diagnostic: compare Rust fitter against CASA PSF beam headers on refim_point_withline"]
 fn cube_uniform_psf_fit_diagnostics_on_casa_psfs_for_refim_point_withline() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point_withline.ms",
@@ -3313,7 +3313,7 @@ fn cube_uniform_psf_fit_diagnostics_on_casa_psfs_for_refim_point_withline() {
 }
 
 #[test]
-#[ignore = "diagnostic for Backlog 11.6 per-plane PSF beam parity on refim_point"]
+#[ignore = "issue #473 diagnostic: per-plane PSF beam parity on refim_point"]
 fn cube_psf_beamset_tracks_casa_on_refim_point_common_beam_case() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point.ms",
@@ -3403,7 +3403,7 @@ fn cube_psf_beamset_tracks_casa_on_refim_point_common_beam_case() {
 }
 
 #[test]
-#[ignore = "diagnostic for Backlog 11.6 cube PSF beam fitting on refim_point"]
+#[ignore = "issue #473 diagnostic: cube PSF beam fitting on refim_point"]
 fn cube_psf_beam_fit_matches_casa_on_refim_point_channel_zero() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point.ms",
@@ -3481,7 +3481,7 @@ fn cube_psf_beam_fit_matches_casa_on_refim_point_channel_zero() {
 }
 
 #[test]
-#[ignore = "diagnostic for Backlog 11.6 cube PSF beam metadata on refim_point"]
+#[ignore = "issue #473 diagnostic: cube PSF beam metadata on refim_point"]
 fn cube_rust_psf_metadata_matches_rust_fit_on_refim_point_channel_zero() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point.ms",
@@ -4249,7 +4249,7 @@ fn channel_mode_cube_products_track_casa_on_refim_point_case_22_direct_parity() 
 }
 
 #[test]
-#[ignore = "CASA test_task_tclean.py leaves cube4 assertions commented out; not a validated oracle"]
+#[ignore = "issue #466 oracle exclusion: CASA test_task_tclean.py leaves cube4 assertions commented out"]
 fn channel_mode_cube_products_track_casa_on_refim_point_case_4_direct_parity() {
     run_refim_point_direct_cube_case(DirectCubeParityCase {
         suffix: "cube4",
@@ -4272,7 +4272,7 @@ fn channel_mode_cube_products_track_casa_on_refim_point_case_4_direct_parity() {
 }
 
 #[test]
-#[ignore = "CASA test_task_tclean.py marks cube13 as not quite properly working and leaves assertions commented out"]
+#[ignore = "issue #466 oracle exclusion: CASA marks cube13 not quite properly working and leaves assertions commented out"]
 fn channel_mode_cube_products_track_casa_on_refim_point_case_13_direct_parity() {
     run_refim_point_direct_cube_case(DirectCubeParityCase {
         suffix: "cube13",
@@ -5504,7 +5504,7 @@ fn hogbom_cube_threshold_tolerance_tracks_casa_on_refim_point_withline() {
 }
 
 #[test]
-#[ignore = "issue #44: late major-cycle residual-refresh divergence still drives the final two extra nsigma updates on refim_point_withline"]
+#[ignore = "issue #35: late major-cycle residual drift drives two extra nsigma updates on refim_point_withline"]
 fn hogbom_cube_nsigma_stopping_tracks_casa_on_refim_point_withline() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point_withline.ms",
@@ -5663,7 +5663,7 @@ fn hogbom_cube_nsigma_stopping_tracks_casa_on_refim_point_withline() {
 }
 
 #[test]
-#[ignore = "diagnostic for Wave 8 late-block CASA restart residual parity"]
+#[ignore = "issue #35 diagnostic: late-block CASA restart residual parity"]
 fn hogbom_cube_nsigma_late_block_residual_planes_track_casa_restart() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point_withline.ms",
@@ -5801,7 +5801,7 @@ fn hogbom_cube_nsigma_late_block_residual_planes_track_casa_restart() {
 }
 
 #[test]
-#[ignore = "diagnostic for Wave 8 exact CASA inputres/inputmod late-block parity"]
+#[ignore = "issue #35 diagnostic: exact CASA inputres/inputmod late-block parity"]
 fn hogbom_cube_nsigma_late_block_inputs_track_casa_minor_cycle_snapshots() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point_withline.ms",
@@ -6062,7 +6062,7 @@ fn hogbom_cube_nsigma_late_block_inputs_track_casa_minor_cycle_snapshots() {
 }
 
 #[test]
-#[ignore = "diagnostic for Wave 8 same-model residual refresh at CASA restart boundaries"]
+#[ignore = "issue #35 diagnostic: same-model residual refresh at CASA restart boundaries"]
 fn hogbom_cube_nsigma_same_model_residual_refresh_tracks_casa_restart() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point_withline.ms",
@@ -6219,7 +6219,7 @@ fn hogbom_cube_nsigma_same_model_residual_refresh_tracks_casa_restart() {
 }
 
 #[test]
-#[ignore = "diagnostic for Wave 8 internal-model residual refresh consistency"]
+#[ignore = "issue #35 diagnostic: internal-model residual refresh consistency"]
 fn hogbom_cube_nsigma_internal_model_residual_refresh_matches_captured_state() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point_withline.ms",
@@ -6393,7 +6393,7 @@ fn hogbom_cube_nsigma_internal_model_residual_refresh_matches_captured_state() {
 }
 
 #[test]
-#[ignore = "diagnostic for Wave 9 full-cube restart consistency on refim_point_withline"]
+#[ignore = "issue #35 diagnostic: full-cube restart consistency on refim_point_withline"]
 fn hogbom_cube_nsigma_full_cube_model_context_explains_late_restart_gap() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point_withline.ms",
@@ -6621,7 +6621,7 @@ fn hogbom_cube_nsigma_full_cube_model_context_explains_late_restart_gap() {
 }
 
 #[test]
-#[ignore = "diagnostic for Wave 9 channel-9 block-0 nearest-vs-linear dirty parity"]
+#[ignore = "issue #35 diagnostic: channel-9 block-0 nearest-vs-linear dirty parity"]
 fn hogbom_cube_nsigma_block0_channel9_nearest_vs_linear_dirty_against_casa() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point_withline.ms",
@@ -6808,7 +6808,7 @@ fn hogbom_cube_nsigma_block0_channel9_nearest_vs_linear_dirty_against_casa() {
 }
 
 #[test]
-#[ignore = "diagnostic for Wave 9 block-0 cube dirty isolation with CASA mstransform output"]
+#[ignore = "issue #35 diagnostic: block-0 cube dirty isolation with CASA mstransform output"]
 fn hogbom_cube_nsigma_block0_channel9_casa_regridded_ms_isolates_spectral_seam() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point_withline.ms",
@@ -7120,7 +7120,7 @@ fn hogbom_cube_nsigma_block0_channel9_casa_regridded_ms_isolates_spectral_seam()
 }
 
 #[test]
-#[ignore = "diagnostic for Wave 9 block-0 cube dirty parity split by correlation product"]
+#[ignore = "issue #35 diagnostic: block-0 cube dirty parity split by correlation product"]
 fn hogbom_cube_nsigma_block0_channel9_single_pol_dirty_parity() {
     let base_case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point_withline.ms",
@@ -8824,7 +8824,7 @@ fn multiscale_products_track_casa_on_m51_single_field() {
 }
 
 #[test]
-#[ignore = "issue #161/#169: mosaic cube wproject frontend path is not implemented"]
+#[ignore = "issue #478: unsupported mosaic-cube W-projection remains an explicit exclusion"]
 fn wproject_dirty_cube_products_track_casa_on_n2403_source_backed_multifield() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/n2403.short.ms",
@@ -13278,7 +13278,7 @@ fn plane_difference_stats(left: &Array2<f32>, right: &Array2<f32>) -> ImageDiffe
 }
 
 #[test]
-#[ignore = "diagnostic for Backlog 11.6 raw cube PSF parity on refim_point common-beam case"]
+#[ignore = "issue #473 diagnostic: raw cube PSF parity on refim_point common-beam case"]
 fn cube_common_restoringbeam_psf_header_and_plane_compare_on_refim_point() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_point.ms",
