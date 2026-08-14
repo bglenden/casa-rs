@@ -9754,7 +9754,7 @@ fn can_run_mtmfs_from_bounded_stream(
         && !config.use_pointing
         && config.field_ids.as_ref().is_none_or(|ids| ids.len() <= 1)
         && config.phasecenter.is_none()
-        && config.phasecenter_field.is_none()
+        && phasecenter_field_matches_single_selected_field(config)
         && config.save_model == SaveModelMode::None
         && config.start_model.is_none()
         && config.outlier_file.is_none()
@@ -9824,6 +9824,7 @@ fn can_run_standard_mfs_dirty_streaming(
             config,
             force_standard_gridder,
         )
+        && config.deconvolver != Deconvolver::Mtmfs
         && !config.use_pointing
         && config.field_ids.as_ref().is_none_or(|ids| ids.len() <= 1)
         && (config.phasecenter.is_none() || force_standard_gridder)
@@ -62978,6 +62979,32 @@ mod tests {
             false,
             1
         ));
+    }
+
+    #[test]
+    fn standard_mtmfs_accepts_matching_explicit_phasecenter_field() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--field"),
+            OsString::from("0"),
+            OsString::from("--phasecenter-field"),
+            OsString::from("0"),
+            OsString::from("--deconvolver"),
+            OsString::from("mtmfs"),
+            OsString::from("--nterms"),
+            OsString::from("2"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+        ])
+        .expect("parse standard MT-MFS config");
+
+        assert!(can_run_mtmfs_from_bounded_stream(&config, false, 1));
+        assert!(!can_run_standard_mfs_dirty_streaming(&config, false, 1));
     }
 
     #[test]
