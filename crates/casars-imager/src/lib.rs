@@ -51098,6 +51098,8 @@ impl PreparedSelection {
     ) -> Result<StandardMfsPlannedRowSampleCounts, String> {
         let mfs_imaging_frequencies =
             self.mfs_imaging_frequencies_for_row(selected_row, derived_engine)?;
+        let (imaging_uvw_m, phase_shift_m) =
+            self.standard_mfs_essentials_imaging_transform(selected_row, row, derived_engine)?;
         if self.mfs_output_frequency_edge_range_hz.is_none() {
             self.mfs_output_frequency_edge_range_hz =
                 Some(self.mfs_imaging_frequency_edge_range_for_row(selected_row, derived_engine)?);
@@ -51150,7 +51152,7 @@ impl PreparedSelection {
                             *row.data.get((*corr_index, local_channel)).ok_or_else(|| {
                                 format!("DATA index [{corr_index}, {channel_index}] out of bounds")
                             })?,
-                            0.0,
+                            phase_shift_m,
                             imaging_frequency_hz,
                         )
                     );
@@ -51178,17 +51180,17 @@ impl PreparedSelection {
                     let weight = detail_time!(
                         final_weight,
                         weighting_plan.weight_sample(
-                            row.u_m * lambda_scale,
-                            row.v_m * lambda_scale,
+                            imaging_uvw_m[0] * lambda_scale,
+                            imaging_uvw_m[1] * lambda_scale,
                             natural_weight,
                         )
                     )
                     .map_err(|error| error.to_string())?;
                     counts.candidate_samples += 1;
                     let sample = ScalarVisibilitySample {
-                        u_lambda: row.u_m * lambda_scale,
-                        v_lambda: row.v_m * lambda_scale,
-                        w_lambda: row.w_m * lambda_scale,
+                        u_lambda: imaging_uvw_m[0] * lambda_scale,
+                        v_lambda: imaging_uvw_m[1] * lambda_scale,
+                        w_lambda: imaging_uvw_m[2] * lambda_scale,
                         weight,
                         sumwt_factor: 1.0,
                         gridable: row.gridable,
@@ -51303,7 +51305,7 @@ impl PreparedSelection {
                         visibility_lookup,
                         phase_rotate_visibility(
                             pair_transform.collapse(first_visibility, second_visibility),
-                            0.0,
+                            phase_shift_m,
                             imaging_frequency_hz,
                         )
                     );
@@ -51316,17 +51318,17 @@ impl PreparedSelection {
                     let weight = detail_time!(
                         final_weight,
                         weighting_plan.weight_sample(
-                            row.u_m * lambda_scale,
-                            row.v_m * lambda_scale,
+                            imaging_uvw_m[0] * lambda_scale,
+                            imaging_uvw_m[1] * lambda_scale,
                             natural_weight,
                         )
                     )
                     .map_err(|error| error.to_string())?;
                     counts.candidate_samples += 1;
                     let sample = ScalarVisibilitySample {
-                        u_lambda: row.u_m * lambda_scale,
-                        v_lambda: row.v_m * lambda_scale,
-                        w_lambda: row.w_m * lambda_scale,
+                        u_lambda: imaging_uvw_m[0] * lambda_scale,
+                        v_lambda: imaging_uvw_m[1] * lambda_scale,
+                        w_lambda: imaging_uvw_m[2] * lambda_scale,
                         weight,
                         sumwt_factor,
                         gridable: row.gridable,
@@ -51386,7 +51388,7 @@ impl PreparedSelection {
     fn standard_mfs_visibility_row_from_essentials(
         &mut self,
         selected_row: &SelectedMainRow,
-        row: MsImagingEssentials,
+        mut row: MsImagingEssentials,
         derived_engine: Option<&MsCalEngine>,
         precomputed_mfs_imaging_frequencies: Option<&MfsImagingFrequencies>,
         source_channel_indices: Arc<[usize]>,
@@ -51446,7 +51448,24 @@ impl PreparedSelection {
             ));
         }
 
-        let uvw_m = [row.u_m, row.v_m, row.w_m];
+        let (uvw_m, phase_shift_m) =
+            self.standard_mfs_essentials_imaging_transform(selected_row, &row, derived_engine)?;
+        if phase_shift_m != 0.0 {
+            for (&source_channel, &imaging_frequency_hz) in source_channel_indices
+                .iter()
+                .zip(mfs_imaging_frequencies.frequency_hz.iter())
+            {
+                let local_channel =
+                    local_channel_index(source_channel, row.channel_origin, row.data.shape()[1])?;
+                for corr in 0..row.data.shape()[0] {
+                    row.data[(corr, local_channel)] = phase_rotate_visibility(
+                        row.data[(corr, local_channel)],
+                        phase_shift_m,
+                        imaging_frequency_hz,
+                    );
+                }
+            }
+        }
         let visibility_row = StandardMfsVisibilityRow {
             uvw_m,
             spw_id: row.spw_id,
@@ -51464,6 +51483,29 @@ impl PreparedSelection {
             counts.detail.routed_row_payload += started.elapsed();
         }
         Ok((visibility_row, counts))
+    }
+
+    fn standard_mfs_essentials_imaging_transform(
+        &self,
+        selected_row: &SelectedMainRow,
+        row: &MsImagingEssentials,
+        derived_engine: Option<&MsCalEngine>,
+    ) -> Result<([f64; 3], f64), String> {
+        let raw_uvw_m = [row.u_m, row.v_m, row.w_m];
+        let reprojection_mode = if self.phase_center.field_id == Some(selected_row.field_id) {
+            UvwReprojectionMode::Standard
+        } else {
+            UvwReprojectionMode::Mosaic
+        };
+        let transform = row_imaging_transform(
+            selected_row.row_index,
+            selected_row.field_id,
+            &self.phase_center,
+            raw_uvw_m,
+            derived_engine,
+            reprojection_mode,
+        )?;
+        Ok((transform.uvw_m, transform.phase_shift_m))
     }
 
     #[allow(clippy::too_many_arguments)]
