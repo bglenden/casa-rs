@@ -107,15 +107,15 @@ while [[ $# -gt 0 ]]; do
       ;;
     --show-prototype)
       if [[ $# -lt 2 ]]; then
-        echo "--show-prototype requires: notebook, python, tutorial, or ai" >&2
+        echo "--show-prototype requires: notebook, python, tutorial, ai, or onboarding" >&2
         exit 2
       fi
       case "$2" in
-        notebook|python|tutorial|ai)
+        notebook|python|tutorial|ai|onboarding)
           SHOW_PROTOTYPE="$2"
           ;;
         *)
-          echo "--show-prototype requires: notebook, python, tutorial, or ai" >&2
+          echo "--show-prototype requires: notebook, python, tutorial, ai, or onboarding" >&2
           exit 2
           ;;
       esac
@@ -160,7 +160,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     *)
-      echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--imager-ms PATH|--tutorial-pack PATH [--tutorial-section ID]|--show-prototype notebook|python|tutorial|ai [--prototype-state STATE]|--empty] [--show-imager-progress-mockup] [--run-active-task] [imager launch overrides]" >&2
+      echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--imager-ms PATH|--tutorial-pack PATH [--tutorial-section ID]|--show-prototype notebook|python|tutorial|ai|onboarding [--prototype-state STATE]|--empty] [--show-imager-progress-mockup] [--run-active-task] [imager launch overrides]" >&2
       exit 2
       ;;
   esac
@@ -177,7 +177,7 @@ if [[ "$PROTOTYPE_STATE_SET" == "1" && -z "$SHOW_PROTOTYPE" ]]; then
 fi
 
 case "$SHOW_PROTOTYPE:$PROTOTYPE_STATE" in
-  :happy-path|notebook:happy-path|notebook:external-conflict|python:happy-path|python:failure|python:nonresponsive|tutorial:happy-path|tutorial:checksum-failure|tutorial:disk-failure|tutorial:offline|tutorial:unsafe-archive|ai:happy-path|ai:rate-limited|ai:nonresponsive)
+  :happy-path|notebook:happy-path|notebook:external-conflict|python:happy-path|python:failure|python:nonresponsive|tutorial:happy-path|tutorial:checksum-failure|tutorial:disk-failure|tutorial:offline|tutorial:unsafe-archive|ai:happy-path|ai:rate-limited|ai:nonresponsive|onboarding:happy-path)
     ;;
   *)
     echo "prototype state '$PROTOTYPE_STATE' is not valid for '$SHOW_PROTOTYPE'" >&2
@@ -487,7 +487,7 @@ case "$MODE" in
     echo "==> Staged $APP_BUNDLE"
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--imager-ms PATH|--tutorial-pack PATH|--show-prototype notebook|python|tutorial|ai [--prototype-state STATE]|--empty] [--show-imager-progress-mockup] [--run-active-task] [imager launch overrides]" >&2
+    echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--imager-ms PATH|--tutorial-pack PATH|--show-prototype notebook|python|tutorial|ai|onboarding [--prototype-state STATE]|--empty] [--show-imager-progress-mockup] [--run-active-task] [imager launch overrides]" >&2
     exit 2
     ;;
 esac

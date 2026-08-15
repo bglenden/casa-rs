@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 struct CentralWorkspaceView: View {
     @ObservedObject var store: WorkbenchStore
     var initialMeasurementSetExplorerMode: MeasurementSetExplorerMode = .summary
+    var firstRunOnboardingPrototype = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -151,6 +152,8 @@ struct CentralWorkspaceView: View {
             case .history:
                 HistoryPanel(store: store)
             }
+        } else if firstRunOnboardingPrototype {
+            FirstRunOnboardingPrototypeView()
         } else {
             EmptyWorkbenchPanel(store: store)
         }

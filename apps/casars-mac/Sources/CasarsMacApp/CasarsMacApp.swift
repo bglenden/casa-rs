@@ -23,6 +23,7 @@ struct CasarsMacApp: App {
     private let startupPythonPrototypeScenario: PythonPrototypeScenario?
     private let startupTutorialPrototypeScenario: TutorialNotebookPrototypeScenario?
     private let startupAIPrototypeScenario: AIChatPrototypeScenario?
+    private let startupFirstRunOnboardingPrototype: Bool
     private let startupShowImagerProgressMockup: Bool
     private let startupOpenImagerTask: Bool
     private let startupRunActiveTask: Bool
@@ -107,6 +108,10 @@ struct CasarsMacApp: App {
         startupPythonPrototypeScenario = Self.pythonPrototypeScenario(arguments: arguments)
         startupTutorialPrototypeScenario = Self.tutorialPrototypeScenario(arguments: arguments)
         startupAIPrototypeScenario = Self.aiPrototypeScenario(arguments: arguments)
+        startupFirstRunOnboardingPrototype = Self.argumentValue(
+            after: "--show-prototype",
+            in: arguments
+        ) == "onboarding"
         startupShowImagerProgressMockup = arguments.contains("--show-imager-progress-mockup")
         startupOpenImagerTask = arguments.contains("--open-imager-task")
         startupRunActiveTask = arguments.contains("--run-active-task")
@@ -115,7 +120,10 @@ struct CasarsMacApp: App {
 
     var body: some Scene {
         WindowGroup("casa-rs Workbench") {
-            WorkbenchView(store: store)
+            WorkbenchView(
+                store: store,
+                firstRunOnboardingPrototype: startupFirstRunOnboardingPrototype
+            )
                 .frame(minWidth: 960, minHeight: 640)
                 .environment(\.workbenchFontSize, store.state.interfaceFontSize)
                 .background(WindowConfigurationView())
@@ -595,8 +603,10 @@ struct CasarsMacApp: App {
     static func prototypeLaunchValidationError(arguments: [String]) -> String? {
         let showKind = argumentValue(after: "--show-prototype", in: arguments)
         if arguments.contains("--show-prototype") {
-            guard let showKind, ["notebook", "python", "tutorial", "ai"].contains(showKind) else {
-                return "--show-prototype requires: notebook, python, tutorial, or ai"
+            guard let showKind,
+                  ["notebook", "python", "tutorial", "ai", "onboarding"].contains(showKind)
+            else {
+                return "--show-prototype requires: notebook, python, tutorial, ai, or onboarding"
             }
         }
 
@@ -625,6 +635,7 @@ struct CasarsMacApp: App {
             case "python": ["happy-path", "failure", "nonresponsive"]
             case "tutorial": ["happy-path", "checksum-failure", "disk-failure", "offline", "unsafe-archive"]
             case "ai": ["happy-path", "provider-error", "rate-limited", "offline", "tool-failure", "nonresponsive"]
+            case "onboarding": ["happy-path"]
             default: []
             }
             if !accepted.contains(state ?? "") {
