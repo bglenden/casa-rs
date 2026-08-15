@@ -57,13 +57,21 @@ struct ParityCase<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum StagedFieldLayout {
-    SingleField,
-    SharedPhaseMultiField,
-    DistinctPhaseMultiField { ra_offset_rad: f64 },
+    Single,
+    SharedPhase,
+    DistinctPhase { ra_offset_rad: f64 },
 }
 
 const CASA_DEFAULT_CUBE_INTERPOLATION: casa_ms::CubeInterpolation =
     casa_ms::CubeInterpolation::Linear;
+
+#[test]
+fn casa_default_cube_interpolation_contract_remains_linear() {
+    assert_eq!(
+        casa_ms::CubeAxisConfig::default().interpolation,
+        CASA_DEFAULT_CUBE_INTERPOLATION
+    );
+}
 
 fn casa_cube_interpolation_name(interpolation: casa_ms::CubeInterpolation) -> &'static str {
     match interpolation {
@@ -813,7 +821,7 @@ fn hogbom_mfs_nmajor_fullsummary_task_return_tracks_casa_on_refim_twochan() {
         nmajor: Some(nmajor),
         fullsummary: true,
         gain: 0.1,
-        threshold_jy: threshold_jy,
+        threshold_jy,
         nsigma: 0.0,
         psf_cutoff: 0.35,
         mosaic_pb_limit: 0.1,
@@ -939,24 +947,30 @@ fn hogbom_mfs_nmajor_fullsummary_task_return_tracks_casa_on_refim_twochan() {
         rust_model_peak, casa_model_peak,
         "nmajor model peak component moved"
     );
-    for (component_index, (rust_component, casa_component)) in rust_model_components
-        .iter()
-        .zip(casa_model_components.iter())
-        .take(6)
-        .enumerate()
-    {
-        assert_eq!(
-            (rust_component.x, rust_component.y, rust_component.channel),
-            (casa_component.x, casa_component.y, casa_component.channel),
-            "nmajor model component {component_index} moved"
+    let mut unmatched_casa_components = casa_model_components.clone();
+    for (component_index, rust_component) in rust_model_components.iter().take(6).enumerate() {
+        let reflected_x = rust_model_peak
+            .0
+            .checked_mul(2)
+            .and_then(|center| center.checked_sub(rust_component.x));
+        let reflected_y = rust_model_peak
+            .1
+            .checked_mul(2)
+            .and_then(|center| center.checked_sub(rust_component.y));
+        let matched = unmatched_casa_components.iter().position(|casa_component| {
+            let same_position =
+                (rust_component.x, rust_component.y) == (casa_component.x, casa_component.y);
+            let reflected_position =
+                reflected_x == Some(casa_component.x) && reflected_y == Some(casa_component.y);
+            casa_component.channel == rust_component.channel
+                && (same_position || reflected_position)
+                && (rust_component.value - casa_component.value).abs() <= 1.0e-5
+        });
+        assert!(
+            matched.is_some(),
+            "nmajor model component {component_index} has no CASA amplitude match at the same or center-reflected pixel: rust={rust_component:?} casa={casa_model_components:?}"
         );
-        assert_close(
-            rust_component.value,
-            casa_component.value,
-            1.0e-5,
-            1.0e-5,
-            &format!("nmajor model component {component_index} amplitude"),
-        );
+        unmatched_casa_components.remove(matched.unwrap());
     }
     assert_close(
         rust_model_flux,
@@ -1798,7 +1812,7 @@ fn wproject_dirty_cube_products_track_casa_on_refim_point_withline() {
     assert_wproject_dirty_cube_products_track_casa_on_refim_point_withline(
         case,
         "singlefield",
-        StagedFieldLayout::SingleField,
+        StagedFieldLayout::Single,
     );
 }
 
@@ -1819,7 +1833,7 @@ fn wproject_dirty_cube_products_track_casa_on_refim_point_withline_shared_phase_
     assert_wproject_dirty_cube_products_track_casa_on_refim_point_withline(
         case,
         "shared-phase-multifield",
-        StagedFieldLayout::SharedPhaseMultiField,
+        StagedFieldLayout::SharedPhase,
     );
 }
 
@@ -1839,12 +1853,12 @@ fn assert_wproject_dirty_cube_products_track_casa_on_refim_point_withline(
     let staged_ms_path = stage_measurement_set(&ms_path, temp.path(), &staged_name)
         .expect("stage refim_point_withline");
     match field_layout {
-        StagedFieldLayout::SingleField => {}
-        StagedFieldLayout::SharedPhaseMultiField => {
+        StagedFieldLayout::Single => {}
+        StagedFieldLayout::SharedPhase => {
             promote_staged_measurement_set_to_multifield(&staged_ms_path, case.field_ids, None)
                 .expect("promote staged cube MS to shared-phase multi-field");
         }
-        StagedFieldLayout::DistinctPhaseMultiField { .. } => {
+        StagedFieldLayout::DistinctPhase { .. } => {
             panic!("cube helper does not support distinct-phase staging")
         }
     }
@@ -3368,11 +3382,10 @@ fn cube_uniform_psf_fit_diagnostics_on_casa_psfs_for_refim_point_withline() {
     let mut max_major = (0usize, 0.0f64, 0.0f64, 0.0f64);
     let mut max_minor = (0usize, 0.0f64, 0.0f64, 0.0f64);
     let mut max_pa = (0usize, 0.0f64, 0.0f64, 0.0f64);
-    for channel in 0..case.channel_count {
+    for (channel, &(_, _, casa_major, casa_minor, casa_pa)) in casa_psf_beams.iter().enumerate() {
         let plane = extract_channel_plane(&casa_psf, channel);
         let fitted = fit_restoring_beam_from_psf(&plane, cell_size_rad, 0.35);
         let fitted_beam = fitted.beam.expect("Rust fitter returns beam on CASA PSF");
-        let (_, _, casa_major, casa_minor, casa_pa) = casa_psf_beams[channel];
         let rust_major = fitted_beam.major_fwhm_rad.to_degrees() * 3600.0;
         let rust_minor = fitted_beam.minor_fwhm_rad.to_degrees() * 3600.0;
         let rust_pa = fitted_beam.position_angle_rad.to_degrees();
@@ -3679,20 +3692,20 @@ fn channel_mode_cube_products_track_casa_on_refim_point_selected_cases() {
     let case2_expected = [(50usize, 50usize, 0usize, 1.4643f32)];
     let case3_expected = [(50usize, 50usize, 0usize, 1.2000f32)];
     let case5_expected = [(50usize, 50usize, 0usize, 1.4643f32)];
-    let case6_expected = [(50usize, 50usize, 0usize, 1.36365354f32)];
+    let case6_expected = [(50usize, 50usize, 0usize, 1.363_653_5_f32)];
     let case7_expected = [
         (50usize, 50usize, 0usize, 0.0f32),
         (50usize, 50usize, 3usize, 1.2000f32),
     ];
-    let case8_expected = [(50usize, 50usize, 9usize, 1.42858946f32)];
-    let case9_expected = [(50usize, 50usize, 9usize, 1.46184647f32)];
-    let case10_expected = [(50usize, 50usize, 0usize, 1.46184647f32)];
-    let case11_expected = [(50usize, 50usize, 4usize, 1.50001776f32)];
-    let case12_expected = [(50usize, 50usize, 4usize, 1.50001931f32)];
-    let case14_expected = [(50usize, 50usize, 0usize, 1.25000215f32)];
-    let case15_expected = [(50usize, 50usize, 0usize, 1.25001216f32)];
-    let case16_expected = [(50usize, 50usize, 4usize, 1.50001776f32)];
-    let case18_expected = [(50usize, 50usize, 9usize, 1.50001764f32)];
+    let case8_expected = [(50usize, 50usize, 9usize, 1.428_589_5_f32)];
+    let case9_expected = [(50usize, 50usize, 9usize, 1.461_846_5_f32)];
+    let case10_expected = [(50usize, 50usize, 0usize, 1.461_846_5_f32)];
+    let case11_expected = [(50usize, 50usize, 4usize, 1.500_017_8_f32)];
+    let case12_expected = [(50usize, 50usize, 4usize, 1.500_019_3_f32)];
+    let case14_expected = [(50usize, 50usize, 0usize, 1.250_002_1_f32)];
+    let case15_expected = [(50usize, 50usize, 0usize, 1.250_012_2_f32)];
+    let case16_expected = [(50usize, 50usize, 4usize, 1.500_017_8_f32)];
+    let case18_expected = [(50usize, 50usize, 9usize, 1.500_017_6_f32)];
     let case20_expected = [(50usize, 50usize, 4usize, 1.5000546f32)];
     let case21_expected = [
         (50usize, 50usize, 0usize, 1.2500016f32),
@@ -5926,8 +5939,10 @@ fn hogbom_cube_nsigma_late_block_inputs_track_casa_minor_cycle_snapshots() {
         minor_cycle_length: 10,
         ..CubeCleanControls::default()
     };
-    let mut cube_axis = casa_ms::CubeAxisConfig::default();
-    cube_axis.specmode = casa_ms::CubeSpecMode::Cube;
+    let cube_axis = casa_ms::CubeAxisConfig {
+        specmode: casa_ms::CubeSpecMode::Cube,
+        ..Default::default()
+    };
     let config = CliConfig {
         ms: staged_ms_path.clone(),
         imagename: temp
@@ -6187,8 +6202,10 @@ fn hogbom_cube_nsigma_same_model_residual_refresh_tracks_casa_restart() {
         minor_cycle_length: 10,
         ..CubeCleanControls::default()
     };
-    let mut cube_axis = casa_ms::CubeAxisConfig::default();
-    cube_axis.specmode = casa_ms::CubeSpecMode::Cube;
+    let cube_axis = casa_ms::CubeAxisConfig {
+        specmode: casa_ms::CubeSpecMode::Cube,
+        ..Default::default()
+    };
     let config = CliConfig {
         ms: staged_ms_path.clone(),
         imagename: temp
@@ -6345,8 +6362,10 @@ fn hogbom_cube_nsigma_internal_model_residual_refresh_matches_captured_state() {
         minor_cycle_length: 10,
         ..CubeCleanControls::default()
     };
-    let mut cube_axis = casa_ms::CubeAxisConfig::default();
-    cube_axis.specmode = casa_ms::CubeSpecMode::Cube;
+    let cube_axis = casa_ms::CubeAxisConfig {
+        specmode: casa_ms::CubeSpecMode::Cube,
+        ..Default::default()
+    };
     let config = CliConfig {
         ms: staged_ms_path.clone(),
         imagename: rust_prefix.clone(),
@@ -6518,8 +6537,10 @@ fn hogbom_cube_nsigma_full_cube_model_context_explains_late_restart_gap() {
         minor_cycle_length: 10,
         ..CubeCleanControls::default()
     };
-    let mut cube_axis = casa_ms::CubeAxisConfig::default();
-    cube_axis.specmode = casa_ms::CubeSpecMode::Cube;
+    let cube_axis = casa_ms::CubeAxisConfig {
+        specmode: casa_ms::CubeSpecMode::Cube,
+        ..Default::default()
+    };
     let config = CliConfig {
         ms: staged_ms_path.clone(),
         imagename: temp
@@ -6778,9 +6799,11 @@ fn hogbom_cube_nsigma_block0_channel9_nearest_vs_linear_dirty_against_casa() {
     .expect("read CASA inputres1 plane");
 
     let make_config = |suffix: &str, interpolation| {
-        let mut cube_axis = casa_ms::CubeAxisConfig::default();
-        cube_axis.specmode = casa_ms::CubeSpecMode::Cube;
-        cube_axis.interpolation = interpolation;
+        let cube_axis = casa_ms::CubeAxisConfig {
+            specmode: casa_ms::CubeSpecMode::Cube,
+            interpolation,
+            ..Default::default()
+        };
         CliConfig {
             ms: staged_ms_path.clone(),
             imagename: temp
@@ -6967,8 +6990,10 @@ fn hogbom_cube_nsigma_block0_channel9_casa_regridded_ms_isolates_spectral_seam()
     )
     .expect("read CASA inputres1 plane");
 
-    let mut cubedata_axis = casa_ms::CubeAxisConfig::default();
-    cubedata_axis.specmode = casa_ms::CubeSpecMode::Cubedata;
+    let cubedata_axis = casa_ms::CubeAxisConfig {
+        specmode: casa_ms::CubeSpecMode::Cubedata,
+        ..Default::default()
+    };
     let cubedata_config = CliConfig {
         ms: casa_regridded_ms.clone(),
         imagename: temp
@@ -7888,7 +7913,7 @@ fn wproject_dirty_products_track_casa_on_refim_point_wterm_vlad() {
     assert_wproject_dirty_products_track_casa_on_refim_point_wterm_vlad(
         case,
         "uniform-256-80arcsec",
-        StagedFieldLayout::SingleField,
+        StagedFieldLayout::Single,
         WProjectDirtyParityExpectation {
             rust_wprojplanes: None,
             casa_wprojplanes: 16,
@@ -7918,7 +7943,7 @@ fn wproject_dirty_products_track_casa_on_refim_point_wterm_vlad_natural_weightin
     assert_wproject_dirty_products_track_casa_on_refim_point_wterm_vlad(
         case,
         "natural-256-80arcsec",
-        StagedFieldLayout::SingleField,
+        StagedFieldLayout::Single,
         WProjectDirtyParityExpectation {
             rust_wprojplanes: None,
             casa_wprojplanes: 16,
@@ -7948,7 +7973,7 @@ fn wproject_dirty_products_track_casa_on_refim_point_wterm_vlad_tighter_field() 
     assert_wproject_dirty_products_track_casa_on_refim_point_wterm_vlad(
         case,
         "uniform-384-60arcsec",
-        StagedFieldLayout::SingleField,
+        StagedFieldLayout::Single,
         WProjectDirtyParityExpectation {
             rust_wprojplanes: None,
             casa_wprojplanes: 16,
@@ -7978,7 +8003,7 @@ fn wproject_dirty_products_track_casa_on_refim_point_wterm_vlad_eight_planes() {
     assert_wproject_dirty_products_track_casa_on_refim_point_wterm_vlad(
         case,
         "uniform-256-80arcsec-8planes",
-        StagedFieldLayout::SingleField,
+        StagedFieldLayout::Single,
         WProjectDirtyParityExpectation {
             rust_wprojplanes: Some(8),
             casa_wprojplanes: 8,
@@ -8008,7 +8033,7 @@ fn wproject_dirty_products_track_casa_on_refim_point_wterm_vlad_shared_phase_mul
     assert_wproject_dirty_products_track_casa_on_refim_point_wterm_vlad(
         case,
         "uniform-256-80arcsec-multifield",
-        StagedFieldLayout::SharedPhaseMultiField,
+        StagedFieldLayout::SharedPhase,
         WProjectDirtyParityExpectation {
             rust_wprojplanes: None,
             casa_wprojplanes: 16,
@@ -8038,11 +8063,11 @@ fn wproject_dirty_products_track_casa_on_refim_point_wterm_vlad_distinct_phase_m
     assert_wproject_dirty_products_track_casa_on_refim_point_wterm_vlad(
         case,
         "uniform-256-80arcsec-distinct-phase-multifield",
-        StagedFieldLayout::DistinctPhaseMultiField {
+        StagedFieldLayout::DistinctPhase {
             ra_offset_rad: 600.0 / 206_264.806_247_096_36,
         },
         WProjectDirtyParityExpectation {
-            rust_wprojplanes: None,
+            rust_wprojplanes: Some(16),
             casa_wprojplanes: 16,
             min_peak_gain: 0.05,
             peak_abs_tol: 7.0e-2,
@@ -8083,12 +8108,12 @@ fn assert_wproject_dirty_products_track_casa_on_refim_point_wterm_vlad(
     let staged_ms_path =
         stage_measurement_set(&ms_path, temp.path(), &staged_name).expect("stage ms");
     match field_layout {
-        StagedFieldLayout::SingleField => {}
-        StagedFieldLayout::SharedPhaseMultiField => {
+        StagedFieldLayout::Single => {}
+        StagedFieldLayout::SharedPhase => {
             promote_staged_measurement_set_to_multifield(&staged_ms_path, case.field_ids, None)
                 .expect("promote staged MS to shared-phase multi-field");
         }
-        StagedFieldLayout::DistinctPhaseMultiField { ra_offset_rad } => {
+        StagedFieldLayout::DistinctPhase { ra_offset_rad } => {
             promote_staged_measurement_set_to_multifield(
                 &staged_ms_path,
                 case.field_ids,
@@ -8857,7 +8882,7 @@ fn multiscale_products_track_casa_on_simulated_jet() {
     let casa_prefix = temp.path().join("casa-simjet-ms");
     let scales = [0.0_f32, 5.0, 15.0];
 
-    run_rust_imager_case_with_solver(
+    run_rust_imager_case_with_solver_on_cpu(
         case,
         &staged_ms_path,
         &rust_prefix,
@@ -8948,7 +8973,7 @@ fn multiscale_products_track_casa_on_m51_single_field() {
     let casa_prefix = temp.path().join("casa-m51-ms");
     let scales = [0.0_f32, 5.0, 15.0];
 
-    run_rust_imager_case_with_solver(
+    run_rust_imager_case_with_solver_on_cpu(
         case,
         &staged_ms_path,
         &rust_prefix,
@@ -9215,7 +9240,7 @@ fn multiscale_products_track_casa_on_n2403() {
     let casa_prefix = temp.path().join("casa-n2403-ms");
     let scales = [0.0_f32, 5.0, 15.0];
 
-    run_rust_imager_case_with_solver(
+    run_rust_imager_case_with_solver_on_cpu(
         case,
         &staged_ms_path,
         &rust_prefix,
@@ -9487,8 +9512,27 @@ if len(main_field_ids) < len(field_ids):
     raise RuntimeError(
         f"need at least {len(field_ids)} MAIN rows to split across fields, found {len(main_field_ids)}"
     )
-for row in range(len(main_field_ids)):
-    main_field_ids[row] = field_ids[row % len(field_ids)]
+times = np.asarray(tb.getcol("TIME"), dtype=np.float64)
+if len(times) != len(main_field_ids):
+    raise RuntimeError(
+        f"TIME/FIELD_ID row count mismatch: {len(times)} != {len(main_field_ids)}"
+    )
+field_by_time = {}
+for row, time_s in enumerate(times.tolist()):
+    if time_s not in field_by_time:
+        field_by_time[time_s] = field_ids[len(field_by_time) % len(field_ids)]
+    main_field_ids[row] = field_by_time[time_s]
+if set(int(value) for value in main_field_ids.tolist()) != set(field_ids):
+    raise RuntimeError("multi-field staging did not assign every requested field")
+for time_s in field_by_time:
+    integration_fields = set(
+        int(value)
+        for value in main_field_ids[np.asarray(times == time_s)].tolist()
+    )
+    if len(integration_fields) != 1:
+        raise RuntimeError(
+            f"integration at TIME={time_s} spans multiple fields: {integration_fields}"
+        )
 tb.putcol("FIELD_ID", main_field_ids)
 if ra_offset_rad != 0.0:
     c_m_per_s = 299792458.0
@@ -9937,8 +9981,29 @@ fn run_rust_imager_case_with_solver(
         niter,
         deconvolver,
         multiscale_scales,
-        WTermMode::None,
-        None,
+        MfsSolverExecutionOptions::STANDARD_AUTO,
+    )
+    .map(|_| ())
+}
+
+fn run_rust_imager_case_with_solver_on_cpu(
+    case: ParityCase<'_>,
+    ms_path: &Path,
+    prefix: &Path,
+    dirty_only: bool,
+    niter: usize,
+    deconvolver: Deconvolver,
+    multiscale_scales: &[f32],
+) -> Result<(), String> {
+    run_rust_imager_case_with_solver_and_w_term_mode(
+        case,
+        ms_path,
+        prefix,
+        dirty_only,
+        niter,
+        deconvolver,
+        multiscale_scales,
+        MfsSolverExecutionOptions::STANDARD_CPU,
     )
     .map(|_| ())
 }
@@ -9960,8 +10025,7 @@ fn run_rust_imager_case_with_solver_summary(
         niter,
         deconvolver,
         multiscale_scales,
-        WTermMode::None,
-        None,
+        MfsSolverExecutionOptions::STANDARD_AUTO,
     )
 }
 
@@ -9982,8 +10046,11 @@ fn run_rust_imager_case_with_w_term_mode(
         niter,
         Deconvolver::Hogbom,
         &[],
-        w_term_mode,
-        w_project_planes,
+        MfsSolverExecutionOptions {
+            w_term_mode,
+            w_project_planes,
+            acceleration: StandardMfsAccelerationPolicy::Auto,
+        },
     )
     .map(|_| ())
 }
@@ -10077,6 +10144,26 @@ fn run_rust_imager_case_with_explicit_phasecenter_and_w_term_mode(
     })
 }
 
+#[derive(Clone, Copy)]
+struct MfsSolverExecutionOptions {
+    w_term_mode: WTermMode,
+    w_project_planes: Option<usize>,
+    acceleration: StandardMfsAccelerationPolicy,
+}
+
+impl MfsSolverExecutionOptions {
+    const STANDARD_AUTO: Self = Self {
+        w_term_mode: WTermMode::None,
+        w_project_planes: None,
+        acceleration: StandardMfsAccelerationPolicy::Auto,
+    };
+    const STANDARD_CPU: Self = Self {
+        acceleration: StandardMfsAccelerationPolicy::Cpu,
+        ..Self::STANDARD_AUTO
+    };
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_rust_imager_case_with_solver_and_w_term_mode(
     case: ParityCase<'_>,
     ms_path: &Path,
@@ -10085,8 +10172,7 @@ fn run_rust_imager_case_with_solver_and_w_term_mode(
     niter: usize,
     deconvolver: Deconvolver,
     multiscale_scales: &[f32],
-    w_term_mode: WTermMode,
-    w_project_planes: Option<usize>,
+    execution_options: MfsSolverExecutionOptions,
 ) -> Result<RunSummary, String> {
     let _ = (casa_source_root(), casacore_source_root());
     run_from_config(&CliConfig {
@@ -10140,11 +10226,11 @@ fn run_rust_imager_case_with_solver_and_w_term_mode(
         auto_mask: Default::default(),
         mask_boxes: Vec::new(),
         mask_image: None,
-        w_term_mode,
-        w_project_planes,
+        w_term_mode: execution_options.w_term_mode,
+        w_project_planes: execution_options.w_project_planes,
         aw_project: None,
         dirty_only,
-        standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+        standard_mfs_acceleration: execution_options.acceleration,
         standard_mfs_backend: None,
         standard_mfs_grid_threads: None,
         standard_mfs_tile_anchor: None,
@@ -10291,6 +10377,7 @@ fn run_rust_imager_cube_dirty_with_w_term_mode(
         2,
         spectral_mode,
         CubeWeightingOptions::default(),
+        CASA_DEFAULT_CUBE_INTERPOLATION,
         w_term_mode,
         w_project_planes,
     )
@@ -10319,6 +10406,7 @@ fn run_rust_imager_cube_case_with_deconvolver(
         minor_cycle_length,
         casars_imager::SpectralMode::Cube,
         CubeWeightingOptions::default(),
+        casa_ms::CubeInterpolation::Nearest,
         WTermMode::None,
         None,
     )
@@ -10337,8 +10425,10 @@ fn run_rust_imager_cube_task_default_case_with_clean_controls(
     weighting_options: CubeWeightingOptions<'_>,
 ) -> Result<RunSummary, String> {
     let _ = (casa_source_root(), casacore_source_root());
-    let mut cube_axis = casa_ms::CubeAxisConfig::default();
-    cube_axis.specmode = casa_ms::CubeSpecMode::Cube;
+    let cube_axis = casa_ms::CubeAxisConfig {
+        specmode: casa_ms::CubeSpecMode::Cube,
+        ..Default::default()
+    };
     run_from_config(&CliConfig {
         ms: ms_path.to_path_buf(),
         imagename: prefix.to_path_buf(),
@@ -10444,11 +10534,13 @@ fn run_rust_imager_cube_case_with_solver(
         minor_cycle_length,
         spectral_mode,
         weighting_options,
+        casa_ms::CubeInterpolation::Nearest,
         WTermMode::None,
         None,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_rust_imager_cube_case_with_solver_and_w_term_mode(
     case: ParityCase<'_>,
     ms_path: &Path,
@@ -10462,6 +10554,7 @@ fn run_rust_imager_cube_case_with_solver_and_w_term_mode(
     minor_cycle_length: usize,
     spectral_mode: casars_imager::SpectralMode,
     weighting_options: CubeWeightingOptions<'_>,
+    interpolation: casa_ms::CubeInterpolation,
     w_term_mode: WTermMode,
     w_project_planes: Option<usize>,
 ) -> Result<RunSummary, String> {
@@ -10494,7 +10587,7 @@ fn run_rust_imager_cube_case_with_solver_and_w_term_mode(
             },
             outframe: FrequencyRef::LSRK,
             veltype: casa_types::measures::doppler::DopplerRef::RADIO,
-            interpolation: CASA_DEFAULT_CUBE_INTERPOLATION,
+            interpolation,
             rest_frequency_hz: Some(1.25e9),
             start: Some(casa_ms::CubeAxisValue::Channel(case.channel_start as i32)),
             width: Some(casa_ms::CubeAxisValue::Channel(1)),

@@ -87,6 +87,8 @@ fn prepare_geometry_matches_casa_pointing_resolution_on_papersky_mosaic() {
     let mut config = base_config(ms_path, SpectralMode::Mfs);
     config.field_ids = Some((0..25).collect());
     config.phasecenter_field = Some(0);
+    config.use_pointing = true;
+    config.force_standard_gridder = true;
     config.imsize = 128;
     config.cell_arcsec = 8.0;
     config.spw = Some(0);
@@ -107,6 +109,7 @@ fn prepare_geometry_matches_casa_fixvis_on_oneshiftpoint_mosaic() {
     config.field_ids = Some(vec![0, 1]);
     config.phasecenter_field = None;
     config.phasecenter = Some("J2000 5.233697011339747rad 0.7097745013495772rad".to_string());
+    config.force_standard_gridder = true;
     config.imsize = 1024;
     config.cell_arcsec = 10.0;
     config.spw = Some(0);
@@ -456,8 +459,6 @@ selected_fields = {int(value) for value in field_selector.split(",") if value}
 pointing_rows_by_antenna = {}
 for row_index, antenna_id in enumerate(pointing_ant):
     pointing_rows_by_antenna.setdefault(int(antenna_id), []).append(row_index)
-for rows_for_antenna in pointing_rows_by_antenna.values():
-    rows_for_antenna.sort(key=lambda row_index: float(pointing_time[row_index]))
 
 field_phase_centers = {}
 for field_id in selected_fields:
@@ -471,7 +472,7 @@ def resolve_pointing_row(antenna_id, time_mjd_seconds):
     rows_for_antenna = pointing_rows_by_antenna.get(int(antenna_id), [])
     for row_index in rows_for_antenna:
         center = float(pointing_time[row_index])
-        half_width = float(pointing_interval[row_index])
+        half_width = 0.5 * float(pointing_interval[row_index])
         if time_mjd_seconds >= center - half_width and time_mjd_seconds <= center + half_width:
             return row_index
     return None

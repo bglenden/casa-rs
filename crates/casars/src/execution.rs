@@ -312,7 +312,16 @@ mod tests {
         }
 
         assert!(exit.expect("process exit").success);
-        assert!(stdout.contains(&workspace.path().to_string_lossy().into_owned()));
+        let reported_workspace = stdout.lines().next().expect("subprocess pwd output");
+        assert_eq!(
+            PathBuf::from(reported_workspace)
+                .canonicalize()
+                .expect("canonicalize subprocess workspace"),
+            workspace
+                .path()
+                .canonicalize()
+                .expect("canonicalize expected workspace"),
+        );
         assert!(stdout.contains("stdin=family-request"));
     }
 }

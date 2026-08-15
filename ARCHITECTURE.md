@@ -357,7 +357,12 @@ the run-level memory target. If all planes fit, it uses the ordinary one-slab
 route. Any selected multi-slab shape is eligible for bounded shared-source reuse
 when the same formula proves the source cache and concurrent plane state
 resident; neither dataset identity nor a particular `chanchunks` value selects
-that route.
+that route. Dirty cubes may therefore execute as multiple bounded slabs. Cube
+CLEAN is the deliberate exception: synchronized minor/major-cycle control must
+retain every nonblank plane state together, so planning admits it only when one
+planner-charged shape holds all output planes. A requested CLEAN that would
+require multiple slabs fails during planning instead of accumulating uncharged
+plane state across slabs.
 
 On Apple platforms, eligible f32 standard and single-term mosaic dirty products
 can keep grids resident through MPSGraph FFT, correction, normalization, and
