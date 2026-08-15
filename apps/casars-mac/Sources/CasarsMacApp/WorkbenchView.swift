@@ -16,6 +16,8 @@ private let datasetClickLogger = Logger(
 struct WorkbenchView: View {
     @ObservedObject var store: WorkbenchStore
     var initialMeasurementSetExplorerMode: MeasurementSetExplorerMode = .summary
+    var firstRunOnboardingIsPresented = false
+    var dismissFirstRunOnboarding: () -> Void = {}
     @State private var leftDockWidth: CGFloat = 250
     @State private var inspectorWidth: CGFloat = 250
     @State private var aiDrawerWidth: CGFloat = 400
@@ -60,7 +62,9 @@ struct WorkbenchView: View {
 
                 CentralWorkspaceView(
                     store: store,
-                    initialMeasurementSetExplorerMode: initialMeasurementSetExplorerMode
+                    initialMeasurementSetExplorerMode: initialMeasurementSetExplorerMode,
+                    firstRunOnboardingIsPresented: firstRunOnboardingIsPresented,
+                    dismissFirstRunOnboarding: dismissFirstRunOnboarding
                 )
                     .frame(minWidth: isAIDrawerPresented ? 360 : 560)
 

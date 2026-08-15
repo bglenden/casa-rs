@@ -7,11 +7,14 @@ import SwiftUI
 @main
 struct CasarsMacApp: App {
     private static let interfaceFontSizeKey = "interfaceFontSize"
+    private static let firstRunOnboardingCompletionKey = "firstRunOnboardingCompleted.v1"
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @AppStorage(Self.interfaceFontSizeKey) private var interfaceFontSize = WorkbenchState.defaultInterfaceFontSize
+    @AppStorage(Self.firstRunOnboardingCompletionKey) private var didCompleteFirstRunOnboarding = false
     @StateObject private var store: WorkbenchStore
     @State private var didOpenStartupProject = false
+    @State private var forceFirstRunOnboarding: Bool
     private let startupProjectPath: String?
     private let startupImagerMeasurementSetPath: String?
     private let startupTutorialPackPath: String?
@@ -64,6 +67,9 @@ struct CasarsMacApp: App {
         _store = StateObject(
             wrappedValue: initialStore
         )
+        _forceFirstRunOnboarding = State(
+            initialValue: arguments.contains("--show-first-run-onboarding")
+        )
         if arguments.contains("--capture-gui-evidence") {
             Self.captureGUIEvidence(arguments: arguments)
             exit(0)
@@ -115,7 +121,11 @@ struct CasarsMacApp: App {
 
     var body: some Scene {
         WindowGroup("casa-rs Workbench") {
-            WorkbenchView(store: store)
+            WorkbenchView(
+                store: store,
+                firstRunOnboardingIsPresented: shouldPresentFirstRunOnboarding,
+                dismissFirstRunOnboarding: completeFirstRunOnboarding
+            )
                 .frame(minWidth: 960, minHeight: 640)
                 .environment(\.workbenchFontSize, store.state.interfaceFontSize)
                 .background(WindowConfigurationView())
@@ -153,6 +163,14 @@ struct CasarsMacApp: App {
                 }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
                 .disabled(store.isPrototypeRuntime)
+
+                Divider()
+
+                Button("Show Welcome") {
+                    didCompleteFirstRunOnboarding = false
+                    forceFirstRunOnboarding = true
+                }
+                .disabled(store.isPrototypeRuntime || store.state.hasProject)
 
                 Button("Open AI Chat") {
                     store.openDefaultTab(kind: .aiChat)
@@ -1004,6 +1022,20 @@ struct CasarsMacApp: App {
         store.setInterfaceFontSize(interfaceFontSize)
     }
 
+    private var shouldPresentFirstRunOnboarding: Bool {
+        guard !store.isPrototypeRuntime, !store.state.hasProject else { return false }
+        if forceFirstRunOnboarding { return true }
+        let hasExplicitStartupDestination = startupProjectPath != nil
+            || startupImagerMeasurementSetPath != nil
+            || startupTutorialPackPath != nil
+        return !hasExplicitStartupDestination && !didCompleteFirstRunOnboarding
+    }
+
+    private func completeFirstRunOnboarding() {
+        didCompleteFirstRunOnboarding = true
+        forceFirstRunOnboarding = false
+    }
+
     private func setStoredInterfaceFontSize(_ size: Double) {
         interfaceFontSize = WorkbenchState.clampedInterfaceFontSize(size)
     }
@@ -1257,13 +1289,20 @@ enum FullScreenController {
 }
 
 enum ProjectOpenPanel {
-    static func chooseDirectory() -> URL? {
+    static func chooseDirectory(
+        title: String = "Open Project Directory",
+        message: String? = nil,
+        prompt: String = "Open"
+    ) -> URL? {
         let panel = NSOpenPanel()
+        panel.title = title
+        panel.message = message
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
         panel.treatsFilePackagesAsDirectories = true
         panel.allowsMultipleSelection = false
-        panel.prompt = "Open"
+        panel.prompt = prompt
         return panel.runModal() == .OK ? panel.url : nil
     }
 }

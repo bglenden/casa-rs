@@ -45,6 +45,29 @@ final class CasarsMacUITests: XCTestCase {
         }
     }
 
+    func testFirstRunOnboardingExplainsSafeStartingPaths() throws {
+        app = makeTestApplication()
+        ensureStoppedBeforeLaunch()
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "--show-first-run-onboarding",
+        ]
+        launchTestApplication()
+        app.activate()
+
+        XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 10))
+        XCTAssertTrue(try require("onboarding.welcome").exists)
+        XCTAssertTrue(try require("onboarding.startTutorial").isEnabled)
+        XCTAssertTrue(try require("onboarding.openProject").isEnabled)
+        XCTAssertTrue(try require("onboarding.openDemo").isEnabled)
+        XCTAssertTrue(try accessibilityValue("project.rootPath").contains("Open a project directory to begin"))
+
+        try require("onboarding.dismiss").click()
+        XCTAssertFalse(element("onboarding.welcome").waitForExistence(timeout: 1))
+        XCTAssertTrue(try require("panel.emptyWorkbench").exists)
+        XCTAssertTrue(try accessibilityValue("project.rootPath").contains("Open a project directory to begin"))
+    }
+
     func testCompleteDocumentEditingAndTaskProjection() throws {
         launchPrototype()
 

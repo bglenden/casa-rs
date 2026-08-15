@@ -321,6 +321,7 @@ if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" && -z "$SHOW_PROTOTYPE" ]]; then
   done
 fi
 cp "$APP_ICON_SOURCE" "$APP_RESOURCES/$APP_ICON_NAME"
+cp -R "$REPO_ROOT/resources/tutorials" "$APP_RESOURCES/tutorials"
 core_resource_bundle="$(dirname "$BUILD_BINARY")/casars-mac_CasarsMacCore.bundle"
 if [[ -d "$core_resource_bundle" ]]; then
   cp -R "$core_resource_bundle" "$APP_RESOURCES/"
