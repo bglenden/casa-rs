@@ -21180,11 +21180,10 @@ fn run_independent_shared_cube_slab_planes(
                 .blocks
                 .len()
                 .saturating_mul(active_plane_count);
-            let bounded_replay_passes = if replay_blocks_per_pass == 0 {
-                0
-            } else {
-                direct_replay_timings.blocks / replay_blocks_per_pass
-            };
+            let bounded_replay_passes = direct_replay_timings
+                .blocks
+                .checked_div(replay_blocks_per_pass)
+                .unwrap_or(0);
             let max_abs_w_lambda = aggregate.channel_diagnostics[slab_plane_start..slab_plane_end]
                 .iter()
                 .flatten()
