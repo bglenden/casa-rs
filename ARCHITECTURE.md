@@ -386,9 +386,10 @@ the selected rows' observed maximum absolute projected W, CASA's 1.05 W-range
 safety factor, and the actual rectangular half-field angle. It does not use the
 array's longest physical baseline as a proxy, round to a power of two, or clamp
 to a tested image-size regime; like CASA, the positive plane-count expression
-is truncated to an integer. Explicit `wprojplanes` remains an accuracy/cost
-choice; both explicit and Auto plans scale their quadratic W coordinates to the
-same safety-expanded observed W range.
+is truncated to an integer. Auto plans scale their quadratic W coordinates to
+that safety-expanded observed W range. Explicit `wprojplanes` remains an
+accuracy/cost choice and, matching CASA's explicit-plane path, spans the
+cell-size-derived W range instead of the selected-data range.
 
 W-projection has one Metal dispatch and reduction implementation for both
 materialized sample slices and bounded replay chunks. The partial-grid count is
