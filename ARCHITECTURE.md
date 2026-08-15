@@ -357,7 +357,12 @@ the run-level memory target. If all planes fit, it uses the ordinary one-slab
 route. Any selected multi-slab shape is eligible for bounded shared-source reuse
 when the same formula proves the source cache and concurrent plane state
 resident; neither dataset identity nor a particular `chanchunks` value selects
-that route.
+that route. Dirty cubes may therefore execute as multiple bounded slabs. Cube
+CLEAN is the deliberate exception: synchronized minor/major-cycle control must
+retain every nonblank plane state together, so planning admits it only when one
+planner-charged shape holds all output planes. A requested CLEAN that would
+require multiple slabs fails during planning instead of accumulating uncharged
+plane state across slabs.
 
 On Apple platforms, eligible f32 standard and single-term mosaic dirty products
 can keep grids resident through MPSGraph FFT, correction, normalization, and
@@ -381,9 +386,10 @@ the selected rows' observed maximum absolute projected W, CASA's 1.05 W-range
 safety factor, and the actual rectangular half-field angle. It does not use the
 array's longest physical baseline as a proxy, round to a power of two, or clamp
 to a tested image-size regime; like CASA, the positive plane-count expression
-is truncated to an integer. Explicit `wprojplanes` remains an accuracy/cost
-choice; both explicit and Auto plans scale their quadratic W coordinates to the
-same safety-expanded observed W range.
+is truncated to an integer. Auto plans scale their quadratic W coordinates to
+that safety-expanded observed W range. Explicit `wprojplanes` remains an
+accuracy/cost choice and, matching CASA's explicit-plane path, spans the
+cell-size-derived W range instead of the selected-data range.
 
 W-projection has one Metal dispatch and reduction implementation for both
 materialized sample slices and bounded replay chunks. The partial-grid count is

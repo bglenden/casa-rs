@@ -79,6 +79,7 @@ pub(crate) enum StandardMfsStreamingReweightPlan<'a> {
 pub struct StandardMfsStreamingWeightingPlan {
     gridder: StandardGridder,
     weighting: WeightingMode,
+    uv_taper: Option<GaussianUvTaper>,
     density_convention: DensityCellConvention,
     density_build_convention: DensityCellConvention,
     fractional_bandwidth: f64,
@@ -109,6 +110,24 @@ impl StandardMfsStreamingWeightingPlan {
         selected_frequency_range_hz: [f64; 2],
         weight_density_mode: WeightDensityMode,
     ) -> Result<Self, crate::ImagingError> {
+        Self::new_with_density_mode_and_taper(
+            geometry,
+            weighting,
+            selected_frequency_range_hz,
+            weight_density_mode,
+            None,
+        )
+    }
+
+    /// Create an empty streaming weighting plan with explicit density sharing
+    /// and an optional CASA-style Gaussian UV taper.
+    pub fn new_with_density_mode_and_taper(
+        geometry: ImageGeometry,
+        weighting: WeightingMode,
+        selected_frequency_range_hz: [f64; 2],
+        weight_density_mode: WeightDensityMode,
+        uv_taper: Option<GaussianUvTaper>,
+    ) -> Result<Self, crate::ImagingError> {
         let density_convention = density_cell_convention(weighting, weight_density_mode);
         let density_build_convention =
             density_build_cell_convention(weighting, weight_density_mode);
@@ -125,6 +144,7 @@ impl StandardMfsStreamingWeightingPlan {
         Ok(Self {
             gridder,
             weighting,
+            uv_taper,
             density_convention,
             density_build_convention,
             fractional_bandwidth: fractional_bandwidth_from_frequency_range(
@@ -196,6 +216,7 @@ impl StandardMfsStreamingWeightingPlan {
         Ok(Self {
             gridder: StandardGridder::new(self.gridder.geometry())?,
             weighting: self.weighting,
+            uv_taper: self.uv_taper,
             density_convention: self.density_convention,
             density_build_convention: self.density_build_convention,
             fractional_bandwidth: self.fractional_bandwidth,
@@ -272,8 +293,8 @@ impl StandardMfsStreamingWeightingPlan {
         &self,
         batches: Vec<VisibilityBatch>,
     ) -> Result<Vec<VisibilityBatch>, crate::ImagingError> {
-        match self.weighting {
-            WeightingMode::Natural => Ok(batches),
+        let weighted = match self.weighting {
+            WeightingMode::Natural => batches,
             WeightingMode::Uniform
             | WeightingMode::Briggs { .. }
             | WeightingMode::BriggsBwTaper { .. } => {
@@ -289,7 +310,7 @@ impl StandardMfsStreamingWeightingPlan {
                             .to_string(),
                     )
                 })?;
-                Ok(reweight_owned_batches(
+                reweight_owned_batches(
                     batches,
                     &self.gridder,
                     density,
@@ -297,9 +318,10 @@ impl StandardMfsStreamingWeightingPlan {
                     trace_weighting_enabled(),
                     mode,
                     1,
-                ))
+                )
             }
-        }
+        };
+        Ok(apply_optional_uv_taper(weighted, self.uv_taper))
     }
 
     /// Return the final standard-MFS imaging weight for one sample.
@@ -314,8 +336,8 @@ impl StandardMfsStreamingWeightingPlan {
         v_lambda: f64,
         input_weight: f32,
     ) -> Result<f32, crate::ImagingError> {
-        match self.weighting {
-            WeightingMode::Natural => Ok(input_weight),
+        let weighted = match self.weighting {
+            WeightingMode::Natural => input_weight,
             WeightingMode::Uniform
             | WeightingMode::Briggs { .. }
             | WeightingMode::BriggsBwTaper { .. } => {
@@ -346,16 +368,17 @@ impl StandardMfsStreamingWeightingPlan {
                 {
                     return Ok(0.0);
                 }
-                Ok(reweight_density_sample(
+                reweight_density_sample(
                     input_weight,
                     cell_density,
                     u_lambda,
                     v_lambda,
                     &self.gridder,
                     mode,
-                ))
+                )
             }
-        }
+        };
+        Ok(weighted * optional_uv_taper_factor(self.uv_taper, u_lambda, v_lambda))
     }
 
     #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
@@ -1526,9 +1549,6 @@ fn apply_optional_uv_taper(
     let Some(taper) = taper else {
         return batches;
     };
-    let (major_coeff, minor_coeff) = taper_coefficients(taper);
-    let cos_pa = taper.position_angle_rad.sin();
-    let sin_pa = taper.position_angle_rad.cos();
     for batch in &mut batches {
         for index in 0..batch.len() {
             let weight = batch.weight[index];
@@ -1536,15 +1556,24 @@ fn apply_optional_uv_taper(
                 batch.weight[index] = 0.0;
                 continue;
             }
-            let u = batch.u_lambda[index];
-            let v = batch.v_lambda[index];
-            let ru = cos_pa * u + sin_pa * v;
-            let rv = -sin_pa * u + cos_pa * v;
-            let filter = (-major_coeff * ru * ru - minor_coeff * rv * rv).exp() as f32;
-            batch.weight[index] *= filter;
+            batch.weight[index] *=
+                optional_uv_taper_factor(Some(taper), batch.u_lambda[index], batch.v_lambda[index]);
         }
     }
     batches
+}
+
+#[inline]
+fn optional_uv_taper_factor(taper: Option<GaussianUvTaper>, u_lambda: f64, v_lambda: f64) -> f32 {
+    let Some(taper) = taper else {
+        return 1.0;
+    };
+    let (major_coeff, minor_coeff) = taper_coefficients(taper);
+    let cos_pa = taper.position_angle_rad.sin();
+    let sin_pa = taper.position_angle_rad.cos();
+    let ru = cos_pa * u_lambda + sin_pa * v_lambda;
+    let rv = -sin_pa * u_lambda + cos_pa * v_lambda;
+    (-major_coeff * ru * ru - minor_coeff * rv * rv).exp() as f32
 }
 
 fn taper_coefficients(taper: GaussianUvTaper) -> (f64, f64) {
@@ -3104,6 +3133,62 @@ mod tests {
                 for index in 0..batch.len() {
                     assert!((batch.weight[index] - sample.weight[index]).abs() < 1.0e-6);
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn streaming_weighting_applies_uv_taper_after_density_reweighting() {
+        let mode = WeightingMode::Briggs { robust: 0.5 };
+        let request = request_for(mode);
+        let taper = GaussianUvTaper {
+            major: UvTaperSize::ImageFwhmRad(50.0 / 206_264.806_247_096_36),
+            minor: UvTaperSize::ImageFwhmRad(50.0 / 206_264.806_247_096_36),
+            position_angle_rad: 0.0,
+        };
+        let mut untapered = StandardMfsStreamingWeightingPlan::new(
+            request.geometry,
+            mode,
+            request.selected_frequency_range_hz,
+        )
+        .unwrap();
+        untapered.accumulate_density_batches(&request.visibility_batches);
+        untapered.finish_density_pass();
+        let expected = apply_optional_uv_taper(
+            untapered
+                .weight_owned_batches(request.visibility_batches.clone())
+                .unwrap(),
+            Some(taper),
+        );
+
+        let mut tapered = StandardMfsStreamingWeightingPlan::new_with_density_mode_and_taper(
+            request.geometry,
+            mode,
+            request.selected_frequency_range_hz,
+            WeightDensityMode::Combined,
+            Some(taper),
+        )
+        .unwrap();
+        tapered.accumulate_density_batches(&request.visibility_batches);
+        tapered.finish_density_pass();
+        let actual = tapered
+            .weight_owned_batches(request.visibility_batches.clone())
+            .unwrap();
+
+        assert_eq!(actual, expected);
+        for (batch_index, batch) in request.visibility_batches.iter().enumerate() {
+            for sample_index in 0..batch.len() {
+                assert_eq!(
+                    tapered
+                        .weight_sample(
+                            batch.u_lambda[sample_index],
+                            batch.v_lambda[sample_index],
+                            batch.weight[sample_index],
+                        )
+                        .unwrap()
+                        .to_bits(),
+                    actual[batch_index].weight[sample_index].to_bits(),
+                );
             }
         }
     }

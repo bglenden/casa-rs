@@ -9489,7 +9489,8 @@ struct MetalResidualRowRunDesc {
     transform: u32,
     corr0: u32,
     corr1: u32,
-    _pad1: [u32; 2],
+    weight_channel_count: u32,
+    _pad1: u32,
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -14376,12 +14377,6 @@ impl MetalDirtyBackend {
                 .saturating_add(routed_run.len());
             return Ok(accumulation);
         }
-        if row.weight_spectrum.is_some() {
-            return Err(ImagingError::Unsupported(
-                "standard MFS initial dirty backend 'metal-row-run-grouped' does not yet support WEIGHT_SPECTRUM"
-                    .to_string(),
-            ));
-        }
         let corr_count = row.data.shape().first().copied().unwrap_or(0);
         let local_channel_count = row.data.shape().get(1).copied().unwrap_or(0);
         if row.flag.shape() != [corr_count, local_channel_count] {
@@ -14442,11 +14437,21 @@ impl MetalDirtyBackend {
                         accumulation.skipped_samples += 1;
                         continue;
                     }
-                    *row.weight.get(corr_index).ok_or_else(|| {
-                        ImagingError::InvalidRequest(format!(
-                            "standard MFS grouped initial dirty WEIGHT correlation {corr_index} is out of bounds"
-                        ))
-                    })?
+                    if let Some(weight_spectrum) = &row.weight_spectrum {
+                        *weight_spectrum
+                            .get((corr_index, local_channel))
+                            .ok_or_else(|| {
+                                ImagingError::InvalidRequest(format!(
+                                    "standard MFS grouped initial dirty WEIGHT_SPECTRUM index [{corr_index}, {source_channel}] is out of bounds"
+                                ))
+                            })?
+                    } else {
+                        *row.weight.get(corr_index).ok_or_else(|| {
+                            ImagingError::InvalidRequest(format!(
+                                "standard MFS grouped initial dirty WEIGHT correlation {corr_index} is out of bounds"
+                            ))
+                        })?
+                    }
                 }
                 StandardMfsVisibilityPolarization::CollapsedPair {
                     first_corr_index,
@@ -14499,16 +14504,39 @@ impl MetalDirtyBackend {
                         accumulation.skipped_samples += 1;
                         continue;
                     }
-                    let first_weight = *row.weight.get(first_corr_index).ok_or_else(|| {
-                        ImagingError::InvalidRequest(format!(
-                            "standard MFS grouped initial dirty WEIGHT correlation {first_corr_index} is out of bounds"
-                        ))
-                    })?;
-                    let second_weight = *row.weight.get(second_corr_index).ok_or_else(|| {
-                        ImagingError::InvalidRequest(format!(
-                            "standard MFS grouped initial dirty WEIGHT correlation {second_corr_index} is out of bounds"
-                        ))
-                    })?;
+                    let (first_weight, second_weight) = if let Some(weight_spectrum) =
+                        &row.weight_spectrum
+                    {
+                        (
+                            *weight_spectrum
+                                .get((first_corr_index, local_channel))
+                                .ok_or_else(|| {
+                                    ImagingError::InvalidRequest(format!(
+                                        "standard MFS grouped initial dirty WEIGHT_SPECTRUM index [{first_corr_index}, {source_channel}] is out of bounds"
+                                    ))
+                                })?,
+                            *weight_spectrum
+                                .get((second_corr_index, local_channel))
+                                .ok_or_else(|| {
+                                    ImagingError::InvalidRequest(format!(
+                                        "standard MFS grouped initial dirty WEIGHT_SPECTRUM index [{second_corr_index}, {source_channel}] is out of bounds"
+                                    ))
+                                })?,
+                        )
+                    } else {
+                        (
+                            *row.weight.get(first_corr_index).ok_or_else(|| {
+                                ImagingError::InvalidRequest(format!(
+                                    "standard MFS grouped initial dirty WEIGHT correlation {first_corr_index} is out of bounds"
+                                ))
+                            })?,
+                            *row.weight.get(second_corr_index).ok_or_else(|| {
+                                ImagingError::InvalidRequest(format!(
+                                    "standard MFS grouped initial dirty WEIGHT correlation {second_corr_index} is out of bounds"
+                                ))
+                            })?,
+                        )
+                    };
                     if !(first_weight.is_finite()
                         && first_weight > 0.0
                         && second_weight.is_finite()
@@ -14684,12 +14712,6 @@ impl MetalDirtyBackend {
                 tap_centers.len()
             )));
         }
-        if row.weight_spectrum.is_some() {
-            return Err(ImagingError::Unsupported(
-                "standard MFS residual backend 'metal-row-run' does not yet support WEIGHT_SPECTRUM"
-                    .to_string(),
-            ));
-        }
         if !row.gridable {
             accumulation.skipped_not_gridable =
                 accumulation.skipped_not_gridable.saturating_add(lane_count);
@@ -14713,7 +14735,11 @@ impl MetalDirtyBackend {
         chunk.lanes.reserve(lane_count);
         chunk.data.reserve(lane_count.saturating_mul(corr_count));
         chunk.flags.reserve(lane_count.saturating_mul(corr_count));
-        chunk.weights.reserve(corr_count);
+        chunk.weights.reserve(if row.weight_spectrum.is_some() {
+            lane_count.saturating_mul(corr_count)
+        } else {
+            corr_count
+        });
         let contiguous_local_channels = if lane_count == 0 {
             Some(0..0)
         } else {
@@ -14899,9 +14925,27 @@ impl MetalDirtyBackend {
             detail.data_flag_copy += data_flag_copy_started.elapsed();
         }
         let run_desc_started = Instant::now();
-        chunk
-            .weights
-            .extend(row.weight.iter().take(corr_count).copied());
+        let weight_channel_count = if let Some(weight_spectrum) = &row.weight_spectrum {
+            if weight_spectrum.shape() != [corr_count, local_channel_count] {
+                return Err(ImagingError::InvalidRequest(
+                    "standard MFS Metal row-run WEIGHT_SPECTRUM shape differs from DATA shape"
+                        .to_string(),
+                ));
+            }
+            for corr in 0..corr_count {
+                for source_slot in source_slot_range.clone() {
+                    let source_channel = row.source_channel_indices[source_slot];
+                    let local_channel = source_channel - row.channel_origin;
+                    chunk.weights.push(weight_spectrum[(corr, local_channel)]);
+                }
+            }
+            lane_count
+        } else {
+            chunk
+                .weights
+                .extend(row.weight.iter().take(corr_count).copied());
+            0
+        };
         chunk.runs.push(MetalResidualRowRunDesc {
             u_m: row.uvw_m[0] as f32,
             v_m: row.uvw_m[1] as f32,
@@ -14949,7 +14993,12 @@ impl MetalDirtyBackend {
                     "standard MFS Metal row-run correlation index exceeds u32".to_string(),
                 )
             })?,
-            _pad1: [0; 2],
+            weight_channel_count: u32::try_from(weight_channel_count).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal row-run weight channel count exceeds u32".to_string(),
+                )
+            })?,
+            _pad1: 0,
         });
         chunk.logical_lanes = chunk.logical_lanes.saturating_add(lane_count);
         chunk.max_lane_count = chunk.max_lane_count.max(lane_count);
@@ -16023,8 +16072,22 @@ struct RowRunDesc {
     uint transform;
     uint corr0;
     uint corr1;
-    uint _pad1[2];
+    uint weight_channel_count;
+    uint _pad1;
 };
+
+inline float row_run_natural_weight(
+    device const float* weights,
+    const RowRunDesc run,
+    const uint corr,
+    const uint lane_index
+) {
+    const uint channel_offset = run.weight_channel_count == 0u ? 0u : lane_index;
+    const uint correlation_stride = run.weight_channel_count == 0u
+        ? 1u
+        : run.weight_channel_count;
+    return weights[run.weight_offset + corr * correlation_stride + channel_offset];
+}
 
 struct RowRunLane {
     float lambda_scale;
@@ -16277,7 +16340,7 @@ kernel void initial_dirty_psf_row_run_grouped_prepare(
             visibility = observed;
             dirty_valid = 1.0f;
         }
-        natural_weight = weights[run.weight_offset + run.corr0];
+        natural_weight = row_run_natural_weight(weights, run, run.corr0, lane_index);
     } else {
         if (run.corr0 >= run.corr_count || run.corr1 >= run.corr_count) {
             return;
@@ -16295,8 +16358,8 @@ kernel void initial_dirty_psf_row_run_grouped_prepare(
             return;
         }
         dirty_valid = 1.0f;
-        const float first_weight = weights[run.weight_offset + run.corr0];
-        const float second_weight = weights[run.weight_offset + run.corr1];
+        const float first_weight = row_run_natural_weight(weights, run, run.corr0, lane_index);
+        const float second_weight = row_run_natural_weight(weights, run, run.corr1, lane_index);
         if (!(isfinite(first_weight) && first_weight > 0.0f &&
               isfinite(second_weight) && second_weight > 0.0f)) {
             return;
@@ -16404,7 +16467,7 @@ kernel void initial_dirty_psf_row_run_grouped_accumulate_runs(
                 output.skipped += 1u;
                 continue;
             }
-            natural_weight = weights[run.weight_offset + run.corr0];
+            natural_weight = row_run_natural_weight(weights, run, run.corr0, lane_index);
         } else {
             if (run.corr0 >= run.corr_count || run.corr1 >= run.corr_count) {
                 output.skipped += 1u;
@@ -16425,8 +16488,8 @@ kernel void initial_dirty_psf_row_run_grouped_accumulate_runs(
                 output.skipped += 1u;
                 continue;
             }
-            const float first_weight = weights[run.weight_offset + run.corr0];
-            const float second_weight = weights[run.weight_offset + run.corr1];
+            const float first_weight = row_run_natural_weight(weights, run, run.corr0, lane_index);
+            const float second_weight = row_run_natural_weight(weights, run, run.corr1, lane_index);
             if (!(isfinite(first_weight) && first_weight > 0.0f &&
                   isfinite(second_weight) && second_weight > 0.0f)) {
                 output.skipped += 1u;
@@ -16950,7 +17013,7 @@ kernel void residual_refresh_row_run_global_atomic_exact(
         if (!isfinite(visibility.x) || !isfinite(visibility.y)) {
             return;
         }
-        natural_weight = weights[run.weight_offset + run.corr0];
+        natural_weight = row_run_natural_weight(weights, run, run.corr0, lane_index);
     } else {
         if (run.corr0 >= run.corr_count || run.corr1 >= run.corr_count) {
             return;
@@ -16967,8 +17030,8 @@ kernel void residual_refresh_row_run_global_atomic_exact(
         if (!isfinite(visibility.x) || !isfinite(visibility.y)) {
             return;
         }
-        const float first_weight = weights[run.weight_offset + run.corr0];
-        const float second_weight = weights[run.weight_offset + run.corr1];
+        const float first_weight = row_run_natural_weight(weights, run, run.corr0, lane_index);
+        const float second_weight = row_run_natural_weight(weights, run, run.corr1, lane_index);
         if (!(isfinite(first_weight) && first_weight > 0.0f &&
               isfinite(second_weight) && second_weight > 0.0f)) {
             return;
@@ -17111,7 +17174,7 @@ kernel void residual_refresh_row_run_grouped_prepare(
                 return;
             }
         }
-        natural_weight = weights[run.weight_offset + run.corr0];
+        natural_weight = row_run_natural_weight(weights, run, run.corr0, lane_index);
     } else {
         if (run.corr0 >= run.corr_count || run.corr1 >= run.corr_count) {
             return;
@@ -17131,8 +17194,8 @@ kernel void residual_refresh_row_run_grouped_prepare(
         if (psf_only_mode) {
             visibility = float2(1.0f, 0.0f);
         }
-        const float first_weight = weights[run.weight_offset + run.corr0];
-        const float second_weight = weights[run.weight_offset + run.corr1];
+        const float first_weight = row_run_natural_weight(weights, run, run.corr0, lane_index);
+        const float second_weight = row_run_natural_weight(weights, run, run.corr1, lane_index);
         if (!(isfinite(first_weight) && first_weight > 0.0f &&
               isfinite(second_weight) && second_weight > 0.0f)) {
             return;
@@ -17319,7 +17382,7 @@ kernel void residual_refresh_row_run_diagnostic(
         if (!isfinite(visibility.x) || !isfinite(visibility.y)) {
             return;
         }
-        natural_weight = weights[run.weight_offset + run.corr0];
+        natural_weight = row_run_natural_weight(weights, run, run.corr0, lane_index);
     } else {
         if (run.corr0 >= run.corr_count || run.corr1 >= run.corr_count) {
             return;
@@ -17336,8 +17399,8 @@ kernel void residual_refresh_row_run_diagnostic(
         if (!isfinite(visibility.x) || !isfinite(visibility.y)) {
             return;
         }
-        const float first_weight = weights[run.weight_offset + run.corr0];
-        const float second_weight = weights[run.weight_offset + run.corr1];
+        const float first_weight = row_run_natural_weight(weights, run, run.corr0, lane_index);
+        const float second_weight = row_run_natural_weight(weights, run, run.corr1, lane_index);
         if (!(isfinite(first_weight) && first_weight > 0.0f &&
               isfinite(second_weight) && second_weight > 0.0f)) {
             return;
@@ -18539,6 +18602,70 @@ mod tests {
                 abi_bytes
             );
         }
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn metal_row_run_stages_selected_weight_spectrum_lanes_corr_major() {
+        if !crate::standard_mfs_metal_device_available() {
+            return;
+        }
+        let row = StandardMfsRoutedVisibilityRow {
+            uvw_m: [0.0, 0.0, 0.0],
+            spw_id: 0,
+            channel_origin: 4,
+            source_channel_indices: Arc::from([4usize, 6usize]),
+            channel_lambda_scales: Arc::from([1.0_f64, 1.1_f64]),
+            data: ndarray::Array2::from_shape_vec(
+                (2, 3),
+                vec![
+                    Complex32::new(1.0, 0.0),
+                    Complex32::new(2.0, 0.0),
+                    Complex32::new(3.0, 0.0),
+                    Complex32::new(4.0, 0.0),
+                    Complex32::new(5.0, 0.0),
+                    Complex32::new(6.0, 0.0),
+                ],
+            )
+            .unwrap(),
+            flag: ndarray::Array2::from_elem((2, 3), false),
+            weight: Arc::from([1.0_f32, 2.0_f32]),
+            weight_spectrum: Some(
+                ndarray::Array2::from_shape_vec(
+                    (2, 3),
+                    vec![10.0_f32, 11.0, 12.0, 20.0, 21.0, 22.0],
+                )
+                .unwrap(),
+            ),
+            gridable: true,
+            polarization: StandardMfsVisibilityPolarization::CollapsedPair {
+                first_corr_index: 0,
+                second_corr_index: 1,
+                transform: crate::StandardMfsPairCollapseTransform::HalfSum,
+                sumwt_factor: 1.0,
+            },
+        };
+        let parts = super::MetalRowRunParts {
+            row: &row,
+            source_slot_range: 0..2,
+            tap_centers: &[[16, 16], [17, 16]],
+            grid_width: 32,
+            grid_height: 32,
+            du_lambda: 1.0,
+            dv_lambda: 1.0,
+        };
+        let backend = super::MetalDirtyBackend::new(&StandardMfsExecutionPlan::default()).unwrap();
+        let mut accumulation = super::StandardMfsTiledResidualAccumulation::default();
+        let mut chunk = super::MetalResidualRowRunChunk::default();
+
+        backend
+            .append_metal_residual_row_run_parts(parts, &mut accumulation, &mut chunk, None)
+            .unwrap();
+
+        assert_eq!(chunk.weights, vec![10.0, 12.0, 20.0, 22.0]);
+        assert_eq!(chunk.runs.len(), 1);
+        assert_eq!(chunk.runs[0].weight_channel_count, 2);
+        assert_eq!(accumulation.valid_samples, 2);
     }
 
     #[test]
