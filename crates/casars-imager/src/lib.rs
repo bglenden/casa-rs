@@ -73,14 +73,15 @@ use casa_imaging::{
     clean_cycle_threshold, clean_mask_pixel_count,
     clean_peak_location_masked_with_relative_tolerance, cube_image_product_set,
     estimate_psf_sidelobe_from_psf, extract_mfs_plane_product,
-    finish_standard_mfs_dirty_grid_results, mfs_image_product_peak_abs_masked,
-    mfs_image_product_set, mtmfs_image_product_set, phase_rotate_visibility,
-    plan_imaging_execution_with_context, plan_standard_mfs_density_source,
+    finish_standard_mfs_dirty_grid_results, image_beam_set_from_channel_beams,
+    mfs_image_product_peak_abs_masked, mfs_image_product_set, mtmfs_image_product_set,
+    phase_rotate_visibility, plan_imaging_execution_with_context, plan_standard_mfs_density_source,
     primary_beam_correct_alpha_product, primary_beam_output_products, primary_beam_product,
-    restore_standard_mfs_model, run_hogbom_plane_minor_cycle, run_imaging,
-    run_mosaic_mfs_from_single_plane_stream, run_mosaic_mtmfs_from_single_plane_stream, run_mtmfs,
-    run_standard_mfs_cube_clean, run_standard_mfs_dirty_grid_plan, run_standard_mfs_plan,
-    single_plane_image_product, standard_mfs_kernel_halo, standard_mfs_materialized_plan_bytes,
+    restore_standard_mfs_common_beam_image, restore_standard_mfs_model,
+    run_hogbom_plane_minor_cycle, run_imaging, run_mosaic_mfs_from_single_plane_stream,
+    run_mosaic_mtmfs_from_single_plane_stream, run_mtmfs, run_standard_mfs_cube_clean,
+    run_standard_mfs_dirty_grid_plan, run_standard_mfs_plan, single_plane_image_product,
+    standard_mfs_kernel_halo, standard_mfs_materialized_plan_bytes,
     standard_mfs_metal_grouped_cache_bytes_per_lane, standard_mfs_tile_queue_entry_bytes,
     topology_parallel_worker_candidates, trace_cube_channel_residual_refresh,
     trace_cube_channel_residual_refresh_model_channel_lambda, trace_w_project_plan,
@@ -21778,12 +21779,16 @@ impl CubeSlabProductWriters {
     }
 
     fn finish(mut self, config: &CliConfig) -> Result<(), String> {
-        if config.restoring_beam_mode == RestoringBeamMode::Common {
-            self.rewrite_clean_images_with_common_beam()?;
-        }
-        let psf_beams = beam_set_from_channel_beams(&self.beams, RestoringBeamMode::PerPlane)?;
+        let psf_beams = image_beam_set_from_channel_beams(&self.beams, RestoringBeamMode::PerPlane)
+            .map_err(|error| error.to_string())?;
         let image_beams =
-            beam_set_from_channel_beams(&self.restored_beams, config.restoring_beam_mode)?;
+            image_beam_set_from_channel_beams(&self.restored_beams, config.restoring_beam_mode)
+                .map_err(|error| error.to_string())?;
+        if config.restoring_beam_mode == RestoringBeamMode::Common {
+            self.rewrite_clean_images_with_common_beam(
+                image_beams.single_beam().map(gaussian_to_beamfit),
+            )?;
+        }
         set_tiled_product_info_and_save(&mut self.psf, psf_beams.clone(), "psf")?;
         set_tiled_product_info_and_save(&mut self.residual, psf_beams, "residual")?;
         if let Some(model) = self.model.as_mut() {
@@ -21797,11 +21802,14 @@ impl CubeSlabProductWriters {
         Ok(())
     }
 
-    fn rewrite_clean_images_with_common_beam(&mut self) -> Result<(), String> {
+    fn rewrite_clean_images_with_common_beam(
+        &mut self,
+        common_beam: Option<BeamFit>,
+    ) -> Result<(), String> {
         let Some(model) = self.model.as_ref() else {
             return Ok(());
         };
-        let Some(common_beam) = common_restoring_beam(&self.beams)? else {
+        let Some(common_beam) = common_beam else {
             return Ok(());
         };
         let image_shape = self.image.shape().to_vec();
@@ -21826,23 +21834,16 @@ impl CubeSlabProductWriters {
                 .map_err(|error| format!("reshape residual plane {channel}: {error}"))?
                 .slice(s![.., .., 0, 0])
                 .to_owned();
-            let restored_model = casa_imaging::restore_standard_mfs_model(
+            let image_plane = restore_standard_mfs_common_beam_image(
                 &model_plane,
+                &residual_plane,
                 self.cell_size_rad,
-                Some(common_beam),
-            );
-            let restored_residual = match self.beams.get(channel).copied().flatten() {
-                Some(fitted_beam) => rescale_frontend_residual_to_beam(
-                    &residual_plane,
-                    self.cell_size_rad,
-                    common_beam,
-                    fitted_beam,
-                )?,
-                None => residual_plane,
-            };
-            let image_plane = (restored_model + restored_residual)
-                .insert_axis(Axis(2))
-                .insert_axis(Axis(3));
+                self.beams.get(channel).copied().flatten(),
+                common_beam,
+            )
+            .map_err(|error| format!("restore image plane {channel} with common beam: {error}"))?
+            .insert_axis(Axis(2))
+            .insert_axis(Axis(3));
             let image_started = Instant::now();
             self.image
                 .put_slice_view(image_plane.view().into_dyn(), &start)
@@ -21859,7 +21860,6 @@ impl CubeSlabProductWriters {
                 image_elapsed,
             );
         }
-        self.restored_beams.fill(Some(common_beam));
         Ok(())
     }
 
@@ -53702,46 +53702,6 @@ fn write_preview_png(path: &Path, data: &Array4<f32>) -> Result<(), String> {
         .map_err(|error| format!("write preview {}: {error}", path.display()))
 }
 
-fn beam_set_from_channel_beams(
-    beams: &[Option<BeamFit>],
-    mode: RestoringBeamMode,
-) -> Result<ImageBeamSet, String> {
-    let Some(first) = beams.iter().flatten().next().copied() else {
-        return Ok(ImageBeamSet::default());
-    };
-    if mode == RestoringBeamMode::Common {
-        let mut beam_set = ImageBeamSet::with_shape(beams.len().max(1), 1, beam_to_gaussian(first));
-        for (channel, beam) in beams.iter().enumerate() {
-            if let Some(beam) = beam {
-                beam_set
-                    .set_beam(Some(channel), Some(0), beam_to_gaussian(*beam))
-                    .map_err(|error| format!("set beam for channel {channel}: {error}"))?;
-            }
-        }
-        let common = beam_set
-            .common_beam()
-            .map_err(|error| format!("determine common restoring beam: {error}"))?;
-        return Ok(ImageBeamSet::new(common));
-    }
-    let mut beam_set = ImageBeamSet::with_shape(beams.len(), 1, beam_to_gaussian(first));
-    for (channel, beam) in beams.iter().enumerate() {
-        if let Some(beam) = beam {
-            beam_set
-                .set_beam(Some(channel), Some(0), beam_to_gaussian(*beam))
-                .map_err(|error| format!("set beam for channel {channel}: {error}"))?;
-        }
-    }
-    if beam_set.single_beam().is_none()
-        && beam_set.shape().0 > 0
-        && beam_set.shape().1 > 0
-        && beam_set.equivalent(&ImageBeamSet::new(*beam_set.beam(0, 0)))
-    {
-        Ok(ImageBeamSet::new(*beam_set.beam(0, 0)))
-    } else {
-        Ok(beam_set)
-    }
-}
-
 fn plane_to_corr_code(plane: PlaneStokes) -> Option<i32> {
     match plane {
         PlaneStokes::RR => Some(5),
@@ -54280,6 +54240,7 @@ fn merge_mask_image(mask: &mut Array2<bool>, path: &Path) -> Result<(), String> 
     }
 }
 
+#[cfg(test)]
 fn beam_to_gaussian(beam: BeamFit) -> GaussianBeam {
     GaussianBeam::new(
         beam.major_fwhm_rad,
@@ -54294,27 +54255,6 @@ fn gaussian_to_beamfit(beam: GaussianBeam) -> BeamFit {
         minor_fwhm_rad: beam.minor,
         position_angle_rad: beam.position_angle,
     }
-}
-
-fn common_restoring_beam(beams: &[Option<BeamFit>]) -> Result<Option<BeamFit>, String> {
-    let Some(first) = beams.iter().flatten().next().copied() else {
-        return Ok(None);
-    };
-    let mut beam_set = ImageBeamSet::with_shape(beams.len().max(1), 1, beam_to_gaussian(first));
-    for (channel, beam) in beams.iter().enumerate() {
-        if let Some(beam) = beam {
-            beam_set
-                .set_beam(Some(channel), Some(0), beam_to_gaussian(*beam))
-                .map_err(|error| {
-                    format!("set common restoring beam input for channel {channel}: {error}")
-                })?;
-        }
-    }
-    beam_set
-        .common_beam()
-        .map(gaussian_to_beamfit)
-        .map(Some)
-        .map_err(|error| format!("determine common restoring beam: {error}"))
 }
 
 fn frontend_dirty_clean_config(psf_cutoff: f32) -> CleanConfig {
@@ -54341,7 +54281,10 @@ fn select_frontend_restored_cube_beams(
     match mode {
         RestoringBeamMode::PerPlane => Ok(fitted_beams.to_vec()),
         RestoringBeamMode::Common => {
-            let common = common_restoring_beam(fitted_beams)?;
+            let common = image_beam_set_from_channel_beams(fitted_beams, RestoringBeamMode::Common)
+                .map_err(|error| error.to_string())?
+                .single_beam()
+                .map(gaussian_to_beamfit);
             Ok(vec![common; fitted_beams.len()])
         }
     }
@@ -54365,6 +54308,7 @@ fn restore_frontend_model(
     apply_frontend_kernel(model, &kernel)
 }
 
+#[cfg(test)]
 fn rescale_frontend_residual_to_beam(
     residual: &Array2<f32>,
     cell_size_rad: [f64; 2],
@@ -54394,6 +54338,7 @@ fn rescale_frontend_residual_to_beam(
     Ok(rescaled)
 }
 
+#[cfg(test)]
 fn frontend_gaussian_kernel(
     beam: BeamFit,
     cell_size_rad: [f64; 2],
@@ -54435,6 +54380,7 @@ fn frontend_gaussian_kernel(
     Some(kernel)
 }
 
+#[cfg(test)]
 fn make_frontend_casa_gaussian_psf_image(
     nx: usize,
     ny: usize,
@@ -54481,6 +54427,7 @@ fn make_frontend_casa_gaussian_psf_image(
     image
 }
 
+#[cfg(test)]
 fn apply_frontend_kernel(model: &Array2<f32>, kernel: &[(isize, isize, f32)]) -> Array2<f32> {
     let mut restored = Array2::<f32>::zeros(model.raw_dim());
     for ((center_x, center_y), flux) in model.indexed_iter() {
@@ -71248,7 +71195,7 @@ mod tests {
             restore_frontend_model(&empty, [1.0e-4, 1.0e-4], fitted[0]),
             empty
         );
-        let residual = Array2::<f32>::from_elem((5, 5), 1.0);
+        let residual = Array2::<f32>::from_elem((7, 7), 1.0);
         let unchanged = rescale_frontend_residual_to_beam(
             &residual,
             [1.0e-4, 1.0e-4],
@@ -71257,6 +71204,32 @@ mod tests {
         )
         .expect("rescale");
         assert_eq!(unchanged, residual);
+
+        let common_beam = common[0].expect("selected common beam");
+        let reference_image =
+            restore_standard_mfs_model(&model, [1.0e-4, 1.0e-4], Some(common_beam))
+                + rescale_frontend_residual_to_beam(
+                    &residual,
+                    [1.0e-4, 1.0e-4],
+                    common_beam,
+                    fitted[0].unwrap(),
+                )
+                .expect("reference common-beam residual");
+        let core_image = restore_standard_mfs_common_beam_image(
+            &model,
+            &residual,
+            [1.0e-4, 1.0e-4],
+            fitted[0],
+            common_beam,
+        )
+        .expect("core common-beam image");
+        assert!(
+            reference_image
+                .iter()
+                .zip(core_image.iter())
+                .all(|(reference, core)| (reference - core).abs() <= 1.0e-6),
+            "moving common-beam semantics into casa-imaging changed the plane result"
+        );
     }
 
     #[test]
@@ -80750,16 +80723,19 @@ deconvolver=mtmfs
     #[cfg(all(target_os = "macos", feature = "slow-tests"))]
     #[test]
     fn refim_point_cube20_cpu_and_metal_agree_on_active_and_blank_planes() {
-        if !casa_imaging::standard_mfs_metal_device_available() {
-            return;
-        }
+        assert!(
+            casa_imaging::standard_mfs_metal_device_available(),
+            "focused CPU-versus-Metal cube differential requires a Metal device"
+        );
         let candidates = [
             casatestdata_path("unittest/tclean/refim_point.ms"),
             casatestdata_path("measurementset/vla/refim_point.ms"),
         ];
-        let Some(ms_path) = candidates.into_iter().flatten().find(|path| path.exists()) else {
-            return;
-        };
+        let ms_path = candidates
+            .into_iter()
+            .flatten()
+            .find(|path| path.exists())
+            .expect("focused CPU-versus-Metal cube differential requires refim_point.ms");
         let tmp = tempdir().unwrap();
         let mut cpu_config = refim_point_cube20_config(ms_path.clone());
         cpu_config.imagename = tmp.path().join("cpu");
@@ -80866,6 +80842,21 @@ deconvolver=mtmfs
                 .iter()
                 .chain(&metal_sumwt)
                 .all(|value| value.is_finite() && *value >= 0.0)
+        );
+        let active_plane_indices = cpu_active_planes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, active)| active.then_some(index))
+            .collect::<Vec<_>>();
+        let blank_plane_indices = cpu_active_planes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, active)| (!active).then_some(index))
+            .collect::<Vec<_>>();
+        eprintln!(
+            "refim_point_cube20_cpu_metal_receipt route_samples={} source_sample_counts={:?} active_planes={active_plane_indices:?} blank_planes={blank_plane_indices:?} cpu_sumwt={cpu_sumwt:?} metal_sumwt={metal_sumwt:?}",
+            source_routes[0].len(),
+            source_sample_counts[0],
         );
     }
 

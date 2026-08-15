@@ -947,30 +947,24 @@ fn hogbom_mfs_nmajor_fullsummary_task_return_tracks_casa_on_refim_twochan() {
         rust_model_peak, casa_model_peak,
         "nmajor model peak component moved"
     );
-    let mut unmatched_casa_components = casa_model_components.clone();
-    for (component_index, rust_component) in rust_model_components.iter().take(6).enumerate() {
-        let reflected_x = rust_model_peak
-            .0
-            .checked_mul(2)
-            .and_then(|center| center.checked_sub(rust_component.x));
-        let reflected_y = rust_model_peak
-            .1
-            .checked_mul(2)
-            .and_then(|center| center.checked_sub(rust_component.y));
-        let matched = unmatched_casa_components.iter().position(|casa_component| {
-            let same_position =
-                (rust_component.x, rust_component.y) == (casa_component.x, casa_component.y);
-            let reflected_position =
-                reflected_x == Some(casa_component.x) && reflected_y == Some(casa_component.y);
-            casa_component.channel == rust_component.channel
-                && (same_position || reflected_position)
-                && (rust_component.value - casa_component.value).abs() <= 1.0e-5
-        });
-        assert!(
-            matched.is_some(),
-            "nmajor model component {component_index} has no CASA amplitude match at the same or center-reflected pixel: rust={rust_component:?} casa={casa_model_components:?}"
+    for (component_index, (rust_component, casa_component)) in rust_model_components
+        .iter()
+        .zip(casa_model_components.iter())
+        .take(6)
+        .enumerate()
+    {
+        assert_eq!(
+            (rust_component.x, rust_component.y, rust_component.channel),
+            (casa_component.x, casa_component.y, casa_component.channel),
+            "nmajor model component {component_index} moved"
         );
-        unmatched_casa_components.remove(matched.unwrap());
+        assert_close(
+            rust_component.value,
+            casa_component.value,
+            1.0e-5,
+            1.0e-5,
+            &format!("nmajor model component {component_index} amplitude"),
+        );
     }
     assert_close(
         rust_model_flux,

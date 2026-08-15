@@ -107,7 +107,7 @@ use sha2::{Digest, Sha256};
 
 use beam::{
     BeamFitOutcome, estimate_psf_sidelobe_level, estimate_psf_sidelobe_level_for_beam,
-    fit_beam_from_psf, restore_model,
+    fit_beam_from_psf, restore_common_beam_image, restore_model,
 };
 #[cfg(all(target_os = "macos", not(coverage)))]
 use execution::{
@@ -3434,6 +3434,21 @@ pub fn restore_standard_mfs_model(
     beam: Option<BeamFit>,
 ) -> Array2<f32> {
     restore_model(model, cell_size_rad, beam)
+}
+
+/// Restore one clean cube plane with a common beam.
+///
+/// The model is convolved with `common_beam`. When a fitted per-plane beam is
+/// available, the residual is converted from that beam to the common beam
+/// before the two products are combined.
+pub fn restore_standard_mfs_common_beam_image(
+    model: &Array2<f32>,
+    residual: &Array2<f32>,
+    cell_size_rad: [f64; 2],
+    fitted_beam: Option<BeamFit>,
+    common_beam: BeamFit,
+) -> Result<Array2<f32>, ImagingError> {
+    restore_common_beam_image(model, residual, cell_size_rad, fitted_beam, common_beam)
 }
 
 /// Estimate the maximum absolute PSF sidelobe level outside the fitted main lobe.
