@@ -45,6 +45,49 @@ When an estimated performance run will take many tens of minutes or more, create
 - For mosaics, do not drop fields unless the explicit question is single-field behavior; field distribution and PB/weight accumulation are part of the performance problem.
 - If the first instrumented estimate is likely to exceed 30 minutes, stop and make a mode-faithful reduced row. If it is likely to exceed 60-90 minutes, continue only for final evidence or explicit user request.
 
+## Campaign control
+
+Before the first implementation change, record each candidate's single causal
+hypothesis, exact parent and candidate revision, predicted terminal effect,
+discriminating metric, scientific ceiling, memory and swap limits, wall and
+stage limits, automatic falsifier, known-correct fallback, and artifact
+retention class.
+
+- Maintain one active candidate at a time. A failed candidate must have its
+  falsifier recorded and its code reverted or preserved as an immutable commit
+  before another candidate begins. Do not stack a new hypothesis on a rejected
+  implementation.
+- Separate correctness, resource feasibility, and performance. Once a slow
+  path passes the accepted scientific contract, freeze and land that baseline
+  before optimizing it in a separate wave unless the approved scope explicitly
+  couples them.
+- Classify a failure before acting: scientific correctness, resource safety,
+  performance, test/tooling, or fixture/provenance. Do not change production
+  science code to repair a stale fixture, harness defect, or performance-only
+  miss.
+- A run projected over 30 minutes requires a passed mode-faithful turnaround
+  receipt from the same source revision, binary, and effective configuration.
+  A run projected over 90 minutes is final evidence only. Changing executable
+  code or runtime configuration revokes the receipt and returns the candidate
+  to the turnaround row.
+- After a long-run failure, reproduce the failed stage with a bounded probe
+  before another long run. After two full-resolution failures in one campaign,
+  stop for an explicit continuation, fallback, or waiver decision.
+- Long-run progress must report stage units completed and total, elapsed time,
+  resource headroom, and a conservative completion forecast. Abort when the
+  forecast exceeds the candidate's wall ceiling; log activity alone is not
+  evidence of viable progress.
+- Campaign approval may authorize repeated small and medium experiments inside
+  these guards. It does not authorize an unbounded sequence of full-size runs
+  or new architecture candidates.
+
+Use a fail-closed execution receipt before substantive work. It must identify
+the dataset and selection, CASA/reference and CF-cache identity, source order
+and row blocking, candidate revision and binary, selected backend, and actual
+CPU or device partitions executed. A skipped Metal test, unreachable target,
+or mismatched fixture is a failed discriminator, not evidence about the
+candidate.
+
 ## Correctness rules
 
 - Use `tools/perf/imager/run_workload.py` bundles when possible, because they capture timings, comparisons, panels, and review gates together.
@@ -52,9 +95,25 @@ When an estimated performance run will take many tens of minutes or more, create
 - Treat low-amplitude but structured `.weight` or `.pb` differences as suspicious until instrumented or explicitly accepted.
 - Use CASA compatibility switches narrowly. The CASA Hogbom inclusive-iteration behavior is a Hogbom compatibility mode, not a Clark or general clean switch.
 - If correctness regresses, do not hide it behind speedup numbers. Record explicit user signoff for any accepted residual issue.
+- For large-image visual review, generate same-scale CASA, casa-rs, and
+  difference panels at representative random locations and around bright
+  sources. Visual panels supplement rather than replace numerical and topology
+  gates.
+- Use an ordered acceptance ladder: fixture and execution receipt; one operator
+  or source segment; cumulative checkpoint; pre-FFT or niter-zero products;
+  one residual refresh; offline minor-cycle trajectory; medium CLEAN; final
+  full-resolution evidence. A red stage vetoes later stages until the failure
+  is explained or corrected.
 
 ## Timing rules
 
+- Before changing casa-rs performance code, obtain and freeze a corresponding
+  CASA timing for the exact workload or component boundary being optimized.
+  Match the dataset, selection, geometry, products, and timed stage. Do not use
+  an end-to-end CASA time to anchor a component microbenchmark, or vice versa.
+  Generate a missing matched CASA timing once, before optimization. If CASA
+  cannot expose the boundary, document the closest measurable envelope and get
+  explicit user approval before optimizing against an internally chosen target.
 - Do not rerun CASA when dataset and CASA parameters are unchanged; treat the existing CASA timing as fixed unless CASA-side instrumentation, parameters, or data selection changed.
 - For large runs, require progress lines per bounded pass so stalls can be attributed to density, prepare, gridding, residual refresh, PB/weight generation, or product writing.
 - Report total wall time first, then stage timing. Tables that mix rows/columns from unrelated concerns are not useful.
@@ -66,8 +125,17 @@ When an estimated performance run will take many tens of minutes or more, create
 - Multi-hour opaque runs without pass/stage progress.
 - Tiny-dataset performance claims.
 - Speculating about bottlenecks instead of instrumenting.
+- Optimizing against an internally chosen target before obtaining a matched
+  CASA baseline.
 - Rerunning CASA just because casa-rs changed.
 - Mistaking a small subset of a large MS for full-dataset performance.
 - Assuming multi-worker or Metal is faster without measured total runtime.
 - Adding local fast paths that duplicate shared prepare, weighting, planner, or GPU code.
 - Leaving old redundant paths in place after a shared path replaces them.
+- Using a full-resolution CLEAN run to discover a stage-local correctness or
+  ownership defect.
+- Continuing a precision or representation ladder after a material local
+  improvement fails to move the first divergent operator, trajectory, or
+  terminal product metric.
+- Keeping multiple experimental representations, selectors, or shadow paths in
+  the production diff until final cleanup.

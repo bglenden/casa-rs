@@ -1,0 +1,234 @@
+{
+  "schema_version": 1,
+  "id": "vlass-merge-recovery-20260802-v1",
+  "approved_by": "Brian Glendenning",
+  "approved_date": "2026-08-02",
+  "wave_issue": 445,
+  "evidence_issue": 446,
+  "cleanup_issue": 454,
+  "legacy_draft_pr": 451,
+  "archive": {
+    "trusted_base_commit": "aea444b5e40fde5486e2ea421e5f8e2cf32d6174",
+    "archive_branch": "codex/vlass-recovery-archive-20260802",
+    "archive_commit": "4c3cf8cc916656f1ece6efc9bbd3fb674e401132",
+    "archive_tree": "d46765f2795d3b4c31edef891f523ddae2433b7b",
+    "bundle_path": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-archive/2026-08-02/vlass-recovery-archive-4c3cf8cc916656f1.bundle",
+    "bundle_sha256": "4ff641f50a5d0248288ba480255765a8870b7bbab6ef9842b3cacc14e75dc519",
+    "binary_patch_path": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-archive/2026-08-02/vlass-recovery-archive-aea444b5-to-4c3cf8cc.patch",
+    "binary_patch_sha256": "55286ec6390dde0552df38abe80e1de2ea84891906d6549675ab0133a57b1aad"
+  },
+  "work_budget": {
+    "salvage_audit_engineer_hours": 8,
+    "total_engineer_hours": 48,
+    "active_window_hours": 72,
+    "exclude_valid_casa_reference_wall_time": true
+  },
+  "casa_reference_schedule": {
+    "runtime": "CASA 6.7.5.9",
+    "max_full_geometry_launches": 3,
+    "shared_external_invalidation_retries": 1,
+    "launch_order": [
+      "CASA-B-FRAGMENT63-CLEAN-CAP20000-v1",
+      "CASA-B-FRAGMENT63-CLEAN-CAP20000-v2",
+      "CASA-A-SINGLE-CLEAN-N2000-v1"
+    ],
+    "rows": [
+      {
+        "id": "CASA-B-FRAGMENT63-CLEAN-CAP20000-v1",
+        "manifest_path": "tools/perf/imager/workloads/vlass-fragment-all-fields-clean-cap20000-casa.json",
+        "manifest_sha256": "d8de70dabf3c1b768a69dc9d0f2a1e8e159b29b67e668079272c7b08bac98bdf",
+        "max_wall_seconds": 604800,
+        "normal_launches": 1,
+        "base_manifest_path": "tools/perf/imager/workloads/vlass-fragment-all-fields-clean-casa.json",
+        "base_manifest_sha256": "06974233a596f857b2877c0a6538caa6fadcab4c1b1bcb33cd66ba98dfe98a23",
+        "only_science_parameter_delta": {
+          "imaging.niter": {
+            "from": 2000,
+            "to": 20000
+          }
+        }
+      },
+      {
+        "id": "CASA-B-FRAGMENT63-CLEAN-CAP20000-v2",
+        "manifest_path": "tools/perf/imager/workloads/vlass-fragment-all-fields-clean-cap20000-casa-v2.json",
+        "manifest_sha256": "63948fe140d5c06c00b924eea407e5afe8ccb2f99e2c927290d9de4644002053",
+        "max_wall_seconds": 604800,
+        "normal_launches": 1,
+        "authorization": "Explicitly approved by Brian Glendenning on 2026-08-02 after CASA-B v1 was rejected because its mask missed the measured source.",
+        "base_manifest_path": "tools/perf/imager/workloads/vlass-fragment-all-fields-clean-casa-v2.json",
+        "base_manifest_sha256": "0cabbe5fdc2f687a10fce3653d018e09db7349a0a1299d16a4f6772557f9f5d9",
+        "only_science_parameter_delta": {
+          "imaging.niter": {
+            "from": 2000,
+            "to": 20000
+          }
+        }
+      },
+      {
+        "id": "CASA-A-SINGLE-CLEAN-N2000-v1",
+        "manifest_path": "tools/perf/imager/workloads/vlass-fragment-single-field-clean-casa.json",
+        "manifest_sha256": "5da8ce24c92b2d47e53784e8600976bf37708086309820cb1b61af6f8982bd9e",
+        "max_wall_seconds": 259200,
+        "normal_launches": 1
+      }
+    ]
+  },
+  "casa_rs_candidate_schedule": {
+    "max_immutable_candidate_freezes": 2,
+    "max_full_geometry_launches": 5,
+    "shared_external_invalidation_retries": 1,
+    "promotion_ladder": [
+      "4096-square four-SPW real VLASS clean",
+      "4096-square full-16-SPW real VLASS clean",
+      "12150-square single-field clean",
+      "12150-square connected-63-field clean"
+    ],
+    "reduced_rows_are_final_evidence": false
+  },
+  "casa_first_performance_baseline": {
+    "required_before_casa_rs_performance_changes": true,
+    "generate_missing_baseline_once": true,
+    "freeze_valid_baseline": true,
+    "required_matching_dimensions": [
+      "dataset",
+      "selection",
+      "image_geometry",
+      "required_products",
+      "timed_boundary"
+    ],
+    "end_to_end_timing_may_anchor_component_target": false,
+    "component_timing_may_anchor_end_to_end_target": false,
+    "unexposed_boundary_policy": "Record the closest measurable CASA envelope and obtain explicit user approval before optimizing against an internally chosen target.",
+    "rerun_when_only_casa_rs_changes": false
+  },
+  "performance_preservation": {
+    "policy_version": 1,
+    "approved_by": "Brian Glendenning",
+    "approved_date": "2026-08-04",
+    "landmark_rows": [
+      {
+        "id": "VLASS-LANDMARK-SINGLE-4096-4SPW-CLEAN-N2000-v1",
+        "scope": "Single field 1525, SPWs 2,7,12,17, 4096-square, real CLEAN from zero, niter=2000, AWProject, POINTING, MT-MFS nterms=2, scales 0,5,12, and 19 products.",
+        "historical_casa_wall_seconds": 3631.809729,
+        "historical_casa_rs_wall_seconds": 28.65,
+        "historical_ratio": 126.76473748691099,
+        "production_baseline_casa_rs_wall_seconds": 38.5,
+        "production_baseline_approved_by": "Brian Glendenning",
+        "production_baseline_approved_date": "2026-08-07",
+        "release_only": true,
+        "maximum_regression_fraction_without_user_approval": 0.1,
+        "required_runtime": {
+          "fftw_threads": 8,
+          "fftw_f64_planner_flags": "estimate",
+          "fftw_f64_core_sha256": "2eda1ef2b5bd9707a63d38f8d4994513b40e1b0ae475fd8c57cfecf5abb88c2d",
+          "fftw_f64_threads_sha256": "1ceb262b9c62af3f3a8bb10d3459fa36c7a954cd32a4bc9774d4c27e4bea0ecc",
+          "fftw_version": "fftw-3.3.11",
+          "image_response_storage": "raw",
+          "image_response_bytes": 536870912,
+          "grouped_resident_replay_required": true,
+          "grouped_omitted_squared_l2_energy": 0.0,
+          "grouped_tile_side": 16
+        },
+        "required_activity": {
+          "frozen_model_allowed": false,
+          "actual_minor_iterations": 2000,
+          "minimum_major_cycles": 1,
+          "minimum_minor_cycle_records": 1,
+          "minimum_image_response_calibrations": 1,
+          "minimum_image_response_syntheses": 1,
+          "exact_final_refreshes": 1,
+          "sparse_rhs_required": true,
+          "radix_madfm_required": true
+        },
+        "evidence": {
+          "run_log": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260729-vlass-clean4096-4spw-n2000-image-response-radix-madfm-v4.log",
+          "run_log_sha256": "f07d3b8721de81ef4aa152f3a3e0747ac597e4b3f25ec609fef279cbec2d0989",
+          "trace_comparison_sha256": "01a403119013875db93c7f8b1679a9a5b8ffb671ee91e98b643cb391303db780",
+          "product_comparison_sha256": "0df5ec1401e2aaa18998feb96b654b922e0a793050f28e86c27e53227fc4fb01"
+        }
+      },
+      {
+        "id": "VLASS-LANDMARK-SINGLE-4096-16SPW-CLEAN-N2000-v1",
+        "scope": "Single field 1525, all 16 SPWs, 4096-square, real CLEAN from zero, niter=2000, AWProject, POINTING, MT-MFS nterms=2, scales 0,5,12, and 19 products.",
+        "historical_casa_rs_wall_seconds": 101.646,
+        "release_only": true,
+        "maximum_regression_fraction_without_user_approval": 0.1,
+        "required_activity": {
+          "frozen_model_allowed": false,
+          "minimum_actual_minor_iterations": 1,
+          "minimum_major_cycles": 1,
+          "minimum_minor_cycle_records": 1,
+          "minimum_image_response_calibrations": 1,
+          "minimum_image_response_syntheses": 1,
+          "exact_final_refreshes": 1,
+          "sparse_rhs_required": true,
+          "radix_madfm_required": true
+        },
+        "evidence": {
+          "scientific_floor_receipt": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260731-vlass-4096-full16-scientific-floor-v1.json",
+          "scientific_floor_receipt_sha256": "f06859c9215a26b15dd32731345b9fdb1aaf1ab0fc267938638dd016b99518a1",
+          "run_log_sha256": "1133ccc666de490b74a905e1dd9d99ab99c1e6a8056cb7f2e892464e08d2c893"
+        }
+      }
+    ],
+    "proxy_policy": {
+      "diagnostic_proxies_may_satisfy_end_to_end_clean_gates": false,
+      "frozen_model_runs_may_satisfy_end_to_end_clean_gates": false,
+      "stage_metrics_may_replace_total_wall_time": false,
+      "debug_builds_may_supply_performance_evidence": false,
+      "required_proxy_label": "diagnostic_operator_proxy"
+    },
+    "retirement_policy": {
+      "landmark_capabilities_remain_in_candidate_lineage": true,
+      "silent_retirement_allowed": false,
+      "allowed_retirement_reasons": [
+        "generalized into the selected production implementation",
+        "superseded by a demonstrably faster implementation on the same landmark",
+        "retired with explicit Brian Glendenning approval"
+      ]
+    }
+  },
+  "acceptance": {
+    "minimum_independent_speedup": 10.0,
+    "strict_100x_target": false,
+    "require_all_19_clean_products": true,
+    "require_exact_product_inventory": true,
+    "require_metadata_and_coordinate_parity": true,
+    "require_scientific_floor": true,
+    "scientific_equivalence_contract_path": "tools/perf/imager/contracts/vlass-scientific-equivalence-v2-mask-topology.json",
+    "scientific_equivalence_contract_sha256": "58cece2f388f6098058598e19e00d4998a8c321f238d062ca8d567cafd29143a",
+    "structured_difference_labels_are_diagnostic": true,
+    "require_bounded_laptop_memory": true,
+    "exact_component_order_required": false,
+    "exact_major_cycle_history_required": false,
+    "record_actual_iterations_components_cycles_and_stop_reason": true,
+    "stop_for_user_decision_when_merge_ready": true,
+    "continue_optimizing_after_merge_ready_without_user_direction": false
+  },
+  "delivery_train": [
+    {
+      "position": 1,
+      "name": "contract-harness-references",
+      "contents": "Recovery contract, CAP20000 manifest, launch ledger, harness checks, and frozen CASA references."
+    },
+    {
+      "position": 2,
+      "name": "shared-execution-substrate",
+      "contents": "Only audited shared multi-SPW, POINTING, AWProject, MT-MFS, product, planner, telemetry, and canonical UI/task capabilities."
+    },
+    {
+      "position": 3,
+      "name": "selected-performance-candidate",
+      "contents": "One audited primary candidate, with the reserve used only after a declared primary failure."
+    },
+    {
+      "position": 4,
+      "name": "acceptance-cleanup-closeout",
+      "contents": "Final receipts, bounded refactor, issue 454 cleanup, sidecar reviews, and merge-ready closeout."
+    }
+  ],
+  "terminal_outcomes": [
+    "merge-ready four-PR train with accepted evidence",
+    "documented blocker with exhausted bounded attempts and a specific user decision"
+  ]
+}

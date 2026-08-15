@@ -326,14 +326,17 @@ sets a shared cancellation token, drops the rendezvous receiver to wake a
 blocked producer, and prevents another bounded source read after the current
 in-flight read; the original consumer error remains the returned context.
 
-The first bounded mosaic MT-MFS slice supports one MeasurementSet,
-`specmode='mfs'`, `gridder='mosaic'`, `nterms <= 2`, no W term, natural,
-uniform, or Briggs weighting, user masks, clean or dirty products, and optional
-PB/PB-corrected products. Each weighting, initial-dirty, and residual-refresh
-pass replays the same bounded row stream; Briggs density uses a raw-UVW sidecar
-so CASA's density cell conventions remain independent of mosaic projection
-coordinates. Broader W/AW, pointing, start-model, outlier, multi-MS, and
-higher-term combinations still reject during planning.
+The bounded mosaic MT-MFS path supports one MeasurementSet, `specmode='mfs'`,
+`nterms <= 2`, natural, uniform, or Briggs weighting, user masks, clean or
+dirty products, and optional PB/PB-corrected products. The ordinary mosaic
+gridder remains a no-W path. The EVLA AWProject specialization additionally
+consumes a validated CASA CF cache, aligned RR/LL hands, POINTING-derived phase
+gradients, wideband conjugate-frequency selection, A/W terms, and its distinct
+imaging, PSF, and weight projections. Each weighting, initial-dirty, and
+residual-refresh pass replays the same bounded row stream; Briggs density uses
+a raw-UVW sidecar so CASA's density cell conventions remain independent of
+mosaic projection coordinates. Start-model, outlier, multi-MS, and higher-term
+combinations outside those admitted slices still reject during planning.
 
 Imager task protocol v3 carries the local execution controls (`parallel`,
 `chanchunks`, shared source memory/row-block/worker/read-ahead settings, and
@@ -403,13 +406,33 @@ and the available scratch budget. MT-MFS keeps f64 PSF moments and Complex64
 dirty moments per complete plan key, applies the Taylor residual identity before
 gridding, and narrows only at the bounded f32 tile. The complete key includes
 grid location, subpixel offset, support, and clipped tap ranges; projector/PB
-identity remains fixed by the metadata group. MT-MFS processes one metadata
-group and bounded compaction chunk at a time. The frontend derives the requested
-scratch from image cells, Taylor plane count, and planned workers, then caps it
-by the run-level memory target after fixed products, caches, and one source row
-block are reserved. The core reduces worker count when a support-sized tile
-cannot fit, subtracts exact worker-tile storage, and converts the remainder into
-a raw-sample limit from the actual compact record layout and geometry-derived
+identity remains fixed by the metadata group. Ordinary mosaic MT-MFS processes
+one metadata group and bounded compaction chunk at a time. Eligible Metal
+AWProject MT-MFS clean runs instead compile each admitted source-order segment
+once after bounded effective-support specialization. The compiler preserves
+the original sample/role order, records the final group ordinal for each role,
+and persists the sorted group plans and grouped tile route. Major-cycle replay
+then performs only the exact-order f64 residual reduction, one f32 narrowing,
+and the unchanged grouped Metal dispatch; it does not rebuild grouping, sorting,
+or route topology. The private spill is integrity-checked, unlinked, and owned
+only for the lifetime of the imaging execution. It is an internal execution
+representation, not a reusable public cache format.
+
+The frontend derives requested scratch from image cells, Taylor plane count,
+and planned workers, then caps it by the run-level memory target after fixed
+products, caches, and one source row block are reserved. For grouped AWProject
+replay it separately admits persistent residual-stage replay bytes and
+capture-time compiler bytes from the initial-grid lifetime ledger. Segment size
+is the remaining compiler headroom after persistent replay retention, bounded
+between 512 MiB and 8 GiB; allocator uncertainty is charged explicitly. The
+spill directory is the output image directory, so the task's output-volume
+choice also owns temporary replay I/O. Existing memory-target and
+memory-pressure parameters govern admission; grouped replay is not a separate
+user-facing science parameter. AWProject charges its full-cell LRU and compact
+tap ceiling as independent allocations; neither may consume the remaining
+safety reserve. The core reduces worker count when a support-sized tile cannot
+fit, subtracts exact worker-tile storage, and converts the remainder into a
+raw-sample limit from the actual compact record layout and geometry-derived
 route-copy bound. Reusable standard-MFS tap plans likewise receive an exact byte
 budget instead of a sample-count cutoff. The frontend memory planner and core
 executor share these formulas; no dataset identity or benchmark-specific sample
@@ -463,10 +486,9 @@ compatibility block facade or normal-path host full-grid upload is retained.
 - On-disk interoperability with casacore-compatible formats is more important than mirroring C++ APIs directly.
 - Heavy CASA parity suites must stay opt-in rather than in the default `cargo test --workspace` path.
 - Some cross-language and parity tests must skip cleanly when `pkg-config casacore` or measures data are unavailable.
-- WDAD uses the scaled v0.4 layer in this repo, including the bounded
-  refactor-pass gate before code waves move to review; some architecture checks
-  are still lightweight/document-oriented rather than full mechanical boundary
-  enforcement.
+- GitHub issues and pull requests are the authoritative work record; some
+  architecture checks are still lightweight/document-oriented rather than full
+  mechanical boundary enforcement.
 
 ## Known current gaps / debt
 

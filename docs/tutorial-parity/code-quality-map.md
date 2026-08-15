@@ -4,7 +4,7 @@ Truth class: current descriptive
 Last reality check: 2026-04-26
 Verification: just docs-check
 
-Wave issue: #137
+Work issue: #137
 Child issue: #131
 
 This audit is intentionally not a generic cleanup request. It records concrete

@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+import os
 import pathlib
 import subprocess
 import sys
 import threading
+import time
+from typing import Callable
 
 
 def run_command(
@@ -19,12 +22,25 @@ def run_command(
     merge_stderr: bool = True,
     check: bool = False,
     stream_stdout: bool = False,
+    incremental_output_path: pathlib.Path | None = None,
+    on_spawn: Callable[[subprocess.Popen[str]], None] | None = None,
+    before_reap: Callable[[subprocess.Popen[str]], None] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    if stream_stdout:
+    if (
+        stream_stdout
+        or incremental_output_path is not None
+        or on_spawn is not None
+        or before_reap is not None
+    ):
         if input_text is not None or not merge_stderr:
             raise ValueError(
-                "stream_stdout requires merged stderr and does not accept stdin"
+                "incremental output capture requires merged stderr and does not "
+                "accept stdin"
             )
+        output_handle = None
+        if incremental_output_path is not None:
+            incremental_output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_handle = incremental_output_path.open("w", encoding="utf-8")
         process = subprocess.Popen(
             argv,
             cwd=cwd,
@@ -41,21 +57,64 @@ def run_command(
             assert process.stdout is not None
             for line in process.stdout:
                 output_chunks.append(line)
-                sys.stdout.write(line)
-                sys.stdout.flush()
+                if output_handle is not None:
+                    output_handle.write(line)
+                    output_handle.flush()
+                if stream_stdout:
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
 
         reader = threading.Thread(target=drain_stdout, daemon=True)
         reader.start()
+        if on_spawn is not None:
+            try:
+                on_spawn(process)
+            except BaseException:
+                process.terminate()
+                try:
+                    process.wait(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                reader.join()
+                process.stdout.close()
+                if output_handle is not None:
+                    output_handle.close()
+                raise
         try:
-            return_code = process.wait(timeout=timeout_seconds)
+            return_code = _wait_with_before_reap(
+                process,
+                timeout_seconds=timeout_seconds,
+                before_reap=before_reap,
+            )
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
             reader.join()
             process.stdout.close()
+            if output_handle is not None:
+                output_handle.close()
+            raise
+        except BaseException:
+            # An operator interrupt must not orphan a long-running CASA worker.
+            # Preserve the exception after synchronously closing the process and
+            # its output-draining thread so the caller can write a typed receipt.
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+            reader.join()
+            process.stdout.close()
+            if output_handle is not None:
+                output_handle.close()
             raise
         reader.join()
         process.stdout.close()
+        if output_handle is not None:
+            output_handle.close()
         completed = subprocess.CompletedProcess(
             argv, return_code, "".join(output_chunks), None
         )
@@ -75,3 +134,41 @@ def run_command(
         timeout=timeout_seconds,
         check=check,
     )
+
+
+def _wait_with_before_reap(
+    process: subprocess.Popen[str],
+    *,
+    timeout_seconds: float | None,
+    before_reap: Callable[[subprocess.Popen[str]], None] | None,
+) -> int:
+    if before_reap is None:
+        return process.wait(timeout=timeout_seconds)
+    if _wait_for_posix_exit_without_reap(process, timeout_seconds=timeout_seconds):
+        before_reap(process)
+        return process.wait()
+    return_code = process.wait(timeout=timeout_seconds)
+    before_reap(process)
+    return return_code
+
+
+def _wait_for_posix_exit_without_reap(
+    process: subprocess.Popen[str],
+    *,
+    timeout_seconds: float | None,
+) -> bool:
+    required = ("P_PID", "WEXITED", "WNOWAIT", "WNOHANG", "waitid")
+    if os.name != "posix" or any(not hasattr(os, name) for name in required):
+        return False
+    deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
+    options = os.WEXITED | os.WNOWAIT | os.WNOHANG
+    while True:
+        try:
+            status = os.waitid(os.P_PID, process.pid, options)
+        except ChildProcessError:
+            return False
+        if status is not None:
+            return True
+        if deadline is not None and time.monotonic() >= deadline:
+            raise subprocess.TimeoutExpired(process.args, timeout_seconds)
+        time.sleep(0.02)

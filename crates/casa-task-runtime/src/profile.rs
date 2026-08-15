@@ -1130,6 +1130,98 @@ cell = "0.0002777777777777778deg"
     }
 
     #[test]
+    fn frozen_vlass_single_and_all_field_profiles_round_trip_without_parameter_loss() {
+        let bundle = casa_provider_contracts::builtin_surface_bundle("imager").unwrap();
+        for (label, source, expected_field) in [
+            (
+                "single",
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../resources/test-profiles/vlass-single-field-awproject.toml"
+                )),
+                "1525",
+            ),
+            (
+                "all",
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../resources/test-profiles/vlass-all-fields-awproject.toml"
+                )),
+                "1107~1127,1512~1532,1542~1562",
+            ),
+        ] {
+            let parsed = parse_profile(source).unwrap_or_else(|error| {
+                panic!("parse frozen {label}-field VLASS profile: {error}")
+            });
+            let resolved = resolve_profile(&parsed, &bundle).unwrap_or_else(|error| {
+                panic!("resolve frozen {label}-field VLASS profile: {error}")
+            });
+            assert_eq!(
+                resolved.values["field"],
+                ParameterValue::String(expected_field.to_string()),
+                "{label}"
+            );
+            for (name, expected) in [
+                ("gridder", ParameterValue::String("awproject".into())),
+                ("stokes", ParameterValue::String("I".into())),
+                ("spw", ParameterValue::String("2~17".into())),
+                ("uvrange", ParameterValue::String("<12km".into())),
+                (
+                    "intent",
+                    ParameterValue::String("OBSERVE_TARGET#UNSPECIFIED".into()),
+                ),
+                ("usepointing", ParameterValue::Bool(true)),
+                ("nterms", ParameterValue::Integer(2)),
+                ("parallel", ParameterValue::Bool(false)),
+                (
+                    "imaging_memory_pressure_policy",
+                    ParameterValue::String("auto".into()),
+                ),
+            ] {
+                assert_eq!(resolved.values[name], expected, "{label}.{name}");
+            }
+            assert!(
+                !resolved
+                    .explicit_overrides
+                    .contains_key("imaging_memory_pressure_policy"),
+                "{label}.imaging_memory_pressure_policy must adopt the safe default"
+            );
+            assert!(
+                resolved.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code == DiagnosticCode::DefaultChanged
+                        && diagnostic.parameter.as_deref() == Some("imaging_memory_pressure_policy")
+                }),
+                "{label}.imaging_memory_pressure_policy migration must be explicit"
+            );
+            for name in [
+                "cfcache",
+                "cf_resident_mb",
+                "facets",
+                "aterm",
+                "psterm",
+                "wbawp",
+                "conjbeams",
+                "computepastep",
+                "rotatepastep",
+                "pointingoffsetsigdev",
+                "mosweight",
+                "normtype",
+            ] {
+                assert!(
+                    resolved.explicit_overrides.contains_key(name),
+                    "{label}.{name}"
+                );
+            }
+
+            let sparse = render_sparse_profile(&bundle, &resolved.values)
+                .unwrap_or_else(|error| panic!("render frozen {label}-field profile: {error}"));
+            let round_trip = resolve_profile(&parse_profile(&sparse).unwrap(), &bundle)
+                .unwrap_or_else(|error| panic!("round-trip frozen {label}-field profile: {error}"));
+            assert_eq!(round_trip.values, resolved.values, "{label}");
+        }
+    }
+
+    #[test]
     fn every_supported_toml_value_shape_round_trips_deterministically() {
         let values = [
             ParameterValue::Bool(true),

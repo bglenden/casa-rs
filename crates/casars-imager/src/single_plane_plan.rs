@@ -26,7 +26,7 @@ pub(crate) fn build_single_plane_execution_plan(
     let spectral = spectral_plan(config.spectral_mode, output_channel_count);
     let projection = projection_plan(config, force_standard_gridder);
     let primary_beam_products = needs_single_field_primary_beam_products(config);
-    build_core_plan(SinglePlaneExecutionPlanInput::new(
+    let mut plan = build_core_plan(SinglePlaneExecutionPlanInput::new(
         spectral,
         projection,
         SinglePlaneDeconvolverPlan::from_deconvolver(config.deconvolver),
@@ -50,7 +50,15 @@ pub(crate) fn build_single_plane_execution_plan(
         config.use_pointing,
         config.use_mask == CleanMaskMode::User,
         config.w_term_mode,
-    ))
+    ));
+    if !crate::clean_is_dirty(config)
+        && (config.use_mask == CleanMaskMode::User
+            || !config.mask_boxes.is_empty()
+            || config.mask_image.is_some())
+    {
+        plan.output_products.push(".mask".to_string());
+    }
+    plan
 }
 
 fn output_channel_count(config: &CliConfig) -> usize {
@@ -89,6 +97,9 @@ fn cube_interpolation(interpolation: CubeInterpolation) -> SinglePlaneCubeInterp
 }
 
 fn projection_plan(config: &CliConfig, force_standard_gridder: bool) -> SinglePlaneProjectionPlan {
+    if config.aw_project.is_some() {
+        return SinglePlaneProjectionPlan::AwProject;
+    }
     if matches!(config.w_term_mode, WTermMode::WProject | WTermMode::Direct) {
         return SinglePlaneProjectionPlan::WProjection;
     }
@@ -169,14 +180,14 @@ mod tests {
         );
         assert_eq!(
             products(&plan),
-            vec![".image", ".residual", ".model", ".psf", ".sumwt"]
+            vec![".image", ".residual", ".model", ".psf", ".sumwt", ".mask"]
         );
         assert!(
             plan.gpu_metal.reason.contains("standard-mfs")
                 || plan.gpu_metal.reason == "metal-device-unavailable"
         );
         let log = plan.log_line();
-        assert!(log.contains("output_products=.image,.residual,.model,.psf,.sumwt"));
+        assert!(log.contains("output_products=.image,.residual,.model,.psf,.sumwt,.mask"));
         assert!(log.contains("source_stream=bounded"));
         assert!(log.contains("stage_timing_attribution=frontend-core-product-stages"));
     }
@@ -214,6 +225,8 @@ mod tests {
             "standard",
             "--interpolation",
             "nearest",
+            "--niter",
+            "10",
         ]);
         let plan = build_single_plane_execution_plan(&config, false, 1);
 
@@ -222,7 +235,7 @@ mod tests {
         assert!(plan.cpu_multi_worker.eligible);
         assert_eq!(
             products(&plan),
-            vec![".image", ".residual", ".model", ".psf", ".sumwt"]
+            vec![".image", ".residual", ".model", ".psf", ".sumwt", ".mask"]
         );
         assert!(
             plan.cpu_multi_worker
@@ -270,6 +283,8 @@ mod tests {
             "standard",
             "--interpolation",
             "nearest",
+            "--niter",
+            "10",
         ]);
         let plan = build_single_plane_execution_plan(&config, false, 1);
 
@@ -283,7 +298,7 @@ mod tests {
         );
         assert_eq!(
             products(&plan),
-            vec![".image", ".residual", ".model", ".psf", ".sumwt"]
+            vec![".image", ".residual", ".model", ".psf", ".sumwt", ".mask"]
         );
         assert!(
             plan.gpu_metal.reason == "standard-cube-like-one-channel-grouped-metal"
@@ -329,7 +344,14 @@ mod tests {
 
     #[test]
     fn wproject_with_pb_products_keeps_pb_requirement_explicit() {
-        let config = parse(["--gridder", "wproject", "--write-pb", "--pbcor"]);
+        let config = parse([
+            "--gridder",
+            "wproject",
+            "--write-pb",
+            "--pbcor",
+            "--niter",
+            "10",
+        ]);
         let plan = build_single_plane_execution_plan(&config, false, 1);
 
         assert_eq!(plan.projection, SinglePlaneProjectionPlan::WProjection);
@@ -347,12 +369,137 @@ mod tests {
                 ".psf",
                 ".sumwt",
                 ".pb",
-                ".image.pbcor"
+                ".image.pbcor",
+                ".mask"
             ]
         );
         assert!(
             plan.log_line()
                 .contains("pb_requirement=wprojection-products")
+        );
+    }
+
+    #[test]
+    fn awproject_plan_keeps_combined_projection_and_cache_products_explicit() {
+        let config = parse([
+            "--gridder",
+            "awproject",
+            "--cfcache",
+            "/tmp/casa-aw-cache",
+            "--usepointing",
+            "--deconvolver",
+            "mtmfs",
+            "--nterms",
+            "2",
+            "--write-pb",
+            "--niter",
+            "10",
+        ]);
+        let plan = build_single_plane_execution_plan(&config, false, 1);
+
+        assert_eq!(plan.projection, SinglePlaneProjectionPlan::AwProject);
+        assert_eq!(
+            plan.primary_beam_requirement,
+            SinglePlanePrimaryBeamRequirement::AwProjection
+        );
+        assert!(plan.cpu_multi_worker.eligible);
+        assert!(
+            plan.cpu_multi_worker
+                .reason
+                .starts_with("awproject-disjoint-taylor-plane-workers-")
+        );
+        let metal_available = casa_imaging::standard_mfs_metal_device_available();
+        assert_eq!(plan.gpu_metal.eligible, metal_available);
+        assert_eq!(
+            plan.gpu_metal.reason,
+            if metal_available {
+                "awproject-metal-cf-kernel"
+            } else {
+                "metal-device-unavailable"
+            }
+        );
+        assert_eq!(
+            products(&plan),
+            vec![
+                ".image.tt0",
+                ".residual.tt0",
+                ".model.tt0",
+                ".image.tt1",
+                ".residual.tt1",
+                ".model.tt1",
+                ".psf.tt0",
+                ".sumwt.tt0",
+                ".weight.tt0",
+                ".psf.tt1",
+                ".sumwt.tt1",
+                ".weight.tt1",
+                ".psf.tt2",
+                ".sumwt.tt2",
+                ".weight.tt2",
+                ".alpha",
+                ".alpha.error",
+                ".pb.tt0",
+                ".mask",
+            ]
+        );
+        let log = plan.log_line();
+        assert!(log.contains("projection=awproject"));
+        assert!(log.contains("pb_requirement=awprojection"));
+    }
+
+    #[test]
+    fn explicit_clean_mask_is_reported_as_an_output_product() {
+        let config = parse([
+            "--gridder",
+            "awproject",
+            "--cfcache",
+            "/tmp/casa-aw-cache",
+            "--usepointing",
+            "--deconvolver",
+            "mtmfs",
+            "--nterms",
+            "2",
+            "--mask-box",
+            "1,2,3,4",
+            "--niter",
+            "10",
+        ]);
+        let plan = build_single_plane_execution_plan(&config, false, 1);
+
+        assert_eq!(
+            plan.output_products.last().map(String::as_str),
+            Some(".mask")
+        );
+        assert!(
+            plan.log_line()
+                .contains(".weight.tt2,.alpha,.alpha.error,.mask")
+        );
+    }
+
+    #[test]
+    fn dirty_plan_does_not_report_clean_mask_product() {
+        let config = parse([
+            "--gridder",
+            "awproject",
+            "--cfcache",
+            "/tmp/casa-aw-cache",
+            "--usepointing",
+            "--deconvolver",
+            "mtmfs",
+            "--nterms",
+            "2",
+            "--mask-box",
+            "1,2,3,4",
+            "--niter",
+            "0",
+        ]);
+        let plan = build_single_plane_execution_plan(&config, false, 1);
+
+        assert!(
+            plan.output_products
+                .iter()
+                .all(|product| product != ".mask"),
+            "CASA does not emit a clean mask for niter=0"
         );
     }
 
@@ -383,15 +530,18 @@ mod tests {
                 ".image.tt0",
                 ".residual.tt0",
                 ".model.tt0",
-                ".psf.tt0",
-                ".sumwt.tt0",
                 ".image.tt1",
                 ".residual.tt1",
                 ".model.tt1",
+                ".psf.tt0",
+                ".sumwt.tt0",
                 ".psf.tt1",
                 ".sumwt.tt1",
+                ".psf.tt2",
+                ".sumwt.tt2",
                 ".alpha",
-                ".alpha.error"
+                ".alpha.error",
+                ".mask"
             ]
         );
     }
@@ -456,13 +606,14 @@ mod tests {
                 ".sumwt",
                 ".weight",
                 ".pb",
-                ".image.pbcor"
+                ".image.pbcor",
+                ".mask"
             ]
         );
         let log = plan.log_line();
         assert!(log.contains("pb_requirement=mosaic-projection"));
         assert!(log.contains(
-            "output_products=.image,.residual,.model,.psf,.sumwt,.weight,.pb,.image.pbcor"
+            "output_products=.image,.residual,.model,.psf,.sumwt,.weight,.pb,.image.pbcor,.mask"
         ));
     }
 

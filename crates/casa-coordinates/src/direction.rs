@@ -352,9 +352,19 @@ impl DirectionCoordinate {
         let dx = pixel[0] - self.crpix[0];
         let dy = pixel[1] - self.crpix[1];
 
-        // Apply PC matrix
-        let x = self.cdelt[0] * (self.pc[[0, 0]] * dx + self.pc[[0, 1]] * dy);
-        let y = self.cdelt[1] * (self.pc[[1, 0]] * dx + self.pc[[1, 1]] * dy);
+        // casacore's DirectionCoordinate stores WCS linear coordinates in
+        // degrees even when its public axis units are radians. Preserve that
+        // operation order so serialized zero-pixel world replacements agree
+        // with WCSLIB down to the final bit.
+        let to_degrees = 1.0 / (PI / 180.0);
+        let x_degrees =
+            (self.cdelt[0] * to_degrees) * (self.pc[[0, 0]] * dx + self.pc[[0, 1]] * dy);
+        let y_degrees =
+            (self.cdelt[1] * to_degrees) * (self.pc[[1, 0]] * dx + self.pc[[1, 1]] * dy);
+        // Keep the D2R multiplication grouped to reproduce CASA's serialized
+        // zero-pixel world replacement exactly.
+        let x = x_degrees * (PI / 180.0);
+        let y = y_degrees * (PI / 180.0);
 
         (x, y)
     }
@@ -384,28 +394,71 @@ impl DirectionCoordinate {
     /// Uses the pre-computed native pole (alpha_p, delta_p).
     fn native_to_celestial(&self, phi: f64, theta: f64) -> (f64, f64) {
         let (alpha_p, delta_p) = (self.native_pole[0], self.native_pole[1]);
-        let phi_p = self.longpole;
+        let radians_per_degree = PI / 180.0;
+        let to_degrees = 1.0 / radians_per_degree;
+        let phi_degrees = phi * to_degrees;
+        let theta_degrees = theta * to_degrees;
+        let euler_0 = alpha_p * to_degrees;
+        let euler_1 = 90.0 - delta_p * to_degrees;
+        let euler_2 = self.longpole * to_degrees;
+        let (euler_4, euler_3) = wcslib_sin_cos_degrees(euler_1);
+        let (sin_theta, cos_theta) = wcslib_sin_cos_degrees(theta_degrees);
+        let dphi = phi_degrees - euler_2;
+        let (sin_phi, cos_phi) = wcslib_sin_cos_degrees(dphi);
 
-        let sin_theta = theta.sin();
-        let cos_theta = theta.cos();
-        let sin_dp = delta_p.sin();
-        let cos_dp = delta_p.cos();
-        let sin_dphi = (phi - phi_p).sin();
-        let cos_dphi = (phi - phi_p).cos();
+        let cos_theta_3 = cos_theta * euler_3;
+        let cos_theta_4 = cos_theta * euler_4;
+        let sin_theta_3 = sin_theta * euler_3;
+        let sin_theta_4 = sin_theta * euler_4;
 
-        // Celestial latitude
-        let sin_lat = sin_theta * sin_dp + cos_theta * cos_dp * cos_dphi;
-        let lat = sin_lat.clamp(-1.0, 1.0).asin();
+        let mut x = sin_theta_4 - cos_theta_3 * cos_phi;
+        if x.abs() < 1.0e-5 {
+            x = -wcslib_cos_degrees(theta_degrees + euler_1) + cos_theta_3 * (1.0 - cos_phi);
+        }
+        let y = -cos_theta * sin_phi;
+        let delta_longitude = if x != 0.0 || y != 0.0 {
+            wcslib_atan2_degrees(y, x)
+        } else if euler_1 < 90.0 {
+            dphi + 180.0
+        } else {
+            -dphi
+        };
+        let mut longitude_degrees = euler_0 + delta_longitude;
+        if euler_0 >= 0.0 {
+            if longitude_degrees < 0.0 {
+                longitude_degrees += 360.0;
+            }
+        } else if longitude_degrees > 0.0 {
+            longitude_degrees -= 360.0;
+        }
+        if longitude_degrees > 360.0 {
+            longitude_degrees -= 360.0;
+        } else if longitude_degrees < -360.0 {
+            longitude_degrees += 360.0;
+        }
 
-        // Celestial longitude
-        let num = -cos_theta * sin_dphi;
-        let den = sin_theta * cos_dp - cos_theta * sin_dp * cos_dphi;
-        let lon = alpha_p + num.atan2(den);
+        let latitude_degrees = if dphi % 180.0 == 0.0 {
+            let mut latitude = theta_degrees + cos_phi * euler_1;
+            if latitude > 90.0 {
+                latitude = 180.0 - latitude;
+            }
+            if latitude < -90.0 {
+                latitude = -180.0 - latitude;
+            }
+            latitude
+        } else {
+            let z = sin_theta_3 + cos_theta_4 * cos_phi;
+            if z.abs() > 0.99 {
+                z.signum() * wcslib_acos_degrees((x * x + y * y).sqrt())
+            } else {
+                wcslib_asin_degrees(z)
+            }
+        };
 
-        // Normalise longitude to [0, 2*pi)
-        let lon = normalize_angle(lon);
-
-        (lon, lat)
+        (
+            longitude_degrees / to_degrees,
+            latitude_degrees / to_degrees,
+        )
     }
 
     /// Celestial (lon, lat) to native spherical (phi, theta).
@@ -434,14 +487,57 @@ impl DirectionCoordinate {
     }
 }
 
-/// Normalises an angle to the range [0, 2*pi).
-fn normalize_angle(mut a: f64) -> f64 {
-    let two_pi = 2.0 * PI;
-    a %= two_pi;
-    if a < 0.0 {
-        a += two_pi;
+fn wcslib_sin_cos_degrees(angle_degrees: f64) -> (f64, f64) {
+    if angle_degrees % 90.0 == 0.0 {
+        let quadrant = ((angle_degrees / 90.0 + 0.5).floor().abs() as i64) % 4;
+        return match quadrant {
+            0 => (0.0, 1.0),
+            1 => (if angle_degrees > 0.0 { 1.0 } else { -1.0 }, 0.0),
+            2 => (0.0, -1.0),
+            3 => (if angle_degrees > 0.0 { -1.0 } else { 1.0 }, 0.0),
+            _ => unreachable!(),
+        };
     }
-    a
+    let angle_radians = angle_degrees * (PI / 180.0);
+    (angle_radians.sin(), angle_radians.cos())
+}
+
+fn wcslib_cos_degrees(angle_degrees: f64) -> f64 {
+    wcslib_sin_cos_degrees(angle_degrees).1
+}
+
+fn wcslib_acos_degrees(value: f64) -> f64 {
+    if value >= 1.0 && value - 1.0 < 1.0e-10 {
+        0.0
+    } else if value == 0.0 {
+        90.0
+    } else if value <= -1.0 && value + 1.0 > -1.0e-10 {
+        180.0
+    } else {
+        value.acos() * (180.0 / PI)
+    }
+}
+
+fn wcslib_asin_degrees(value: f64) -> f64 {
+    if value <= -1.0 && value + 1.0 > -1.0e-10 {
+        -90.0
+    } else if value == 0.0 {
+        0.0
+    } else if value >= 1.0 && value - 1.0 < 1.0e-10 {
+        90.0
+    } else {
+        value.asin() * (180.0 / PI)
+    }
+}
+
+fn wcslib_atan2_degrees(y: f64, x: f64) -> f64 {
+    if y == 0.0 {
+        if x >= 0.0 { 0.0 } else { 180.0 }
+    } else if x == 0.0 {
+        if y > 0.0 { 90.0 } else { -90.0 }
+    } else {
+        y.atan2(x) * (180.0 / PI)
+    }
 }
 
 fn convert_value_to_unit(
@@ -640,6 +736,43 @@ mod tests {
             "lat mismatch: {} vs {}",
             world[1],
             coord.crval[1]
+        );
+    }
+
+    #[test]
+    fn vlass_4096_zero_pixel_matches_casa_wcslib() {
+        let coord = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [3.5456021799042077, 0.29321531433310033],
+            [-2.9088820866572157e-6, 2.9088820866572157e-6],
+            [2048.0, 2048.0],
+        );
+
+        assert_eq!(
+            coord.to_world(&[0.0, 0.0]).unwrap(),
+            vec![3.5518141381294104, 0.2872525403597405]
+        );
+    }
+
+    #[test]
+    fn vlass_12150_zero_pixel_matches_casa_wcslib() {
+        let coord = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [3.5456021799042077, 0.29321531433310033],
+            [-2.9088820866572157e-6, 2.9088820866572157e-6],
+            [6075.0, 6075.0],
+        );
+
+        let world = coord.to_world(&[0.0, 0.0]).unwrap();
+        let expected = [3.56396716862884, 0.2754960264910762];
+        assert_eq!(world[0], expected[0]);
+        assert!(
+            world[1].to_bits().abs_diff(expected[1].to_bits()) <= 1,
+            "latitude differs by more than one ULP: {} vs {}",
+            world[1],
+            expected[1]
         );
     }
 

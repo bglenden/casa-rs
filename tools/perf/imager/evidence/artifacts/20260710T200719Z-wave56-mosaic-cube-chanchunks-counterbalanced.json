@@ -3959,7 +3959,7 @@
     }
   },
   "run_id": "20260710T200719Z-wave4-mosaic-cube-alma-medium-dirty-boun-vs-wave4-mosaic-cube-alma-medium-dirty-boun-3f87984f",
-  "schema_version": 2,
+  "schema_version": 3,
   "status": "completed",
   "workload": {
     "id": "wave4-mosaic-cube-alma-medium-dirty-bounded"

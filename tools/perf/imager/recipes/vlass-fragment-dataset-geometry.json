@@ -1,0 +1,95 @@
+{
+  "dataset": {
+    "archive_sha256": "b80d5e87487ab8ab01faa064c4cd48db6d93446fd0add208c051dd574e0d353a",
+    "file_count": 117,
+    "size_bytes": 2707239817,
+    "tree_sha256": "037db124913cdf66de670698536f1bb38c9dbac3725a561fd79eee8bb055fd91"
+  },
+  "geometry": {
+    "correlations": [
+      "RR",
+      "RL",
+      "LR",
+      "LL"
+    ],
+    "data_description_ids": [
+      2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17
+    ],
+    "field_row_count": 14358,
+    "main_row_count": 655200,
+    "pointing_row_count": 3335002,
+    "field_groups": [
+      {"id": "raster_row_1", "field": "1107~1127"},
+      {"id": "raster_row_2", "field": "1512~1532"},
+      {"id": "raster_row_3", "field": "1542~1562"}
+    ],
+    "spectral_windows": [
+      {"id": 2, "channels": 64, "first_hz": 1965000000.0, "last_hz": 2091000000.0, "width_hz": 2000000.0},
+      {"id": 3, "channels": 64, "first_hz": 2093000000.0, "last_hz": 2219000000.0, "width_hz": 2000000.0},
+      {"id": 4, "channels": 64, "first_hz": 2221000000.0, "last_hz": 2347000000.0, "width_hz": 2000000.0},
+      {"id": 5, "channels": 64, "first_hz": 2349000000.0, "last_hz": 2475000000.0, "width_hz": 2000000.0},
+      {"id": 6, "channels": 64, "first_hz": 2477000000.0, "last_hz": 2603000000.0, "width_hz": 2000000.0},
+      {"id": 7, "channels": 64, "first_hz": 2605000000.0, "last_hz": 2731000000.0, "width_hz": 2000000.0},
+      {"id": 8, "channels": 64, "first_hz": 2733000000.0, "last_hz": 2859000000.0, "width_hz": 2000000.0},
+      {"id": 9, "channels": 64, "first_hz": 2861000000.0, "last_hz": 2987000000.0, "width_hz": 2000000.0},
+      {"id": 10, "channels": 64, "first_hz": 2989000000.0, "last_hz": 3115000000.0, "width_hz": 2000000.0},
+      {"id": 11, "channels": 64, "first_hz": 3117000000.0, "last_hz": 3243000000.0, "width_hz": 2000000.0},
+      {"id": 12, "channels": 64, "first_hz": 3245000000.0, "last_hz": 3371000000.0, "width_hz": 2000000.0},
+      {"id": 13, "channels": 64, "first_hz": 3373000000.0, "last_hz": 3499000000.0, "width_hz": 2000000.0},
+      {"id": 14, "channels": 64, "first_hz": 3501000000.0, "last_hz": 3627000000.0, "width_hz": 2000000.0},
+      {"id": 15, "channels": 64, "first_hz": 3629000000.0, "last_hz": 3755000000.0, "width_hz": 2000000.0},
+      {"id": 16, "channels": 64, "first_hz": 3757000000.0, "last_hz": 3883000000.0, "width_hz": 2000000.0},
+      {"id": 17, "channels": 64, "first_hz": 3885000000.0, "last_hz": 4011000000.0, "width_hz": 2000000.0}
+    ]
+  },
+  "kind": "frozen_dataset_geometry_identity",
+  "schema_version": 1,
+  "selections": {
+    "all_fields": {
+      "field": "1107~1127,1512~1532,1542~1562",
+      "intent": "OBSERVE_TARGET#UNSPECIFIED",
+      "selected_rows": 655200,
+      "spw": "2~17",
+      "spw_ids": [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+      "channel_start": 0,
+      "channel_count": 64,
+      "correlations": ["RR", "RL", "LR", "LL"],
+      "uvrange": "<12km"
+    },
+    "single_field": {
+      "field": "1525",
+      "intent": "OBSERVE_TARGET#UNSPECIFIED",
+      "selected_rows": 10400,
+      "spw": "2~17",
+      "spw_ids": [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+      "channel_start": 0,
+      "channel_count": 64,
+      "correlations": ["RR", "RL", "LR", "LL"],
+      "uvrange": "<12km"
+    },
+    "single_field_spw9": {
+      "field": "1525",
+      "intent": "OBSERVE_TARGET#UNSPECIFIED",
+      "selected_rows": 650,
+      "spw": "9",
+      "spw_ids": [9],
+      "channel_start": 0,
+      "channel_count": 64,
+      "correlations": ["RR", "RL", "LR", "LL"],
+      "uvrange": "<12km"
+    }
+  },
+  "source_receipts": {
+    "dataset_receipt_sha256": "ba6fe4482b89297da3cb1d2856a2d47037e767f016d7c63efa7a186ec7c89628",
+    "geometry_receipts": {
+      "all_spws": {
+        "request_sha256": "831c60b3c103ea93418f9850fc52dcd2adad796feabee4de26646638ded8ae39",
+        "result_sha256": "247e482afe002bae25e17a17b570bc65c4c0bfa847204abf276d1691a0140781"
+      },
+      "spw9": {
+        "request_sha256": "0614b2f5e4d401b4a4fc024beb7223effeef793c6cac192158486586870ae848",
+        "result_sha256": "a193b9e415ced2e5b6c48589f01d41b499cf380f14e4fe328f028714166c224a"
+      }
+    }
+  }
+}

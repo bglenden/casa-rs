@@ -3603,7 +3603,7 @@
     "reason": null,
     "status": "runnable"
   },
-  "schema_version": 2,
+  "schema_version": 3,
   "started_at": "2026-07-09T19:49:37.357970Z",
   "status": "completed",
   "workload": {

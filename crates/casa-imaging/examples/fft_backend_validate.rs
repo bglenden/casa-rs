@@ -8,17 +8,18 @@
 //!   --backend rustfft --backend accelerate --precision both --shape 1024x1024
 //! ```
 //!
-//! FFTW is intentionally local-benchmark-only and is not part of Apple GPU
-//! backend selection. Set
-//! `CASA_RS_FFTW_BENCH_CMD=/path/to/bench` to run an external executable with
-//! the arguments `--precision`, `--rows`, `--columns`, and `--use-case`.
+//! FFTW is intentionally explicit and local-only. Set
+//! `CASA_RS_FFTW_LIBRARY_DIR=/path/to/lib` to validate the experimental runtime
+//! adapter, or set `CASA_RS_FFTW_BENCH_CMD=/path/to/bench` to run an external
+//! executable with the arguments `--precision`, `--rows`, `--columns`, and
+//! `--use-case`.
 
 use std::process::Command;
 use std::time::{Duration, Instant};
 
 use casa_imaging::fft_backend::{
     Fft2Spec, FftBackendChoice, FftDirection, FftPrecision, FftUseCase, FftValidationReport,
-    fftw_local_bench_command, validate_fft_backend,
+    fftw_bench_command, validate_fft_backend,
 };
 
 #[derive(Debug)]
@@ -43,8 +44,14 @@ fn run() -> Result<(), String> {
     for &(rows, columns) in &options.shapes {
         for &precision in &options.precisions {
             for &backend in &options.backends {
-                if backend == FftBackendChoice::FftwLocalBench {
-                    print_fftw_local_bench(&options, precision, rows, columns);
+                if backend == FftBackendChoice::Fftw && fftw_bench_command().is_some() {
+                    print_fftw_bench(&options, precision, rows, columns);
+                    continue;
+                }
+                if backend == FftBackendChoice::Fftw
+                    && std::env::var_os("CASA_RS_FFTW_LIBRARY_DIR").is_none()
+                {
+                    print_fftw_unconfigured(options.json, precision, rows, columns);
                     continue;
                 }
                 let spec = Fft2Spec::centered_c2c(
@@ -91,7 +98,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Options, String> {
                         FftBackendChoice::Accelerate,
                         FftBackendChoice::MetalVkFft,
                         FftBackendChoice::MetalMpsGraph,
-                        FftBackendChoice::FftwLocalBench,
+                        FftBackendChoice::Fftw,
                     ]);
                 } else {
                     backends.push(value.parse()?);
@@ -234,8 +241,8 @@ fn print_report(report: &FftValidationReport, json: bool) {
     );
 }
 
-fn print_fftw_local_bench(options: &Options, precision: FftPrecision, rows: usize, columns: usize) {
-    let Some(command) = fftw_local_bench_command() else {
+fn print_fftw_bench(options: &Options, precision: FftPrecision, rows: usize, columns: usize) {
+    let Some(command) = fftw_bench_command() else {
         print_fftw_unconfigured(options.json, precision, rows, columns);
         return;
     };
@@ -261,7 +268,7 @@ fn print_fftw_local_bench(options: &Options, precision: FftPrecision, rows: usiz
             if options.json {
                 println!(
                     "{{\"backend\":\"{}\",\"precision\":\"{}\",\"rows\":{},\"columns\":{},\"use_case\":\"{}\",\"configured\":true,\"status\":{},\"wall_ms\":{:.6},\"stdout_first_line\":\"{}\",\"stderr_first_line\":\"{}\"}}",
-                    FftBackendChoice::FftwLocalBench,
+                    FftBackendChoice::Fftw,
                     precision,
                     rows,
                     columns,
@@ -273,7 +280,7 @@ fn print_fftw_local_bench(options: &Options, precision: FftPrecision, rows: usiz
                 );
             } else {
                 println!(
-                    "fftw_local_bench precision={} shape={}x{} use_case={} configured=true status={} wall_ms={:.6} stdout_first_line={:?} stderr_first_line={:?}",
+                    "fftw_bench precision={} shape={}x{} use_case={} configured=true status={} wall_ms={:.6} stdout_first_line={:?} stderr_first_line={:?}",
                     precision,
                     rows,
                     columns,
@@ -289,7 +296,7 @@ fn print_fftw_local_bench(options: &Options, precision: FftPrecision, rows: usiz
             if options.json {
                 println!(
                     "{{\"backend\":\"{}\",\"precision\":\"{}\",\"rows\":{},\"columns\":{},\"use_case\":\"{}\",\"configured\":true,\"status\":\"spawn_error\",\"wall_ms\":{:.6},\"error\":\"{}\"}}",
-                    FftBackendChoice::FftwLocalBench,
+                    FftBackendChoice::Fftw,
                     precision,
                     rows,
                     columns,
@@ -299,7 +306,7 @@ fn print_fftw_local_bench(options: &Options, precision: FftPrecision, rows: usiz
                 );
             } else {
                 println!(
-                    "fftw_local_bench precision={} shape={}x{} use_case={} configured=true status=spawn_error wall_ms={:.6} error={error}",
+                    "fftw_bench precision={} shape={}x{} use_case={} configured=true status=spawn_error wall_ms={:.6} error={error}",
                     precision,
                     rows,
                     columns,
@@ -314,15 +321,15 @@ fn print_fftw_local_bench(options: &Options, precision: FftPrecision, rows: usiz
 fn print_fftw_unconfigured(json: bool, precision: FftPrecision, rows: usize, columns: usize) {
     if json {
         println!(
-            "{{\"backend\":\"{}\",\"precision\":\"{}\",\"rows\":{},\"columns\":{},\"configured\":false,\"reason\":\"set_CASA_RS_FFTW_BENCH_CMD\"}}",
-            FftBackendChoice::FftwLocalBench,
+            "{{\"backend\":\"{}\",\"precision\":\"{}\",\"rows\":{},\"columns\":{},\"configured\":false,\"reason\":\"set_CASA_RS_FFTW_LIBRARY_DIR_or_CASA_RS_FFTW_BENCH_CMD\"}}",
+            FftBackendChoice::Fftw,
             precision,
             rows,
             columns,
         );
     } else {
         println!(
-            "fftw_local_bench precision={} shape={}x{} configured=false reason=set_CASA_RS_FFTW_BENCH_CMD",
+            "fftw_bench precision={} shape={}x{} configured=false reason=set_CASA_RS_FFTW_LIBRARY_DIR_or_CASA_RS_FFTW_BENCH_CMD",
             precision, rows, columns,
         );
     }
@@ -363,7 +370,7 @@ fn help_text() -> String {
         "Usage: cargo run -p casa-imaging --example fft_backend_validate -- [options]",
         "",
         "Options:",
-        "  --backend rustfft|accelerate|metal-vkfft|metal-mpsgraph|fftw-local-bench|all|all-with-fftw",
+        "  --backend rustfft|accelerate|metal-vkfft|metal-mpsgraph|fftw|all|all-with-fftw",
         "  --precision f32|f64|both",
         "  --shape ROWSxCOLUMNS",
         "  --use-case dirty|model|restoration|benchmark",

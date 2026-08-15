@@ -4,7 +4,7 @@ Truth class: current descriptive
 Last reality check: 2026-05-02
 Verification: just docs-check
 
-Wave issue: #137
+Work issue: #137
 Child issue: #115
 
 This inventory records the current CASA Guide tutorial surface that drives the

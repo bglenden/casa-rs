@@ -352,6 +352,138 @@ mod tests {
     }
 
     #[test]
+    fn imager_vlass_controls_share_one_catalog_owned_awproject_surface() {
+        let catalog = builtin_surface_catalog().unwrap();
+        let surface = catalog.surface("imager").unwrap();
+        assert_eq!(surface.contract_version(), 7);
+        let memory_target = catalog
+            .catalog
+            .concepts
+            .iter()
+            .find(|concept| concept.id.as_str() == "parameter.imaging_memory_target_mb")
+            .expect("imaging memory target concept");
+        assert_eq!(memory_target.semantic_revision, SemanticRevision(2));
+
+        let awproject = Predicate::Equals {
+            parameter: "gridder".to_string(),
+            value: ParameterValue::String("awproject".to_string()),
+        };
+        for name in [
+            "cfcache",
+            "cf_resident_mb",
+            "facets",
+            "psfphasecenter",
+            "vptable",
+            "aterm",
+            "psterm",
+            "wbawp",
+            "conjbeams",
+            "computepastep",
+            "rotatepastep",
+            "pointingoffsetsigdev",
+            "mosweight",
+            "normtype",
+        ] {
+            let binding = surface
+                .bindings()
+                .iter()
+                .find(|binding| binding.name == name)
+                .unwrap_or_else(|| panic!("missing imager AWProject binding {name}"));
+            assert_eq!(binding.active_when, awproject, "{name}");
+            assert_eq!(
+                binding.projections.presentation.group, "Advanced Wide-Field",
+                "{name}"
+            );
+            assert!(binding.projections.presentation.advanced, "{name}");
+            assert!(binding.projections.cli.is_some(), "{name}");
+            assert!(binding.projections.python.is_some(), "{name}");
+        }
+
+        let usepointing = surface
+            .bindings()
+            .iter()
+            .find(|binding| binding.name == "usepointing")
+            .expect("missing imager POINTING binding");
+        assert_eq!(usepointing.active_when, Predicate::Always);
+        assert_eq!(
+            usepointing.projections.presentation.group,
+            "Advanced Wide-Field"
+        );
+        assert!(usepointing.projections.presentation.advanced);
+
+        for name in ["uvrange", "intent", "stokes"] {
+            assert!(
+                surface
+                    .bindings()
+                    .iter()
+                    .any(|binding| binding.name == name),
+                "missing canonical selection binding {name}"
+            );
+        }
+        let stokes = surface
+            .bindings()
+            .iter()
+            .find(|binding| binding.name == "stokes")
+            .unwrap();
+        assert_eq!(stokes.concept.id.as_str(), "image.selection.stokes");
+        assert_eq!(stokes.aliases, ["polarization"]);
+
+        for name in [
+            "imaging_memory_target_mb",
+            "imaging_memory_pressure_policy",
+            "imaging_prepare_buffer_mb",
+            "imaging_row_block_rows",
+            "imaging_prepare_workers",
+            "standard_mfs_grid_threads",
+            "imaging_fft_precision",
+        ] {
+            let binding = surface
+                .bindings()
+                .iter()
+                .find(|binding| binding.name == name)
+                .unwrap_or_else(|| panic!("missing imager resource binding {name}"));
+            assert_eq!(
+                binding.projections.presentation.group, "Execution Resources",
+                "{name}"
+            );
+            assert!(binding.projections.presentation.advanced, "{name}");
+        }
+        let memory_target = surface
+            .bindings()
+            .iter()
+            .find(|binding| binding.name == "imaging_memory_target_mb")
+            .expect("imaging memory target binding");
+        assert_eq!(memory_target.concept.semantic_revision, SemanticRevision(2));
+        assert_eq!(
+            memory_target.required_when,
+            Predicate::Equals {
+                parameter: "imaging_memory_pressure_policy".to_string(),
+                value: ParameterValue::String("oversubscribe".to_string()),
+            }
+        );
+        let memory_policy = surface
+            .bindings()
+            .iter()
+            .find(|binding| binding.name == "imaging_memory_pressure_policy")
+            .expect("imaging memory policy binding");
+        assert!(
+            memory_policy
+                .surface_note
+                .as_deref()
+                .is_some_and(|note| note.contains("planner-probe-only"))
+        );
+        let migration = surface
+            .migrations()
+            .iter()
+            .find(|migration| migration.from_contract == 6)
+            .expect("imager contract 6 to 7 migration");
+        assert_eq!(
+            migration.changed_defaults,
+            vec!["imaging_memory_pressure_policy".to_string()]
+        );
+    }
+
+    #[test]
     fn repeated_builtin_names_share_a_concept_or_carry_a_homonym_review() {
         let catalog = builtin_surface_catalog().unwrap();
         let mut grouped = BTreeMap::<

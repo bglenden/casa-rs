@@ -11,7 +11,7 @@ Verification:
 - `cargo test -p casa-imaging mosaic_projector_sampling_matches_casa_hetarray_default`
 - `scripts/run-wave6-issue161-antennae.sh target/wave6-issue161-antennae`
 
-Wave issue: #143
+Work issue: #143
 Child issue: #161
 
 ## Purpose

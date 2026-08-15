@@ -7,6 +7,7 @@
 //! candidate proves the same centered 2-D complex FFT semantics used by the
 //! current RustFFT path.
 
+use std::ffi::c_int;
 use std::fmt;
 use std::time::Duration;
 
@@ -137,8 +138,8 @@ pub enum FftBackendChoice {
     MetalVkFft,
     /// Apple MPSGraph FFT implementation candidate.
     MetalMpsGraph,
-    /// Local-only FFTW benchmark hook, excluded from default distribution.
-    FftwLocalBench,
+    /// Dynamically loaded host FFTW backend.
+    Fftw,
 }
 
 impl FftBackendChoice {
@@ -150,7 +151,7 @@ impl FftBackendChoice {
             Self::Accelerate => "accelerate",
             Self::MetalVkFft => "metal-vkfft",
             Self::MetalMpsGraph => "metal-mpsgraph",
-            Self::FftwLocalBench => "fftw-local-bench",
+            Self::Fftw => "fftw",
         }
     }
 }
@@ -171,7 +172,7 @@ impl std::str::FromStr for FftBackendChoice {
             "accelerate" | "vdsp" => Ok(Self::Accelerate),
             "metal-vkfft" | "metal" | "vkfft" => Ok(Self::MetalVkFft),
             "metal-mpsgraph" | "mpsgraph" | "mps-graph" => Ok(Self::MetalMpsGraph),
-            "fftw-local-bench" | "fftw-local" | "fftw" => Ok(Self::FftwLocalBench),
+            "fftw" => Ok(Self::Fftw),
             _ => Err(format!("unknown FFT backend '{value}'")),
         }
     }
@@ -497,13 +498,16 @@ pub fn select_fft_backend(spec: Fft2Spec) -> FftBackendSelection {
                 reason: capability.reason,
             }
         }
-        FftBackendChoice::FftwLocalBench => FftBackendSelection {
-            requested_backend: spec.backend_choice,
-            selected_backend: FftBackendChoice::FftwLocalBench,
-            requested_backend_supported: false,
-            fallback_used: false,
-            reason: "fftw_local_benchmark_hook_requires_external_command",
-        },
+        FftBackendChoice::Fftw => {
+            let capability = fft_backend_capability(FftBackendChoice::Fftw, spec);
+            FftBackendSelection {
+                requested_backend: spec.backend_choice,
+                selected_backend: FftBackendChoice::Fftw,
+                requested_backend_supported: capability.supported,
+                fallback_used: false,
+                reason: capability.reason,
+            }
+        }
     }
 }
 
@@ -536,12 +540,37 @@ pub fn fft_backend_capability(backend: FftBackendChoice, spec: Fft2Spec) -> FftB
             reason: metal_vkfft_unavailable_reason(spec),
         },
         FftBackendChoice::MetalMpsGraph => metal_mpsgraph_capability(backend, spec),
-        FftBackendChoice::FftwLocalBench => FftBackendCapability {
-            backend,
-            implemented: false,
-            supported: false,
-            reason: "fftw_local_benchmark_hook_requires_external_command",
-        },
+        FftBackendChoice::Fftw => {
+            let configured = match spec.precision {
+                FftPrecision::F32 => crate::fftw_local::configured_f32(),
+                FftPrecision::F64 => crate::fftw_local::configured(),
+            };
+            let shape_supported = spec.shape.rows > 0
+                && spec.shape.columns > 0
+                && spec.shape.batch > 0
+                && spec.shape.rows & 1 == 0
+                && spec.shape.columns & 1 == 0
+                && spec.shape.rows <= c_int::MAX as usize
+                && spec.shape.columns <= c_int::MAX as usize;
+            let supported = configured && spec.placement == FftPlacement::Host && shape_supported;
+            FftBackendCapability {
+                backend,
+                implemented: configured,
+                supported,
+                reason: if !configured {
+                    "fftw_runtime_libraries_not_found"
+                } else if spec.placement != FftPlacement::Host {
+                    "fftw_local_runtime_requires_host_placement"
+                } else if !shape_supported {
+                    "fftw_local_runtime_requires_non_empty_even_int_range_axes"
+                } else {
+                    match spec.precision {
+                        FftPrecision::F32 => "fftw_f32_host_transform_supported",
+                        FftPrecision::F64 => "fftw_f64_host_transform_supported",
+                    }
+                },
+            }
+        }
     }
 }
 
@@ -572,7 +601,7 @@ pub fn validate_fft_backend(spec: Fft2Spec) -> FftValidationReport {
 }
 
 /// Whether an external FFTW benchmark command has been configured locally.
-pub fn fftw_local_bench_command() -> Option<String> {
+pub fn fftw_bench_command() -> Option<String> {
     std::env::var("CASA_RS_FFTW_BENCH_CMD").ok()
 }
 
@@ -849,9 +878,10 @@ pub(crate) fn transform_f32(
         },
         FftBackendChoice::Accelerate => accelerate_transform_f32(input, direction, use_case),
         FftBackendChoice::MetalMpsGraph => mpsgraph_transform_f32(input, direction, use_case),
-        FftBackendChoice::Auto
-        | FftBackendChoice::MetalVkFft
-        | FftBackendChoice::FftwLocalBench => {
+        FftBackendChoice::Fftw => {
+            crate::fftw_local::centered_transform_f32(input, direction, use_case)
+        }
+        FftBackendChoice::Auto | FftBackendChoice::MetalVkFft => {
             Err("backend_is_not_a_concrete_implemented_f32_transform")
         }
     }
@@ -877,10 +907,10 @@ pub(crate) fn transform_f64(
             )),
         },
         FftBackendChoice::Accelerate => accelerate_transform_f64(input, direction, use_case),
-        FftBackendChoice::Auto
-        | FftBackendChoice::MetalVkFft
-        | FftBackendChoice::MetalMpsGraph
-        | FftBackendChoice::FftwLocalBench => {
+        FftBackendChoice::Fftw => {
+            crate::fftw_local::centered_transform_f64(input, direction, use_case)
+        }
+        FftBackendChoice::Auto | FftBackendChoice::MetalVkFft | FftBackendChoice::MetalMpsGraph => {
             Err("backend_is_not_a_concrete_implemented_f64_transform")
         }
     }
@@ -908,9 +938,7 @@ fn dirty_product_input_boundary_movement_bytes(
             FftBackendChoice::MetalMpsGraph | FftBackendChoice::MetalVkFft
         ) | (
             FftPlacement::AppleGpuDeviceBuffer,
-            FftBackendChoice::RustFft
-                | FftBackendChoice::Accelerate
-                | FftBackendChoice::FftwLocalBench
+            FftBackendChoice::RustFft | FftBackendChoice::Accelerate | FftBackendChoice::Fftw
         )
     );
     if crosses_residency_boundary {
@@ -1638,6 +1666,27 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn explicit_fftw_f32_validates_when_locally_configured() {
+        if !crate::fftw_local::configured_f32() {
+            return;
+        }
+        let spec = Fft2Spec::centered_c2c(
+            8,
+            10,
+            FftPrecision::F32,
+            FftDirection::Forward,
+            FftUseCase::Benchmark,
+            FftBackendChoice::Fftw,
+        );
+
+        let report = validate_fft_backend(spec);
+
+        assert!(report.capability.supported, "{report:?}");
+        assert!(report.passed, "{report:?}");
+        assert_eq!(report.selection.selected_backend, FftBackendChoice::Fftw);
     }
 
     #[cfg(target_os = "macos")]

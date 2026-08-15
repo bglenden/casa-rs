@@ -1,0 +1,19 @@
+{
+  "contract_version": 2,
+  "require_full_array": true,
+  "default": {
+    "coherent_block_rms_over_right_rms": 0.0001,
+    "diff_abs_max_over_right_peak": 0.005,
+    "diff_rms_over_right_rms": 0.001,
+    "require_topology_parity": true
+  },
+  "products": {
+    ".image.tt0": {
+      "beam_area_relative": 0.001,
+      "beam_kernel_nrmse": 0.001,
+      "centroid_beams": 0.01,
+      "integrated_flux_relative": 0.001,
+      "peak_relative": 0.001
+    }
+  }
+}

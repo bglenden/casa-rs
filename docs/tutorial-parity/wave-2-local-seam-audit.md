@@ -6,7 +6,7 @@ Truth class: current descriptive
 Last reality check: 2026-04-27
 Verification: `cargo test -p casa-images --lib image_view`, `cargo test -p casa-calibration --lib`
 
-Wave issue: #139
+Work issue: #139
 Child issues: #133, #135
 
 ## Hotspot Split Decision

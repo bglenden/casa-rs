@@ -11,7 +11,7 @@ if [[ -z "${CASA_RS_CASA_PYTHON:-}" && -x "$HOME/SoftwareProjects/casa-build/ven
   export CASA_RS_CASA_PYTHON="$HOME/SoftwareProjects/casa-build/venv/bin/python"
 fi
 
-outdir="${1:-target/wdad-wave4-121}"
+outdir="${1:-target/issue-121}"
 mkdir -p "$outdir"
 outdir="$(cd "$outdir" && pwd)"
 export MPLCONFIGDIR="${MPLCONFIGDIR:-$outdir/matplotlib}"

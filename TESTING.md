@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-07-18
+Last reality check: 2026-08-04
 Verification: just verify
 
 ## Test categories
@@ -18,7 +18,7 @@ Verification: just verify
 
 ## Required discipline
 
-- Every wave defines falsifiable acceptance checks and ships verification evidence.
+- Every approved work item defines falsifiable acceptance checks and ships verification evidence.
 - Bug fixes need regression tests.
 - Cross-crate and boundary changes need integration or contract coverage.
 - On-disk metadata or byte changes need the applicable 2x2 interop matrix: RR, RC, CR, CC.
@@ -58,7 +58,7 @@ Verification: just verify
 ## Default commands
 
 - Fast local gate: `just quick`
-- Full default wave gate: `just verify`
+- Full default pre-review gate: `just verify`
 - Smoke/release gate: `just smoke`
 - Blocking C++ interop release gate: `just release-cpp-interop`
 - Informational release performance suite: `just release-perf`
@@ -72,11 +72,50 @@ Verification: just verify
   suite-install, and CI-like coverage
 - Main-branch pushes run the rustdoc and MkDocs deployment workflow
 
+The AWProject Metal acceptance gate must run outside command
+sandboxes on an Apple-silicon Mac:
+
+- `scripts/test-macos-awproject-metal.sh`
+
+The gate fails when `MTLCreateSystemDefaultDevice()` is unavailable. It runs
+the ignored role-segmented source-major initial-grid and retained grouped-Metal
+integration tests and requires receipts proving device creation, pipeline
+creation, command dispatch, and verified output. The ordinary capability
+diagnostic remains runnable in a command sandbox and distinguishes supported
+Apple-silicon hardware with unavailable process device creation from a
+successfully created device; that diagnostic is not itself evidence that a
+Metal workload ran.
+
 Large spectral-cube storage changes additionally run the sparse logical-capacity
 test and the explicit release throughput guard:
 
 - `cargo test -p casa-images fifty_gib_spectral_cube_streams_selected_planes_with_bounded_storage -- --nocapture`
 - `CASA_RS_CUBE_PERF_DIR=/path/to/volume cargo test -p casa-test-support --features performance-tests --test images_perf_vs_cpp full_spectral_cube_plane_io_tracks_raw_disk_speed --release -- --ignored --nocapture`
+
+The accepted full-resolution VLASS all-field/full-band CLEAN result is a scoped
+resource-contract exception: **12150² science pass; no-new-swap guard waived by user.**
+The completed 19-product scientific contract retained its unchanged
+normalized-RMS ceiling of `1e-3`; the observed global swap-out increase was
+exactly 344,504 16,384-byte pages, or 5,644,353,536 bytes. This waiver applies
+only to that accepted run. It does not weaken the no-new-swap guard for other
+VLASS runs or the general acceptance tooling.
+
+The accepted artifact root is
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-candidates/runs/20260812T-12150-all63-full16-clean-r21-r4`.
+It contains the products, `casa-rs.log`, and `comparison.json`; the comparison
+receipt SHA-256 is
+`ebd028a0c3c4a15a6a9733d6917e807bf4aa1522b437cb08ba9f79d963d1f49f`.
+The run completed in approximately 40,412 seconds and its worst normalized RMS
+was `2.2086646e-4`.
+
+The post-cleanup 4096², 16-SPW, all-63-field production acceptance is retained
+under
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-candidates/runs/20260813T-final-cleaned-4096-all63-full16-clean-r22`.
+Its `casa-final4096.validation.json` receipt passed all 19 products with zero
+failed or incomplete products, a worst normalized RMS of
+`9.58363498478996e-5`, 25,030,848 accepted samples, and zero new swap-out. The
+validation-receipt SHA-256 is
+`b2cc4b3b1ce1062f292b3e1ae360da2fac648bf61dc033e2fa377ab0a104a9d0`.
 
 The first test proves a 50 GiB logical cube can access separated planes with
 bounded owned storage. The second physically writes and reads every plane of
@@ -113,6 +152,7 @@ the commits after the tested revision and reuse the result when they contain
 only documentation, planning, or workflow-policy changes. Do not rerun a gate
 solely because review started; if executable changes intervened, rerun only the
 affected gate.
+
 - Native macOS GUI prototype and frontend services:
   `scripts/generate-frontend-bindings.sh --check`,
   `cargo test -p casa-notebook --test wave1_contract`,
@@ -237,6 +277,45 @@ removable-volume decision while the large Cargo target, task executables, and
 test artifacts stay on external storage. Override the config location with
 `CASA_RS_GUI_TEST_REMOTE_SIGNING_CONFIG`.
 
+## Long performance campaigns
+
+Every performance run projected over 30 minutes must use a checked-in workload
+harness or campaign controller and produce a launch receipt. The receipt binds:
+
+- run and candidate identity, clean source revision or recorded tree state, and
+  binary hash;
+- dataset selection, source ordering and blocking, reference products, CASA
+  runtime, convolution-function cache, and other mode-specific fixture
+  identities;
+- effective backend and runtime configuration plus required CPU, Metal device,
+  pipeline, dispatch, and output receipts;
+- a same-revision mode-faithful turnaround receipt;
+- scientific tolerances, stage forecast, hard wall limit, and memory, disk,
+  swap, and other resource ceilings;
+- exclusive host ownership for the long run; and
+- artifact-retention class and cleanup disposition.
+
+Only one long performance run may be active on a host. A terminal receipt must
+classify it as passed, scientifically failed, resource-aborted, rate-aborted,
+fixture-invalid, or execution-failed before another candidate launches. Mere
+log activity does not satisfy progress: the controller must report completed
+and total stage units, update a conservative completion forecast, and abort
+when that forecast exceeds the declared wall ceiling.
+
+A run projected over 90 minutes is final evidence, not a diagnostic. After a
+long-run failure, the same stage must be reproduced by a bounded probe before
+another long run. Two failed full-resolution launches in one campaign require
+an explicit continuation, fallback, or waiver decision. Executable or
+runtime-configuration changes invalidate prior turnaround authorization, but
+unchanged accepted reference products and CASA baselines remain reusable.
+
+Complete generated products are retained only for accepted evidence, the first
+unresolved scientific failure, or an explicitly named forensic case. Rejected
+or diagnosed runs retain compact provenance, logs, telemetry, comparisons, and
+hashes; their generated products, spill files, frozen binaries, and workspaces
+then become cleanup candidates. Cleanup remains fail-closed and must never
+remove an active run or unresolved first scientific failure.
+
 ## Coverage / confidence policy
 
 - CI enforces 75% line coverage.
@@ -295,20 +374,20 @@ The executable GUI layer follows these rules:
   artifact or a verified false positive. They may not blanket-exclude an audit
   category or newly introduced actionable controls.
 
-## Wave expectations
+## Notebook program expectations
 
-For each wave:
+For each notebook program phase:
 
-- scientific-notebook waves first pass the ADR-0007 prototype gate: the live
+- scientific-notebook changes first pass the ADR-0007 prototype gate: the live
   fixture-backed app covers primary, failure, cancellation, retry, and restart
   states; meaningful controls have accessibility IDs; debug JSON and visual
   evidence are recorded; and explicit interaction approval precedes real
   adapter integration
 - user-visible native macOS GUI changes identify critical XCUITest workflows
   during shaping and record a green local or hosted `just gui-test` result
-  before Review; for
+  before independent review; for
   Wave 1, #368 must be implemented and green before Phase B begins and lands
-  with the completed wave
+  with the completed work item
 - after prototype approval, real adapters must match the accepted interaction
   and state contract; deterministic fixture adapters remain available for
   regression tests and may not be treated as evidence that persistence,
@@ -452,28 +531,27 @@ For each wave:
   acceptance is not part of CI or the deterministic `just gui-test` contract.
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
-- medium/high-risk work gets architecture review and test-adversary review
-- code waves record a bounded `refactor` pass on the involved code before
-  review, or a not-applicable rationale for no-code waves
-- reality-sync happens when docs, interfaces, or boundaries changed
+- medium/high-risk work gets independent architecture and test-quality review
+- docs, interfaces, and boundary descriptions are reconciled with implementation
+  before review
 - approved outcome, included issues, and acceptance checks are not deferred or
   descoped without explicit user signoff recorded in the issue or PR
 - release work also runs the smoke gate, the blocking C++ interop gate, and the suite-install gate; CI-like coverage remains a version-tag CI gate and is run locally only for `scripts/release.sh --full` or explicit coverage reproduction
 - ordinary non-release merges stay on `just verify` plus targeted tests unless the user explicitly asks to exercise release/tag-only heavy gates
 - release performance evidence is informational by default and becomes blocking only when `CASA_RS_ENFORCE_PERF=1`
-- slow CASA parity checks run when the wave touches those concerns
+- slow CASA parity checks run when the approved work touches those concerns
 
 ## Done gate
 
-A wave is not done until:
+Work is not complete until:
 
 - `just verify` passes or any intentional exclusion is called out explicitly
 - tests cover the claimed behavior
-- native macOS GUI waves pass `just gui-test` locally or in hosted CI for
+- native macOS GUI changes pass `just gui-test` locally or in hosted CI for
   changed critical interactions
   once the #368 test target is present
-- code-wave refactor evidence is recorded, or a no-code not-applicable
-  rationale exists
 - reviewers checked for shallow or tautological tests on medium/high-risk work
 - docs or ADRs were updated if reality changed
 - any approved-scope deferral records explicit user signoff
+- final merge, cleanup, and release actions receive an independent review and
+  explicit authorization

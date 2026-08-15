@@ -12,6 +12,7 @@ TempLattice*/
 IMAGING_WEIGHT_*/
 __pycache__/
 *.py[cod]
+autoresearch-results/
 **/node_modules/
 .codex/
 .codex-run-worktrees/

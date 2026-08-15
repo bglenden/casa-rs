@@ -4,7 +4,7 @@ Truth class: current descriptive
 Last reality check: 2026-05-05
 Verification: `bash -n scripts/run-wave7-performance-closeout.sh`; `bash -n scripts/run-wave7-ticket-closeout.sh`; `just docs-check`; `just quick`; `just verify`
 
-Wave issue: #144
+Work issue: #144
 Child issue: #130
 
 Wave 7 consolidates tutorial-program performance evidence and splits remaining

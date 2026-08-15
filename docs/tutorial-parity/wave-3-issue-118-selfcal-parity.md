@@ -4,7 +4,7 @@ Truth class: current descriptive
 Last reality check: 2026-04-29
 Verification: just verify; full TW Hydra self-cal loop commands and evidence below
 
-Wave issue: #140
+Work issue: #140
 Child issue: #118
 
 This note records the CASA-to-casa-rs mapping for the ALMA First Look / TW Hydra
@@ -93,27 +93,27 @@ mismatches, common-solution median phase difference `0.00190 rad`, p95
 CASA evidence is under:
 
 ```text
-target/wdad-wave3-118/casa_fresh
+target/issue-118/casa_fresh
 ```
 
 The current casa-rs evidence is under:
 
 ```text
-target/wdad-wave3-118/rust_full_selfcal_matched
-target/wdad-wave3-118/evidence/current_final_image_zoom_panel.png
+target/issue-118/rust_full_selfcal_matched
+target/issue-118/evidence/current_final_image_zoom_panel.png
 ```
 
 The Rust loop used release binaries and a fresh copy of the tutorial MS:
 
 ```bash
 cargo build --release -p casars-imager --bin casars-imager -p casa-calibration --bin calibrate
-python target/wdad-wave3-118/run_rust_selfcal_matched.py
+python target/issue-118/run_rust_selfcal_matched.py
 ```
 
 The final restored-image zoom panel is:
 
 ```text
-target/wdad-wave3-118/evidence/current_final_image_zoom_panel.png
+target/issue-118/evidence/current_final_image_zoom_panel.png
 ```
 
 Final restored image comparison:
@@ -167,13 +167,13 @@ Fresh full-loop timings were collected on 2026-04-28 with CASA run through:
 CASA evidence is under:
 
 ```text
-target/wdad-wave3-118/casa_fresh
+target/issue-118/casa_fresh
 ```
 
 Matched casa-rs evidence is under:
 
 ```text
-target/wdad-wave3-118/rust_full_selfcal_matched
+target/issue-118/rust_full_selfcal_matched
 ```
 
 Current matched full-loop totals:
