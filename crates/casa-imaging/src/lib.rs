@@ -107,7 +107,7 @@ use sha2::{Digest, Sha256};
 
 use beam::{
     BeamFitOutcome, estimate_psf_sidelobe_level, estimate_psf_sidelobe_level_for_beam,
-    fit_beam_from_psf, restore_model,
+    fit_beam_from_psf, restore_common_beam_image, restore_model,
 };
 #[cfg(all(target_os = "macos", not(coverage)))]
 use execution::{
@@ -2897,51 +2897,39 @@ impl<'a> StandardMfsCleanPlan<'a> {
     }
 }
 
-/// Canonical finish request for one resident standard-MFS CLEAN plane.
-pub struct StandardMfsCleanFinishPlan<'a> {
-    execution_config: StandardMfsExecutionPlan,
-    cube_cycle_threshold_jy_per_beam: Option<f32>,
-    replay: Box<StandardMfsPlannedRunReplay<'a>>,
+/// Result of one retained standard-MFS CLEAN major-cycle pass.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct StandardMfsCleanCycleStats {
+    /// CASA-reported component updates committed during this pass.
+    pub minor_iterations: usize,
+    /// Peak absolute residual after the exact major-cycle refresh.
+    pub residual_peak_jy_per_beam: f32,
+    /// Plane-local reason reported by the bounded controller pass.
+    pub clean_stop_reason: Option<CleanStopReason>,
+    /// Whether this pass changed the component model.
+    pub updated_model: bool,
 }
 
-impl<'a> StandardMfsCleanFinishPlan<'a> {
-    /// Build a finish plan from replayable planned sample run blocks.
-    pub fn planned_sample_run_blocks<F>(
-        execution: ImagingExecutionPlan,
-        cube_cycle_threshold_jy_per_beam: Option<f32>,
-        mut replay: F,
-    ) -> Self
-    where
-        F: FnMut(
-                &mut dyn FnMut(&StandardMfsPlannedSampleBlock) -> Result<(), ImagingError>,
-            ) -> Result<(), ImagingError>
-            + 'a,
-    {
-        let wrapped = move |consumer: &mut dyn FnMut(
-            &StandardMfsPlannedWeightedSampleRunBlock,
-        ) -> Result<(), ImagingError>| {
-            replay(&mut |block: &StandardMfsPlannedSampleBlock| consumer(block.inner()))
-        };
-        Self {
-            execution_config: execution.standard_mfs,
-            cube_cycle_threshold_jy_per_beam,
-            replay: Box::new(wrapped),
-        }
-    }
-}
-
-/// Resident standard-MFS CLEAN plane session.
+/// One opaque resident plane owned by the synchronized cube CLEAN controller.
 ///
-/// A session owns prepared dirty/PSF/residual state for one image plane. The
-/// caller can inspect clean-control stats, publish a skipped plane, or finish
-/// one/full minor-cycle pass using the same bounded replay source shape.
-pub struct StandardMfsCleanSession {
+/// `S` carries application metadata needed to replay the plane. The imaging
+/// state and CLEAN lifecycle remain private to [`run_standard_mfs_cube_clean`].
+pub struct StandardMfsCubeCleanPlane<S> {
+    plane_index: usize,
+    state: S,
     prepared: StandardMfsPreparedCleanPlane,
+    execution_config: StandardMfsExecutionPlan,
+    reported_iteration_starts: Vec<usize>,
 }
 
-impl StandardMfsCleanSession {
-    /// Prepare one resident standard-MFS CLEAN plane.
-    pub fn prepare(plan: StandardMfsCleanPlan<'_>) -> Result<Self, ImagingError> {
+impl<S> StandardMfsCubeCleanPlane<S> {
+    /// Prepare one indexed plane for synchronized cube CLEAN.
+    pub fn prepare(
+        plane_index: usize,
+        state: S,
+        plan: StandardMfsCleanPlan<'_>,
+    ) -> Result<Self, ImagingError> {
+        let execution_config = plan.execution_config.clone();
         let prepared =
             prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config(
                 plan.request,
@@ -2949,56 +2937,294 @@ impl StandardMfsCleanSession {
                 plan.dirty_product_fft_policy,
                 plan.replay,
             )?;
-        Ok(Self { prepared })
+        Ok(Self {
+            plane_index,
+            state,
+            prepared,
+            execution_config,
+            reported_iteration_starts: Vec::new(),
+        })
     }
 
-    /// Return the plane-local scalar values needed by a cube controller.
+    /// Return the initial scalar controls computed for this plane.
     pub fn clean_control_stats(&self) -> StandardMfsCleanControlStats {
         self.prepared.clean_control_stats()
     }
 
-    /// Publish this prepared plane without running a minor cycle.
-    pub fn skip_with_cycle_threshold(
-        self,
-        cube_cycle_threshold_jy_per_beam: f32,
-    ) -> Result<ImagingResult, ImagingError> {
-        skip_standard_mfs_prepared_clean_plane_with_cycle_threshold(
-            self.prepared,
-            cube_cycle_threshold_jy_per_beam,
-        )
-    }
-
-    /// Finish this prepared plane with the normal standard-MFS CLEAN loop.
-    pub fn finish(
-        self,
-        plan: StandardMfsCleanFinishPlan<'_>,
-    ) -> Result<ImagingResult, ImagingError> {
-        finish_standard_mfs_clean_session(self.prepared, plan, false)
-    }
-
-    /// Finish this prepared plane with one CASA cube-style major-cycle pass.
-    pub fn finish_one_major_cycle(
-        self,
-        plan: StandardMfsCleanFinishPlan<'_>,
-    ) -> Result<ImagingResult, ImagingError> {
-        finish_standard_mfs_clean_session(self.prepared, plan, true)
+    /// Return the output plane index used for deterministic ordering.
+    pub fn plane_index(&self) -> usize {
+        self.plane_index
     }
 }
 
-fn finish_standard_mfs_clean_session(
-    mut prepared: StandardMfsPreparedCleanPlane,
-    plan: StandardMfsCleanFinishPlan<'_>,
-    one_major_cycle: bool,
-) -> Result<ImagingResult, ImagingError> {
-    if one_major_cycle {
-        prepared.request.clean.major_cycle_limit = Some(1);
+impl StandardMfsCubeCleanPlane<()> {
+    /// Attach caller metadata after bounded preparation has completed.
+    pub fn with_state<S>(self, state: S) -> StandardMfsCubeCleanPlane<S> {
+        StandardMfsCubeCleanPlane {
+            plane_index: self.plane_index,
+            state,
+            prepared: self.prepared,
+            execution_config: self.execution_config,
+            reported_iteration_starts: self.reported_iteration_starts,
+        }
     }
-    finish_standard_mfs_prepared_clean_plane_with_execution_config(
-        prepared,
-        plan.execution_config,
-        plan.cube_cycle_threshold_jy_per_beam,
-        plan.replay,
-    )
+}
+
+/// Context for one deterministic plane advancement inside cube CLEAN.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StandardMfsCubeCleanReplayContext {
+    /// Zero-based output plane index.
+    pub plane_index: usize,
+    /// One-based synchronized major-cycle pass number.
+    pub major_cycle: usize,
+    /// Cube-wide cycle threshold applied to this pass.
+    pub cycle_threshold_jy_per_beam: f32,
+    /// Shared cube-pass reported-iteration budget applied to every active plane.
+    pub cycle_niter: usize,
+    /// Cube-global reported-iteration start for this plane pass.
+    pub reported_iteration_start: usize,
+}
+
+/// Completed synchronized cube CLEAN plane and its caller-owned metadata.
+pub struct StandardMfsCubeCleanPlaneResult<S> {
+    /// Zero-based output plane index.
+    pub plane_index: usize,
+    /// Caller metadata supplied when the plane was prepared.
+    pub state: S,
+    /// Restored CASA-style imaging products and diagnostics.
+    pub imaging: ImagingResult,
+}
+
+/// Cube-wide CLEAN control receipt and completed planes.
+pub struct StandardMfsCubeCleanResult<S> {
+    /// Completed planes sorted by output plane index.
+    pub planes: Vec<StandardMfsCubeCleanPlaneResult<S>>,
+    /// Maximum initial residual peak across prepared planes.
+    pub initial_peak_jy_per_beam: f32,
+    /// Maximum PSF sidelobe level across prepared planes.
+    pub max_psf_sidelobe_level: f32,
+    /// Final cube-wide cycle threshold.
+    pub final_cycle_threshold_jy_per_beam: f32,
+    /// Total CASA-reported component updates across all planes.
+    pub minor_iterations: usize,
+    /// Number of synchronized major-cycle passes attempted.
+    pub major_cycles: usize,
+    /// Planes initially at or below the first cube cycle threshold.
+    pub planes_at_or_below_initial_threshold: usize,
+}
+
+/// Run deterministic CASA-style CLEAN control across resident cube planes.
+///
+/// Plane state is advanced in ascending output-plane order. Following CASA,
+/// every active plane in one synchronized pass receives the same cube-global
+/// control record; its per-plane reported updates are merged after the pass.
+/// The merged count can therefore exceed `CleanConfig::niter` by the final
+/// pass, while trace starts remain deterministic and independent of worker
+/// completion order. The replay callback supplies bounded planned samples for
+/// the requested plane while this module owns thresholds, reactivation, major
+/// cycle limits, trace starts, and terminal restoration.
+pub fn run_standard_mfs_cube_clean<S, F>(
+    mut planes: Vec<StandardMfsCubeCleanPlane<S>>,
+    mut replay: F,
+) -> Result<StandardMfsCubeCleanResult<S>, ImagingError>
+where
+    F: FnMut(
+        StandardMfsCubeCleanReplayContext,
+        &mut S,
+        &mut dyn FnMut(&StandardMfsPlannedSampleBlock) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    if planes.is_empty() {
+        return Ok(StandardMfsCubeCleanResult {
+            planes: Vec::new(),
+            initial_peak_jy_per_beam: 0.0,
+            max_psf_sidelobe_level: 0.0,
+            final_cycle_threshold_jy_per_beam: 0.0,
+            minor_iterations: 0,
+            major_cycles: 0,
+            planes_at_or_below_initial_threshold: 0,
+        });
+    }
+    planes.sort_by_key(|plane| plane.plane_index);
+    for pair in planes.windows(2) {
+        if pair[0].plane_index == pair[1].plane_index {
+            return Err(ImagingError::InvalidRequest(format!(
+                "cube CLEAN received duplicate output plane {}",
+                pair[0].plane_index
+            )));
+        }
+    }
+
+    let clean = planes[0].prepared.request.clean;
+    if planes
+        .iter()
+        .any(|plane| plane.prepared.request.clean != clean)
+    {
+        return Err(ImagingError::InvalidRequest(
+            "cube CLEAN requires identical clean controls on every prepared plane".to_string(),
+        ));
+    }
+    let initial_peak_jy_per_beam = planes
+        .iter()
+        .map(|plane| plane.prepared.stats.initial_residual_peak_jy_per_beam)
+        .filter(|peak| peak.is_finite())
+        .fold(0.0f32, f32::max);
+    let max_psf_sidelobe_level = planes
+        .iter()
+        .map(|plane| plane.prepared.stats.max_psf_sidelobe_level)
+        .filter(|level| level.is_finite())
+        .fold(0.0f32, f32::max);
+    let initial_cycle_threshold =
+        clean_cycle_threshold(initial_peak_jy_per_beam, max_psf_sidelobe_level, clean);
+    let planes_at_or_below_initial_threshold = planes
+        .iter()
+        .filter(|plane| {
+            peak_abs_value_masked(
+                &plane.prepared.residual,
+                plane.prepared.request.clean_mask.as_ref(),
+            ) <= initial_cycle_threshold
+        })
+        .count();
+
+    let mut completed_minor_iterations = 0usize;
+    let mut major_cycles = 0usize;
+    loop {
+        let cube_current_peak = planes
+            .iter()
+            .map(|plane| {
+                peak_abs_value_masked(
+                    &plane.prepared.residual,
+                    plane.prepared.request.clean_mask.as_ref(),
+                )
+            })
+            .filter(|peak| peak.is_finite())
+            .fold(0.0f32, f32::max);
+        let cycle_threshold =
+            clean_cycle_threshold(cube_current_peak, max_psf_sidelobe_level, clean);
+        let threshold_reached = cube_current_peak <= clean.threshold_jy_per_beam
+            || (clean.threshold_jy_per_beam > 0.0
+                && (cube_current_peak - clean.threshold_jy_per_beam).abs()
+                    / clean.threshold_jy_per_beam
+                    < 0.01);
+        if threshold_reached || completed_minor_iterations >= clean.niter {
+            break;
+        }
+        if clean
+            .major_cycle_limit
+            .is_some_and(|limit| major_cycles >= limit)
+        {
+            break;
+        }
+        let active_plane_indices = planes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, plane)| {
+                let peak = peak_abs_value_masked(
+                    &plane.prepared.residual,
+                    plane.prepared.request.clean_mask.as_ref(),
+                );
+                (peak > cycle_threshold).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        if active_plane_indices.is_empty() {
+            break;
+        }
+
+        major_cycles = major_cycles.saturating_add(1);
+        let cycle_niter = clean.niter.saturating_sub(completed_minor_iterations);
+        let mut pass_minor_iterations = 0usize;
+        for index in active_plane_indices {
+            let plane = &mut planes[index];
+            let context = StandardMfsCubeCleanReplayContext {
+                plane_index: plane.plane_index,
+                major_cycle: major_cycles,
+                cycle_threshold_jy_per_beam: cycle_threshold,
+                cycle_niter,
+                reported_iteration_start: completed_minor_iterations
+                    .saturating_add(pass_minor_iterations),
+            };
+            let mut replay_weighted_runs =
+                |consumer: &mut dyn FnMut(
+                    &StandardMfsPlannedWeightedSampleRunBlock,
+                ) -> Result<(), ImagingError>| {
+                    replay(context, &mut plane.state, &mut |block| {
+                        consumer(block.inner())
+                    })
+                };
+            plane
+                .reported_iteration_starts
+                .push(context.reported_iteration_start);
+            let stats =
+                run_standard_mfs_prepared_clean_plane_one_major_cycle_with_execution_config(
+                    &mut plane.prepared,
+                    plane.execution_config.clone(),
+                    Some(cycle_threshold),
+                    cycle_niter,
+                    &mut replay_weighted_runs,
+                )?;
+            if stats.minor_iterations > cycle_niter {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "cube CLEAN plane {} reported {} updates for remaining global budget {}",
+                    plane.plane_index, stats.minor_iterations, cycle_niter
+                )));
+            }
+            pass_minor_iterations = pass_minor_iterations.saturating_add(stats.minor_iterations);
+        }
+        completed_minor_iterations =
+            completed_minor_iterations.saturating_add(pass_minor_iterations);
+        if pass_minor_iterations == 0 {
+            break;
+        }
+    }
+
+    let cube_current_peak = planes
+        .iter()
+        .map(|plane| {
+            peak_abs_value_masked(
+                &plane.prepared.residual,
+                plane.prepared.request.clean_mask.as_ref(),
+            )
+        })
+        .filter(|peak| peak.is_finite())
+        .fold(0.0f32, f32::max);
+    let final_cycle_threshold_jy_per_beam =
+        clean_cycle_threshold(cube_current_peak, max_psf_sidelobe_level, clean);
+    let mut completed_planes = Vec::with_capacity(planes.len());
+    for plane in planes {
+        let StandardMfsCubeCleanPlane {
+            plane_index,
+            state,
+            prepared,
+            reported_iteration_starts,
+            ..
+        } = plane;
+        let mut imaging = complete_standard_mfs_prepared_clean_plane(
+            prepared,
+            final_cycle_threshold_jy_per_beam,
+        )?;
+        for (trace, start_reported_iteration) in imaging
+            .diagnostics
+            .minor_cycle_traces
+            .iter_mut()
+            .zip(reported_iteration_starts)
+        {
+            trace.start_reported_iteration = start_reported_iteration;
+        }
+        completed_planes.push(StandardMfsCubeCleanPlaneResult {
+            plane_index,
+            state,
+            imaging,
+        });
+    }
+    Ok(StandardMfsCubeCleanResult {
+        planes: completed_planes,
+        initial_peak_jy_per_beam,
+        max_psf_sidelobe_level,
+        final_cycle_threshold_jy_per_beam,
+        minor_iterations: completed_minor_iterations,
+        major_cycles,
+        planes_at_or_below_initial_threshold,
+    })
 }
 
 /// Metadata for streaming natural-weighted standard MFS dirty accumulation.
@@ -3208,6 +3434,21 @@ pub fn restore_standard_mfs_model(
     beam: Option<BeamFit>,
 ) -> Array2<f32> {
     restore_model(model, cell_size_rad, beam)
+}
+
+/// Restore one clean cube plane with a common beam.
+///
+/// The model is convolved with `common_beam`. When a fitted per-plane beam is
+/// available, the residual is converted from that beam to the common beam
+/// before the two products are combined.
+pub fn restore_standard_mfs_common_beam_image(
+    model: &Array2<f32>,
+    residual: &Array2<f32>,
+    cell_size_rad: [f64; 2],
+    fitted_beam: Option<BeamFit>,
+    common_beam: BeamFit,
+) -> Result<Array2<f32>, ImagingError> {
+    restore_common_beam_image(model, residual, cell_size_rad, fitted_beam, common_beam)
 }
 
 /// Estimate the maximum absolute PSF sidelobe level outside the fitted main lobe.
@@ -45915,6 +46156,11 @@ pub(crate) struct StandardMfsPreparedCleanPlane {
     beam_fit_cutoff_used: Option<f32>,
     beam_fit_debug: Option<BeamFitDebugSummary>,
     stats: StandardMfsCleanControlStats,
+    major_cycle_refreshes: usize,
+    minor_iterations: usize,
+    minor_cycle_traces: Vec<MinorCycleTrace>,
+    clean_stop_reason: Option<CleanStopReason>,
+    final_cycle_threshold_jy_per_beam: f32,
     stage_timings: ImagingStageTimings,
     dirty_product_fft_policy: DirtyProductFftPolicy,
     total_started: Instant,
@@ -46065,6 +46311,7 @@ fn prepare_standard_mfs_planned_sample_block_source_clean_plane_with_execution_c
         .unwrap_or(nx * ny);
     let initial_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
 
+    let initial_cycle_threshold_jy_per_beam = request.clean.threshold_jy_per_beam;
     Ok(StandardMfsPreparedCleanPlane {
         request,
         psf_state,
@@ -46082,19 +46329,18 @@ fn prepare_standard_mfs_planned_sample_block_source_clean_plane_with_execution_c
             max_psf_sidelobe_level,
             clean_mask_pixels,
         },
+        major_cycle_refreshes: 0,
+        minor_iterations: 0,
+        minor_cycle_traces: Vec::new(),
+        clean_stop_reason: None,
+        final_cycle_threshold_jy_per_beam: initial_cycle_threshold_jy_per_beam,
         stage_timings,
         dirty_product_fft_policy,
         total_started,
     })
 }
 
-/// Publish a resident standard-gridder CLEAN plane without running a minor cycle.
-///
-/// Cube frontends use this when the cube-level controller decides that a
-/// prepared plane is already below the shared cycle threshold. The dirty/PSF
-/// state that was already computed is preserved, the component model is left
-/// unchanged, and no CPU or Metal deconvolver work is run.
-fn skip_standard_mfs_prepared_clean_plane_with_cycle_threshold(
+fn complete_standard_mfs_prepared_clean_plane(
     prepared: StandardMfsPreparedCleanPlane,
     cube_cycle_threshold_jy_per_beam: f32,
 ) -> Result<ImagingResult, ImagingError> {
@@ -46111,6 +46357,11 @@ fn skip_standard_mfs_prepared_clean_plane_with_cycle_threshold(
         beam_fit_cutoff_used,
         beam_fit_debug,
         stats,
+        major_cycle_refreshes,
+        minor_iterations,
+        minor_cycle_traces,
+        clean_stop_reason,
+        final_cycle_threshold_jy_per_beam: _,
         mut stage_timings,
         dirty_product_fft_policy: _,
         total_started,
@@ -46143,12 +46394,23 @@ fn skip_standard_mfs_prepared_clean_plane_with_cycle_threshold(
     }
     let cycle_nsigma_threshold_jy_per_beam =
         nsigma_threshold_jy_per_beam(&residual, request.clean_mask.as_ref(), request.clean);
-    let clean_stop_reason = tolerant_clean_stop_reason(
-        stats.initial_residual_peak_jy_per_beam,
-        request.clean.threshold_jy_per_beam,
-        cycle_nsigma_threshold_jy_per_beam,
-    )
-    .or(Some(CleanStopReason::CycleThresholdReached));
+    let final_residual_peak_jy_per_beam =
+        peak_abs_value_masked(&residual, request.clean_mask.as_ref());
+    let clean_stop_reason = if minor_iterations >= request.clean.niter {
+        Some(CleanStopReason::IterationLimitReached)
+    } else {
+        tolerant_clean_stop_reason(
+            final_residual_peak_jy_per_beam,
+            request.clean.threshold_jy_per_beam,
+            cycle_nsigma_threshold_jy_per_beam,
+        )
+        .or(match clean_stop_reason {
+            Some(CleanStopReason::MajorCycleLimitReached) | None => {
+                Some(CleanStopReason::CycleThresholdReached)
+            }
+            reason => reason,
+        })
+    };
     stage_timings.total = total_started.elapsed();
 
     Ok(ImagingResult {
@@ -46165,12 +46427,12 @@ fn skip_standard_mfs_prepared_clean_plane_with_cycle_threshold(
             normalization_sumwt: psf_state.normalization_sumwt,
             reported_sumwt: psf_state.reported_sumwt,
             psf_peak_normalization: psf_state.psf_peak,
-            major_cycles: casa_major_cycle_count(0, request.clean.niter),
-            minor_iterations: 0,
+            major_cycles: casa_major_cycle_count(major_cycle_refreshes, request.clean.niter),
+            minor_iterations,
             clean_stop_reason,
-            minor_cycle_traces: Vec::new(),
+            minor_cycle_traces,
             initial_residual_peak_jy_per_beam: stats.initial_residual_peak_jy_per_beam,
-            final_residual_peak_jy_per_beam: stats.initial_residual_peak_jy_per_beam,
+            final_residual_peak_jy_per_beam,
             max_abs_w_lambda,
             fractional_bandwidth,
             max_psf_sidelobe_level: stats.max_psf_sidelobe_level,
@@ -46200,18 +46462,23 @@ fn skip_standard_mfs_prepared_clean_plane_with_cycle_threshold(
     })
 }
 
-/// Finish a resident standard-gridder CLEAN plane with an optional cube threshold.
-fn finish_standard_mfs_prepared_clean_plane_with_execution_config<F>(
-    prepared: StandardMfsPreparedCleanPlane,
+fn run_standard_mfs_prepared_clean_plane_one_major_cycle_with_execution_config<F>(
+    prepared: &mut StandardMfsPreparedCleanPlane,
     mut execution_config: StandardMfsExecutionPlan,
     cube_cycle_threshold_jy_per_beam: Option<f32>,
+    cycle_niter: usize,
     replay_planned_runs: F,
-) -> Result<ImagingResult, ImagingError>
+) -> Result<StandardMfsCleanCycleStats, ImagingError>
 where
     F: FnMut(
         &mut dyn FnMut(&StandardMfsPlannedWeightedSampleRunBlock) -> Result<(), ImagingError>,
     ) -> Result<(), ImagingError>,
 {
+    if cycle_niter == 0 {
+        return Err(ImagingError::InvalidRequest(
+            "a retained standard-MFS CLEAN major-cycle pass requires cycle_niter > 0".to_string(),
+        ));
+    }
     execution_config.fixed_tile_use_planned_run_blocks = true;
     struct RunBlockSource<F> {
         replay: F,
@@ -46245,45 +46512,58 @@ where
     let mut source = RunBlockSource {
         replay: replay_planned_runs,
     };
-    finish_standard_mfs_prepared_clean_plane_with_block_source(
+    run_standard_mfs_prepared_clean_plane_controller_with_block_source(
         prepared,
         execution_config,
         cube_cycle_threshold_jy_per_beam,
+        Some(cycle_niter),
         &mut source,
     )
 }
 
-fn finish_standard_mfs_prepared_clean_plane_with_block_source(
-    prepared: StandardMfsPreparedCleanPlane,
+fn run_standard_mfs_prepared_clean_plane_controller_with_block_source(
+    prepared: &mut StandardMfsPreparedCleanPlane,
     execution_config: StandardMfsExecutionPlan,
     cube_cycle_threshold_jy_per_beam: Option<f32>,
+    cycle_niter: Option<usize>,
     replay_weighted_samples: &mut dyn StandardMfsPlannedSampleBlockSource,
-) -> Result<ImagingResult, ImagingError> {
+) -> Result<StandardMfsCleanCycleStats, ImagingError> {
     let StandardMfsPreparedCleanPlane {
         request,
         psf_state,
         residual,
-        mut model,
-        model_has_flux: _,
-        max_abs_w_lambda,
-        beam,
-        mut warnings,
-        beam_fit_attempts,
-        beam_fit_cutoff_used,
-        beam_fit_debug,
+        model,
+        model_has_flux,
+        max_abs_w_lambda: _,
+        beam: _,
+        warnings,
+        beam_fit_attempts: _,
+        beam_fit_cutoff_used: _,
+        beam_fit_debug: _,
         stats,
-        mut stage_timings,
+        major_cycle_refreshes,
+        minor_iterations,
+        minor_cycle_traces,
+        clean_stop_reason,
+        final_cycle_threshold_jy_per_beam,
+        stage_timings,
         dirty_product_fft_policy,
-        total_started,
+        total_started: _,
     } = prepared;
 
+    let mut cycle_request = request.clone();
+    if let Some(cycle_niter) = cycle_niter {
+        cycle_request.clean.niter = cycle_niter;
+        cycle_request.clean.major_cycle_limit = Some(1);
+    }
     let gridder = StandardGridder::new(request.geometry)?;
     let mut replay_plan = StandardMfsReplayPlan::planned_samples(
         &gridder,
         execution_config.clone(),
-        dirty_product_fft_policy,
+        *dirty_product_fft_policy,
         replay_weighted_samples,
     );
+    let mut cycle_refreshes = 0usize;
     let mut refresh_residual = |model: &Array2<f32>,
                                 stage_timings: &mut ImagingStageTimings,
                                 progress_context: Option<StandardMfsProgressContext>|
@@ -46291,9 +46571,9 @@ fn finish_standard_mfs_prepared_clean_plane_with_block_source(
         let before = ResidualRefreshTimingSnapshot::capture(stage_timings);
         let refresh_started = Instant::now();
         let residual = replay_plan.compute_residual(
-            request.geometry,
+            cycle_request.geometry,
             model,
-            &psf_state,
+            psf_state,
             stage_timings,
             progress_context,
         )?;
@@ -46302,110 +46582,82 @@ fn finish_standard_mfs_prepared_clean_plane_with_block_source(
         stage_timings.major_cycle_refresh += refresh_elapsed;
         stage_timings.residual_refresh_overhead += refresh_elapsed.saturating_sub(accounted);
         log_standard_mfs_clean_residual_refresh_summary(
-            &request,
+            &cycle_request,
             execution_config.clone(),
             before,
             stage_timings,
             refresh_elapsed,
             accounted,
         );
+        cycle_refreshes = cycle_refreshes.saturating_add(1);
         Ok(residual)
     };
 
+    let accounted_before = stage_timings
+        .minor_cycle_solve
+        .saturating_add(stage_timings.major_cycle_refresh);
     let controller_started = Instant::now();
     let clean_state = run_cotton_schwab_controller_with_refresh(
-        &request,
-        &psf_state,
+        &cycle_request,
+        psf_state,
         execution_config.minor_cycle_backend,
         execution_config.progress_callback.as_ref(),
-        &mut stage_timings,
+        stage_timings,
         &mut refresh_residual,
-        &mut model,
-        residual,
+        model,
+        residual.clone(),
         stats.max_psf_sidelobe_level,
-        stats.initial_residual_peak_jy_per_beam,
+        peak_abs_value_masked(residual, cycle_request.clean_mask.as_ref()),
         cube_cycle_threshold_jy_per_beam,
-        &mut warnings,
+        warnings,
     )?;
     let controller_elapsed = controller_started.elapsed();
     let accounted = stage_timings
         .minor_cycle_solve
-        .saturating_add(stage_timings.major_cycle_refresh);
+        .saturating_add(stage_timings.major_cycle_refresh)
+        .saturating_sub(accounted_before);
     stage_timings.controller_overhead += controller_elapsed.saturating_sub(accounted);
-    let residual = clean_state.residual;
-
-    let restore_started = Instant::now();
-    let restored_model = restore_model(&model, request.geometry.cell_size_rad, beam);
-    stage_timings.restore += restore_started.elapsed();
-    let restored_image = &restored_model + &residual;
-
-    let fractional_bandwidth = (request.selected_frequency_range_hz[1]
-        - request.selected_frequency_range_hz[0])
-        / request.reffreq_hz;
-    if fractional_bandwidth > 0.1 {
-        warnings.push(format!(
-            "fractional bandwidth {:.3} exceeds the narrow-band nterms=1 comfort zone",
-            fractional_bandwidth
-        ));
+    let cycle_index_offset = minor_cycle_traces.len();
+    let reported_iteration_offset = minor_cycle_traces
+        .iter()
+        .map(|trace| trace.reported_updates)
+        .sum::<usize>();
+    let updated_model = clean_state.minor_iterations > 0;
+    let mut cycle_minor_iterations = 0usize;
+    for mut trace in clean_state.minor_cycle_traces {
+        trace.cycle_index = trace.cycle_index.saturating_add(cycle_index_offset);
+        trace.start_reported_iteration =
+            reported_iteration_offset.saturating_add(cycle_minor_iterations);
+        if request.deconvolver == Deconvolver::Multiscale && trace.actual_updates > 0 {
+            let remaining_cycle_budget = cycle_niter
+                .map(|budget| budget.saturating_sub(cycle_minor_iterations))
+                .unwrap_or(usize::MAX);
+            trace.reported_updates = trace
+                .reported_updates
+                .saturating_add(1)
+                .min(remaining_cycle_budget);
+        }
+        cycle_minor_iterations = cycle_minor_iterations.saturating_add(trace.reported_updates);
+        minor_cycle_traces.push(trace);
     }
-    let w_phase_metric = max_abs_w_lambda * request.geometry.field_of_view_rad().powi(2);
-    if w_phase_metric > 0.1 {
-        warnings.push(format!(
-            "max |w| * fov^2 = {:.3} suggests 2-D standard imaging may show non-coplanar artifacts",
-            w_phase_metric
-        ));
-    }
-    stage_timings.total = total_started.elapsed();
+    *residual = clean_state.residual;
+    *model_has_flux |= updated_model;
+    *minor_iterations = minor_iterations.saturating_add(cycle_minor_iterations);
+    let completed_refreshes = if cycle_niter.is_some() {
+        cycle_refreshes
+    } else {
+        clean_state.major_cycles
+    };
+    *major_cycle_refreshes = major_cycle_refreshes.saturating_add(completed_refreshes);
+    *clean_stop_reason = clean_state.clean_stop_reason;
+    *final_cycle_threshold_jy_per_beam = clean_state.final_cycle_threshold_jy_per_beam;
+    let residual_peak_jy_per_beam = peak_abs_value_masked(residual, request.clean_mask.as_ref());
 
-    Ok(ImagingResult {
-        psf: expand_plane(&psf_state.psf),
-        residual: expand_plane(&residual),
-        model: expand_plane(&model),
-        image: expand_plane(&restored_image),
-        sumwt: expand_scalar(psf_state.reported_sumwt),
-        beam,
-        diagnostics: ImagingDiagnostics {
-            warnings,
-            gridded_samples: psf_state.gridded_samples,
-            skipped_samples: psf_state.skipped_samples,
-            normalization_sumwt: psf_state.normalization_sumwt,
-            reported_sumwt: psf_state.reported_sumwt,
-            psf_peak_normalization: psf_state.psf_peak,
-            major_cycles: casa_major_cycle_count(clean_state.major_cycles, request.clean.niter),
-            minor_iterations: clean_state.minor_iterations,
-            clean_stop_reason: clean_state.clean_stop_reason,
-            minor_cycle_traces: clean_state.minor_cycle_traces,
-            initial_residual_peak_jy_per_beam: stats.initial_residual_peak_jy_per_beam,
-            final_residual_peak_jy_per_beam: peak_abs_value_masked(
-                &residual,
-                request.clean_mask.as_ref(),
-            ),
-            max_abs_w_lambda,
-            fractional_bandwidth,
-            max_psf_sidelobe_level: stats.max_psf_sidelobe_level,
-            final_cycle_threshold_jy_per_beam: clean_state.final_cycle_threshold_jy_per_beam,
-            clean_mask_pixels: stats.clean_mask_pixels,
-            beam_fit_attempts,
-            beam_fit_cutoff_used,
-            beam_fit_debug,
-            mosaic_weight_image: None,
-            stage_timings,
-        },
-        compatibility: CompatibilityMetadata {
-            axis_order: [
-                AxisKind::RightAscension,
-                AxisKind::Declination,
-                AxisKind::Stokes,
-                AxisKind::Frequency,
-            ],
-            plane_stokes: request.plane_stokes,
-            reffreq_hz: request.reffreq_hz,
-            channel_frequencies_hz: vec![request.reffreq_hz],
-            psf_units: String::new(),
-            residual_units: "Jy/beam".to_string(),
-            model_units: "Jy/pixel".to_string(),
-            image_units: "Jy/beam".to_string(),
-        },
+    Ok(StandardMfsCleanCycleStats {
+        minor_iterations: cycle_minor_iterations,
+        residual_peak_jy_per_beam,
+        clean_stop_reason: clean_state.clean_stop_reason,
+        updated_model,
     })
 }
 
@@ -74929,9 +75181,10 @@ mod tests {
         MosaicMtmfsVisibilityBlock, MosaicVisibilityBlock, MtmfsRequest, MultiscaleCandidate,
         ParallelHandBatch, PlaneStokes, PrimaryBeamModel, PrimaryBeamProductRequest,
         PrimaryBeamWeightSample, PsfState, StandardGridder, StandardMfsBackend,
-        StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionPlan,
-        StandardMfsMinorCycleBackend, StandardMfsMinorCycleProgressReporter,
-        StandardMfsModelPredictor, StandardMfsPlan, StandardMfsPlannedSampleBuilder,
+        StandardMfsCleanPlan, StandardMfsCubeCleanPlane, StandardMfsDirtyAccumulator,
+        StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionPlan, StandardMfsMinorCycleBackend,
+        StandardMfsMinorCycleProgressReporter, StandardMfsModelPredictor, StandardMfsPlan,
+        StandardMfsPlannedSampleBlock, StandardMfsPlannedSampleBuilder,
         StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
         StandardMfsProgressCallback, StandardMfsProgressContext, StandardMfsProgressPhase,
         StandardMfsWeightedSample, VisibilityBatch, VisibilityMetadataBatch, VisibilitySampleRange,
@@ -74954,19 +75207,17 @@ mod tests {
         normalized_weighted_primary_beam_product, parse_experimental_frozen_restoring_beam,
         parse_standard_mfs_backend_selection, parse_standard_mfs_thread_count, peak_abs_value,
         peak_location_masked, peak_location_masked_in_window, phase_rotate_visibility,
-        prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config,
         primary_beam_correct_alpha_product, primary_beam_correct_image_product,
         primary_beam_limited_product, primary_beam_output_products, primary_beam_product,
         primary_beam_support_mask_product, primary_beam_voltage_pattern_for_offsets,
         radix_madfm_f32, run_clark_cotton_schwab, run_clark_minor_cycle, run_hogbom_minor_cycle,
         run_hogbom_minor_cycle_with_progress, run_hogbom_plane_minor_cycle,
         run_mosaic_mfs_from_single_plane_stream, run_mosaic_mtmfs_from_single_plane_stream,
-        run_mtmfs, run_standard_mfs_plan,
+        run_mtmfs, run_standard_mfs_cube_clean, run_standard_mfs_plan,
         run_standard_mfs_planned_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_streaming_with_execution_config,
         should_defer_awproject_exact_refresh, single_plane_image_product,
-        skip_standard_mfs_prepared_clean_plane_with_cycle_threshold,
         standard_mfs_backend_allows_direct_metal, tolerant_clean_stop_reason,
         trace_cube_channel_residual_refresh,
         trace_cube_channel_residual_refresh_model_channel_lambda, trace_residual_refresh,
@@ -75467,7 +75718,7 @@ mod tests {
     #[cfg(all(target_os = "macos", not(coverage)))]
     use super::{
         FftUseCase, StandardMfsDirtyAccumulation, StandardMfsDirtyGridStorage,
-        StandardMfsDirtyPlan, StandardMfsPlannedSampleBlock, build_multiscale_state,
+        StandardMfsDirtyPlan, build_multiscale_state,
         centered_ifft2_batch_f64_to_f32_timed_with_backend,
         compute_dirty_psf_and_residual_standard_metal, dirty_f32_raw_grids_to_psf_and_residual,
         fft_convolve_real, finish_standard_mfs_dirty_grid_result, peak_abs_value_masked,
@@ -86005,6 +86256,7 @@ mod tests {
                 threshold_jy_per_beam: 0.0,
                 minor_cycle_length: 100,
                 hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+                major_cycle_limit: Some(0),
                 ..CleanConfig::default()
             },
             clean_mask: None,
@@ -86023,22 +86275,32 @@ mod tests {
         let mut run_block = StandardMfsPlannedWeightedSampleRunBlock::default();
         run_block.push_run_from_slice(&planned_samples);
         let mut replay_count = 0usize;
-        let prepared =
-            prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config(
+        let prepared = StandardMfsCubeCleanPlane::prepare(
+            0,
+            (),
+            StandardMfsCleanPlan::planned_sample_run_blocks(
                 request,
-                StandardMfsExecutionPlan::default(),
-                DirtyProductFftPolicy::correctness_first(),
+                execution_config_with_standard_mfs(StandardMfsExecutionPlan::default()),
                 |consumer| {
                     replay_count += 1;
-                    consumer(&run_block)
+                    consumer(&StandardMfsPlannedSampleBlock {
+                        inner: run_block.clone(),
+                    })
                 },
-            )
-            .unwrap();
+            ),
+        )
+        .unwrap();
         assert!(replay_count > 0);
-
-        let result =
-            skip_standard_mfs_prepared_clean_plane_with_cycle_threshold(prepared, f32::MAX)
-                .unwrap();
+        let prepare_replays = replay_count;
+        let mut result = run_standard_mfs_cube_clean(vec![prepared], |_, (), consumer| {
+            replay_count += 1;
+            consumer(&StandardMfsPlannedSampleBlock {
+                inner: run_block.clone(),
+            })
+        })
+        .unwrap();
+        assert_eq!(replay_count, prepare_replays);
+        let result = result.planes.pop().unwrap().imaging;
 
         assert_eq!(result.diagnostics.minor_iterations, 0);
         assert_eq!(
@@ -86057,6 +86319,118 @@ mod tests {
             .map(|(image, residual)| (image - residual).abs())
             .fold(0.0f32, f32::max);
         assert_eq!(max_image_residual_delta, 0.0);
+    }
+
+    #[test]
+    fn cube_clean_controller_merges_shared_pass_controls_in_plane_order() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let samples = [
+            (-95.0, -35.0, 0.0),
+            (-70.0, 40.0, 0.0),
+            (-35.0, -80.0, 0.0),
+            (22.0, 75.0, 0.0),
+            (55.0, -25.0, 0.0),
+            (105.0, 50.0, 0.0),
+        ];
+        let request = ImagingRequest {
+            geometry,
+            visibility_batches: vec![point_source_visibilities(
+                &samples,
+                geometry.cell_size_rad[0],
+                geometry.image_shape,
+                (34.0, 30.0),
+                1.0,
+            )],
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.4e9,
+            selected_frequency_range_hz: [1.4e9, 1.4e9],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter: 3,
+                gain: 0.2,
+                minor_cycle_length: 2,
+                ..CleanConfig::default()
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let gridder = StandardGridder::new(geometry).unwrap();
+        let weighted_batches = apply_weighting(&request, &gridder, 1).unwrap();
+        let builder = StandardMfsPlannedSampleBuilder::new(geometry).unwrap();
+        let mut planned_samples = Vec::<StandardMfsPlannedWeightedSample>::new();
+        builder
+            .plan_visibility_batch_into(&weighted_batches[0], &mut planned_samples)
+            .unwrap();
+        let mut inner = StandardMfsPlannedWeightedSampleRunBlock::default();
+        inner.push_run_from_slice(&planned_samples);
+        let planned = StandardMfsPlannedSampleBlock { inner };
+
+        let prepare_plane = |plane_index| {
+            StandardMfsCubeCleanPlane::prepare(
+                plane_index,
+                (),
+                StandardMfsCleanPlan::planned_sample_run_blocks(
+                    request.clone(),
+                    execution_config_with_standard_mfs(StandardMfsExecutionPlan::default()),
+                    |consumer| consumer(&planned),
+                ),
+            )
+            .unwrap()
+        };
+        let mut replay_contexts = Vec::new();
+        let result = run_standard_mfs_cube_clean(
+            vec![prepare_plane(1), prepare_plane(0)],
+            |context, (), consumer| {
+                replay_contexts.push(context);
+                consumer(&planned)
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.minor_iterations, 4);
+        assert_eq!(result.major_cycles, 1);
+        assert_eq!(result.planes.len(), 2);
+        assert_eq!(
+            replay_contexts
+                .iter()
+                .map(|context| (context.plane_index, context.cycle_niter))
+                .collect::<Vec<_>>(),
+            vec![(0, 3), (1, 3)]
+        );
+        assert_eq!(
+            replay_contexts
+                .iter()
+                .map(|context| context.reported_iteration_start)
+                .collect::<Vec<_>>(),
+            vec![0, 2]
+        );
+        assert_eq!(
+            result
+                .planes
+                .iter()
+                .map(|plane| plane.plane_index)
+                .collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        assert_eq!(
+            result
+                .planes
+                .iter()
+                .flat_map(|plane| plane.imaging.diagnostics.minor_cycle_traces.iter())
+                .map(|trace| trace.start_reported_iteration)
+                .collect::<Vec<_>>(),
+            vec![0, 2]
+        );
     }
 
     #[test]

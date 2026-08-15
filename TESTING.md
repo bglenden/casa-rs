@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-08-04
+Last reality check: 2026-08-14
 Verification: just verify
 
 ## Test categories
@@ -64,6 +64,9 @@ Verification: just verify
 - Informational release performance suite: `just release-perf`
 - Release-only install gate: `scripts/test-install-suite.sh`
 - Heavy parity suites: `scripts/test-slow.sh`
+- Targeted imaging parity: `scripts/test-imaging-parity.sh`; its complete
+  dataset preflight fails closed instead of allowing missing CASA cases to
+  report as runtime skips
 - Release/tag-only CI-like coverage: `scripts/run-coverage.sh --ci-like`
 - GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs
 - GitHub PR CI: lint/test, editable Python package, strict docs, and native GUI

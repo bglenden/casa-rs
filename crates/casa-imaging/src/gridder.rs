@@ -3420,7 +3420,8 @@ impl WProjector {
             / conv_size as f64;
         let s1 = geometry.cell_size_rad[1].abs() * sampling as f64 * grid_shape[1] as f64
             / conv_size as f64;
-        let effective_max_w_lambda = CASA_WPROJECT_MAX_W_SAFETY_FACTOR * max_abs_w_lambda;
+        let effective_max_w_lambda =
+            w_project_max_uvw_lambda(geometry, max_abs_w_lambda, explicit_plane_count);
         let w_scale = if plane_count > 1
             && effective_max_w_lambda.is_finite()
             && effective_max_w_lambda > 0.0
@@ -3802,6 +3803,20 @@ pub(crate) fn choose_w_project_plane_count(
     max_abs_w_lambda: f64,
 ) -> usize {
     suggested_w_project_plane_count(geometry, max_abs_w_lambda).max(1)
+}
+
+fn w_project_max_uvw_lambda(
+    geometry: ImageGeometry,
+    max_abs_w_lambda: f64,
+    explicit_plane_count: Option<usize>,
+) -> f64 {
+    if explicit_plane_count.is_some() {
+        // CASA supplies no selected-data W statistics to WPConvFunc when
+        // wprojplanes is explicit, so it spans the cell-size-derived W range.
+        0.25 / geometry.cell_size_rad[0].abs()
+    } else {
+        CASA_WPROJECT_MAX_W_SAFETY_FACTOR * max_abs_w_lambda
+    }
 }
 
 fn suggested_w_project_plane_count(geometry: ImageGeometry, max_abs_w_lambda: f64) -> usize {
@@ -4265,7 +4280,7 @@ mod tests {
     use super::{
         AwProjectSamplePlanRejection, AwProjector, CASA_WPROJECT_MAX_W_SAFETY_FACTOR,
         DensityCellConvention, GRIDDER_TAP_COUNT, ScreenProjectSamplePlan, ScreenProjector,
-        StandardGridder, WProjector, choose_w_project_plane_count,
+        StandardGridder, WProjector, choose_w_project_plane_count, w_project_max_uvw_lambda,
     };
     use crate::{
         AwConvolutionFunctionKernelMetadata, AwConvolutionFunctionUvCoordinateIdentity,
@@ -5070,7 +5085,8 @@ mod tests {
         };
         let gridder = StandardGridder::new_with_casa_composite_padding(geometry).unwrap();
         let projector = WProjector::new(geometry, &gridder, 20_000.0, Some(8)).unwrap();
-        assert!((projector.w_scale - 49.0 / 21_000.0).abs() <= f64::EPSILON);
+        let casa_explicit_max_uvw = 0.25 / geometry.cell_size_rad[0].abs();
+        assert!((projector.w_scale - 49.0 / casa_explicit_max_uvw).abs() <= f64::EPSILON);
         let plan = projector
             .plan_sample(12_000.25, -9_000.75, -4_000.0)
             .expect("wproject sample should plan inside the grid");
@@ -5102,6 +5118,25 @@ mod tests {
         assert_eq!(choose_w_project_plane_count(geometry, 100.0), expected);
         assert!(expected > 16);
         assert_eq!(choose_w_project_plane_count(geometry, 0.0), 1);
+    }
+
+    #[test]
+    fn w_project_explicit_planes_use_casa_cell_range_while_auto_uses_data_range() {
+        let geometry = ImageGeometry {
+            image_shape: [256, 256],
+            cell_size_rad: [
+                (80.0f64 / 3600.0).to_radians(),
+                (80.0f64 / 3600.0).to_radians(),
+            ],
+        };
+
+        let explicit_max_uvw = w_project_max_uvw_lambda(geometry, 100.0, Some(16));
+        let auto_max_uvw = w_project_max_uvw_lambda(geometry, 100.0, None);
+
+        assert!((explicit_max_uvw - 644.577_519_522_176_1).abs() < 1.0e-12);
+        assert_eq!(auto_max_uvw, 105.0);
+        assert!((225.0 / explicit_max_uvw - 0.349_065_850_398_865_95).abs() < 1.0e-15);
+        assert_eq!(225.0 / auto_max_uvw, 15.0 / 7.0);
     }
 
     #[test]

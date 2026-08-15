@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! PSF beam fitting and restoration helpers following CASA's `psfcutoff` flow.
 
+use casa_images::GaussianBeam;
 use ndarray::Array2;
 use num_complex::Complex32;
 
 use crate::fft::{centered_fft2, centered_ifft2};
 use crate::least_squares::solve_symmetric_ldlt_casacore;
-use crate::{BeamFit, BeamFitDebugSummary};
+use crate::{BeamFit, BeamFitDebugSummary, ImagingError};
 
 const CASA_FWHM_TO_INTERNAL: f64 = 0.600_561_204_393_224_9;
 const PSF_PATCH_RADIUS: usize = 20;
@@ -117,6 +118,127 @@ pub(crate) fn restore_model(
 
     let gaussian_psf = make_casa_gaussian_psf_image(model.raw_dim(), cell_size_rad, beam, false);
     fft_convolve_real_casa_restore(model, &gaussian_psf)
+}
+
+pub(crate) fn restore_common_beam_image(
+    model: &Array2<f32>,
+    residual: &Array2<f32>,
+    cell_size_rad: [f64; 2],
+    fitted_beam: Option<BeamFit>,
+    common_beam: BeamFit,
+) -> Result<Array2<f32>, ImagingError> {
+    let restored_model = restore_model(model, cell_size_rad, Some(common_beam));
+    let restored_residual = match fitted_beam {
+        Some(fitted_beam) => {
+            rescale_residual_to_beam(residual, cell_size_rad, common_beam, fitted_beam)?
+        }
+        None => residual.clone(),
+    };
+    Ok(restored_model + restored_residual)
+}
+
+fn rescale_residual_to_beam(
+    residual: &Array2<f32>,
+    cell_size_rad: [f64; 2],
+    restored_beam: BeamFit,
+    fitted_beam: BeamFit,
+) -> Result<Array2<f32>, ImagingError> {
+    let restored = beam_fit_to_gaussian(restored_beam);
+    let fitted = beam_fit_to_gaussian(fitted_beam);
+    let Some(convolving_beam) = restored.deconvolving_beam(fitted).map_err(|error| {
+        ImagingError::InvalidRequest(format!("deconvolve restoring beam: {error}"))
+    })?
+    else {
+        return Ok(residual.clone());
+    };
+    let pixel_width = cell_size_rad[0].hypot(cell_size_rad[1]);
+    if convolving_beam.minor <= pixel_width {
+        return Ok(residual.clone());
+    }
+    let Some(kernel) = gaussian_kernel(gaussian_to_beam_fit(convolving_beam), cell_size_rad, true)
+    else {
+        return Ok(residual.clone());
+    };
+    let mut rescaled = apply_gaussian_kernel(residual, &kernel);
+    let area_ratio = restored.area() / fitted.area();
+    rescaled.mapv_inplace(|value| (f64::from(value) * area_ratio) as f32);
+    Ok(rescaled)
+}
+
+fn beam_fit_to_gaussian(beam: BeamFit) -> GaussianBeam {
+    GaussianBeam::new(
+        beam.major_fwhm_rad,
+        beam.minor_fwhm_rad,
+        beam.position_angle_rad,
+    )
+}
+
+fn gaussian_to_beam_fit(beam: GaussianBeam) -> BeamFit {
+    BeamFit {
+        major_fwhm_rad: beam.major,
+        minor_fwhm_rad: beam.minor,
+        position_angle_rad: beam.position_angle,
+    }
+}
+
+fn gaussian_kernel(
+    beam: BeamFit,
+    cell_size_rad: [f64; 2],
+    normalize_volume: bool,
+) -> Option<Vec<(isize, isize, f32)>> {
+    let sigma_major = beam.major_fwhm_rad / 2.354_820_045_030_949_3;
+    let sigma_minor = beam.minor_fwhm_rad / 2.354_820_045_030_949_3;
+    if !(sigma_major.is_finite()
+        && sigma_major > MIN_SIGMA_RAD
+        && sigma_minor.is_finite()
+        && sigma_minor > MIN_SIGMA_RAD)
+    {
+        return None;
+    }
+    let radius_rad = 5.0 * sigma_major.max(sigma_minor);
+    let radius_x = (radius_rad / cell_size_rad[0]).ceil() as isize;
+    let radius_y = (radius_rad / cell_size_rad[1]).ceil() as isize;
+    let kernel_image = make_casa_gaussian_psf_image(
+        ndarray::Ix2((2 * radius_x + 1) as usize, (2 * radius_y + 1) as usize),
+        cell_size_rad,
+        beam,
+        normalize_volume,
+    );
+    let center_x = radius_x as usize;
+    let center_y = radius_y as usize;
+    Some(
+        (-radius_x..=radius_x)
+            .flat_map(|dx| {
+                let kernel_image = &kernel_image;
+                (-radius_y..=radius_y).filter_map(move |dy| {
+                    let weight = kernel_image[(
+                        (center_x as isize + dx) as usize,
+                        (center_y as isize + dy) as usize,
+                    )];
+                    (weight > 1.0e-6).then_some((dx, dy, weight))
+                })
+            })
+            .collect(),
+    )
+}
+
+fn apply_gaussian_kernel(image: &Array2<f32>, kernel: &[(isize, isize, f32)]) -> Array2<f32> {
+    let mut restored = Array2::<f32>::zeros(image.raw_dim());
+    for ((center_x, center_y), value) in image.indexed_iter() {
+        if value.abs() <= 1.0e-12 {
+            continue;
+        }
+        for &(dx, dy, weight) in kernel {
+            let x = center_x as isize + dx;
+            let y = center_y as isize + dy;
+            if (0..image.shape()[0] as isize).contains(&x)
+                && (0..image.shape()[1] as isize).contains(&y)
+            {
+                restored[(x as usize, y as usize)] += *value * weight;
+            }
+        }
+    }
+    restored
 }
 
 fn fft_convolve_real_casa_restore(model: &Array2<f32>, psf: &Array2<f32>) -> Array2<f32> {
@@ -864,7 +986,10 @@ mod tests {
     use casa_images::PagedImage;
     use ndarray::{Array2, Ix4};
 
-    use super::{fit_beam_from_psf, make_casa_gaussian_psf_image, restore_model};
+    use super::{
+        fit_beam_from_psf, gaussian_kernel, make_casa_gaussian_psf_image,
+        restore_common_beam_image, restore_model,
+    };
     use crate::BeamFit;
 
     fn fit_retained_vlass_psf(path: PathBuf, expected_side: usize) -> BeamFit {
@@ -911,6 +1036,33 @@ mod tests {
             }
         }
         psf
+    }
+
+    #[test]
+    fn common_beam_restoration_handles_empty_and_equal_beam_inputs() {
+        let beam = BeamFit {
+            major_fwhm_rad: 3.0e-4,
+            minor_fwhm_rad: 2.0e-4,
+            position_angle_rad: 0.1,
+        };
+        assert!(
+            gaussian_kernel(
+                BeamFit {
+                    major_fwhm_rad: 0.0,
+                    ..beam
+                },
+                [1.0e-4, 1.0e-4],
+                false,
+            )
+            .is_none()
+        );
+
+        let model = Array2::<f32>::zeros((7, 7));
+        let residual = Array2::<f32>::from_elem((7, 7), 1.0);
+        let restored =
+            restore_common_beam_image(&model, &residual, [1.0e-4, 1.0e-4], Some(beam), beam)
+                .expect("restore equal-beam plane");
+        assert_eq!(restored, residual);
     }
 
     #[test]

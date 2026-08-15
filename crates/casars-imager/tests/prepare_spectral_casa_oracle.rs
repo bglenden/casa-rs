@@ -26,6 +26,7 @@ fn casa_spectral_oracle_lock() -> &'static Mutex<()> {
 struct CasaSpectralOracle {
     selected_rows: Vec<SelectedRowTrace>,
     source_channel_indices: Vec<usize>,
+    contributing_source_channel_indices: Vec<usize>,
     source_channel_frequencies_hz: Vec<f64>,
     source_channel_widths_hz: Vec<f64>,
     output_channel_frequencies_hz: Vec<f64>,
@@ -81,6 +82,7 @@ struct CasaRejectedPreparedSampleTrace {
 #[derive(Debug, Serialize)]
 struct RustTraceSeed {
     phase_center_field_id: usize,
+    source_channel_indices: Vec<usize>,
     selected_rows: Vec<SelectedRowTrace>,
     samples: Vec<RustSampleSeed>,
     rejected_samples: Vec<RustRejectedSampleSeed>,
@@ -221,6 +223,35 @@ fn assert_spectral_matches_casa_oracle(config: &CliConfig, staged_name: &str) {
     assert_eq!(
         rust_trace.source_channel_indices,
         casa_oracle.source_channel_indices
+    );
+    let mut rust_contributing_source_channel_indices = rust_trace
+        .samples
+        .iter()
+        .flat_map(|sample| sample.source_contributions.iter())
+        .chain(
+            rust_trace
+                .rejected_samples
+                .iter()
+                .flat_map(|sample| sample.source_contributions.iter()),
+        )
+        .map(|contribution| contribution.source_channel_index)
+        .collect::<Vec<_>>();
+    rust_contributing_source_channel_indices.sort_unstable();
+    rust_contributing_source_channel_indices.dedup();
+    assert_eq!(
+        rust_contributing_source_channel_indices,
+        casa_oracle.contributing_source_channel_indices
+    );
+    assert!(
+        rust_contributing_source_channel_indices
+            .iter()
+            .all(|channel_index| rust_trace
+                .source_channel_indices
+                .binary_search(channel_index)
+                .is_ok()),
+        "planned source support {:?} does not contain all contributing source channels {:?}",
+        rust_trace.source_channel_indices,
+        rust_contributing_source_channel_indices,
     );
     assert_close_slice(
         "source_channel_frequencies_hz",
@@ -471,6 +502,8 @@ fn base_config(ms_path: PathBuf, spectral_mode: SpectralMode) -> CliConfig {
         imsize: 64,
         cell_arcsec: 20.0,
         field_ids: Some(vec![0]),
+        uvrange: None,
+        intent: None,
         phasecenter_field: Some(0),
         phasecenter: None,
         ddid: None,
@@ -516,6 +549,7 @@ fn base_config(ms_path: PathBuf, spectral_mode: SpectralMode) -> CliConfig {
         w_term_mode: WTermMode::None,
         force_standard_gridder: false,
         w_project_planes: None,
+        aw_project: None,
         dirty_only: true,
         standard_mfs_acceleration: Default::default(),
         standard_mfs_backend: None,
@@ -594,6 +628,7 @@ fn run_casa_spectral_oracle(
             .phase_center
             .field_id
             .expect("spectral CASA oracle expects a field phase center"),
+        source_channel_indices: rust_trace.source_channel_indices.clone(),
         selected_rows: rust_trace.selected_rows.clone(),
         samples: rust_trace
             .samples
@@ -776,14 +811,25 @@ def collect_source_channel_indices(trace):
             indices.add(int(contribution["source_channel_index"]))
     return sorted(indices)
 
-source_channel_indices = collect_source_channel_indices(rust_trace)
-if not source_channel_indices:
-    if spectral_mode == "cubedata":
-        source_channel_indices = [
-            start_channel + index * width_channel for index in range(nchan)
-        ]
-    else:
-        source_channel_indices = list(range(len(all_chan_freqs)))
+contributing_source_channel_indices = collect_source_channel_indices(rust_trace)
+source_channel_indices = [
+    int(channel_index) for channel_index in rust_trace["source_channel_indices"]
+]
+for channel_index in source_channel_indices:
+    if channel_index < 0 or channel_index >= len(all_chan_freqs):
+        raise RuntimeError(
+            f"planned source support channel {channel_index} is outside the SPW with {len(all_chan_freqs)} channels"
+        )
+planned_source_channel_set = set(source_channel_indices)
+missing_contribution_channels = [
+    channel_index
+    for channel_index in contributing_source_channel_indices
+    if channel_index not in planned_source_channel_set
+]
+if missing_contribution_channels:
+    raise RuntimeError(
+        f"planned source support does not cover contributing channels {missing_contribution_channels}"
+    )
 source_channel_frequencies_hz = [
     float(all_chan_freqs[channel_index]) for channel_index in source_channel_indices
 ]
@@ -1146,7 +1192,18 @@ if spectral_mode == "cube":
         weight_spectrum_row = None if input_weight_spectrum is None else input_weight_spectrum[seed["row_index"]]
         rejected_samples.append(build_pair_sample(seed, data_row, channel_index, source_flag_row, weight_row, weight_spectrum_row, output_frequency_hz))
 else:
-    output_channel_frequencies_hz = [float(value) for value in source_channel_frequencies_hz]
+    output_source_channel_indices = [
+        start_channel + index * width_channel for index in range(nchan)
+    ]
+    for channel_index in output_source_channel_indices:
+        if channel_index < 0 or channel_index >= len(all_chan_freqs):
+            raise RuntimeError(
+                f"cubedata output channel {channel_index} is outside the SPW with {len(all_chan_freqs)} channels"
+            )
+    output_channel_frequencies_hz = [
+        float(all_chan_freqs[channel_index])
+        for channel_index in output_source_channel_indices
+    ]
     samples = []
     rejected_samples = []
     for seed in rust_trace["samples"]:
@@ -1178,6 +1235,7 @@ with open(output_json, "w", encoding="utf-8") as handle:
         {
             "selected_rows": selected_rows,
             "source_channel_indices": source_channel_indices,
+            "contributing_source_channel_indices": contributing_source_channel_indices,
             "source_channel_frequencies_hz": source_channel_frequencies_hz,
             "source_channel_widths_hz": source_channel_widths_hz,
             "output_channel_frequencies_hz": output_channel_frequencies_hz,
