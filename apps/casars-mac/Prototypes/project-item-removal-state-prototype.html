@@ -44,6 +44,13 @@
     code { color: #a9d4ff; }
     .status { min-height: 46px; margin-top: 12px; padding: 10px 12px; background: #181a1c; border-radius: 7px; color: #cbd0d5; }
     .shortcut { border: 1px solid #626970; border-bottom-width: 2px; border-radius: 5px; padding: 1px 5px; color: #eef0f2; }
+    .context-menu { position: fixed; z-index: 10; min-width: 220px; padding: 6px; background: #2b2e32; border: 1px solid #555b62; border-radius: 9px; box-shadow: 0 10px 32px #0009; }
+    .context-menu button { width: 100%; display: flex; justify-content: space-between; border: 0; background: transparent; text-align: left; }
+    .context-menu button:hover:not(:disabled) { background: #176bc0; }
+    dialog { width: min(480px, calc(100vw - 32px)); color: #f2f3f4; background: #292c30; border: 1px solid #60666d; border-radius: 12px; box-shadow: 0 22px 80px #000c; }
+    dialog::backdrop { background: #0009; }
+    dialog h2 { margin-top: 2px; }
+    dialog .toolbar { justify-content: flex-end; }
     @media (max-width: 780px) { .layout { grid-template-columns: 1fr; } main { padding: 18px; } }
   </style>
 </head>
@@ -64,7 +71,7 @@
         <button id="delete" class="danger">Delete Immediately…</button>
         <button id="restore">Put Back</button>
       </div>
-      <p class="detail">Finder convention: right-click exposes both actions; <span class="shortcut">⌘</span> <span class="shortcut">⌫</span> moves the selected item to Trash. Immediate deletion has no keyboard shortcut here.</p>
+      <p class="detail">Right-click exposes both actions. <span class="shortcut">⌘</span> <span class="shortcut">⌫</span> moves the selected item to Trash; plain <span class="shortcut">⌫</span> opens the permanent-delete confirmation.</p>
       <div id="status" class="status"></div>
     </section>
 
@@ -79,6 +86,21 @@
     <dl id="review-details"></dl>
     <p id="review-warning" class="warning"></p>
   </section>
+
+  <div id="context-menu" class="context-menu" role="menu" hidden>
+    <button id="menu-trash" role="menuitem"><span>Move to Trash</span><span>⌘⌫</span></button>
+    <button id="menu-delete" role="menuitem"><span>Delete Immediately…</span><span>⌫</span></button>
+  </div>
+
+  <dialog id="delete-dialog">
+    <h2>Delete immediately?</h2>
+    <p id="delete-message"></p>
+    <p class="danger-text">This cannot be undone.</p>
+    <div class="toolbar">
+      <button id="cancel-delete">Cancel</button>
+      <button id="confirm-delete" class="danger">Permanently Delete</button>
+    </div>
+  </dialog>
 
   <div class="tabs" role="tablist" aria-label="Guided walkthroughs">
     <button class="active" data-tab="notebook">Duplicate notebook</button>
@@ -170,6 +192,9 @@
   const reviewCard = document.querySelector("#review-card");
   const reviewDetails = document.querySelector("#review-details");
   const reviewWarning = document.querySelector("#review-warning");
+  const contextMenu = document.querySelector("#context-menu");
+  const deleteDialog = document.querySelector("#delete-dialog");
+  const deleteMessage = document.querySelector("#delete-message");
 
   function dispatch(action) { state = reducer(state, action); render(); }
 
@@ -210,14 +235,46 @@
     document.querySelector("#trash").disabled = selected.protected || selected.state !== "present";
     document.querySelector("#delete").disabled = selected.protected || selected.state === "deleted";
     document.querySelector("#restore").disabled = selected.state !== "trash";
+    document.querySelector("#menu-trash").disabled = selected.protected || selected.state !== "present";
+    document.querySelector("#menu-delete").disabled = selected.protected || selected.state === "deleted";
+  }
+
+  function requestPermanentDelete() {
+    const selected = state.items.find(item => item.id === state.selected);
+    contextMenu.hidden = true;
+    if (selected.protected || selected.state === "deleted") {
+      dispatch({ type: "delete" });
+      return;
+    }
+    deleteMessage.textContent = `“${selected.name}” will be removed permanently and is expected to reclaim ${formatSize(selected.sizeGB)} now.`;
+    deleteDialog.showModal();
   }
 
   document.querySelector("#review").onclick = () => dispatch({ type: "review" });
   document.querySelector("#trash").onclick = () => dispatch({ type: "trash" });
-  document.querySelector("#delete").onclick = () => dispatch({ type: "delete" });
+  document.querySelector("#delete").onclick = requestPermanentDelete;
   document.querySelector("#restore").onclick = () => dispatch({ type: "restore" });
+  document.querySelector("#menu-trash").onclick = () => { contextMenu.hidden = true; dispatch({ type: "trash" }); };
+  document.querySelector("#menu-delete").onclick = requestPermanentDelete;
+  document.querySelector("#cancel-delete").onclick = () => deleteDialog.close();
+  document.querySelector("#confirm-delete").onclick = () => { deleteDialog.close(); dispatch({ type: "delete" }); };
+  itemsEl.addEventListener("contextmenu", event => {
+    const itemButton = event.target.closest("[data-id]");
+    if (!itemButton) return;
+    event.preventDefault();
+    if (state.selected !== itemButton.dataset.id) dispatch({ type: "select", id: itemButton.dataset.id });
+    contextMenu.style.left = `${Math.min(event.clientX, window.innerWidth - 240)}px`;
+    contextMenu.style.top = `${Math.min(event.clientY, window.innerHeight - 100)}px`;
+    contextMenu.hidden = false;
+  });
+  document.addEventListener("click", event => {
+    if (!contextMenu.hidden && !contextMenu.contains(event.target)) contextMenu.hidden = true;
+  });
   document.addEventListener("keydown", event => {
-    if (event.metaKey && event.key === "Backspace") { event.preventDefault(); dispatch({ type: "trash" }); }
+    if (event.key !== "Backspace" || event.altKey || event.ctrlKey || event.shiftKey || deleteDialog.open) return;
+    event.preventDefault();
+    if (event.metaKey) dispatch({ type: "trash" });
+    else requestPermanentDelete();
   });
   document.querySelectorAll("[data-tab]").forEach(tab => tab.onclick = () => {
     document.querySelectorAll("[data-tab]").forEach(button => button.classList.toggle("active", button === tab));
