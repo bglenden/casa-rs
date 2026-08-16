@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Project item removal state prototype</title>
+  <style>
+    :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #17191b; color: #f2f3f4; }
+    main { max-width: 1120px; margin: 0 auto; padding: 32px; }
+    h1 { margin: 0 0 8px; font-size: 26px; }
+    h2 { font-size: 17px; margin: 0 0 14px; }
+    p { color: #b7bcc2; line-height: 1.45; }
+    .question { padding: 18px 20px; border: 1px solid #4a5057; border-radius: 12px; background: #22262a; }
+    .question strong { color: #fff; }
+    .layout { display: grid; grid-template-columns: 1.15fr .85fr; gap: 18px; margin-top: 18px; }
+    .card { background: #202326; border: 1px solid #393e43; border-radius: 12px; padding: 18px; }
+    .items { display: grid; gap: 8px; }
+    .item { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 12px; text-align: left; color: inherit; background: #292d31; border: 1px solid transparent; border-radius: 8px; }
+    .item:hover { background: #30353a; }
+    .item.selected { border-color: #5f9ee9; background: #24364a; }
+    .item.removed { opacity: .45; text-decoration: line-through; }
+    .kind, .detail { color: #aeb4ba; font-size: 12px; }
+    .size { color: #d4d7da; font-variant-numeric: tabular-nums; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+    button { border: 1px solid #51575e; background: #34383d; color: #f3f4f5; padding: 8px 12px; border-radius: 7px; font: inherit; }
+    button:hover:not(:disabled) { background: #40454b; }
+    button.primary { background: #176bc0; border-color: #3387db; }
+    button.danger { background: #8f2428; border-color: #c3474c; }
+    button:disabled { opacity: .4; }
+    dl { display: grid; grid-template-columns: 145px 1fr; gap: 9px 12px; margin: 0; }
+    dt { color: #969ca3; }
+    dd { margin: 0; }
+    .review { margin-top: 18px; border-left: 4px solid #dfad45; }
+    .warning { color: #f0c66e; }
+    .danger-text { color: #ff8f93; }
+    .ok { color: #7dd29a; }
+    .tabs { display: flex; gap: 6px; margin: 22px 0 10px; }
+    .tabs button.active { background: #4a5561; border-color: #77828d; }
+    .step { display: none; }
+    .step.active { display: block; }
+    ol { color: #c6cacf; line-height: 1.55; }
+    code { color: #a9d4ff; }
+    .status { min-height: 46px; margin-top: 12px; padding: 10px 12px; background: #181a1c; border-radius: 7px; color: #cbd0d5; }
+    .shortcut { border: 1px solid #626970; border-bottom-width: 2px; border-radius: 5px; padding: 1px 5px; color: #eef0f2; }
+    @media (max-width: 780px) { .layout { grid-template-columns: 1fr; } main { padding: 18px; } }
+  </style>
+</head>
+<body>
+<main>
+  <section class="question">
+    <h1>Removal behavior prototype</h1>
+    <p><strong>Design question:</strong> Can one Finder-like removal model safely cover notebooks, datasets, files, and folders—while still offering immediate deletion when storage pressure matters?</p>
+  </section>
+
+  <div class="layout">
+    <section class="card">
+      <h2>Project items</h2>
+      <div id="items" class="items"></div>
+      <div class="toolbar">
+        <button id="review">Review removal…</button>
+        <button id="trash" class="primary">Move to Trash</button>
+        <button id="delete" class="danger">Delete Immediately…</button>
+        <button id="restore">Put Back</button>
+      </div>
+      <p class="detail">Finder convention: right-click exposes both actions; <span class="shortcut">⌘</span> <span class="shortcut">⌫</span> moves the selected item to Trash. Immediate deletion has no keyboard shortcut here.</p>
+      <div id="status" class="status"></div>
+    </section>
+
+    <section class="card">
+      <h2>Current project state</h2>
+      <dl id="state"></dl>
+    </section>
+  </div>
+
+  <section id="review-card" class="card review" hidden>
+    <h2>Removal review</h2>
+    <dl id="review-details"></dl>
+    <p id="review-warning" class="warning"></p>
+  </section>
+
+  <div class="tabs" role="tablist" aria-label="Guided walkthroughs">
+    <button class="active" data-tab="notebook">Duplicate notebook</button>
+    <button data-tab="dataset">Large dataset</button>
+    <button data-tab="guards">Files and safety guards</button>
+  </div>
+
+  <section class="card step active" data-step="notebook">
+    <h2>Walkthrough: remove a duplicated tutorial notebook</h2>
+    <ol>
+      <li>Select <strong>TW Hya First Look (copy)</strong> and choose <strong>Review removal…</strong>.</li>
+      <li><strong>Move to Trash</strong> removes only the visible Markdown notebook. Tutorial support files remain dormant so Finder’s Put Back can restore it cleanly.</li>
+      <li><strong>Delete Immediately…</strong> also removes notebook-owned tutorial copies and visualization assets. Execution receipts and scientific products remain as provenance.</li>
+    </ol>
+  </section>
+  <section class="card step" data-step="dataset">
+    <h2>Walkthrough: recover working storage</h2>
+    <ol>
+      <li>Select <strong>uid___A002_Xc123.ms</strong>. The review shows its 84 GB size and the notebook that refers to it.</li>
+      <li><strong>Move to Trash</strong> is reversible, but free space remains unchanged while the dataset stays in system Trash.</li>
+      <li><strong>Delete Immediately…</strong> reclaims 84 GB now. The tutorial becomes “dataset missing”; the notebook and task history remain.</li>
+    </ol>
+  </section>
+  <section class="card step" data-step="guards">
+    <h2>Walkthrough: ordinary files and unsafe targets</h2>
+    <ol>
+      <li>An ordinary project file or folder uses the same review and actions.</li>
+      <li>Recognized notebooks and datasets route through their semantic cleanup rules even when selected in Files.</li>
+      <li>The project root, managed <code>.casa-rs</code> state, out-of-project paths, and items used by a running task cannot be removed.</li>
+    </ol>
+  </section>
+</main>
+
+<script>
+  const initialState = {
+    selected: "notebook-copy",
+    reviewOpen: false,
+    freeGB: 112,
+    tutorial: "Ready — dataset staged",
+    lastResult: "Select an item, review the effects, then choose a removal mode.",
+    items: [
+      { id: "notebook-copy", name: "TW Hya First Look (copy).md", kind: "Notebook", sizeGB: 0.02, state: "present", reference: "Tutorial support files, visualization assets" },
+      { id: "dataset", name: "uid___A002_Xc123.ms", kind: "Dataset", sizeGB: 84, state: "present", reference: "Referenced by TW Hya First Look; tutorial staged" },
+      { id: "file", name: "notes/observing-log.txt", kind: "File", sizeGB: 0.001, state: "present", reference: "No related project state" },
+      { id: "managed", name: ".casa-rs", kind: "Protected state", sizeGB: 0.3, state: "present", protected: true, reference: "Workbench-managed project state" },
+      { id: "running", name: "active-imaging.ms", kind: "Dataset in use", sizeGB: 31, state: "present", protected: true, reference: "Used by a running imaging task" }
+    ]
+  };
+
+  function reducer(state, action) {
+    const selected = state.items.find(item => item.id === state.selected);
+    if (action.type === "select") return { ...state, selected: action.id, reviewOpen: false, lastResult: `Selected ${state.items.find(i => i.id === action.id).name}.` };
+    if (action.type === "review") {
+      if (selected.protected) return { ...state, reviewOpen: true, lastResult: `Removal blocked: ${selected.reference}.` };
+      return { ...state, reviewOpen: true, lastResult: `Reviewing removal of ${selected.name}. No changes made yet.` };
+    }
+    if (action.type === "trash") {
+      if (selected.protected || selected.state !== "present") return { ...state, lastResult: selected.protected ? `Removal blocked: ${selected.reference}.` : "The selected item is not present." };
+      const items = state.items.map(item => item.id === selected.id ? { ...item, state: "trash" } : item);
+      const tutorial = selected.id === "dataset" ? "Dataset missing — can be restored with Put Back" : state.tutorial;
+      return { ...state, items, tutorial, reviewOpen: false, lastResult: `${selected.name} moved to system Trash. Free space is unchanged until Trash is emptied.` };
+    }
+    if (action.type === "delete") {
+      if (selected.protected || selected.state === "deleted") return { ...state, lastResult: selected.protected ? `Removal blocked: ${selected.reference}.` : "The selected item is already permanently deleted." };
+      const items = state.items.map(item => item.id === selected.id ? { ...item, state: "deleted" } : item);
+      const freeGB = state.freeGB + selected.sizeGB;
+      const tutorial = selected.id === "dataset" ? "Dataset missing — re-acquisition required" : state.tutorial;
+      const cleanup = selected.id === "notebook-copy" ? " Notebook-owned tutorial copies and visualization assets were also removed; receipts and products remain." : "";
+      return { ...state, items, freeGB, tutorial, reviewOpen: false, lastResult: `${selected.name} permanently deleted; ${formatSize(selected.sizeGB)} reclaimed.${cleanup}` };
+    }
+    if (action.type === "restore") {
+      if (selected.state !== "trash") return { ...state, lastResult: "Put Back is available only for an item currently in Trash." };
+      const items = state.items.map(item => item.id === selected.id ? { ...item, state: "present" } : item);
+      const tutorial = selected.id === "dataset" ? "Ready — dataset staged" : state.tutorial;
+      return { ...state, items, tutorial, reviewOpen: false, lastResult: `${selected.name} put back in its original project location.` };
+    }
+    return state;
+  }
+
+  function formatSize(gb) {
+    if (gb >= 1) return `${gb.toFixed(gb % 1 ? 1 : 0)} GB`;
+    return `${Math.max(1, Math.round(gb * 1024))} MB`;
+  }
+
+  let state = structuredClone(initialState);
+  const itemsEl = document.querySelector("#items");
+  const statusEl = document.querySelector("#status");
+  const stateEl = document.querySelector("#state");
+  const reviewCard = document.querySelector("#review-card");
+  const reviewDetails = document.querySelector("#review-details");
+  const reviewWarning = document.querySelector("#review-warning");
+
+  function dispatch(action) { state = reducer(state, action); render(); }
+
+  function render() {
+    const selected = state.items.find(item => item.id === state.selected);
+    itemsEl.innerHTML = state.items.map(item => `
+      <button class="item ${item.id === state.selected ? "selected" : ""} ${item.state !== "present" ? "removed" : ""}" data-id="${item.id}">
+        <span><strong>${item.name}</strong><br><span class="kind">${item.kind} · ${item.state === "trash" ? "In Trash" : item.state}</span></span>
+        <span class="size">${formatSize(item.sizeGB)}</span>
+      </button>`).join("");
+    itemsEl.querySelectorAll("[data-id]").forEach(button => button.onclick = () => dispatch({ type: "select", id: button.dataset.id }));
+
+    const trashCount = state.items.filter(item => item.state === "trash").length;
+    stateEl.innerHTML = `
+      <dt>Free space</dt><dd>${state.freeGB.toFixed(1)} GB</dd>
+      <dt>System Trash</dt><dd>${trashCount} project item${trashCount === 1 ? "" : "s"}</dd>
+      <dt>Tutorial</dt><dd>${state.tutorial}</dd>
+      <dt>Selected</dt><dd>${selected.name}</dd>`;
+    statusEl.textContent = state.lastResult;
+
+    reviewCard.hidden = !state.reviewOpen;
+    if (state.reviewOpen) {
+      reviewDetails.innerHTML = `
+        <dt>Item</dt><dd>${selected.name}</dd>
+        <dt>Recognized as</dt><dd>${selected.kind}</dd>
+        <dt>Size</dt><dd>${formatSize(selected.sizeGB)}</dd>
+        <dt>Related state</dt><dd>${selected.reference}</dd>
+        <dt>Trash result</dt><dd>Reversible; working free space unchanged</dd>
+        <dt>Delete result</dt><dd>Permanent; reclaims ${formatSize(selected.sizeGB)} now</dd>`;
+      reviewWarning.className = selected.protected ? "danger-text" : "warning";
+      reviewWarning.textContent = selected.protected
+        ? `Blocked: ${selected.reference}.`
+        : selected.id === "dataset"
+          ? "Deleting this dataset leaves notebooks and receipts intact, but their data reference becomes missing."
+          : "Delete Immediately cannot be undone.";
+    }
+
+    document.querySelector("#trash").disabled = selected.protected || selected.state !== "present";
+    document.querySelector("#delete").disabled = selected.protected || selected.state === "deleted";
+    document.querySelector("#restore").disabled = selected.state !== "trash";
+  }
+
+  document.querySelector("#review").onclick = () => dispatch({ type: "review" });
+  document.querySelector("#trash").onclick = () => dispatch({ type: "trash" });
+  document.querySelector("#delete").onclick = () => dispatch({ type: "delete" });
+  document.querySelector("#restore").onclick = () => dispatch({ type: "restore" });
+  document.addEventListener("keydown", event => {
+    if (event.metaKey && event.key === "Backspace") { event.preventDefault(); dispatch({ type: "trash" }); }
+  });
+  document.querySelectorAll("[data-tab]").forEach(tab => tab.onclick = () => {
+    document.querySelectorAll("[data-tab]").forEach(button => button.classList.toggle("active", button === tab));
+    document.querySelectorAll("[data-step]").forEach(step => step.classList.toggle("active", step.dataset.step === tab.dataset.tab));
+  });
+  render();
+</script>
+</body>
+</html>
