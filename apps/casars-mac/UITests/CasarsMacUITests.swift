@@ -2358,16 +2358,17 @@ final class CasarsMacUITests: XCTestCase {
         let originalProseHeight = prose.frame.height
 
         for _ in 0..<3 {
-            let displayMenu = app.menuBars.menuBarItems["Display"]
-            XCTAssertTrue(displayMenu.waitForExistence(timeout: 3), app.debugDescription)
-            displayMenu.click()
-            let increaseFontSize = app.menuItems["Increase Font Size"]
-            XCTAssertTrue(increaseFontSize.waitForExistence(timeout: 3), app.debugDescription)
-            increaseFontSize.click()
+            app.typeKey("+", modifierFlags: [.command])
         }
 
         XCTAssertGreaterThan(heading.frame.height, originalHeadingHeight)
         XCTAssertGreaterThan(prose.frame.height, originalProseHeight)
+
+        for _ in 0..<3 {
+            app.typeKey("-", modifierFlags: [.command])
+        }
+        XCTAssertEqual(heading.frame.height, originalHeadingHeight, accuracy: 1)
+        XCTAssertEqual(prose.frame.height, originalProseHeight, accuracy: 1)
     }
 
     func testProductionTutorialForkApprovalReadyAndTaskLoading() throws {

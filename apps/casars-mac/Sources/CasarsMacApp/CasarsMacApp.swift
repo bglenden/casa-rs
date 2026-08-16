@@ -1046,7 +1046,9 @@ struct CasarsMacApp: App {
     }
 
     private func setStoredInterfaceFontSize(_ size: Double) {
-        interfaceFontSize = WorkbenchState.clampedInterfaceFontSize(size)
+        let clampedSize = WorkbenchState.clampedInterfaceFontSize(size)
+        interfaceFontSize = clampedSize
+        store.setInterfaceFontSize(clampedSize)
     }
 
     private static func storedInterfaceFontSize() -> Double {
