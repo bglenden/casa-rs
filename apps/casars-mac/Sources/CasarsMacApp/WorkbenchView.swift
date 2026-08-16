@@ -23,6 +23,7 @@ struct WorkbenchView: View {
     @State private var aiDrawerWidth: CGFloat = 400
     @State private var autoCollapsedLeftDockForDrawer = false
     @State private var autoCollapsedInspectorForDrawer = false
+    @State private var onboardingError: String?
 
     private var isAIDrawerPresented: Bool {
         (store.isAIPrototypeRuntime && store.state.prototypeAI?.presentation == .drawer)
@@ -30,87 +31,99 @@ struct WorkbenchView: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            HStack(alignment: .top, spacing: 0) {
-                if !store.state.leftDockCollapsed {
-                    LeftDockView(store: store)
-                        .frame(
-                            width: leftDockWidth,
-                            height: geometry.size.height,
-                            alignment: .top
+        ZStack {
+            GeometryReader { geometry in
+                HStack(alignment: .top, spacing: 0) {
+                    if !store.state.leftDockCollapsed {
+                        LeftDockView(store: store)
+                            .frame(
+                                width: leftDockWidth,
+                                height: geometry.size.height,
+                                alignment: .top
+                            )
+
+                        HorizontalResizeHandle(
+                            width: $leftDockWidth,
+                            range: 190...420,
+                            anchor: .left,
+                            accessibilityID: "split.resizeHandle"
+                        )
+                    }
+
+                    if !store.state.inspectorCollapsed {
+                        InspectorView(store: store)
+                            .frame(width: inspectorWidth)
+
+                        HorizontalResizeHandle(
+                            width: $inspectorWidth,
+                            range: 220...520,
+                            anchor: .left,
+                            accessibilityID: "split.resizeHandle"
+                        )
+                    }
+
+                    CentralWorkspaceView(
+                        store: store,
+                        initialMeasurementSetExplorerMode: initialMeasurementSetExplorerMode
+                    )
+                        .frame(minWidth: isAIDrawerPresented ? 360 : 560)
+
+                    if store.isAIPrototypeRuntime,
+                       store.state.prototypeAI?.presentation == .drawer
+                    {
+                        HorizontalResizeHandle(
+                            width: $aiDrawerWidth,
+                            range: 340...520,
+                            anchor: .right,
+                            accessibilityID: "aiPrototype.resizeHandle"
                         )
 
-                    HorizontalResizeHandle(
-                        width: $leftDockWidth,
-                        range: 190...420,
-                        anchor: .left,
-                        accessibilityID: "split.resizeHandle"
+                        AIChatPrototypeView(store: store, layout: .drawer)
+                            .frame(width: aiDrawerWidth)
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                    } else if store.state.assistantDiscussion?.presentation == .drawer {
+                        HorizontalResizeHandle(
+                            width: $aiDrawerWidth,
+                            range: 340...520,
+                            anchor: .right,
+                            accessibilityID: "assistant.resizeHandle"
+                        )
+
+                        AssistantDiscussionView(store: store, layout: .drawer)
+                            .frame(width: aiDrawerWidth)
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .onAppear {
+                    reconcilePanelsForDrawer(
+                        containerWidth: geometry.size.width,
+                        drawerPresented: isAIDrawerPresented
                     )
                 }
-
-                if !store.state.inspectorCollapsed {
-                    InspectorView(store: store)
-                        .frame(width: inspectorWidth)
-
-                    HorizontalResizeHandle(
-                        width: $inspectorWidth,
-                        range: 220...520,
-                        anchor: .left,
-                        accessibilityID: "split.resizeHandle"
+                .onChange(of: isAIDrawerPresented) { presented in
+                    reconcilePanelsForDrawer(
+                        containerWidth: geometry.size.width,
+                        drawerPresented: presented
                     )
                 }
-
-                CentralWorkspaceView(
-                    store: store,
-                    initialMeasurementSetExplorerMode: initialMeasurementSetExplorerMode,
-                    firstRunOnboardingIsPresented: firstRunOnboardingIsPresented,
-                    dismissFirstRunOnboarding: dismissFirstRunOnboarding
-                )
-                    .frame(minWidth: isAIDrawerPresented ? 360 : 560)
-
-                if store.isAIPrototypeRuntime,
-                   store.state.prototypeAI?.presentation == .drawer
-                {
-                    HorizontalResizeHandle(
-                        width: $aiDrawerWidth,
-                        range: 340...520,
-                        anchor: .right,
-                        accessibilityID: "aiPrototype.resizeHandle"
+                .onChange(of: geometry.size.width) { width in
+                    reconcilePanelsForDrawer(
+                        containerWidth: width,
+                        drawerPresented: isAIDrawerPresented
                     )
-
-                    AIChatPrototypeView(store: store, layout: .drawer)
-                        .frame(width: aiDrawerWidth)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                } else if store.state.assistantDiscussion?.presentation == .drawer {
-                    HorizontalResizeHandle(
-                        width: $aiDrawerWidth,
-                        range: 340...520,
-                        anchor: .right,
-                        accessibilityID: "assistant.resizeHandle"
-                    )
-
-                    AssistantDiscussionView(store: store, layout: .drawer)
-                        .frame(width: aiDrawerWidth)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .onAppear {
-                reconcilePanelsForDrawer(
-                    containerWidth: geometry.size.width,
-                    drawerPresented: isAIDrawerPresented
-                )
-            }
-            .onChange(of: isAIDrawerPresented) { presented in
-                reconcilePanelsForDrawer(
-                    containerWidth: geometry.size.width,
-                    drawerPresented: presented
-                )
-            }
-            .onChange(of: geometry.size.width) { width in
-                reconcilePanelsForDrawer(
-                    containerWidth: width,
-                    drawerPresented: isAIDrawerPresented
+            .allowsHitTesting(!firstRunOnboardingIsPresented)
+            .accessibilityHidden(firstRunOnboardingIsPresented)
+
+            if firstRunOnboardingIsPresented {
+                FirstRunOnboardingView(
+                    errorMessage: onboardingError,
+                    startTutorial: startGuidedTutorial,
+                    openProject: openProjectFromOnboarding,
+                    openDemo: openDemoFromOnboarding,
+                    dismiss: dismissFirstRunOnboarding
                 )
             }
         }
@@ -161,6 +174,52 @@ struct WorkbenchView: View {
             return "This permanently removes \(size) and cannot be undone."
         }
         return "This permanently removes the selected item and cannot be undone."
+    }
+
+    private func startGuidedTutorial() {
+        let template: URL
+        do {
+            template = try BundledTutorialTemplate.twHyaFirstLookURL()
+        } catch {
+            onboardingError = error.localizedDescription
+            return
+        }
+
+        guard let workspace = ProjectOpenPanel.chooseDirectory(
+            title: "Choose a tutorial workspace",
+            message: "Select or create a folder for editable notes, acquired data, plots, and task results.",
+            prompt: "Use Workspace"
+        ) else {
+            return
+        }
+
+        store.openProject(path: workspace.path)
+        guard store.state.hasProject else {
+            onboardingError = store.state.lastErrors.last ?? "Workbench could not open that tutorial workspace."
+            return
+        }
+
+        store.openTutorialTemplate(path: template.path)
+        dismissFirstRunOnboarding()
+    }
+
+    private func openProjectFromOnboarding() {
+        guard let url = ProjectOpenPanel.chooseDirectory() else { return }
+        store.openProject(path: url.path)
+        guard store.state.hasProject else {
+            onboardingError = store.state.lastErrors.last ?? "Workbench could not open that project directory."
+            return
+        }
+        dismissFirstRunOnboarding()
+    }
+
+    private func openDemoFromOnboarding() {
+        store.openFixtureProject()
+        guard store.state.hasProject else {
+            onboardingError = store.state.lastErrors.last ?? "Workbench could not create the demo project."
+            return
+        }
+        dismissFirstRunOnboarding()
     }
 
     private func reconcilePanelsForDrawer(containerWidth: CGFloat, drawerPresented: Bool) {

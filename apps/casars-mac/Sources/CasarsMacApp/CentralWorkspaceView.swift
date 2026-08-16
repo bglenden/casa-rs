@@ -8,8 +8,6 @@ import UniformTypeIdentifiers
 struct CentralWorkspaceView: View {
     @ObservedObject var store: WorkbenchStore
     var initialMeasurementSetExplorerMode: MeasurementSetExplorerMode = .summary
-    var firstRunOnboardingIsPresented = false
-    var dismissFirstRunOnboarding: () -> Void = {}
 
     var body: some View {
         VStack(spacing: 0) {
@@ -154,11 +152,7 @@ struct CentralWorkspaceView: View {
                 HistoryPanel(store: store)
             }
         } else {
-            EmptyWorkbenchPanel(
-                store: store,
-                firstRunOnboardingIsPresented: firstRunOnboardingIsPresented,
-                dismissFirstRunOnboarding: dismissFirstRunOnboarding
-            )
+            EmptyWorkbenchPanel(store: store)
         }
     }
 
@@ -179,33 +173,8 @@ struct CentralWorkspaceView: View {
 
 struct EmptyWorkbenchPanel: View {
     @ObservedObject var store: WorkbenchStore
-    let firstRunOnboardingIsPresented: Bool
-    let dismissFirstRunOnboarding: () -> Void
-    @State private var onboardingError: String?
 
     var body: some View {
-        ZStack {
-            emptyState
-                .allowsHitTesting(!isPresentingFirstRunOnboarding)
-                .accessibilityHidden(isPresentingFirstRunOnboarding)
-
-            if isPresentingFirstRunOnboarding {
-                FirstRunOnboardingView(
-                    errorMessage: onboardingError,
-                    startTutorial: startGuidedTutorial,
-                    openProject: openProject,
-                    openDemo: openDemo,
-                    dismiss: dismissFirstRunOnboarding
-                )
-            }
-        }
-    }
-
-    private var isPresentingFirstRunOnboarding: Bool {
-        firstRunOnboardingIsPresented && !store.state.hasProject
-    }
-
-    private var emptyState: some View {
         VStack(alignment: .leading, spacing: 18) {
             PanelHeader(
                 title: store.state.hasProject ? "No active tab" : "Open a casa-rs project",
@@ -251,52 +220,6 @@ struct EmptyWorkbenchPanel: View {
         .frame(maxWidth: 560, alignment: .leading)
         .padding(28)
         .accessibilityIdentifier("panel.emptyWorkbench")
-    }
-
-    private func startGuidedTutorial() {
-        let template: URL
-        do {
-            template = try BundledTutorialTemplate.twHyaFirstLookURL()
-        } catch {
-            onboardingError = error.localizedDescription
-            return
-        }
-
-        guard let workspace = ProjectOpenPanel.chooseDirectory(
-            title: "Choose a tutorial workspace",
-            message: "Select or create a folder for editable notes, acquired data, plots, and task results.",
-            prompt: "Use Workspace"
-        ) else {
-            return
-        }
-
-        store.openProject(path: workspace.path)
-        guard store.state.hasProject else {
-            onboardingError = store.state.lastErrors.last ?? "Workbench could not open that tutorial workspace."
-            return
-        }
-
-        store.openTutorialTemplate(path: template.path)
-        dismissFirstRunOnboarding()
-    }
-
-    private func openProject() {
-        guard let url = ProjectOpenPanel.chooseDirectory() else { return }
-        store.openProject(path: url.path)
-        guard store.state.hasProject else {
-            onboardingError = store.state.lastErrors.last ?? "Workbench could not open that project directory."
-            return
-        }
-        dismissFirstRunOnboarding()
-    }
-
-    private func openDemo() {
-        store.openFixtureProject()
-        guard store.state.hasProject else {
-            onboardingError = store.state.lastErrors.last ?? "Workbench could not create the demo project."
-            return
-        }
-        dismissFirstRunOnboarding()
     }
 }
 

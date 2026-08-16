@@ -68,6 +68,44 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(try accessibilityValue("project.rootPath").contains("Open a project directory to begin"))
     }
 
+    func testShowWelcomeOverOpenProjectReturnsToSameNotebook() throws {
+        let project = try makeProductionProjectRoot(prefix: "casars-mac-ui-welcome")
+        let notebooks = project.appendingPathComponent("notebooks", isDirectory: true)
+        try FileManager.default.createDirectory(at: notebooks, withIntermediateDirectories: true)
+        try """
+        <!-- casa-rs-notebook:v1 id=019f1111-1111-7111-8111-111111111111 -->
+
+        # Welcome regression notebook
+
+        The active project and notebook must survive the welcome overlay.
+        """.write(
+            to: notebooks.appendingPathComponent("welcome-regression.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        productionProjectURL = project
+
+        launchLiveProductionProject(
+            project,
+            environment: [:],
+            requiredElements: ["notebook.document.scroll"]
+        )
+        let projectRootBeforeWelcome = try accessibilityValue("project.rootPath")
+
+        app.menuBars.menuBarItems["Workbench"].click()
+        let showWelcome = app.menuItems["Show Welcome"]
+        XCTAssertTrue(showWelcome.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(showWelcome.isEnabled)
+        showWelcome.click()
+
+        XCTAssertTrue(try require("onboarding.welcome").exists)
+        try require("onboarding.dismiss").click()
+
+        XCTAssertFalse(element("onboarding.welcome").waitForExistence(timeout: 1))
+        XCTAssertTrue(try require("notebook.document.scroll").exists)
+        XCTAssertEqual(try accessibilityValue("project.rootPath"), projectRootBeforeWelcome)
+    }
+
     func testCompleteDocumentEditingAndTaskProjection() throws {
         launchPrototype()
 

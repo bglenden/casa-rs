@@ -179,7 +179,7 @@ struct CasarsMacApp: App {
                     didCompleteFirstRunOnboarding = false
                     forceFirstRunOnboarding = true
                 }
-                .disabled(store.isPrototypeRuntime || store.state.hasProject)
+                .disabled(store.isPrototypeRuntime)
 
                 Button("Open AI Chat") {
                     store.openDefaultTab(kind: .aiChat)
@@ -1032,8 +1032,9 @@ struct CasarsMacApp: App {
     }
 
     private var shouldPresentFirstRunOnboarding: Bool {
-        guard !store.isPrototypeRuntime, !store.state.hasProject else { return false }
+        guard !store.isPrototypeRuntime else { return false }
         if forceFirstRunOnboarding { return true }
+        guard !store.state.hasProject else { return false }
         let hasExplicitStartupDestination = startupProjectPath != nil
             || startupImagerMeasurementSetPath != nil
             || startupTutorialPackPath != nil
