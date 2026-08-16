@@ -62,6 +62,12 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(try require("onboarding.openDemo").isEnabled)
         XCTAssertTrue(try accessibilityValue("project.rootPath").contains("Open a project directory to begin"))
 
+        try require("onboarding.startTutorial").click()
+        let workspaceChooser = app.dialogs["Choose a tutorial workspace"]
+        XCTAssertTrue(workspaceChooser.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(element("onboarding.error").exists)
+        workspaceChooser.buttons["Cancel"].click()
+
         try require("onboarding.dismiss").click()
         XCTAssertFalse(element("onboarding.welcome").waitForExistence(timeout: 1))
         XCTAssertTrue(try require("panel.emptyWorkbench").exists)
