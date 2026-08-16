@@ -633,6 +633,41 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Stop"].isEnabled, "Replacing notebook parameters must not execute the task")
     }
 
+    func testProjectFileContextMenuRequiresConfirmationForImmediateDeletion() throws {
+        let project = try makeProductionProjectRoot(prefix: "casars-mac-ui-removal")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let file = project.appendingPathComponent("large-output.dat")
+        try Data(repeating: 0x2A, count: 1024).write(to: file)
+        productionProjectURL = project
+
+        app = makeTestApplication()
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "--open-project", project.path,
+        ]
+        launchTestApplication()
+        app.activate()
+        XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 10))
+        try clickIdentified("dock.mode.files")
+
+        let row = try require("file.row.\(file.path)")
+        row.rightClick()
+        XCTAssertTrue(app.menuItems["Move to Trash"].waitForExistence(timeout: 3))
+        let deleteImmediately = app.menuItems["Delete Immediately…"]
+        XCTAssertTrue(deleteImmediately.exists)
+        deleteImmediately.click()
+
+        let alert = app.alerts["Delete large-output.dat immediately?"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        alert.buttons["Delete"].click()
+
+        XCTAssertTrue(pollUntil(timeout: 5) {
+            !FileManager.default.fileExists(atPath: file.path)
+        })
+        XCTAssertFalse(row.waitForExistence(timeout: 2))
+    }
+
     func testCanonicalMeasurementSetSelectorDiagnosticsReachTheLaunchedApp() throws {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

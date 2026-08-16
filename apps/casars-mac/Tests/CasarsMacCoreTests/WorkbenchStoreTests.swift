@@ -5951,6 +5951,133 @@ final class WorkbenchStoreTests: XCTestCase {
             )
         }
     }
+
+    func testSelectedDatasetUsesSharedTrashRemovalAndClosesItsTab() throws {
+        let root = "/tmp/casars-removal-project"
+        let dataset = DatasetSummary(
+            id: "large-ms",
+            name: "large.ms",
+            path: "\(root)/large.ms",
+            kind: .measurementSet,
+            size: "84 GB",
+            units: "bytes",
+            sizeBytes: 84_000_000_000,
+            notes: ""
+        )
+        var project = ProjectFixture(name: "Removal", rootPath: root, datasets: [dataset], source: .probed)
+        var state = EmptyWorkbench.makeState()
+        state.project = project
+        state.selectedDatasetID = dataset.id
+        state.dockMode = .datasets
+        state.tabs = [WorkbenchTab(
+            id: dataset.explorerTabID,
+            title: dataset.explorerTabTitle,
+            kind: .datasetExplorer,
+            datasetID: dataset.id
+        )]
+        state.activeTabID = dataset.explorerTabID
+        project.datasets = []
+        let removal = RecordingProjectItemRemovalClient()
+        let store = WorkbenchStore(
+            state: state,
+            probeClient: StubProjectProbeClient(result: ProjectFixtureProbe(
+                project: project,
+                diagnostics: []
+            ))
+        )
+        store.installProjectItemRemovalClientForTesting(removal)
+        let finished = expectation(description: "dataset moved to Trash")
+        removal.onRemove = {
+            DispatchQueue.main.async {
+                DispatchQueue.main.async { finished.fulfill() }
+            }
+        }
+
+        store.moveSelectedProjectItemToTrash()
+        wait(for: [finished], timeout: 1)
+
+        XCTAssertEqual(removal.requests.map(\.mode), [.trash])
+        XCTAssertEqual(removal.requests.first?.target.id, dataset.id)
+        XCTAssertEqual(removal.requests.first?.projectRoot, root)
+        XCTAssertTrue(store.state.tabs.isEmpty)
+        XCTAssertTrue(store.state.project.datasets.isEmpty)
+        XCTAssertEqual(store.state.history.last?.title, "Moved large.ms to Trash")
+    }
+
+    func testImmediateDeletionRequiresConfirmationAndBlocksManagedState() throws {
+        let root = "/tmp/casars-removal-project"
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(name: "Removal", rootPath: root, datasets: [], source: .probed)
+        let removal = RecordingProjectItemRemovalClient()
+        let store = WorkbenchStore(
+            state: state,
+            probeClient: StubProjectProbeClient(result: ProjectFixtureProbe(
+                project: state.project,
+                diagnostics: []
+            ))
+        )
+        store.installProjectItemRemovalClientForTesting(removal)
+        let file = try XCTUnwrap(store.fileRemovalTarget(
+            path: "\(root)/notes.txt",
+            name: "notes.txt",
+            isDirectory: false,
+            sizeBytes: 20
+        ))
+
+        store.requestImmediateProjectItemDeletion(file)
+        XCTAssertEqual(store.pendingProjectItemDeletion, file)
+        XCTAssertTrue(removal.requests.isEmpty)
+
+        let finished = expectation(description: "file deleted immediately")
+        removal.onRemove = {
+            DispatchQueue.main.async {
+                DispatchQueue.main.async { finished.fulfill() }
+            }
+        }
+        store.confirmImmediateProjectItemDeletion()
+        wait(for: [finished], timeout: 1)
+        XCTAssertEqual(removal.requests.map(\.mode), [.deleteImmediately])
+
+        let managed = try XCTUnwrap(store.fileRemovalTarget(
+            path: "\(root)/.casa-rs/notebook.lock",
+            name: "notebook.lock",
+            isDirectory: false,
+            sizeBytes: 20
+        ))
+        store.requestImmediateProjectItemDeletion(managed)
+        XCTAssertNil(store.pendingProjectItemDeletion)
+        XCTAssertEqual(removal.requests.count, 1)
+        XCTAssertTrue(store.state.lastErrors.last?.contains(".casa-rs") == true)
+    }
+}
+
+private final class RecordingProjectItemRemovalClient: ProjectItemRemovalClient {
+    struct Request {
+        let target: ProjectItemRemovalTarget
+        let projectRoot: String
+        let mode: ProjectItemRemovalMode
+    }
+
+    private let lock = NSLock()
+    private var storedRequests: [Request] = []
+    var onRemove: (() -> Void)?
+
+    var requests: [Request] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedRequests
+    }
+
+    func remove(
+        _ target: ProjectItemRemovalTarget,
+        fromProjectRoot projectRoot: String,
+        mode: ProjectItemRemovalMode
+    ) throws {
+        lock.lock()
+        storedRequests.append(Request(target: target, projectRoot: projectRoot, mode: mode))
+        lock.unlock()
+        onRemove?()
+    }
 }
 
 private struct StubProjectProbeClient: ProjectProbeClient {

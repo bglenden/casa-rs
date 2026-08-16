@@ -136,6 +136,31 @@ struct WorkbenchView: View {
         .onReceive(Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()) { date in
             store.refreshProjectFromDiskIfNeeded(now: date)
         }
+        .alert(item: Binding(
+            get: { store.pendingProjectItemDeletion },
+            set: { target in
+                if target == nil { store.cancelImmediateProjectItemDeletion() }
+            }
+        )) { target in
+            Alert(
+                title: Text("Delete \(target.name) immediately?"),
+                message: Text(immediateDeletionMessage(target)),
+                primaryButton: .destructive(Text("Delete")) {
+                    store.confirmImmediateProjectItemDeletion()
+                },
+                secondaryButton: .cancel {
+                    store.cancelImmediateProjectItemDeletion()
+                }
+            )
+        }
+    }
+
+    private func immediateDeletionMessage(_ target: ProjectItemRemovalTarget) -> String {
+        if let bytes = target.sizeBytes, bytes > 0 {
+            let size = ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+            return "This permanently removes \(size) and cannot be undone."
+        }
+        return "This permanently removes the selected item and cannot be undone."
     }
 
     private func reconcilePanelsForDrawer(containerWidth: CGFloat, drawerPresented: Bool) {
@@ -210,6 +235,14 @@ struct LeftDockView: View {
                         .lineLimit(1)
 
                     Spacer()
+
+                    if let target = store.projectItemRemovalInProgress {
+                        ProgressView()
+                            .controlSize(.small)
+                            .help("Removing \(target.name)")
+                            .accessibilityLabel("Removing \(target.name)")
+                            .accessibilityIdentifier("projectItem.removal.progress")
+                    }
 
                     Button {
                         store.toggleInspector()
@@ -570,6 +603,11 @@ struct LeftDockView: View {
                         .padding(.vertical, 3)
                         .tag(Optional(document.id))
                         .accessibilityIdentifier("notebook.selector.\(document.id)")
+                        .contextMenu {
+                            if let target = store.notebookRemovalTarget(document.id) {
+                                projectItemRemovalMenu(target)
+                            }
+                        }
                     }
                 }
                 .listStyle(.sidebar)
@@ -650,6 +688,10 @@ struct LeftDockView: View {
                     Button("Open in Table Browser") {
                         store.openDatasetTableBrowser(dataset.id)
                     }
+                }
+                if let target = store.datasetRemovalTarget(dataset.id) {
+                    Divider()
+                    projectItemRemovalMenu(target)
                 }
             }
     }
@@ -837,10 +879,22 @@ struct LeftDockView: View {
                     }
                 )
             } else {
-                List {
+                List(selection: Binding(
+                    get: { store.selectedProjectFileRemovalTarget?.path },
+                    set: { path in
+                        let node = path.flatMap { ProjectFileNode.find(path: $0, in: nodes) }
+                        store.selectProjectFileForRemoval(node.flatMap(projectFileRemovalTarget))
+                    }
+                )) {
                     OutlineGroup(nodes, children: \.children) { node in
                         ProjectFileRow(node: node)
+                            .tag(Optional(node.path))
                             .accessibilityIdentifier("file.row.\(node.id)")
+                            .contextMenu {
+                                if let target = projectFileRemovalTarget(node) {
+                                    projectItemRemovalMenu(target)
+                                }
+                            }
                     }
                 }
                 .listStyle(.sidebar)
@@ -864,6 +918,28 @@ struct LeftDockView: View {
                 }
             )
         }
+    }
+
+    private func projectFileRemovalTarget(_ node: ProjectFileNode) -> ProjectItemRemovalTarget? {
+        store.fileRemovalTarget(
+            path: node.path,
+            name: node.name,
+            isDirectory: node.isDirectory,
+            sizeBytes: node.sizeBytes
+        )
+    }
+
+    @ViewBuilder
+    private func projectItemRemovalMenu(_ target: ProjectItemRemovalTarget) -> some View {
+        Button("Move to Trash") {
+            store.moveProjectItemToTrash(target)
+        }
+        .disabled(!store.canRemoveProjectItem(target))
+
+        Button("Delete Immediately…", role: .destructive) {
+            store.requestImmediateProjectItemDeletion(target)
+        }
+        .disabled(!store.canRemoveProjectItem(target))
     }
 }
 
@@ -974,6 +1050,16 @@ private struct ProjectFileNode: Identifiable, Hashable {
             depth: 0,
             remaining: &remaining
         )
+    }
+
+    static func find(path: String, in nodes: [ProjectFileNode]) -> ProjectFileNode? {
+        for node in nodes {
+            if node.path == path { return node }
+            if let children = node.children, let match = find(path: path, in: children) {
+                return match
+            }
+        }
+        return nil
     }
 
     private static func scanDirectory(

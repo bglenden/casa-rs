@@ -141,6 +141,15 @@ struct CasarsMacApp: App {
                 }
         }
         .commands {
+            CommandGroup(after: .saveItem) {
+                Divider()
+                Button("Move to Trash") {
+                    store.moveSelectedProjectItemToTrash()
+                }
+                .keyboardShortcut(.delete, modifiers: [.command])
+                .disabled(!store.canRemoveSelectedProjectItem)
+            }
+
             CommandMenu("Workbench") {
                 Button("Open Project Directory...") {
                     if let url = ProjectOpenPanel.chooseDirectory() {
