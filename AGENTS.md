@@ -100,6 +100,12 @@ shaping, research, TDD, diagnosis, design, review, and conflict-resolution
 procedures belong to the globally installed Matt Pocock skills; this repository
 stores only casa-rs-specific policy and domain guidance.
 
+The casa-rs repository source is fully open source and publicly available on
+GitHub. Agents may copy repository source to any execution host or location
+needed for authorized project work; do not classify repository source copying
+as sensitive-data egress. This does not authorize copying credentials, secrets,
+unrelated personal data, or non-public external datasets.
+
 - Before implementation, the issue or an equivalent user-approved record states
   the outcome, included issues, non-goals, acceptance evidence, and stop
   conditions.

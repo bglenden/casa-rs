@@ -80723,6 +80723,13 @@ deconvolver=mtmfs
     #[cfg(all(target_os = "macos", feature = "slow-tests"))]
     #[test]
     fn refim_point_cube20_cpu_and_metal_agree_on_active_and_blank_planes() {
+        #[allow(unexpected_cfgs)]
+        let coverage_build = cfg!(coverage);
+        // cargo-llvm-cov intentionally compiles Metal out under cfg(coverage),
+        // so this backend differential has no executable Metal side there.
+        if coverage_build {
+            return;
+        }
         assert!(
             casa_imaging::standard_mfs_metal_device_available(),
             "focused CPU-versus-Metal cube differential requires a Metal device"
