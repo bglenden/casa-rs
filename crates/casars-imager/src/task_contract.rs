@@ -2757,6 +2757,8 @@ pub struct ImagerRunTaskResult {
 impl ImagerRunTaskResult {
     /// Build the canonical run result from one completed run.
     pub fn from_run(request: ImagerRunTaskRequest, summary: &RunSummary) -> Self {
+        let summaryminor = build_summaryminor(summary, request.fullsummary);
+        let iterdone = task_iterdone(summary.minor_iterations, &summaryminor);
         Self {
             request: request.clone(),
             run: ImagerRunReport {
@@ -2764,11 +2766,11 @@ impl ImagerRunTaskResult {
                 gridded_samples: summary.gridded_samples,
                 major_cycles: summary.major_cycles,
                 minor_iterations: summary.minor_iterations,
-                iterdone: summary.minor_iterations,
+                iterdone,
                 nmajordone: summary.major_cycles,
                 stopcode: casa_stop_code(summary.clean_stop_reason),
                 clean_stop_reason: summary.clean_stop_reason.map(Into::into),
-                summaryminor: build_summaryminor(summary, request.fullsummary),
+                summaryminor,
                 stage_timings: core_stage_timings(&summary.stage_timings),
                 frontend_timings: frontend_stage_timings(summary.frontend_timings),
                 channels: summary
@@ -2780,6 +2782,14 @@ impl ImagerRunTaskResult {
             },
             artifacts: build_artifacts(&request),
         }
+    }
+}
+
+fn task_iterdone(minor_iterations: usize, summaryminor: &[ImagerMinorCycleSummary]) -> usize {
+    if summaryminor.is_empty() {
+        minor_iterations
+    } else {
+        summaryminor.iter().map(|cycle| cycle.iter_done).sum()
     }
 }
 
@@ -3169,12 +3179,17 @@ mod tests {
         ImagerProgressDetail, ImagerProgressEvent, ImagerProgressRuntime, ImagerProjection,
         ImagerRestoringBeamMode, ImagerRunTaskRequest, ImagerSaveModel, ImagerSpectralMode,
         ImagerTaskRequest, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
-        awproject_run_report, imager_task_schema_bundle,
+        awproject_run_report, imager_task_schema_bundle, task_iterdone,
     };
     use crate::{
         CliConfig, ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy,
         SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy,
     };
+
+    #[test]
+    fn task_iterdone_preserves_trace_empty_reported_updates() {
+        assert_eq!(task_iterdone(7, &[]), 7);
+    }
 
     #[test]
     fn schema_bundle_uses_current_protocol_and_definitions() {
