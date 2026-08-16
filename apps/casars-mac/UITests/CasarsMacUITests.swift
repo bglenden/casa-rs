@@ -2310,6 +2310,31 @@ final class CasarsMacUITests: XCTestCase {
         )
     }
 
+    func testDisplayFontSizeScalesTutorialRichText() throws {
+        launchTutorialPrototype()
+        app.menuBars.menuBarItems["Display"].click()
+        let resetFontSize = app.menuItems["Reset Font Size"]
+        XCTAssertTrue(resetFontSize.waitForExistence(timeout: 3), app.debugDescription)
+        resetFontSize.click()
+
+        let heading = try require("notebook.richElement.rich-element-0")
+        let prose = try require("notebook.richElement.rich-element-1")
+        let originalHeadingHeight = heading.frame.height
+        let originalProseHeight = prose.frame.height
+
+        for _ in 0..<3 {
+            let displayMenu = app.menuBars.menuBarItems["Display"]
+            XCTAssertTrue(displayMenu.waitForExistence(timeout: 3), app.debugDescription)
+            displayMenu.click()
+            let increaseFontSize = app.menuItems["Increase Font Size"]
+            XCTAssertTrue(increaseFontSize.waitForExistence(timeout: 3), app.debugDescription)
+            increaseFontSize.click()
+        }
+
+        XCTAssertGreaterThan(heading.frame.height, originalHeadingHeight)
+        XCTAssertGreaterThan(prose.frame.height, originalProseHeight)
+    }
+
     func testProductionTutorialForkApprovalReadyAndTaskLoading() throws {
         let root = try makeProductionProjectRoot(prefix: "casars-gui-tutorial")
         let project = root.appendingPathComponent("project", isDirectory: true)

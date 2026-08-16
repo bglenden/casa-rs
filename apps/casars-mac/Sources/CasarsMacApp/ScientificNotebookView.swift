@@ -672,6 +672,7 @@ struct PrototypeNotebookTaskView: View {
 }
 
 struct RichMarkdownBlockEditor: View {
+    @Environment(\.workbenchFontSize) private var workbenchFontSize
     @Binding var source: String
     let headingLevel: Int?
     let isInsertionSurface: Bool
@@ -686,7 +687,7 @@ struct RichMarkdownBlockEditor: View {
                 set: { source = $0 }
             ))
             .textFieldStyle(.plain)
-            .font(headingFont(level: headingLevel))
+            .font(.system(size: headingPointSize(level: headingLevel)))
             .fontWeight(.semibold)
             .accessibilityIdentifier(accessibilityID)
         } else {
@@ -694,12 +695,13 @@ struct RichMarkdownBlockEditor: View {
                 ZStack(alignment: .topLeading) {
                     if source.isEmpty {
                         Text(isInsertionSurface ? "Add notes here…" : "Continue writing notes…")
+                            .font(.system(size: bodyPointSize))
                             .foregroundStyle(.tertiary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 8)
                     }
                     TextEditor(text: $source)
-                        .font(.system(size: 15))
+                        .font(.system(size: bodyPointSize))
                         .scrollContentBackground(.hidden)
                         .frame(minHeight: editorHeight)
                         .fixedSize(horizontal: false, vertical: true)
@@ -715,7 +717,7 @@ struct RichMarkdownBlockEditor: View {
                 }
             } else if let rendered = NotebookMarkdownPresentation.attributedString(source) {
                 Text(rendered)
-                    .font(.system(size: 15))
+                    .font(.system(size: bodyPointSize))
                     .foregroundStyle(Color(nsColor: .labelColor))
                     .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
                     .contentShape(Rectangle())
@@ -733,17 +735,38 @@ struct RichMarkdownBlockEditor: View {
         }
     }
 
-    private func headingFont(level: Int) -> Font {
-        switch level {
-        case 1: .title
-        case 2: .title2
-        case 3: .title3
-        default: .headline
+    private var bodyPointSize: CGFloat {
+        CGFloat(workbenchFontSize + 2)
+    }
+
+    private func headingPointSize(level: Int) -> CGFloat {
+        let offset: Double = switch level {
+        case 1: 15
+        case 2: 9
+        case 3: 7
+        default: 1
         }
+        return CGFloat(workbenchFontSize + offset)
+    }
+
+    private var editorLineHeight: CGFloat {
+        bodyPointSize + 8
+    }
+
+    private var editorMinimumHeight: CGFloat {
+        bodyPointSize * (46.0 / 15.0)
+    }
+
+    private var editorVerticalPadding: CGFloat {
+        bodyPointSize * (18.0 / 15.0)
     }
 
     private var editorHeight: CGFloat {
-        max(46, CGFloat(source.components(separatedBy: .newlines).count) * 23 + 18)
+        max(
+            editorMinimumHeight,
+            CGFloat(source.components(separatedBy: .newlines).count) * editorLineHeight
+                + editorVerticalPadding
+        )
     }
 }
 
