@@ -1102,6 +1102,7 @@ struct DisplaySettingsView: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        NSApp.applicationIconImage = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
         NSApp.activate(ignoringOtherApps: true)
         WorkbenchFallbackWindowController.shared.scheduleStartupWindow(arguments: CommandLine.arguments)
         WorkbenchWindowPlacement.scheduleRepairsForAppWindows()
