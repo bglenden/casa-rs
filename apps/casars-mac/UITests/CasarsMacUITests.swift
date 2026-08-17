@@ -630,7 +630,7 @@ final class CasarsMacUITests: XCTestCase {
         try clickIdentified("dock.mode.notebooks")
         let selector = notebookSelector(notebookID)
         XCTAssertTrue(selector.waitForExistence(timeout: 5), app.debugDescription)
-        try require("notebook.selector.open").click()
+        try require("notebook.row.\(notebookID)").doubleClick()
 
         XCTAssertTrue(element("notebook.viewMode").waitForExistence(timeout: 5), app.debugDescription)
 

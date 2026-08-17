@@ -607,6 +607,20 @@ struct LeftDockView: View {
                         .padding(.vertical, 3)
                         .tag(Optional(summary.id))
                         .accessibilityIdentifier("notebook.selector.\(summary.id)")
+                        .overlay {
+                            DockRowClickTarget(
+                                identifier: "notebook.row.\(summary.id)",
+                                label: "Open \(summary.filename)",
+                                help: "Double-click to open the notebook",
+                                onSingleClick: {
+                                    store.selectPrototypeNotebook(summary.id)
+                                },
+                                onDoubleClick: {
+                                    store.selectPrototypeNotebook(summary.id)
+                                    store.openDefaultTab(kind: .notebook)
+                                }
+                            )
+                        }
                     }
                 }
                 .listStyle(.sidebar)
@@ -662,6 +676,20 @@ struct LeftDockView: View {
                         .padding(.vertical, 3)
                         .tag(Optional(document.id))
                         .accessibilityIdentifier("notebook.selector.\(document.id)")
+                        .overlay {
+                            DockRowClickTarget(
+                                identifier: "notebook.row.\(document.id)",
+                                label: "Open \(document.filename)",
+                                help: "Double-click to open the notebook",
+                                onSingleClick: {
+                                    store.selectScientificNotebook(document.id)
+                                },
+                                onDoubleClick: {
+                                    store.selectScientificNotebook(document.id)
+                                    store.openDefaultTab(kind: .notebook)
+                                }
+                            )
+                        }
                         .contextMenu {
                             if let target = store.notebookRemovalTarget(document.id) {
                                 projectItemRemovalMenu(target)
@@ -729,8 +757,10 @@ struct LeftDockView: View {
             .contentShape(Rectangle())
             .tag(Optional(dataset.id))
             .overlay {
-                DatasetRowClickTarget(
-                    datasetID: dataset.id,
+                DockRowClickTarget(
+                    identifier: "dataset.row.\(dataset.id)",
+                    label: "Open \(URL(fileURLWithPath: dataset.id).lastPathComponent)",
+                    help: "Double-click to open the dataset explorer",
                     onSingleClick: {
                         store.selectDataset(dataset.id)
                     },
@@ -1237,49 +1267,51 @@ private struct ProjectFileRow: View {
     }
 }
 
-private struct DatasetRowClickTarget: NSViewRepresentable {
-    let datasetID: String
+private struct DockRowClickTarget: NSViewRepresentable {
+    let identifier: String
+    let label: String
+    let help: String
     let onSingleClick: () -> Void
     let onDoubleClick: () -> Void
 
-    func makeNSView(context: Context) -> DatasetRowClickView {
-        let view = DatasetRowClickView()
-        view.configureAccessibility(datasetID: datasetID)
+    func makeNSView(context: Context) -> DockRowClickView {
+        let view = DockRowClickView()
+        view.configureAccessibility(identifier: identifier, label: label, help: help)
         view.onSingleClick = onSingleClick
         view.onDoubleClick = onDoubleClick
         return view
     }
 
-    func updateNSView(_ nsView: DatasetRowClickView, context: Context) {
-        nsView.configureAccessibility(datasetID: datasetID)
+    func updateNSView(_ nsView: DockRowClickView, context: Context) {
+        nsView.configureAccessibility(identifier: identifier, label: label, help: help)
         nsView.onSingleClick = onSingleClick
         nsView.onDoubleClick = onDoubleClick
     }
 }
 
-private final class DatasetRowClickView: NSView {
-    var datasetID = ""
+private final class DockRowClickView: NSView {
+    var itemIdentifier = ""
     var onSingleClick: (() -> Void)?
     var onDoubleClick: (() -> Void)?
 
     override var acceptsFirstResponder: Bool { false }
 
-    func configureAccessibility(datasetID: String) {
-        self.datasetID = datasetID
+    func configureAccessibility(identifier: String, label: String, help: String) {
+        itemIdentifier = identifier
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
-        setAccessibilityIdentifier("dataset.row.\(datasetID)")
-        setAccessibilityLabel("Open \(URL(fileURLWithPath: datasetID).lastPathComponent)")
-        setAccessibilityHelp("Double-click to open the dataset explorer")
+        setAccessibilityIdentifier(identifier)
+        setAccessibilityLabel(label)
+        setAccessibilityHelp(help)
     }
 
     override func mouseDown(with event: NSEvent) {
-        let clickedDatasetID = datasetID
+        let clickedItemIdentifier = itemIdentifier
         if event.clickCount >= 2 {
-            datasetClickLogger.debug("row_mouse_down double id=\(clickedDatasetID, privacy: .public)")
+            datasetClickLogger.debug("row_mouse_down double id=\(clickedItemIdentifier, privacy: .public)")
             onDoubleClick?()
         } else {
-            datasetClickLogger.debug("row_mouse_down single id=\(clickedDatasetID, privacy: .public)")
+            datasetClickLogger.debug("row_mouse_down single id=\(clickedItemIdentifier, privacy: .public)")
             onSingleClick?()
         }
     }
