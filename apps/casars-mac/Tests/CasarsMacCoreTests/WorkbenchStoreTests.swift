@@ -1611,7 +1611,10 @@ final class WorkbenchStoreTests: XCTestCase {
         """)
         store.saveScientificNotebook()
         let savedCell = try XCTUnwrap(store.state.scientificNotebooks?.activeNotebook?.cells.first)
-        XCTAssertFalse(savedCell.body.isEmpty, "saved source: \(store.state.scientificNotebooks?.activeNotebook?.source ?? "missing")")
+        XCTAssertFalse(
+            savedCell.bodySource(in: store.state.scientificNotebooks?.activeNotebook?.source ?? "")?.isEmpty ?? true,
+            "saved source: \(store.state.scientificNotebooks?.activeNotebook?.source ?? "missing")"
+        )
 
         store.runScientificPythonCell(cellID)
         waitFor("Python receipt", timeout: 10) {
@@ -7114,7 +7117,7 @@ private final class RecordingNotebookPersistenceClient: NotebookPersistenceClien
     private(set) var finalizeRequests: [NotebookFinalizeRecordingRequest] = []
     var beginError: Error?
 
-    func projectCells(source: String) throws -> [NotebookCellState] {
+    func projectCells(source: String) throws -> [NotebookCellProjection] {
         try base.projectCells(source: source)
     }
 

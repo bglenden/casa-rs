@@ -1554,11 +1554,14 @@ pub struct NotebookExecutionReceipt {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, uniffi::Record)]
-pub struct NotebookCellState {
+pub struct NotebookCellProjection {
     pub id: String,
     pub kind: String,
-    pub body: String,
     pub task_intent: Option<NotebookTaskIntent>,
+    pub full_start: u64,
+    pub full_end: u64,
+    pub body_start: u64,
+    pub body_end: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, uniffi::Record)]
@@ -1604,7 +1607,7 @@ pub struct NotebookDocumentProjection {
     pub filename: String,
     pub source: String,
     pub content_hash: String,
-    pub cells: Vec<NotebookCellState>,
+    pub cells: Vec<NotebookCellProjection>,
     pub receipts: Vec<NotebookExecutionReceipt>,
     pub visualizations: Vec<NotebookVisualizationSnapshot>,
 }
@@ -3069,20 +3072,27 @@ fn notebook_receipt_projection(
 
 fn notebook_cell_projections(
     document: &NotebookDocument,
-) -> FrontendResult<Vec<NotebookCellState>> {
+) -> FrontendResult<Vec<NotebookCellProjection>> {
     document
         .cells()
         .iter()
         .map(|cell| {
-            Ok(NotebookCellState {
+            Ok(NotebookCellProjection {
                 id: cell.id.to_string(),
                 kind: cell.kind.as_str().to_owned(),
-                body: document.source()[cell.body_range.clone()].to_owned(),
                 task_intent: cell
                     .task
                     .as_ref()
                     .map(notebook_task_intent_projection)
                     .transpose()?,
+                full_start: u64::try_from(cell.full_range.start)
+                    .map_err(|error| notebook_error("project notebook full start", error))?,
+                full_end: u64::try_from(cell.full_range.end)
+                    .map_err(|error| notebook_error("project notebook full end", error))?,
+                body_start: u64::try_from(cell.body_range.start)
+                    .map_err(|error| notebook_error("project notebook body start", error))?,
+                body_end: u64::try_from(cell.body_range.end)
+                    .map_err(|error| notebook_error("project notebook body end", error))?,
             })
         })
         .collect()
@@ -3279,7 +3289,7 @@ fn notebook_projection(
 
 /// Parse one complete in-memory Markdown draft through the Rust-owned cell contract.
 #[uniffi::export]
-pub fn notebook_cells(source: String) -> FrontendResult<Vec<NotebookCellState>> {
+pub fn notebook_cells(source: String) -> FrontendResult<Vec<NotebookCellProjection>> {
     let document = NotebookDocument::parse(source)
         .map_err(|error| notebook_error("parse notebook draft cells", error))?;
     notebook_cell_projections(&document)
@@ -10824,7 +10834,7 @@ mod tests {
             project_root: project_root.display().to_string(),
             filename: "Authored.md".to_owned(),
             base_hash: created.content_hash,
-            source,
+            source: source.clone(),
             resolution: NotebookConflictResolution::Reject,
         })
         .expect("save authored task cell");
@@ -10835,7 +10845,19 @@ mod tests {
         assert!(notebook.receipts.is_empty());
         assert_eq!(notebook.cells[0].id, cell_id.to_string());
         assert_eq!(notebook.cells[0].kind, "task");
-        assert!(notebook.cells[0].body.contains("[parameters]"));
+        let cell = &notebook.cells[0];
+        let full_start = usize::try_from(cell.full_start).expect("full start");
+        let full_end = usize::try_from(cell.full_end).expect("full end");
+        let body_start = usize::try_from(cell.body_start).expect("body start");
+        let body_end = usize::try_from(cell.body_end).expect("body end");
+        assert_eq!(&notebook.source.as_bytes()[body_start..body_end], b"```toml\n[casars]\nformat = 1\nsurface = \"imhead\"\nkind = \"task\"\ncontract = 1\n\n[parameters]\nmode = \"summary\"\n```\n");
+        assert_eq!(
+            &notebook.source.as_bytes()[full_start..full_end],
+            source[full_start..full_end].as_bytes()
+        );
+        assert!(full_start < body_start);
+        assert!(body_start < body_end);
+        assert!(body_end < full_end);
         assert_eq!(
             notebook.cells[0].task_intent.as_ref().unwrap().surface,
             "imhead"
@@ -10849,6 +10871,55 @@ mod tests {
                 value: "summary".to_owned()
             })
         );
+    }
+
+    #[test]
+    fn notebook_cells_preserve_ordered_utf8_ranges_and_exact_body_slices() {
+        let project = tempfile::tempdir().expect("project");
+        let project_root = project.path().canonicalize().expect("canonical project");
+        let created = notebook_create(NotebookCreateRequest {
+            project_root: project_root.display().to_string(),
+            filename: Some("Ranges.md".to_owned()),
+            title: "Ranges".to_owned(),
+        })
+        .expect("create notebook");
+        let first_id = casa_notebook::CellId::new();
+        let second_id = casa_notebook::CellId::new();
+        let source = format!(
+            "{}\n<!-- casa-rs-cell:v1 id={first_id} kind=output -->\nπ body é\n<!-- /casa-rs-cell -->\n\n<!-- casa-rs-cell:v1 id={second_id} kind=python -->\nsecond body\n<!-- /casa-rs-cell -->\n",
+            created.source
+        );
+
+        let cells = notebook_cells(source.clone()).expect("project cell ranges");
+        assert_eq!(
+            cells.iter().map(|cell| cell.id.clone()).collect::<Vec<_>>(),
+            [first_id.to_string(), second_id.to_string()]
+        );
+        assert!(cells.windows(2).all(|pair| {
+            pair[0].full_start < pair[0].full_end
+                && pair[0].full_end <= pair[1].full_start
+                && pair[0].body_start < pair[0].body_end
+                && pair[0].body_end <= pair[1].body_start
+        }));
+
+        let first = &cells[0];
+        let first_body_start = usize::try_from(first.body_start).expect("first body start");
+        let first_body_end = usize::try_from(first.body_end).expect("first body end");
+        assert_eq!(
+            &source.as_bytes()[first_body_start..first_body_end],
+            "π body é\n".as_bytes()
+        );
+        for cell in &cells {
+            for offset in [
+                cell.full_start,
+                cell.full_end,
+                cell.body_start,
+                cell.body_end,
+            ] {
+                let offset = usize::try_from(offset).expect("UTF-8 offset");
+                assert!(source.is_char_boundary(offset));
+            }
+        }
     }
 
     #[test]

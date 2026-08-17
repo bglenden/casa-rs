@@ -3197,7 +3197,11 @@ public final class WorkbenchStore: ObservableObject {
               let document = project.activeNotebook,
               let cell = document.cells.first(where: { $0.id == cellID && $0.kind == "python" })
         else { return }
-        let source = Self.pythonSource(from: cell.body)
+        guard let body = cell.bodySource(in: document.draftSource) else {
+            state.lastErrors.append("Python cell \(cellID) has invalid Rust-owned body offsets")
+            return
+        }
+        let source = Self.pythonSource(from: body)
         guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             state.lastErrors.append("Python cell \(cellID) has no executable source")
             completion?()
@@ -3473,10 +3477,22 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     package func setScientificNotebookDraft(_ markdown: String) {
-        let projectedCells = try? notebookPersistenceClient.projectCells(source: markdown)
+        let projection: Result<[NotebookCellProjection], Error>
+        do {
+            projection = .success(try notebookPersistenceClient.projectCells(source: markdown))
+        } catch {
+            projection = .failure(error)
+        }
         updateActiveScientificNotebook { document in
             document.draftSource = markdown
-            document.cells = projectedCells ?? []
+            switch projection {
+            case let .success(cells):
+                document.cells = cells
+                document.projectionError = nil
+            case let .failure(error):
+                document.cells = []
+                document.projectionError = String(describing: error)
+            }
             document.conflict = nil
         }
     }
@@ -3486,7 +3502,10 @@ public final class WorkbenchStore: ObservableObject {
               let cell = document.cells.first(where: { $0.id == cellID && $0.kind == "python" })
         else { return }
         let replacement = "```python\n\(source)\(source.hasSuffix("\n") ? "" : "\n")```\n"
-        guard let bodyRange = document.draftSource.range(of: cell.body) else { return }
+        guard let bodyRange = cell.bodyStringRange(in: document.draftSource) else {
+            state.lastErrors.append("Python cell \(cellID) has invalid Rust-owned body offsets")
+            return
+        }
         var markdown = document.draftSource
         markdown.replaceSubrange(bodyRange, with: replacement)
         setScientificNotebookDraft(markdown)

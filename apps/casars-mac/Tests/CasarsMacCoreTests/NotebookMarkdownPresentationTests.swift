@@ -2,7 +2,7 @@ import Foundation
 @testable import CasarsMacCore
 import XCTest
 
-final class NotebookMarkdownPresentationTests: XCTestCase {
+final class MarkdownPresentationTests: XCTestCase {
     func testRichProjectionHidesControlCommentsAndParsesMarkdownDecoration() throws {
         let source = """
         <!-- casa-rs-notebook:v1 id=notebook-1 -->
@@ -12,8 +12,8 @@ final class NotebookMarkdownPresentationTests: XCTestCase {
         <!-- casa-rs-ai-pin:v1 conversation=c1 message=m1 -->
         """
 
-        let displayed = NotebookMarkdownPresentation.displaySource(source)
-        let attributed = try XCTUnwrap(NotebookMarkdownPresentation.attributedString(source))
+        let displayed = NotebookVisibleMarkdown.source(source)
+        let attributed = try XCTUnwrap(NotebookVisibleMarkdown.attributedString(source))
         let renderedText = String(attributed.characters)
 
         XCTAssertFalse(displayed.contains("casa-rs-notebook"))
@@ -26,8 +26,8 @@ final class NotebookMarkdownPresentationTests: XCTestCase {
     func testMetadataOnlyFragmentHasNoRichProjection() {
         let source = "<!-- casa-rs-notebook:v1 id=notebook-1 -->\n\n"
 
-        XCTAssertEqual(NotebookMarkdownPresentation.displaySource(source), "")
-        XCTAssertNil(NotebookMarkdownPresentation.attributedString(source))
+        XCTAssertEqual(NotebookVisibleMarkdown.source(source), "")
+        XCTAssertNil(NotebookVisibleMarkdown.attributedString(source))
     }
 
     func testRichProjectionMaterializesParagraphsAndLists() throws {
@@ -43,7 +43,7 @@ final class NotebookMarkdownPresentationTests: XCTestCase {
         My summary notes:
         """
 
-        let attributed = try XCTUnwrap(NotebookMarkdownPresentation.attributedString(source))
+        let attributed = try XCTUnwrap(NotebookVisibleMarkdown.attributedString(source))
 
         XCTAssertEqual(
             String(attributed.characters),
@@ -60,4 +60,24 @@ final class NotebookMarkdownPresentationTests: XCTestCase {
             """
         )
     }
+
+    func testGenericMarkdownPreservesOrdinaryAndFencedComments() throws {
+        let source = """
+        <!-- ordinary HTML comment -->
+        <!-- ordinary prose may mention casa-rs-cell without being control metadata -->
+
+        ```markdown
+        <!-- casa-rs-cell:v1 id=fenced kind=unknown -->
+        ```
+        """
+
+        let generic = try XCTUnwrap(MarkdownPresentation.attributedString(source))
+        XCTAssertTrue(String(generic.characters).contains("ordinary HTML comment"))
+        XCTAssertTrue(String(generic.characters).contains("casa-rs-cell:v1 id=fenced kind=unknown"))
+        let visible = NotebookVisibleMarkdown.source(source)
+        XCTAssertTrue(visible.contains("ordinary HTML comment"))
+        XCTAssertTrue(visible.contains("ordinary prose may mention casa-rs-cell"))
+        XCTAssertTrue(visible.contains("casa-rs-cell:v1 id=fenced kind=unknown"))
+    }
+
 }

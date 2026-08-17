@@ -113,6 +113,19 @@ syntax remains intact. Raw HTML is not executed in rich rendering. External
 modifications are detected; conflicting dirty edits pause saving and require
 reconciliation rather than being overwritten.
 
+The production rendering seam is deliberately one-way: Rust parses managed
+cells and projects their IDs, kinds, task intent, and ordered UTF-8 byte ranges;
+the macOS workbench validates that projection before constructing its
+source-preserving rich document. An invalid projection produces a structural
+error with an explicit Raw-mode action, never a marker-bearing prose fallback.
+The only Markdown marker scanner is
+`PrototypeNotebookRichProjectionAdapter`, retained for deterministic fixture
+and prototype input; it is not a production recovery path. Generic Markdown
+rendering is shared through `MarkdownPresentation` and
+`WorkbenchMarkdownText`, while `NotebookVisibleMarkdown` is the notebook-only
+projection that hides CASA control comments outside fenced code and preserves
+ordinary HTML comments and fenced content.
+
 Task cells contain sparse ADR-0006 TOML. Selecting or double-clicking the
 parameter block opens a normal task tab populated from that intent. A new task
 tab loads directly; replacing an already edited task tab first displays a typed

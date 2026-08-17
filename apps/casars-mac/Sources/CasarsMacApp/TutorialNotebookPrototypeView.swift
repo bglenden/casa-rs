@@ -5,7 +5,8 @@ struct TutorialNotebookPrototypeView: View {
     @ObservedObject var store: WorkbenchStore
     @Environment(\.colorScheme) private var colorScheme
     @State private var expandedFailureDetails = false
-    @State private var learnerRichDocument = PrototypeNotebookRichDocument(markdown: "")
+    @State private var learnerRichDocument = NotebookRichDocument.empty
+    @State private var richProjectionError: String?
 
     private var tutorial: TutorialNotebookPrototypeProjection? {
         store.state.prototypeTutorial
@@ -170,12 +171,24 @@ struct TutorialNotebookPrototypeView: View {
                     acquisitionCard
                 }
 
-                ForEach(learnerRichDocument.elements) { element in
-                    richElement(element)
-
-                    if element.id == acquisitionAnchorElementID {
-                        acquisitionCard
-                    }
+                if let richProjectionError {
+                    NotebookRichStructuralErrorView(
+                        message: richProjectionError,
+                        onSwitchToRaw: { store.setTutorialPrototypeViewMode(.raw) }
+                    )
+                } else {
+                    NotebookRichDocumentView(
+                        document: $learnerRichDocument,
+                        onMarkdownChange: { store.setTutorialPrototypeDraft($0) },
+                        resolvedManagedCell: { cellID in
+                            guard cellID == tutorial?.fixtureTask.id else { return nil }
+                            return AnyView(taskParameterCard)
+                        },
+                        afterBlock: { block in
+                            guard block.id == acquisitionAnchorElementID else { return nil }
+                            return AnyView(acquisitionCard)
+                        }
+                    )
                 }
 
                 Text("End of learner notebook")
@@ -196,41 +209,17 @@ struct TutorialNotebookPrototypeView: View {
     /// content. Place it after the first section's prose when possible while
     /// keeping every Markdown element sourced from the learner draft.
     private var acquisitionAnchorElementID: String? {
-        let elements = learnerRichDocument.elements
-        guard let headingIndex = elements.firstIndex(where: { $0.headingLevel == 2 }) else {
+        let blocks = learnerRichDocument.blocks
+        guard let headingIndex = blocks.firstIndex(where: { $0.headingLevel == 2 }) else {
             return nil
         }
-        let followingIndex = elements.index(after: headingIndex)
-        if followingIndex < elements.endIndex,
-           elements[followingIndex].headingLevel == nil,
-           elements[followingIndex].taskID == nil {
-            return elements[followingIndex].id
+        let followingIndex = blocks.index(after: headingIndex)
+        if followingIndex < blocks.endIndex,
+           blocks[followingIndex].headingLevel == nil,
+           blocks[followingIndex].managedCellID == nil {
+            return blocks[followingIndex].id
         }
-        return elements[headingIndex].id
-    }
-
-    @ViewBuilder
-    private func richElement(_ element: PrototypeNotebookRichElement) -> some View {
-        if let taskID = element.taskID {
-            if taskID == tutorial?.fixtureTask.id {
-                taskParameterCard
-            } else if let fallbackSource = element.managedFallbackSource,
-                      let rendered = NotebookMarkdownPresentation.attributedString(fallbackSource) {
-                Text(rendered)
-                    .workbenchFont(.caption)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityIdentifier("notebook.managedFallback.\(taskID)")
-            }
-        } else {
-            RichMarkdownBlockEditor(
-                source: richElementBinding(element.id),
-                headingLevel: element.headingLevel,
-                isInsertionSurface: element.isInsertionSurface,
-                accessibilityID: "notebook.richElement.\(element.id)"
-            )
-        }
+        return blocks[headingIndex].id
     }
 
     private var compactSectionProgress: some View {
@@ -258,28 +247,15 @@ struct TutorialNotebookPrototypeView: View {
         .padding(.vertical, 2)
     }
 
-    private func richElementBinding(_ elementID: String) -> Binding<String> {
-        Binding(
-            get: {
-                learnerRichDocument.elements
-                    .first(where: { $0.id == elementID })?
-                    .editableSource ?? ""
-            },
-            set: { value in
-                var updated = learnerRichDocument
-                guard updated.replaceEditableSource(elementID: elementID, with: value) else {
-                    return
-                }
-                learnerRichDocument = updated
-                store.setTutorialPrototypeDraft(updated.markdown)
-            }
-        )
-    }
-
     private func loadRichDocument() {
-        learnerRichDocument = PrototypeNotebookRichDocument(
-            markdown: learnerNotebook?.draftMarkdown ?? ""
-        )
+        do {
+            learnerRichDocument = try PrototypeNotebookRichProjectionAdapter.document(
+                markdown: learnerNotebook?.draftMarkdown ?? ""
+            )
+            richProjectionError = nil
+        } catch {
+            richProjectionError = String(describing: error)
+        }
     }
 
     @ViewBuilder
