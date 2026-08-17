@@ -244,14 +244,16 @@ struct ScientificNotebookView: View {
                     if let receiptID = element.taskID,
                        let receipt = notebook.task(receiptID: receiptID) {
                         inlineTaskBlock(receipt)
-                    } else if element.taskID != nil {
-                        Text(element.source)
-                            .font(.system(size: 12, design: .monospaced))
+                    } else if let fallbackSource = element.managedFallbackSource,
+                              let rendered = NotebookMarkdownPresentation.attributedString(fallbackSource) {
+                        Text(rendered)
+                            .workbenchFont(.caption)
+                            .foregroundStyle(.secondary)
                             .textSelection(.enabled)
-                            .padding(10)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.secondary.opacity(0.065))
-                            .clipShape(RoundedRectangle(cornerRadius: 5))
+                            .accessibilityIdentifier("notebook.managedFallback.\(element.taskID ?? "unknown")")
+                    } else if element.taskID != nil {
+                        EmptyView()
                     } else {
                         RichMarkdownBlockEditor(
                             source: richElementBinding(element.id),

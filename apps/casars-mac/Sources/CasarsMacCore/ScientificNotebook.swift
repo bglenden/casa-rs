@@ -284,6 +284,12 @@ package struct PrototypeNotebookRichElement: Identifiable, Equatable {
 
     package var taskID: String? { kind.taskID }
 
+    package var managedFallbackSource: String? {
+        guard taskID != nil else { return nil }
+        let displayed = NotebookMarkdownPresentation.displaySource(source)
+        return displayed.isEmpty ? nil : displayed
+    }
+
     package var headingLevel: Int? {
         guard case let .heading(level) = kind else { return nil }
         return level

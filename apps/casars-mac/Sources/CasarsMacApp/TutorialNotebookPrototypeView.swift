@@ -214,14 +214,14 @@ struct TutorialNotebookPrototypeView: View {
         if let taskID = element.taskID {
             if taskID == tutorial?.fixtureTask.id {
                 taskParameterCard
-            } else {
-                Text(element.source)
-                    .font(.system(size: 12, design: .monospaced))
+            } else if let fallbackSource = element.managedFallbackSource,
+                      let rendered = NotebookMarkdownPresentation.attributedString(fallbackSource) {
+                Text(rendered)
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
                     .textSelection(.enabled)
-                    .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.secondary.opacity(0.065))
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                    .accessibilityIdentifier("notebook.managedFallback.\(taskID)")
             }
         } else {
             RichMarkdownBlockEditor(

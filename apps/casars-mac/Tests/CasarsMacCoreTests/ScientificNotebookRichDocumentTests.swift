@@ -222,6 +222,21 @@ final class ScientificNotebookRichDocumentTests: XCTestCase {
         )
     }
 
+    func testUnresolvedManagedOutputFallbackHidesControlMarkers() throws {
+        let source = """
+        <!-- casa-rs-cell:v1 id=acquisition kind=output -->
+        Recorded operation `tutorial.acquire.twhya-calibrated`. Managed execution details are stored separately.
+        <!-- /casa-rs-cell -->
+        """
+        let document = PrototypeNotebookRichDocument(markdown: source)
+        let managedElement = try XCTUnwrap(document.elements.first { $0.taskID == "acquisition" })
+
+        XCTAssertEqual(
+            managedElement.managedFallbackSource,
+            "Recorded operation `tutorial.acquire.twhya-calibrated`. Managed execution details are stored separately."
+        )
+    }
+
     private func taskCell(id: String, trailingNewline: Bool) -> String {
         "<!-- casa-rs-cell:v1 id=\(id) kind=task -->\n"
             + "```toml\n"
