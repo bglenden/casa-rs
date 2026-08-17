@@ -4277,10 +4277,17 @@ pub fn tutorial_project_list(
         .map_err(|error| tutorial_error("open tutorial project", error))?;
     let store = NotebookStore::open(&project_root)
         .map_err(|error| tutorial_error("open tutorial notebook store", error))?;
+    let notebook_ids = store
+        .list_notebooks()
+        .map_err(|error| notebook_error("list tutorial notebooks", error))?
+        .into_iter()
+        .map(|entry| entry.id)
+        .collect::<BTreeSet<_>>();
     project
         .list_locks()
         .map_err(|error| tutorial_error("list tutorial locks", error))?
         .into_iter()
+        .filter(|lock| notebook_ids.contains(&lock.notebook_id))
         .map(|lock| tutorial_project_projection(&store, lock))
         .collect()
 }

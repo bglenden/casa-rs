@@ -4,15 +4,34 @@ import XCTest
 @testable import CasarsMacCore
 
 final class TutorialPersistenceTests: XCTestCase {
+    func testListingTutorialsIgnoresManagedStateForTrashedNotebook() throws {
+        let project = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-tutorial-orphan-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: project) }
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+
+        let client = UniFFITutorialPersistenceClient()
+        let removed = try client.fork(
+            projectRoot: project.path,
+            templatePath: bundledTWHyaTutorial.path,
+            filename: "removed.md"
+        )
+        let surviving = try client.fork(
+            projectRoot: project.path,
+            templatePath: bundledTWHyaTutorial.path,
+            filename: "surviving.md"
+        )
+        try FileManager.default.removeItem(
+            at: project.appendingPathComponent("notebooks/removed.md")
+        )
+
+        let reopened = try client.list(projectRoot: project.path)
+
+        XCTAssertEqual(reopened.map(\.tutorial.notebookId), [surviving.tutorial.notebookId])
+        XCTAssertFalse(reopened.map(\.tutorial.notebookId).contains(removed.tutorial.notebookId))
+    }
+
     func testBundledTWHyaTutorialLoadsEveryGuideTaskAgainstCanonicalSurfaces() throws {
-        let packageRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let template = packageRoot
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("resources/tutorials/tw-hya-first-look", isDirectory: true)
         let project = FileManager.default.temporaryDirectory
             .appendingPathComponent("casars-tutorial-template-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: project) }
@@ -20,7 +39,7 @@ final class TutorialPersistenceTests: XCTestCase {
 
         let forked = try UniFFITutorialPersistenceClient().fork(
             projectRoot: project.path,
-            templatePath: template.path,
+            templatePath: bundledTWHyaTutorial.path,
             filename: "tw-hya-first-look.md"
         )
         let cells = forked.notebook.cells
@@ -175,5 +194,15 @@ final class TutorialPersistenceTests: XCTestCase {
         let reopened = try client.list(projectRoot: project.path)
         XCTAssertEqual(reopened.first?.tutorial.datasets.first?.phase, .ready)
         XCTAssertEqual(reopened.first?.notebook.receipts.first?.operationId, "tutorial.acquire.science")
+    }
+
+    private var bundledTWHyaTutorial: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("resources/tutorials/tw-hya-first-look", isDirectory: true)
     }
 }
