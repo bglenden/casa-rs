@@ -3239,6 +3239,21 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(store.state.activeTabID, "")
     }
 
+    func testTabPresentationSurvivesSwitchingAwayAndBack() {
+        let store = WorkbenchStore.fixture()
+        let datasetTabID = store.state.activeTabID
+
+        store.setMeasurementSetExplorerSection(.plots, tabID: datasetTabID)
+        store.activateTab("tab-ai")
+        store.activateTab(datasetTabID)
+
+        XCTAssertEqual(store.measurementSetExplorerSection(tabID: datasetTabID), .plots)
+
+        store.closeTab(datasetTabID)
+
+        XCTAssertNil(store.tabPresentationStates[datasetTabID])
+    }
+
     func testClosingUnknownTabRecordsDebugError() {
         let store = WorkbenchStore.fixture()
 

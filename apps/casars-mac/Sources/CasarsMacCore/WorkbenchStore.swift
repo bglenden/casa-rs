@@ -791,6 +791,7 @@ extension AssistantCorpusRefreshRequest: Equatable {}
 public final class WorkbenchStore: ObservableObject {
     @Published public private(set) var state: WorkbenchState
     @Published package private(set) var pythonNotebookRuntime = NotebookPythonRuntimeState()
+    @Published package private(set) var tabPresentationStates: [String: WorkbenchTabPresentationState] = [:]
     @Published package private(set) var selectedProjectFileRemovalTarget: ProjectItemRemovalTarget?
     @Published package private(set) var pendingProjectItemDeletion: ProjectItemRemovalTarget?
     @Published package private(set) var projectItemRemovalInProgress: ProjectItemRemovalTarget?
@@ -1211,6 +1212,7 @@ public final class WorkbenchStore: ObservableObject {
             temporaryDemoProjectRoot = probed.project.rootPath
             var project = probed.project
             project.datasets = orderedDemoDatasets(project.datasets)
+            tabPresentationStates.removeAll()
             state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
             state.applicationCatalog = applicationCatalog
             state.project = project
@@ -1252,6 +1254,7 @@ public final class WorkbenchStore: ObservableObject {
         cleanupTemporaryDemoProject()
         do {
             let probed = try probeClient.probeProject(path: path)
+            tabPresentationStates.removeAll()
             state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
             state.applicationCatalog = applicationCatalog
             state.project = probed.project
@@ -1312,6 +1315,7 @@ public final class WorkbenchStore: ObservableObject {
             )
             return
         }
+        tabPresentationStates.removeAll()
         state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
         state.applicationCatalog = applicationCatalog
         state.project = ProjectFixture(
@@ -2479,6 +2483,22 @@ public final class WorkbenchStore: ObservableObject {
         state.activeTabID = tabID
     }
 
+    package func measurementSetExplorerSection(
+        tabID: String,
+        default defaultMode: MeasurementSetExplorerMode = .summary
+    ) -> MeasurementSetExplorerMode {
+        tabPresentationStates[tabID]?.measurementSetExplorerMode ?? defaultMode
+    }
+
+    package func setMeasurementSetExplorerSection(
+        _ mode: MeasurementSetExplorerMode,
+        tabID: String
+    ) {
+        var presentation = tabPresentationStates[tabID] ?? WorkbenchTabPresentationState()
+        presentation.measurementSetExplorerMode = mode
+        tabPresentationStates[tabID] = presentation
+    }
+
     public func closeTab(_ tabID: String) {
         guard let index = state.tabs.firstIndex(where: { $0.id == tabID }) else {
             state.lastErrors.append("Unknown tab \(tabID)")
@@ -2510,6 +2530,7 @@ public final class WorkbenchStore: ObservableObject {
         }
         let wasActive = state.activeTabID == tabID
         state.tabs.remove(at: index)
+        tabPresentationStates.removeValue(forKey: tabID)
 
         guard wasActive else {
             return
