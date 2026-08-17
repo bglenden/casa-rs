@@ -29,4 +29,35 @@ final class NotebookMarkdownPresentationTests: XCTestCase {
         XCTAssertEqual(NotebookMarkdownPresentation.displaySource(source), "")
         XCTAssertNil(NotebookMarkdownPresentation.attributedString(source))
     }
+
+    func testRichProjectionMaterializesParagraphsAndLists() throws {
+        let source = """
+        Open **Datasets** and select `twhya_calibrated.ms`.
+
+        Check the following against the summary:
+
+        - the observation has 68,335 records;
+        - field 3 is the phase calibrator;
+        - field 5 is TW Hya.
+
+        My summary notes:
+        """
+
+        let attributed = try XCTUnwrap(NotebookMarkdownPresentation.attributedString(source))
+
+        XCTAssertEqual(
+            String(attributed.characters),
+            """
+            Open Datasets and select twhya_calibrated.ms.
+
+            Check the following against the summary:
+
+            • the observation has 68,335 records;
+            • field 3 is the phase calibrator;
+            • field 5 is TW Hya.
+
+            My summary notes:
+            """
+        )
+    }
 }
