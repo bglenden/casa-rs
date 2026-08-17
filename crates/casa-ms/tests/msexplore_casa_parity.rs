@@ -2055,7 +2055,15 @@ except Exception:
         .env("CASA_OUT", &output)
         .env(
             "DISPLAY",
-            std::env::var("DISPLAY").unwrap_or_else(|_| ":0".to_string()),
+            std::env::var("DISPLAY").unwrap_or_else(|_| ":99".to_string()),
+        )
+        .env(
+            "QT_QPA_PLATFORM",
+            std::env::var("QT_QPA_PLATFORM").unwrap_or_else(|_| "offscreen".to_string()),
+        )
+        .env(
+            "MPLBACKEND",
+            std::env::var("MPLBACKEND").unwrap_or_else(|_| "Agg".to_string()),
         )
         .output()
         .map_err(|error| format!("spawn casa plotms sequence: {error}"))?;
@@ -2135,11 +2143,20 @@ kwargs = {
         .env("CASA_VIS", &local_ms_path)
         .env("CASA_OUT", &output)
         .env("CASA_EXPFORMAT", expformat)
-        // `casaplotms` checks only for the presence of DISPLAY, even when
-        // exporting with `showgui=False` on macOS.
+        // `casaplotms` checks for DISPLAY even with `showgui=False`, while
+        // Qt still needs an explicit offscreen backend to avoid activating the
+        // CASA application during macOS test runs.
         .env(
             "DISPLAY",
-            std::env::var("DISPLAY").unwrap_or_else(|_| ":0".to_string()),
+            std::env::var("DISPLAY").unwrap_or_else(|_| ":99".to_string()),
+        )
+        .env(
+            "QT_QPA_PLATFORM",
+            std::env::var("QT_QPA_PLATFORM").unwrap_or_else(|_| "offscreen".to_string()),
+        )
+        .env(
+            "MPLBACKEND",
+            std::env::var("MPLBACKEND").unwrap_or_else(|_| "Agg".to_string()),
         )
         .output()
         .map_err(|error| format!("spawn casa plotms: {error}"))?;
