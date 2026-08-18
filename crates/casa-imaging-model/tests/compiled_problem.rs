@@ -44,6 +44,10 @@ fn reconstruction() -> ReconstructionContract {
 }
 
 fn products(reverse: bool) -> ProductRequirements {
+    products_with_beam(reverse, RestoringBeamPolicy::PerPlane)
+}
+
+fn products_with_beam(reverse: bool, restoring_beam: RestoringBeamPolicy) -> ProductRequirements {
     let mut products = vec![
         ProductKind::Psf,
         ProductKind::Residual,
@@ -57,11 +61,7 @@ fn products(reverse: bool) -> ProductRequirements {
     if reverse {
         products.reverse();
     }
-    ProductRequirements::new(
-        products,
-        ProductNormalization::FlatNoise,
-        RestoringBeamPolicy::PerPlane,
-    )
+    ProductRequirements::new(products, ProductNormalization::FlatNoise, restoring_beam)
 }
 
 fn science() -> ScientificContract {
@@ -200,6 +200,26 @@ fn incompatible_reconstruction_capabilities_fail_before_execution_inputs_exist()
         science(),
         ReconstructionContract::new(
             ReconstructionBasis::Constant,
+            ReconstructionAlgorithm::Mtmfs,
+            ReconstructionControls::new(100, 0.1, 0.0),
+        ),
+        weighting(),
+        products(false),
+        numerics(false),
+    );
+
+    assert!(matches!(
+        compile_problem(specification, inputs(false)),
+        Err(CompileProblemError::InvalidCapabilityCombination { .. })
+    ));
+}
+
+#[test]
+fn one_term_mfs_uses_the_constant_basis_instead_of_taylor() {
+    let specification = ProblemSpecification::new(
+        science(),
+        ReconstructionContract::new(
+            ReconstructionBasis::Taylor { terms: 1 },
             ReconstructionAlgorithm::Mtmfs,
             ReconstructionControls::new(100, 0.1, 0.0),
         ),
@@ -405,16 +425,17 @@ fn multiscale_order_and_duplicate_scales_do_not_change_scientific_identity() {
 
 #[test]
 fn complete_science_contract_changes_identity_and_capabilities() {
-    let make = |science, weighting| {
+    let make = |science, weighting, products| {
         ProblemSpecification::new(
             science,
             reconstruction(),
             weighting,
-            products(false),
+            products,
             numerics(false),
         )
     };
-    let baseline = compile_problem(make(science(), weighting()), inputs(false)).expect("baseline");
+    let baseline = compile_problem(make(science(), weighting(), products(false)), inputs(false))
+        .expect("baseline");
     let widefield_science = ScientificContract::new(
         GeometryContract::new(ProjectionGeometry::NonCoplanarW, FieldGeometry::Mosaic),
         SpectralContract::new(
@@ -436,8 +457,15 @@ fn complete_science_contract_changes_identity_and_capabilities() {
         WeightDensityScope::GlobalSelection,
     )
     .with_uv_taper(UvTaper::new(12_000.0, 8_000.0, 0.25));
-    let widefield = compile_problem(make(widefield_science, tapered), inputs(false))
-        .expect("widefield science");
+    let widefield = compile_problem(
+        make(
+            widefield_science,
+            tapered,
+            products_with_beam(false, RestoringBeamPolicy::Common),
+        ),
+        inputs(false),
+    )
+    .expect("widefield science");
 
     assert_ne!(baseline.problem_id(), widefield.problem_id());
     for capability in [
@@ -452,6 +480,52 @@ fn complete_science_contract_changes_identity_and_capabilities() {
     ] {
         assert!(widefield.required_capabilities().contains(&capability));
     }
+}
+
+#[test]
+fn spectral_coupling_and_restoring_beam_policy_must_agree() {
+    let science_with_coupling = |coupling| {
+        ScientificContract::new(
+            GeometryContract::new(ProjectionGeometry::Coplanar, FieldGeometry::Single),
+            SpectralContract::new(
+                SpectralFrame::Native,
+                SpectralSampling::Identity,
+                coupling,
+                None,
+            ),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+            MeasurementEquationContract::new(InstrumentResponse::Scalar),
+        )
+    };
+    let compile = |coupling, beam| {
+        compile_problem(
+            ProblemSpecification::new(
+                science_with_coupling(coupling),
+                reconstruction(),
+                weighting(),
+                products_with_beam(false, beam),
+                numerics(false),
+            ),
+            inputs(false),
+        )
+    };
+
+    assert!(matches!(
+        compile(
+            SpectralCoupling::CommonRestoringBeam,
+            RestoringBeamPolicy::PerPlane
+        ),
+        Err(CompileProblemError::InvalidProductCombination { .. })
+    ));
+    assert!(matches!(
+        compile(SpectralCoupling::Independent, RestoringBeamPolicy::Common),
+        Err(CompileProblemError::InvalidProductCombination { .. })
+    ));
+    compile(
+        SpectralCoupling::CommonRestoringBeam,
+        RestoringBeamPolicy::Common,
+    )
+    .expect("matching common-beam contracts compile");
 }
 
 #[test]

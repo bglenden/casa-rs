@@ -21,10 +21,12 @@ exactly one stable row. A row records:
 - the deletion condition for the displaced implementation; and
 - a Migration Obligation whenever it is not native.
 
-The matrix also maps every current `ProductKind` variant and every supported
-Stokes/raw-correlation `ImagerPlaneSelection` variant to exactly one row. These
-maps make additions or removals explicit instead of letting a coordinated row
-and inventory edit silently redefine the product or polarization surface.
+The matrix also maps every current `ProductKind`, `ImagerPlaneSelection`, and
+`PolarizationCoordinate` variant to exactly one row. The latter includes the
+XY, YX, RL, and LR cross-hands even while their execution routes are
+temporarily unavailable. These maps make additions or removals explicit
+instead of letting a coordinated row and inventory edit silently redefine the
+product or polarization surface.
 
 `LegacyWholeRun` is an ownership classification, not a compatibility promise.
 It permits the current production implementation to remain reachable only
@@ -34,9 +36,11 @@ to call into legacy code or a failed native run to retry through legacy.
 ## Acceptance contracts
 
 The matrix defines reusable contracts for scientific products, exact routing,
-solver trajectories, cross-surface request round trips, and process resource
-authority. Scientific product contracts use a normalized-RMS ceiling of
-`0.001` only on declared valid support and only with a declared denominator.
+solver trajectories, cross-surface request round trips, the immutable
+Compiled Problem foundation, and both the Resource Authority foundation and
+its eventual production integration. Scientific product contracts use a
+normalized-RMS ceiling of `0.001` only on declared valid support and only with
+a declared denominator.
 That scalar ceiling supplements rather than replaces exact topology, WCS,
 units, beam, sum-of-weights, flux, centroid, operator-law, and resource gates.
 
@@ -57,15 +61,25 @@ A row transfers to `Native` only when the same change:
 Before transfer, corrective and performance changes land only in the row's
 current owner. After transfer, they land only in the native owner.
 
-The architecture checker validates schema, the independently pinned canonical
-inventory, stable row identity, exact Acceptance Contract laws/thresholds/
-resource gates, structured issue outcomes, evidence locators, Migration
-Obligations, and source evidence. It classifies every Cargo workspace package,
-requires native dependency sets to match exactly, scans native science and
-Rust/Swift frontend roots for forbidden backend/device imports, and permits
-only the 16 exact frozen legacy edges. Its mutation tests prove coordinated
-inventory and issue deletion, contract weakening, unmapped packages, and
-forbidden logical, package, module, and Swift edges fail closed.
+The architecture checker validates schema, the independently pinned logical
+graph, canonical inventories, complete Acceptance Contracts, complete binding
+row ledger, structured issue outcomes, evidence locators, Migration
+Obligations, and source evidence. It binds the three variant maps to their Rust
+enums, classifies every Cargo workspace package, requires native dependency
+sets to match exactly, scans native science and Rust/Swift frontend roots for
+forbidden backend/device imports, and permits only the 16 exact frozen legacy
+edges plus three exact pre-existing transitional surface edges. Its mutation
+tests prove coordinated inventory and issue deletion, row reclassification,
+contract or graph weakening, unmapped packages, and forbidden logical,
+package, module, and Swift edges fail closed.
+
+`capability.compiled-problem` is Native only for its backend-independent
+logical contract and stable identity; later observation and geometry tickets
+own concrete manifests. Likewise `backend.resource-authority-contract` is the
+Native topology/admission/lease foundation, while
+`backend.process-resource-authority` remains `TemporarilyUnavailable` until
+production schedulers acquire its leases and retain prediction-versus-actual
+execution receipts.
 
 ## Preserved issue and evidence crosswalk
 

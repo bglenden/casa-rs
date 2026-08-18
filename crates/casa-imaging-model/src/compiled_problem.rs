@@ -1318,9 +1318,9 @@ fn validate_science(
 
 fn validate_reconstruction(contract: &ReconstructionContract) -> Result<(), CompileProblemError> {
     match contract.basis {
-        ReconstructionBasis::Taylor { terms: 0 } => {
+        ReconstructionBasis::Taylor { terms: 0 | 1 } => {
             return Err(CompileProblemError::InvalidCapabilityCombination {
-                reason: "a Taylor basis requires at least one term",
+                reason: "a Taylor basis requires at least two terms; single-term MFS uses the constant basis",
             });
         }
         ReconstructionBasis::ChannelLocal { channels: 0 } => {
@@ -1447,6 +1447,13 @@ fn validate_products(
     if restored_image_requested != restoring_beam_requested {
         return Err(CompileProblemError::InvalidProductCombination {
             reason: "restored-image and restoring-beam requirements must be requested together",
+        });
+    }
+    let common_spectral_beam = science.spectral.coupling == SpectralCoupling::CommonRestoringBeam;
+    let common_product_beam = products.restoring_beam == RestoringBeamPolicy::Common;
+    if common_spectral_beam != common_product_beam {
+        return Err(CompileProblemError::InvalidProductCombination {
+            reason: "common spectral coupling and common restoring-beam publication must be requested together",
         });
     }
     if products.contains(ProductKind::PbCorrectedImage)

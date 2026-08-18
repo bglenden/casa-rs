@@ -1065,13 +1065,16 @@ pub enum ResourceError {
         /// Amount remaining under the named hard ceiling.
         available: u64,
     },
-    /// New external pressure would strand active hard reservations.
+    /// Observed external pressure strands active hard reservations.
+    ///
+    /// The authority retains the observation and advances its pressure epoch
+    /// before returning this error, preventing admissions against stale capacity.
     PressureWouldInvalidateLeases {
         /// Physical resource that would become overcommitted.
         resource: String,
         /// Capacity retained by active leases and headroom.
         reserved: u64,
-        /// Capacity exposed by the rejected pressure snapshot.
+        /// Capacity exposed by the observed pressure snapshot.
         available: u64,
     },
     /// The process-wide authority lock was poisoned.
@@ -1137,7 +1140,7 @@ impl fmt::Display for ResourceError {
                 available,
             } => write!(
                 formatter,
-                "pressure update would strand {reserved} reserved {resource} with only {available} available"
+                "observed pressure strands {reserved} reserved {resource} with only {available} available"
             ),
             Self::AuthorityPoisoned => formatter.write_str("resource authority lock is poisoned"),
         }
@@ -1308,7 +1311,11 @@ impl ResourceAuthority {
             let totals = alternative.demand.resource_totals(&self.inner.topology)?;
             let limits = alternative.demand.lease_limits();
             let mut reserved = totals.hard.clone();
-            let headroom = headroom_grant(&self.inner.topology, &alternative.headroom)?;
+            let headroom = headroom_grant(
+                &self.inner.topology,
+                &alternative.headroom,
+                &alternative.demand.host_memory_view,
+            )?;
             add_grant(&mut reserved, &headroom)?;
             let reservation_totals = ResourceTotals {
                 hard: reserved.clone(),
@@ -1366,6 +1373,11 @@ impl ResourceAuthority {
     }
 
     /// Replaces the external-pressure snapshot used for subsequent admissions.
+    ///
+    /// A structurally valid observation is always retained and advances the
+    /// pressure epoch. If it undercuts active reservations, the method reports
+    /// [`ResourceError::PressureWouldInvalidateLeases`] after publishing the
+    /// lower capacity so later admissions fail closed.
     pub fn update_external_pressure(
         &self,
         pressure: ExternalPressure,
@@ -1382,14 +1394,7 @@ impl ResourceAuthority {
         }
         let available = capacity_for_pressure(&self.inner.topology, &pressure);
         let policy_available = active_policy_capacity(&self.inner.topology, &state, &available);
-        if let Some((resource, reserved, available)) = grant_shortfall(&reserved, &policy_available)
-        {
-            return Err(ResourceError::PressureWouldInvalidateLeases {
-                resource,
-                reserved,
-                available,
-            });
-        }
+        let shortfall = grant_shortfall(&reserved, &policy_available);
         let previous_epoch = state.pressure_epoch;
         let current_epoch = state
             .pressure_epoch
@@ -1402,6 +1407,13 @@ impl ResourceAuthority {
         state.pressure = pressure;
         state.pressure_epoch = current_epoch;
         state.epoch = resource_epoch;
+        if let Some((resource, reserved, available)) = shortfall {
+            return Err(ResourceError::PressureWouldInvalidateLeases {
+                resource,
+                reserved,
+                available,
+            });
+        }
         Ok(PressureUpdate {
             previous_epoch,
             current_epoch,
@@ -1817,6 +1829,7 @@ fn validate_alternative(
 fn headroom_grant(
     topology: &ResourceTopology,
     headroom: &ResourceHeadroom,
+    host_memory_view: &CapacityViewId,
 ) -> Result<ResourceGrant, ResourceError> {
     validate_known_resources(
         "headroom memory domain",
@@ -1846,8 +1859,26 @@ fn headroom_grant(
             .iter()
             .map(|accelerator| &accelerator.id),
     )?;
+    let host_domain = topology
+        .memory_views
+        .iter()
+        .find(|view| &view.id == host_memory_view && view.kind == MemoryViewKind::Host)
+        .map(|view| view.domain.clone())
+        .ok_or_else(|| {
+            ResourceError::Invalid(format!(
+                "headroom host-memory view {} is absent or not host-visible",
+                host_memory_view.as_str()
+            ))
+        })?;
+    let mut memory_bytes = headroom.memory_bytes.clone();
+    add_map_bytes(
+        &mut memory_bytes,
+        host_domain,
+        headroom.cache_bytes,
+        "cache headroom",
+    )?;
     Ok(ResourceGrant {
-        memory_bytes: headroom.memory_bytes.clone(),
+        memory_bytes,
         workers: headroom.workers,
         storage_bytes: headroom.storage_bytes.clone(),
         rates_per_second: headroom.rates_per_second.clone(),
@@ -3286,21 +3317,31 @@ fn detect_performance_cpu_cores() -> Option<u64> {
 
 #[cfg(target_os = "macos")]
 fn detect_unified_metal_device() -> bool {
-    let metal = Command::new("/usr/sbin/system_profiler")
+    let hardware_support = Command::new("/usr/sbin/system_profiler")
         .args(["SPDisplaysDataType", "-json"])
         .output()
         .ok()
         .filter(|output| output.status.success())
         .is_some_and(|output| String::from_utf8_lossy(&output.stdout).contains("spdisplays_metal"));
-    if !metal {
-        return false;
-    }
-    Command::new("/usr/sbin/system_profiler")
-        .args(["SPHardwareDataType", "-json"])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .is_some_and(|output| String::from_utf8_lossy(&output.stdout).contains("\"chip_type\""))
+    metal_inventory_available(hardware_support, detect_process_metal_access())
+}
+
+fn metal_inventory_available(hardware_support: bool, process_access: bool) -> bool {
+    hardware_support && process_access
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn detect_process_metal_access() -> bool {
+    use objc2_metal::{MTLCreateSystemDefaultDevice, MTLDevice};
+
+    MTLCreateSystemDefaultDevice()
+        .and_then(|device| device.newCommandQueue())
+        .is_some()
+}
+
+#[cfg(all(target_os = "macos", coverage))]
+fn detect_process_metal_access() -> bool {
+    false
 }
 
 #[cfg(not(target_os = "macos"))]
