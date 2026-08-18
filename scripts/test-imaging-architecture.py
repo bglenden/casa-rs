@@ -414,43 +414,49 @@ class ArchitecturePolicyTests(unittest.TestCase):
     def test_transitional_frontend_boundary_rejects_unqualified_backend_selection(
         self,
     ) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            source = root / "frontend"
-            source.mkdir()
-            module = source / "lib.rs"
-            module.write_text(
-                "let selected = StandardMfsBackend::Cpu;\n", encoding="utf-8"
-            )
-            boundary = {
-                "id": "synthetic-transitional-frontend",
-                "roots": ["frontend"],
-                "extensions": [".rs"],
-                "forbidden_patterns": [
-                    {
-                        "regex": r"\bStandardMfsBackend::[A-Za-z_][A-Za-z0-9_]*\b",
-                        "message": "frontend selects backend",
-                    }
-                ],
-                "accepted_violation_digest": None,
-            }
-            boundary["accepted_violation_digest"] = (
-                checker.source_boundary_violation_digest(
-                    checker.source_boundary_violations(boundary, root)
-                )
-            )
-            policy = {"source_boundaries": [boundary]}
-            checker.validate_source_boundaries(policy, root)
-
-            module.write_text(
-                "let selected = StandardMfsBackend::Cpu;\nlet extra = StandardMfsBackend::Metal;\n",
-                encoding="utf-8",
-            )
-            with self.assertRaisesRegex(
-                checker.ArchitectureError,
-                r"differs from its accepted transitional violations",
+        selectors = [
+            ("StandardMfsBackend", "Cpu", "Metal"),
+            ("StandardMfsMinorCycleBackend", "Cpu", "Metal"),
+            ("SinglePlaneAccelerationPolicy", "Cpu", "Metal"),
+            ("PerPlaneExecutionBackend", "SerialCpu", "Wave3MetalGrouped"),
+        ]
+        production_boundary = next(
+            boundary
+            for boundary in self.policy["source_boundaries"]
+            if boundary["id"] == "rust-imaging-frontends"
+        )
+        for selector, baseline, added in selectors:
+            with (
+                self.subTest(selector=selector),
+                tempfile.TemporaryDirectory() as directory,
             ):
+                root = Path(directory)
+                source = root / "frontend"
+                source.mkdir()
+                module = source / "lib.rs"
+                module.write_text(
+                    f"let selected = {selector}::{baseline};\n", encoding="utf-8"
+                )
+                boundary = copy.deepcopy(production_boundary)
+                boundary["roots"] = ["frontend"]
+                boundary["accepted_violation_digest"] = (
+                    checker.source_boundary_violation_digest(
+                        checker.source_boundary_violations(boundary, root)
+                    )
+                )
+                policy = {"source_boundaries": [boundary]}
                 checker.validate_source_boundaries(policy, root)
+
+                module.write_text(
+                    f"let selected = {selector}::{baseline};\n"
+                    f"let extra = {selector}::{added};\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(
+                    checker.ArchitectureError,
+                    r"differs from its accepted transitional violations",
+                ):
+                    checker.validate_source_boundaries(policy, root)
 
 
 class MigrationMatrixTests(unittest.TestCase):
@@ -632,6 +638,21 @@ class MigrationMatrixTests(unittest.TestCase):
                 "standard_mfs_acceleration_policy_inventory",
                 "Metal",
                 "StandardMfsAccelerationPolicy",
+            ),
+            (
+                "standard_mfs_minor_cycle_backend_inventory",
+                "Metal",
+                "StandardMfsMinorCycleBackend",
+            ),
+            (
+                "single_plane_acceleration_policy_inventory",
+                "MultiCpu",
+                "SinglePlaneAccelerationPolicy",
+            ),
+            (
+                "per_plane_execution_backend_inventory",
+                "Wave3MetalGrouped",
+                "PerPlaneExecutionBackend",
             ),
         ]
         for field, variant, enum_name in cases:

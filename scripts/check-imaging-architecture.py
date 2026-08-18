@@ -53,7 +53,7 @@ ACCEPTED_LOGICAL_GRAPH_SHA256 = (
     "7101b6d90196b1ea3d3c750080d703bb5e305e91c8ac19553e1dda7ed58c4e33"
 )
 ACCEPTED_SOURCE_BOUNDARIES_SHA256 = (
-    "33886331016fb0d0f567e75d1870184571c759bf6a48997ff55d20dc8c7a206d"
+    "1ae88137a4bbf648546e290234c2dbb1617f6f5765153c2790431b288c98fb90"
 )
 ACCEPTED_FROZEN_TRANSITIONAL_EDGES_SHA256 = (
     "0077e28528d2160616d34e17fb7124586f346557917e0bfac99b0dff6739a1d1"
@@ -62,7 +62,7 @@ ACCEPTED_PACKAGE_POLICY_SHA256 = (
     "5f348d635a693798a59cb309d32d2afb121ae14ba980c602e43654e3343ba66c"
 )
 ACCEPTED_MATRIX_INVENTORY_SHA256 = (
-    "29cbc25f7915945d413b39d3b7644b95e3edac23b1877fcf6b8e8095c49ced17"
+    "dc4ca134627402fa74744f56797c067e462e9566178a9188cadeb4c4b14714b0"
 )
 ACCEPTED_PRODUCT_KIND_INVENTORY_SHA256 = (
     "f4e04101f0d6e89d9bc12584cd580f5f8924f80e71b867ee252422f648fdced5"
@@ -106,6 +106,15 @@ ACCEPTED_IMAGING_FFT_BACKEND_POLICY_INVENTORY_SHA256 = (
 ACCEPTED_STANDARD_MFS_ACCELERATION_POLICY_INVENTORY_SHA256 = (
     "5a746c70358a33c038c9ccf37167ab29998f7b55aef418f43b8d7b1ea4953de3"
 )
+ACCEPTED_STANDARD_MFS_MINOR_CYCLE_BACKEND_INVENTORY_SHA256 = (
+    "d96f704776bd4e88fee221e14e7c863894c5a7c1e6e2d3d0510976ad76a1822e"
+)
+ACCEPTED_SINGLE_PLANE_ACCELERATION_POLICY_INVENTORY_SHA256 = (
+    "d762618f2f100f2af0ea77f2244e19bd7d07d911ae23500432ae667f56bd46c6"
+)
+ACCEPTED_PER_PLANE_EXECUTION_BACKEND_INVENTORY_SHA256 = (
+    "2f622825a283efc3580072ae37c6dbf78dc52530923b9a1c56834a44f23b2583"
+)
 ACCEPTED_ISSUE_OUTCOMES_SHA256 = (
     "ffc816c216e9b969c1229f2e813d33a9e12118555e3b286ea66e769218d86713"
 )
@@ -113,12 +122,12 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "114ef002b698d8c3d01f233dac7c3385885c04b6f40bff4ad7d3cecfaea441ef"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "afc1610a7f4b90d6ccebf056370e380cb5a17367b895774aff0918f040fe131f"
+    "fb4936ebc2eced382a141ae15e804aedbdfe36c28f57563f58dfa7841fc57fe2"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
     "f006734a956ab1ae7ee6545d6fd24d82c5bc2fcee39f549fac9cfb64c16f24ac"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 4
+ACCEPTED_MATRIX_CONTRACT_REVISION = 5
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -1155,10 +1164,13 @@ def rust_unit_enum_variants(path: Path, identifier: str) -> set[str]:
         raise ArchitectureError(
             f"cannot read Rust enum source {display_path(path)}: {error}"
         ) from error
-    declaration = re.search(rf"\bpub\s+enum\s+{re.escape(identifier)}\s*\{{", source)
+    declaration = re.search(
+        rf"\b(?:pub(?:\([^)]*\))?\s+)?enum\s+{re.escape(identifier)}\s*\{{",
+        source,
+    )
     if declaration is None:
         raise ArchitectureError(
-            f"cannot find public Rust enum {identifier} in {display_path(path)}"
+            f"cannot find Rust enum {identifier} in {display_path(path)}"
         )
     depth = 1
     end = declaration.end()
@@ -1409,6 +1421,27 @@ def validate_migration_matrix(
             REPO_ROOT / "crates/casars-imager/src/lib.rs",
             "StandardMfsAccelerationPolicy",
             ACCEPTED_STANDARD_MFS_ACCELERATION_POLICY_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "standard_mfs_minor_cycle_backend_inventory",
+            REPO_ROOT / "crates/casa-imaging/src/lib.rs",
+            "StandardMfsMinorCycleBackend",
+            ACCEPTED_STANDARD_MFS_MINOR_CYCLE_BACKEND_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "single_plane_acceleration_policy_inventory",
+            REPO_ROOT / "crates/casa-imaging/src/single_plane_plan.rs",
+            "SinglePlaneAccelerationPolicy",
+            ACCEPTED_SINGLE_PLANE_ACCELERATION_POLICY_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "per_plane_execution_backend_inventory",
+            REPO_ROOT / "crates/casars-imager/src/lib.rs",
+            "PerPlaneExecutionBackend",
+            ACCEPTED_PER_PLANE_EXECUTION_BACKEND_INVENTORY_SHA256,
         )
     baseline_registry = validate_baseline_manifest_registry(
         matrix.get("baseline_manifest_digests")

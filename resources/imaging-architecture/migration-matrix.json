@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "contract_revision": 4,
+  "contract_revision": 5,
   "programme_issue": 486,
   "owner_issue": 487,
   "status_values": ["Native", "LegacyWholeRun", "TemporarilyUnavailable"],
@@ -255,7 +255,7 @@
     "product": ["product.psf", "product.residual", "product.model", "product.image", "product.sumwt", "product.mask", "product.weight", "product.pb", "product.sensitivity", "product.image-pbcor", "product.taylor-terms", "product.alpha", "product.alpha-error", "product.alpha-pbcor", "product.beam"],
     "solver": ["solver.hogbom", "solver.mtmfs", "solver.clark", "solver.multiscale"],
     "frontend": ["frontend.task-provider", "frontend.cli", "frontend.tui", "frontend.python", "frontend.macos", "frontend.assistant"],
-    "backend": ["backend.execution-auto", "backend.serial-cpu", "backend.fixed-tile-cpu", "backend.multiworker-cpu", "backend.metal-gridder", "backend.metal-row-run-gridder", "backend.metal-row-run-grouped-gridder", "backend.fft-auto", "backend.rustfft", "backend.accelerate", "backend.fftw", "backend.metal-mpsgraph", "backend.metal-vkfft", "backend.resource-authority-contract", "backend.process-resource-authority"]
+    "backend": ["backend.execution-auto", "backend.serial-cpu", "backend.fixed-tile-cpu", "backend.multiworker-cpu", "backend.metal-gridder", "backend.metal-row-run-gridder", "backend.metal-row-run-grouped-gridder", "backend.metal-minor-cycle", "backend.fft-auto", "backend.rustfft", "backend.accelerate", "backend.fftw", "backend.metal-mpsgraph", "backend.metal-vkfft", "backend.resource-authority-contract", "backend.process-resource-authority"]
   },
   "product_kind_inventory": {
     "Psf": "product.psf",
@@ -363,6 +363,22 @@
     "MultiCpu": "backend.fixed-tile-cpu",
     "Metal": "backend.metal-row-run-grouped-gridder"
   },
+  "standard_mfs_minor_cycle_backend_inventory": {
+    "Cpu": "backend.serial-cpu",
+    "Metal": "backend.metal-minor-cycle"
+  },
+  "single_plane_acceleration_policy_inventory": {
+    "Cpu": "backend.serial-cpu",
+    "Auto": "backend.execution-auto",
+    "MultiCpu": "backend.multiworker-cpu",
+    "Metal": "backend.metal-row-run-grouped-gridder"
+  },
+  "per_plane_execution_backend_inventory": {
+    "SerialCpu": "backend.serial-cpu",
+    "Wave3FixedTileCpu": "backend.multiworker-cpu",
+    "Wave3MetalGrouped": "backend.metal-row-run-grouped-gridder",
+    "OwnedSinglePlaneFixedTileCpu": "backend.fixed-tile-cpu"
+  },
   "rows": [
     {"id":"capability.continuum-mfs","kind":"capability","status":"LegacyWholeRun","current_owner":"crates/casars-imager + crates/casa-imaging","destination_tickets":["T23/#509"],"evidence_issues":[319,445,446,447,448],"baseline_manifests":["repo://tools/perf/imager/evidence/imaging_performance_evidence_manifest.json#standard-mfs-final-comparison"],"acceptance_contract":"scientific-products-v1","transfer_point":"continuum tracer passes canonical CPU contract","deletion_condition":"old standard-MFS runner is unreachable","migration_obligation":{"ticket":"T23/#509","reason":"current path mixes science, execution, and product ownership"},"source_evidence":["crates/casa-imaging/src/types.rs::pub struct ImagingRequest"]},
     {"id":"capability.spectral-cube","kind":"capability","status":"LegacyWholeRun","current_owner":"crates/casars-imager/src/spectral_slab.rs","destination_tickets":["T35/#521","T37/#523","T38/#524"],"evidence_issues":[35,45,217,466,473,478],"baseline_manifests":["repo://docs/tutorial-parity/wave-3-issue-119-line-imaging.md"],"acceptance_contract":"scientific-products-v1","transfer_point":"cube operator, cycles, and products pass","deletion_condition":"spectral-slab science/controller route is removed","migration_obligation":{"ticket":"T38/#524","reason":"cube remains a mode-specific runner"},"source_evidence":["crates/casars-imager/src/task_contract.rs::ImagerSpectralMode"]},
@@ -436,6 +452,7 @@
     {"id":"backend.metal-gridder","kind":"backend","status":"LegacyWholeRun","current_owner":"crates/casa-imaging","destination_tickets":["T55/#541","T56/#542","T57/#543"],"evidence_issues":[449],"baseline_manifests":["repo://tools/perf/imager/evidence/imaging_performance_evidence_manifest.json#mosaic-mfs-large-dirty-product-metal"],"acceptance_contract":"scientific-products-v1","transfer_point":"direct Metal gridding is registry-selected and lease-backed","deletion_condition":"legacy direct-Metal dispatch and discovery are removed","migration_obligation":{"ticket":"T57/#543","reason":"direct Metal gridding is selected in the legacy runner"},"source_evidence":["crates/casa-imaging/src/lib.rs::Metal"]},
     {"id":"backend.metal-row-run-gridder","kind":"backend","status":"LegacyWholeRun","current_owner":"crates/casa-imaging","destination_tickets":["T55/#541","T56/#542","T57/#543"],"evidence_issues":[449],"baseline_manifests":["repo://tools/perf/imager/evidence/imaging_performance_evidence_manifest.json#mosaic-mfs-large-dirty-product-metal"],"acceptance_contract":"scientific-products-v1","transfer_point":"Metal row-run gridding is registry-selected and lease-backed","deletion_condition":"legacy Metal row-run dispatch and discovery are removed","migration_obligation":{"ticket":"T57/#543","reason":"Metal row-run gridding is selected in the legacy runner"},"source_evidence":["crates/casa-imaging/src/lib.rs::MetalRowRun"]},
     {"id":"backend.metal-row-run-grouped-gridder","kind":"backend","status":"LegacyWholeRun","current_owner":"crates/casa-imaging","destination_tickets":["T55/#541","T56/#542","T57/#543"],"evidence_issues":[449],"baseline_manifests":["repo://tools/perf/imager/evidence/imaging_performance_evidence_manifest.json#mosaic-mfs-large-dirty-product-metal"],"acceptance_contract":"scientific-products-v1","transfer_point":"grouped Metal row-run gridding is registry-selected and lease-backed","deletion_condition":"legacy grouped Metal row-run dispatch and discovery are removed","migration_obligation":{"ticket":"T57/#543","reason":"grouped Metal row-run gridding is selected in the legacy runner"},"source_evidence":["crates/casa-imaging/src/lib.rs::MetalRowRunGrouped"]},
+    {"id":"backend.metal-minor-cycle","kind":"backend","status":"LegacyWholeRun","current_owner":"crates/casa-imaging + crates/casars-imager","destination_tickets":["T26/#512","T54/#540","T55/#541"],"evidence_issues":[448,449],"baseline_manifests":["repo://tools/perf/imager/evidence/imaging_performance_evidence_manifest.json#standard-mfs-final-comparison"],"acceptance_contract":"solver-trajectory-v1","transfer_point":"Metal minor-cycle execution is registry-selected, lease-backed, and trajectory-equivalent","deletion_condition":"frontend minor-cycle backend selection and legacy Metal minor-cycle dispatch are removed","migration_obligation":{"ticket":"T54/#540","reason":"the frontend still selects CPU versus Metal minor-cycle execution"},"source_evidence":["crates/casa-imaging/src/lib.rs::StandardMfsMinorCycleBackend"]},
     {"id":"backend.fft-auto","kind":"backend","status":"LegacyWholeRun","current_owner":"crates/casa-imaging + crates/casars-imager","destination_tickets":["T16/#502","T54/#540","T55/#541"],"evidence_issues":[319,449],"baseline_manifests":["repo://tools/perf/imager/evidence/imaging_performance_evidence_manifest.json"],"acceptance_contract":"resource-authority-v1","transfer_point":"FFT auto choice is made only by the shared planner and backend registry","deletion_condition":"environment and frontend FFT selector ladders are removed","migration_obligation":{"ticket":"T16/#502","reason":"FFT auto-selection remains split across legacy planner and frontend policy"},"source_evidence":["crates/casa-imaging/src/fft_backend.rs::Auto"]},
     {"id":"backend.rustfft","kind":"backend","status":"LegacyWholeRun","current_owner":"crates/casa-imaging/src/fft_backend.rs","destination_tickets":["T16/#502","T54/#540"],"evidence_issues":[319],"baseline_manifests":["repo://tools/perf/imager/evidence/imaging_performance_evidence_manifest.json"],"acceptance_contract":"scientific-products-v1","transfer_point":"FFT is declarative backend work node","deletion_condition":"legacy FFT selector removed","migration_obligation":{"ticket":"T54/#540","reason":"FFT selection precedes shared registry"},"source_evidence":["crates/casa-imaging/src/fft_backend.rs::RustFft"]},
     {"id":"backend.accelerate","kind":"backend","status":"LegacyWholeRun","current_owner":"crates/casa-imaging/src/fft_backend.rs","destination_tickets":["T16/#502","T55/#541"],"evidence_issues":[449],"baseline_manifests":["repo://tools/perf/imager/evidence/imaging_performance_evidence_manifest.json"],"acceptance_contract":"scientific-products-v1","transfer_point":"Accelerate is plan-selected work","deletion_condition":"legacy Accelerate selector removed","migration_obligation":{"ticket":"T55/#541","reason":"backend eligibility is not registry-owned"},"source_evidence":["crates/casa-imaging/src/fft_backend.rs::Accelerate"]},
