@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -335,9 +336,42 @@ class ArchitecturePolicyTests(unittest.TestCase):
                 for boundary in policy.get("source_boundaries", [])
                 if boundary.get("id") == "swift-imaging-frontends"
             ]
+            policy["source_boundaries"][0]["roots"] = [
+                "apps/casars-mac/Sources/CasarsMacApp"
+            ]
             with self.assertRaisesRegex(
                 checker.ArchitectureError,
                 r"Swift frontend inspects a device or selects an imaging backend",
+            ):
+                checker.validate_source_boundaries(policy, root)
+
+    def test_transitional_frontend_boundary_rejects_a_new_backend_reference(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "frontend"
+            source.mkdir()
+            boundary = {
+                "id": "synthetic-transitional-frontend",
+                "roots": ["frontend"],
+                "extensions": [".rs"],
+                "forbidden_patterns": [
+                    {
+                        "regex": r"\bcasa_imaging::",
+                        "message": "frontend imports legacy imaging",
+                    }
+                ],
+                "accepted_violation_digest": checker.stable_digest([]),
+            }
+            policy = {"source_boundaries": [boundary]}
+            checker.validate_source_boundaries(policy, root)
+            (source / "lib.rs").write_text(
+                "use casa_imaging::StandardMfsBackend;\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(
+                checker.ArchitectureError,
+                r"differs from its accepted transitional violations",
             ):
                 checker.validate_source_boundaries(policy, root)
 
@@ -351,6 +385,24 @@ class MigrationMatrixTests(unittest.TestCase):
         checker.validate_migration_matrix(
             self.matrix, self.policy, enforce_accepted_scope=False
         )
+
+    def test_cli_requires_the_declared_migration_matrix(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "missing-migration-matrix.json"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(CHECKER_PATH),
+                    "--migration-matrix",
+                    str(missing),
+                ],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("required migration matrix is missing", result.stderr)
 
     def test_required_mutations_fail(self) -> None:
         mutations: list[tuple[str, dict[str, Any], str]] = []
@@ -425,6 +477,51 @@ class MigrationMatrixTests(unittest.TestCase):
         with self.assertRaisesRegex(
             checker.ArchitectureError,
             r"inventory differs from the canonical imaging inventory",
+        ):
+            checker.validate_migration_matrix(matrix, self.policy)
+
+    def test_baseline_evidence_digest_must_match_repository_content(self) -> None:
+        matrix = checker.load_object(MATRIX_PATH, "migration matrix")
+        locator = next(iter(matrix["baseline_manifest_digests"]))
+        matrix["baseline_manifest_digests"][locator] = "0" * 64
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"content digest differs",
+        ):
+            checker.validate_migration_matrix(matrix, self.policy)
+
+    def test_mutable_external_baseline_locator_is_rejected(self) -> None:
+        matrix = copy.deepcopy(self.matrix)
+        matrix["rows"][0]["baseline_manifests"] = [
+            "github-issue://bglenden/casa-rs/487"
+        ]
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"must reference a content-pinned baseline manifest",
+        ):
+            checker.validate_migration_matrix(
+                matrix, self.policy, enforce_accepted_scope=False
+            )
+
+    def test_cube_interpolation_inventory_cannot_drop_a_current_variant(self) -> None:
+        matrix = checker.load_object(MATRIX_PATH, "migration matrix")
+        del matrix["cube_interpolation_inventory"]["Linear"]
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"differs from CubeInterpolation",
+        ):
+            checker.validate_migration_matrix(matrix, self.policy)
+
+    def test_standard_mfs_backend_inventory_cannot_alias_a_distinct_family(
+        self,
+    ) -> None:
+        matrix = checker.load_object(MATRIX_PATH, "migration matrix")
+        matrix["standard_mfs_backend_inventory"]["MetalRowRun"] = (
+            "backend.metal-gridder"
+        )
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"differs from StandardMfsBackend",
         ):
             checker.validate_migration_matrix(matrix, self.policy)
 
@@ -575,9 +672,9 @@ class MigrationMatrixTests(unittest.TestCase):
 
     def test_live_baseline_rejects_a_missing_repository_manifest(self) -> None:
         matrix = checker.load_object(MATRIX_PATH, "migration matrix")
-        matrix["rows"][0]["baseline_manifests"] = [
-            "repo://tools/perf/imager/evidence/missing.json"
-        ]
+        missing = "repo://tools/perf/imager/evidence/missing.json"
+        matrix["baseline_manifest_digests"][missing] = "0" * 64
+        matrix["rows"][0]["baseline_manifests"] = [missing]
         with self.assertRaisesRegex(
             checker.ArchitectureError,
             r"cannot read baseline manifest",

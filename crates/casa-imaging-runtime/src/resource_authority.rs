@@ -3323,25 +3323,34 @@ fn detect_unified_metal_device() -> bool {
         .ok()
         .filter(|output| output.status.success())
         .is_some_and(|output| String::from_utf8_lossy(&output.stdout).contains("spdisplays_metal"));
-    metal_inventory_available(hardware_support, detect_process_metal_access())
+    let (process_access, has_unified_memory) = detect_process_metal_access();
+    metal_inventory_available(hardware_support, process_access, has_unified_memory)
 }
 
-fn metal_inventory_available(hardware_support: bool, process_access: bool) -> bool {
-    hardware_support && process_access
+fn metal_inventory_available(
+    hardware_support: bool,
+    process_access: bool,
+    has_unified_memory: bool,
+) -> bool {
+    hardware_support && process_access && has_unified_memory
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
-fn detect_process_metal_access() -> bool {
+fn detect_process_metal_access() -> (bool, bool) {
     use objc2_metal::{MTLCreateSystemDefaultDevice, MTLDevice};
 
-    MTLCreateSystemDefaultDevice()
-        .and_then(|device| device.newCommandQueue())
-        .is_some()
+    let Some(device) = MTLCreateSystemDefaultDevice() else {
+        return (false, false);
+    };
+    (
+        device.newCommandQueue().is_some(),
+        device.hasUnifiedMemory(),
+    )
 }
 
 #[cfg(all(target_os = "macos", coverage))]
-fn detect_process_metal_access() -> bool {
-    false
+fn detect_process_metal_access() -> (bool, bool) {
+    (false, false)
 }
 
 #[cfg(not(target_os = "macos"))]

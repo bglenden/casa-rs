@@ -122,13 +122,16 @@
           "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:casa_imaging_runtime|casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)\\b|\\b(?:casa_imaging_runtime|casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)::",
           "message": "native science Rust source imports an execution, backend, legacy, or device API"
         }
-      ]
+      ],
+      "accepted_violation_digest": null
     },
     {
       "id": "rust-imaging-frontends",
       "roots": [
         "crates/casa-provider-contracts/src",
+        "crates/casars/src",
         "crates/casars-frontend-services/src",
+        "crates/casars-imager/src",
         "crates/casars-python/src"
       ],
       "extensions": [
@@ -139,7 +142,8 @@
           "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:casa_imaging_runtime|casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)\\b|\\b(?:casa_imaging_runtime|casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)::",
           "message": "Rust frontend imports an execution, legacy imaging backend, or device API"
         }
-      ]
+      ],
+      "accepted_violation_digest": "f83a6c22b94d2e7061b0b9a3b48e01cc735fb704d23697d7261ef640091580dc"
     },
     {
       "id": "swift-imaging-frontends",
@@ -155,7 +159,8 @@
           "regex": "(?m)^\\s*import\\s+(?:Metal|MetalKit)\\b|\\b(?:MTLCreateSystemDefaultDevice|MTLCopyAllDevices|MTLCopyAllDevicesWithObserver|FftBackend|GridBackend|ImagingBackend|BackendEligibility|MetalBackend)\\b|\\bProcessInfo\\.processInfo\\.(?:activeProcessorCount|processorCount)\\b|\\b(?:sysctl|sysctlbyname|host_statistics|host_statistics64)\\s*\\(",
           "message": "Swift frontend inspects a device or selects an imaging backend"
         }
-      ]
+      ],
+      "accepted_violation_digest": null
     }
   ],
   "legacy_packages": [

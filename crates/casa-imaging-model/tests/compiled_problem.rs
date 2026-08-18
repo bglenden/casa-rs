@@ -114,6 +114,19 @@ fn inputs(reverse: bool) -> ProblemInputIdentities {
     )
 }
 
+fn inputs_with_instrument() -> ProblemInputIdentities {
+    ProblemInputIdentities::new(
+        ObservationSnapshotId::new(identity(1)),
+        CompiledGeometryId::new(identity(2)),
+        vec![
+            (ReferenceDataKind::Measures, identity(3)),
+            (ReferenceDataKind::Ephemeris, identity(4)),
+            (ReferenceDataKind::Instrument, identity(6)),
+        ],
+        ModelStateIdentity::Seed(identity(5)),
+    )
+}
+
 #[test]
 fn equivalent_science_has_one_canonical_compiled_identity() {
     let first = compile_problem(specification(false), inputs(false)).expect("compile first");
@@ -463,7 +476,7 @@ fn complete_science_contract_changes_identity_and_capabilities() {
             tapered,
             products_with_beam(false, RestoringBeamPolicy::Common),
         ),
-        inputs(false),
+        inputs_with_instrument(),
     )
     .expect("widefield science");
 
@@ -479,6 +492,70 @@ fn complete_science_contract_changes_identity_and_capabilities() {
         RequiredCapability::Polarization(PolarizationCoordinate::StokesQ),
     ] {
         assert!(widefield.required_capabilities().contains(&capability));
+    }
+}
+
+#[test]
+fn direction_dependent_response_requires_instrument_identity() {
+    let direction_dependent = ScientificContract::new(
+        GeometryContract::new(ProjectionGeometry::Coplanar, FieldGeometry::Single),
+        SpectralContract::new(
+            SpectralFrame::Native,
+            SpectralSampling::Identity,
+            SpectralCoupling::Independent,
+            None,
+        ),
+        PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam),
+    );
+    let specification = ProblemSpecification::new(
+        direction_dependent,
+        reconstruction(),
+        weighting(),
+        products(false),
+        numerics(false),
+    );
+
+    assert!(matches!(
+        compile_problem(specification, inputs(false)),
+        Err(CompileProblemError::InvalidScientificContract {
+            reason: "direction-dependent response requires bound instrument reference data"
+        })
+    ));
+}
+
+#[test]
+fn dirty_reconstruction_rejects_scientifically_unused_controls() {
+    let dirty = |gain, threshold| {
+        ProblemSpecification::new(
+            science(),
+            ReconstructionContract::new(
+                ReconstructionBasis::Constant,
+                ReconstructionAlgorithm::Dirty,
+                ReconstructionControls::new(0, gain, threshold),
+            ),
+            weighting(),
+            ProductRequirements::new(
+                vec![
+                    ProductKind::Psf,
+                    ProductKind::Residual,
+                    ProductKind::SumWeights,
+                ],
+                ProductNormalization::UnitResponse,
+                RestoringBeamPolicy::None,
+            ),
+            numerics(false),
+        )
+    };
+
+    compile_problem(dirty(1.0, 0.0), inputs(false)).expect("canonical dirty problem");
+    for specification in [dirty(0.1, 0.0), dirty(1.0, 0.5)] {
+        assert!(matches!(
+            compile_problem(specification, inputs(false)),
+            Err(CompileProblemError::InvalidCapabilityCombination {
+                reason: "dirty reconstruction requires canonical inactive controls: gain 1 and threshold 0"
+            })
+        ));
     }
 }
 
@@ -563,7 +640,7 @@ fn invalid_science_contracts_fail_before_bulk_io() {
             SpectralCoupling::Independent,
             None,
         ),
-        PolarizationContract::new(Vec::new()),
+        PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         MeasurementEquationContract::new(InstrumentResponse::Scalar),
     );
     let specification = ProblemSpecification::new(
@@ -575,7 +652,34 @@ fn invalid_science_contracts_fail_before_bulk_io() {
     );
     assert!(matches!(
         compile_problem(specification, inputs(false)),
-        Err(CompileProblemError::InvalidScientificContract { .. })
+        Err(CompileProblemError::InvalidScientificContract {
+            reason: "spectral channel averaging requires a positive bin width"
+        })
+    ));
+
+    let invalid_polarization = ScientificContract::new(
+        GeometryContract::new(ProjectionGeometry::Coplanar, FieldGeometry::Single),
+        SpectralContract::new(
+            SpectralFrame::Native,
+            SpectralSampling::Identity,
+            SpectralCoupling::Independent,
+            None,
+        ),
+        PolarizationContract::new(Vec::new()),
+        MeasurementEquationContract::new(InstrumentResponse::Scalar),
+    );
+    let specification = ProblemSpecification::new(
+        invalid_polarization,
+        reconstruction(),
+        weighting(),
+        products(false),
+        numerics(false),
+    );
+    assert!(matches!(
+        compile_problem(specification, inputs(false)),
+        Err(CompileProblemError::InvalidScientificContract {
+            reason: "at least one polarization coordinate must be requested"
+        })
     ));
 }
 
