@@ -7,6 +7,7 @@ setup:
     cargo fetch
 
 quick:
+    just arch-check
     ./scripts/check-spdx.sh
     cargo fmt --all -- --check
     CARGO_INCREMENTAL=0 cargo clippy --workspace --all-targets -- -D warnings

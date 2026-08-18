@@ -3,6 +3,8 @@ casa-calibration	crates/casa-calibration/Cargo.toml
 casa-coordinates	crates/casa-coordinates/Cargo.toml
 casa-images	crates/casa-images/Cargo.toml
 casa-imaging	crates/casa-imaging/Cargo.toml
+casa-imaging-model	crates/casa-imaging-model/Cargo.toml
+casa-imaging-runtime	crates/casa-imaging-runtime/Cargo.toml
 casa-lattices	crates/casa-lattices/Cargo.toml
 casa-logging	crates/casa-logging/Cargo.toml
 casa-measures-data	crates/casa-measures-data/Cargo.toml

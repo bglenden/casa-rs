@@ -21,6 +21,8 @@ members = [
     "crates/casa-lattices",
     "crates/casa-coordinates",
     "crates/casa-images",
+    "crates/casa-imaging-model",
+    "crates/casa-imaging-runtime",
     "crates/casa-imaging",
     "crates/casa-measures-data",
     "crates/casa-test-support",

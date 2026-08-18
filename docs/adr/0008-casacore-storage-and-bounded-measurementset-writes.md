@@ -1,6 +1,6 @@
 # ADR-0008: Casacore storage and bounded MeasurementSet writes
 
-Status: Accepted
+Status: accepted
 
 Date: 2026-07-18
 

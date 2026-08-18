@@ -17,6 +17,7 @@ coordinates, measures, and related workflows.
 | core codecs (`casa-values`, `casa-aipsio`) | Internal generic value model and AipsIO-style framing used by higher layers | Rust ecosystem crates only |
 | foundation crates (`casa-types`, `casa-measures-data`, `casa-measures-tools`) | Public scalar/quanta/measures algorithms and contracts plus explicit runtime-data validation, loading, installation, and maintenance | core codecs; `casa-measures-data` also uses canonical `casa-tables` accessors |
 | persistent storage (`casa-tables`) | CASA table persistence, codecs, data managers/storage backends, schema/mutation APIs, and TaQL engine | core codecs, foundation crates |
+| native imaging contracts (`casa-imaging-model`, `casa-imaging-runtime`) | Immutable logical imaging problems plus process-level resource topology, policies, demand envelopes, arbitration, and leases | `casa-imaging-model` has no workspace dependencies; `casa-imaging-runtime` may depend on the model but never on current legacy imaging crates |
 | domain libraries (`casa-ms`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-imaging`, `casa-calibration`, `casa-vla`) | Higher-level astronomy data models and algorithms built on table/image persistence | foundation crates, `casa-tables`, selected peer domain crates where documented |
 | boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | The generic provider envelope, canonical parameter and application catalogs, task/session surface definitions, and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
 | parameter and task runtime (`casa-task-runtime`) | Format-neutral parameter resolution, sparse TOML profiles, migrations, typed task/session lifecycle coordination, managed Last storage, and the common one-shot task CLI host | boundary contracts and `casa-types`; must not implement provider science behavior |
@@ -29,6 +30,17 @@ coordinates, measures, and related workflows.
 Preferred direction is:
 
 `core codecs -> foundations -> persistent storage / domain libraries -> boundary contracts -> parameter runtime / notebook runtime -> apps/runtimes`
+
+Native imaging follows its stricter accepted direction:
+
+`science -> observation / reconstruction -> products -> execution -> backends -> application -> frontends`
+
+`casa-imaging-model` owns the dependency-free science/reconstruction/product
+contract introduced by ADR-0009. `casa-imaging-runtime` owns execution-resource
+contracts introduced by ADR-0010 and may depend inward on the model. The current
+`casa-imaging` and `casars-imager` crates remain frozen legacy owners during the
+migration; their exact existing edges are ratcheted rather than treated as
+permission for new native dependencies.
 
 with `casa-test-support` outside the product dependency chain.
 
@@ -100,6 +112,12 @@ Additional constraints:
   domain-library reads and `casa-notebook` operations into GUI-appropriate
   projections, but it must not become a second implementation of persistence,
   task semantics, or provider contracts.
+- Native frontends select a versioned request and `ResourcePolicy`; they do not
+  inspect hosts or devices, select imaging implementations, allocate work
+  buffers, or define scientific products. Native model code depends on no
+  MeasurementSet, backend, device, cache, or allocation API. The machine-
+  readable dependency policy and migration matrix under
+  `resources/imaging-architecture/` are enforced by `just arch-check`.
 
 ## Runtime model
 
@@ -492,15 +510,16 @@ compatibility block facade or normal-path host full-grid upload is retained.
 - On-disk interoperability with casacore-compatible formats is more important than mirroring C++ APIs directly.
 - Heavy CASA parity suites must stay opt-in rather than in the default `cargo test --workspace` path.
 - Some cross-language and parity tests must skip cleanly when `pkg-config casacore` or measures data are unavailable.
-- GitHub issues and pull requests are the authoritative work record; some
-  architecture checks are still lightweight/document-oriented rather than full
-  mechanical boundary enforcement.
+- GitHub issues and pull requests are the authoritative work record.
 
 ## Known current gaps / debt
 
 - GitHub Project/issue adoption is now the planning source of truth, but older `docs/Planning/` material still exists and may need incremental retirement or summarization.
 - `just` provides a stable command vocabulary, but some contributors may still use the underlying `cargo` and `scripts/*` commands directly until it is installed locally.
-- Boundary enforcement is partly manual today; `just arch-check` currently validates the documented surface and ADR index rather than all crate dependency rules mechanically.
+- Current production imaging remains explicitly classified as legacy until its
+  whole-run migration router and capability transfers land. `just arch-check`
+  mechanically rejects undeclared native dependency edges and any expansion of
+  the frozen legacy edge set.
 
 ## ADR index
 
@@ -513,3 +532,6 @@ compatibility block facade or normal-path host full-grid upload is retained.
 | 0005 | Native macOS GUI prototype boundary | accepted |
 | 0006 | Unified parameter catalog and sparse profiles | accepted |
 | 0007 | Scientific notebooks and assistant boundary | accepted |
+| 0008 | Casacore storage and bounded MeasurementSet writes | accepted |
+| 0009 | Mathematical imaging architecture | accepted |
+| 0010 | Unified imaging resource authority | accepted |
