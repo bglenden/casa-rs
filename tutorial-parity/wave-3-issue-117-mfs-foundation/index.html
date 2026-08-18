@@ -891,8 +891,8 @@ machine.</p>
 <p>The visibility-inspection parity check rendered <code>msexplore</code> and CASA <code>plotms</code>
 from the same TW Hydra selection: <code>field=5</code>, <code>spw=0</code>, <code>scan=12</code>.</p>
 <div class="codehilite"><pre><span></span><code>scripts/render-msexplore-side-by-side.sh<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--ms<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/target/issue-117/twhya_calibrated.ms&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--output<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/target/issue-117/twhya-field5-scan12-amplitude-uvdist-side-by-side-readable.png&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--ms<span class="w"> </span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">/target/issue-117/twhya_calibrated.ms"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output<span class="w"> </span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">/target/issue-117/twhya-field5-scan12-amplitude-uvdist-side-by-side-readable.png"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--plot-width<span class="w"> </span><span class="m">2400</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--plot-height<span class="w"> </span><span class="m">1350</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--rust-symbolsize<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
@@ -901,21 +901,21 @@ from the same TW Hydra selection: <code>field=5</code>, <code>spw=0</code>, <cod
 <span class="w">  </span>--casa-kw<span class="w"> </span><span class="nv">field</span><span class="o">=</span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--casa-kw<span class="w"> </span><span class="nv">spw</span><span class="o">=</span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--casa-kw<span class="w"> </span><span class="nv">scan</span><span class="o">=</span><span class="m">12</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--rust-label<span class="w"> </span><span class="s2">&quot;casa-rs msexplore amplitude vs uvdist&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--casa-label<span class="w"> </span><span class="s2">&quot;CASA plotms amplitude vs uvdist&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--rust-label<span class="w"> </span><span class="s2">"casa-rs msexplore amplitude vs uvdist"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--casa-label<span class="w"> </span><span class="s2">"CASA plotms amplitude vs uvdist"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--<span class="w"> </span>--preset<span class="w"> </span>amplitude_vs_uv_distance<span class="w"> </span>--field<span class="w"> </span><span class="m">5</span><span class="w"> </span>--spw<span class="w"> </span><span class="m">0</span><span class="w"> </span>--scan<span class="w"> </span><span class="m">12</span>
 
 scripts/render-msexplore-page-side-by-side.sh<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--ms<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/target/issue-117/twhya_calibrated.ms&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--output<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/target/issue-117/twhya-field5-scan12-amplitude-phase-time-side-by-side-readable.png&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--ms<span class="w"> </span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">/target/issue-117/twhya_calibrated.ms"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output<span class="w"> </span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">/target/issue-117/twhya-field5-scan12-amplitude-phase-time-side-by-side-readable.png"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--plot-width<span class="w"> </span><span class="m">2400</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--plot-height<span class="w"> </span><span class="m">1350</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--rust-symbolsize<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--field<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--spw<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--scan<span class="w"> </span><span class="m">12</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--rust-label<span class="w"> </span><span class="s2">&quot;casa-rs msexplore amplitude / phase vs time&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--casa-label<span class="w"> </span><span class="s2">&quot;CASA plotms amplitude / phase vs time&quot;</span>
+<span class="w">  </span>--rust-label<span class="w"> </span><span class="s2">"casa-rs msexplore amplitude / phase vs time"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--casa-label<span class="w"> </span><span class="s2">"CASA plotms amplitude / phase vs time"</span>
 </code></pre></div>
 
 <p>These side-by-side helpers use <code>msexplore --symbolsize 1</code> and larger CASA

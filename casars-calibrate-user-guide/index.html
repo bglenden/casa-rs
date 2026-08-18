@@ -917,8 +917,8 @@
 stage writes <code>CORRECTED_DATA</code>.</p>
 <p>Example with the shared test dataset:</p>
 <div class="codehilite"><pre><span></span><code><span class="nv">workdir</span><span class="o">=</span><span class="k">$(</span>mktemp<span class="w"> </span>-d<span class="w"> </span>/tmp/casars-cal.XXXXXX<span class="k">)</span>
-cp<span class="w"> </span>-R<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$HOME</span><span class="s2">/SoftwareProjects/casatestdata/measurementset/vla/ngc5921.ms&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$workdir</span><span class="s2">/ngc5921.ms&quot;</span>
-cargo<span class="w"> </span>run<span class="w"> </span>-p<span class="w"> </span>casars<span class="w"> </span>--<span class="w"> </span>calibrate<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$workdir</span><span class="s2">/ngc5921.ms&quot;</span>
+cp<span class="w"> </span>-R<span class="w"> </span><span class="s2">"</span><span class="nv">$HOME</span><span class="s2">/SoftwareProjects/casatestdata/measurementset/vla/ngc5921.ms"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$workdir</span><span class="s2">/ngc5921.ms"</span>
+cargo<span class="w"> </span>run<span class="w"> </span>-p<span class="w"> </span>casars<span class="w"> </span>--<span class="w"> </span>calibrate<span class="w"> </span><span class="s2">"</span><span class="nv">$workdir</span><span class="s2">/ngc5921.ms"</span>
 </code></pre></div>
 
 <h2 id="shell-layout">Shell layout<a class="headerlink" href="#shell-layout" title="Permanent link">&para;</a></h2>

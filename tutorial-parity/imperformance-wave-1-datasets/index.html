@@ -1171,7 +1171,7 @@ generation. Missing families remain tracked separately:</p>
 <p>Materialize source models and generated benchmark workload manifests for one
 dataset:</p>
 <div class="codehilite"><pre><span></span><code>tools/perf/imager/stage_wave1_datasets.py<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--data-root<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$CASA_RS_IMPERF_DATA_ROOT</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--data-root<span class="w"> </span><span class="s2">"</span><span class="nv">$CASA_RS_IMPERF_DATA_ROOT</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--dataset<span class="w"> </span>wave1-vla-single-small<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--materialize-models<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--materialize-workloads
@@ -1186,7 +1186,7 @@ tools/perf/imager/stage_wave1_datasets.py<span class="w"> </span>--dry-run
 <p>Generate logical workload manifests for the single shared large dataset without
 materializing the 100 GiB MeasurementSet:</p>
 <div class="codehilite"><pre><span></span><code>tools/perf/imager/stage_wave1_datasets.py<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--data-root<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$CASA_RS_IMPERF_DATA_ROOT</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--data-root<span class="w"> </span><span class="s2">"</span><span class="nv">$CASA_RS_IMPERF_DATA_ROOT</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--dataset<span class="w"> </span>wave1-alma-mosaic-large<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--materialize-workloads
 </code></pre></div>

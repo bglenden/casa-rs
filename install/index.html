@@ -954,8 +954,8 @@ python3<span class="w"> </span>--version
 <h2 id="install-a-stable-release">Install a stable release<a class="headerlink" href="#install-a-stable-release" title="Permanent link">&para;</a></h2>
 <p>Choose the version you want to install:</p>
 <div class="codehilite"><pre><span></span><code><span class="nv">version</span><span class="o">=</span><span class="m">0</span>.15.0
-curl<span class="w"> </span>-fsSL<span class="w"> </span><span class="s2">&quot;https://github.com/bglenden/casa-rs/releases/download/v</span><span class="si">${</span><span class="nv">version</span><span class="si">}</span><span class="s2">/install-casa-rs.sh&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span><span class="p">|</span><span class="w"> </span>bash<span class="w"> </span>-s<span class="w"> </span>--<span class="w"> </span>--version<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$version</span><span class="s2">&quot;</span>
+curl<span class="w"> </span>-fsSL<span class="w"> </span><span class="s2">"https://github.com/bglenden/casa-rs/releases/download/v</span><span class="si">${</span><span class="nv">version</span><span class="si">}</span><span class="s2">/install-casa-rs.sh"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="p">|</span><span class="w"> </span>bash<span class="w"> </span>-s<span class="w"> </span>--<span class="w"> </span>--version<span class="w"> </span><span class="s2">"</span><span class="nv">$version</span><span class="s2">"</span>
 </code></pre></div>
 
 <p>That creates:</p>
@@ -972,8 +972,8 @@ curl<span class="w"> </span>-fsSL<span class="w"> </span><span class="s2">&quot;
 <p>Release candidates use the same installer, but by default they update only the
 <code>rc</code> channel links and do not take over <code>current</code>:</p>
 <div class="codehilite"><pre><span></span><code><span class="nv">version</span><span class="o">=</span><span class="m">0</span>.16.0-rc1
-curl<span class="w"> </span>-fsSL<span class="w"> </span><span class="s2">&quot;https://github.com/bglenden/casa-rs/releases/download/v</span><span class="si">${</span><span class="nv">version</span><span class="si">}</span><span class="s2">/install-casa-rs.sh&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span><span class="p">|</span><span class="w"> </span>bash<span class="w"> </span>-s<span class="w"> </span>--<span class="w"> </span>--version<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$version</span><span class="s2">&quot;</span>
+curl<span class="w"> </span>-fsSL<span class="w"> </span><span class="s2">"https://github.com/bglenden/casa-rs/releases/download/v</span><span class="si">${</span><span class="nv">version</span><span class="si">}</span><span class="s2">/install-casa-rs.sh"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="p">|</span><span class="w"> </span>bash<span class="w"> </span>-s<span class="w"> </span>--<span class="w"> </span>--version<span class="w"> </span><span class="s2">"</span><span class="nv">$version</span><span class="s2">"</span>
 </code></pre></div>
 
 <p>That creates:</p>
@@ -988,7 +988,7 @@ curl<span class="w"> </span>-fsSL<span class="w"> </span><span class="s2">&quot;
 <h2 id="put-the-suite-on-path">Put the suite on PATH<a class="headerlink" href="#put-the-suite-on-path" title="Permanent link">&para;</a></h2>
 <p>The installer creates launchers in <code>~/.local/bin</code>. Add that directory to your
 shell startup file such as <code>~/.zshrc</code>:</p>
-<div class="codehilite"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">PATH</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$HOME</span><span class="s2">/.local/bin:</span><span class="nv">$PATH</span><span class="s2">&quot;</span>
+<div class="codehilite"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">PATH</span><span class="o">=</span><span class="s2">"</span><span class="nv">$HOME</span><span class="s2">/.local/bin:</span><span class="nv">$PATH</span><span class="s2">"</span>
 </code></pre></div>
 
 <p>Reload the shell:</p>
@@ -997,14 +997,14 @@ shell startup file such as <code>~/.zshrc</code>:</p>
 
 <h2 id="use-python-from-the-suite">Use Python from the suite<a class="headerlink" href="#use-python-from-the-suite" title="Permanent link">&para;</a></h2>
 <p>Activate the suite-local virtual environment:</p>
-<div class="codehilite"><pre><span></span><code><span class="nb">source</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$HOME</span><span class="s2">/.local/opt/casa-rs/current/python/bin/activate&quot;</span>
-python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import casars; print(casars.__version__)&quot;</span>
+<div class="codehilite"><pre><span></span><code><span class="nb">source</span><span class="w"> </span><span class="s2">"</span><span class="nv">$HOME</span><span class="s2">/.local/opt/casa-rs/current/python/bin/activate"</span>
+python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import casars; print(casars.__version__)"</span>
 </code></pre></div>
 
 <p>In the standard suite layout, <code>casars.tasks.calibrate</code> will automatically find
 the sibling <code>calibrate</code> binary. To target a different installed suite
 explicitly, set:</p>
-<div class="codehilite"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">CASARS_SUITE_ROOT</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$HOME</span><span class="s2">/.local/opt/casa-rs/&lt;version&gt;&quot;</span>
+<div class="codehilite"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">CASARS_SUITE_ROOT</span><span class="o">=</span><span class="s2">"</span><span class="nv">$HOME</span><span class="s2">/.local/opt/casa-rs/&lt;version&gt;"</span>
 </code></pre></div>
 
 <p>The Python binary lookup and protocol-compatibility rules are documented in
@@ -1033,15 +1033,15 @@ virtual environment.</p>
 <p>If you are working from a checkout instead of a published release asset, install
 Rust and build locally:</p>
 <div class="codehilite"><pre><span></span><code>curl<span class="w"> </span>https://sh.rustup.rs<span class="w"> </span>-sSf<span class="w"> </span><span class="p">|</span><span class="w"> </span>sh
-<span class="nb">source</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$HOME</span><span class="s2">/.cargo/env&quot;</span>
+<span class="nb">source</span><span class="w"> </span><span class="s2">"</span><span class="nv">$HOME</span><span class="s2">/.cargo/env"</span>
 cargo<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>--workspace<span class="w"> </span>--bins
 </code></pre></div>
 
 <p>To package a local release-style bundle, run:</p>
 <div class="codehilite"><pre><span></span><code>scripts/build-python-dist.sh<span class="w"> </span>dist/python
 scripts/package-suite-bundle.sh<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--version<span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>sed<span class="w"> </span>-n<span class="w"> </span><span class="s1">&#39;s/^version = \&quot;\\(.*\\)\&quot;/\\1/p&#39;</span><span class="w"> </span>Cargo.toml<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-n<span class="w"> </span><span class="m">1</span><span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--platform<span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>scripts/install-suite.sh<span class="w"> </span>--print-platform<span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--version<span class="w"> </span><span class="s2">"</span><span class="k">$(</span>sed<span class="w"> </span>-n<span class="w"> </span><span class="s1">'s/^version = \"\\(.*\\)\"/\\1/p'</span><span class="w"> </span>Cargo.toml<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-n<span class="w"> </span><span class="m">1</span><span class="k">)</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--platform<span class="w"> </span><span class="s2">"</span><span class="k">$(</span>scripts/install-suite.sh<span class="w"> </span>--print-platform<span class="k">)</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--bin-dir<span class="w"> </span>target/release<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--wheel-dir<span class="w"> </span>dist/python<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--out-dir<span class="w"> </span>dist/python

@@ -838,7 +838,7 @@ rm<span class="w"> </span>-rf<span class="w"> </span>target/issue-119/twhya_self
 <span class="w">  </span>--ms<span class="w"> </span>target/issue-119/twhya_selfcal.ms<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--out<span class="w"> </span>target/issue-119/twhya_selfcal.ms.contsub<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--field<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--fitspw<span class="w"> </span><span class="s1">&#39;0:0~239;281~383&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--fitspw<span class="w"> </span><span class="s1">'0:0~239;281~383'</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--fitorder<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--datacolumn<span class="w"> </span>DATA<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--format<span class="w"> </span>json<span class="w"> </span><span class="se">\</span>
@@ -958,27 +958,27 @@ signed cube-weightor density-cell convention, and routes dirty cubes with
 per-plane density through the same cube weighting path as cleaned cubes.</p>
 <p>Fresh CASA 6.7.5-9 reference command:</p>
 <div class="codehilite"><pre><span></span><code><span class="n">tclean</span><span class="p">(</span>
-    <span class="n">vis</span><span class="o">=</span><span class="s2">&quot;target/issue-119/twhya_selfcal.ms.contsub&quot;</span><span class="p">,</span>
-    <span class="n">imagename</span><span class="o">=</span><span class="s2">&quot;target/issue-119/casa-briggsbwtaper-refresh-twhya-n2hp&quot;</span><span class="p">,</span>
-    <span class="n">field</span><span class="o">=</span><span class="s2">&quot;5&quot;</span><span class="p">,</span>
-    <span class="n">spw</span><span class="o">=</span><span class="s2">&quot;0&quot;</span><span class="p">,</span>
-    <span class="n">specmode</span><span class="o">=</span><span class="s2">&quot;cube&quot;</span><span class="p">,</span>
+    <span class="n">vis</span><span class="o">=</span><span class="s2">"target/issue-119/twhya_selfcal.ms.contsub"</span><span class="p">,</span>
+    <span class="n">imagename</span><span class="o">=</span><span class="s2">"target/issue-119/casa-briggsbwtaper-refresh-twhya-n2hp"</span><span class="p">,</span>
+    <span class="n">field</span><span class="o">=</span><span class="s2">"5"</span><span class="p">,</span>
+    <span class="n">spw</span><span class="o">=</span><span class="s2">"0"</span><span class="p">,</span>
+    <span class="n">specmode</span><span class="o">=</span><span class="s2">"cube"</span><span class="p">,</span>
     <span class="n">nchan</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span>
-    <span class="n">start</span><span class="o">=</span><span class="s2">&quot;0.0km/s&quot;</span><span class="p">,</span>
-    <span class="n">width</span><span class="o">=</span><span class="s2">&quot;0.5km/s&quot;</span><span class="p">,</span>
-    <span class="n">outframe</span><span class="o">=</span><span class="s2">&quot;LSRK&quot;</span><span class="p">,</span>
-    <span class="n">restfreq</span><span class="o">=</span><span class="s2">&quot;372.67249GHz&quot;</span><span class="p">,</span>
-    <span class="n">gridder</span><span class="o">=</span><span class="s2">&quot;standard&quot;</span><span class="p">,</span>
-    <span class="n">deconvolver</span><span class="o">=</span><span class="s2">&quot;hogbom&quot;</span><span class="p">,</span>
-    <span class="n">weighting</span><span class="o">=</span><span class="s2">&quot;briggsbwtaper&quot;</span><span class="p">,</span>
+    <span class="n">start</span><span class="o">=</span><span class="s2">"0.0km/s"</span><span class="p">,</span>
+    <span class="n">width</span><span class="o">=</span><span class="s2">"0.5km/s"</span><span class="p">,</span>
+    <span class="n">outframe</span><span class="o">=</span><span class="s2">"LSRK"</span><span class="p">,</span>
+    <span class="n">restfreq</span><span class="o">=</span><span class="s2">"372.67249GHz"</span><span class="p">,</span>
+    <span class="n">gridder</span><span class="o">=</span><span class="s2">"standard"</span><span class="p">,</span>
+    <span class="n">deconvolver</span><span class="o">=</span><span class="s2">"hogbom"</span><span class="p">,</span>
+    <span class="n">weighting</span><span class="o">=</span><span class="s2">"briggsbwtaper"</span><span class="p">,</span>
     <span class="n">perchanweightdensity</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-    <span class="n">restoringbeam</span><span class="o">=</span><span class="s2">&quot;common&quot;</span><span class="p">,</span>
+    <span class="n">restoringbeam</span><span class="o">=</span><span class="s2">"common"</span><span class="p">,</span>
     <span class="n">imsize</span><span class="o">=</span><span class="mi">250</span><span class="p">,</span>
-    <span class="n">cell</span><span class="o">=</span><span class="s2">&quot;0.08arcsec&quot;</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="s2">"0.08arcsec"</span><span class="p">,</span>
     <span class="n">phasecenter</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
     <span class="n">niter</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
-    <span class="n">threshold</span><span class="o">=</span><span class="s2">&quot;0Jy&quot;</span><span class="p">,</span>
-    <span class="n">datacolumn</span><span class="o">=</span><span class="s2">&quot;data&quot;</span><span class="p">,</span>
+    <span class="n">threshold</span><span class="o">=</span><span class="s2">"0Jy"</span><span class="p">,</span>
+    <span class="n">datacolumn</span><span class="o">=</span><span class="s2">"data"</span><span class="p">,</span>
     <span class="n">interactive</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>

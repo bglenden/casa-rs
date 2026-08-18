@@ -784,33 +784,33 @@ cases.</p>
 <code>request.model</code>.</p>
 <p>Analytic component file:</p>
 <div class="codehilite"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;schema_version&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;14pt-3gauss-v1&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;components&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">  </span><span class="nt">"schema_version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"14pt-3gauss-v1"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"components"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;kind&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;point&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;core_0&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;l_rad&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;m_rad&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;spectrum&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="nt">&quot;flux_jy&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1.0</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;spectral_index&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">-0.7</span>
+<span class="w">      </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"point"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"core_0"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"l_rad"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"m_rad"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"spectrum"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">"flux_jy"</span><span class="p">:</span><span class="w"> </span><span class="mf">1.0</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"spectral_index"</span><span class="p">:</span><span class="w"> </span><span class="mf">-0.7</span>
 <span class="w">      </span><span class="p">}</span>
 <span class="w">    </span><span class="p">},</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;kind&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gaussian&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;line_cloud_0&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;l_rad&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.00012</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;m_rad&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">-0.00008</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;major_fwhm_rad&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.00004</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;minor_fwhm_rad&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.00002</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;position_angle_rad&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.6</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;spectrum&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="nt">&quot;flux_jy&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.25</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;spectral_index&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">-0.2</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;line_peak_jy&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1.5</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;line_center_fraction&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.35</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;line_sigma_fraction&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.06</span>
+<span class="w">      </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gaussian"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"line_cloud_0"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"l_rad"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.00012</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"m_rad"</span><span class="p">:</span><span class="w"> </span><span class="mf">-0.00008</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"major_fwhm_rad"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.00004</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"minor_fwhm_rad"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.00002</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"position_angle_rad"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.6</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"spectrum"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">"flux_jy"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.25</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"spectral_index"</span><span class="p">:</span><span class="w"> </span><span class="mf">-0.2</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"line_peak_jy"</span><span class="p">:</span><span class="w"> </span><span class="mf">1.5</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"line_center_fraction"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.35</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"line_sigma_fraction"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.06</span>
 <span class="w">      </span><span class="p">}</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="w">  </span><span class="p">]</span>
@@ -819,39 +819,39 @@ cases.</p>
 
 <p>Run that analytic model:</p>
 <div class="codehilite"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;kind&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;run&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;request&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;model&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;kind&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;analytic_components&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;models/14pt-3gauss-v1.json&quot;</span>
+<span class="w">  </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"run"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"request"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"model"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"analytic_components"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"models/14pt-3gauss-v1.json"</span>
 <span class="w">    </span><span class="p">},</span>
-<span class="w">    </span><span class="nt">&quot;output_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;out/spectral-cube.ms&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;overwrite&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;telescope_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;VLA&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;spectral_setup&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Qband&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;start_frequency_hz&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">44000000000.0</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;channel_width_hz&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">128000000.0</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;channel_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">64</span>
+<span class="w">    </span><span class="nt">"output_ms"</span><span class="p">:</span><span class="w"> </span><span class="s2">"out/spectral-cube.ms"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"overwrite"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"telescope_name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"VLA"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"spectral_setup"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Qband"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"start_frequency_hz"</span><span class="p">:</span><span class="w"> </span><span class="mf">44000000000.0</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"channel_width_hz"</span><span class="p">:</span><span class="w"> </span><span class="mf">128000000.0</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"channel_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">64</span>
 <span class="w">    </span><span class="p">},</span>
-<span class="w">    </span><span class="nt">&quot;worker_policy&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;row_workers&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;channel_workers&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span>
+<span class="w">    </span><span class="nt">"worker_policy"</span><span class="p">:</span><span class="w"> </span><span class="s2">"auto"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"row_workers"</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"channel_workers"</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
 
 <p>Run a FITS image or cube:</p>
 <div class="codehilite"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;kind&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;run&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;request&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;model&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;kind&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;fits_image&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;models/sky-cube.fits&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;model_peak_jy_per_pixel&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.00003</span>
+<span class="w">  </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"run"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"request"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"model"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"fits_image"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"models/sky-cube.fits"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"model_peak_jy_per_pixel"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.00003</span>
 <span class="w">    </span><span class="p">},</span>
-<span class="w">    </span><span class="nt">&quot;output_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;out/fits-cube.ms&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;overwrite&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">    </span><span class="nt">"output_ms"</span><span class="p">:</span><span class="w"> </span><span class="s2">"out/fits-cube.ms"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"overwrite"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
@@ -864,25 +864,25 @@ exact point-source and Gaussian visibility predictions plus per-channel spectra.
 needed to size and generate a family member for an imaging mode. Human-saved
 configuration uses the equivalent sparse TOML profile shown below:</p>
 <div class="codehilite"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;kind&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;family&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;request&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;source_model&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;kind&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;analytic_components&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;models/14pt-3gauss-v1.json&quot;</span>
+<span class="w">  </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"family"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"request"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"source_model"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"analytic_components"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"models/14pt-3gauss-v1.json"</span>
 <span class="w">    </span><span class="p">},</span>
-<span class="w">    </span><span class="nt">&quot;telescope&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;VLA&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;array_config&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;A&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;band&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Q&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;target_ms_size_gib&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">8.0</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;polarizations&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;ms_channels&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">64</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;image_channels&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">16</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;pointing_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">7</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;imaging_mode&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;mosaic&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;output_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;out/vla-mosaic.ms&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;worker_policy&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;row_workers&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;channel_workers&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span>
+<span class="w">    </span><span class="nt">"telescope"</span><span class="p">:</span><span class="w"> </span><span class="s2">"VLA"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"array_config"</span><span class="p">:</span><span class="w"> </span><span class="s2">"A"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"band"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Q"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"target_ms_size_gib"</span><span class="p">:</span><span class="w"> </span><span class="mf">8.0</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"polarizations"</span><span class="p">:</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"ms_channels"</span><span class="p">:</span><span class="w"> </span><span class="mi">64</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"image_channels"</span><span class="p">:</span><span class="w"> </span><span class="mi">16</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"pointing_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">7</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"imaging_mode"</span><span class="p">:</span><span class="w"> </span><span class="s2">"mosaic"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"output_ms"</span><span class="p">:</span><span class="w"> </span><span class="s2">"out/vla-mosaic.ms"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"worker_policy"</span><span class="p">:</span><span class="w"> </span><span class="s2">"auto"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"row_workers"</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"channel_workers"</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
@@ -928,23 +928,23 @@ diagnostics and manifests; it does not change the MS channel count by itself.</p
 <p>Python callers can use the same contract without a second schema:</p>
 <div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">casars</span><span class="w"> </span><span class="kn">import</span> <span class="n">parameters</span><span class="p">,</span> <span class="n">tasks</span>
 
-<span class="n">profile</span> <span class="o">=</span> <span class="n">parameters</span><span class="o">.</span><span class="n">defaults</span><span class="p">(</span><span class="s2">&quot;simobserve&quot;</span><span class="p">)</span>
+<span class="n">profile</span> <span class="o">=</span> <span class="n">parameters</span><span class="o">.</span><span class="n">defaults</span><span class="p">(</span><span class="s2">"simobserve"</span><span class="p">)</span>
 <span class="n">profile</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
-    <span class="n">request_kind</span><span class="o">=</span><span class="s2">&quot;family&quot;</span><span class="p">,</span>
-    <span class="n">source_model</span><span class="o">=</span><span class="s1">&#39;{&quot;kind&quot;:&quot;analytic_components&quot;,&quot;path&quot;:&quot;models/14pt-3gauss-v1.json&quot;}&#39;</span><span class="p">,</span>
-    <span class="n">telescope</span><span class="o">=</span><span class="s2">&quot;ALMA&quot;</span><span class="p">,</span>
-    <span class="n">array_config</span><span class="o">=</span><span class="s2">&quot;synthetic-aca&quot;</span><span class="p">,</span>
-    <span class="n">band</span><span class="o">=</span><span class="s2">&quot;Band 3&quot;</span><span class="p">,</span>
+    <span class="n">request_kind</span><span class="o">=</span><span class="s2">"family"</span><span class="p">,</span>
+    <span class="n">source_model</span><span class="o">=</span><span class="s1">'{"kind":"analytic_components","path":"models/14pt-3gauss-v1.json"}'</span><span class="p">,</span>
+    <span class="n">telescope</span><span class="o">=</span><span class="s2">"ALMA"</span><span class="p">,</span>
+    <span class="n">array_config</span><span class="o">=</span><span class="s2">"synthetic-aca"</span><span class="p">,</span>
+    <span class="n">band</span><span class="o">=</span><span class="s2">"Band 3"</span><span class="p">,</span>
     <span class="n">target_ms_size_gib</span><span class="o">=</span><span class="mf">0.25</span><span class="p">,</span>
     <span class="n">polarizations</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
     <span class="n">ms_channels</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span>
     <span class="n">image_channels</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
     <span class="n">pointing_count</span><span class="o">=</span><span class="mi">7</span><span class="p">,</span>
-    <span class="n">imaging_mode</span><span class="o">=</span><span class="s2">&quot;mosaic&quot;</span><span class="p">,</span>
-    <span class="n">output_ms</span><span class="o">=</span><span class="s2">&quot;out/aca-mosaic.ms&quot;</span><span class="p">,</span>
+    <span class="n">imaging_mode</span><span class="o">=</span><span class="s2">"mosaic"</span><span class="p">,</span>
+    <span class="n">output_ms</span><span class="o">=</span><span class="s2">"out/aca-mosaic.ms"</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="n">profile</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">&quot;out/aca-mosaic.toml&quot;</span><span class="p">)</span>
-<span class="n">result</span> <span class="o">=</span> <span class="n">tasks</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;simobserve&quot;</span><span class="p">,</span> <span class="n">parameters</span><span class="o">=</span><span class="n">profile</span><span class="p">)</span>
+<span class="n">profile</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">"out/aca-mosaic.toml"</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">tasks</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">"simobserve"</span><span class="p">,</span> <span class="n">parameters</span><span class="o">=</span><span class="n">profile</span><span class="p">)</span>
 </code></pre></div>
 
 <h2 id="spectral-diagnostics">Spectral Diagnostics<a class="headerlink" href="#spectral-diagnostics" title="Permanent link">&para;</a></h2>

@@ -953,21 +953,21 @@ revisions, types, units, defaults, groups, and summaries.</p>
 designed to paste cleanly into Markdown:</p>
 <div class="codehilite"><pre><span></span><code><span class="k">[casars]</span>
 <span class="n">format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
-<span class="n">surface</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;imager&quot;</span>
-<span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;task&quot;</span>
+<span class="n">surface</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"imager"</span>
+<span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"task"</span>
 <span class="n">contract</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
 
 <span class="k">[parameters]</span>
-<span class="n">vis</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;data/target.ms&quot;</span>
-<span class="n">imagename</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;products/target&quot;</span>
+<span class="n">vis</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"data/target.ms"</span>
+<span class="n">imagename</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"products/target"</span>
 <span class="n">imsize</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1024</span>
-<span class="n">cell</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.2arcsec&quot;</span>
-<span class="n">field</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;target&quot;</span>
-<span class="n">spw</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0:32~255&quot;</span>
-<span class="n">specmode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;cube&quot;</span>
-<span class="n">weighting</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;briggs&quot;</span>
+<span class="n">cell</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"0.2arcsec"</span>
+<span class="n">field</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"target"</span>
+<span class="n">spw</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"0:32~255"</span>
+<span class="n">specmode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"cube"</span>
+<span class="n">weighting</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"briggs"</span>
 <span class="n">niter</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">10000</span>
-<span class="n">threshold</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;2mJy&quot;</span>
+<span class="n">threshold</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"2mJy"</span>
 </code></pre></div>
 
 <p>Only required values and values that differ semantically from current defaults
@@ -1090,19 +1090,19 @@ confirmation remain outside the saved science parameters.</p>
 <p>The accepted Python API exposes the same profile session:</p>
 <div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">casars</span><span class="w"> </span><span class="kn">import</span> <span class="n">parameters</span><span class="p">,</span> <span class="n">tasks</span>
 
-<span class="n">p</span> <span class="o">=</span> <span class="n">parameters</span><span class="o">.</span><span class="n">defaults</span><span class="p">(</span><span class="s2">&quot;imager&quot;</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="s2">&quot;project&quot;</span><span class="p">)</span>
+<span class="n">p</span> <span class="o">=</span> <span class="n">parameters</span><span class="o">.</span><span class="n">defaults</span><span class="p">(</span><span class="s2">"imager"</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="s2">"project"</span><span class="p">)</span>
 <span class="n">p</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
-    <span class="n">vis</span><span class="o">=</span><span class="s2">&quot;data/target.ms&quot;</span><span class="p">,</span>
-    <span class="n">imagename</span><span class="o">=</span><span class="s2">&quot;products/target&quot;</span><span class="p">,</span>
+    <span class="n">vis</span><span class="o">=</span><span class="s2">"data/target.ms"</span><span class="p">,</span>
+    <span class="n">imagename</span><span class="o">=</span><span class="s2">"products/target"</span><span class="p">,</span>
     <span class="n">imsize</span><span class="o">=</span><span class="mi">1024</span><span class="p">,</span>
-    <span class="n">cell</span><span class="o">=</span><span class="s2">&quot;0.2arcsec&quot;</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="s2">"0.2arcsec"</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="n">p</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">&quot;profiles/target-imaging.toml&quot;</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">"profiles/target-imaging.toml"</span><span class="p">)</span>
 
 <span class="n">result</span> <span class="o">=</span> <span class="n">tasks</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
-    <span class="s2">&quot;imager&quot;</span><span class="p">,</span>
+    <span class="s2">"imager"</span><span class="p">,</span>
     <span class="n">parameters</span><span class="o">=</span><span class="n">p</span><span class="p">,</span>
-    <span class="n">workspace</span><span class="o">=</span><span class="s2">&quot;project&quot;</span><span class="p">,</span>
+    <span class="n">workspace</span><span class="o">=</span><span class="s2">"project"</span><span class="p">,</span>
     <span class="n">save_last</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>

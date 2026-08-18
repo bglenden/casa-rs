@@ -875,10 +875,10 @@ local registry records the live source page used for the current evidence.</p>
 <h2 id="current-results">Current Results<a class="headerlink" href="#current-results" title="Permanent link">&para;</a></h2>
 <p>The runner uses the official final-calibrated mosaic MS and the tutorial
 multiscale mosaic shape:</p>
-<div class="codehilite"><pre><span></span><code>tclean(gridder=&#39;mosaic&#39;, deconvolver=&#39;multiscale&#39;, scales=[0,5,15,45],
-       niter=500, gain=0.1, threshold=&#39;1.0mJy&#39;,
-       imsize=[480,480], cell=&#39;2.5arcsec&#39;,
-       weighting=&#39;briggs&#39;, robust=0.5, pbcor=True)
+<div class="codehilite"><pre><span></span><code>tclean(gridder='mosaic', deconvolver='multiscale', scales=[0,5,15,45],
+       niter=500, gain=0.1, threshold='1.0mJy',
+       imsize=[480,480], cell='2.5arcsec',
+       weighting='briggs', robust=0.5, pbcor=True)
 </code></pre></div>
 
 <p>Current run stamp: <code>20260503T080756-0600</code>, generated

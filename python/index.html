@@ -825,13 +825,13 @@ object contract.</p>
 <p>The accepted profile API is shared with the CLI, TUI, and native GUI:</p>
 <div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">casars</span><span class="w"> </span><span class="kn">import</span> <span class="n">parameters</span><span class="p">,</span> <span class="n">tasks</span>
 
-<span class="n">p</span> <span class="o">=</span> <span class="n">parameters</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">&quot;profiles/target-imaging.toml&quot;</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="s2">&quot;project&quot;</span><span class="p">)</span>
-<span class="n">p</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">niter</span><span class="o">=</span><span class="mi">20000</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="s2">&quot;1mJy&quot;</span><span class="p">)</span>
+<span class="n">p</span> <span class="o">=</span> <span class="n">parameters</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"profiles/target-imaging.toml"</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="s2">"project"</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">niter</span><span class="o">=</span><span class="mi">20000</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="s2">"1mJy"</span><span class="p">)</span>
 
 <span class="n">result</span> <span class="o">=</span> <span class="n">tasks</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
-    <span class="s2">&quot;imager&quot;</span><span class="p">,</span>
+    <span class="s2">"imager"</span><span class="p">,</span>
     <span class="n">parameters</span><span class="o">=</span><span class="n">p</span><span class="p">,</span>
-    <span class="n">workspace</span><span class="o">=</span><span class="s2">&quot;project&quot;</span><span class="p">,</span>
+    <span class="n">workspace</span><span class="o">=</span><span class="s2">"project"</span><span class="p">,</span>
     <span class="n">save_last</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
