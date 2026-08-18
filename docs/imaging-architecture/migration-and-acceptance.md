@@ -21,6 +21,11 @@ exactly one stable row. A row records:
 - the deletion condition for the displaced implementation; and
 - a Migration Obligation whenever it is not native.
 
+The matrix also maps every current `ProductKind` variant and every supported
+Stokes/raw-correlation `ImagerPlaneSelection` variant to exactly one row. These
+maps make additions or removals explicit instead of letting a coordinated row
+and inventory edit silently redefine the product or polarization surface.
+
 `LegacyWholeRun` is an ownership classification, not a compatibility promise.
 It permits the current production implementation to remain reachable only
 through the future whole-run migration router. It never permits a native stage
@@ -52,17 +57,22 @@ A row transfers to `Native` only when the same change:
 Before transfer, corrective and performance changes land only in the row's
 current owner. After transfer, they land only in the native owner.
 
-The architecture checker validates schema, inventory completeness, stable row
-identity, contract references, preserved issue crosswalks, evidence locators,
-Migration Obligations, source evidence, native dependency direction, and the
-frozen legacy edge set. Its synthetic contract tests prove every unlisted
-logical dependency direction is rejected.
+The architecture checker validates schema, the independently pinned canonical
+inventory, stable row identity, exact Acceptance Contract laws/thresholds/
+resource gates, structured issue outcomes, evidence locators, Migration
+Obligations, and source evidence. It classifies every Cargo workspace package,
+requires native dependency sets to match exactly, scans native science and
+Rust/Swift frontend roots for forbidden backend/device imports, and permits
+only the 16 exact frozen legacy edges. Its mutation tests prove coordinated
+inventory and issue deletion, contract weakening, unmapped packages, and
+forbidden logical, package, module, and Swift edges fail closed.
 
 ## Preserved issue and evidence crosswalk
 
-The required crosswalk set is encoded in the matrix and cannot disappear
-without failing `just arch-check`: #35, #40, #42, #45, #52, #54, #55, #217,
-#319, #445-#450, #462, #466, #473, and #478.
+The required crosswalk set and a structured per-issue outcome ledger are
+encoded in the matrix and pinned by the checker. They cannot disappear through
+a coordinated policy/matrix edit without failing `just arch-check`: #35, #40,
+#42, #45, #52, #54, #55, #217, #319, #445-#450, #462, #466, #473, and #478.
 
 - #319 is the closed July 2026 consolidation baseline. Its bounded streaming,
   request boundary, fixed-tile/Metal staging, evidence, and deletion ledger

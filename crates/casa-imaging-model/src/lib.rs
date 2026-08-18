@@ -5,11 +5,14 @@
 mod compiled_problem;
 
 pub use compiled_problem::{
-    CompileProblemError, CompiledGeometryId, CompiledProblem, CompiledProblemId, FiniteValuePolicy,
-    LogicalIdentity, ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract,
-    ObservationSnapshotId, ProblemInputIdentities, ProblemSpecification, ProductKind,
-    ProductNormalization, ProductRequirements, ReconstructionAlgorithm, ReconstructionBasis,
+    CompileProblemError, CompiledGeometryId, CompiledProblem, CompiledProblemId, FieldGeometry,
+    FiniteValuePolicy, GeometryContract, InstrumentResponse, LogicalIdentity,
+    MeasurementEquationContract, ModelStateIdentity, NumericPrecision, NumericalStage,
+    NumericsContract, ObservationSnapshotId, PolarizationContract, PolarizationCoordinate,
+    ProblemInputIdentities, ProblemSpecification, ProductKind, ProductNormalization,
+    ProductRequirements, ProjectionGeometry, ReconstructionAlgorithm, ReconstructionBasis,
     ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
-    RequiredCapability, RestoringBeamPolicy, StageErrorBudget, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile_problem,
+    RequiredCapability, RestoringBeamPolicy, ScientificContract, SpectralContract,
+    SpectralCoupling, SpectralFrame, SpectralSampling, StageErrorBudget, UvTaper,
+    WeightDensityScope, WeightingContract, WeightingScheme, compile_problem,
 };

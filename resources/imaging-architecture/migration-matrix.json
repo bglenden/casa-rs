@@ -52,12 +52,193 @@
       "evidence_tiers": ["tier-0 topology contract", "tier-1 deterministic concurrency", "host inventory probe", "milestone execution receipt"]
     }
   },
+  "issue_outcomes": [
+    {
+      "issue": 319,
+      "required_outcome": "Preserve the consolidation baseline: canonical request boundary, bounded selection and streaming, fixed-tile and Metal staging, current application/library ownership, CASA and performance evidence, and the deletion ledger.",
+      "current_owner": "crates/casars-imager and crates/casa-imaging",
+      "destination_tickets": ["T01-T03", "T07", "T17-T23", "all later capability transfers"],
+      "acceptance_gates": ["all inherited #319 parity, boundedness, staging, ownership, and deletion checks remain mandatory"],
+      "deletion_or_retention_condition": "Delete a legacy helper only when the same merge transfers its capability and makes the old route unreachable."
+    },
+    {
+      "issue": 35,
+      "required_outcome": "Recover cube Hogbom nsigma late-floor behavior with the #409/#407 diagnosis, late-block evidence, base 3ad7114a, named CASA parity, and a first-divergence diagnostic.",
+      "current_owner": "legacy cube controller and spectral preparation",
+      "destination_tickets": ["T26", "T35-T38"],
+      "acceptance_gates": ["cube cycle contract", "named CASA parity", "first-divergence evidence"],
+      "deletion_or_retention_condition": "The old cube controller must be unreachable when the native cube cycle transfers."
+    },
+    {
+      "issue": 40,
+      "required_outcome": "Map direction-dependent Mueller terms, native convolution functions, and GPU execution explicitly; distributed execution remains outside the first Resource Authority implementation.",
+      "current_owner": "mixed legacy science, convolution-function, and backend paths",
+      "destination_tickets": ["T33-T34", "T51-T52", "T56-T57"],
+      "acceptance_gates": ["Mueller and convolution-function contracts", "native CPU and Metal parity", "device work remains declarative execution"],
+      "deletion_or_retention_condition": "Remove only routes whose ownership has transferred; retain distributed execution as an explicit non-goal rather than an implicit fallback."
+    },
+    {
+      "issue": 42,
+      "required_outcome": "Cubic interpolation must produce genuine cubic contributions and never alias linear interpolation.",
+      "current_owner": "legacy spectral preparation",
+      "destination_tickets": ["T35-T36"],
+      "acceptance_gates": ["source-backed cubic coefficients", "paired prediction and adjoint sampling", "nonidentity from linear interpolation"],
+      "deletion_or_retention_condition": "Remove the old cubic alias or rejection path after the paired sampler transfers."
+    },
+    {
+      "issue": 45,
+      "required_outcome": "Cube and cubedata Briggs weighting use one globally weighted preparation contract.",
+      "current_owner": "legacy weighting and spectral preparation",
+      "destination_tickets": ["T18", "T35-T37"],
+      "acceptance_gates": ["global weighting identity", "bounded replay", "cube and cubedata parity"],
+      "deletion_or_retention_condition": "Remove the old mode-specific weighting path."
+    },
+    {
+      "issue": 52,
+      "required_outcome": "Deliver true AW and widefield planning with convolution-function planning, starting from precomputed products; AW must never silently route to W projection.",
+      "current_owner": "legacy request, planner, and operator paths",
+      "destination_tickets": ["T49-T53", "T61-T66"],
+      "acceptance_gates": ["AW plan identity", "precomputed convolution-function products", "no AW-to-W alias or fallback"],
+      "deletion_or_retention_condition": "Remove AW aliases and duplicate controls once the native AW route and surfaces transfer."
+    },
+    {
+      "issue": 54,
+      "required_outcome": "Multi-MeasurementSet selection includes timerange, uvrange, antenna, scan, observation, and intent while preserving exact selected-row order.",
+      "current_owner": "legacy frontend selection and MeasurementSet preparation",
+      "destination_tickets": ["T07", "T17", "T61-T66"],
+      "acceptance_gates": ["Observation Snapshot identity", "CASA row-order parity", "bounded multi-MS evaluation"],
+      "deletion_or_retention_condition": "Remove duplicate selectors and preparation paths after the Selected Observation transfer."
+    },
+    {
+      "issue": 55,
+      "required_outcome": "Moving-source imaging covers cubesource, mvc, TRACKFIELD, named targets, ephemerides, and the public expression surface.",
+      "current_owner": "legacy spectral and frontend paths",
+      "destination_tickets": ["T06", "T36", "T41", "T61-T66"],
+      "acceptance_gates": ["ephemeris and tracked-field geometry", "source-backed products", "cross-surface round trip"],
+      "deletion_or_retention_condition": "Remove special moving-source runners and phase adjustments after native tracking transfers."
+    },
+    {
+      "issue": 217,
+      "required_outcome": "Primary-beam and product-validity masks remain distinct from CLEAN reconstruction masks.",
+      "current_owner": "legacy cube writer and controller",
+      "destination_tickets": ["T27", "T39", "T47"],
+      "acceptance_gates": ["valid-pixel and mask-mismatch tests", "product reopenability", "typed mask semantics"],
+      "deletion_or_retention_condition": "Remove the mode-specific writer after mask and product ownership transfers."
+    },
+    {
+      "issue": 445,
+      "required_outcome": "The parent performance contract retains both frozen manifests, the full array contract, the 32 GiB ceiling, every supported surface, and four end-to-end rows each achieving at least 10x speedup.",
+      "current_owner": "crates/casars-imager and crates/casa-imaging",
+      "destination_tickets": ["T01", "T12", "T17-T18", "T42-T60", "T61-T67"],
+      "acceptance_gates": ["all child contracts", "four >=10x median rows", "<=32 GiB", "final whole-program audit"],
+      "deletion_or_retention_condition": "No VLASS-specific alternative owner or reduced performance contract may remain."
+    },
+    {
+      "issue": 446,
+      "required_outcome": "Evidence retains two manifest identities, archive SHA b80d5e9830ce3835837175ccd786de581bf39312a402b7acf89ac0cbf5df353a, CASA 6.7.5.9 fiducials, cold/warm roles, and complete product inventories.",
+      "current_owner": "imaging performance evidence harness",
+      "destination_tickets": ["T01", "T12"],
+      "acceptance_gates": ["frozen manifests", "content receipts", "CASA-version identity", "declared cold and warm roles"],
+      "deletion_or_retention_condition": "Remove duplicate comparator or manifest ownership; keep one canonical evidence path."
+    },
+    {
+      "issue": 447,
+      "required_outcome": "Bounded input covers 16 spectral windows, 10,400 and 655,200 selected rows, multi-DDID streaming, POINTING, and deterministic Briggs weighting.",
+      "current_owner": "legacy MeasurementSet source preparation",
+      "destination_tickets": ["T07", "T17-T18", "T48"],
+      "acceptance_gates": ["selection parity", "bounded memory", "deterministic progress", "global weighting"],
+      "deletion_or_retention_condition": "Remove the old full or duplicate preparation path."
+    },
+    {
+      "issue": 448,
+      "required_outcome": "Serial correctness uses real EVLA A+W projection and pointing MT-MFS, exact product topology, deterministic CLEAN, and no more than 32 GiB.",
+      "current_owner": "legacy serial imaging path",
+      "destination_tickets": ["T42-T44", "T47-T53"],
+      "acceptance_gates": ["all four serial rows", "exact product topology", "deterministic CLEAN", "<=32 GiB"],
+      "deletion_or_retention_condition": "Remove W-only aliases and the legacy serial route after transfer."
+    },
+    {
+      "issue": 449,
+      "required_outcome": "Acceleration preserves a serial baseline, reports a complete resource ledger, avoids a full grid per worker, selects safe automatic policy, and reaches at least 10x median speedup in all four rows.",
+      "current_owner": "fragmented legacy CPU and Metal planners",
+      "destination_tickets": ["T16", "T54-T60"],
+      "acceptance_gates": ["four end-to-end median speedups >=10x", "serial comparison", "complete resource receipts", "safe automatic selection"],
+      "deletion_or_retention_condition": "Remove environment ladders and losing execution paths after the accepted alternatives transfer."
+    },
+    {
+      "issue": 450,
+      "required_outcome": "Task/provider, CLI, TUI, macOS, Python, profiles, and assistant surfaces all project canonical semantics with no hidden environment or UI science behavior.",
+      "current_owner": "legacy catalog and frontend projections",
+      "destination_tickets": ["T61-T66"],
+      "acceptance_gates": ["exact cross-surface round trips", "explicit defaults", "typed rejection", "no frontend science defaults"],
+      "deletion_or_retention_condition": "Remove local defaults and private surface semantics."
+    },
+    {
+      "issue": 462,
+      "required_outcome": "Convolution-function artifacts have exact identity, paired cells, bounded generation, atomic caching, corruption and mismatch rejection, CASA cache interoperability, and EVLA/VLASS evidence.",
+      "current_owner": "legacy cache consumer and future native generator",
+      "destination_tickets": ["T48", "T50", "T52"],
+      "acceptance_gates": ["artifact identity", "paired-cell validation", "bounded atomic generation", "CASA cache interoperability"],
+      "deletion_or_retention_condition": "Remove runtime preparation while retaining the explicit interoperable importer."
+    },
+    {
+      "issue": 466,
+      "required_outcome": "Cube routing preserves bounded selection, descending spectral axes, blank and unmapped cases, and CPU/Metal parity without a MeasurementSet fallback.",
+      "current_owner": "legacy cube routing",
+      "destination_tickets": ["T35-T37", "T56-T57"],
+      "acceptance_gates": ["closed routing matrix", "descending and blank cases", "CPU/Metal parity", "no MeasurementSet fallback"],
+      "deletion_or_retention_condition": "Remove the old cube route after the closed native matrix passes."
+    },
+    {
+      "issue": 473,
+      "required_outcome": "Cube products are reopenable and preserve bad-channel beams, common-beam policy, and residual scaling.",
+      "current_owner": "legacy cube product writer",
+      "destination_tickets": ["T13", "T39"],
+      "acceptance_gates": ["product topology and reopenability", "bad-channel and common-beam behavior", "residual scaling interoperability"],
+      "deletion_or_retention_condition": "Remove the old writer and beam side path after Product Graph ownership transfers."
+    },
+    {
+      "issue": 478,
+      "required_outcome": "Multifield W-projection cubes share phase and source routing, spectral and W planning, bounded replay, and explicit unsupported-combination failures.",
+      "current_owner": "legacy W-projection cube route",
+      "destination_tickets": ["T31-T32", "T37", "T49", "T53"],
+      "acceptance_gates": ["closed multifield cases", "shared phase/source identity", "bounded replay", "typed unsupported combinations"],
+      "deletion_or_retention_condition": "Remove the old multifield W-cube route after all closed cases transfer."
+    }
+  ],
   "inventory": {
-    "capability": ["capability.continuum-mfs", "capability.spectral-cube", "capability.spectral-cubedata", "capability.mtmfs", "capability.mosaic-mfs", "capability.mosaic-cube", "capability.w-projection", "capability.aw-projection", "capability.lsrk-transform", "capability.cubic-interpolation", "capability.continuum-subtraction", "capability.moving-source", "capability.facets-outliers", "capability.automasking", "capability.start-model", "capability.model-column-write", "capability.stokes-i", "capability.major-minor-cycles", "capability.global-weighting", "capability.ms-selection", "capability.compiled-problem"],
-    "product": ["product.psf", "product.residual", "product.model", "product.image", "product.sumwt", "product.mask", "product.weight", "product.pb", "product.image-pbcor", "product.alpha", "product.alpha-error", "product.alpha-pbcor"],
+    "capability": ["capability.continuum-mfs", "capability.spectral-cube", "capability.spectral-cubedata", "capability.mtmfs", "capability.mosaic-mfs", "capability.mosaic-cube", "capability.w-projection", "capability.aw-projection", "capability.lsrk-transform", "capability.cubic-interpolation", "capability.continuum-subtraction", "capability.moving-source", "capability.facets-outliers", "capability.automasking", "capability.start-model", "capability.model-column-write", "capability.stokes-i", "capability.stokes-q", "capability.stokes-u", "capability.stokes-v", "capability.correlation-xx", "capability.correlation-yy", "capability.correlation-rr", "capability.correlation-ll", "capability.major-minor-cycles", "capability.global-weighting", "capability.ms-selection", "capability.compiled-problem"],
+    "product": ["product.psf", "product.residual", "product.model", "product.image", "product.sumwt", "product.mask", "product.weight", "product.pb", "product.sensitivity", "product.image-pbcor", "product.taylor-terms", "product.alpha", "product.alpha-error", "product.alpha-pbcor", "product.beam"],
     "solver": ["solver.hogbom", "solver.mtmfs", "solver.clark", "solver.multiscale"],
     "frontend": ["frontend.task-provider", "frontend.cli", "frontend.tui", "frontend.python", "frontend.macos", "frontend.assistant"],
     "backend": ["backend.serial-cpu", "backend.multiworker-cpu", "backend.rustfft", "backend.accelerate", "backend.fftw", "backend.metal-mpsgraph", "backend.metal-vkfft", "backend.process-resource-authority"]
+  },
+  "product_kind_inventory": {
+    "Psf": "product.psf",
+    "Residual": "product.residual",
+    "Model": "product.model",
+    "RestoredImage": "product.image",
+    "SumWeights": "product.sumwt",
+    "Mask": "product.mask",
+    "Weight": "product.weight",
+    "PrimaryBeam": "product.pb",
+    "Sensitivity": "product.sensitivity",
+    "PbCorrectedImage": "product.image-pbcor",
+    "TaylorTerms": "product.taylor-terms",
+    "SpectralIndex": "product.alpha",
+    "SpectralIndexError": "product.alpha-error",
+    "PbCorrectedSpectralIndex": "product.alpha-pbcor",
+    "Beam": "product.beam"
+  },
+  "plane_selection_inventory": {
+    "StokesI": "capability.stokes-i",
+    "StokesQ": "capability.stokes-q",
+    "StokesU": "capability.stokes-u",
+    "StokesV": "capability.stokes-v",
+    "CorrXX": "capability.correlation-xx",
+    "CorrYY": "capability.correlation-yy",
+    "CorrRR": "capability.correlation-rr",
+    "CorrLL": "capability.correlation-ll"
   },
   "rows": [
     {"id":"capability.continuum-mfs","kind":"capability","status":"LegacyWholeRun","current_owner":"crates/casars-imager + crates/casa-imaging","destination_tickets":["T23/#509"],"evidence_issues":[319,445,446,447,448],"baseline_manifests":["repo://tools/perf/imager/evidence/imaging_performance_evidence_manifest.json#standard-mfs-final-comparison"],"acceptance_contract":"scientific-products-v1","transfer_point":"continuum tracer passes canonical CPU contract","deletion_condition":"old standard-MFS runner is unreachable","migration_obligation":{"ticket":"T23/#509","reason":"current path mixes science, execution, and product ownership"},"source_evidence":["crates/casa-imaging/src/types.rs::pub struct ImagingRequest"]},
@@ -77,6 +258,13 @@
     {"id":"capability.start-model","kind":"capability","status":"LegacyWholeRun","current_owner":"crates/casars-imager","destination_tickets":["T29/#515"],"evidence_issues":[319],"baseline_manifests":["repo://docs/tutorial-parity/capability-matrix.md"],"acceptance_contract":"scientific-products-v1","transfer_point":"start model enters compiled reconstruction basis","deletion_condition":"frontend/backend start-model branches are removed","migration_obligation":{"ticket":"T29/#515","reason":"start model is not compiled model state"},"source_evidence":["crates/casars-imager/src/lib.rs::start_model"]},
     {"id":"capability.model-column-write","kind":"capability","status":"LegacyWholeRun","current_owner":"crates/casars-imager","destination_tickets":["T30/#516"],"evidence_issues":[319,473],"baseline_manifests":["repo://docs/tutorial-parity/capability-matrix.md"],"acceptance_contract":"exact-routing-v1","transfer_point":"final prediction and atomic MS transaction pass","deletion_condition":"direct legacy model-column writer is removed","migration_obligation":{"ticket":"T30/#516","reason":"prediction and persistent side effect are not transactional"},"source_evidence":["crates/casars-imager/src/task_contract.rs::ImagerSaveModel"]},
     {"id":"capability.stokes-i","kind":"capability","status":"LegacyWholeRun","current_owner":"crates/casa-imaging","destination_tickets":["T32/#518"],"evidence_issues":[40,448],"baseline_manifests":["repo://docs/tutorial-parity/vlass-imaging-recovery-contract.md"],"acceptance_contract":"scientific-products-v1","transfer_point":"polarization contract and paired response pass","deletion_condition":"legacy hand-collapse path is removed","migration_obligation":{"ticket":"T32/#518","reason":"requested polarization and instrument response are not separated"},"source_evidence":["crates/casa-imaging/src/types.rs::PlaneStokes"]},
+    {"id":"capability.stokes-q","kind":"capability","status":"LegacyWholeRun","current_owner":"crates/casars-imager + crates/casa-imaging","destination_tickets":["T32/#518"],"evidence_issues":[40,448],"baseline_manifests":["github-issue://bglenden/casa-rs/40"],"acceptance_contract":"scientific-products-v1","transfer_point":"Stokes Q request and paired instrumental response pass","deletion_condition":"legacy Stokes Q collapse path is removed","migration_obligation":{"ticket":"T32/#518","reason":"requested polarization and feed response remain coupled in legacy execution"},"source_evidence":["crates/casars-imager/src/task_contract.rs::StokesQ"]},
+    {"id":"capability.stokes-u","kind":"capability","status":"LegacyWholeRun","current_owner":"crates/casars-imager + crates/casa-imaging","destination_tickets":["T32/#518"],"evidence_issues":[40,448],"baseline_manifests":["github-issue://bglenden/casa-rs/40"],"acceptance_contract":"scientific-products-v1","transfer_point":"Stokes U request and paired instrumental response pass","deletion_condition":"legacy Stokes U collapse path is removed","migration_obligation":{"ticket":"T32/#518","reason":"requested polarization and feed response remain coupled in legacy execution"},"source_evidence":["crates/casars-imager/src/task_contract.rs::StokesU"]},
+    {"id":"capability.stokes-v","kind":"capability","status":"LegacyWholeRun","current_owner":"crates/casars-imager + crates/casa-imaging","destination_tickets":["T32/#518"],"evidence_issues":[40,448],"baseline_manifests":["github-issue://bglenden/casa-rs/40"],"acceptance_contract":"scientific-products-v1","transfer_point":"Stokes V request and paired instrumental response pass","deletion_condition":"legacy Stokes V collapse path is removed","migration_obligation":{"ticket":"T32/#518","reason":"requested polarization and feed response remain coupled in legacy execution"},"source_evidence":["crates/casars-imager/src/task_contract.rs::StokesV"]},
+    {"id":"capability.correlation-xx","kind":"capability","status":"LegacyWholeRun","current_owner":"crates/casars-imager + crates/casa-imaging","destination_tickets":["T32/#518"],"evidence_issues":[40,448],"baseline_manifests":["github-issue://bglenden/casa-rs/40"],"acceptance_contract":"scientific-products-v1","transfer_point":"raw XX selection and paired response pass","deletion_condition":"legacy raw-XX selection path is removed","migration_obligation":{"ticket":"T32/#518","reason":"raw-correlation selection is coupled to legacy preparation"},"source_evidence":["crates/casars-imager/src/task_contract.rs::CorrXX"]},
+    {"id":"capability.correlation-yy","kind":"capability","status":"LegacyWholeRun","current_owner":"crates/casars-imager + crates/casa-imaging","destination_tickets":["T32/#518"],"evidence_issues":[40,448],"baseline_manifests":["github-issue://bglenden/casa-rs/40"],"acceptance_contract":"scientific-products-v1","transfer_point":"raw YY selection and paired response pass","deletion_condition":"legacy raw-YY selection path is removed","migration_obligation":{"ticket":"T32/#518","reason":"raw-correlation selection is coupled to legacy preparation"},"source_evidence":["crates/casars-imager/src/task_contract.rs::CorrYY"]},
+    {"id":"capability.correlation-rr","kind":"capability","status":"LegacyWholeRun","current_owner":"crates/casars-imager + crates/casa-imaging","destination_tickets":["T32/#518"],"evidence_issues":[40,448],"baseline_manifests":["github-issue://bglenden/casa-rs/40"],"acceptance_contract":"scientific-products-v1","transfer_point":"raw RR selection and paired response pass","deletion_condition":"legacy raw-RR selection path is removed","migration_obligation":{"ticket":"T32/#518","reason":"raw-correlation selection is coupled to legacy preparation"},"source_evidence":["crates/casars-imager/src/task_contract.rs::CorrRR"]},
+    {"id":"capability.correlation-ll","kind":"capability","status":"LegacyWholeRun","current_owner":"crates/casars-imager + crates/casa-imaging","destination_tickets":["T32/#518"],"evidence_issues":[40,448],"baseline_manifests":["github-issue://bglenden/casa-rs/40"],"acceptance_contract":"scientific-products-v1","transfer_point":"raw LL selection and paired response pass","deletion_condition":"legacy raw-LL selection path is removed","migration_obligation":{"ticket":"T32/#518","reason":"raw-correlation selection is coupled to legacy preparation"},"source_evidence":["crates/casars-imager/src/task_contract.rs::CorrLL"]},
     {"id":"capability.major-minor-cycles","kind":"capability","status":"LegacyWholeRun","current_owner":"crates/casa-imaging + crates/casars-imager","destination_tickets":["T20/#506","T21/#507","T22/#508"],"evidence_issues":[35,448],"baseline_manifests":["repo://docs/tutorial-parity/vlass-imaging-recovery-contract.md"],"acceptance_contract":"solver-trajectory-v1","transfer_point":"normal-state generations and explicit cycle protocol pass","deletion_condition":"mode-specific cycle controllers are removed","migration_obligation":{"ticket":"T22/#508","reason":"major/minor cycles are not explicit shared architecture"},"source_evidence":["crates/casa-imaging/src/types.rs::CleanConfig"]},
     {"id":"capability.global-weighting","kind":"capability","status":"LegacyWholeRun","current_owner":"crates/casa-imaging/src/weighting.rs","destination_tickets":["T18/#504"],"evidence_issues":[45,447],"baseline_manifests":["github-issue://bglenden/casa-rs/45"],"acceptance_contract":"scientific-products-v1","transfer_point":"one frozen global weighting generation passes","deletion_condition":"per-mode density/weighting branches are removed","migration_obligation":{"ticket":"T18/#504","reason":"weighting generation is duplicated across runners"},"source_evidence":["crates/casa-imaging/src/weighting.rs::StandardMfsStreamingWeightingPlan"]},
     {"id":"capability.ms-selection","kind":"capability","status":"LegacyWholeRun","current_owner":"crates/casa-ms + crates/casars-imager","destination_tickets":["T07/#493","T17/#503"],"evidence_issues":[54,447],"baseline_manifests":["github-issue://bglenden/casa-rs/54"],"acceptance_contract":"exact-routing-v1","transfer_point":"Observation Snapshot and bounded Selected Observation pass exact identity/order gates","deletion_condition":"frontend selectors and duplicate MS preparation are removed","migration_obligation":{"ticket":"T17/#503","reason":"selection identity and bounded evaluation are not one observation contract"},"source_evidence":["crates/casa-ms/src/selection.rs::pub struct MsSelection"]},
@@ -90,10 +278,13 @@
     {"id":"product.mask","kind":"product","status":"LegacyWholeRun","current_owner":"crates/casa-imaging/src/image_product.rs","destination_tickets":["T13/#499","T25/#511"],"evidence_issues":[217],"baseline_manifests":["github-issue://bglenden/casa-rs/217"],"acceptance_contract":"scientific-products-v1","transfer_point":"Product Graph separates validity and CLEAN masks","deletion_condition":"legacy mask writer removed","migration_obligation":{"ticket":"T25/#511","reason":"mask meanings are not centrally typed"},"source_evidence":["crates/casa-imaging/src/image_product.rs::Mask"]},
     {"id":"product.weight","kind":"product","status":"LegacyWholeRun","current_owner":"crates/casa-imaging/src/image_product.rs","destination_tickets":["T13/#499","T47/#533"],"evidence_issues":[217,448],"baseline_manifests":["repo://tools/perf/imager/evidence/imaging_performance_evidence_manifest.json"],"acceptance_contract":"scientific-products-v1","transfer_point":"Product Graph owns weight/sensitivity semantics","deletion_condition":"legacy weight writer removed","migration_obligation":{"ticket":"T47/#533","reason":"weight product is mode-defined"},"source_evidence":["crates/casa-imaging/src/image_product.rs::Weight"]},
     {"id":"product.pb","kind":"product","status":"LegacyWholeRun","current_owner":"crates/casa-imaging/src/image_product.rs","destination_tickets":["T13/#499","T47/#533"],"evidence_issues":[217,448],"baseline_manifests":["repo://docs/tutorial-parity/vlass-imaging-recovery-contract.md"],"acceptance_contract":"scientific-products-v1","transfer_point":"Product Graph owns PB","deletion_condition":"legacy PB writer removed","migration_obligation":{"ticket":"T47/#533","reason":"PB meaning is gridder-owned"},"source_evidence":["crates/casa-imaging/src/image_product.rs::PrimaryBeam"]},
+    {"id":"product.sensitivity","kind":"product","status":"LegacyWholeRun","current_owner":"crates/casa-imaging weight and primary-beam product paths","destination_tickets":["T13/#499","T47/#533"],"evidence_issues":[217,448],"baseline_manifests":["repo://docs/tutorial-parity/vlass-imaging-recovery-contract.md"],"acceptance_contract":"scientific-products-v1","transfer_point":"Product Graph owns a distinct sensitivity response","deletion_condition":"legacy weight/PB aliases no longer stand in for sensitivity","migration_obligation":{"ticket":"T47/#533","reason":"sensitivity is not a distinct legacy product role"},"source_evidence":["crates/casa-imaging-model/src/compiled_problem.rs::Sensitivity"]},
     {"id":"product.image-pbcor","kind":"product","status":"LegacyWholeRun","current_owner":"crates/casa-imaging/src/image_product.rs","destination_tickets":["T13/#499","T14/#500"],"evidence_issues":[217,448],"baseline_manifests":["repo://docs/tutorial-parity/vlass-imaging-recovery-contract.md"],"acceptance_contract":"scientific-products-v1","transfer_point":"normalization contract owns PB correction","deletion_condition":"legacy pbcor writer removed","migration_obligation":{"ticket":"T14/#500","reason":"PB correction is product assembly"},"source_evidence":["crates/casa-imaging/src/image_product.rs::ImagePbcor"]},
+    {"id":"product.taylor-terms","kind":"product","status":"LegacyWholeRun","current_owner":"crates/casa-imaging MT-MFS product paths","destination_tickets":["T13/#499","T43/#529"],"evidence_issues":[448],"baseline_manifests":["repo://docs/tutorial-parity/vlass-imaging-recovery-contract.md"],"acceptance_contract":"scientific-products-v1","transfer_point":"Product Graph publishes the authoritative Taylor coefficient set","deletion_condition":"legacy MT-MFS Taylor writers are removed","migration_obligation":{"ticket":"T43/#529","reason":"Taylor coefficients are solver-coupled legacy products"},"source_evidence":["crates/casa-imaging-model/src/compiled_problem.rs::TaylorTerms"]},
     {"id":"product.alpha","kind":"product","status":"LegacyWholeRun","current_owner":"crates/casa-imaging/src/image_product.rs","destination_tickets":["T13/#499","T43/#529"],"evidence_issues":[448],"baseline_manifests":["repo://docs/tutorial-parity/vlass-imaging-recovery-contract.md"],"acceptance_contract":"scientific-products-v1","transfer_point":"Taylor products derive from authoritative normal state","deletion_condition":"legacy alpha writer removed","migration_obligation":{"ticket":"T43/#529","reason":"Taylor product generation is solver-coupled"},"source_evidence":["crates/casa-imaging/src/image_product.rs::Alpha"]},
     {"id":"product.alpha-error","kind":"product","status":"LegacyWholeRun","current_owner":"crates/casa-imaging/src/image_product.rs","destination_tickets":["T13/#499","T43/#529"],"evidence_issues":[448],"baseline_manifests":["repo://docs/tutorial-parity/vlass-imaging-recovery-contract.md"],"acceptance_contract":"scientific-products-v1","transfer_point":"Taylor uncertainty product is graph-owned","deletion_condition":"legacy alpha-error writer removed","migration_obligation":{"ticket":"T43/#529","reason":"uncertainty product is solver-coupled"},"source_evidence":["crates/casa-imaging/src/image_product.rs::AlphaError"]},
     {"id":"product.alpha-pbcor","kind":"product","status":"LegacyWholeRun","current_owner":"crates/casa-imaging/src/image_product.rs","destination_tickets":["T13/#499","T43/#529"],"evidence_issues":[448],"baseline_manifests":["repo://docs/tutorial-parity/vlass-imaging-recovery-contract.md"],"acceptance_contract":"scientific-products-v1","transfer_point":"Taylor PB correction is graph-owned","deletion_condition":"legacy alpha-pbcor writer removed","migration_obligation":{"ticket":"T43/#529","reason":"Taylor PB correction is product assembly"},"source_evidence":["crates/casa-imaging/src/image_product.rs::AlphaPbcor"]},
+    {"id":"product.beam","kind":"product","status":"LegacyWholeRun","current_owner":"crates/casa-imaging beam fitting and image-product metadata","destination_tickets":["T13/#499","T39/#525"],"evidence_issues":[217,473],"baseline_manifests":["repo://docs/tutorial-parity/vlass-imaging-recovery-contract.md"],"acceptance_contract":"scientific-products-v1","transfer_point":"Product Graph owns fitted and common-beam metadata","deletion_condition":"legacy writers no longer synthesize private beam metadata","migration_obligation":{"ticket":"T39/#525","reason":"beam metadata is split across legacy fitters and writers"},"source_evidence":["crates/casa-imaging-model/src/compiled_problem.rs::Beam"]},
 
     {"id":"solver.hogbom","kind":"solver","status":"LegacyWholeRun","current_owner":"crates/casa-imaging","destination_tickets":["T24/#510"],"evidence_issues":[35,448],"baseline_manifests":["repo://docs/tutorial-parity/vlass-imaging-recovery-contract.md"],"acceptance_contract":"solver-trajectory-v1","transfer_point":"solver consumes Minor Cycle View","deletion_condition":"legacy Högbom controller path removed","migration_obligation":{"ticket":"T24/#510","reason":"solver and cycle controller are coupled"},"source_evidence":["crates/casa-imaging/src/types.rs::Hogbom"]},
     {"id":"solver.mtmfs","kind":"solver","status":"LegacyWholeRun","current_owner":"crates/casa-imaging","destination_tickets":["T44/#530"],"evidence_issues":[448],"baseline_manifests":["repo://docs/tutorial-parity/vlass-imaging-recovery-contract.md"],"acceptance_contract":"solver-trajectory-v1","transfer_point":"MT-MFS solver consumes block normal state","deletion_condition":"legacy MT-MFS solver route removed","migration_obligation":{"ticket":"T44/#530","reason":"solver owns mode-specific products/state"},"source_evidence":["crates/casa-imaging/src/types.rs::Mtmfs"]},

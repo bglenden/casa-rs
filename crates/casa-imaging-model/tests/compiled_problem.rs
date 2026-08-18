@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::{
-    CompileProblemError, CompiledGeometryId, FiniteValuePolicy, LogicalIdentity,
-    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationSnapshotId,
-    ProblemInputIdentities, ProblemSpecification, ProductKind, ProductNormalization,
-    ProductRequirements, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
-    ReconstructionControls, ReductionPolicy, ReferenceDataKind, RequiredCapability,
-    RestoringBeamPolicy, StageErrorBudget, WeightDensityScope, WeightingContract, WeightingScheme,
+    CompileProblemError, CompiledGeometryId, FieldGeometry, FiniteValuePolicy, GeometryContract,
+    InstrumentResponse, LogicalIdentity, MeasurementEquationContract, ModelStateIdentity,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationSnapshotId,
+    PolarizationContract, PolarizationCoordinate, ProblemInputIdentities, ProblemSpecification,
+    ProductKind, ProductNormalization, ProductRequirements, ProjectionGeometry,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, ReferenceDataKind, RequiredCapability, RestoringBeamPolicy,
+    ScientificContract, SpectralContract, SpectralCoupling, SpectralFrame, SpectralSampling,
+    StageErrorBudget, UvTaper, WeightDensityScope, WeightingContract, WeightingScheme,
     compile_problem,
 };
 
@@ -61,8 +64,23 @@ fn products(reverse: bool) -> ProductRequirements {
     )
 }
 
+fn science() -> ScientificContract {
+    ScientificContract::new(
+        GeometryContract::new(ProjectionGeometry::Coplanar, FieldGeometry::Single),
+        SpectralContract::new(
+            SpectralFrame::Native,
+            SpectralSampling::Identity,
+            SpectralCoupling::Independent,
+            None,
+        ),
+        PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        MeasurementEquationContract::new(InstrumentResponse::Scalar),
+    )
+}
+
 fn specification(reverse: bool) -> ProblemSpecification {
     ProblemSpecification::new(
+        science(),
         reconstruction(),
         WeightingContract::new(
             WeightingScheme::Briggs { robust: 0.5 },
@@ -142,6 +160,7 @@ fn derived_capabilities_cover_normalization_without_naming_a_backend() {
 #[test]
 fn natural_weighting_rejects_a_meaningless_per_channel_density_scope() {
     let specification = ProblemSpecification::new(
+        science(),
         reconstruction(),
         WeightingContract::new(
             WeightingScheme::Natural,
@@ -160,6 +179,7 @@ fn natural_weighting_rejects_a_meaningless_per_channel_density_scope() {
 #[test]
 fn natural_weighting_declares_that_density_generation_is_not_applicable() {
     let specification = ProblemSpecification::new(
+        science(),
         reconstruction(),
         WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
         products(false),
@@ -177,6 +197,7 @@ fn natural_weighting_declares_that_density_generation_is_not_applicable() {
 #[test]
 fn incompatible_reconstruction_capabilities_fail_before_execution_inputs_exist() {
     let specification = ProblemSpecification::new(
+        science(),
         ReconstructionContract::new(
             ReconstructionBasis::Constant,
             ReconstructionAlgorithm::Mtmfs,
@@ -196,6 +217,7 @@ fn incompatible_reconstruction_capabilities_fail_before_execution_inputs_exist()
 #[test]
 fn flat_normalization_without_sensitivity_fails_at_compile_time() {
     let specification = ProblemSpecification::new(
+        science(),
         reconstruction(),
         weighting(),
         ProductRequirements::new(
@@ -228,6 +250,7 @@ fn incomplete_or_non_finite_numerics_fail_at_compile_time() {
         .collect::<Vec<_>>();
     incomplete.pop();
     let incomplete_specification = ProblemSpecification::new(
+        science(),
         reconstruction(),
         weighting(),
         products(false),
@@ -255,6 +278,7 @@ fn incomplete_or_non_finite_numerics_fail_at_compile_time() {
         })
         .collect();
     let non_finite_specification = ProblemSpecification::new(
+        science(),
         reconstruction(),
         weighting(),
         products(false),
@@ -274,6 +298,7 @@ fn incomplete_or_non_finite_numerics_fail_at_compile_time() {
 #[test]
 fn derived_products_require_their_scientific_sources() {
     let specification = ProblemSpecification::new(
+        science(),
         ReconstructionContract::new(
             ReconstructionBasis::Constant,
             ReconstructionAlgorithm::Hogbom,
@@ -325,6 +350,7 @@ fn duplicate_reference_families_are_rejected_instead_of_ordered_accidentally() {
 fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
     let with_robust = |robust| {
         ProblemSpecification::new(
+            science(),
             reconstruction(),
             WeightingContract::new(
                 WeightingScheme::Briggs { robust },
@@ -340,13 +366,14 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
 
     assert_eq!(negative_zero.problem_id(), positive_zero.problem_id());
     assert_ne!(positive_zero.problem_id(), changed.problem_id());
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 1);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 2);
 }
 
 #[test]
 fn multiscale_order_and_duplicate_scales_do_not_change_scientific_identity() {
     let specification = |scales_px| {
         ProblemSpecification::new(
+            science(),
             ReconstructionContract::new(
                 ReconstructionBasis::Constant,
                 ReconstructionAlgorithm::Multiscale { scales_px },
@@ -374,4 +401,117 @@ fn multiscale_order_and_duplicate_scales_do_not_change_scientific_identity() {
 
     assert_eq!(canonical.problem_id(), reordered.problem_id());
     assert_eq!(canonical.reconstruction(), reordered.reconstruction());
+}
+
+#[test]
+fn complete_science_contract_changes_identity_and_capabilities() {
+    let make = |science, weighting| {
+        ProblemSpecification::new(
+            science,
+            reconstruction(),
+            weighting,
+            products(false),
+            numerics(false),
+        )
+    };
+    let baseline = compile_problem(make(science(), weighting()), inputs(false)).expect("baseline");
+    let widefield_science = ScientificContract::new(
+        GeometryContract::new(ProjectionGeometry::NonCoplanarW, FieldGeometry::Mosaic),
+        SpectralContract::new(
+            SpectralFrame::Lsrk,
+            SpectralSampling::Linear,
+            SpectralCoupling::CommonRestoringBeam,
+            Some(1.420_405_751_77e9),
+        ),
+        PolarizationContract::new(vec![
+            PolarizationCoordinate::StokesI,
+            PolarizationCoordinate::StokesQ,
+            PolarizationCoordinate::StokesU,
+            PolarizationCoordinate::StokesV,
+        ]),
+        MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam),
+    );
+    let tapered = WeightingContract::new(
+        WeightingScheme::Briggs { robust: 0.5 },
+        WeightDensityScope::GlobalSelection,
+    )
+    .with_uv_taper(UvTaper::new(12_000.0, 8_000.0, 0.25));
+    let widefield = compile_problem(make(widefield_science, tapered), inputs(false))
+        .expect("widefield science");
+
+    assert_ne!(baseline.problem_id(), widefield.problem_id());
+    for capability in [
+        RequiredCapability::NonCoplanarWGeometry,
+        RequiredCapability::MosaicGeometry,
+        RequiredCapability::SpectralFrameTransform,
+        RequiredCapability::SpectralResampling,
+        RequiredCapability::CommonBeamSpectralCoupling,
+        RequiredCapability::PrimaryBeamResponse,
+        RequiredCapability::UvTaper,
+        RequiredCapability::Polarization(PolarizationCoordinate::StokesQ),
+    ] {
+        assert!(widefield.required_capabilities().contains(&capability));
+    }
+}
+
+#[test]
+fn invalid_science_contracts_fail_before_bulk_io() {
+    let invalid_mosaic = ScientificContract::new(
+        GeometryContract::new(ProjectionGeometry::Coplanar, FieldGeometry::Mosaic),
+        SpectralContract::new(
+            SpectralFrame::Native,
+            SpectralSampling::Identity,
+            SpectralCoupling::Independent,
+            None,
+        ),
+        PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        MeasurementEquationContract::new(InstrumentResponse::Scalar),
+    );
+    let specification = ProblemSpecification::new(
+        invalid_mosaic,
+        reconstruction(),
+        weighting(),
+        products(false),
+        numerics(false),
+    );
+    assert!(matches!(
+        compile_problem(specification, inputs(false)),
+        Err(CompileProblemError::InvalidScientificContract { .. })
+    ));
+
+    let invalid_sampling = ScientificContract::new(
+        GeometryContract::new(ProjectionGeometry::Coplanar, FieldGeometry::Single),
+        SpectralContract::new(
+            SpectralFrame::Native,
+            SpectralSampling::ChannelAverage {
+                channels_per_bin: 0,
+            },
+            SpectralCoupling::Independent,
+            None,
+        ),
+        PolarizationContract::new(Vec::new()),
+        MeasurementEquationContract::new(InstrumentResponse::Scalar),
+    );
+    let specification = ProblemSpecification::new(
+        invalid_sampling,
+        reconstruction(),
+        weighting(),
+        products(false),
+        numerics(false),
+    );
+    assert!(matches!(
+        compile_problem(specification, inputs(false)),
+        Err(CompileProblemError::InvalidScientificContract { .. })
+    ));
+}
+
+#[test]
+fn compiled_problem_identity_has_a_pinned_schema_two_digest() {
+    let compiled = compile_problem(specification(false), inputs(false)).expect("compile problem");
+
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 2);
+    assert_eq!(
+        compiled.problem_id().to_string(),
+        "c486305a146bda4ba64fd82781a21bfe4013abf9cbfdfe19a7be995ddd707801"
+    );
 }
