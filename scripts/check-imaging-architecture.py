@@ -53,7 +53,7 @@ ACCEPTED_LOGICAL_GRAPH_SHA256 = (
     "7101b6d90196b1ea3d3c750080d703bb5e305e91c8ac19553e1dda7ed58c4e33"
 )
 ACCEPTED_SOURCE_BOUNDARIES_SHA256 = (
-    "32fde8d016747f93ef77473be11e43d7a3ae476f7fa975612babe1ddf3e658e5"
+    "33886331016fb0d0f567e75d1870184571c759bf6a48997ff55d20dc8c7a206d"
 )
 ACCEPTED_FROZEN_TRANSITIONAL_EDGES_SHA256 = (
     "0077e28528d2160616d34e17fb7124586f346557917e0bfac99b0dff6739a1d1"
@@ -62,7 +62,7 @@ ACCEPTED_PACKAGE_POLICY_SHA256 = (
     "5f348d635a693798a59cb309d32d2afb121ae14ba980c602e43654e3343ba66c"
 )
 ACCEPTED_MATRIX_INVENTORY_SHA256 = (
-    "a9342bb174303e58b9d29e2c3b67de72460c90598d9aa2293c7ae10fe31dea0c"
+    "29cbc25f7915945d413b39d3b7644b95e3edac23b1877fcf6b8e8095c49ced17"
 )
 ACCEPTED_PRODUCT_KIND_INVENTORY_SHA256 = (
     "f4e04101f0d6e89d9bc12584cd580f5f8924f80e71b867ee252422f648fdced5"
@@ -79,6 +79,33 @@ ACCEPTED_CUBE_INTERPOLATION_INVENTORY_SHA256 = (
 ACCEPTED_STANDARD_MFS_BACKEND_INVENTORY_SHA256 = (
     "28cc3eef3336bac19e51906067f85a0373308e3132d8976a8d19a3aced8432b9"
 )
+ACCEPTED_SPECTRAL_MODE_INVENTORY_SHA256 = (
+    "3a1a8e62103ec316b3bacc996acaf1b426f831b0de2c2db1834b038065d6fe04"
+)
+ACCEPTED_IMAGER_SPECTRAL_MODE_INVENTORY_SHA256 = (
+    "3a1a8e62103ec316b3bacc996acaf1b426f831b0de2c2db1834b038065d6fe04"
+)
+ACCEPTED_GRIDDER_REQUEST_INVENTORY_SHA256 = (
+    "0921c6e8f01dcaebf2c3b32ebc8d34f6811951343f6cbe1b2bee39f3440fe6dc"
+)
+ACCEPTED_DECONVOLVER_INVENTORY_SHA256 = (
+    "57648c06caa082706e5af79f623a54e90b8faccf6cdc2f4105f0bd0718965ca9"
+)
+ACCEPTED_IMAGER_DECONVOLVER_INVENTORY_SHA256 = (
+    "57648c06caa082706e5af79f623a54e90b8faccf6cdc2f4105f0bd0718965ca9"
+)
+ACCEPTED_IMAGER_CUBE_INTERPOLATION_INVENTORY_SHA256 = (
+    "b955f223aebede1f69e75c17ea2ed83bd280557b6cf361dff6a4fd620e673162"
+)
+ACCEPTED_FFT_BACKEND_CHOICE_INVENTORY_SHA256 = (
+    "21bc32c858a3e6f4e13a174b5764cc900dd3d8becce641decae5c3e47e32aecf"
+)
+ACCEPTED_IMAGING_FFT_BACKEND_POLICY_INVENTORY_SHA256 = (
+    "6e72c455ac075eed27b502a635d0c8e0c2ce63c5ece70fea48c13ed2a40ad380"
+)
+ACCEPTED_STANDARD_MFS_ACCELERATION_POLICY_INVENTORY_SHA256 = (
+    "5a746c70358a33c038c9ccf37167ab29998f7b55aef418f43b8d7b1ea4953de3"
+)
 ACCEPTED_ISSUE_OUTCOMES_SHA256 = (
     "ffc816c216e9b969c1229f2e813d33a9e12118555e3b286ea66e769218d86713"
 )
@@ -86,12 +113,12 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "114ef002b698d8c3d01f233dac7c3385885c04b6f40bff4ad7d3cecfaea441ef"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "214524cf1ee8a61bfdc08132f7e4b35613e444ef8f06baa9b426dfb0043c6073"
+    "afc1610a7f4b90d6ccebf056370e380cb5a17367b895774aff0918f040fe131f"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "fb3aaad5bcc78f81745e09f4ecda1392e5a121d929fbedd711c86cfaebb52bce"
+    "f006734a956ab1ae7ee6545d6fd24d82c5bc2fcee39f549fac9cfb64c16f24ac"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 3
+ACCEPTED_MATRIX_CONTRACT_REVISION = 4
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -804,11 +831,25 @@ def source_boundary_violations(
                             "path": relative,
                             "pattern": pattern_index,
                             "match": match.group(0),
+                            "context": normalized_violation_context(source, match),
                             "line": source.count("\n", 0, match.start()) + 1,
                             "message": forbidden["message"],
                         }
                     )
     return violations
+
+
+def normalized_violation_context(source: str, match: re.Match[str]) -> str:
+    line_start = source.rfind("\n", 0, match.start()) + 1
+    line_end = source.find("\n", match.end())
+    if line_end == -1:
+        line_end = len(source)
+    first_line = source[line_start:line_end]
+    if re.match(r"\s*(?:pub\s+)?(?:use|extern\s+crate)\b", first_line):
+        statement_end = source.find(";", match.end())
+        if statement_end != -1:
+            line_end = statement_end + 1
+    return " ".join(source[line_start:line_end].split())
 
 
 def source_boundary_violation_digest(violations: list[dict[str, Any]]) -> str:
@@ -817,6 +858,7 @@ def source_boundary_violation_digest(violations: list[dict[str, Any]]) -> str:
             "path": violation["path"],
             "pattern": violation["pattern"],
             "match": violation["match"],
+            "context": violation["context"],
         }
         for violation in violations
     ]
@@ -1304,6 +1346,69 @@ def validate_migration_matrix(
             REPO_ROOT / "crates/casa-imaging/src/lib.rs",
             "StandardMfsBackend",
             ACCEPTED_STANDARD_MFS_BACKEND_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "spectral_mode_inventory",
+            REPO_ROOT / "crates/casars-imager/src/lib.rs",
+            "SpectralMode",
+            ACCEPTED_SPECTRAL_MODE_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "imager_spectral_mode_inventory",
+            REPO_ROOT / "crates/casars-imager/src/task_contract.rs",
+            "ImagerSpectralMode",
+            ACCEPTED_IMAGER_SPECTRAL_MODE_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "gridder_request_inventory",
+            REPO_ROOT / "crates/casars-imager/src/lib.rs",
+            "GridderRequest",
+            ACCEPTED_GRIDDER_REQUEST_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "deconvolver_inventory",
+            REPO_ROOT / "crates/casa-imaging/src/types.rs",
+            "Deconvolver",
+            ACCEPTED_DECONVOLVER_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "imager_deconvolver_inventory",
+            REPO_ROOT / "crates/casars-imager/src/task_contract.rs",
+            "ImagerDeconvolver",
+            ACCEPTED_IMAGER_DECONVOLVER_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "imager_cube_interpolation_inventory",
+            REPO_ROOT / "crates/casars-imager/src/task_contract.rs",
+            "ImagerCubeInterpolation",
+            ACCEPTED_IMAGER_CUBE_INTERPOLATION_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "fft_backend_choice_inventory",
+            REPO_ROOT / "crates/casa-imaging/src/fft_backend.rs",
+            "FftBackendChoice",
+            ACCEPTED_FFT_BACKEND_CHOICE_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "imaging_fft_backend_policy_inventory",
+            REPO_ROOT / "crates/casars-imager/src/lib.rs",
+            "ImagingFftBackendPolicy",
+            ACCEPTED_IMAGING_FFT_BACKEND_POLICY_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "standard_mfs_acceleration_policy_inventory",
+            REPO_ROOT / "crates/casars-imager/src/lib.rs",
+            "StandardMfsAccelerationPolicy",
+            ACCEPTED_STANDARD_MFS_ACCELERATION_POLICY_INVENTORY_SHA256,
         )
     baseline_registry = validate_baseline_manifest_registry(
         matrix.get("baseline_manifest_digests")

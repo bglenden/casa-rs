@@ -21,18 +21,21 @@ exactly one stable row. A row records:
 - the deletion condition for the displaced implementation; and
 - a Migration Obligation whenever it is not native.
 
-The matrix also maps every current `ProductKind`, `ImagerPlaneSelection`,
-`PolarizationCoordinate`, `CubeInterpolation`, and `StandardMfsBackend`
-variant to exactly one row. The polarization map includes the XY, YX, RL, and
-LR cross-hands even while their execution routes are temporarily unavailable;
-the backend map keeps fixed-tile and each Metal gridder family distinct. These
-maps make additions, removals, and aliases explicit instead of letting a
-coordinated row and inventory edit silently redefine a production surface.
+The matrix binds fourteen current Rust request, science, solver, product, and
+backend enums to rows, including `ProductKind`, both spectral-mode and
+deconvolver surfaces, `GridderRequest`, both cube-interpolation surfaces,
+`PolarizationCoordinate`, `StandardMfsBackend`, both FFT-backend surfaces, and
+the standard-MFS acceleration policy. The polarization map includes the XY,
+YX, RL, and LR cross-hands even while their execution routes are temporarily
+unavailable; backend maps keep automatic policy, fixed-tile, and each Metal
+family distinct. Additions, removals, and aliases therefore cannot silently
+redefine an accepted production surface.
 
 Every baseline locator resolves to repository content and is paired with a
 pinned SHA-256 digest in `baseline_manifest_digests`. Mutable issue URLs are
-not baseline evidence. A baseline replacement therefore requires an explicit
-matrix revision and accepted digest update.
+not baseline evidence; issue-backed rows use exact committed snapshots with
+the issue title, body, URL, and source update timestamp. A baseline replacement
+therefore requires an explicit matrix revision and accepted digest update.
 
 `LegacyWholeRun` is an ownership classification, not a compatibility promise.
 It permits the current production implementation to remain reachable only
@@ -70,7 +73,7 @@ current owner. After transfer, they land only in the native owner.
 The architecture checker validates schema, the independently pinned logical
 graph, canonical inventories, complete Acceptance Contracts, complete binding
 row ledger, structured issue outcomes, content-pinned evidence locators,
-Migration Obligations, and source evidence. It binds the five variant maps to their Rust
+Migration Obligations, and source evidence. It binds the fourteen variant maps to their Rust
 enums, classifies every Cargo workspace package, requires native dependency
 sets to match exactly, scans native science and Rust/Swift frontend roots for
 forbidden backend/device imports, ratchets the existing legacy Rust-frontend
