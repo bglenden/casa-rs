@@ -53,7 +53,7 @@ ACCEPTED_LOGICAL_GRAPH_SHA256 = (
     "7101b6d90196b1ea3d3c750080d703bb5e305e91c8ac19553e1dda7ed58c4e33"
 )
 ACCEPTED_SOURCE_BOUNDARIES_SHA256 = (
-    "b0acde2a40e5ae4b7ecf4b082a263cb41655c9889217eae4801b15728c4d7d4e"
+    "32fde8d016747f93ef77473be11e43d7a3ae476f7fa975612babe1ddf3e658e5"
 )
 ACCEPTED_FROZEN_TRANSITIONAL_EDGES_SHA256 = (
     "0077e28528d2160616d34e17fb7124586f346557917e0bfac99b0dff6739a1d1"
@@ -62,7 +62,7 @@ ACCEPTED_PACKAGE_POLICY_SHA256 = (
     "5f348d635a693798a59cb309d32d2afb121ae14ba980c602e43654e3343ba66c"
 )
 ACCEPTED_MATRIX_INVENTORY_SHA256 = (
-    "0dd9523c3a6a6032f231d60887712519e01ecd91abaac8cf290afe3d715bed0c"
+    "a9342bb174303e58b9d29e2c3b67de72460c90598d9aa2293c7ae10fe31dea0c"
 )
 ACCEPTED_PRODUCT_KIND_INVENTORY_SHA256 = (
     "f4e04101f0d6e89d9bc12584cd580f5f8924f80e71b867ee252422f648fdced5"
@@ -73,6 +73,12 @@ ACCEPTED_PLANE_SELECTION_INVENTORY_SHA256 = (
 ACCEPTED_POLARIZATION_COORDINATE_INVENTORY_SHA256 = (
     "245f24c2e462b7127fce91a899db1995ce82733ba3d88f5c425a04ec49e32376"
 )
+ACCEPTED_CUBE_INTERPOLATION_INVENTORY_SHA256 = (
+    "c5de582d14d11af38ab9e2ea1833b6a2a222798616466df785b402d96715b8d0"
+)
+ACCEPTED_STANDARD_MFS_BACKEND_INVENTORY_SHA256 = (
+    "28cc3eef3336bac19e51906067f85a0373308e3132d8976a8d19a3aced8432b9"
+)
 ACCEPTED_ISSUE_OUTCOMES_SHA256 = (
     "ffc816c216e9b969c1229f2e813d33a9e12118555e3b286ea66e769218d86713"
 )
@@ -80,9 +86,12 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "114ef002b698d8c3d01f233dac7c3385885c04b6f40bff4ad7d3cecfaea441ef"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "1b647c1208e1d021d7e6c8e7cd3a263e07238acf94b66edc3a4eb1c234301bc9"
+    "214524cf1ee8a61bfdc08132f7e4b35613e444ef8f06baa9b426dfb0043c6073"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 2
+ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
+    "fb3aaad5bcc78f81745e09f4ecda1392e5a121d929fbedd711c86cfaebb52bce"
+)
+ACCEPTED_MATRIX_CONTRACT_REVISION = 3
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -443,9 +452,15 @@ def validate_source_boundary_policy(value: Any) -> None:
         context = f"source_boundaries[{index}]"
         if not isinstance(boundary, dict):
             raise ArchitectureError(f"{context} must be an object")
-        if set(boundary) != {"id", "roots", "extensions", "forbidden_patterns"}:
+        if set(boundary) != {
+            "id",
+            "roots",
+            "extensions",
+            "forbidden_patterns",
+            "accepted_violation_digest",
+        }:
             raise ArchitectureError(
-                f"{context} must contain id, roots, extensions, and forbidden_patterns only"
+                f"{context} must contain id, roots, extensions, forbidden_patterns, and accepted_violation_digest only"
             )
         identifier = require_string(boundary.get("id"), f"{context}.id")
         if identifier in identifiers:
@@ -484,6 +499,13 @@ def validate_source_boundary_policy(value: Any) -> None:
                 raise ArchitectureError(
                     f"{pattern_context}.regex is invalid: {error}"
                 ) from error
+        accepted_digest = boundary.get("accepted_violation_digest")
+        if accepted_digest is not None and not re.fullmatch(
+            r"[0-9a-f]{64}", str(accepted_digest)
+        ):
+            raise ArchitectureError(
+                f"{context}.accepted_violation_digest must be null or a lowercase SHA-256 digest"
+            )
 
 
 def edge_tuple(edge: Any, context: str) -> tuple[str, str, str]:
@@ -754,35 +776,71 @@ def validate_workspace(policy: dict[str, Any], metadata: dict[str, Any]) -> None
                 )
 
 
+def source_boundary_violations(
+    boundary: dict[str, Any], repo_root: Path = REPO_ROOT
+) -> list[dict[str, Any]]:
+    violations = []
+    extensions = set(boundary["extensions"])
+    for root_text in boundary["roots"]:
+        root = repo_root / root_text
+        if not root.is_dir():
+            raise ArchitectureError(
+                f"source boundary {boundary['id']} cannot read root {root_text}"
+            )
+        for path in sorted(root.rglob("*")):
+            if not path.is_file() or path.suffix not in extensions:
+                continue
+            try:
+                source = path.read_text(encoding="utf-8")
+            except OSError as error:
+                raise ArchitectureError(
+                    f"source boundary {boundary['id']} cannot read {path}: {error}"
+                ) from error
+            relative = str(path.relative_to(repo_root))
+            for pattern_index, forbidden in enumerate(boundary["forbidden_patterns"]):
+                for match in re.finditer(forbidden["regex"], source):
+                    violations.append(
+                        {
+                            "path": relative,
+                            "pattern": pattern_index,
+                            "match": match.group(0),
+                            "line": source.count("\n", 0, match.start()) + 1,
+                            "message": forbidden["message"],
+                        }
+                    )
+    return violations
+
+
+def source_boundary_violation_digest(violations: list[dict[str, Any]]) -> str:
+    fingerprint = [
+        {
+            "path": violation["path"],
+            "pattern": violation["pattern"],
+            "match": violation["match"],
+        }
+        for violation in violations
+    ]
+    return stable_digest(fingerprint)
+
+
 def validate_source_boundaries(
     policy: dict[str, Any], repo_root: Path = REPO_ROOT
 ) -> None:
     for boundary in policy["source_boundaries"]:
-        extensions = set(boundary["extensions"])
-        for root_text in boundary["roots"]:
-            root = repo_root / root_text
-            if not root.is_dir():
-                raise ArchitectureError(
-                    f"source boundary {boundary['id']} cannot read root {root_text}"
-                )
-            for path in sorted(root.rglob("*")):
-                if not path.is_file() or path.suffix not in extensions:
-                    continue
-                try:
-                    source = path.read_text(encoding="utf-8")
-                except OSError as error:
-                    raise ArchitectureError(
-                        f"source boundary {boundary['id']} cannot read {path}: {error}"
-                    ) from error
-                for forbidden in boundary["forbidden_patterns"]:
-                    match = re.search(forbidden["regex"], source)
-                    if match is None:
-                        continue
-                    line = source.count("\n", 0, match.start()) + 1
-                    relative = path.relative_to(repo_root)
-                    raise ArchitectureError(
-                        f"{forbidden['message']}: {relative}:{line}"
-                    )
+        violations = source_boundary_violations(boundary, repo_root)
+        accepted_digest = boundary["accepted_violation_digest"]
+        if accepted_digest is None:
+            if not violations:
+                continue
+            violation = violations[0]
+            raise ArchitectureError(
+                f"{violation['message']}: {violation['path']}:{violation['line']}"
+            )
+        actual_digest = source_boundary_violation_digest(violations)
+        if actual_digest != accepted_digest:
+            raise ArchitectureError(
+                f"source boundary {boundary['id']} differs from its accepted transitional violations"
+            )
 
 
 def format_edges(edges: list[tuple[str, str, str]]) -> str:
@@ -932,27 +990,66 @@ def validate_source_evidence(value: Any, context: str) -> None:
             )
 
 
-def validate_baseline_manifests(value: Any, context: str) -> None:
-    validate_locator_collection(value, context)
-    for index, locator in enumerate(value):
-        if not isinstance(locator, str) or not locator.startswith("repo://"):
-            continue
-        relative, separator, fragment = locator.removeprefix("repo://").partition("#")
-        path = Path(relative)
-        if path.is_absolute() or ".." in path.parts:
-            raise ArchitectureError(
-                f"{context}[{index}] path must stay inside the repository"
-            )
+def baseline_manifest_content(locator: str, context: str) -> bytes:
+    if not locator.startswith("repo://"):
+        raise ArchitectureError(
+            f"{context} must be a repository baseline locator with pinned content"
+        )
+    relative, separator, fragment = locator.removeprefix("repo://").partition("#")
+    path = Path(relative)
+    if not relative or path.is_absolute() or ".." in path.parts:
+        raise ArchitectureError(f"{context} path must stay inside the repository")
+    try:
+        content = (REPO_ROOT / path).read_bytes()
+    except OSError as error:
+        raise ArchitectureError(
+            f"{context} cannot read baseline manifest {relative}: {error}"
+        ) from error
+    if separator:
         try:
-            content = (REPO_ROOT / path).read_text(encoding="utf-8")
-        except OSError as error:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError as error:
             raise ArchitectureError(
-                f"{context}[{index}] cannot read baseline manifest {relative}: {error}"
+                f"{context} baseline fragment requires UTF-8 content: {error}"
             ) from error
-        if separator and (not fragment or fragment not in content):
+        if not fragment or fragment not in text:
             raise ArchitectureError(
-                f"{context}[{index}] baseline fragment {fragment!r} was not found in {relative}"
+                f"{context} baseline fragment {fragment!r} was not found in {relative}"
             )
+    return content
+
+
+def validate_baseline_manifest_registry(value: Any) -> dict[str, str]:
+    context = "migration matrix baseline_manifest_digests"
+    if not isinstance(value, dict) or not value:
+        raise ArchitectureError(f"{context} must be a non-empty object")
+    for locator, digest in value.items():
+        require_string(locator, f"{context} locator")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ArchitectureError(
+                f"{context}.{locator} must be a lowercase SHA-256 digest"
+            )
+        content = baseline_manifest_content(locator, f"{context}.{locator}")
+        actual = hashlib.sha256(content).hexdigest()
+        if actual != digest:
+            raise ArchitectureError(
+                f"{context}.{locator} content digest differs: expected {digest}, actual {actual}"
+            )
+    return value
+
+
+def validate_baseline_manifests(
+    value: Any, context: str, registry: dict[str, str]
+) -> set[str]:
+    validate_locator_collection(value, context)
+    used = set()
+    for index, locator in enumerate(value):
+        if not isinstance(locator, str) or locator not in registry:
+            raise ArchitectureError(
+                f"{context}[{index}] must reference a content-pinned baseline manifest"
+            )
+        used.add(locator)
+    return used
 
 
 def issue_number(value: Any, context: str) -> int:
@@ -1194,6 +1291,31 @@ def validate_migration_matrix(
             "PolarizationCoordinate",
             ACCEPTED_POLARIZATION_COORDINATE_INVENTORY_SHA256,
         )
+        validate_rust_enum_inventory(
+            matrix,
+            "cube_interpolation_inventory",
+            REPO_ROOT / "crates/casa-ms/src/spectral_selection.rs",
+            "CubeInterpolation",
+            ACCEPTED_CUBE_INTERPOLATION_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "standard_mfs_backend_inventory",
+            REPO_ROOT / "crates/casa-imaging/src/lib.rs",
+            "StandardMfsBackend",
+            ACCEPTED_STANDARD_MFS_BACKEND_INVENTORY_SHA256,
+        )
+    baseline_registry = validate_baseline_manifest_registry(
+        matrix.get("baseline_manifest_digests")
+    )
+    if (
+        enforce_accepted_scope
+        and stable_digest(baseline_registry)
+        != ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256
+    ):
+        raise ArchitectureError(
+            "migration matrix baseline manifest digests differ from the accepted evidence"
+        )
 
     outcome_issues = (
         validate_issue_outcomes(matrix.get("issue_outcomes"))
@@ -1220,6 +1342,7 @@ def validate_migration_matrix(
     row_ids: set[str] = set()
     row_pairs: set[tuple[str, str]] = set()
     covered_issues: set[int] = set()
+    used_baselines: set[str] = set()
     required_fields = {
         "id",
         "kind",
@@ -1270,8 +1393,12 @@ def validate_migration_matrix(
             issue_number(issue, f"{context}.evidence_issues[{issue_index}]")
             for issue_index, issue in enumerate(evidence)
         )
-        validate_baseline_manifests(
-            row.get("baseline_manifests"), f"{context}.baseline_manifests"
+        used_baselines.update(
+            validate_baseline_manifests(
+                row.get("baseline_manifests"),
+                f"{context}.baseline_manifests",
+                baseline_registry,
+            )
         )
         contract = require_string(
             row.get("acceptance_contract"), f"{context}.acceptance_contract"
@@ -1309,6 +1436,12 @@ def validate_migration_matrix(
             f"missing={sorted(inventory_pairs - row_pairs)}, "
             f"extra={sorted(row_pairs - inventory_pairs)}"
         )
+    if used_baselines != set(baseline_registry):
+        raise ArchitectureError(
+            "migration matrix baseline digest registry and rows differ: "
+            f"unused={sorted(set(baseline_registry) - used_baselines)}, "
+            f"unpinned={sorted(used_baselines - set(baseline_registry))}"
+        )
 
     missing_issues = sorted(expected_crosswalk - covered_issues)
     if missing_issues:
@@ -1341,6 +1474,7 @@ def run_policy_self_test(policy: dict[str, Any]) -> None:
 
 
 def synthetic_matrix(policy: dict[str, Any]) -> dict[str, Any]:
+    baseline = "repo://scripts/check-imaging-architecture.py#class ArchitectureError"
     return {
         "schema_version": 1,
         "contract_revision": 1,
@@ -1360,6 +1494,11 @@ def synthetic_matrix(policy: dict[str, Any]) -> dict[str, Any]:
                 "evidence_tiers": ["synthetic evidence tier"],
             }
         },
+        "baseline_manifest_digests": {
+            baseline: hashlib.sha256(
+                (REPO_ROOT / "scripts/check-imaging-architecture.py").read_bytes()
+            ).hexdigest()
+        },
         "inventory": {
             "capability": ["synthetic-row"],
             "product": ["synthetic-product"],
@@ -1375,7 +1514,7 @@ def synthetic_matrix(policy: dict[str, Any]) -> dict[str, Any]:
                 "current_owner": "synthetic legacy",
                 "destination_tickets": ["#488"],
                 "evidence_issues": policy["required_migration_evidence_issues"],
-                "baseline_manifests": ["synthetic:baseline"],
+                "baseline_manifests": [baseline],
                 "acceptance_contract": "synthetic",
                 "transfer_point": "synthetic transfer",
                 "deletion_condition": "synthetic deletion",
@@ -1395,7 +1534,7 @@ def synthetic_matrix(policy: dict[str, Any]) -> dict[str, Any]:
                     "current_owner": "synthetic native",
                     "destination_tickets": ["#488"],
                     "evidence_issues": policy["required_migration_evidence_issues"],
-                    "baseline_manifests": ["synthetic:baseline"],
+                    "baseline_manifests": [baseline],
                     "acceptance_contract": "synthetic",
                     "transfer_point": "synthetic transfer",
                     "deletion_condition": "synthetic canonical owner",
@@ -1471,11 +1610,13 @@ def main() -> int:
             if args.migration_matrix
             else resolve_input(Path(policy["migration_matrix"]))
         )
-        matrix_rows = 0
-        if matrix_path.exists():
-            matrix = load_object(matrix_path, "migration matrix")
-            validate_migration_matrix(matrix, policy)
-            matrix_rows = len(matrix["rows"])
+        if not matrix_path.is_file():
+            raise ArchitectureError(
+                f"required migration matrix is missing or not a file: {display_path(matrix_path)}"
+            )
+        matrix = load_object(matrix_path, "migration matrix")
+        validate_migration_matrix(matrix, policy)
+        matrix_rows = len(matrix["rows"])
         print(
             "imaging-architecture: validated "
             f"{len(metadata['packages'])} workspace packages, "

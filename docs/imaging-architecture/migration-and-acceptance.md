@@ -21,12 +21,18 @@ exactly one stable row. A row records:
 - the deletion condition for the displaced implementation; and
 - a Migration Obligation whenever it is not native.
 
-The matrix also maps every current `ProductKind`, `ImagerPlaneSelection`, and
-`PolarizationCoordinate` variant to exactly one row. The latter includes the
-XY, YX, RL, and LR cross-hands even while their execution routes are
-temporarily unavailable. These maps make additions or removals explicit
-instead of letting a coordinated row and inventory edit silently redefine the
-product or polarization surface.
+The matrix also maps every current `ProductKind`, `ImagerPlaneSelection`,
+`PolarizationCoordinate`, `CubeInterpolation`, and `StandardMfsBackend`
+variant to exactly one row. The polarization map includes the XY, YX, RL, and
+LR cross-hands even while their execution routes are temporarily unavailable;
+the backend map keeps fixed-tile and each Metal gridder family distinct. These
+maps make additions, removals, and aliases explicit instead of letting a
+coordinated row and inventory edit silently redefine a production surface.
+
+Every baseline locator resolves to repository content and is paired with a
+pinned SHA-256 digest in `baseline_manifest_digests`. Mutable issue URLs are
+not baseline evidence. A baseline replacement therefore requires an explicit
+matrix revision and accepted digest update.
 
 `LegacyWholeRun` is an ownership classification, not a compatibility promise.
 It permits the current production implementation to remain reachable only
@@ -63,12 +69,13 @@ current owner. After transfer, they land only in the native owner.
 
 The architecture checker validates schema, the independently pinned logical
 graph, canonical inventories, complete Acceptance Contracts, complete binding
-row ledger, structured issue outcomes, evidence locators, Migration
-Obligations, and source evidence. It binds the three variant maps to their Rust
+row ledger, structured issue outcomes, content-pinned evidence locators,
+Migration Obligations, and source evidence. It binds the five variant maps to their Rust
 enums, classifies every Cargo workspace package, requires native dependency
 sets to match exactly, scans native science and Rust/Swift frontend roots for
-forbidden backend/device imports, and permits only the 16 exact frozen legacy
-edges plus three exact pre-existing transitional surface edges. Its mutation
+forbidden backend/device imports, ratchets the existing legacy Rust-frontend
+violations while rejecting additions, and permits only the 16 exact frozen
+legacy edges plus three exact pre-existing transitional surface edges. Its mutation
 tests prove coordinated inventory and issue deletion, row reclassification,
 contract or graph weakening, unmapped packages, and forbidden logical,
 package, module, and Swift edges fail closed.

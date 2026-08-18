@@ -1313,6 +1313,16 @@ fn validate_science(
             reason: "spectral frame conversion requires bound measures reference data",
         });
     }
+    if science.measurement_equation.instrument_response != InstrumentResponse::Scalar
+        && !inputs
+            .reference_data
+            .iter()
+            .any(|(kind, _)| *kind == ReferenceDataKind::Instrument)
+    {
+        return Err(CompileProblemError::InvalidScientificContract {
+            reason: "direction-dependent response requires bound instrument reference data",
+        });
+    }
     Ok(())
 }
 
@@ -1344,6 +1354,13 @@ fn validate_reconstruction(contract: &ReconstructionContract) -> Result<(), Comp
     {
         return Err(CompileProblemError::InvalidCapabilityCombination {
             reason: "dirty reconstruction cannot request minor-cycle iterations",
+        });
+    }
+    if matches!(contract.algorithm, ReconstructionAlgorithm::Dirty)
+        && (contract.controls.gain != 1.0 || contract.controls.threshold_jy_per_beam != 0.0)
+    {
+        return Err(CompileProblemError::InvalidCapabilityCombination {
+            reason: "dirty reconstruction requires canonical inactive controls: gain 1 and threshold 0",
         });
     }
     if !matches!(contract.algorithm, ReconstructionAlgorithm::Dirty)
