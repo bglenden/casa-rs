@@ -21,7 +21,7 @@ exactly one stable row. A row records:
 - the deletion condition for the displaced implementation; and
 - a Migration Obligation whenever it is not native.
 
-The matrix binds fourteen current Rust request, science, solver, product, and
+The matrix binds seventeen current Rust request, science, solver, product, and
 backend enums to rows, including `ProductKind`, both spectral-mode and
 deconvolver surfaces, `GridderRequest`, both cube-interpolation surfaces,
 `PolarizationCoordinate`, `StandardMfsBackend`, both FFT-backend surfaces, and
@@ -73,7 +73,7 @@ current owner. After transfer, they land only in the native owner.
 The architecture checker validates schema, the independently pinned logical
 graph, canonical inventories, complete Acceptance Contracts, complete binding
 row ledger, structured issue outcomes, content-pinned evidence locators,
-Migration Obligations, and source evidence. It binds the fourteen variant maps to their Rust
+Migration Obligations, and source evidence. It binds the seventeen variant maps to their Rust
 enums, classifies every Cargo workspace package, requires native dependency
 sets to match exactly, scans native science and Rust/Swift frontend roots for
 forbidden backend/device imports, ratchets the existing legacy Rust-frontend

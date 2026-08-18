@@ -143,11 +143,11 @@
           "message": "Rust frontend imports an execution, legacy imaging backend, or device API"
         },
         {
-          "regex": "\\b(?:StandardMfsBackend|FftBackendChoice|ImagingFftBackendPolicy|StandardMfsAccelerationPolicy|MtmfsScaleFftBackend|DirtyProductFftPolicy|FftBackend)::[A-Za-z_][A-Za-z0-9_]*\\b|\\b(?:standard_mfs_metal_device_available|MTLCreateSystemDefaultDevice|MTLCopyAllDevices|MTLCopyAllDevicesWithObserver)\\s*\\(",
+          "regex": "\\b(?:StandardMfsBackend|StandardMfsMinorCycleBackend|SinglePlaneAccelerationPolicy|PerPlaneExecutionBackend|FftBackendChoice|ImagingFftBackendPolicy|StandardMfsAccelerationPolicy|MtmfsScaleFftBackend|DirtyProductFftPolicy|FftBackend)::[A-Za-z_][A-Za-z0-9_]*\\b|\\b(?:standard_mfs_metal_device_available|MTLCreateSystemDefaultDevice|MTLCopyAllDevices|MTLCopyAllDevicesWithObserver)\\s*\\(",
           "message": "Rust frontend selects an imaging backend or inspects a device"
         }
       ],
-      "accepted_violation_digest": "6cd2613e0209df7b760cb1abef67ca7a0510f8afb5668035c056884f8506edf6"
+      "accepted_violation_digest": "4dc8a3e332be39601b21ca01889890284ead23c63f398afb942d37d13c04ba64"
     },
     {
       "id": "swift-imaging-frontends",
