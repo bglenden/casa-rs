@@ -79084,6 +79084,8 @@ deconvolver=mtmfs
     fn awproject_mtmfs_bounded_stream_writes_complete_persisted_product_topology_impl(
         run_metal: bool,
     ) {
+        let _test_lock = AWPROJECT_DIAGNOSTIC_ENV_TEST_LOCK.lock().unwrap();
+        let _diagnostic_env = AwProjectDiagnosticTestEnv::isolated();
         let tmp = tempdir().unwrap();
         let ms_path = tmp.path().join("tiny_awproject_mtmfs.ms");
         let cf_cache = tmp.path().join("synthetic-cf-cache");
