@@ -59,10 +59,15 @@ def metadata_for_policy(policy: dict[str, Any]) -> dict[str, Any]:
     for edge in policy["frozen_legacy_workspace_edges"]:
         package_names.add(edge["source"])
         package_names.add(edge["target"])
+    for edge in policy["frozen_transitional_workspace_edges"]:
+        package_names.add(edge["source"])
+        package_names.add(edge["target"])
     dependencies: dict[str, list[dict[str, Any]]] = {
         package: [] for package in package_names
     }
     for edge in policy["frozen_legacy_workspace_edges"]:
+        dependencies[edge["source"]].append(dependency(edge["target"], edge["kind"]))
+    for edge in policy["frozen_transitional_workspace_edges"]:
         dependencies[edge["source"]].append(dependency(edge["target"], edge["kind"]))
     for source, targets in policy["native_package_workspace_dependencies"].items():
         for target in targets:
@@ -106,6 +111,47 @@ class ArchitecturePolicyTests(unittest.TestCase):
                         ):
                             checker.validate_logical_edge(self.policy, source, target)
 
+    def test_policy_cannot_authorize_a_new_logical_edge(self) -> None:
+        policy = copy.deepcopy(self.policy)
+        policy["allowed_logical_edges"]["frontend"].append("backend")
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"allowed edges differ from the accepted graph",
+        ):
+            checker.validate_policy(policy)
+
+    def test_every_surface_package_requires_a_logical_layer(self) -> None:
+        policy = copy.deepcopy(self.policy)
+        del policy["package_layers"]["casars-frontend-services"]
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"imaging surface packages lack logical layers: \['casars-frontend-services'\]",
+        ):
+            checker.validate_policy(policy)
+
+    def test_surface_classification_and_layer_cannot_be_coordinately_removed(
+        self,
+    ) -> None:
+        policy = copy.deepcopy(self.policy)
+        policy["workspace_package_classification"]["casars-python"] = "support"
+        del policy["package_layers"]["casars-python"]
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"workspace package layers, classifications, native dependencies, or device policy differ",
+        ):
+            checker.validate_policy(policy)
+
+    def test_native_dependency_allowlist_cannot_authorize_itself(self) -> None:
+        policy = copy.deepcopy(self.policy)
+        policy["native_package_workspace_dependencies"]["casa-imaging-runtime"] = [
+            "casa-imaging-model"
+        ]
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"workspace package layers, classifications, native dependencies, or device policy differ",
+        ):
+            checker.validate_policy(policy)
+
     def test_workspace_check_rejects_frontend_backend_edge(self) -> None:
         policy = copy.deepcopy(self.policy)
         policy["package_layers"]["synthetic-frontend"] = "frontend"
@@ -117,7 +163,7 @@ class ArchitecturePolicyTests(unittest.TestCase):
             "synthetic-backend"
         ]
         policy["native_package_workspace_dependencies"]["synthetic-backend"] = []
-        checker.validate_policy(policy)
+        checker.validate_policy(policy, enforce_accepted_scope=False)
         metadata = metadata_for_policy(policy)
         package(metadata, "synthetic-frontend")["dependencies"].append(
             dependency("synthetic-backend")
@@ -156,6 +202,15 @@ class ArchitecturePolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(
             checker.ArchitectureError,
             r"differs from the 16 accepted exceptions",
+        ):
+            checker.validate_policy(policy)
+
+    def test_policy_cannot_replace_a_frozen_transitional_exception(self) -> None:
+        policy = copy.deepcopy(self.policy)
+        policy["frozen_transitional_workspace_edges"][0]["target"] = "casars"
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"frozen_transitional_workspace_edges differs from the accepted exceptions",
         ):
             checker.validate_policy(policy)
 
@@ -214,7 +269,7 @@ class ArchitecturePolicyTests(unittest.TestCase):
             "synthetic-backend"
         ] = "native"
         policy["native_package_workspace_dependencies"]["synthetic-backend"] = []
-        checker.validate_policy(policy)
+        checker.validate_policy(policy, enforce_accepted_scope=False)
         metadata = metadata_for_policy(policy)
         if not any(value["name"] == "casars-python" for value in metadata["packages"]):
             metadata["packages"].append(
@@ -232,6 +287,17 @@ class ArchitecturePolicyTests(unittest.TestCase):
             r"forbidden logical imaging edge: frontend -> backend",
         ):
             checker.validate_workspace(policy, metadata)
+
+    def test_frontend_services_rejects_a_direct_execution_edge(self) -> None:
+        metadata = metadata_for_policy(self.policy)
+        package(metadata, "casars-frontend-services")["dependencies"].append(
+            dependency("casa-imaging-runtime")
+        )
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"forbidden logical imaging edge: frontend -> execution",
+        ):
+            checker.validate_workspace(self.policy, metadata)
 
     def test_rust_science_module_rejects_an_execution_import(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -380,6 +446,15 @@ class MigrationMatrixTests(unittest.TestCase):
         ):
             checker.validate_migration_matrix(matrix, self.policy)
 
+    def test_polarization_inventory_cannot_drop_a_cross_hand(self) -> None:
+        matrix = checker.load_object(MATRIX_PATH, "migration matrix")
+        del matrix["polarization_coordinate_inventory"]["LinearXy"]
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"polarization_coordinate_inventory differs from PolarizationCoordinate",
+        ):
+            checker.validate_migration_matrix(matrix, self.policy)
+
     def test_required_issue_cannot_be_deleted_from_policy_matrix_and_rows(self) -> None:
         policy = copy.deepcopy(self.policy)
         matrix = checker.load_object(MATRIX_PATH, "migration matrix")
@@ -426,6 +501,46 @@ class MigrationMatrixTests(unittest.TestCase):
                             rf"acceptance contract {contract_id}\.{field} differs from the accepted scope",
                         ):
                             checker.validate_migration_matrix(mutation, self.policy)
+
+    def test_acceptance_baseline_comparator_and_evidence_are_immutable(self) -> None:
+        matrix = checker.load_object(MATRIX_PATH, "migration matrix")
+        mutations = []
+        baseline = copy.deepcopy(matrix)
+        baseline["acceptance_contracts"]["scientific-products-v1"][
+            "baseline_identity"
+        ] = "discard the baseline"
+        mutations.append(baseline)
+        comparator = copy.deepcopy(matrix)
+        comparator["acceptance_contracts"]["scientific-products-v1"]["comparator"][
+            "preprocessing"
+        ] = "discard all samples"
+        mutations.append(comparator)
+        evidence = copy.deepcopy(matrix)
+        evidence["acceptance_contracts"]["scientific-products-v1"]["evidence_tiers"] = [
+            "smoke only"
+        ]
+        mutations.append(evidence)
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                with self.assertRaisesRegex(
+                    checker.ArchitectureError,
+                    r"acceptance contract content differs from the accepted scope",
+                ):
+                    checker.validate_migration_matrix(mutation, self.policy)
+
+    def test_live_row_cannot_be_silently_reclassified_native(self) -> None:
+        matrix = checker.load_object(MATRIX_PATH, "migration matrix")
+        row = next(row for row in matrix["rows"] if row["id"] == "product.psf")
+        row["status"] = "Native"
+        row["current_owner"] = "arbitrary owner"
+        row["transfer_point"] = "claimed without evidence"
+        row["deletion_condition"] = "ignored"
+        row["migration_obligation"] = None
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"row ledger differs from the accepted scope",
+        ):
+            checker.validate_migration_matrix(matrix, self.policy)
 
     def test_live_contract_rejects_a_weakened_normalized_rms_ceiling(self) -> None:
         matrix = checker.load_object(MATRIX_PATH, "migration matrix")

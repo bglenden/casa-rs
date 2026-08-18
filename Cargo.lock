@@ -631,6 +631,9 @@ dependencies = [
 [[package]]
 name = "casa-imaging-runtime"
 version = "0.27.0"
+dependencies = [
+ "objc2-metal",
+]
 
 [[package]]
 name = "casa-lattices"

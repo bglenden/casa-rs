@@ -163,6 +163,13 @@ fn inventory_retains_typed_storage_transfer_queue_and_metal_topology() {
 }
 
 #[test]
+fn metal_inventory_requires_process_device_and_queue_access() {
+    assert!(!metal_inventory_available(true, false));
+    assert!(!metal_inventory_available(false, true));
+    assert!(metal_inventory_available(true, true));
+}
+
+#[test]
 fn demand_is_admitted_against_named_storage_rate_and_queue_domains() {
     let host_domain = CapacityDomainId::new("host-domain");
     let host_view = CapacityViewId::new("host-view");
@@ -388,6 +395,62 @@ fn authority_selects_a_capable_feasible_alternative_and_reserves_its_headroom() 
         .expect_err("the selected alternative's 100-byte headroom remains reserved");
     assert_eq!(error.required(), Some(301));
     assert_eq!(error.available(), Some(300));
+}
+
+#[test]
+fn cache_headroom_is_charged_to_its_physical_host_memory_domain() {
+    let domain = CapacityDomainId::new("unified-memory");
+    let host = CapacityViewId::new("host-memory");
+    let authority = ResourceAuthority::with_inventory(inventory_with_views(vec![MemoryView {
+        id: host.clone(),
+        domain,
+        kind: MemoryViewKind::Host,
+    }]))
+    .expect("valid cache-headroom inventory");
+    let demand = DemandEnvelope {
+        host_memory_view: host.clone(),
+        memory: vec![MemoryDemand {
+            allocation_id: "grid".to_string(),
+            hard_bytes: 900,
+            preferred_bytes: 900,
+            views: vec![host],
+        }],
+        workers: CountDemand::new(1, 1),
+        overhead: RuntimeOverheadDemand::zero(),
+        storage: Vec::new(),
+        rates: Vec::new(),
+        caches: CacheDemand::zero(),
+        locks: CountDemand::zero(),
+        file_descriptors: CountDemand::zero(),
+        queues: Vec::new(),
+        transfers: Vec::new(),
+        accelerators: Vec::new(),
+        io_buffers: IoBufferDemand::zero(),
+    };
+    let alternatives = DemandAlternatives {
+        required_capabilities: BTreeSet::new(),
+        alternatives: vec![DemandAlternative {
+            id: AlternativeId::new("cache-headroom"),
+            capabilities: CapabilityPredicate::default(),
+            demand,
+            headroom: ResourceHeadroom {
+                cache_bytes: 101,
+                ..ResourceHeadroom::default()
+            },
+            scaling: ScalingMetadata {
+                minimum_workers: 1,
+                maximum_workers: 1,
+                memory_bytes_per_worker: BTreeMap::new(),
+            },
+            quiescence_points: BTreeSet::from([QuiescencePoint::RunBoundary]),
+        }],
+    };
+
+    let error = authority
+        .acquire(ResourcePolicy::Exclusive, alternatives)
+        .expect_err("cache headroom cannot overcommit physical host memory");
+    assert_eq!(error.required(), Some(1_001));
+    assert_eq!(error.available(), Some(1_000));
 }
 
 #[test]
@@ -673,16 +736,23 @@ fn pressure_updates_reject_active_overcommit_and_advance_an_observable_epoch() {
         authority
             .pressure_epoch()
             .expect("authority pressure epoch"),
-        acquired_pressure_epoch
+        acquired_pressure_epoch + 1
     );
-    assert!(!lease.pressure_changed().expect("lease epoch is observable"));
+    assert!(lease.pressure_changed().expect("lease epoch is observable"));
+    assert_eq!(
+        authority
+            .acquire(ResourcePolicy::Exclusive, demand("stale-pressure-probe", 1))
+            .expect_err("observed pressure prevents new admission while overcommitted")
+            .available(),
+        Some(0)
+    );
 
     pressure.memory_available_bytes.insert(domain, 700);
     let update = authority
         .update_external_pressure(pressure)
         .expect("pressure still covers all active hard reservations");
-    assert_eq!(update.previous_epoch(), acquired_pressure_epoch);
-    assert_eq!(update.current_epoch(), acquired_pressure_epoch + 1);
+    assert_eq!(update.previous_epoch(), acquired_pressure_epoch + 1);
+    assert_eq!(update.current_epoch(), acquired_pressure_epoch + 2);
     assert!(
         lease
             .pressure_changed()
@@ -755,9 +825,9 @@ fn active_policy_headroom_remains_binding_under_concurrency_and_pressure() {
         })
     ));
     assert!(
-        !lease
+        lease
             .pressure_changed()
-            .expect("rejected pressure is not published")
+            .expect("overcommitting pressure remains observable")
     );
 
     pressure.memory_available_bytes.insert(domain, 800);

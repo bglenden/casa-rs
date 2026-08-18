@@ -40,7 +40,10 @@ contract introduced by ADR-0009. `casa-imaging-runtime` owns execution-resource
 contracts introduced by ADR-0010 and may depend inward on the model. The current
 `casa-imaging` and `casars-imager` crates remain frozen legacy owners during the
 migration; their exact existing edges are ratcheted rather than treated as
-permission for new native dependencies.
+permission for new native dependencies. Three current surface-to-domain edges
+that violate the accepted logical direction are separately frozen as
+transitional exceptions; the architecture gate permits no additions to either
+ledger.
 
 with `casa-test-support` outside the product dependency chain.
 
@@ -520,7 +523,7 @@ compatibility block facade or normal-path host full-grid upload is retained.
   whole-run migration router and capability transfers land. `just arch-check`
   mechanically rejects unclassified workspace packages, non-exact native
   dependency sets, forbidden Rust/Swift source imports, and any change to the
-  16 exact frozen legacy edges.
+  16 exact frozen legacy or three exact transitional edges.
 
 ## ADR index
 

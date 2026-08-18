@@ -9,3 +9,9 @@ repository.workspace = true
 
 [lints]
 workspace = true
+
+[target.'cfg(all(target_os = "macos", not(coverage)))'.dependencies]
+objc2-metal = { version = "0.3.2", default-features = false, features = [
+    "MTLCommandQueue",
+    "MTLDevice",
+] }
