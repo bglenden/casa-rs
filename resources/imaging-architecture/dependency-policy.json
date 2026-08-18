@@ -141,9 +141,13 @@
         {
           "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:casa_imaging_runtime|casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)\\b|\\b(?:casa_imaging_runtime|casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)::",
           "message": "Rust frontend imports an execution, legacy imaging backend, or device API"
+        },
+        {
+          "regex": "\\b(?:StandardMfsBackend|FftBackendChoice|ImagingFftBackendPolicy|StandardMfsAccelerationPolicy|MtmfsScaleFftBackend|DirtyProductFftPolicy|FftBackend)::[A-Za-z_][A-Za-z0-9_]*\\b|\\b(?:standard_mfs_metal_device_available|MTLCreateSystemDefaultDevice|MTLCopyAllDevices|MTLCopyAllDevicesWithObserver)\\s*\\(",
+          "message": "Rust frontend selects an imaging backend or inspects a device"
         }
       ],
-      "accepted_violation_digest": "f83a6c22b94d2e7061b0b9a3b48e01cc735fb704d23697d7261ef640091580dc"
+      "accepted_violation_digest": "6cd2613e0209df7b760cb1abef67ca7a0510f8afb5668035c056884f8506edf6"
     },
     {
       "id": "swift-imaging-frontends",

@@ -375,6 +375,83 @@ class ArchitecturePolicyTests(unittest.TestCase):
             ):
                 checker.validate_source_boundaries(policy, root)
 
+    def test_transitional_frontend_boundary_rejects_forbidden_symbol_replacement(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "frontend"
+            source.mkdir()
+            module = source / "lib.rs"
+            module.write_text("use casa_imaging::LegacyBackend;\n", encoding="utf-8")
+            boundary = {
+                "id": "synthetic-transitional-frontend",
+                "roots": ["frontend"],
+                "extensions": [".rs"],
+                "forbidden_patterns": [
+                    {
+                        "regex": r"\bcasa_imaging::",
+                        "message": "frontend imports legacy imaging",
+                    }
+                ],
+                "accepted_violation_digest": None,
+            }
+            boundary["accepted_violation_digest"] = (
+                checker.source_boundary_violation_digest(
+                    checker.source_boundary_violations(boundary, root)
+                )
+            )
+            policy = {"source_boundaries": [boundary]}
+            checker.validate_source_boundaries(policy, root)
+
+            module.write_text("use casa_imaging::DifferentBackend;\n", encoding="utf-8")
+            with self.assertRaisesRegex(
+                checker.ArchitectureError,
+                r"differs from its accepted transitional violations",
+            ):
+                checker.validate_source_boundaries(policy, root)
+
+    def test_transitional_frontend_boundary_rejects_unqualified_backend_selection(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "frontend"
+            source.mkdir()
+            module = source / "lib.rs"
+            module.write_text(
+                "let selected = StandardMfsBackend::Cpu;\n", encoding="utf-8"
+            )
+            boundary = {
+                "id": "synthetic-transitional-frontend",
+                "roots": ["frontend"],
+                "extensions": [".rs"],
+                "forbidden_patterns": [
+                    {
+                        "regex": r"\bStandardMfsBackend::[A-Za-z_][A-Za-z0-9_]*\b",
+                        "message": "frontend selects backend",
+                    }
+                ],
+                "accepted_violation_digest": None,
+            }
+            boundary["accepted_violation_digest"] = (
+                checker.source_boundary_violation_digest(
+                    checker.source_boundary_violations(boundary, root)
+                )
+            )
+            policy = {"source_boundaries": [boundary]}
+            checker.validate_source_boundaries(policy, root)
+
+            module.write_text(
+                "let selected = StandardMfsBackend::Cpu;\nlet extra = StandardMfsBackend::Metal;\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                checker.ArchitectureError,
+                r"differs from its accepted transitional violations",
+            ):
+                checker.validate_source_boundaries(policy, root)
+
 
 class MigrationMatrixTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -524,6 +601,48 @@ class MigrationMatrixTests(unittest.TestCase):
             r"differs from StandardMfsBackend",
         ):
             checker.validate_migration_matrix(matrix, self.policy)
+
+    def test_public_request_solver_and_backend_enum_variants_are_bound(self) -> None:
+        cases = [
+            ("spectral_mode_inventory", "Cube", "SpectralMode"),
+            ("gridder_request_inventory", "Mosaic", "GridderRequest"),
+            ("deconvolver_inventory", "Clark", "Deconvolver"),
+            ("fft_backend_choice_inventory", "Auto", "FftBackendChoice"),
+            (
+                "imager_spectral_mode_inventory",
+                "Cubedata",
+                "ImagerSpectralMode",
+            ),
+            (
+                "imager_deconvolver_inventory",
+                "Multiscale",
+                "ImagerDeconvolver",
+            ),
+            (
+                "imager_cube_interpolation_inventory",
+                "Nearest",
+                "ImagerCubeInterpolation",
+            ),
+            (
+                "imaging_fft_backend_policy_inventory",
+                "Auto",
+                "ImagingFftBackendPolicy",
+            ),
+            (
+                "standard_mfs_acceleration_policy_inventory",
+                "Metal",
+                "StandardMfsAccelerationPolicy",
+            ),
+        ]
+        for field, variant, enum_name in cases:
+            with self.subTest(field=field, variant=variant):
+                matrix = checker.load_object(MATRIX_PATH, "migration matrix")
+                del matrix[field][variant]
+                with self.assertRaisesRegex(
+                    checker.ArchitectureError,
+                    rf"differs from {enum_name}",
+                ):
+                    checker.validate_migration_matrix(matrix, self.policy)
 
     def test_product_kind_inventory_cannot_drop_a_current_variant(self) -> None:
         matrix = checker.load_object(MATRIX_PATH, "migration matrix")
