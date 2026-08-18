@@ -1,0 +1,192 @@
+{
+  "schema_version": 1,
+  "decision": "ADR-0009",
+  "layers": [
+    "frontend",
+    "application",
+    "science",
+    "observation",
+    "reconstruction",
+    "product",
+    "execution",
+    "backend",
+    "legacy"
+  ],
+  "allowed_logical_edges": {
+    "frontend": [
+      "application"
+    ],
+    "application": [
+      "science",
+      "observation",
+      "reconstruction",
+      "product",
+      "execution",
+      "backend"
+    ],
+    "science": [],
+    "observation": [
+      "science"
+    ],
+    "reconstruction": [
+      "science"
+    ],
+    "product": [
+      "science",
+      "reconstruction"
+    ],
+    "execution": [
+      "science",
+      "observation",
+      "reconstruction",
+      "product"
+    ],
+    "backend": [
+      "science",
+      "execution"
+    ],
+    "legacy": []
+  },
+  "package_layers": {
+    "casa-imaging-model": "science",
+    "casa-imaging-runtime": "execution",
+    "casa-imaging": "legacy",
+    "casars-imager": "legacy"
+  },
+  "native_package_workspace_dependencies": {
+    "casa-imaging-model": [
+      "casa-coordinates",
+      "casa-types"
+    ],
+    "casa-imaging-runtime": [
+      "casa-imaging-model",
+      "casa-types"
+    ]
+  },
+  "device_dependency_prefixes": [
+    "ash",
+    "cuda",
+    "cudarc",
+    "metal",
+    "objc2-metal",
+    "opencl",
+    "vulkano",
+    "wgpu"
+  ],
+  "device_free_layers": [
+    "frontend",
+    "application",
+    "science",
+    "observation",
+    "reconstruction",
+    "product"
+  ],
+  "legacy_packages": [
+    "casa-imaging",
+    "casars-imager"
+  ],
+  "frozen_legacy_workspace_edges": [
+    {
+      "source": "casa-imaging",
+      "target": "casa-coordinates",
+      "kind": "normal"
+    },
+    {
+      "source": "casa-imaging",
+      "target": "casa-images",
+      "kind": "normal"
+    },
+    {
+      "source": "casa-imaging",
+      "target": "casa-lattices",
+      "kind": "normal"
+    },
+    {
+      "source": "casa-imaging",
+      "target": "casa-types",
+      "kind": "normal"
+    },
+    {
+      "source": "casa-ms",
+      "target": "casa-imaging",
+      "kind": "normal"
+    },
+    {
+      "source": "casars",
+      "target": "casa-imaging",
+      "kind": "normal"
+    },
+    {
+      "source": "casars",
+      "target": "casars-imager",
+      "kind": "normal"
+    },
+    {
+      "source": "casars-imager",
+      "target": "casa-coordinates",
+      "kind": "normal"
+    },
+    {
+      "source": "casars-imager",
+      "target": "casa-images",
+      "kind": "normal"
+    },
+    {
+      "source": "casars-imager",
+      "target": "casa-imaging",
+      "kind": "normal"
+    },
+    {
+      "source": "casars-imager",
+      "target": "casa-logging",
+      "kind": "normal"
+    },
+    {
+      "source": "casars-imager",
+      "target": "casa-ms",
+      "kind": "normal"
+    },
+    {
+      "source": "casars-imager",
+      "target": "casa-provider-contracts",
+      "kind": "normal"
+    },
+    {
+      "source": "casars-imager",
+      "target": "casa-tables",
+      "kind": "normal"
+    },
+    {
+      "source": "casars-imager",
+      "target": "casa-task-runtime",
+      "kind": "normal"
+    },
+    {
+      "source": "casars-imager",
+      "target": "casa-types",
+      "kind": "normal"
+    }
+  ],
+  "migration_matrix": "resources/imaging-architecture/migration-matrix.json",
+  "required_migration_evidence_issues": [
+    35,
+    40,
+    42,
+    45,
+    52,
+    54,
+    55,
+    217,
+    319,
+    445,
+    446,
+    447,
+    448,
+    449,
+    450,
+    462,
+    466,
+    473,
+    478
+  ]
+}
