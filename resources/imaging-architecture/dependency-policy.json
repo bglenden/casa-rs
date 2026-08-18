@@ -21,8 +21,7 @@
       "observation",
       "reconstruction",
       "product",
-      "execution",
-      "backend"
+      "execution"
     ],
     "science": [],
     "observation": [
@@ -48,20 +47,46 @@
     "legacy": []
   },
   "package_layers": {
+    "casa-provider-contracts": "application",
     "casa-imaging-model": "science",
     "casa-imaging-runtime": "execution",
     "casa-imaging": "legacy",
-    "casars-imager": "legacy"
+    "casars": "frontend",
+    "casars-imager": "legacy",
+    "casars-python": "frontend"
+  },
+  "workspace_package_classification": {
+    "casa-aipsio": "support",
+    "casa-calibration": "support",
+    "casa-coordinates": "support",
+    "casa-images": "support",
+    "casa-imaging": "legacy",
+    "casa-imaging-model": "native",
+    "casa-imaging-runtime": "native",
+    "casa-lattices": "support",
+    "casa-logging": "support",
+    "casa-measures-data": "support",
+    "casa-measures-tools": "support",
+    "casa-ms": "surface",
+    "casa-notebook": "support",
+    "casa-provider-contracts": "surface",
+    "casa-tables": "support",
+    "casa-task-runtime": "support",
+    "casa-test-support": "support",
+    "casa-types": "support",
+    "casa-values": "support",
+    "casa-vla": "support",
+    "casars": "surface",
+    "casars-frontend-services": "surface",
+    "casars-imagebrowser-protocol": "support",
+    "casars-imager": "legacy",
+    "casars-python": "surface",
+    "casars-tablebrowser-protocol": "support",
+    "ratatui-graphics": "support"
   },
   "native_package_workspace_dependencies": {
-    "casa-imaging-model": [
-      "casa-coordinates",
-      "casa-types"
-    ],
-    "casa-imaging-runtime": [
-      "casa-imaging-model",
-      "casa-types"
-    ]
+    "casa-imaging-model": [],
+    "casa-imaging-runtime": []
   },
   "device_dependency_prefixes": [
     "ash",
@@ -80,6 +105,56 @@
     "observation",
     "reconstruction",
     "product"
+  ],
+  "source_boundaries": [
+    {
+      "id": "native-science-rust",
+      "roots": [
+        "crates/casa-imaging-model/src"
+      ],
+      "extensions": [
+        ".rs"
+      ],
+      "forbidden_patterns": [
+        {
+          "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:casa_imaging_runtime|casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)\\b|\\b(?:casa_imaging_runtime|casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)::",
+          "message": "native science Rust source imports an execution, backend, legacy, or device API"
+        }
+      ]
+    },
+    {
+      "id": "rust-imaging-frontends",
+      "roots": [
+        "crates/casa-provider-contracts/src",
+        "crates/casars-frontend-services/src",
+        "crates/casars-python/src"
+      ],
+      "extensions": [
+        ".rs"
+      ],
+      "forbidden_patterns": [
+        {
+          "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)\\b|\\b(?:casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)::",
+          "message": "Rust frontend imports a legacy imaging backend or device API"
+        }
+      ]
+    },
+    {
+      "id": "swift-imaging-frontends",
+      "roots": [
+        "apps/casars-mac/Sources/CasarsMacApp",
+        "apps/casars-mac/Sources/CasarsMacCore"
+      ],
+      "extensions": [
+        ".swift"
+      ],
+      "forbidden_patterns": [
+        {
+          "regex": "(?m)^\\s*import\\s+(?:Metal|MetalKit)\\b|\\b(?:MTLCreateSystemDefaultDevice|MTLCopyAllDevices|MTLCopyAllDevicesWithObserver|FftBackend|GridBackend|ImagingBackend|BackendEligibility|MetalBackend)\\b|\\bProcessInfo\\.processInfo\\.(?:activeProcessorCount|processorCount)\\b|\\b(?:sysctl|sysctlbyname|host_statistics|host_statistics64)\\s*\\(",
+          "message": "Swift frontend inspects a device or selects an imaging backend"
+        }
+      ]
+    }
   ],
   "legacy_packages": [
     "casa-imaging",

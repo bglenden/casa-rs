@@ -5,9 +5,14 @@
 mod resource_authority;
 
 pub use resource_authority::{
-    CacheDemand, CapacityDomainId, CapacityViewId, CountDemand, DemandEnvelope, ExternalPressure,
-    HostInventory, IoBufferDemand, LeaseRelease, MemoryCapacityDomain, MemoryCapacityKind,
-    MemoryDemand, MemoryView, MemoryViewKind, QueueDemand, ResourceAuthority, ResourceError,
-    ResourceFence, ResourceGrant, ResourceLease, ResourceOverride, ResourcePolicy,
-    ResourceTopology, RuntimeOverheadDemand, StorageDemand,
+    Accelerator, AcceleratorDemand, AcceleratorId, AcceleratorKind, AlternativeId, CacheDemand,
+    CapabilityId, CapabilityPredicate, CapacityDomainId, CapacityViewId, CountDemand,
+    CpuClassCapacity, DemandAlternative, DemandAlternatives, DemandEnvelope, ExternalPressure,
+    HostInventory, IoBufferDemand, IoBufferKind, LeaseRelease, LeaseResource, MemoryCapacityDomain,
+    MemoryCapacityKind, MemoryDemand, MemoryView, MemoryViewKind, PressureUpdate, QueueDemand,
+    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
+    RateUnit, ResourceAuthority, ResourceError, ResourceFence, ResourceGrant, ResourceHeadroom,
+    ResourceLease, ResourceOverride, ResourcePermit, ResourcePolicy, ResourceTopology,
+    RuntimeOverheadDemand, RuntimeOverheadKind, ScalingMetadata, StorageDemand, StorageDomain,
+    StorageDomainId, StorageUseKind, TransferDemand, TransferLink, TransferLinkId,
 };

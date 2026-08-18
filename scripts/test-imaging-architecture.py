@@ -7,6 +7,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,9 @@ MATRIX_PATH = REPO_ROOT / "resources/imaging-architecture/migration-matrix.json"
 
 
 def load_checker() -> Any:
-    spec = importlib.util.spec_from_file_location("check_imaging_architecture", CHECKER_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "check_imaging_architecture", CHECKER_PATH
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load {CHECKER_PATH}")
     module = importlib.util.module_from_spec(spec)
@@ -37,7 +40,9 @@ def load_policy() -> dict[str, Any]:
     return policy
 
 
-def dependency(target: str, kind: str = "normal", *, external: bool = False) -> dict[str, Any]:
+def dependency(
+    target: str, kind: str = "normal", *, external: bool = False
+) -> dict[str, Any]:
     return {
         "name": target,
         "kind": kind,
@@ -47,6 +52,7 @@ def dependency(target: str, kind: str = "normal", *, external: bool = False) -> 
 
 def metadata_for_policy(policy: dict[str, Any]) -> dict[str, Any]:
     package_names = set(policy["package_layers"])
+    package_names.update(policy.get("workspace_package_classification", {}))
     package_names.update(policy["native_package_workspace_dependencies"].keys())
     for allowed in policy["native_package_workspace_dependencies"].values():
         package_names.update(allowed)
@@ -57,9 +63,10 @@ def metadata_for_policy(policy: dict[str, Any]) -> dict[str, Any]:
         package: [] for package in package_names
     }
     for edge in policy["frozen_legacy_workspace_edges"]:
-        dependencies[edge["source"]].append(
-            dependency(edge["target"], edge["kind"])
-        )
+        dependencies[edge["source"]].append(dependency(edge["target"], edge["kind"]))
+    for source, targets in policy["native_package_workspace_dependencies"].items():
+        for target in targets:
+            dependencies[source].append(dependency(target))
     return {
         "workspace_root": "/workspace",
         "packages": [
@@ -103,6 +110,9 @@ class ArchitecturePolicyTests(unittest.TestCase):
         policy = copy.deepcopy(self.policy)
         policy["package_layers"]["synthetic-frontend"] = "frontend"
         policy["package_layers"]["synthetic-backend"] = "backend"
+        policy.setdefault("workspace_package_classification", {}).update(
+            {"synthetic-frontend": "native", "synthetic-backend": "native"}
+        )
         policy["native_package_workspace_dependencies"]["synthetic-frontend"] = [
             "synthetic-backend"
         ]
@@ -118,6 +128,13 @@ class ArchitecturePolicyTests(unittest.TestCase):
         ):
             checker.validate_workspace(policy, metadata)
 
+    def test_application_cannot_depend_on_a_backend(self) -> None:
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"forbidden logical imaging edge: application -> backend",
+        ):
+            checker.validate_logical_edge(self.policy, "application", "backend")
+
     def test_workspace_check_freezes_legacy_edges_exactly(self) -> None:
         metadata = metadata_for_policy(self.policy)
         edge = self.policy["frozen_legacy_workspace_edges"][0]
@@ -132,6 +149,15 @@ class ArchitecturePolicyTests(unittest.TestCase):
         ]
         with self.assertRaisesRegex(checker.ArchitectureError, r"removed=\["):
             checker.validate_workspace(self.policy, metadata)
+
+    def test_policy_cannot_replace_a_frozen_legacy_exception(self) -> None:
+        policy = copy.deepcopy(self.policy)
+        policy["frozen_legacy_workspace_edges"][0]["target"] = "casa-values"
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"differs from the 16 accepted exceptions",
+        ):
+            checker.validate_policy(policy)
 
     def test_device_free_layer_rejects_direct_device_api(self) -> None:
         metadata = metadata_for_policy(self.policy)
@@ -155,6 +181,100 @@ class ArchitecturePolicyTests(unittest.TestCase):
         ):
             checker.validate_workspace(self.policy, metadata)
 
+    def test_workspace_check_rejects_an_unclassified_workspace_package(self) -> None:
+        metadata = metadata_for_policy(self.policy)
+        metadata["packages"].append(
+            {
+                "name": "new-imaging-crate",
+                "manifest_path": "/workspace/crates/new-imaging-crate/Cargo.toml",
+                "dependencies": [],
+            }
+        )
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"workspace package classification differs from Cargo metadata",
+        ):
+            checker.validate_workspace(self.policy, metadata)
+
+    def test_real_workspace_package_cannot_become_unmapped(self) -> None:
+        metadata = metadata_for_policy(self.policy)
+        policy = copy.deepcopy(self.policy)
+        del policy["package_layers"]["casars-python"]
+        del policy["workspace_package_classification"]["casars-python"]
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"workspace package classification differs from Cargo metadata: added=\['casars-python'\]",
+        ):
+            checker.validate_workspace(policy, metadata)
+
+    def test_real_frontend_package_rejects_a_direct_backend_edge(self) -> None:
+        policy = copy.deepcopy(self.policy)
+        policy["package_layers"]["synthetic-backend"] = "backend"
+        policy.setdefault("workspace_package_classification", {})[
+            "synthetic-backend"
+        ] = "native"
+        policy["native_package_workspace_dependencies"]["synthetic-backend"] = []
+        checker.validate_policy(policy)
+        metadata = metadata_for_policy(policy)
+        if not any(value["name"] == "casars-python" for value in metadata["packages"]):
+            metadata["packages"].append(
+                {
+                    "name": "casars-python",
+                    "manifest_path": "/workspace/crates/casars-python/Cargo.toml",
+                    "dependencies": [],
+                }
+            )
+        package(metadata, "casars-python")["dependencies"].append(
+            dependency("synthetic-backend")
+        )
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"forbidden logical imaging edge: frontend -> backend",
+        ):
+            checker.validate_workspace(policy, metadata)
+
+    def test_rust_science_module_rejects_an_execution_import(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "crates/casa-imaging-model/src"
+            source.mkdir(parents=True)
+            (source / "lib.rs").write_text(
+                "use casa_imaging_runtime::ResourceAuthority;\n",
+                encoding="utf-8",
+            )
+            policy = copy.deepcopy(self.policy)
+            policy["source_boundaries"] = [
+                boundary
+                for boundary in policy.get("source_boundaries", [])
+                if boundary.get("id") == "native-science-rust"
+            ]
+            with self.assertRaisesRegex(
+                checker.ArchitectureError,
+                r"native science Rust source imports an execution, backend, legacy, or device API",
+            ):
+                checker.validate_source_boundaries(policy, root)
+
+    def test_swift_frontend_rejects_device_discovery(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "apps/casars-mac/Sources/CasarsMacApp"
+            source.mkdir(parents=True)
+            (source / "View.swift").write_text(
+                "import Metal\nlet device = MTLCreateSystemDefaultDevice()\n",
+                encoding="utf-8",
+            )
+            policy = copy.deepcopy(self.policy)
+            policy["source_boundaries"] = [
+                boundary
+                for boundary in policy.get("source_boundaries", [])
+                if boundary.get("id") == "swift-imaging-frontends"
+            ]
+            with self.assertRaisesRegex(
+                checker.ArchitectureError,
+                r"Swift frontend inspects a device or selects an imaging backend",
+            ):
+                checker.validate_source_boundaries(policy, root)
+
 
 class MigrationMatrixTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -162,7 +282,9 @@ class MigrationMatrixTests(unittest.TestCase):
         self.matrix = checker.synthetic_matrix(self.policy)
 
     def test_valid_synthetic_matrix_passes(self) -> None:
-        checker.validate_migration_matrix(self.matrix, self.policy)
+        checker.validate_migration_matrix(
+            self.matrix, self.policy, enforce_accepted_scope=False
+        )
 
     def test_required_mutations_fail(self) -> None:
         mutations: list[tuple[str, dict[str, Any], str]] = []
@@ -174,11 +296,15 @@ class MigrationMatrixTests(unittest.TestCase):
         mutations.append(("contract", missing_contract, "unknown acceptance contract"))
         missing_obligation = copy.deepcopy(self.matrix)
         missing_obligation["rows"][0]["migration_obligation"] = None
-        mutations.append(("obligation", missing_obligation, "must be a non-empty object"))
+        mutations.append(
+            ("obligation", missing_obligation, "must be a non-empty object")
+        )
         missing_crosswalk = copy.deepcopy(self.matrix)
         for row in missing_crosswalk["rows"]:
             row["evidence_issues"] = [488]
-        mutations.append(("crosswalk", missing_crosswalk, "omits required crosswalk issues"))
+        mutations.append(
+            ("crosswalk", missing_crosswalk, "omits required crosswalk issues")
+        )
         changed_crosswalk = copy.deepcopy(self.matrix)
         changed_crosswalk["required_issue_crosswalk"] = [488]
         mutations.append(
@@ -195,7 +321,9 @@ class MigrationMatrixTests(unittest.TestCase):
         for name, mutation, message in mutations:
             with self.subTest(name=name):
                 with self.assertRaisesRegex(checker.ArchitectureError, message):
-                    checker.validate_migration_matrix(mutation, self.policy)
+                    checker.validate_migration_matrix(
+                        mutation, self.policy, enforce_accepted_scope=False
+                    )
 
     def test_live_inventory_rejects_a_missing_row(self) -> None:
         matrix = checker.load_object(MATRIX_PATH, "migration matrix")
@@ -205,6 +333,99 @@ class MigrationMatrixTests(unittest.TestCase):
             r"inventory and rows differ",
         ):
             checker.validate_migration_matrix(matrix, self.policy)
+
+    def test_live_inventory_rejects_a_coordinated_row_and_inventory_rename(
+        self,
+    ) -> None:
+        matrix = checker.load_object(MATRIX_PATH, "migration matrix")
+        old_identifier = matrix["rows"][0]["id"]
+        new_identifier = "capability.renamed-continuum"
+        matrix["rows"][0]["id"] = new_identifier
+        inventory = matrix["inventory"]["capability"]
+        inventory[inventory.index(old_identifier)] = new_identifier
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"inventory differs from the canonical imaging inventory",
+        ):
+            checker.validate_migration_matrix(matrix, self.policy)
+
+    def test_live_inventory_rejects_a_coordinated_row_and_inventory_delete(
+        self,
+    ) -> None:
+        matrix = checker.load_object(MATRIX_PATH, "migration matrix")
+        identifier = "product.alpha-pbcor"
+        matrix["rows"] = [row for row in matrix["rows"] if row["id"] != identifier]
+        matrix["inventory"]["product"].remove(identifier)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"inventory differs from the canonical imaging inventory",
+        ):
+            checker.validate_migration_matrix(matrix, self.policy)
+
+    def test_product_kind_inventory_cannot_drop_a_current_variant(self) -> None:
+        matrix = checker.load_object(MATRIX_PATH, "migration matrix")
+        del matrix["product_kind_inventory"]["Sensitivity"]
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"product_kind_inventory differs from ProductKind",
+        ):
+            checker.validate_migration_matrix(matrix, self.policy)
+
+    def test_plane_inventory_cannot_drop_a_raw_correlation(self) -> None:
+        matrix = checker.load_object(MATRIX_PATH, "migration matrix")
+        del matrix["plane_selection_inventory"]["CorrLL"]
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"plane_selection_inventory differs from ImagerPlaneSelection",
+        ):
+            checker.validate_migration_matrix(matrix, self.policy)
+
+    def test_required_issue_cannot_be_deleted_from_policy_matrix_and_rows(self) -> None:
+        policy = copy.deepcopy(self.policy)
+        matrix = checker.load_object(MATRIX_PATH, "migration matrix")
+        removed_issue = 54
+        policy["required_migration_evidence_issues"].remove(removed_issue)
+        matrix["required_issue_crosswalk"].remove(removed_issue)
+        matrix["issue_outcomes"] = [
+            outcome
+            for outcome in matrix.get("issue_outcomes", [])
+            if outcome.get("issue") != removed_issue
+        ]
+        for row in matrix["rows"]:
+            row["evidence_issues"] = [
+                issue for issue in row["evidence_issues"] if issue != removed_issue
+            ]
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"required_migration_evidence_issues differs from the accepted issue scope",
+        ):
+            checker.validate_policy(policy)
+            checker.validate_migration_matrix(matrix, policy)
+
+    def test_issue_outcome_cannot_be_weakened_in_place(self) -> None:
+        matrix = checker.load_object(MATRIX_PATH, "migration matrix")
+        matrix["issue_outcomes"][0]["acceptance_gates"] = ["some evidence"]
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"issue_outcomes content differs from the accepted crosswalk outcomes",
+        ):
+            checker.validate_migration_matrix(matrix, self.policy)
+
+    def test_every_acceptance_law_threshold_and_gate_is_immutable(self) -> None:
+        matrix = checker.load_object(MATRIX_PATH, "migration matrix")
+        for contract_id, contract in matrix["acceptance_contracts"].items():
+            for field in ("laws", "thresholds", "resource_gates"):
+                for index in range(len(contract[field])):
+                    with self.subTest(contract=contract_id, field=field, index=index):
+                        mutation = copy.deepcopy(matrix)
+                        mutation["acceptance_contracts"][contract_id][field][index] = (
+                            "weakened requirement"
+                        )
+                        with self.assertRaisesRegex(
+                            checker.ArchitectureError,
+                            rf"acceptance contract {contract_id}\.{field} differs from the accepted scope",
+                        ):
+                            checker.validate_migration_matrix(mutation, self.policy)
 
     def test_live_contract_rejects_a_weakened_normalized_rms_ceiling(self) -> None:
         matrix = checker.load_object(MATRIX_PATH, "migration matrix")

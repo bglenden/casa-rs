@@ -3,8 +3,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
+
+static PRODUCTION_AUTHORITY: OnceLock<Result<ResourceAuthority, ResourceError>> = OnceLock::new();
 
 /// Stable identity of one physical memory-capacity domain.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -37,6 +40,34 @@ impl CapacityViewId {
         &self.0
     }
 }
+
+macro_rules! resource_identity {
+    ($name:ident, $summary:literal) => {
+        #[doc = $summary]
+        #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub struct $name(String);
+
+        impl $name {
+            /// Creates a stable resource identity.
+            pub fn new(value: impl Into<String>) -> Self {
+                Self(value.into())
+            }
+
+            /// Returns the identity text.
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+    };
+}
+
+resource_identity!(AcceleratorId, "Stable identity of one accelerator.");
+resource_identity!(TransferLinkId, "Stable identity of one transfer link.");
+resource_identity!(StorageDomainId, "Stable identity of one storage domain.");
+resource_identity!(RateResourceId, "Stable identity of one rate resource.");
+resource_identity!(QueueResourceId, "Stable identity of one bounded queue.");
+resource_identity!(AlternativeId, "Stable identity of one demand alternative.");
+resource_identity!(CapabilityId, "Stable identity of one required capability.");
 
 /// Physical location represented by a memory-capacity domain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,6 +111,118 @@ pub struct MemoryView {
     pub kind: MemoryViewKind,
 }
 
+/// Knowledge available about performance-oriented CPU cores.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CpuClassCapacity {
+    /// The host reported a distinct performance-core count.
+    Known(u64),
+    /// The host did not expose a reliable CPU-class classification.
+    Unknown,
+}
+
+/// Accelerator implementation class.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AcceleratorKind {
+    /// Apple Metal accelerator.
+    Metal,
+}
+
+/// One typed accelerator in the process topology.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Accelerator {
+    /// Stable accelerator identity.
+    pub id: AcceleratorId,
+    /// Accelerator implementation class.
+    pub kind: AcceleratorKind,
+    /// Memory view used by the accelerator.
+    pub memory_view: CapacityViewId,
+    /// Runtime-owned command queue.
+    pub command_queue: QueueResourceId,
+    /// Simultaneous occupancy slots.
+    pub occupancy_slots: u64,
+}
+
+/// Unit carried by a typed rate resource.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RateUnit {
+    /// Bytes transferred per second.
+    BytesPerSecond,
+    /// Discrete operations completed per second.
+    OperationsPerSecond,
+}
+
+/// One explicitly measured or configured rate capacity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RateResource {
+    /// Stable rate identity.
+    pub id: RateResourceId,
+    /// Physical unit measured by this resource.
+    pub unit: RateUnit,
+    /// Maximum units per second; zero means unprofiled and fails closed.
+    pub units_per_second: u64,
+}
+
+impl RateResource {
+    /// Creates a typed rate resource.
+    pub const fn new(id: RateResourceId, unit: RateUnit, units_per_second: u64) -> Self {
+        Self {
+            id,
+            unit,
+            units_per_second,
+        }
+    }
+}
+
+/// One bounded runtime queue.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueueResource {
+    /// Stable queue identity.
+    pub id: QueueResourceId,
+    /// Maximum simultaneously occupied slots.
+    pub slots: u64,
+}
+
+impl QueueResource {
+    /// Creates a typed queue resource.
+    pub const fn new(id: QueueResourceId, slots: u64) -> Self {
+        Self { id, slots }
+    }
+}
+
+/// One configured storage capacity rooted at a real filesystem domain.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StorageDomain {
+    /// Stable storage-domain identity.
+    pub id: StorageDomainId,
+    /// Absolute root whose capacity this domain represents.
+    pub root: PathBuf,
+    /// Total configured capacity.
+    pub capacity_bytes: u64,
+    /// Rate resource used for reads from this domain.
+    pub read_rate: RateResourceId,
+    /// Rate resource used for writes to this domain.
+    pub write_rate: RateResourceId,
+    /// Optional operations-per-second resource for this domain.
+    pub operations_rate: Option<RateResourceId>,
+    /// Queue resource used for storage operations.
+    pub queue: QueueResourceId,
+}
+
+/// One directed transfer path between memory views.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TransferLink {
+    /// Stable transfer-link identity.
+    pub id: TransferLinkId,
+    /// Source memory view.
+    pub source_view: CapacityViewId,
+    /// Destination memory view.
+    pub destination_view: CapacityViewId,
+    /// Shared transfer-rate resource.
+    pub rate: RateResourceId,
+    /// Shared transfer-queue resource.
+    pub queue: QueueResourceId,
+}
+
 /// Physical, rate, and count topology inventoried for one process.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResourceTopology {
@@ -87,24 +230,26 @@ pub struct ResourceTopology {
     pub memory_domains: Vec<MemoryCapacityDomain>,
     /// Host and accelerator views of those domains.
     pub memory_views: Vec<MemoryView>,
+    /// Typed accelerators visible to the runtime.
+    pub accelerators: Vec<Accelerator>,
+    /// Directed transfer paths between memory views.
+    pub transfer_links: Vec<TransferLink>,
+    /// Explicit storage domains supplied by runtime bootstrap.
+    pub storage_domains: Vec<StorageDomain>,
+    /// Typed rate capacities shared by storage and transfer paths.
+    pub rate_resources: Vec<RateResource>,
+    /// Typed bounded queues shared by runtime paths.
+    pub queue_resources: Vec<QueueResource>,
     /// Logical CPU threads available to the process.
     pub logical_cpu_threads: u64,
     /// Performance-oriented CPU cores available to the process.
-    pub performance_cpu_cores: u64,
-    /// Capacity available for temporary and output storage reservations.
-    pub storage_capacity_bytes: u64,
-    /// Sequential storage read-rate capacity.
-    pub storage_read_bytes_per_second: u64,
-    /// Sequential storage write-rate capacity.
-    pub storage_write_bytes_per_second: u64,
+    pub performance_cpu_cores: CpuClassCapacity,
     /// Process-wide resident-cache capacity.
     pub cache_capacity_bytes: u64,
     /// Simultaneously held table or synchronization locks.
     pub lock_capacity: u64,
     /// File descriptors available to imaging work.
     pub file_descriptor_capacity: u64,
-    /// Total bounded queue slots available to imaging work.
-    pub queue_capacity: u64,
 }
 
 /// Mutable external pressure observed around the process.
@@ -115,15 +260,19 @@ pub struct ExternalPressure {
     /// CPU threads currently assignable to imaging work.
     pub available_cpu_threads: u64,
     /// Storage bytes currently assignable to imaging work.
-    pub storage_available_bytes: u64,
+    pub storage_available_bytes: BTreeMap<StorageDomainId, u64>,
+    /// Currently usable units per second for every typed rate resource.
+    pub rate_available_per_second: BTreeMap<RateResourceId, u64>,
+    /// Currently usable slots for every typed queue resource.
+    pub queue_available_slots: BTreeMap<QueueResourceId, u64>,
+    /// Currently usable occupancy slots for every accelerator.
+    pub accelerator_available_slots: BTreeMap<AcceleratorId, u64>,
     /// Resident-cache bytes currently assignable to imaging work.
     pub cache_available_bytes: u64,
     /// Lock slots currently assignable to imaging work.
     pub available_locks: u64,
     /// File descriptors currently assignable to imaging work.
     pub available_file_descriptors: u64,
-    /// Queue slots currently assignable to imaging work.
-    pub available_queue_slots: u64,
 }
 
 /// Immutable topology plus the initial pressure snapshot.
@@ -136,31 +285,61 @@ pub struct HostInventory {
 }
 
 impl HostInventory {
-    /// Detects the production process's local CPU, memory, storage, and Metal
-    /// topology without consulting a frontend.
-    pub fn detect() -> Result<Self, ResourceError> {
+    /// Detects local CPU, memory, and Metal topology inside the runtime.
+    /// Storage domains and measured rates require an explicit bootstrap
+    /// profile and are never inferred from the current working directory.
+    fn detect() -> Result<Self, ResourceError> {
         let (physical_memory_bytes, available_memory_bytes) = detect_host_memory()?;
         let logical_cpu_threads = std::thread::available_parallelism()
             .map_err(|error| ResourceError::Detection(error.to_string()))?
             .get() as u64;
         let performance_cpu_cores = detect_performance_cpu_cores()
-            .unwrap_or(logical_cpu_threads)
-            .clamp(1, logical_cpu_threads);
+            .map(|cores| CpuClassCapacity::Known(cores.clamp(1, logical_cpu_threads)))
+            .unwrap_or(CpuClassCapacity::Unknown);
         let unified_metal_available = detect_unified_metal_device();
         let host_domain = CapacityDomainId::new("production-host-memory");
+        let host_view = CapacityViewId::new("production-host-memory");
         let mut memory_views = vec![MemoryView {
-            id: CapacityViewId::new("production-host-memory"),
+            id: host_view.clone(),
             domain: host_domain.clone(),
             kind: MemoryViewKind::Host,
         }];
+        let mut accelerators = Vec::new();
+        let mut transfer_links = Vec::new();
+        let mut rate_resources = Vec::new();
+        let mut queue_resources = Vec::new();
         if unified_metal_available {
+            let metal_view = CapacityViewId::new("production-metal-memory");
+            let command_queue = QueueResourceId::new("production-metal-command-queue");
+            let transfer_queue = QueueResourceId::new("production-metal-transfer-queue");
+            let transfer_rate = RateResourceId::new("production-unified-transfer-rate");
             memory_views.push(MemoryView {
-                id: CapacityViewId::new("production-metal-memory"),
+                id: metal_view.clone(),
                 domain: host_domain.clone(),
                 kind: MemoryViewKind::Metal,
             });
+            queue_resources.push(QueueResource::new(command_queue.clone(), 1));
+            queue_resources.push(QueueResource::new(transfer_queue.clone(), 1));
+            rate_resources.push(RateResource::new(
+                transfer_rate.clone(),
+                RateUnit::BytesPerSecond,
+                0,
+            ));
+            accelerators.push(Accelerator {
+                id: AcceleratorId::new("production-metal-0"),
+                kind: AcceleratorKind::Metal,
+                memory_view: metal_view.clone(),
+                command_queue,
+                occupancy_slots: 1,
+            });
+            transfer_links.push(TransferLink {
+                id: TransferLinkId::new("production-host-to-metal"),
+                source_view: host_view,
+                destination_view: metal_view,
+                rate: transfer_rate,
+                queue: transfer_queue,
+            });
         }
-        let (storage_capacity_bytes, storage_available_bytes) = detect_storage_capacity()?;
         let file_descriptor_capacity = detect_open_file_limit()?;
         let topology = ResourceTopology {
             memory_domains: vec![MemoryCapacityDomain {
@@ -173,20 +352,18 @@ impl HostInventory {
                 capacity_bytes: physical_memory_bytes,
             }],
             memory_views,
+            accelerators,
+            transfer_links,
+            storage_domains: Vec::new(),
+            rate_resources,
+            queue_resources,
             logical_cpu_threads,
             performance_cpu_cores,
-            storage_capacity_bytes,
-            // Rates require a measured profile. Zero fails closed for a run
-            // that declares a nonzero rate until such a profile is supplied.
-            storage_read_bytes_per_second: 0,
-            storage_write_bytes_per_second: 0,
             cache_capacity_bytes: physical_memory_bytes,
             // Table and synchronization capacity has no portable detector.
             // Zero fails closed until the embedding runtime supplies a profile.
             lock_capacity: 0,
             file_descriptor_capacity,
-            // Queue capacity is a runtime-owned topology fact, not an FD proxy.
-            queue_capacity: 0,
         };
         let pressure = ExternalPressure {
             memory_available_bytes: BTreeMap::from([(
@@ -194,11 +371,25 @@ impl HostInventory {
                 available_memory_bytes.min(physical_memory_bytes),
             )]),
             available_cpu_threads: logical_cpu_threads,
-            storage_available_bytes: storage_available_bytes.min(storage_capacity_bytes),
+            storage_available_bytes: BTreeMap::new(),
+            rate_available_per_second: topology
+                .rate_resources
+                .iter()
+                .map(|rate| (rate.id.clone(), rate.units_per_second))
+                .collect(),
+            queue_available_slots: topology
+                .queue_resources
+                .iter()
+                .map(|queue| (queue.id.clone(), queue.slots))
+                .collect(),
+            accelerator_available_slots: topology
+                .accelerators
+                .iter()
+                .map(|accelerator| (accelerator.id.clone(), accelerator.occupancy_slots))
+                .collect(),
             cache_available_bytes: available_memory_bytes.min(physical_memory_bytes),
             available_locks: 0,
             available_file_descriptors: file_descriptor_capacity,
-            available_queue_slots: 0,
         };
         Ok(Self { topology, pressure })
     }
@@ -372,49 +563,15 @@ impl IoBufferDemand {
     }
 }
 
-/// Bounded queue depths attributable to one run.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// One named demand on a typed bounded queue.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueueDemand {
-    /// Source read-ahead queue slots.
-    pub source_read_ahead_slots: u64,
-    /// Decode and preparation queue slots.
-    pub preparation_slots: u64,
-    /// Accelerator command queue slots.
-    pub device_command_slots: u64,
-    /// Transfer queue slots.
-    pub transfer_slots: u64,
-    /// Spill queue slots.
-    pub spill_slots: u64,
-    /// Writeback and publication queue slots.
-    pub writeback_slots: u64,
-}
-
-impl QueueDemand {
-    /// Creates an envelope with no queue slots.
-    pub const fn zero() -> Self {
-        Self {
-            source_read_ahead_slots: 0,
-            preparation_slots: 0,
-            device_command_slots: 0,
-            transfer_slots: 0,
-            spill_slots: 0,
-            writeback_slots: 0,
-        }
-    }
-
-    fn checked_total(self) -> Result<u64, ResourceError> {
-        checked_sum(
-            [
-                self.source_read_ahead_slots,
-                self.preparation_slots,
-                self.device_command_slots,
-                self.transfer_slots,
-                self.spill_slots,
-                self.writeback_slots,
-            ],
-            "queue slots",
-        )
-    }
+    /// Stable identity retained by the lease.
+    pub demand_id: String,
+    /// Queue resource charged by this demand.
+    pub resource: QueueResourceId,
+    /// Hard and preferred occupied slots.
+    pub slots: CountDemand,
 }
 
 /// Resident and persistent cache demand.
@@ -436,9 +593,13 @@ impl CacheDemand {
     }
 }
 
-/// Storage-capacity and shared-rate demand.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Storage-capacity demand bound to one configured filesystem domain.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StorageDemand {
+    /// Stable identity retained by the lease.
+    pub demand_id: String,
+    /// Storage domain charged by this demand.
+    pub domain: StorageDomainId,
     /// Mandatory temporary spill storage.
     pub temporary_bytes: u64,
     /// Mandatory staged-output storage.
@@ -447,26 +608,18 @@ pub struct StorageDemand {
     pub final_output_bytes: u64,
     /// Mandatory persistent-cache storage.
     pub persistent_cache_bytes: u64,
-    /// Mandatory sequential read rate.
-    pub read_bytes_per_second: u64,
-    /// Mandatory sequential write rate.
-    pub write_bytes_per_second: u64,
+    /// Required and preferred sequential read bandwidth.
+    pub read_rate: CountDemand,
+    /// Required and preferred sequential write bandwidth.
+    pub write_rate: CountDemand,
+    /// Required and preferred storage operations per second.
+    pub operations_rate: CountDemand,
+    /// Required and preferred storage queue occupancy.
+    pub queue_slots: CountDemand,
 }
 
 impl StorageDemand {
-    /// Creates an envelope with no storage demand.
-    pub const fn zero() -> Self {
-        Self {
-            temporary_bytes: 0,
-            staged_output_bytes: 0,
-            final_output_bytes: 0,
-            persistent_cache_bytes: 0,
-            read_bytes_per_second: 0,
-            write_bytes_per_second: 0,
-        }
-    }
-
-    fn checked_capacity(self) -> Result<u64, ResourceError> {
+    fn checked_capacity(&self) -> Result<u64, ResourceError> {
         checked_sum(
             [
                 self.temporary_bytes,
@@ -477,6 +630,43 @@ impl StorageDemand {
             "storage capacity",
         )
     }
+}
+
+/// One named demand on a typed throughput resource.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RateDemand {
+    /// Stable identity retained by the lease.
+    pub demand_id: String,
+    /// Rate resource charged by this demand.
+    pub resource: RateResourceId,
+    /// Hard and preferred units per second.
+    pub amount: CountDemand,
+}
+
+/// One named accelerator occupancy demand.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AcceleratorDemand {
+    /// Stable identity retained by the lease.
+    pub demand_id: String,
+    /// Accelerator charged by this demand.
+    pub accelerator: AcceleratorId,
+    /// Hard and preferred occupancy slots.
+    pub slots: CountDemand,
+    /// Hard and preferred command-queue occupancy.
+    pub command_queue_slots: CountDemand,
+}
+
+/// One named demand bound to a typed transfer link.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TransferDemand {
+    /// Stable identity retained by the lease.
+    pub demand_id: String,
+    /// Transfer link charged by this demand.
+    pub link: TransferLinkId,
+    /// Hard and preferred transfer rate.
+    pub rate: CountDemand,
+    /// Hard and preferred transfer-queue occupancy.
+    pub queue_slots: CountDemand,
 }
 
 /// Complete declarative resource demand for one implementation alternative.
@@ -491,7 +681,9 @@ pub struct DemandEnvelope {
     /// Runtime, allocator, library, FFT, driver, JIT, and command-buffer demand.
     pub overhead: RuntimeOverheadDemand,
     /// Temporary, output, persistent-cache, and rate demand.
-    pub storage: StorageDemand,
+    pub storage: Vec<StorageDemand>,
+    /// Typed throughput demands for storage and transfer paths.
+    pub rates: Vec<RateDemand>,
     /// Resident-cache demand.
     pub caches: CacheDemand,
     /// Table and synchronization lock demand.
@@ -499,19 +691,255 @@ pub struct DemandEnvelope {
     /// File-descriptor demand.
     pub file_descriptors: CountDemand,
     /// Bounded queue-depth demand.
-    pub queues: QueueDemand,
+    pub queues: Vec<QueueDemand>,
+    /// Typed transfer-link demands.
+    pub transfers: Vec<TransferDemand>,
+    /// Accelerator occupancy demands.
+    pub accelerators: Vec<AcceleratorDemand>,
     /// Every I/O buffer category owned by the run.
     pub io_buffers: IoBufferDemand,
+}
+
+/// Capability coverage declared by one implementation alternative.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CapabilityPredicate {
+    /// Capabilities this alternative can satisfy.
+    pub supported: BTreeSet<CapabilityId>,
+}
+
+impl CapabilityPredicate {
+    fn accepts(&self, required: &BTreeSet<CapabilityId>) -> bool {
+        required.is_subset(&self.supported)
+    }
+}
+
+/// Scaling facts retained with a selected alternative.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScalingMetadata {
+    /// Smallest supported worker count.
+    pub minimum_workers: u64,
+    /// Largest supported worker count.
+    pub maximum_workers: u64,
+    /// Additional resident bytes per worker by physical memory domain.
+    pub memory_bytes_per_worker: BTreeMap<CapacityDomainId, u64>,
+}
+
+/// A point at which a run can safely reconsider resource allocation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum QuiescencePoint {
+    /// Entire run boundary.
+    RunBoundary,
+    /// Major-cycle boundary.
+    MajorCycle,
+    /// Tile-batch boundary.
+    TileBatch,
+    /// Cube-slab boundary.
+    Slab,
+}
+
+/// Capacity reserved in addition to a run's consumable hard ceilings.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ResourceHeadroom {
+    /// Reserved memory bytes by physical domain.
+    pub memory_bytes: BTreeMap<CapacityDomainId, u64>,
+    /// Reserved worker slots.
+    pub workers: u64,
+    /// Reserved storage bytes by storage domain.
+    pub storage_bytes: BTreeMap<StorageDomainId, u64>,
+    /// Reserved rate capacity by rate resource.
+    pub rates_per_second: BTreeMap<RateResourceId, u64>,
+    /// Reserved resident-cache bytes.
+    pub cache_bytes: u64,
+    /// Reserved lock capacity.
+    pub locks: u64,
+    /// Reserved file descriptors.
+    pub file_descriptors: u64,
+    /// Reserved queue slots by queue resource.
+    pub queue_slots: BTreeMap<QueueResourceId, u64>,
+    /// Reserved occupancy slots by accelerator.
+    pub accelerator_slots: BTreeMap<AcceleratorId, u64>,
+}
+
+/// One declarative implementation alternative offered for arbitration.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DemandAlternative {
+    /// Stable alternative identity.
+    pub id: AlternativeId,
+    /// Capabilities supported by this alternative.
+    pub capabilities: CapabilityPredicate,
+    /// Consumable resource demand.
+    pub demand: DemandEnvelope,
+    /// Non-consumable admission margin retained while the lease is active.
+    pub headroom: ResourceHeadroom,
+    /// Scaling facts for later quiescent decisions.
+    pub scaling: ScalingMetadata,
+    /// Safe points at which the runtime may reconsider allocation.
+    pub quiescence_points: BTreeSet<QuiescencePoint>,
+}
+
+/// Ordered implementation alternatives for one scientific problem.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DemandAlternatives {
+    /// Capabilities every selectable alternative must satisfy.
+    pub required_capabilities: BTreeSet<CapabilityId>,
+    /// Alternatives in caller preference order.
+    pub alternatives: Vec<DemandAlternative>,
+}
+
+/// Named runtime-overhead category owned by a lease.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RuntimeOverheadKind {
+    /// Worker thread stacks.
+    ThreadStack,
+    /// Allocator fragmentation and bookkeeping.
+    AllocatorFragmentation,
+    /// External-library workspace.
+    ExternalLibrary,
+    /// FFT plans and workspace.
+    FftWorkspace,
+    /// Accelerator driver allocations.
+    Driver,
+    /// JIT compiler allocations.
+    Jit,
+    /// Accelerator command buffers.
+    CommandBuffer,
+}
+
+/// Named I/O-buffer category owned by a lease.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum IoBufferKind {
+    /// Source read-ahead buffers.
+    SourceReadAhead,
+    /// Decode buffers.
+    Decode,
+    /// Visibility or product preparation buffers.
+    Preparation,
+    /// Host-to-device transfer buffers.
+    HostToDeviceTransfer,
+    /// Device-to-host transfer buffers.
+    DeviceToHostTransfer,
+    /// Spill-read buffers.
+    SpillRead,
+    /// Spill-write buffers.
+    SpillWrite,
+    /// Serialization buffers.
+    Serialization,
+    /// Generic storage-manager buffers.
+    StorageManager,
+    /// Tiled-column writer buffers.
+    TiledColumnWriter,
+    /// Scalar-column writer buffers.
+    ScalarColumnWriter,
+    /// Writeback buffers.
+    Writeback,
+    /// Publication buffers.
+    Publication,
+    /// Mapped-file and page-cache exposure.
+    MappedPageCache,
+}
+
+/// Named storage-capacity category owned by a lease.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum StorageUseKind {
+    /// Temporary spill capacity.
+    Temporary,
+    /// Staged-output capacity.
+    StagedOutput,
+    /// Final-output capacity.
+    FinalOutput,
+    /// Persistent-cache capacity.
+    PersistentCache,
+}
+
+/// One typed consumable resource declared by a selected lease alternative.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LeaseResource {
+    /// One logical resident allocation.
+    Memory {
+        /// Stable allocation identity from [`MemoryDemand`].
+        allocation_id: String,
+    },
+    /// Worker slots.
+    Workers,
+    /// One runtime-overhead category.
+    RuntimeOverhead(RuntimeOverheadKind),
+    /// One I/O-buffer category.
+    IoBuffer(IoBufferKind),
+    /// One storage-capacity category in a named storage demand.
+    Storage {
+        /// Stable storage-demand identity.
+        demand_id: String,
+        /// Storage-capacity category.
+        use_kind: StorageUseKind,
+    },
+    /// Read-rate demand derived from a named storage domain.
+    StorageReadRate {
+        /// Stable storage-demand identity.
+        demand_id: String,
+    },
+    /// Write-rate demand derived from a named storage domain.
+    StorageWriteRate {
+        /// Stable storage-demand identity.
+        demand_id: String,
+    },
+    /// IOPS demand derived from a named storage domain.
+    StorageOperationsRate {
+        /// Stable storage-demand identity.
+        demand_id: String,
+    },
+    /// Queue demand derived from a named storage domain.
+    StorageQueue {
+        /// Stable storage-demand identity.
+        demand_id: String,
+    },
+    /// One named rate demand.
+    Rate {
+        /// Stable rate-demand identity.
+        demand_id: String,
+    },
+    /// One named queue demand.
+    Queue {
+        /// Stable queue-demand identity.
+        demand_id: String,
+    },
+    /// Rate demand derived from a named transfer link.
+    TransferRate {
+        /// Stable transfer-demand identity.
+        demand_id: String,
+    },
+    /// Queue demand derived from a named transfer link.
+    TransferQueue {
+        /// Stable transfer-demand identity.
+        demand_id: String,
+    },
+    /// One named accelerator demand.
+    Accelerator {
+        /// Stable accelerator-demand identity.
+        demand_id: String,
+    },
+    /// Command-queue demand derived from a named accelerator.
+    AcceleratorCommandQueue {
+        /// Stable accelerator-demand identity.
+        demand_id: String,
+    },
+    /// Resident cache bytes.
+    ResidentCache,
+    /// Table or synchronization locks.
+    Locks,
+    /// File descriptors.
+    FileDescriptors,
 }
 
 /// User-selected host-use policy; detection remains inside the authority.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ResourcePolicy {
-    /// Preserve responsiveness by preferring a conservative share.
+    /// Admit at most half of byte/rate capacity while preserving one slot of
+    /// each available indivisible count resource.
     Interactive,
-    /// Prefer performance cores and most currently available memory.
+    /// Admit at most three quarters of capacity and, when known, stay within
+    /// the performance-core class.
     Balanced,
-    /// Prefer all currently available process resources.
+    /// Admit against all currently available process resources.
     Exclusive,
     /// Apply explicit ceilings without inventing unavailable capacity.
     Explicit(ResourceOverride),
@@ -524,20 +952,20 @@ pub struct ResourceOverride {
     pub memory_bytes: BTreeMap<CapacityDomainId, u64>,
     /// Optional worker ceiling.
     pub workers: Option<u64>,
-    /// Optional storage-capacity ceiling.
-    pub storage_bytes: Option<u64>,
-    /// Optional storage read-rate ceiling.
-    pub storage_read_bytes_per_second: Option<u64>,
-    /// Optional storage write-rate ceiling.
-    pub storage_write_bytes_per_second: Option<u64>,
+    /// Optional per-domain storage ceilings.
+    pub storage_bytes: BTreeMap<StorageDomainId, u64>,
+    /// Optional per-resource rate ceilings.
+    pub rates_per_second: BTreeMap<RateResourceId, u64>,
     /// Optional resident-cache ceiling.
     pub cache_bytes: Option<u64>,
     /// Optional lock ceiling.
     pub locks: Option<u64>,
     /// Optional file-descriptor ceiling.
     pub file_descriptors: Option<u64>,
-    /// Optional queue-slot ceiling.
-    pub queue_slots: Option<u64>,
+    /// Optional per-resource queue ceilings.
+    pub queue_slots: BTreeMap<QueueResourceId, u64>,
+    /// Optional per-accelerator occupancy ceilings.
+    pub accelerator_slots: BTreeMap<AcceleratorId, u64>,
 }
 
 /// Hard ceilings or preferred targets granted to one run.
@@ -545,13 +973,13 @@ pub struct ResourceOverride {
 pub struct ResourceGrant {
     memory_bytes: BTreeMap<CapacityDomainId, u64>,
     workers: u64,
-    storage_bytes: u64,
-    storage_read_bytes_per_second: u64,
-    storage_write_bytes_per_second: u64,
+    storage_bytes: BTreeMap<StorageDomainId, u64>,
+    rates_per_second: BTreeMap<RateResourceId, u64>,
     cache_bytes: u64,
     locks: u64,
     file_descriptors: u64,
-    queue_slots: u64,
+    queue_slots: BTreeMap<QueueResourceId, u64>,
+    accelerator_slots: BTreeMap<AcceleratorId, u64>,
 }
 
 impl ResourceGrant {
@@ -565,19 +993,14 @@ impl ResourceGrant {
         self.workers
     }
 
-    /// Returns the granted storage capacity.
-    pub const fn storage_bytes(&self) -> u64 {
-        self.storage_bytes
+    /// Returns granted bytes in one storage domain.
+    pub fn storage_bytes(&self, domain: &StorageDomainId) -> u64 {
+        self.storage_bytes.get(domain).copied().unwrap_or(0)
     }
 
-    /// Returns the granted storage read rate.
-    pub const fn storage_read_bytes_per_second(&self) -> u64 {
-        self.storage_read_bytes_per_second
-    }
-
-    /// Returns the granted storage write rate.
-    pub const fn storage_write_bytes_per_second(&self) -> u64 {
-        self.storage_write_bytes_per_second
+    /// Returns granted units per second for one rate resource.
+    pub fn rate_per_second(&self, resource: &RateResourceId) -> u64 {
+        self.rates_per_second.get(resource).copied().unwrap_or(0)
     }
 
     /// Returns the granted resident-cache bytes.
@@ -595,9 +1018,17 @@ impl ResourceGrant {
         self.file_descriptors
     }
 
-    /// Returns the granted total queue slots.
-    pub const fn queue_slots(&self) -> u64 {
-        self.queue_slots
+    /// Returns granted slots for one queue resource.
+    pub fn queue_slots(&self, resource: &QueueResourceId) -> u64 {
+        self.queue_slots.get(resource).copied().unwrap_or(0)
+    }
+
+    /// Returns granted occupancy slots for one accelerator.
+    pub fn accelerator_slots(&self, accelerator: &AcceleratorId) -> u64 {
+        self.accelerator_slots
+            .get(accelerator)
+            .copied()
+            .unwrap_or(0)
     }
 }
 
@@ -610,6 +1041,10 @@ pub enum ResourceError {
     Overflow(&'static str),
     /// Production host detection failed.
     Detection(String),
+    /// The process production authority was already initialized.
+    ProductionAlreadyInitialized,
+    /// No declared alternative satisfied the required capabilities.
+    NoCapableAlternative,
     /// A mandatory demand did not fit the current hard ceiling.
     Infeasible {
         /// Resource category that failed admission.
@@ -617,6 +1052,26 @@ pub enum ResourceError {
         /// Mandatory requested amount.
         required: u64,
         /// Amount available after policy, pressure, and active leases.
+        available: u64,
+    },
+    /// A permit requested a resource absent from the selected declaration.
+    UndeclaredLeaseResource(LeaseResource),
+    /// Concurrent permits would exceed one named lease ceiling.
+    LeaseLimitExceeded {
+        /// Named resource whose lease ceiling would be exceeded.
+        resource: LeaseResource,
+        /// Additional amount requested by the caller.
+        requested: u64,
+        /// Amount remaining under the named hard ceiling.
+        available: u64,
+    },
+    /// New external pressure would strand active hard reservations.
+    PressureWouldInvalidateLeases {
+        /// Physical resource that would become overcommitted.
+        resource: String,
+        /// Capacity retained by active leases and headroom.
+        reserved: u64,
+        /// Capacity exposed by the rejected pressure snapshot.
         available: u64,
     },
     /// The process-wide authority lock was poisoned.
@@ -628,6 +1083,8 @@ impl ResourceError {
     pub const fn required(&self) -> Option<u64> {
         match self {
             Self::Infeasible { required, .. } => Some(*required),
+            Self::LeaseLimitExceeded { requested, .. } => Some(*requested),
+            Self::PressureWouldInvalidateLeases { reserved, .. } => Some(*reserved),
             _ => None,
         }
     }
@@ -635,7 +1092,9 @@ impl ResourceError {
     /// Returns the available amount for an infeasibility error.
     pub const fn available(&self) -> Option<u64> {
         match self {
-            Self::Infeasible { available, .. } => Some(*available),
+            Self::Infeasible { available, .. }
+            | Self::LeaseLimitExceeded { available, .. }
+            | Self::PressureWouldInvalidateLeases { available, .. } => Some(*available),
             _ => None,
         }
     }
@@ -647,6 +1106,12 @@ impl fmt::Display for ResourceError {
             Self::Invalid(message) => write!(formatter, "invalid resource declaration: {message}"),
             Self::Overflow(category) => write!(formatter, "{category} arithmetic overflowed"),
             Self::Detection(message) => write!(formatter, "resource detection failed: {message}"),
+            Self::ProductionAlreadyInitialized => {
+                formatter.write_str("production resource authority is already initialized")
+            }
+            Self::NoCapableAlternative => {
+                formatter.write_str("no demand alternative satisfies the required capabilities")
+            }
             Self::Infeasible {
                 resource,
                 required,
@@ -654,6 +1119,25 @@ impl fmt::Display for ResourceError {
             } => write!(
                 formatter,
                 "resource {resource} requires {required}, but only {available} is available"
+            ),
+            Self::UndeclaredLeaseResource(resource) => {
+                write!(formatter, "lease did not declare resource {resource:?}")
+            }
+            Self::LeaseLimitExceeded {
+                resource,
+                requested,
+                available,
+            } => write!(
+                formatter,
+                "lease resource {resource:?} requested {requested}, but only {available} remains"
+            ),
+            Self::PressureWouldInvalidateLeases {
+                resource,
+                reserved,
+                available,
+            } => write!(
+                formatter,
+                "pressure update would strand {reserved} reserved {resource} with only {available} available"
             ),
             Self::AuthorityPoisoned => formatter.write_str("resource authority lock is poisoned"),
         }
@@ -670,7 +1154,10 @@ struct ResourceTotals {
 
 #[derive(Clone, Debug)]
 struct LeaseRecord {
-    hard: ResourceGrant,
+    reserved: ResourceGrant,
+    policy: ResourcePolicy,
+    limits: BTreeMap<LeaseResource, u64>,
+    consumed: BTreeMap<LeaseResource, u64>,
     outstanding_fences: u64,
     release_requested: bool,
 }
@@ -681,6 +1168,7 @@ struct AuthorityState {
     leases: BTreeMap<u64, LeaseRecord>,
     next_lease_id: u64,
     epoch: u64,
+    pressure_epoch: u64,
 }
 
 #[derive(Debug)]
@@ -695,18 +1183,72 @@ pub struct ResourceAuthority {
     inner: Arc<AuthorityInner>,
 }
 
+/// Successful external-pressure epoch transition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PressureUpdate {
+    previous_epoch: u64,
+    current_epoch: u64,
+}
+
+impl PressureUpdate {
+    /// Returns the pressure epoch replaced by this update.
+    pub const fn previous_epoch(self) -> u64 {
+        self.previous_epoch
+    }
+
+    /// Returns the pressure epoch established by this update.
+    pub const fn current_epoch(self) -> u64 {
+        self.current_epoch
+    }
+}
+
 impl ResourceAuthority {
     /// Returns the single lazily detected authority shared by this process.
     pub fn production() -> Result<&'static Self, ResourceError> {
-        static PRODUCTION: OnceLock<Result<ResourceAuthority, ResourceError>> = OnceLock::new();
-        match PRODUCTION.get_or_init(|| HostInventory::detect().and_then(Self::with_inventory)) {
+        match PRODUCTION_AUTHORITY
+            .get_or_init(|| HostInventory::detect().and_then(Self::with_inventory))
+        {
             Ok(authority) => Ok(authority),
             Err(error) => Err(error.clone()),
         }
     }
 
-    /// Creates an isolated authority from an injected deterministic inventory.
-    pub fn with_inventory(inventory: HostInventory) -> Result<Self, ResourceError> {
+    /// Installs the inventory used by the one process production authority.
+    ///
+    /// This must be called by runtime bootstrap before [`Self::production`].
+    /// Subsequent initialization attempts are rejected.
+    pub fn install_production_inventory(
+        inventory: HostInventory,
+    ) -> Result<&'static Self, ResourceError> {
+        let authority = Self::with_inventory(inventory)?;
+        PRODUCTION_AUTHORITY
+            .set(Ok(authority))
+            .map_err(|_| ResourceError::ProductionAlreadyInitialized)?;
+        match PRODUCTION_AUTHORITY.get() {
+            Some(Ok(authority)) => Ok(authority),
+            Some(Err(error)) => Err(error.clone()),
+            None => Err(ResourceError::Invalid(
+                "production authority initialization did not persist".to_string(),
+            )),
+        }
+    }
+
+    /// Returns the immutable physical topology owned by this authority.
+    pub fn topology(&self) -> &ResourceTopology {
+        &self.inner.topology
+    }
+
+    /// Returns the current external-pressure epoch.
+    pub fn pressure_epoch(&self) -> Result<u64, ResourceError> {
+        let state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| ResourceError::AuthorityPoisoned)?;
+        Ok(state.pressure_epoch)
+    }
+
+    fn with_inventory(inventory: HostInventory) -> Result<Self, ResourceError> {
         validate_inventory(&inventory)?;
         Ok(Self {
             inner: Arc::new(AuthorityInner {
@@ -716,27 +1258,78 @@ impl ResourceAuthority {
                     leases: BTreeMap::new(),
                     next_lease_id: 1,
                     epoch: 0,
+                    pressure_epoch: 0,
                 }),
             }),
         })
     }
 
-    /// Atomically admits and reserves one complete demand envelope.
+    /// Atomically selects, admits, and reserves one complete demand alternative.
     pub fn acquire(
         &self,
         policy: ResourcePolicy,
-        demand: DemandEnvelope,
+        alternatives: DemandAlternatives,
     ) -> Result<ResourceLease, ResourceError> {
         validate_policy(&self.inner.topology, &policy)?;
-        let totals = demand.resource_totals(&self.inner.topology)?;
+        if alternatives.alternatives.is_empty() {
+            return Err(ResourceError::Invalid(
+                "at least one demand alternative is required".to_string(),
+            ));
+        }
+        let mut alternative_ids = BTreeSet::new();
+        if alternatives.alternatives.iter().any(|alternative| {
+            alternative.id.as_str().is_empty() || !alternative_ids.insert(&alternative.id)
+        }) {
+            return Err(ResourceError::Invalid(
+                "alternative identities must be non-empty and unique".to_string(),
+            ));
+        }
         let mut state = self
             .inner
             .state
             .lock()
             .map_err(|_| ResourceError::AuthorityPoisoned)?;
-        let available = available_after_active_leases(&self.inner.topology, &state)?;
-        let policy_available = apply_policy(&self.inner.topology, &policy, available);
-        let granted = admit_totals(&totals, &policy_available)?;
+        let pressured = capacity_under_pressure(&self.inner.topology, &state);
+        let policy_capacity =
+            apply_concurrent_policies(&self.inner.topology, &state, &policy, &pressured);
+        let policy_available = available_after_active_leases(&state, policy_capacity)?;
+        let mut first_infeasible = None;
+        let mut capable = false;
+        let mut selected = None;
+        for alternative in alternatives.alternatives {
+            if !alternative
+                .capabilities
+                .accepts(&alternatives.required_capabilities)
+            {
+                continue;
+            }
+            capable = true;
+            validate_alternative(&self.inner.topology, &alternative)?;
+            let totals = alternative.demand.resource_totals(&self.inner.topology)?;
+            let limits = alternative.demand.lease_limits();
+            let mut reserved = totals.hard.clone();
+            let headroom = headroom_grant(&self.inner.topology, &alternative.headroom)?;
+            add_grant(&mut reserved, &headroom)?;
+            let reservation_totals = ResourceTotals {
+                hard: reserved.clone(),
+                preferred: reserved.clone(),
+            };
+            if let Err(error) = admit_totals(&reservation_totals, &policy_available) {
+                first_infeasible.get_or_insert(error);
+                continue;
+            }
+            let granted = admit_totals(&totals, &policy_available)?;
+            selected = Some((alternative, granted, reserved, limits));
+            break;
+        }
+        let Some((alternative, granted, reserved, limits)) = selected else {
+            if !capable {
+                return Err(ResourceError::NoCapableAlternative);
+            }
+            return Err(first_infeasible.unwrap_or_else(|| {
+                ResourceError::Invalid("capable alternatives could not be admitted".to_string())
+            }));
+        };
         let lease_id = state.next_lease_id;
         state.next_lease_id = state
             .next_lease_id
@@ -747,10 +1340,14 @@ impl ResourceAuthority {
             .checked_add(1)
             .ok_or(ResourceError::Overflow("resource epoch"))?;
         let epoch = state.epoch;
+        let pressure_epoch = state.pressure_epoch;
         state.leases.insert(
             lease_id,
             LeaseRecord {
-                hard: granted.hard.clone(),
+                reserved,
+                policy,
+                limits: limits.clone(),
+                consumed: BTreeMap::new(),
                 outstanding_fences: 0,
                 release_requested: false,
             },
@@ -759,8 +1356,11 @@ impl ResourceAuthority {
             inner: Arc::clone(&self.inner),
             lease_id,
             epoch,
+            pressure_epoch,
             hard: granted.hard,
             preferred: granted.preferred,
+            alternative,
+            limits,
             release_requested: false,
         })
     }
@@ -769,19 +1369,43 @@ impl ResourceAuthority {
     pub fn update_external_pressure(
         &self,
         pressure: ExternalPressure,
-    ) -> Result<(), ResourceError> {
+    ) -> Result<PressureUpdate, ResourceError> {
         validate_pressure(&self.inner.topology, &pressure)?;
         let mut state = self
             .inner
             .state
             .lock()
             .map_err(|_| ResourceError::AuthorityPoisoned)?;
-        state.pressure = pressure;
-        state.epoch = state
+        let mut reserved = ResourceGrant::default();
+        for record in state.leases.values() {
+            add_grant(&mut reserved, &record.reserved)?;
+        }
+        let available = capacity_for_pressure(&self.inner.topology, &pressure);
+        let policy_available = active_policy_capacity(&self.inner.topology, &state, &available);
+        if let Some((resource, reserved, available)) = grant_shortfall(&reserved, &policy_available)
+        {
+            return Err(ResourceError::PressureWouldInvalidateLeases {
+                resource,
+                reserved,
+                available,
+            });
+        }
+        let previous_epoch = state.pressure_epoch;
+        let current_epoch = state
+            .pressure_epoch
+            .checked_add(1)
+            .ok_or(ResourceError::Overflow("pressure epoch"))?;
+        let resource_epoch = state
             .epoch
             .checked_add(1)
             .ok_or(ResourceError::Overflow("resource epoch"))?;
-        Ok(())
+        state.pressure = pressure;
+        state.pressure_epoch = current_epoch;
+        state.epoch = resource_epoch;
+        Ok(PressureUpdate {
+            previous_epoch,
+            current_epoch,
+        })
     }
 }
 
@@ -792,21 +1416,34 @@ fn validate_policy(
     let ResourcePolicy::Explicit(overrides) = policy else {
         return Ok(());
     };
-    let domains = topology
-        .memory_domains
-        .iter()
-        .map(|domain| &domain.id)
-        .collect::<BTreeSet<_>>();
-    if let Some(domain) = overrides
-        .memory_bytes
-        .keys()
-        .find(|domain| !domains.contains(domain))
-    {
-        return Err(ResourceError::Invalid(format!(
-            "explicit policy references unknown memory domain {}",
-            domain.as_str()
-        )));
-    }
+    validate_known_resources(
+        "explicit memory domain",
+        overrides.memory_bytes.keys(),
+        topology.memory_domains.iter().map(|domain| &domain.id),
+    )?;
+    validate_known_resources(
+        "explicit storage domain",
+        overrides.storage_bytes.keys(),
+        topology.storage_domains.iter().map(|domain| &domain.id),
+    )?;
+    validate_known_resources(
+        "explicit rate resource",
+        overrides.rates_per_second.keys(),
+        topology.rate_resources.iter().map(|resource| &resource.id),
+    )?;
+    validate_known_resources(
+        "explicit queue resource",
+        overrides.queue_slots.keys(),
+        topology.queue_resources.iter().map(|resource| &resource.id),
+    )?;
+    validate_known_resources(
+        "explicit accelerator",
+        overrides.accelerator_slots.keys(),
+        topology
+            .accelerators
+            .iter()
+            .map(|accelerator| &accelerator.id),
+    )?;
     Ok(())
 }
 
@@ -829,8 +1466,11 @@ pub struct ResourceLease {
     inner: Arc<AuthorityInner>,
     lease_id: u64,
     epoch: u64,
+    pressure_epoch: u64,
     hard: ResourceGrant,
     preferred: ResourceGrant,
+    alternative: DemandAlternative,
+    limits: BTreeMap<LeaseResource, u64>,
     release_requested: bool,
 }
 
@@ -838,6 +1478,21 @@ impl ResourceLease {
     /// Returns the monotonically increasing authority epoch of this grant.
     pub const fn epoch(&self) -> u64 {
         self.epoch
+    }
+
+    /// Returns the external-pressure epoch observed at admission.
+    pub const fn pressure_epoch(&self) -> u64 {
+        self.pressure_epoch
+    }
+
+    /// Returns true when external pressure changed after this lease was admitted.
+    pub fn pressure_changed(&self) -> Result<bool, ResourceError> {
+        let state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| ResourceError::AuthorityPoisoned)?;
+        Ok(state.pressure_epoch != self.pressure_epoch)
     }
 
     /// Returns the lease's enforceable hard ceilings.
@@ -848,6 +1503,99 @@ impl ResourceLease {
     /// Returns the lease's preferred operating targets.
     pub const fn preferred_targets(&self) -> &ResourceGrant {
         &self.preferred
+    }
+
+    /// Returns the selected implementation alternative identity.
+    pub const fn selected_alternative(&self) -> &AlternativeId {
+        &self.alternative.id
+    }
+
+    /// Returns the capability predicate of the selected alternative.
+    pub const fn capabilities(&self) -> &CapabilityPredicate {
+        &self.alternative.capabilities
+    }
+
+    /// Returns the complete named demand retained from the selected alternative.
+    pub const fn demand(&self) -> &DemandEnvelope {
+        &self.alternative.demand
+    }
+
+    /// Returns the admission headroom reserved for the selected alternative.
+    pub const fn headroom(&self) -> &ResourceHeadroom {
+        &self.alternative.headroom
+    }
+
+    /// Returns the selected alternative's declared scaling facts.
+    pub const fn scaling(&self) -> &ScalingMetadata {
+        &self.alternative.scaling
+    }
+
+    /// Returns the selected alternative's safe reallocation points.
+    pub const fn quiescence_points(&self) -> &BTreeSet<QuiescencePoint> {
+        &self.alternative.quiescence_points
+    }
+
+    /// Returns the selected alternative's hard limit for one named resource.
+    pub fn declared_limit(&self, resource: &LeaseResource) -> Option<u64> {
+        self.limits.get(resource).copied()
+    }
+
+    /// Returns every named hard limit retained from the selected demand.
+    pub const fn declared_limits(&self) -> &BTreeMap<LeaseResource, u64> {
+        &self.limits
+    }
+
+    /// Acquires ownership of consumption under one named hard ceiling.
+    pub fn permit(
+        &self,
+        resource: LeaseResource,
+        amount: u64,
+    ) -> Result<ResourcePermit, ResourceError> {
+        if amount == 0 {
+            return Err(ResourceError::Invalid(
+                "resource permits must own a positive amount".to_string(),
+            ));
+        }
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| ResourceError::AuthorityPoisoned)?;
+        let record = state.leases.get_mut(&self.lease_id).ok_or_else(|| {
+            ResourceError::Invalid("cannot permit a released resource lease".to_string())
+        })?;
+        if record.release_requested {
+            return Err(ResourceError::Invalid(
+                "cannot acquire a permit after release was requested".to_string(),
+            ));
+        }
+        let limit = record
+            .limits
+            .get(&resource)
+            .copied()
+            .ok_or_else(|| ResourceError::UndeclaredLeaseResource(resource.clone()))?;
+        let consumed = record.consumed.get(&resource).copied().unwrap_or(0);
+        let available = limit.saturating_sub(consumed);
+        if amount > available {
+            return Err(ResourceError::LeaseLimitExceeded {
+                resource,
+                requested: amount,
+                available,
+            });
+        }
+        record.consumed.insert(
+            resource.clone(),
+            consumed
+                .checked_add(amount)
+                .ok_or(ResourceError::Overflow("lease consumption"))?,
+        );
+        Ok(ResourcePermit {
+            inner: Arc::clone(&self.inner),
+            lease_id: self.lease_id,
+            resource,
+            amount,
+            released: false,
+        })
     }
 
     /// Registers asynchronous work whose completion gates capacity reuse.
@@ -872,7 +1620,6 @@ impl ResourceLease {
         Ok(ResourceFence {
             inner: Arc::clone(&self.inner),
             lease_id: self.lease_id,
-            completed: false,
         })
     }
 
@@ -892,6 +1639,43 @@ impl Drop for ResourceLease {
     }
 }
 
+/// Lease-owned proof that one named consumption fits its hard ceiling.
+#[derive(Debug)]
+pub struct ResourcePermit {
+    inner: Arc<AuthorityInner>,
+    lease_id: u64,
+    resource: LeaseResource,
+    amount: u64,
+    released: bool,
+}
+
+impl ResourcePermit {
+    /// Returns the named resource owned by this permit.
+    pub const fn resource(&self) -> &LeaseResource {
+        &self.resource
+    }
+
+    /// Returns the amount owned by this permit.
+    pub const fn amount(&self) -> u64 {
+        self.amount
+    }
+
+    /// Releases this consumption and any now-quiescent pending lease.
+    pub fn release(mut self) -> Result<LeaseRelease, ResourceError> {
+        let released = release_permit(&self.inner, self.lease_id, &self.resource, self.amount)?;
+        self.released = true;
+        Ok(LeaseRelease { released })
+    }
+}
+
+impl Drop for ResourcePermit {
+    fn drop(&mut self) {
+        if !self.released {
+            let _ = release_permit(&self.inner, self.lease_id, &self.resource, self.amount);
+        }
+    }
+}
+
 /// Explicit completion token for device, I/O, writeback, or publication work.
 ///
 /// Dropping an incomplete fence intentionally retains the lease reservation. A
@@ -901,13 +1685,12 @@ impl Drop for ResourceLease {
 pub struct ResourceFence {
     inner: Arc<AuthorityInner>,
     lease_id: u64,
-    completed: bool,
 }
 
 impl ResourceFence {
     /// Marks the fenced work complete and releases a pending lease when this is
     /// its final outstanding fence.
-    pub fn complete(mut self) -> Result<LeaseRelease, ResourceError> {
+    pub fn complete(self) -> Result<LeaseRelease, ResourceError> {
         let mut state = self
             .inner
             .state
@@ -919,11 +1702,12 @@ impl ResourceFence {
         record.outstanding_fences = record.outstanding_fences.checked_sub(1).ok_or_else(|| {
             ResourceError::Invalid("resource fence count underflowed".to_string())
         })?;
-        let released = record.release_requested && record.outstanding_fences == 0;
+        let released = record.release_requested
+            && record.outstanding_fences == 0
+            && record.consumed.is_empty();
         if released {
             state.leases.remove(&self.lease_id);
         }
-        self.completed = true;
         Ok(LeaseRelease { released })
     }
 }
@@ -937,12 +1721,45 @@ fn request_release(inner: &AuthorityInner, lease_id: u64) -> Result<bool, Resour
         return Ok(true);
     };
     record.release_requested = true;
-    if record.outstanding_fences == 0 {
+    if record.outstanding_fences == 0 && record.consumed.is_empty() {
         state.leases.remove(&lease_id);
         Ok(true)
     } else {
         Ok(false)
     }
+}
+
+fn release_permit(
+    inner: &AuthorityInner,
+    lease_id: u64,
+    resource: &LeaseResource,
+    amount: u64,
+) -> Result<bool, ResourceError> {
+    let mut state = inner
+        .state
+        .lock()
+        .map_err(|_| ResourceError::AuthorityPoisoned)?;
+    let record = state.leases.get_mut(&lease_id).ok_or_else(|| {
+        ResourceError::Invalid("cannot release a permit for an absent lease".to_string())
+    })?;
+    let consumed =
+        record.consumed.get(resource).copied().ok_or_else(|| {
+            ResourceError::Invalid("lease permit consumption is absent".to_string())
+        })?;
+    let remaining = consumed.checked_sub(amount).ok_or_else(|| {
+        ResourceError::Invalid("lease permit consumption underflowed".to_string())
+    })?;
+    if remaining == 0 {
+        record.consumed.remove(resource);
+    } else {
+        record.consumed.insert(resource.clone(), remaining);
+    }
+    let released =
+        record.release_requested && record.outstanding_fences == 0 && record.consumed.is_empty();
+    if released {
+        state.leases.remove(&lease_id);
+    }
+    Ok(released)
 }
 
 #[derive(Clone, Debug)]
@@ -955,6 +1772,105 @@ struct GrantedTotals {
 struct PolicyAvailability {
     hard: ResourceGrant,
     preferred: ResourceGrant,
+}
+
+fn validate_alternative(
+    topology: &ResourceTopology,
+    alternative: &DemandAlternative,
+) -> Result<(), ResourceError> {
+    if alternative.scaling.minimum_workers == 0
+        || alternative.scaling.maximum_workers < alternative.scaling.minimum_workers
+        || alternative.demand.workers.hard < alternative.scaling.minimum_workers
+        || alternative.demand.workers.hard > alternative.scaling.maximum_workers
+    {
+        return Err(ResourceError::Invalid(format!(
+            "alternative {} has scaling metadata inconsistent with its worker ceiling",
+            alternative.id.as_str()
+        )));
+    }
+    if alternative.quiescence_points.is_empty() {
+        return Err(ResourceError::Invalid(format!(
+            "alternative {} declares no quiescence point",
+            alternative.id.as_str()
+        )));
+    }
+    let domains = topology
+        .memory_domains
+        .iter()
+        .map(|domain| &domain.id)
+        .collect::<BTreeSet<_>>();
+    if let Some(domain) = alternative
+        .scaling
+        .memory_bytes_per_worker
+        .keys()
+        .find(|domain| !domains.contains(domain))
+    {
+        return Err(ResourceError::Invalid(format!(
+            "alternative {} scaling references unknown memory domain {}",
+            alternative.id.as_str(),
+            domain.as_str()
+        )));
+    }
+    Ok(())
+}
+
+fn headroom_grant(
+    topology: &ResourceTopology,
+    headroom: &ResourceHeadroom,
+) -> Result<ResourceGrant, ResourceError> {
+    validate_known_resources(
+        "headroom memory domain",
+        headroom.memory_bytes.keys(),
+        topology.memory_domains.iter().map(|domain| &domain.id),
+    )?;
+    validate_known_resources(
+        "headroom storage domain",
+        headroom.storage_bytes.keys(),
+        topology.storage_domains.iter().map(|domain| &domain.id),
+    )?;
+    validate_known_resources(
+        "headroom rate resource",
+        headroom.rates_per_second.keys(),
+        topology.rate_resources.iter().map(|resource| &resource.id),
+    )?;
+    validate_known_resources(
+        "headroom queue resource",
+        headroom.queue_slots.keys(),
+        topology.queue_resources.iter().map(|resource| &resource.id),
+    )?;
+    validate_known_resources(
+        "headroom accelerator",
+        headroom.accelerator_slots.keys(),
+        topology
+            .accelerators
+            .iter()
+            .map(|accelerator| &accelerator.id),
+    )?;
+    Ok(ResourceGrant {
+        memory_bytes: headroom.memory_bytes.clone(),
+        workers: headroom.workers,
+        storage_bytes: headroom.storage_bytes.clone(),
+        rates_per_second: headroom.rates_per_second.clone(),
+        cache_bytes: headroom.cache_bytes,
+        locks: headroom.locks,
+        file_descriptors: headroom.file_descriptors,
+        queue_slots: headroom.queue_slots.clone(),
+        accelerator_slots: headroom.accelerator_slots.clone(),
+    })
+}
+
+fn validate_known_resources<'a, Id: Ord + fmt::Debug + 'a>(
+    kind: &str,
+    declared: impl Iterator<Item = &'a Id>,
+    known: impl Iterator<Item = &'a Id>,
+) -> Result<(), ResourceError> {
+    let known = known.collect::<BTreeSet<_>>();
+    if let Some(id) = declared.into_iter().find(|id| !known.contains(id)) {
+        return Err(ResourceError::Invalid(format!(
+            "{kind} references unknown resource {id:?}"
+        )));
+    }
+    Ok(())
 }
 
 fn admit_totals(
@@ -976,33 +1892,20 @@ fn admit_totals(
     }
     require_scalar("workers", totals.hard.workers, available.hard.workers)?;
     preferred.workers = totals.preferred.workers.min(available.preferred.workers);
-    require_scalar(
-        "storage-bytes",
-        totals.hard.storage_bytes,
-        available.hard.storage_bytes,
+    preferred.storage_bytes = admit_resource_map(
+        "storage-domain",
+        &totals.hard.storage_bytes,
+        &totals.preferred.storage_bytes,
+        &available.hard.storage_bytes,
+        &available.preferred.storage_bytes,
     )?;
-    preferred.storage_bytes = totals
-        .preferred
-        .storage_bytes
-        .min(available.preferred.storage_bytes);
-    require_scalar(
-        "storage-read-rate",
-        totals.hard.storage_read_bytes_per_second,
-        available.hard.storage_read_bytes_per_second,
+    preferred.rates_per_second = admit_resource_map(
+        "rate-resource",
+        &totals.hard.rates_per_second,
+        &totals.preferred.rates_per_second,
+        &available.hard.rates_per_second,
+        &available.preferred.rates_per_second,
     )?;
-    preferred.storage_read_bytes_per_second = totals
-        .preferred
-        .storage_read_bytes_per_second
-        .min(available.preferred.storage_read_bytes_per_second);
-    require_scalar(
-        "storage-write-rate",
-        totals.hard.storage_write_bytes_per_second,
-        available.hard.storage_write_bytes_per_second,
-    )?;
-    preferred.storage_write_bytes_per_second = totals
-        .preferred
-        .storage_write_bytes_per_second
-        .min(available.preferred.storage_write_bytes_per_second);
     require_scalar(
         "cache-bytes",
         totals.hard.cache_bytes,
@@ -1023,16 +1926,44 @@ fn admit_totals(
         .preferred
         .file_descriptors
         .min(available.preferred.file_descriptors);
-    require_scalar(
-        "queue-slots",
-        totals.hard.queue_slots,
-        available.hard.queue_slots,
+    preferred.queue_slots = admit_resource_map(
+        "queue-resource",
+        &totals.hard.queue_slots,
+        &totals.preferred.queue_slots,
+        &available.hard.queue_slots,
+        &available.preferred.queue_slots,
     )?;
-    preferred.queue_slots = totals
-        .preferred
-        .queue_slots
-        .min(available.preferred.queue_slots);
+    preferred.accelerator_slots = admit_resource_map(
+        "accelerator",
+        &totals.hard.accelerator_slots,
+        &totals.preferred.accelerator_slots,
+        &available.hard.accelerator_slots,
+        &available.preferred.accelerator_slots,
+    )?;
     Ok(GrantedTotals { hard, preferred })
+}
+
+fn admit_resource_map<Id: Clone + Ord + fmt::Debug>(
+    kind: &str,
+    hard: &BTreeMap<Id, u64>,
+    preferred: &BTreeMap<Id, u64>,
+    hard_available: &BTreeMap<Id, u64>,
+    preferred_available: &BTreeMap<Id, u64>,
+) -> Result<BTreeMap<Id, u64>, ResourceError> {
+    let mut granted = BTreeMap::new();
+    for (id, required) in hard {
+        let available = hard_available.get(id).copied().unwrap_or(0);
+        require_fit(format!("{kind}:{id:?}"), *required, available)?;
+        granted.insert(
+            id.clone(),
+            preferred
+                .get(id)
+                .copied()
+                .unwrap_or(*required)
+                .min(preferred_available.get(id).copied().unwrap_or(0)),
+        );
+    }
+    Ok(granted)
 }
 
 fn require_scalar(name: &str, required: u64, available: u64) -> Result<(), ResourceError> {
@@ -1055,24 +1986,18 @@ fn apply_policy(
     policy: &ResourcePolicy,
     mut hard: ResourceGrant,
 ) -> PolicyAvailability {
-    let mut preferred = hard.clone();
     match policy {
         ResourcePolicy::Interactive => {
-            for bytes in preferred.memory_bytes.values_mut() {
-                *bytes /= 2;
-            }
-            preferred.workers = preferred
-                .workers
-                .min(topology.performance_cpu_cores.div_ceil(2).max(1));
+            scale_grant(&mut hard, 1, 2);
         }
         ResourcePolicy::Balanced => {
-            for bytes in preferred.memory_bytes.values_mut() {
-                *bytes = bytes.saturating_sub(*bytes / 4);
+            scale_grant(&mut hard, 3, 4);
+            if let CpuClassCapacity::Known(cores) = topology.performance_cpu_cores {
+                hard.workers = hard.workers.min(cores);
             }
-            preferred.workers = preferred.workers.min(topology.performance_cpu_cores.max(1));
         }
         ResourcePolicy::Exclusive => {
-            preferred.workers = preferred.workers.min(topology.logical_cpu_threads);
+            hard.workers = hard.workers.min(topology.logical_cpu_threads);
         }
         ResourcePolicy::Explicit(overrides) => {
             for (domain, ceiling) in &overrides.memory_bytes {
@@ -1081,23 +2006,105 @@ fn apply_policy(
                 }
             }
             cap_optional(&mut hard.workers, overrides.workers);
-            cap_optional(&mut hard.storage_bytes, overrides.storage_bytes);
-            cap_optional(
-                &mut hard.storage_read_bytes_per_second,
-                overrides.storage_read_bytes_per_second,
-            );
-            cap_optional(
-                &mut hard.storage_write_bytes_per_second,
-                overrides.storage_write_bytes_per_second,
-            );
+            cap_map(&mut hard.storage_bytes, &overrides.storage_bytes);
+            cap_map(&mut hard.rates_per_second, &overrides.rates_per_second);
             cap_optional(&mut hard.cache_bytes, overrides.cache_bytes);
             cap_optional(&mut hard.locks, overrides.locks);
             cap_optional(&mut hard.file_descriptors, overrides.file_descriptors);
-            cap_optional(&mut hard.queue_slots, overrides.queue_slots);
-            preferred = hard.clone();
+            cap_map(&mut hard.queue_slots, &overrides.queue_slots);
+            cap_map(&mut hard.accelerator_slots, &overrides.accelerator_slots);
         }
     }
+    let preferred = hard.clone();
     PolicyAvailability { hard, preferred }
+}
+
+fn apply_concurrent_policies(
+    topology: &ResourceTopology,
+    state: &AuthorityState,
+    requested: &ResourcePolicy,
+    pressured: &ResourceGrant,
+) -> PolicyAvailability {
+    let mut available = apply_policy(topology, requested, pressured.clone());
+    for record in state.leases.values() {
+        let active = apply_policy(topology, &record.policy, pressured.clone());
+        intersect_grant(&mut available.hard, &active.hard);
+        intersect_grant(&mut available.preferred, &active.preferred);
+    }
+    available
+}
+
+fn active_policy_capacity(
+    topology: &ResourceTopology,
+    state: &AuthorityState,
+    pressured: &ResourceGrant,
+) -> ResourceGrant {
+    let mut available = pressured.clone();
+    for record in state.leases.values() {
+        let active = apply_policy(topology, &record.policy, pressured.clone());
+        intersect_grant(&mut available, &active.hard);
+    }
+    available
+}
+
+fn intersect_grant(capacity: &mut ResourceGrant, other: &ResourceGrant) {
+    intersect_resource_map(&mut capacity.memory_bytes, &other.memory_bytes);
+    capacity.workers = capacity.workers.min(other.workers);
+    intersect_resource_map(&mut capacity.storage_bytes, &other.storage_bytes);
+    intersect_resource_map(&mut capacity.rates_per_second, &other.rates_per_second);
+    capacity.cache_bytes = capacity.cache_bytes.min(other.cache_bytes);
+    capacity.locks = capacity.locks.min(other.locks);
+    capacity.file_descriptors = capacity.file_descriptors.min(other.file_descriptors);
+    intersect_resource_map(&mut capacity.queue_slots, &other.queue_slots);
+    intersect_resource_map(&mut capacity.accelerator_slots, &other.accelerator_slots);
+}
+
+fn intersect_resource_map<Id: Ord>(capacity: &mut BTreeMap<Id, u64>, other: &BTreeMap<Id, u64>) {
+    for (id, amount) in capacity {
+        *amount = (*amount).min(other.get(id).copied().unwrap_or(0));
+    }
+}
+
+fn scale_grant(grant: &mut ResourceGrant, numerator: u64, denominator: u64) {
+    scale_map_floor(&mut grant.memory_bytes, numerator, denominator);
+    scale_map_floor(&mut grant.storage_bytes, numerator, denominator);
+    scale_map_floor(&mut grant.rates_per_second, numerator, denominator);
+    scale_map_ceil(&mut grant.queue_slots, numerator, denominator);
+    scale_map_ceil(&mut grant.accelerator_slots, numerator, denominator);
+    grant.workers = scale_count_ceil(grant.workers, numerator, denominator);
+    grant.cache_bytes = grant.cache_bytes.saturating_mul(numerator) / denominator;
+    grant.locks = scale_count_ceil(grant.locks, numerator, denominator);
+    grant.file_descriptors = scale_count_ceil(grant.file_descriptors, numerator, denominator);
+}
+
+fn scale_map_floor<Id>(values: &mut BTreeMap<Id, u64>, numerator: u64, denominator: u64) {
+    for value in values.values_mut() {
+        *value = scale_count_floor(*value, numerator, denominator);
+    }
+}
+
+fn scale_map_ceil<Id>(values: &mut BTreeMap<Id, u64>, numerator: u64, denominator: u64) {
+    for value in values.values_mut() {
+        *value = scale_count_ceil(*value, numerator, denominator);
+    }
+}
+
+fn scale_count_ceil(value: u64, numerator: u64, denominator: u64) -> u64 {
+    let scaled = u128::from(value) * u128::from(numerator);
+    u64::try_from(scaled.div_ceil(u128::from(denominator))).unwrap_or(u64::MAX)
+}
+
+fn scale_count_floor(value: u64, numerator: u64, denominator: u64) -> u64 {
+    let scaled = u128::from(value) * u128::from(numerator);
+    u64::try_from(scaled / u128::from(denominator)).unwrap_or(u64::MAX)
+}
+
+fn cap_map<Id: Ord>(values: &mut BTreeMap<Id, u64>, caps: &BTreeMap<Id, u64>) {
+    for (id, cap) in caps {
+        if let Some(value) = values.get_mut(id) {
+            *value = (*value).min(*cap);
+        }
+    }
 }
 
 fn cap_optional(value: &mut u64, cap: Option<u64>) {
@@ -1106,59 +2113,147 @@ fn cap_optional(value: &mut u64, cap: Option<u64>) {
     }
 }
 
-fn available_after_active_leases(
+fn capacity_under_pressure(topology: &ResourceTopology, state: &AuthorityState) -> ResourceGrant {
+    capacity_for_pressure(topology, &state.pressure)
+}
+
+fn capacity_for_pressure(
     topology: &ResourceTopology,
-    state: &AuthorityState,
-) -> Result<ResourceGrant, ResourceError> {
-    let mut reserved = ResourceGrant::default();
-    for record in state.leases.values() {
-        add_grant(&mut reserved, &record.hard)?;
-    }
-    let memory_bytes = state
-        .pressure
+    pressure: &ExternalPressure,
+) -> ResourceGrant {
+    let memory_bytes = pressure
         .memory_available_bytes
         .iter()
-        .map(|(domain, available)| {
+        .map(|(domain, available)| (domain.clone(), *available))
+        .collect();
+    ResourceGrant {
+        memory_bytes,
+        workers: pressure
+            .available_cpu_threads
+            .min(topology.logical_cpu_threads),
+        storage_bytes: pressure.storage_available_bytes.clone(),
+        rates_per_second: pressure.rate_available_per_second.clone(),
+        cache_bytes: pressure.cache_available_bytes,
+        locks: pressure.available_locks,
+        file_descriptors: pressure.available_file_descriptors,
+        queue_slots: pressure.queue_available_slots.clone(),
+        accelerator_slots: pressure.accelerator_available_slots.clone(),
+    }
+}
+
+fn grant_shortfall(
+    reserved: &ResourceGrant,
+    available: &ResourceGrant,
+) -> Option<(String, u64, u64)> {
+    map_shortfall(
+        "memory-domain",
+        &reserved.memory_bytes,
+        &available.memory_bytes,
+    )
+    .or_else(|| scalar_shortfall("workers", reserved.workers, available.workers))
+    .or_else(|| {
+        map_shortfall(
+            "storage-domain",
+            &reserved.storage_bytes,
+            &available.storage_bytes,
+        )
+    })
+    .or_else(|| {
+        map_shortfall(
+            "rate-resource",
+            &reserved.rates_per_second,
+            &available.rates_per_second,
+        )
+    })
+    .or_else(|| {
+        scalar_shortfall(
+            "resident-cache",
+            reserved.cache_bytes,
+            available.cache_bytes,
+        )
+    })
+    .or_else(|| scalar_shortfall("locks", reserved.locks, available.locks))
+    .or_else(|| {
+        scalar_shortfall(
+            "file-descriptors",
+            reserved.file_descriptors,
+            available.file_descriptors,
+        )
+    })
+    .or_else(|| {
+        map_shortfall(
+            "queue-resource",
+            &reserved.queue_slots,
+            &available.queue_slots,
+        )
+    })
+    .or_else(|| {
+        map_shortfall(
+            "accelerator",
+            &reserved.accelerator_slots,
+            &available.accelerator_slots,
+        )
+    })
+}
+
+fn map_shortfall<Id: Ord + fmt::Debug>(
+    kind: &str,
+    reserved: &BTreeMap<Id, u64>,
+    available: &BTreeMap<Id, u64>,
+) -> Option<(String, u64, u64)> {
+    reserved.iter().find_map(|(id, reserved)| {
+        let available = available.get(id).copied().unwrap_or(0);
+        (*reserved > available).then(|| (format!("{kind}:{id:?}"), *reserved, available))
+    })
+}
+
+fn scalar_shortfall(kind: &str, reserved: u64, available: u64) -> Option<(String, u64, u64)> {
+    (reserved > available).then(|| (kind.to_string(), reserved, available))
+}
+
+fn available_after_active_leases(
+    state: &AuthorityState,
+    mut available: PolicyAvailability,
+) -> Result<PolicyAvailability, ResourceError> {
+    let mut reserved = ResourceGrant::default();
+    for record in state.leases.values() {
+        add_grant(&mut reserved, &record.reserved)?;
+    }
+    subtract_grant(&mut available.hard, &reserved);
+    subtract_grant(&mut available.preferred, &reserved);
+    Ok(available)
+}
+
+fn subtract_grant(available: &mut ResourceGrant, reserved: &ResourceGrant) {
+    available.memory_bytes = subtract_resource_map(&available.memory_bytes, &reserved.memory_bytes);
+    available.workers = available.workers.saturating_sub(reserved.workers);
+    available.storage_bytes =
+        subtract_resource_map(&available.storage_bytes, &reserved.storage_bytes);
+    available.rates_per_second =
+        subtract_resource_map(&available.rates_per_second, &reserved.rates_per_second);
+    available.cache_bytes = available.cache_bytes.saturating_sub(reserved.cache_bytes);
+    available.locks = available.locks.saturating_sub(reserved.locks);
+    available.file_descriptors = available
+        .file_descriptors
+        .saturating_sub(reserved.file_descriptors);
+    available.queue_slots = subtract_resource_map(&available.queue_slots, &reserved.queue_slots);
+    available.accelerator_slots =
+        subtract_resource_map(&available.accelerator_slots, &reserved.accelerator_slots);
+}
+
+fn subtract_resource_map<Id: Clone + Ord>(
+    available: &BTreeMap<Id, u64>,
+    reserved: &BTreeMap<Id, u64>,
+) -> BTreeMap<Id, u64> {
+    available
+        .iter()
+        .map(|(id, available)| {
             (
-                domain.clone(),
-                available.saturating_sub(reserved.memory_bytes(domain)),
+                id.clone(),
+                available.saturating_sub(reserved.get(id).copied().unwrap_or(0)),
             )
         })
-        .collect();
-    Ok(ResourceGrant {
-        memory_bytes,
-        workers: state
-            .pressure
-            .available_cpu_threads
-            .min(topology.logical_cpu_threads)
-            .saturating_sub(reserved.workers),
-        storage_bytes: state
-            .pressure
-            .storage_available_bytes
-            .saturating_sub(reserved.storage_bytes),
-        storage_read_bytes_per_second: topology
-            .storage_read_bytes_per_second
-            .saturating_sub(reserved.storage_read_bytes_per_second),
-        storage_write_bytes_per_second: topology
-            .storage_write_bytes_per_second
-            .saturating_sub(reserved.storage_write_bytes_per_second),
-        cache_bytes: state
-            .pressure
-            .cache_available_bytes
-            .saturating_sub(reserved.cache_bytes),
-        locks: state
-            .pressure
-            .available_locks
-            .saturating_sub(reserved.locks),
-        file_descriptors: state
-            .pressure
-            .available_file_descriptors
-            .saturating_sub(reserved.file_descriptors),
-        queue_slots: state
-            .pressure
-            .available_queue_slots
-            .saturating_sub(reserved.queue_slots),
-    })
+        .collect()
 }
 
 fn add_grant(total: &mut ResourceGrant, value: &ResourceGrant) -> Result<(), ResourceError> {
@@ -1169,17 +2264,15 @@ fn add_grant(total: &mut ResourceGrant, value: &ResourceGrant) -> Result<(), Res
             .ok_or(ResourceError::Overflow("reserved memory"))?;
     }
     total.workers = checked_add(total.workers, value.workers, "reserved workers")?;
-    total.storage_bytes =
-        checked_add(total.storage_bytes, value.storage_bytes, "reserved storage")?;
-    total.storage_read_bytes_per_second = checked_add(
-        total.storage_read_bytes_per_second,
-        value.storage_read_bytes_per_second,
-        "reserved storage read rate",
+    add_resource_map(
+        &mut total.storage_bytes,
+        &value.storage_bytes,
+        "reserved storage",
     )?;
-    total.storage_write_bytes_per_second = checked_add(
-        total.storage_write_bytes_per_second,
-        value.storage_write_bytes_per_second,
-        "reserved storage write rate",
+    add_resource_map(
+        &mut total.rates_per_second,
+        &value.rates_per_second,
+        "reserved rate",
     )?;
     total.cache_bytes = checked_add(total.cache_bytes, value.cache_bytes, "reserved cache")?;
     total.locks = checked_add(total.locks, value.locks, "reserved locks")?;
@@ -1188,7 +2281,30 @@ fn add_grant(total: &mut ResourceGrant, value: &ResourceGrant) -> Result<(), Res
         value.file_descriptors,
         "reserved file descriptors",
     )?;
-    total.queue_slots = checked_add(total.queue_slots, value.queue_slots, "reserved queue slots")?;
+    add_resource_map(
+        &mut total.queue_slots,
+        &value.queue_slots,
+        "reserved queue slots",
+    )?;
+    add_resource_map(
+        &mut total.accelerator_slots,
+        &value.accelerator_slots,
+        "reserved accelerator slots",
+    )?;
+    Ok(())
+}
+
+fn add_resource_map<Id: Clone + Ord>(
+    total: &mut BTreeMap<Id, u64>,
+    value: &BTreeMap<Id, u64>,
+    category: &'static str,
+) -> Result<(), ResourceError> {
+    for (id, amount) in value {
+        let current = total.entry(id.clone()).or_default();
+        *current = current
+            .checked_add(*amount)
+            .ok_or(ResourceError::Overflow(category))?;
+    }
     Ok(())
 }
 
@@ -1208,14 +2324,21 @@ impl DemandEnvelope {
         let views = topology
             .memory_views
             .iter()
-            .map(|view| (&view.id, &view.domain))
+            .map(|view| (&view.id, view))
             .collect::<BTreeMap<_, _>>();
-        let host_domain = views.get(&self.host_memory_view).ok_or_else(|| {
+        let host_view = views.get(&self.host_memory_view).ok_or_else(|| {
             ResourceError::Invalid(format!(
                 "host-memory view {} is absent from topology",
                 self.host_memory_view.as_str()
             ))
         })?;
+        if host_view.kind != MemoryViewKind::Host {
+            return Err(ResourceError::Invalid(format!(
+                "host view {} is not host-visible",
+                self.host_memory_view.as_str()
+            )));
+        }
+        let host_domain = &host_view.domain;
         let mut hard_memory = BTreeMap::<CapacityDomainId, u64>::new();
         let mut preferred_memory = BTreeMap::<CapacityDomainId, u64>::new();
         let mut allocation_ids = BTreeSet::new();
@@ -1241,13 +2364,13 @@ impl DemandEnvelope {
             }
             let mut physical_domains = BTreeSet::new();
             for view in &allocation.views {
-                let domain = views.get(view).ok_or_else(|| {
+                let view = views.get(view).ok_or_else(|| {
                     ResourceError::Invalid(format!(
                         "memory view {} is absent from topology",
                         view.as_str()
                     ))
                 })?;
-                physical_domains.insert((*domain).clone());
+                physical_domains.insert(view.domain.clone());
             }
             for domain in physical_domains {
                 add_map_bytes(
@@ -1285,33 +2408,438 @@ impl DemandEnvelope {
                 .ok_or(ResourceError::Overflow("preferred host-memory demand"))?,
             "preferred host-memory demand",
         )?;
-        let storage_bytes = self.storage.checked_capacity()?;
-        let queue_slots = self.queues.checked_total()?;
+        let storage_domains = topology
+            .storage_domains
+            .iter()
+            .map(|domain| (&domain.id, domain))
+            .collect::<BTreeMap<_, _>>();
+        let rate_resources = topology
+            .rate_resources
+            .iter()
+            .map(|resource| &resource.id)
+            .collect::<BTreeSet<_>>();
+        let queue_resources = topology
+            .queue_resources
+            .iter()
+            .map(|resource| &resource.id)
+            .collect::<BTreeSet<_>>();
+        let accelerator_resources = topology
+            .accelerators
+            .iter()
+            .map(|accelerator| (&accelerator.id, accelerator))
+            .collect::<BTreeMap<_, _>>();
+        let transfer_resources = topology
+            .transfer_links
+            .iter()
+            .map(|transfer| (&transfer.id, transfer))
+            .collect::<BTreeMap<_, _>>();
+        let mut hard_storage = BTreeMap::new();
+        let mut hard_rates = BTreeMap::new();
+        let mut preferred_rates = BTreeMap::new();
+        let mut hard_queues = BTreeMap::new();
+        let mut preferred_queues = BTreeMap::new();
+        let mut hard_accelerators = BTreeMap::new();
+        let mut preferred_accelerators = BTreeMap::new();
+        let mut demand_ids = BTreeSet::new();
+        for demand in &self.storage {
+            validate_demand_id(&mut demand_ids, "storage", &demand.demand_id)?;
+            let storage = storage_domains.get(&demand.domain).ok_or_else(|| {
+                ResourceError::Invalid(format!(
+                    "storage demand {} references unknown domain {}",
+                    demand.demand_id,
+                    demand.domain.as_str()
+                ))
+            })?;
+            validate_count("storage read rate", demand.read_rate)?;
+            validate_count("storage write rate", demand.write_rate)?;
+            validate_count("storage operations rate", demand.operations_rate)?;
+            validate_count("storage queue", demand.queue_slots)?;
+            add_resource_amount(
+                &mut hard_storage,
+                demand.domain.clone(),
+                demand.checked_capacity()?,
+                "storage demand",
+            )?;
+            add_demand_amounts(
+                &mut hard_rates,
+                &mut preferred_rates,
+                storage.read_rate.clone(),
+                demand.read_rate,
+                "storage read rate",
+            )?;
+            add_demand_amounts(
+                &mut hard_rates,
+                &mut preferred_rates,
+                storage.write_rate.clone(),
+                demand.write_rate,
+                "storage write rate",
+            )?;
+            if let Some(operations_rate) = &storage.operations_rate {
+                add_demand_amounts(
+                    &mut hard_rates,
+                    &mut preferred_rates,
+                    operations_rate.clone(),
+                    demand.operations_rate,
+                    "storage operations rate",
+                )?;
+            } else if demand.operations_rate.hard > 0 {
+                return Err(ResourceError::Invalid(format!(
+                    "storage demand {} requests operations rate from a domain without an IOPS resource",
+                    demand.demand_id
+                )));
+            }
+            add_demand_amounts(
+                &mut hard_queues,
+                &mut preferred_queues,
+                storage.queue.clone(),
+                demand.queue_slots,
+                "storage queue demand",
+            )?;
+        }
+        for demand in &self.rates {
+            validate_demand_id(&mut demand_ids, "rate", &demand.demand_id)?;
+            validate_count("rate", demand.amount)?;
+            if !rate_resources.contains(&demand.resource) {
+                return Err(ResourceError::Invalid(format!(
+                    "rate demand {} references unknown resource {}",
+                    demand.demand_id,
+                    demand.resource.as_str()
+                )));
+            }
+            add_resource_amount(
+                &mut hard_rates,
+                demand.resource.clone(),
+                demand.amount.hard,
+                "rate demand",
+            )?;
+            add_resource_amount(
+                &mut preferred_rates,
+                demand.resource.clone(),
+                demand.amount.preferred,
+                "preferred rate demand",
+            )?;
+        }
+        for demand in &self.queues {
+            validate_demand_id(&mut demand_ids, "queue", &demand.demand_id)?;
+            validate_count("queue", demand.slots)?;
+            if !queue_resources.contains(&demand.resource) {
+                return Err(ResourceError::Invalid(format!(
+                    "queue demand {} references unknown resource {}",
+                    demand.demand_id,
+                    demand.resource.as_str()
+                )));
+            }
+            add_resource_amount(
+                &mut hard_queues,
+                demand.resource.clone(),
+                demand.slots.hard,
+                "queue demand",
+            )?;
+            add_resource_amount(
+                &mut preferred_queues,
+                demand.resource.clone(),
+                demand.slots.preferred,
+                "preferred queue demand",
+            )?;
+        }
+        for demand in &self.transfers {
+            validate_demand_id(&mut demand_ids, "transfer", &demand.demand_id)?;
+            validate_count("transfer rate", demand.rate)?;
+            validate_count("transfer queue", demand.queue_slots)?;
+            let transfer = transfer_resources.get(&demand.link).ok_or_else(|| {
+                ResourceError::Invalid(format!(
+                    "transfer demand {} references unknown link {}",
+                    demand.demand_id,
+                    demand.link.as_str()
+                ))
+            })?;
+            add_demand_amounts(
+                &mut hard_rates,
+                &mut preferred_rates,
+                transfer.rate.clone(),
+                demand.rate,
+                "transfer rate demand",
+            )?;
+            add_demand_amounts(
+                &mut hard_queues,
+                &mut preferred_queues,
+                transfer.queue.clone(),
+                demand.queue_slots,
+                "transfer queue demand",
+            )?;
+        }
+        for demand in &self.accelerators {
+            validate_demand_id(&mut demand_ids, "accelerator", &demand.demand_id)?;
+            validate_count("accelerator", demand.slots)?;
+            validate_count("accelerator command queue", demand.command_queue_slots)?;
+            let accelerator = accelerator_resources
+                .get(&demand.accelerator)
+                .ok_or_else(|| {
+                    ResourceError::Invalid(format!(
+                        "accelerator demand {} references unknown accelerator {}",
+                        demand.demand_id,
+                        demand.accelerator.as_str()
+                    ))
+                })?;
+            add_resource_amount(
+                &mut hard_accelerators,
+                demand.accelerator.clone(),
+                demand.slots.hard,
+                "accelerator demand",
+            )?;
+            add_resource_amount(
+                &mut preferred_accelerators,
+                demand.accelerator.clone(),
+                demand.slots.preferred,
+                "preferred accelerator demand",
+            )?;
+            add_demand_amounts(
+                &mut hard_queues,
+                &mut preferred_queues,
+                accelerator.command_queue.clone(),
+                demand.command_queue_slots,
+                "accelerator command queue demand",
+            )?;
+        }
         Ok(ResourceTotals {
             hard: ResourceGrant {
                 memory_bytes: hard_memory,
                 workers: self.workers.hard,
-                storage_bytes,
-                storage_read_bytes_per_second: self.storage.read_bytes_per_second,
-                storage_write_bytes_per_second: self.storage.write_bytes_per_second,
+                storage_bytes: hard_storage.clone(),
+                rates_per_second: hard_rates,
                 cache_bytes: self.caches.hard_resident_bytes,
                 locks: self.locks.hard,
                 file_descriptors: self.file_descriptors.hard,
-                queue_slots,
+                queue_slots: hard_queues,
+                accelerator_slots: hard_accelerators,
             },
             preferred: ResourceGrant {
                 memory_bytes: preferred_memory,
                 workers: self.workers.preferred,
-                storage_bytes,
-                storage_read_bytes_per_second: self.storage.read_bytes_per_second,
-                storage_write_bytes_per_second: self.storage.write_bytes_per_second,
+                storage_bytes: hard_storage,
+                rates_per_second: preferred_rates,
                 cache_bytes: self.caches.preferred_resident_bytes,
                 locks: self.locks.preferred,
                 file_descriptors: self.file_descriptors.preferred,
-                queue_slots,
+                queue_slots: preferred_queues,
+                accelerator_slots: preferred_accelerators,
             },
         })
     }
+}
+
+impl DemandEnvelope {
+    fn lease_limits(&self) -> BTreeMap<LeaseResource, u64> {
+        let mut limits = BTreeMap::new();
+        for demand in &self.memory {
+            limits.insert(
+                LeaseResource::Memory {
+                    allocation_id: demand.allocation_id.clone(),
+                },
+                demand.hard_bytes,
+            );
+        }
+        limits.insert(LeaseResource::Workers, self.workers.hard);
+        for (kind, amount) in [
+            (
+                RuntimeOverheadKind::ThreadStack,
+                self.overhead.thread_stack_bytes,
+            ),
+            (
+                RuntimeOverheadKind::AllocatorFragmentation,
+                self.overhead.allocator_fragmentation_bytes,
+            ),
+            (
+                RuntimeOverheadKind::ExternalLibrary,
+                self.overhead.external_library_bytes,
+            ),
+            (
+                RuntimeOverheadKind::FftWorkspace,
+                self.overhead.fft_workspace_bytes,
+            ),
+            (RuntimeOverheadKind::Driver, self.overhead.driver_bytes),
+            (RuntimeOverheadKind::Jit, self.overhead.jit_bytes),
+            (
+                RuntimeOverheadKind::CommandBuffer,
+                self.overhead.command_buffer_bytes,
+            ),
+        ] {
+            limits.insert(LeaseResource::RuntimeOverhead(kind), amount);
+        }
+        for (kind, amount) in [
+            (
+                IoBufferKind::SourceReadAhead,
+                self.io_buffers.source_read_ahead_bytes,
+            ),
+            (IoBufferKind::Decode, self.io_buffers.decode_bytes),
+            (IoBufferKind::Preparation, self.io_buffers.preparation_bytes),
+            (
+                IoBufferKind::HostToDeviceTransfer,
+                self.io_buffers.host_to_device_transfer_bytes,
+            ),
+            (
+                IoBufferKind::DeviceToHostTransfer,
+                self.io_buffers.device_to_host_transfer_bytes,
+            ),
+            (IoBufferKind::SpillRead, self.io_buffers.spill_read_bytes),
+            (IoBufferKind::SpillWrite, self.io_buffers.spill_write_bytes),
+            (
+                IoBufferKind::Serialization,
+                self.io_buffers.serialization_bytes,
+            ),
+            (
+                IoBufferKind::StorageManager,
+                self.io_buffers.storage_manager_bytes,
+            ),
+            (
+                IoBufferKind::TiledColumnWriter,
+                self.io_buffers.tiled_column_writer_bytes,
+            ),
+            (
+                IoBufferKind::ScalarColumnWriter,
+                self.io_buffers.scalar_column_writer_bytes,
+            ),
+            (IoBufferKind::Writeback, self.io_buffers.writeback_bytes),
+            (IoBufferKind::Publication, self.io_buffers.publication_bytes),
+            (
+                IoBufferKind::MappedPageCache,
+                self.io_buffers.mapped_page_cache_bytes,
+            ),
+        ] {
+            limits.insert(LeaseResource::IoBuffer(kind), amount);
+        }
+        for demand in &self.storage {
+            for (use_kind, amount) in [
+                (StorageUseKind::Temporary, demand.temporary_bytes),
+                (StorageUseKind::StagedOutput, demand.staged_output_bytes),
+                (StorageUseKind::FinalOutput, demand.final_output_bytes),
+                (
+                    StorageUseKind::PersistentCache,
+                    demand.persistent_cache_bytes,
+                ),
+            ] {
+                limits.insert(
+                    LeaseResource::Storage {
+                        demand_id: demand.demand_id.clone(),
+                        use_kind,
+                    },
+                    amount,
+                );
+            }
+            limits.insert(
+                LeaseResource::StorageReadRate {
+                    demand_id: demand.demand_id.clone(),
+                },
+                demand.read_rate.hard,
+            );
+            limits.insert(
+                LeaseResource::StorageWriteRate {
+                    demand_id: demand.demand_id.clone(),
+                },
+                demand.write_rate.hard,
+            );
+            limits.insert(
+                LeaseResource::StorageOperationsRate {
+                    demand_id: demand.demand_id.clone(),
+                },
+                demand.operations_rate.hard,
+            );
+            limits.insert(
+                LeaseResource::StorageQueue {
+                    demand_id: demand.demand_id.clone(),
+                },
+                demand.queue_slots.hard,
+            );
+        }
+        for demand in &self.rates {
+            limits.insert(
+                LeaseResource::Rate {
+                    demand_id: demand.demand_id.clone(),
+                },
+                demand.amount.hard,
+            );
+        }
+        for demand in &self.queues {
+            limits.insert(
+                LeaseResource::Queue {
+                    demand_id: demand.demand_id.clone(),
+                },
+                demand.slots.hard,
+            );
+        }
+        for demand in &self.transfers {
+            limits.insert(
+                LeaseResource::TransferRate {
+                    demand_id: demand.demand_id.clone(),
+                },
+                demand.rate.hard,
+            );
+            limits.insert(
+                LeaseResource::TransferQueue {
+                    demand_id: demand.demand_id.clone(),
+                },
+                demand.queue_slots.hard,
+            );
+        }
+        for demand in &self.accelerators {
+            limits.insert(
+                LeaseResource::Accelerator {
+                    demand_id: demand.demand_id.clone(),
+                },
+                demand.slots.hard,
+            );
+            limits.insert(
+                LeaseResource::AcceleratorCommandQueue {
+                    demand_id: demand.demand_id.clone(),
+                },
+                demand.command_queue_slots.hard,
+            );
+        }
+        limits.insert(
+            LeaseResource::ResidentCache,
+            self.caches.hard_resident_bytes,
+        );
+        limits.insert(LeaseResource::Locks, self.locks.hard);
+        limits.insert(LeaseResource::FileDescriptors, self.file_descriptors.hard);
+        limits
+    }
+}
+
+fn validate_demand_id<'a>(
+    identities: &mut BTreeSet<&'a str>,
+    kind: &str,
+    identity: &'a str,
+) -> Result<(), ResourceError> {
+    if identity.is_empty() || !identities.insert(identity) {
+        return Err(ResourceError::Invalid(format!(
+            "{kind} demand identities must be non-empty and unique within the envelope"
+        )));
+    }
+    Ok(())
+}
+
+fn add_resource_amount<Id: Ord>(
+    values: &mut BTreeMap<Id, u64>,
+    id: Id,
+    amount: u64,
+    category: &'static str,
+) -> Result<(), ResourceError> {
+    let current = values.entry(id).or_default();
+    *current = current
+        .checked_add(amount)
+        .ok_or(ResourceError::Overflow(category))?;
+    Ok(())
+}
+
+fn add_demand_amounts<Id: Clone + Ord>(
+    hard: &mut BTreeMap<Id, u64>,
+    preferred: &mut BTreeMap<Id, u64>,
+    id: Id,
+    demand: CountDemand,
+    category: &'static str,
+) -> Result<(), ResourceError> {
+    add_resource_amount(hard, id.clone(), demand.hard, category)?;
+    add_resource_amount(preferred, id, demand.preferred, category)
 }
 
 fn add_map_bytes(
@@ -1343,18 +2871,18 @@ fn validate_inventory(inventory: &HostInventory) -> Result<(), ResourceError> {
             "logical CPU topology must be nonzero".to_string(),
         ));
     }
-    if topology.performance_cpu_cores == 0
-        || topology.performance_cpu_cores > topology.logical_cpu_threads
-    {
-        return Err(ResourceError::Invalid(
-            "performance CPU topology must be within logical CPU capacity".to_string(),
-        ));
+    if let CpuClassCapacity::Known(performance_cpu_cores) = topology.performance_cpu_cores {
+        if performance_cpu_cores == 0 || performance_cpu_cores > topology.logical_cpu_threads {
+            return Err(ResourceError::Invalid(
+                "known performance CPU topology must be within logical CPU capacity".to_string(),
+            ));
+        }
     }
     let mut domains = BTreeMap::new();
     for domain in &topology.memory_domains {
         if domain.id.as_str().is_empty()
             || domain.capacity_bytes == 0
-            || domains.insert(&domain.id, domain.capacity_bytes).is_some()
+            || domains.insert(&domain.id, domain).is_some()
         {
             return Err(ResourceError::Invalid(
                 "memory domains must have unique non-empty identities and positive capacity"
@@ -1370,6 +2898,117 @@ fn validate_inventory(inventory: &HostInventory) -> Result<(), ResourceError> {
         {
             return Err(ResourceError::Invalid(
                 "memory views must be unique and reference physical domains".to_string(),
+            ));
+        }
+        let domain = domains[&view.domain];
+        let valid_semantics = matches!(
+            (view.kind, domain.kind),
+            (
+                MemoryViewKind::Host,
+                MemoryCapacityKind::Host | MemoryCapacityKind::Unified
+            ) | (
+                MemoryViewKind::Metal,
+                MemoryCapacityKind::Unified | MemoryCapacityKind::DevicePrivate
+            )
+        );
+        if !valid_semantics {
+            return Err(ResourceError::Invalid(format!(
+                "memory view {} has incompatible view and capacity-domain semantics",
+                view.id.as_str()
+            )));
+        }
+    }
+    let rates = topology
+        .rate_resources
+        .iter()
+        .map(|resource| (&resource.id, resource))
+        .collect::<BTreeMap<_, _>>();
+    if rates.len() != topology.rate_resources.len()
+        || topology
+            .rate_resources
+            .iter()
+            .any(|resource| resource.id.as_str().is_empty())
+    {
+        return Err(ResourceError::Invalid(
+            "rate resources must have unique non-empty identities".to_string(),
+        ));
+    }
+    let queues = topology
+        .queue_resources
+        .iter()
+        .map(|resource| (&resource.id, resource.slots))
+        .collect::<BTreeMap<_, _>>();
+    if queues.len() != topology.queue_resources.len()
+        || topology
+            .queue_resources
+            .iter()
+            .any(|resource| resource.id.as_str().is_empty())
+    {
+        return Err(ResourceError::Invalid(
+            "queue resources must have unique non-empty identities".to_string(),
+        ));
+    }
+    let view_by_id = topology
+        .memory_views
+        .iter()
+        .map(|view| (&view.id, view))
+        .collect::<BTreeMap<_, _>>();
+    let mut storage_ids = BTreeSet::new();
+    let mut storage_roots = BTreeSet::new();
+    for storage in &topology.storage_domains {
+        if storage.id.as_str().is_empty()
+            || storage.capacity_bytes == 0
+            || !storage.root.is_absolute()
+            || !storage_ids.insert(&storage.id)
+            || !storage_roots.insert(&storage.root)
+            || !rates
+                .get(&storage.read_rate)
+                .is_some_and(|rate| rate.unit == RateUnit::BytesPerSecond)
+            || !rates
+                .get(&storage.write_rate)
+                .is_some_and(|rate| rate.unit == RateUnit::BytesPerSecond)
+            || storage.operations_rate.as_ref().is_some_and(|operations| {
+                !rates
+                    .get(operations)
+                    .is_some_and(|rate| rate.unit == RateUnit::OperationsPerSecond)
+            })
+            || !queues.contains_key(&storage.queue)
+        {
+            return Err(ResourceError::Invalid(
+                "storage domains must be unique absolute roots with positive capacity, byte-rate resources, an optional IOPS resource, and a typed queue"
+                    .to_string(),
+            ));
+        }
+    }
+    let mut accelerator_ids = BTreeSet::new();
+    for accelerator in &topology.accelerators {
+        let memory_view = view_by_id.get(&accelerator.memory_view);
+        if accelerator.id.as_str().is_empty()
+            || accelerator.occupancy_slots == 0
+            || !accelerator_ids.insert(&accelerator.id)
+            || !queues.contains_key(&accelerator.command_queue)
+            || !memory_view.is_some_and(|view| view.kind == MemoryViewKind::Metal)
+        {
+            return Err(ResourceError::Invalid(
+                "accelerators must have unique identities, positive occupancy, a Metal view, and a typed command queue"
+                    .to_string(),
+            ));
+        }
+    }
+    let mut transfer_ids = BTreeSet::new();
+    for transfer in &topology.transfer_links {
+        if transfer.id.as_str().is_empty()
+            || !transfer_ids.insert(&transfer.id)
+            || !view_by_id.contains_key(&transfer.source_view)
+            || !view_by_id.contains_key(&transfer.destination_view)
+            || !rates
+                .get(&transfer.rate)
+                .is_some_and(|rate| rate.unit == RateUnit::BytesPerSecond)
+            || !queues.contains_key(&transfer.queue)
+        {
+            return Err(ResourceError::Invalid(
+                "transfer links must have unique identities and reference typed views, rates, and queues"
+                    .to_string(),
             ));
         }
     }
@@ -1404,16 +3043,47 @@ fn validate_pressure(
             )));
         }
     }
+    validate_pressure_map(
+        "storage",
+        &pressure.storage_available_bytes,
+        topology
+            .storage_domains
+            .iter()
+            .map(|domain| (domain.id.clone(), domain.capacity_bytes))
+            .collect(),
+    )?;
+    validate_pressure_map(
+        "rate",
+        &pressure.rate_available_per_second,
+        topology
+            .rate_resources
+            .iter()
+            .map(|resource| (resource.id.clone(), resource.units_per_second))
+            .collect(),
+    )?;
+    validate_pressure_map(
+        "queue",
+        &pressure.queue_available_slots,
+        topology
+            .queue_resources
+            .iter()
+            .map(|resource| (resource.id.clone(), resource.slots))
+            .collect(),
+    )?;
+    validate_pressure_map(
+        "accelerator",
+        &pressure.accelerator_available_slots,
+        topology
+            .accelerators
+            .iter()
+            .map(|resource| (resource.id.clone(), resource.occupancy_slots))
+            .collect(),
+    )?;
     let bounded_counts = [
         (
             pressure.available_cpu_threads,
             topology.logical_cpu_threads,
             "CPU pressure",
-        ),
-        (
-            pressure.storage_available_bytes,
-            topology.storage_capacity_bytes,
-            "storage pressure",
         ),
         (
             pressure.cache_available_bytes,
@@ -1430,16 +3100,36 @@ fn validate_pressure(
             topology.file_descriptor_capacity,
             "file-descriptor pressure",
         ),
-        (
-            pressure.available_queue_slots,
-            topology.queue_capacity,
-            "queue pressure",
-        ),
     ];
     for (available, capacity, name) in bounded_counts {
         if available > capacity {
             return Err(ResourceError::Invalid(format!(
                 "{name} exceeds inventoried capacity"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_pressure_map<Id: Ord + fmt::Debug>(
+    name: &str,
+    available: &BTreeMap<Id, u64>,
+    capacity: BTreeMap<Id, u64>,
+) -> Result<(), ResourceError> {
+    if available.len() != capacity.len() {
+        return Err(ResourceError::Invalid(format!(
+            "external pressure must report every {name} resource"
+        )));
+    }
+    for (id, available) in available {
+        let capacity = capacity.get(id).ok_or_else(|| {
+            ResourceError::Invalid(format!(
+                "external pressure references unknown {name} resource {id:?}"
+            ))
+        })?;
+        if available > capacity {
+            return Err(ResourceError::Invalid(format!(
+                "available {name} capacity for {id:?} exceeds topology"
             )));
         }
     }
@@ -1618,43 +3308,6 @@ fn detect_unified_metal_device() -> bool {
     false
 }
 
-fn detect_storage_capacity() -> Result<(u64, u64), ResourceError> {
-    let output = Command::new("df")
-        .args(["-Pk", "."])
-        .output()
-        .map_err(|error| ResourceError::Detection(error.to_string()))?;
-    if !output.status.success() {
-        return Err(ResourceError::Detection(
-            "df did not complete successfully".to_string(),
-        ));
-    }
-    let text = String::from_utf8(output.stdout)
-        .map_err(|error| ResourceError::Detection(error.to_string()))?;
-    let fields = text
-        .lines()
-        .last()
-        .ok_or_else(|| ResourceError::Detection("df returned no rows".to_string()))?
-        .split_ascii_whitespace()
-        .collect::<Vec<_>>();
-    let parse_field = |index: usize, name: &str| {
-        fields
-            .get(index)
-            .ok_or_else(|| ResourceError::Detection(format!("df has no {name} field")))?
-            .parse::<u64>()
-            .map_err(|error| ResourceError::Detection(error.to_string()))
-    };
-    let capacity_kib = parse_field(1, "capacity")?;
-    let available_kib = parse_field(3, "available capacity")?;
-    Ok((
-        capacity_kib
-            .checked_mul(1024)
-            .ok_or(ResourceError::Overflow("storage capacity detection"))?,
-        available_kib
-            .checked_mul(1024)
-            .ok_or(ResourceError::Overflow("storage availability detection"))?,
-    ))
-}
-
 fn detect_open_file_limit() -> Result<u64, ResourceError> {
     let output = Command::new("getconf")
         .arg("OPEN_MAX")
@@ -1689,3 +3342,6 @@ fn command_u64(program: &str, arguments: &[&str]) -> Result<u64, ResourceError> 
         .parse::<u64>()
         .map_err(|error| ResourceError::Detection(error.to_string()))
 }
+
+#[cfg(test)]
+mod tests;

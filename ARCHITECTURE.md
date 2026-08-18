@@ -518,8 +518,9 @@ compatibility block facade or normal-path host full-grid upload is retained.
 - `just` provides a stable command vocabulary, but some contributors may still use the underlying `cargo` and `scripts/*` commands directly until it is installed locally.
 - Current production imaging remains explicitly classified as legacy until its
   whole-run migration router and capability transfers land. `just arch-check`
-  mechanically rejects undeclared native dependency edges and any expansion of
-  the frozen legacy edge set.
+  mechanically rejects unclassified workspace packages, non-exact native
+  dependency sets, forbidden Rust/Swift source imports, and any change to the
+  16 exact frozen legacy edges.
 
 ## ADR index
 

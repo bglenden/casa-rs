@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 1;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 2;
 
 /// A content identity supplied by an owner outside the problem compiler.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -161,6 +161,316 @@ impl ProblemInputIdentities {
         {
             return Err(CompileProblemError::DuplicateReferenceData(kind));
         }
+        Ok(self)
+    }
+}
+
+/// Image-domain treatment required by the logical measurement operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectionGeometry {
+    /// A coplanar tangent-plane operator is sufficient.
+    Coplanar,
+    /// The non-coplanar baseline term must be represented.
+    NonCoplanarW,
+    /// Multiple image-domain charts are part of the requested geometry.
+    Faceted,
+}
+
+/// User-visible field layout, independent of execution batching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldGeometry {
+    /// One logical field or phase center.
+    Single,
+    /// Multiple pointings share one joint mosaic reconstruction.
+    Mosaic,
+}
+
+/// Coordinate and field requirements summarized from compiled geometry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeometryContract {
+    projection: ProjectionGeometry,
+    fields: FieldGeometry,
+}
+
+impl GeometryContract {
+    /// Construct logical geometry requirements.
+    #[must_use]
+    pub const fn new(projection: ProjectionGeometry, fields: FieldGeometry) -> Self {
+        Self { projection, fields }
+    }
+
+    /// Return the required projection treatment.
+    #[must_use]
+    pub const fn projection(self) -> ProjectionGeometry {
+        self.projection
+    }
+
+    /// Return the logical field layout.
+    #[must_use]
+    pub const fn fields(self) -> FieldGeometry {
+        self.fields
+    }
+}
+
+/// Output spectral reference frame owned by the coordinate law.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpectralFrame {
+    /// Preserve the native selected-data frame.
+    Native,
+    /// Topocentric frequency frame.
+    Topocentric,
+    /// Kinematic Local Standard of Rest.
+    Lsrk,
+    /// Solar-system barycentric frame.
+    Barycentric,
+}
+
+/// Paired spectral sampling used in prediction and adjoint imaging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpectralSampling {
+    /// Preserve native channel samples exactly.
+    Identity,
+    /// Nearest covered source channel.
+    Nearest,
+    /// Linear paired interpolation.
+    Linear,
+    /// Integrate a fixed number of adjacent channels into each output bin.
+    ChannelAverage {
+        /// Number of source channels in each bin.
+        channels_per_bin: usize,
+    },
+}
+
+/// Scientific coupling between reconstructed spectral planes or coefficients.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpectralCoupling {
+    /// Planes or coefficients have no shared product constraint.
+    Independent,
+    /// Published planes share one common restoring beam.
+    CommonRestoringBeam,
+}
+
+/// Spectral coordinate, sampling, and cross-plane requirements.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SpectralContract {
+    output_frame: SpectralFrame,
+    sampling: SpectralSampling,
+    coupling: SpectralCoupling,
+    rest_frequency_hz: Option<f64>,
+}
+
+impl SpectralContract {
+    /// Construct spectral requirements.
+    #[must_use]
+    pub const fn new(
+        output_frame: SpectralFrame,
+        sampling: SpectralSampling,
+        coupling: SpectralCoupling,
+        rest_frequency_hz: Option<f64>,
+    ) -> Self {
+        Self {
+            output_frame,
+            sampling,
+            coupling,
+            rest_frequency_hz,
+        }
+    }
+
+    /// Return the requested output frame.
+    #[must_use]
+    pub const fn output_frame(self) -> SpectralFrame {
+        self.output_frame
+    }
+
+    /// Return paired spectral sampling semantics.
+    #[must_use]
+    pub const fn sampling(self) -> SpectralSampling {
+        self.sampling
+    }
+
+    /// Return spectral coupling semantics.
+    #[must_use]
+    pub const fn coupling(self) -> SpectralCoupling {
+        self.coupling
+    }
+
+    /// Return an optional rest frequency in hertz.
+    #[must_use]
+    pub const fn rest_frequency_hz(self) -> Option<f64> {
+        self.rest_frequency_hz
+    }
+}
+
+/// Requested reconstruction coordinate in Stokes or correlation space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PolarizationCoordinate {
+    /// Stokes I.
+    StokesI,
+    /// Stokes Q.
+    StokesQ,
+    /// Stokes U.
+    StokesU,
+    /// Stokes V.
+    StokesV,
+    /// Linear-feed XX correlation.
+    LinearXx,
+    /// Linear-feed XY correlation.
+    LinearXy,
+    /// Linear-feed YX correlation.
+    LinearYx,
+    /// Linear-feed YY correlation.
+    LinearYy,
+    /// Circular-feed RR correlation.
+    CircularRr,
+    /// Circular-feed RL correlation.
+    CircularRl,
+    /// Circular-feed LR correlation.
+    CircularLr,
+    /// Circular-feed LL correlation.
+    CircularLl,
+}
+
+/// Requested polarization reconstruction coordinates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PolarizationContract {
+    coordinates: Vec<PolarizationCoordinate>,
+}
+
+impl PolarizationContract {
+    /// Construct requested coordinates. Compilation canonicalizes ordering.
+    #[must_use]
+    pub const fn new(coordinates: Vec<PolarizationCoordinate>) -> Self {
+        Self { coordinates }
+    }
+
+    /// Return canonical requested coordinates after compilation.
+    #[must_use]
+    pub fn coordinates(&self) -> &[PolarizationCoordinate] {
+        &self.coordinates
+    }
+
+    fn canonicalize(mut self) -> Result<Self, CompileProblemError> {
+        self.coordinates.sort_unstable();
+        self.coordinates.dedup();
+        if self.coordinates.is_empty() {
+            return Err(CompileProblemError::InvalidScientificContract {
+                reason: "at least one polarization coordinate must be requested",
+            });
+        }
+        let categories = self
+            .coordinates
+            .iter()
+            .fold([false; 3], |mut present, coordinate| {
+                match coordinate {
+                    PolarizationCoordinate::StokesI
+                    | PolarizationCoordinate::StokesQ
+                    | PolarizationCoordinate::StokesU
+                    | PolarizationCoordinate::StokesV => present[0] = true,
+                    PolarizationCoordinate::LinearXx
+                    | PolarizationCoordinate::LinearXy
+                    | PolarizationCoordinate::LinearYx
+                    | PolarizationCoordinate::LinearYy => present[1] = true,
+                    PolarizationCoordinate::CircularRr
+                    | PolarizationCoordinate::CircularRl
+                    | PolarizationCoordinate::CircularLr
+                    | PolarizationCoordinate::CircularLl => present[2] = true,
+                }
+                present
+            });
+        if categories.into_iter().filter(|present| *present).count() > 1 {
+            return Err(CompileProblemError::InvalidScientificContract {
+                reason: "one reconstruction cannot mix Stokes, linear, and circular coordinates",
+            });
+        }
+        Ok(self)
+    }
+}
+
+/// Direction-dependent instrument response included in the measurement equation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstrumentResponse {
+    /// Direction-independent scalar response.
+    Scalar,
+    /// Scalar primary-beam response.
+    PrimaryBeam,
+    /// Full polarization Mueller response.
+    FullMueller,
+}
+
+/// Logical measurement-equation terms independent of an implementation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MeasurementEquationContract {
+    instrument_response: InstrumentResponse,
+}
+
+impl MeasurementEquationContract {
+    /// Construct measurement-equation requirements.
+    #[must_use]
+    pub const fn new(instrument_response: InstrumentResponse) -> Self {
+        Self {
+            instrument_response,
+        }
+    }
+
+    /// Return the required instrument response.
+    #[must_use]
+    pub const fn instrument_response(self) -> InstrumentResponse {
+        self.instrument_response
+    }
+}
+
+/// Complete science-owned contract outside reconstruction, weighting, and products.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScientificContract {
+    geometry: GeometryContract,
+    spectral: SpectralContract,
+    polarization: PolarizationContract,
+    measurement_equation: MeasurementEquationContract,
+}
+
+impl ScientificContract {
+    /// Construct a complete logical scientific contract.
+    #[must_use]
+    pub const fn new(
+        geometry: GeometryContract,
+        spectral: SpectralContract,
+        polarization: PolarizationContract,
+        measurement_equation: MeasurementEquationContract,
+    ) -> Self {
+        Self {
+            geometry,
+            spectral,
+            polarization,
+            measurement_equation,
+        }
+    }
+
+    /// Return geometry requirements.
+    #[must_use]
+    pub const fn geometry(&self) -> GeometryContract {
+        self.geometry
+    }
+
+    /// Return spectral requirements.
+    #[must_use]
+    pub const fn spectral(&self) -> SpectralContract {
+        self.spectral
+    }
+
+    /// Return polarization requirements.
+    #[must_use]
+    pub const fn polarization(&self) -> &PolarizationContract {
+        &self.polarization
+    }
+
+    /// Return measurement-equation requirements.
+    #[must_use]
+    pub const fn measurement_equation(&self) -> MeasurementEquationContract {
+        self.measurement_equation
+    }
+
+    fn canonicalize(mut self) -> Result<Self, CompileProblemError> {
+        self.polarization = self.polarization.canonicalize()?;
         Ok(self)
     }
 }
@@ -323,11 +633,50 @@ pub enum WeightDensityScope {
     PerOutputChannel,
 }
 
+/// Gaussian taper in the UV plane, expressed in wavelengths and radians.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UvTaper {
+    major_lambda: f64,
+    minor_lambda: f64,
+    position_angle_rad: f64,
+}
+
+impl UvTaper {
+    /// Construct a Gaussian UV taper.
+    #[must_use]
+    pub const fn new(major_lambda: f64, minor_lambda: f64, position_angle_rad: f64) -> Self {
+        Self {
+            major_lambda,
+            minor_lambda,
+            position_angle_rad,
+        }
+    }
+
+    /// Return the major-axis scale in wavelengths.
+    #[must_use]
+    pub const fn major_lambda(self) -> f64 {
+        self.major_lambda
+    }
+
+    /// Return the minor-axis scale in wavelengths.
+    #[must_use]
+    pub const fn minor_lambda(self) -> f64 {
+        self.minor_lambda
+    }
+
+    /// Return the position angle in radians.
+    #[must_use]
+    pub const fn position_angle_rad(self) -> f64 {
+        self.position_angle_rad
+    }
+}
+
 /// Complete logical visibility-weighting requirements.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WeightingContract {
     scheme: WeightingScheme,
     density_scope: WeightDensityScope,
+    uv_taper: Option<UvTaper>,
 }
 
 impl WeightingContract {
@@ -337,7 +686,15 @@ impl WeightingContract {
         Self {
             scheme,
             density_scope,
+            uv_taper: None,
         }
+    }
+
+    /// Add a Gaussian UV taper to the weighting metric.
+    #[must_use]
+    pub const fn with_uv_taper(mut self, uv_taper: UvTaper) -> Self {
+        self.uv_taper = Some(uv_taper);
+        self
     }
 
     /// Return the weighting formula.
@@ -350,6 +707,12 @@ impl WeightingContract {
     #[must_use]
     pub const fn density_scope(self) -> WeightDensityScope {
         self.density_scope
+    }
+
+    /// Return the optional Gaussian UV taper.
+    #[must_use]
+    pub const fn uv_taper(self) -> Option<UvTaper> {
+        self.uv_taper
     }
 }
 
@@ -652,6 +1015,7 @@ impl NumericsContract {
 /// Complete uncompiled logical problem specification.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProblemSpecification {
+    science: ScientificContract,
     reconstruction: ReconstructionContract,
     weighting: WeightingContract,
     products: ProductRequirements,
@@ -662,12 +1026,14 @@ impl ProblemSpecification {
     /// Construct a logical problem specification.
     #[must_use]
     pub const fn new(
+        science: ScientificContract,
         reconstruction: ReconstructionContract,
         weighting: WeightingContract,
         products: ProductRequirements,
         numerics: NumericsContract,
     ) -> Self {
         Self {
+            science,
             reconstruction,
             weighting,
             products,
@@ -679,6 +1045,26 @@ impl ProblemSpecification {
 /// Backend-independent capability required to plan and execute a problem.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RequiredCapability {
+    /// Non-coplanar baseline geometry.
+    NonCoplanarWGeometry,
+    /// Multiple image-domain facets.
+    FacetedGeometry,
+    /// Joint mosaic field geometry.
+    MosaicGeometry,
+    /// Spectral reference-frame transformation.
+    SpectralFrameTransform,
+    /// Non-identity paired spectral sampling.
+    SpectralResampling,
+    /// Common restoring-beam coupling across spectral planes.
+    CommonBeamSpectralCoupling,
+    /// Reconstruction of one polarization coordinate.
+    Polarization(PolarizationCoordinate),
+    /// Scalar primary-beam response.
+    PrimaryBeamResponse,
+    /// Full Mueller instrument response.
+    FullMuellerResponse,
+    /// Gaussian UV tapering in the data metric.
+    UvTaper,
     /// Constant reconstruction basis.
     ConstantBasis,
     /// Taylor reconstruction basis.
@@ -747,6 +1133,7 @@ impl fmt::Display for CompiledProblemId {
 pub struct CompiledProblem {
     problem_id: CompiledProblemId,
     inputs: ProblemInputIdentities,
+    science: ScientificContract,
     reconstruction: ReconstructionContract,
     weighting: WeightingContract,
     products: ProductRequirements,
@@ -765,6 +1152,12 @@ impl CompiledProblem {
     #[must_use]
     pub const fn inputs(&self) -> &ProblemInputIdentities {
         &self.inputs
+    }
+
+    /// Return the complete science-owned logical contract.
+    #[must_use]
+    pub const fn science(&self) -> &ScientificContract {
+        &self.science
     }
 
     /// Return reconstruction requirements.
@@ -810,6 +1203,12 @@ pub enum CompileProblemError {
         /// Stable human-readable reason.
         reason: &'static str,
     },
+    /// Geometry, spectral, polarization, or measurement-equation requirements conflict.
+    #[error("invalid scientific contract: {reason}")]
+    InvalidScientificContract {
+        /// Stable human-readable reason.
+        reason: &'static str,
+    },
     /// Weighting requirements are outside the logical domain.
     #[error("invalid weighting contract: {reason}")]
     InvalidWeighting {
@@ -842,16 +1241,23 @@ pub fn compile_problem(
     inputs: ProblemInputIdentities,
 ) -> Result<CompiledProblem, CompileProblemError> {
     let inputs = inputs.canonicalize()?;
+    let science = specification.science.canonicalize()?;
     let products = specification.products.canonicalize();
     let numerics = specification.numerics.canonicalize()?;
+    validate_science(&science, &inputs)?;
     validate_reconstruction(&specification.reconstruction)?;
     let reconstruction = specification.reconstruction.canonicalize();
     validate_weighting(specification.weighting)?;
-    validate_products(&reconstruction, &products)?;
-    let required_capabilities =
-        derive_capabilities(&reconstruction, specification.weighting, &products);
+    validate_products(&science, &reconstruction, &products)?;
+    let required_capabilities = derive_capabilities(
+        &science,
+        &reconstruction,
+        specification.weighting,
+        &products,
+    );
     let problem_id = canonical_problem_id(
         &inputs,
+        &science,
         &reconstruction,
         specification.weighting,
         &products,
@@ -860,12 +1266,54 @@ pub fn compile_problem(
     Ok(CompiledProblem {
         problem_id,
         inputs,
+        science,
         reconstruction,
         weighting: specification.weighting,
         products,
         numerics,
         required_capabilities,
     })
+}
+
+fn validate_science(
+    science: &ScientificContract,
+    inputs: &ProblemInputIdentities,
+) -> Result<(), CompileProblemError> {
+    if science.geometry.fields == FieldGeometry::Mosaic
+        && science.measurement_equation.instrument_response == InstrumentResponse::Scalar
+    {
+        return Err(CompileProblemError::InvalidScientificContract {
+            reason: "mosaic geometry requires an explicit direction-dependent response",
+        });
+    }
+    if let SpectralSampling::ChannelAverage {
+        channels_per_bin: 0,
+    } = science.spectral.sampling
+    {
+        return Err(CompileProblemError::InvalidScientificContract {
+            reason: "spectral channel averaging requires a positive bin width",
+        });
+    }
+    if science
+        .spectral
+        .rest_frequency_hz
+        .is_some_and(|frequency| !(frequency.is_finite() && frequency > 0.0))
+    {
+        return Err(CompileProblemError::InvalidScientificContract {
+            reason: "a spectral rest frequency must be finite and positive",
+        });
+    }
+    if science.spectral.output_frame != SpectralFrame::Native
+        && !inputs
+            .reference_data
+            .iter()
+            .any(|(kind, _)| *kind == ReferenceDataKind::Measures)
+    {
+        return Err(CompileProblemError::InvalidScientificContract {
+            reason: "spectral frame conversion requires bound measures reference data",
+        });
+    }
+    Ok(())
 }
 
 fn validate_reconstruction(contract: &ReconstructionContract) -> Result<(), CompileProblemError> {
@@ -961,10 +1409,22 @@ fn validate_weighting(contract: WeightingContract) -> Result<(), CompileProblemE
             reason: "Briggs robustness must be finite and in [-2, 2]",
         });
     }
+    if contract.uv_taper.is_some_and(|taper| {
+        !(taper.major_lambda.is_finite()
+            && taper.major_lambda > 0.0
+            && taper.minor_lambda.is_finite()
+            && taper.minor_lambda > 0.0
+            && taper.position_angle_rad.is_finite())
+    }) {
+        return Err(CompileProblemError::InvalidWeighting {
+            reason: "UV taper axes must be finite and positive and its angle must be finite",
+        });
+    }
     Ok(())
 }
 
 fn validate_products(
+    science: &ScientificContract,
     reconstruction: &ReconstructionContract,
     products: &ProductRequirements,
 ) -> Result<(), CompileProblemError> {
@@ -995,6 +1455,13 @@ fn validate_products(
     {
         return Err(CompileProblemError::InvalidProductCombination {
             reason: "a PB-corrected image requires restored-image and primary-beam products",
+        });
+    }
+    if products.contains(ProductKind::PrimaryBeam)
+        && science.measurement_equation.instrument_response == InstrumentResponse::Scalar
+    {
+        return Err(CompileProblemError::InvalidProductCombination {
+            reason: "a primary-beam product requires a primary-beam or full-Mueller response",
         });
     }
     let taylor_terms = match reconstruction.basis {
@@ -1032,11 +1499,53 @@ fn validate_products(
 }
 
 fn derive_capabilities(
+    science: &ScientificContract,
     reconstruction: &ReconstructionContract,
     weighting: WeightingContract,
     products: &ProductRequirements,
 ) -> BTreeSet<RequiredCapability> {
     let mut capabilities = BTreeSet::new();
+    match science.geometry.projection {
+        ProjectionGeometry::Coplanar => {}
+        ProjectionGeometry::NonCoplanarW => {
+            capabilities.insert(RequiredCapability::NonCoplanarWGeometry);
+        }
+        ProjectionGeometry::Faceted => {
+            capabilities.insert(RequiredCapability::FacetedGeometry);
+        }
+    }
+    if science.geometry.fields == FieldGeometry::Mosaic {
+        capabilities.insert(RequiredCapability::MosaicGeometry);
+    }
+    if science.spectral.output_frame != SpectralFrame::Native {
+        capabilities.insert(RequiredCapability::SpectralFrameTransform);
+    }
+    if science.spectral.sampling != SpectralSampling::Identity {
+        capabilities.insert(RequiredCapability::SpectralResampling);
+    }
+    if science.spectral.coupling == SpectralCoupling::CommonRestoringBeam {
+        capabilities.insert(RequiredCapability::CommonBeamSpectralCoupling);
+    }
+    capabilities.extend(
+        science
+            .polarization
+            .coordinates
+            .iter()
+            .copied()
+            .map(RequiredCapability::Polarization),
+    );
+    match science.measurement_equation.instrument_response {
+        InstrumentResponse::Scalar => {}
+        InstrumentResponse::PrimaryBeam => {
+            capabilities.insert(RequiredCapability::PrimaryBeamResponse);
+        }
+        InstrumentResponse::FullMueller => {
+            capabilities.insert(RequiredCapability::FullMuellerResponse);
+        }
+    }
+    if weighting.uv_taper.is_some() {
+        capabilities.insert(RequiredCapability::UvTaper);
+    }
     capabilities.insert(match reconstruction.basis {
         ReconstructionBasis::Constant => RequiredCapability::ConstantBasis,
         ReconstructionBasis::Taylor { .. } => RequiredCapability::TaylorBasis,
@@ -1074,6 +1583,7 @@ fn derive_capabilities(
 
 fn canonical_problem_id(
     inputs: &ProblemInputIdentities,
+    science: &ScientificContract,
     reconstruction: &ReconstructionContract,
     weighting: WeightingContract,
     products: &ProductRequirements,
@@ -1100,6 +1610,50 @@ fn canonical_problem_id(
             encoder.identity(identity);
         }
     }
+    encoder.u8(match science.geometry.projection {
+        ProjectionGeometry::Coplanar => 0,
+        ProjectionGeometry::NonCoplanarW => 1,
+        ProjectionGeometry::Faceted => 2,
+    });
+    encoder.u8(match science.geometry.fields {
+        FieldGeometry::Single => 0,
+        FieldGeometry::Mosaic => 1,
+    });
+    encoder.u8(match science.spectral.output_frame {
+        SpectralFrame::Native => 0,
+        SpectralFrame::Topocentric => 1,
+        SpectralFrame::Lsrk => 2,
+        SpectralFrame::Barycentric => 3,
+    });
+    match science.spectral.sampling {
+        SpectralSampling::Identity => encoder.u8(0),
+        SpectralSampling::Nearest => encoder.u8(1),
+        SpectralSampling::Linear => encoder.u8(2),
+        SpectralSampling::ChannelAverage { channels_per_bin } => {
+            encoder.u8(3);
+            encoder.usize(channels_per_bin);
+        }
+    }
+    encoder.u8(match science.spectral.coupling {
+        SpectralCoupling::Independent => 0,
+        SpectralCoupling::CommonRestoringBeam => 1,
+    });
+    match science.spectral.rest_frequency_hz {
+        None => encoder.u8(0),
+        Some(frequency) => {
+            encoder.u8(1);
+            encoder.f64(frequency);
+        }
+    }
+    encoder.usize(science.polarization.coordinates.len());
+    for coordinate in &science.polarization.coordinates {
+        encoder.u8(polarization_tag(*coordinate));
+    }
+    encoder.u8(match science.measurement_equation.instrument_response {
+        InstrumentResponse::Scalar => 0,
+        InstrumentResponse::PrimaryBeam => 1,
+        InstrumentResponse::FullMueller => 2,
+    });
     match reconstruction.basis {
         ReconstructionBasis::Constant => encoder.u8(0),
         ReconstructionBasis::Taylor { terms } => {
@@ -1144,6 +1698,15 @@ fn canonical_problem_id(
         WeightDensityScope::GlobalSelection => 1,
         WeightDensityScope::PerOutputChannel => 2,
     });
+    match weighting.uv_taper {
+        None => encoder.u8(0),
+        Some(taper) => {
+            encoder.u8(1);
+            encoder.f64(taper.major_lambda);
+            encoder.f64(taper.minor_lambda);
+            encoder.f64(taper.position_angle_rad);
+        }
+    }
     encoder.usize(products.products.len());
     for product in &products.products {
         encoder.u8(product_tag(*product));
@@ -1247,6 +1810,23 @@ fn product_tag(product: ProductKind) -> u8 {
         ProductKind::SpectralIndexError => 12,
         ProductKind::PbCorrectedSpectralIndex => 13,
         ProductKind::Beam => 14,
+    }
+}
+
+fn polarization_tag(coordinate: PolarizationCoordinate) -> u8 {
+    match coordinate {
+        PolarizationCoordinate::StokesI => 0,
+        PolarizationCoordinate::StokesQ => 1,
+        PolarizationCoordinate::StokesU => 2,
+        PolarizationCoordinate::StokesV => 3,
+        PolarizationCoordinate::LinearXx => 4,
+        PolarizationCoordinate::LinearXy => 5,
+        PolarizationCoordinate::LinearYx => 6,
+        PolarizationCoordinate::LinearYy => 7,
+        PolarizationCoordinate::CircularRr => 8,
+        PolarizationCoordinate::CircularRl => 9,
+        PolarizationCoordinate::CircularLr => 10,
+        PolarizationCoordinate::CircularLl => 11,
     }
 }
 
