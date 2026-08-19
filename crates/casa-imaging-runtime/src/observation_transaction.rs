@@ -1,0 +1,1406 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+//! Plan binding for snapshot-consistent, atomic imaging side effects.
+//!
+//! CASA and LibRA write visibility models while holding MeasurementSet table
+//! locks. This contract retains their explicit selection and lock semantics,
+//! but strengthens publication: model bytes and required products remain in
+//! private staging until one post-reconciliation commit gate succeeds.
+
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+};
+
+use casa_imaging_model::{
+    CompiledProblem, CompiledProblemId, MeasurementSetIdentity, ObservationTransactionId,
+    ProductKind,
+};
+
+use crate::{
+    ExecutionDag, FenceId, FenceKind, IoBufferKind, LeaseResource, PhysicalWorkId, StorageUseKind,
+    WorkDependency, WorkKind, WorkNode, WorkNodeId,
+};
+
+/// Exact execution-DAG events that implement one observation transaction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ObservationTransactionWork {
+    initial_consistency_check: WorkNodeId,
+    observation_reads: BTreeSet<WorkDependency>,
+    final_reconciliation: WorkNodeId,
+    required_product_staging: BTreeMap<ProductKind, BTreeSet<WorkDependency>>,
+    model_column_staging: Option<WorkNodeId>,
+    commit: WorkNodeId,
+}
+
+impl ObservationTransactionWork {
+    /// Name every semantic checkpoint and private staging completion event.
+    ///
+    /// Observation-read completions are derived from every typed
+    /// [`WorkKind::ObservationRead`] node during the mandatory plan seal.
+    #[must_use]
+    pub const fn new(
+        initial_consistency_check: WorkNodeId,
+        final_reconciliation: WorkNodeId,
+        required_product_staging: BTreeMap<ProductKind, BTreeSet<WorkDependency>>,
+        model_column_staging: Option<WorkNodeId>,
+        commit: WorkNodeId,
+    ) -> Self {
+        Self {
+            initial_consistency_check,
+            observation_reads: BTreeSet::new(),
+            final_reconciliation,
+            required_product_staging,
+            model_column_staging,
+            commit,
+        }
+    }
+
+    /// Return the consistency check that must precede observation reads.
+    #[must_use]
+    pub const fn initial_consistency_check(&self) -> &WorkNodeId {
+        &self.initial_consistency_check
+    }
+
+    /// Return exact completion events for all physical observation reads.
+    ///
+    /// Every producer revalidates and consumes the bound read set while
+    /// holding one declared table lock per MeasurementSet through this event.
+    #[must_use]
+    pub const fn observation_reads(&self) -> &BTreeSet<WorkDependency> {
+        &self.observation_reads
+    }
+
+    /// Return the mandatory final complete-data reconciliation node.
+    #[must_use]
+    pub const fn final_reconciliation(&self) -> &WorkNodeId {
+        &self.final_reconciliation
+    }
+
+    /// Return exact completion events for every privately staged required product.
+    #[must_use]
+    pub const fn required_product_staging(
+        &self,
+    ) -> &BTreeMap<ProductKind, BTreeSet<WorkDependency>> {
+        &self.required_product_staging
+    }
+
+    /// Return the private model-column staging node, when requested.
+    #[must_use]
+    pub const fn model_column_staging(&self) -> Option<&WorkNodeId> {
+        self.model_column_staging.as_ref()
+    }
+
+    /// Return the sole node permitted to revalidate and publish side effects.
+    ///
+    /// The node holds every MeasurementSet lock while it rechecks the exact
+    /// read/write preconditions. Successful completion of its publication
+    /// fence establishes readiness only; the runtime's final publish call
+    /// atomically activates all staged products and model-column generations.
+    #[must_use]
+    pub const fn commit(&self) -> &WorkNodeId {
+        &self.commit
+    }
+}
+
+/// Validated problem-bound observation transaction in one immutable DAG.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoundObservationTransaction {
+    problem_id: CompiledProblemId,
+    transaction_id: ObservationTransactionId,
+    physical_work_id: PhysicalWorkId,
+    work: ObservationTransactionWork,
+}
+
+impl BoundObservationTransaction {
+    /// Return the exact compiled problem whose transaction was validated.
+    #[must_use]
+    pub const fn problem_id(&self) -> CompiledProblemId {
+        self.problem_id
+    }
+
+    /// Return the logical read/write contract this physical work implements.
+    #[must_use]
+    pub const fn transaction_id(&self) -> ObservationTransactionId {
+        self.transaction_id
+    }
+
+    /// Return the immutable physical DAG whose declarations were validated.
+    #[must_use]
+    pub const fn physical_work_id(&self) -> PhysicalWorkId {
+        self.physical_work_id
+    }
+
+    /// Return the validated physical checkpoint and staging events.
+    #[must_use]
+    pub const fn work(&self) -> &ObservationTransactionWork {
+        &self.work
+    }
+}
+
+/// Failure to bind an observation transaction to physical work.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ObservationTransactionPlanError {
+    /// A node, dependency, resource, or fence violates atomic-side-effect rules.
+    InvalidPlan {
+        /// Stable diagnostic describing the rejected declaration.
+        reason: String,
+    },
+}
+
+impl fmt::Display for ObservationTransactionPlanError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidPlan { reason } => {
+                write!(formatter, "invalid observation transaction plan: {reason}")
+            }
+        }
+    }
+}
+
+impl Error for ObservationTransactionPlanError {}
+
+/// Validate and bind exact transaction work to an immutable execution DAG.
+pub(crate) fn bind_observation_transaction(
+    problem: &CompiledProblem,
+    dag: &ExecutionDag,
+    mut work: ObservationTransactionWork,
+) -> Result<BoundObservationTransaction, ObservationTransactionPlanError> {
+    let contract = problem.observation_transaction();
+    let measurement_sets = contract
+        .read_set()
+        .sources()
+        .iter()
+        .map(|source| source.measurement_set())
+        .collect::<BTreeSet<_>>();
+    validate_product_staging(problem.products().products(), &work)?;
+    work.observation_reads = validate_transaction_nodes(
+        contract.read_set().sources().len(),
+        contract.write_set().model_columns().len(),
+        dag.nodes(),
+        &work,
+    )?;
+    validate_measurement_set_lock_identities(&measurement_sets, dag.nodes(), &work)?;
+    Ok(BoundObservationTransaction {
+        problem_id: problem.problem_id(),
+        transaction_id: contract.transaction_id(),
+        physical_work_id: dag.physical_work_id(),
+        work,
+    })
+}
+
+fn validate_product_staging(
+    required_products: &[ProductKind],
+    work: &ObservationTransactionWork,
+) -> Result<(), ObservationTransactionPlanError> {
+    let required = required_products.iter().copied().collect::<BTreeSet<_>>();
+    let declared = work
+        .required_product_staging
+        .keys()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    if declared != required {
+        return invalid(format!(
+            "required product staging keys {declared:?} do not match compiled product requirements {required:?}"
+        ));
+    }
+    if let Some(product) = work
+        .required_product_staging
+        .iter()
+        .find_map(|(product, events)| events.is_empty().then_some(product))
+    {
+        return invalid(format!(
+            "required product {product:?} has no private staging completion event"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_transaction_nodes(
+    read_sources: usize,
+    model_column_sources: usize,
+    nodes: &BTreeMap<WorkNodeId, WorkNode>,
+    work: &ObservationTransactionWork,
+) -> Result<BTreeSet<WorkDependency>, ObservationTransactionPlanError> {
+    if let Some(node) = nodes
+        .values()
+        .find(|node| node.kind == WorkKind::Publication && node.id != work.commit)
+    {
+        return invalid(format!(
+            "publication node {} bypasses the atomic commit gate",
+            node.id.as_str()
+        ));
+    }
+
+    let initial = require_node(
+        nodes,
+        &work.initial_consistency_check,
+        "initial consistency",
+    )?;
+    require_kind(initial, WorkKind::DataCensus, "initial consistency")?;
+    require_exact_lock_count(initial, read_sources, "initial consistency")?;
+    let initial_completions = completion_events(initial);
+
+    let observation_reads = derive_observation_reads(nodes, initial, &work.commit)?;
+    if observation_reads.is_empty() {
+        return invalid("observation read event set is empty");
+    }
+    let read_nodes =
+        require_exact_completion_events(nodes, &observation_reads, "observation read")?;
+    for producer in read_nodes {
+        require_exact_lock_count(producer, read_sources, "observation read")?;
+        for completion in &initial_completions {
+            require_precedes(nodes, completion, &producer.id, "initial consistency")?;
+        }
+    }
+    for completion in &observation_reads {
+        require_precedes(
+            nodes,
+            completion,
+            &work.final_reconciliation,
+            "observation read",
+        )?;
+        require_precedes(nodes, completion, &work.commit, "observation read")?;
+    }
+
+    let reconciliation = require_node(nodes, &work.final_reconciliation, "final reconciliation")?;
+    require_kind(reconciliation, WorkKind::Compute, "final reconciliation")?;
+    let reconciliation_completions = completion_events(reconciliation);
+
+    let mut staged_nodes = Vec::new();
+    for (product_kind, completions) in &work.required_product_staging {
+        for producer in
+            require_exact_completion_events(nodes, completions, "required product staging")?
+        {
+            if producer.kind == WorkKind::Publication {
+                return invalid(format!(
+                    "required product {product_kind:?} publishes before the atomic commit gate through {}",
+                    producer.id.as_str()
+                ));
+            }
+            require_claim(
+                producer,
+                is_staged_output,
+                "staged-output storage",
+                "required product staging",
+            )?;
+            staged_nodes.push(producer);
+        }
+    }
+
+    match (model_column_sources, &work.model_column_staging) {
+        (0, None) => {}
+        (0, Some(_)) => return invalid("read-only transaction declares model-column staging"),
+        (_, None) => return invalid("model-column transaction omits private staging"),
+        (_, Some(model_id)) => {
+            let model = require_node(nodes, model_id, "model-column staging")?;
+            require_kind(model, WorkKind::Writeback, "model-column staging")?;
+            require_claim(
+                model,
+                is_staged_output,
+                "staged-output storage",
+                "model-column staging",
+            )?;
+            require_claim(
+                model,
+                is_writeback_buffer,
+                "writeback buffer",
+                "model-column staging",
+            )?;
+            if !model.fences.contains(&FenceKind::Writeback) {
+                return invalid(format!(
+                    "model-column staging node {} omits its writeback fence",
+                    model.id.as_str()
+                ));
+            }
+            staged_nodes.push(model);
+        }
+    }
+
+    let commit = require_node(nodes, &work.commit, "atomic commit")?;
+    require_kind(commit, WorkKind::Publication, "atomic commit")?;
+    require_claim(
+        commit,
+        is_staged_output,
+        "staged-output storage",
+        "atomic commit",
+    )?;
+    require_claim(
+        commit,
+        is_publication_buffer,
+        "publication buffer",
+        "atomic commit",
+    )?;
+    require_exact_lock_count(commit, read_sources, "atomic commit")?;
+    if !commit.fences.contains(&FenceKind::Publication) {
+        return invalid(format!(
+            "atomic commit node {} omits its publication fence",
+            commit.id.as_str()
+        ));
+    }
+    for staged in staged_nodes {
+        if !shares_staging_demand(staged, commit) {
+            return invalid(format!(
+                "staging node {} and atomic commit node {} do not share a staged-output demand",
+                staged.id.as_str(),
+                commit.id.as_str()
+            ));
+        }
+    }
+
+    for completion in &initial_completions {
+        require_precedes(
+            nodes,
+            completion,
+            &work.final_reconciliation,
+            "initial consistency",
+        )?;
+    }
+    for completions in work.required_product_staging.values() {
+        for product in completions {
+            let producer = event_node(product);
+            for completion in &reconciliation_completions {
+                require_precedes(nodes, completion, producer, "final reconciliation")?;
+            }
+            require_precedes(nodes, product, &work.commit, "required product staging")?;
+        }
+    }
+    if let Some(model) = &work.model_column_staging {
+        for completion in &reconciliation_completions {
+            require_precedes(nodes, completion, model, "final reconciliation")?;
+        }
+        for completion in completion_events(&nodes[model]) {
+            require_precedes(nodes, &completion, &work.commit, "model-column staging")?;
+        }
+    }
+    for node in nodes.values().filter(|node| node.id != work.commit) {
+        for completion in completion_events(node) {
+            require_precedes(
+                nodes,
+                &completion,
+                &work.commit,
+                "atomic commit terminal ordering",
+            )?;
+        }
+    }
+    Ok(observation_reads)
+}
+
+fn derive_observation_reads(
+    nodes: &BTreeMap<WorkNodeId, WorkNode>,
+    initial: &WorkNode,
+    commit: &WorkNodeId,
+) -> Result<BTreeSet<WorkDependency>, ObservationTransactionPlanError> {
+    let mut completions = BTreeSet::new();
+    for node in nodes.values() {
+        let holds_measurement_set_lock = node
+            .claims
+            .iter()
+            .any(|claim| matches!(claim.resource, LeaseResource::MeasurementSetLock { .. }));
+        if node.kind == WorkKind::ObservationRead {
+            completions.extend(completion_events(node));
+        } else if holds_measurement_set_lock && node.id != initial.id && &node.id != commit {
+            return invalid(format!(
+                "node {} declares a MeasurementSet lock without the observation-read role",
+                node.id.as_str()
+            ));
+        }
+    }
+    Ok(completions)
+}
+
+fn require_node<'a>(
+    nodes: &'a BTreeMap<WorkNodeId, WorkNode>,
+    id: &WorkNodeId,
+    role: &str,
+) -> Result<&'a WorkNode, ObservationTransactionPlanError> {
+    nodes
+        .get(id)
+        .ok_or_else(|| ObservationTransactionPlanError::InvalidPlan {
+            reason: format!("{role} node {} is absent", id.as_str()),
+        })
+}
+
+fn require_event<'a>(
+    nodes: &'a BTreeMap<WorkNodeId, WorkNode>,
+    event: &WorkDependency,
+    role: &str,
+) -> Result<&'a WorkNode, ObservationTransactionPlanError> {
+    let producer = require_node(nodes, event_node(event), role)?;
+    if let WorkDependency::Fence(fence) = event
+        && !producer.fences.contains(&fence.kind())
+    {
+        return invalid(format!(
+            "{role} references undeclared {:?} fence on node {}",
+            fence.kind(),
+            producer.id.as_str()
+        ));
+    }
+    Ok(producer)
+}
+
+fn completion_events(node: &WorkNode) -> BTreeSet<WorkDependency> {
+    if node.fences.is_empty() {
+        BTreeSet::from([WorkDependency::Work(node.id.clone())])
+    } else {
+        node.fences
+            .iter()
+            .map(|kind| WorkDependency::Fence(FenceId::new(node.id.clone(), *kind)))
+            .collect()
+    }
+}
+
+fn require_exact_completion_events<'a>(
+    nodes: &'a BTreeMap<WorkNodeId, WorkNode>,
+    declared: &BTreeSet<WorkDependency>,
+    role: &str,
+) -> Result<Vec<&'a WorkNode>, ObservationTransactionPlanError> {
+    let mut producers = BTreeMap::<WorkNodeId, &WorkNode>::new();
+    for event in declared {
+        let producer = require_event(nodes, event, role)?;
+        producers.insert(producer.id.clone(), producer);
+    }
+    for producer in producers.values() {
+        let expected = completion_events(producer);
+        let actual = declared
+            .iter()
+            .filter(|event| event_node(event) == &producer.id)
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if actual != expected {
+            return invalid(format!(
+                "{role} node {} completion events {actual:?} do not match terminal events {expected:?}",
+                producer.id.as_str()
+            ));
+        }
+    }
+    Ok(producers.into_values().collect())
+}
+
+fn require_kind(
+    node: &WorkNode,
+    expected: WorkKind,
+    role: &str,
+) -> Result<(), ObservationTransactionPlanError> {
+    if node.kind == expected {
+        Ok(())
+    } else {
+        invalid(format!(
+            "{role} node {} has kind {:?}, expected {expected:?}",
+            node.id.as_str(),
+            node.kind
+        ))
+    }
+}
+
+fn require_claim(
+    node: &WorkNode,
+    predicate: fn(&LeaseResource) -> bool,
+    resource: &str,
+    role: &str,
+) -> Result<(), ObservationTransactionPlanError> {
+    if node.claims.iter().any(|claim| predicate(&claim.resource)) {
+        Ok(())
+    } else {
+        invalid(format!("{role} node {} omits {resource}", node.id.as_str()))
+    }
+}
+
+fn require_exact_lock_count(
+    node: &WorkNode,
+    required: usize,
+    role: &str,
+) -> Result<(), ObservationTransactionPlanError> {
+    let mut measurement_sets = BTreeSet::new();
+    for claim in &node.claims {
+        match claim.resource {
+            LeaseResource::MeasurementSetLock { measurement_set } => {
+                if claim.amount != 1 || !measurement_sets.insert(measurement_set) {
+                    return invalid(format!(
+                        "{role} node {} has an ambiguous MeasurementSet lock claim",
+                        node.id.as_str()
+                    ));
+                }
+            }
+            LeaseResource::Locks => {
+                return invalid(format!(
+                    "{role} node {} uses an unscoped aggregate lock claim",
+                    node.id.as_str()
+                ));
+            }
+            _ => {}
+        }
+    }
+    if measurement_sets.len() != required {
+        return invalid(format!(
+            "{role} node {} reserves {} exact MeasurementSet locks, expected {required}",
+            node.id.as_str(),
+            measurement_sets.len()
+        ));
+    }
+    Ok(())
+}
+
+fn validate_measurement_set_lock_identities(
+    required: &BTreeSet<MeasurementSetIdentity>,
+    nodes: &BTreeMap<WorkNodeId, WorkNode>,
+    work: &ObservationTransactionWork,
+) -> Result<(), ObservationTransactionPlanError> {
+    let mut lock_nodes = vec![
+        require_node(
+            nodes,
+            &work.initial_consistency_check,
+            "initial consistency",
+        )?,
+        require_node(nodes, &work.commit, "atomic commit")?,
+    ];
+    for read in &work.observation_reads {
+        lock_nodes.push(require_event(nodes, read, "observation read")?);
+    }
+    lock_nodes.sort_unstable_by(|left, right| left.id.cmp(&right.id));
+    lock_nodes.dedup_by(|left, right| left.id == right.id);
+    for node in lock_nodes {
+        let actual = node
+            .claims
+            .iter()
+            .filter_map(|claim| match claim.resource {
+                LeaseResource::MeasurementSetLock { measurement_set } => Some(measurement_set),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        if &actual != required {
+            return invalid(format!(
+                "transaction node {} MeasurementSet locks {actual:?} do not match read-set identities {required:?}",
+                node.id.as_str()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn require_precedes(
+    nodes: &BTreeMap<WorkNodeId, WorkNode>,
+    prerequisite: &WorkDependency,
+    target: &WorkNodeId,
+    role: &str,
+) -> Result<(), ObservationTransactionPlanError> {
+    let mut visited = BTreeSet::new();
+    if event_precedes(nodes, prerequisite, target, &mut visited) {
+        Ok(())
+    } else {
+        invalid(format!(
+            "{role} event does not precede node {}",
+            target.as_str()
+        ))
+    }
+}
+
+fn event_precedes(
+    nodes: &BTreeMap<WorkNodeId, WorkNode>,
+    prerequisite: &WorkDependency,
+    target: &WorkNodeId,
+    visited: &mut BTreeSet<WorkNodeId>,
+) -> bool {
+    if !visited.insert(target.clone()) {
+        return false;
+    }
+    let Some(node) = nodes.get(target) else {
+        return false;
+    };
+    node.dependencies.contains(prerequisite)
+        || node
+            .dependencies
+            .iter()
+            .any(|dependency| event_precedes(nodes, prerequisite, event_node(dependency), visited))
+}
+
+fn event_node(event: &WorkDependency) -> &WorkNodeId {
+    match event {
+        WorkDependency::Work(node) => node,
+        WorkDependency::Fence(fence) => fence.node(),
+    }
+}
+
+fn is_staged_output(resource: &LeaseResource) -> bool {
+    matches!(
+        resource,
+        LeaseResource::Storage {
+            use_kind: StorageUseKind::StagedOutput,
+            ..
+        }
+    )
+}
+
+fn is_writeback_buffer(resource: &LeaseResource) -> bool {
+    matches!(resource, LeaseResource::IoBuffer(IoBufferKind::Writeback))
+}
+
+fn is_publication_buffer(resource: &LeaseResource) -> bool {
+    matches!(resource, LeaseResource::IoBuffer(IoBufferKind::Publication))
+}
+
+fn shares_staging_demand(left: &WorkNode, right: &WorkNode) -> bool {
+    left.claims.iter().any(|left_claim| {
+        let LeaseResource::Storage {
+            demand_id: left_id,
+            use_kind: StorageUseKind::StagedOutput,
+        } = &left_claim.resource
+        else {
+            return false;
+        };
+        right.claims.iter().any(|right_claim| {
+            matches!(
+                &right_claim.resource,
+                LeaseResource::Storage {
+                    demand_id: right_id,
+                    use_kind: StorageUseKind::StagedOutput,
+                } if right_id == left_id
+            )
+        })
+    })
+}
+
+fn invalid<T>(reason: impl Into<String>) -> Result<T, ObservationTransactionPlanError> {
+    Err(ObservationTransactionPlanError::InvalidPlan {
+        reason: reason.into(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use casa_imaging_model::{LogicalIdentity, MeasurementSetIdentity};
+
+    use crate::{
+        AllocationAccess, AllocationId, AllocationLayout, AllocationLifetime, AllocationPurpose,
+        AllocationUse, AlternativeId, CacheDemand, CapabilityPredicate, CapacityDomainId,
+        CapacityViewId, ClaimLifetime, CountDemand, DemandAlternative, DemandEnvelope,
+        ExecutionDagSpecification, ExecutionKnobs, FenceId, FenceKind, InitializationPolicy,
+        IoBufferDemand, IoBufferKind, LeaseResource, LogicalAllocation, MemoryDemand, PhysicalSlot,
+        PhysicalSlotId, QueueDemand, QueueResourceId, QuiescencePoint, RateDemand, RateResourceId,
+        ResourceClaim, ResourceHeadroom, RuntimeOverheadDemand, ScalingMetadata, SlotCompatibility,
+        StorageDemand, StorageDomainId, StorageMode, StorageUseKind, WorkDependency, WorkDomain,
+        WorkImplementationId, WorkKind, WorkNode, WorkNodeId,
+    };
+
+    use super::*;
+
+    fn claim(resource: LeaseResource) -> ResourceClaim {
+        ResourceClaim {
+            resource,
+            amount: 1,
+            lifetime: ClaimLifetime::Work,
+        }
+    }
+
+    fn measurement_set(byte: u8) -> MeasurementSetIdentity {
+        MeasurementSetIdentity::new(LogicalIdentity::from_sha256([byte; 32]))
+    }
+
+    fn measurement_set_lock(byte: u8) -> LeaseResource {
+        LeaseResource::MeasurementSetLock {
+            measurement_set: measurement_set(byte),
+        }
+    }
+
+    fn node(
+        id: &str,
+        kind: WorkKind,
+        dependencies: BTreeSet<WorkDependency>,
+        claims: Vec<ResourceClaim>,
+        fences: BTreeSet<FenceKind>,
+    ) -> WorkNode {
+        let domain = match kind {
+            WorkKind::Io
+            | WorkKind::ObservationRead
+            | WorkKind::Writeback
+            | WorkKind::Publication => WorkDomain::Io,
+            _ => WorkDomain::Cpu,
+        };
+        let lifetime = match &domain {
+            WorkDomain::Io => ClaimLifetime::through_fences(fences.iter().copied()),
+            _ => ClaimLifetime::Work,
+        };
+        let mut claims = claims;
+        for claim in &mut claims {
+            claim.lifetime = lifetime.clone();
+        }
+        match &domain {
+            WorkDomain::Cpu => claims.push(ResourceClaim {
+                resource: LeaseResource::Workers,
+                amount: 1,
+                lifetime: ClaimLifetime::Work,
+            }),
+            WorkDomain::Io => claims.extend([
+                ResourceClaim {
+                    resource: LeaseResource::Rate {
+                        demand_id: "transaction-io-rate".to_string(),
+                    },
+                    amount: 1,
+                    lifetime: lifetime.clone(),
+                },
+                ResourceClaim {
+                    resource: LeaseResource::Queue {
+                        demand_id: "transaction-io-queue".to_string(),
+                    },
+                    amount: 1,
+                    lifetime,
+                },
+            ]),
+            WorkDomain::Control | WorkDomain::Metal { .. } => unreachable!("fixture domain"),
+        }
+        WorkNode {
+            id: WorkNodeId::new(id),
+            kind,
+            domain,
+            implementation: WorkImplementationId::new("transaction-test"),
+            dependencies,
+            claims,
+            allocations: match kind {
+                WorkKind::Writeback => vec![AllocationUse {
+                    allocation: AllocationId::new("writeback-buffer"),
+                    lifetime: ClaimLifetime::through_fences([FenceKind::Io, FenceKind::Writeback]),
+                }],
+                WorkKind::Publication => vec![AllocationUse {
+                    allocation: AllocationId::new("publication-buffer"),
+                    lifetime: ClaimLifetime::through_fences([
+                        FenceKind::Io,
+                        FenceKind::Publication,
+                    ]),
+                }],
+                _ => Vec::new(),
+            },
+            fences,
+            quiescence_after: BTreeSet::new(),
+        }
+    }
+
+    fn transaction_nodes() -> (BTreeMap<WorkNodeId, WorkNode>, ObservationTransactionWork) {
+        let initial = WorkNodeId::new("check-initial");
+        let read = WorkNodeId::new("read-observation");
+        let reconciliation = WorkNodeId::new("final-reconciliation");
+        let product = WorkNodeId::new("stage-products");
+        let model = WorkNodeId::new("stage-model-column");
+        let commit = WorkNodeId::new("commit-side-effects");
+        let staged_storage = || LeaseResource::Storage {
+            demand_id: "atomic-output".to_string(),
+            use_kind: StorageUseKind::StagedOutput,
+        };
+        let model_completion =
+            WorkDependency::Fence(FenceId::new(model.clone(), FenceKind::Writeback));
+        let model_io_completion = WorkDependency::Fence(FenceId::new(model.clone(), FenceKind::Io));
+        let product_completion = WorkDependency::Work(product.clone());
+        let read_completion = WorkDependency::Fence(FenceId::new(read.clone(), FenceKind::Io));
+        let nodes = [
+            node(
+                initial.as_str(),
+                WorkKind::DataCensus,
+                BTreeSet::new(),
+                vec![claim(measurement_set_lock(1))],
+                BTreeSet::new(),
+            ),
+            node(
+                read.as_str(),
+                WorkKind::ObservationRead,
+                BTreeSet::from([WorkDependency::Work(initial.clone())]),
+                vec![claim(measurement_set_lock(1))],
+                BTreeSet::from([FenceKind::Io]),
+            ),
+            node(
+                reconciliation.as_str(),
+                WorkKind::Compute,
+                BTreeSet::from([read_completion.clone()]),
+                Vec::new(),
+                BTreeSet::new(),
+            ),
+            node(
+                product.as_str(),
+                WorkKind::Serialization,
+                BTreeSet::from([WorkDependency::Work(reconciliation.clone())]),
+                vec![claim(staged_storage())],
+                BTreeSet::new(),
+            ),
+            node(
+                model.as_str(),
+                WorkKind::Writeback,
+                BTreeSet::from([WorkDependency::Work(reconciliation.clone())]),
+                vec![
+                    claim(staged_storage()),
+                    claim(LeaseResource::IoBuffer(IoBufferKind::Writeback)),
+                ],
+                BTreeSet::from([FenceKind::Io, FenceKind::Writeback]),
+            ),
+            node(
+                commit.as_str(),
+                WorkKind::Publication,
+                BTreeSet::from([
+                    product_completion.clone(),
+                    model_completion.clone(),
+                    model_io_completion,
+                ]),
+                vec![
+                    claim(measurement_set_lock(1)),
+                    claim(staged_storage()),
+                    claim(LeaseResource::IoBuffer(IoBufferKind::Publication)),
+                ],
+                BTreeSet::from([FenceKind::Io, FenceKind::Publication]),
+            ),
+        ]
+        .into_iter()
+        .collect::<Vec<_>>();
+        let compatibility = |layout| SlotCompatibility {
+            memory_domain: CapacityDomainId::new("host-memory"),
+            views: BTreeSet::from([CapacityViewId::new("host-memory")]),
+            alignment_bytes: 1,
+            storage_mode: StorageMode::Host,
+            layout: AllocationLayout::new(layout),
+            initialization: InitializationPolicy::Preserve,
+            access: AllocationAccess::ReadWrite,
+        };
+        let writeback_compatibility = compatibility("writeback-buffer");
+        let publication_compatibility = compatibility("publication-buffer");
+        let dag = ExecutionDag::new(ExecutionDagSpecification {
+            required_resource_capabilities: BTreeSet::new(),
+            resource_alternative: DemandAlternative {
+                id: AlternativeId::new("transaction-test"),
+                capabilities: CapabilityPredicate::default(),
+                demand: DemandEnvelope {
+                    host_memory_view: CapacityViewId::new("host-memory"),
+                    memory: vec![
+                        MemoryDemand {
+                            allocation_id: "writeback-slot".to_string(),
+                            hard_bytes: 1,
+                            preferred_bytes: 1,
+                            views: vec![CapacityViewId::new("host-memory")],
+                        },
+                        MemoryDemand {
+                            allocation_id: "publication-slot".to_string(),
+                            hard_bytes: 1,
+                            preferred_bytes: 1,
+                            views: vec![CapacityViewId::new("host-memory")],
+                        },
+                    ],
+                    workers: CountDemand::new(1, 1),
+                    overhead: RuntimeOverheadDemand::zero(),
+                    storage: vec![StorageDemand {
+                        demand_id: "atomic-output".to_string(),
+                        domain: StorageDomainId::new("atomic-output"),
+                        temporary_bytes: 0,
+                        staged_output_bytes: 3,
+                        final_output_bytes: 0,
+                        persistent_cache_bytes: 0,
+                        read_rate: CountDemand::zero(),
+                        write_rate: CountDemand::zero(),
+                        operations_rate: CountDemand::zero(),
+                        queue_slots: CountDemand::zero(),
+                    }],
+                    rates: vec![RateDemand {
+                        demand_id: "transaction-io-rate".to_string(),
+                        resource: RateResourceId::new("transaction-io-rate"),
+                        amount: CountDemand::new(1, 1),
+                    }],
+                    caches: CacheDemand::zero(),
+                    locks: CountDemand::new(1, 1),
+                    file_descriptors: CountDemand::zero(),
+                    queues: vec![QueueDemand {
+                        demand_id: "transaction-io-queue".to_string(),
+                        resource: QueueResourceId::new("transaction-io-queue"),
+                        slots: CountDemand::new(1, 1),
+                    }],
+                    transfers: Vec::new(),
+                    accelerators: Vec::new(),
+                    io_buffers: IoBufferDemand {
+                        writeback_bytes: 1,
+                        publication_bytes: 1,
+                        ..IoBufferDemand::zero()
+                    },
+                },
+                headroom: ResourceHeadroom::default(),
+                scaling: ScalingMetadata {
+                    minimum_workers: 1,
+                    maximum_workers: 1,
+                    maximum_batch_size: 1,
+                    maximum_tile_width: 1,
+                    maximum_tile_height: 1,
+                    maximum_slab_depth: 1,
+                    memory_bytes_per_worker: BTreeMap::new(),
+                },
+                quiescence_points: BTreeSet::from([QuiescencePoint::RunBoundary]),
+            },
+            nodes,
+            logical_allocations: vec![
+                LogicalAllocation {
+                    id: AllocationId::new("writeback-buffer"),
+                    bytes: 1,
+                    purpose: AllocationPurpose::IoBuffer(IoBufferKind::Writeback),
+                    compatibility: writeback_compatibility.clone(),
+                    physical_slot: PhysicalSlotId::new("writeback-slot"),
+                    lifetime: AllocationLifetime {
+                        acquire_at: model.clone(),
+                        release_after: BTreeSet::from([
+                            WorkDependency::Fence(FenceId::new(model.clone(), FenceKind::Io)),
+                            model_completion.clone(),
+                        ]),
+                    },
+                },
+                LogicalAllocation {
+                    id: AllocationId::new("publication-buffer"),
+                    bytes: 1,
+                    purpose: AllocationPurpose::IoBuffer(IoBufferKind::Publication),
+                    compatibility: publication_compatibility.clone(),
+                    physical_slot: PhysicalSlotId::new("publication-slot"),
+                    lifetime: AllocationLifetime {
+                        acquire_at: commit.clone(),
+                        release_after: BTreeSet::from([
+                            WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Io)),
+                            WorkDependency::Fence(FenceId::new(
+                                commit.clone(),
+                                FenceKind::Publication,
+                            )),
+                        ]),
+                    },
+                },
+            ],
+            physical_slots: vec![
+                PhysicalSlot {
+                    id: PhysicalSlotId::new("writeback-slot"),
+                    lease_resource: LeaseResource::Memory {
+                        allocation_id: "writeback-slot".to_string(),
+                    },
+                    capacity_bytes: 1,
+                    compatibility: writeback_compatibility,
+                },
+                PhysicalSlot {
+                    id: PhysicalSlotId::new("publication-slot"),
+                    lease_resource: LeaseResource::Memory {
+                        allocation_id: "publication-slot".to_string(),
+                    },
+                    capacity_bytes: 1,
+                    compatibility: publication_compatibility,
+                },
+            ],
+            initial_knobs: ExecutionKnobs::serial(),
+            adaptations: Vec::new(),
+        })
+        .expect("canonical transaction test DAG");
+        let work = ObservationTransactionWork::new(
+            initial,
+            reconciliation,
+            BTreeMap::from([(ProductKind::Psf, BTreeSet::from([product_completion]))]),
+            Some(model),
+            commit,
+        );
+        (dag.nodes().clone(), work)
+    }
+
+    #[test]
+    fn observation_reads_form_the_mutation_and_failure_cut() {
+        let (nodes, work) = transaction_nodes();
+        let observation_reads =
+            validate_transaction_nodes(1, 1, &nodes, &work).expect("complete transaction cut");
+        assert_eq!(
+            observation_reads,
+            BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                WorkNodeId::new("read-observation"),
+                FenceKind::Io,
+            ))])
+        );
+
+        let mut read_before_check = nodes.clone();
+        read_before_check
+            .get_mut(&WorkNodeId::new("read-observation"))
+            .expect("observation read")
+            .dependencies
+            .clear();
+        assert!(validate_transaction_nodes(1, 1, &read_before_check, &work).is_err());
+
+        let mut unlocked_read = nodes.clone();
+        unlocked_read
+            .get_mut(&WorkNodeId::new("read-observation"))
+            .expect("observation read")
+            .claims
+            .clear();
+        assert!(
+            validate_transaction_nodes(1, 1, &unlocked_read, &work).is_err(),
+            "every observation read must hold all source locks"
+        );
+
+        let mut reconcile_before_read = nodes;
+        reconcile_before_read
+            .get_mut(&WorkNodeId::new("final-reconciliation"))
+            .expect("final reconciliation")
+            .dependencies
+            .clear();
+        assert!(validate_transaction_nodes(1, 1, &reconcile_before_read, &work).is_err());
+    }
+
+    #[test]
+    fn transaction_boundary_rejects_untyped_source_io() {
+        let (mut nodes, work) = transaction_nodes();
+        let hidden = WorkNodeId::new("hidden-observation-read");
+        let hidden_completion = WorkDependency::Fence(FenceId::new(hidden.clone(), FenceKind::Io));
+        nodes.insert(
+            hidden.clone(),
+            node(
+                hidden.as_str(),
+                WorkKind::Io,
+                BTreeSet::from([WorkDependency::Work(WorkNodeId::new("check-initial"))]),
+                vec![claim(measurement_set_lock(1))],
+                BTreeSet::from([FenceKind::Io]),
+            ),
+        );
+        nodes
+            .get_mut(&WorkNodeId::new("final-reconciliation"))
+            .expect("final reconciliation")
+            .dependencies
+            .insert(hidden_completion);
+
+        assert!(
+            validate_transaction_nodes(1, 1, &nodes, &work).is_err(),
+            "a lock-bearing generic I/O node cannot hide an observation read outside the transaction cut"
+        );
+    }
+
+    #[test]
+    fn transaction_boundary_requires_terminal_atomic_commit() {
+        let (mut nodes, work) = transaction_nodes();
+        nodes.insert(
+            WorkNodeId::new("post-commit-fallible-io"),
+            node(
+                "post-commit-fallible-io",
+                WorkKind::Io,
+                BTreeSet::from([WorkDependency::Work(WorkNodeId::new("commit-side-effects"))]),
+                Vec::new(),
+                BTreeSet::from([FenceKind::Io]),
+            ),
+        );
+
+        assert!(
+            validate_transaction_nodes(1, 1, &nodes, &work).is_err(),
+            "the atomic commit cannot precede another fallible completion"
+        );
+    }
+
+    #[test]
+    fn asynchronous_observation_read_cannot_use_its_launch_as_completion() {
+        let (mut nodes, work) = transaction_nodes();
+        let read = WorkNodeId::new("read-observation");
+        let reconciliation = nodes
+            .get_mut(&WorkNodeId::new("final-reconciliation"))
+            .expect("final reconciliation");
+        reconciliation.dependencies.clear();
+        reconciliation
+            .dependencies
+            .insert(WorkDependency::Work(read));
+
+        assert!(
+            validate_transaction_nodes(1, 1, &nodes, &work).is_err(),
+            "a fenced observation read must name every terminal fence, not its launch"
+        );
+    }
+
+    #[test]
+    fn asynchronous_initial_check_and_reconciliation_gate_their_terminal_fences() {
+        let (mut nodes, work) = transaction_nodes();
+        let initial = WorkNodeId::new("check-initial");
+        nodes
+            .get_mut(&initial)
+            .expect("initial check")
+            .fences
+            .insert(FenceKind::Io);
+        assert!(
+            validate_transaction_nodes(1, 1, &nodes, &work).is_err(),
+            "observation reads cannot start from an asynchronous initial-check launch"
+        );
+
+        let (mut nodes, work) = transaction_nodes();
+        let reconciliation = WorkNodeId::new("final-reconciliation");
+        nodes
+            .get_mut(&reconciliation)
+            .expect("final reconciliation")
+            .fences
+            .insert(FenceKind::Device);
+        assert!(
+            validate_transaction_nodes(1, 1, &nodes, &work).is_err(),
+            "private staging cannot start from an asynchronous reconciliation launch"
+        );
+    }
+
+    #[test]
+    fn mutation_cancellation_and_precommit_failures_cannot_reach_visibility() {
+        let (mut nodes, work) = transaction_nodes();
+        let commit = WorkNodeId::new("commit-side-effects");
+        for (failure, event) in [
+            (
+                "input mutation",
+                WorkDependency::Work(WorkNodeId::new("check-initial")),
+            ),
+            (
+                "observation read",
+                WorkDependency::Fence(FenceId::new(
+                    WorkNodeId::new("read-observation"),
+                    FenceKind::Io,
+                )),
+            ),
+            (
+                "numerical reconciliation",
+                WorkDependency::Work(WorkNodeId::new("final-reconciliation")),
+            ),
+            (
+                "product output",
+                WorkDependency::Work(WorkNodeId::new("stage-products")),
+            ),
+            (
+                "model writeback",
+                WorkDependency::Fence(FenceId::new(
+                    WorkNodeId::new("stage-model-column"),
+                    FenceKind::Writeback,
+                )),
+            ),
+        ] {
+            assert!(
+                event_precedes(&nodes, &event, &commit, &mut BTreeSet::new()),
+                "{failure} and cancellation at that cut must block publication"
+            );
+        }
+
+        nodes.insert(
+            WorkNodeId::new("rogue-publication"),
+            node(
+                "rogue-publication",
+                WorkKind::Publication,
+                BTreeSet::from([WorkDependency::Work(WorkNodeId::new("check-initial"))]),
+                Vec::new(),
+                BTreeSet::new(),
+            ),
+        );
+        assert!(
+            validate_transaction_nodes(1, 1, &nodes, &work).is_err(),
+            "no failure path may expose a partial generation through another publication node"
+        );
+    }
+
+    #[test]
+    fn atomic_model_transaction_requires_declared_resources() {
+        let (nodes, work) = transaction_nodes();
+        validate_transaction_nodes(1, 1, &nodes, &work).expect("complete transaction resources");
+
+        for (node_id, resource) in [
+            ("check-initial", measurement_set_lock(1)),
+            (
+                "stage-model-column",
+                LeaseResource::Storage {
+                    demand_id: "atomic-output".to_string(),
+                    use_kind: StorageUseKind::StagedOutput,
+                },
+            ),
+            (
+                "stage-model-column",
+                LeaseResource::IoBuffer(IoBufferKind::Writeback),
+            ),
+            (
+                "commit-side-effects",
+                LeaseResource::IoBuffer(IoBufferKind::Publication),
+            ),
+        ] {
+            let mut incomplete = nodes.clone();
+            incomplete
+                .get_mut(&WorkNodeId::new(node_id))
+                .expect("fixture node")
+                .claims
+                .retain(|claim| claim.resource != resource);
+            assert!(validate_transaction_nodes(1, 1, &incomplete, &work).is_err());
+        }
+
+        let mut no_commit_fence = nodes;
+        no_commit_fence
+            .get_mut(&WorkNodeId::new("commit-side-effects"))
+            .expect("commit node")
+            .fences
+            .remove(&FenceKind::Publication);
+        assert!(validate_transaction_nodes(1, 1, &no_commit_fence, &work).is_err());
+    }
+
+    #[test]
+    fn atomic_commit_waits_for_complete_staging_in_one_domain() {
+        let (nodes, work) = transaction_nodes();
+        validate_transaction_nodes(1, 1, &nodes, &work).expect("complete transaction ordering");
+
+        let mut unstaged_product = nodes.clone();
+        unstaged_product
+            .get_mut(&WorkNodeId::new("stage-products"))
+            .expect("product node")
+            .claims
+            .clear();
+        assert!(validate_transaction_nodes(1, 1, &unstaged_product, &work).is_err());
+
+        let mut split_staging_domains = nodes.clone();
+        let commit = split_staging_domains
+            .get_mut(&WorkNodeId::new("commit-side-effects"))
+            .expect("commit node");
+        let storage = commit
+            .claims
+            .iter_mut()
+            .find(|claim| {
+                matches!(
+                    &claim.resource,
+                    LeaseResource::Storage {
+                        use_kind: StorageUseKind::StagedOutput,
+                        ..
+                    }
+                )
+            })
+            .expect("staged storage claim");
+        storage.resource = LeaseResource::Storage {
+            demand_id: "different-output-domain".to_string(),
+            use_kind: StorageUseKind::StagedOutput,
+        };
+        assert!(validate_transaction_nodes(1, 1, &split_staging_domains, &work).is_err());
+
+        let mut early_commit = nodes;
+        early_commit
+            .get_mut(&WorkNodeId::new("commit-side-effects"))
+            .expect("commit node")
+            .dependencies
+            .clear();
+        assert!(validate_transaction_nodes(1, 1, &early_commit, &work).is_err());
+    }
+
+    #[test]
+    fn multi_ms_transactions_reserve_every_concurrent_table_lock() {
+        let (mut nodes, work) = transaction_nodes();
+        assert!(validate_transaction_nodes(2, 2, &nodes, &work).is_err());
+
+        for node_id in ["check-initial", "read-observation", "commit-side-effects"] {
+            nodes
+                .get_mut(&WorkNodeId::new(node_id))
+                .expect("lock-owning node")
+                .claims
+                .push(claim(measurement_set_lock(2)));
+        }
+        validate_transaction_nodes(2, 2, &nodes, &work)
+            .expect("one concurrent table lock per MeasurementSet");
+    }
+
+    #[test]
+    fn transaction_lock_claims_are_exact_and_unambiguous() {
+        let (mut excess, work) = transaction_nodes();
+        excess
+            .get_mut(&WorkNodeId::new("check-initial"))
+            .expect("initial check")
+            .claims
+            .iter_mut()
+            .find(|claim| matches!(claim.resource, LeaseResource::MeasurementSetLock { .. }))
+            .expect("lock claim")
+            .amount = 2;
+        assert!(
+            validate_transaction_nodes(1, 1, &excess, &work).is_err(),
+            "one MeasurementSet cannot be represented by an excess lock claim"
+        );
+
+        let (mut ambiguous, work) = transaction_nodes();
+        ambiguous
+            .get_mut(&WorkNodeId::new("check-initial"))
+            .expect("initial check")
+            .claims
+            .push(claim(measurement_set_lock(1)));
+        assert!(
+            validate_transaction_nodes(1, 1, &ambiguous, &work).is_err(),
+            "multiple aggregate lock claims do not identify one exact per-MS lock set"
+        );
+
+        let (mut wrong_identity, work) = transaction_nodes();
+        for node_id in ["check-initial", "read-observation", "commit-side-effects"] {
+            let claim = wrong_identity
+                .get_mut(&WorkNodeId::new(node_id))
+                .expect("lock-owning node")
+                .claims
+                .iter_mut()
+                .find(|claim| matches!(claim.resource, LeaseResource::MeasurementSetLock { .. }))
+                .expect("MeasurementSet lock claim");
+            claim.resource = measurement_set_lock(9);
+        }
+        assert!(
+            validate_measurement_set_lock_identities(
+                &BTreeSet::from([measurement_set(1)]),
+                &wrong_identity,
+                &work,
+            )
+            .is_err(),
+            "lock count alone cannot substitute another MeasurementSet identity"
+        );
+    }
+
+    #[test]
+    fn model_staging_presence_matches_the_logical_write_set() {
+        let (nodes, writable) = transaction_nodes();
+        validate_transaction_nodes(1, 1, &nodes, &writable).expect("writable transaction");
+        assert!(validate_transaction_nodes(1, 0, &nodes, &writable).is_err());
+
+        let read_only = ObservationTransactionWork::new(
+            writable.initial_consistency_check.clone(),
+            writable.final_reconciliation.clone(),
+            writable.required_product_staging.clone(),
+            None,
+            writable.commit.clone(),
+        );
+        validate_transaction_nodes(1, 0, &nodes, &read_only).expect("read-only transaction");
+        assert!(validate_transaction_nodes(1, 1, &nodes, &read_only).is_err());
+    }
+
+    #[test]
+    fn commit_cannot_bypass_reconciliation_or_staging() {
+        let (nodes, work) = transaction_nodes();
+        for node_id in ["stage-products", "stage-model-column"] {
+            let mut bypass = nodes.clone();
+            bypass
+                .get_mut(&WorkNodeId::new(node_id))
+                .expect("staging node")
+                .dependencies
+                .clear();
+            assert!(validate_transaction_nodes(1, 1, &bypass, &work).is_err());
+        }
+
+        let mut premature_product_visibility = nodes;
+        premature_product_visibility
+            .get_mut(&WorkNodeId::new("stage-products"))
+            .expect("product staging node")
+            .kind = WorkKind::Publication;
+        assert!(validate_transaction_nodes(1, 1, &premature_product_visibility, &work).is_err());
+    }
+
+    #[test]
+    fn commit_waits_for_every_model_staging_fence() {
+        let (mut nodes, work) = transaction_nodes();
+        nodes
+            .get_mut(&WorkNodeId::new("commit-side-effects"))
+            .expect("commit node")
+            .dependencies
+            .remove(&WorkDependency::Fence(FenceId::new(
+                WorkNodeId::new("stage-model-column"),
+                FenceKind::Io,
+            )));
+
+        assert!(
+            validate_transaction_nodes(1, 1, &nodes, &work).is_err(),
+            "commit must wait for every staging fence"
+        );
+    }
+
+    #[test]
+    fn product_staging_names_every_asynchronous_completion() {
+        let (mut nodes, work) = transaction_nodes();
+        nodes
+            .get_mut(&WorkNodeId::new("stage-products"))
+            .expect("product staging node")
+            .fences
+            .insert(FenceKind::Io);
+
+        assert!(
+            validate_transaction_nodes(1, 1, &nodes, &work).is_err(),
+            "a synchronous work event cannot stand in for a live product fence"
+        );
+    }
+}

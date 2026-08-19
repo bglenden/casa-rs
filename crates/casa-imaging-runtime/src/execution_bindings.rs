@@ -1,27 +1,40 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::{collections::BTreeMap, error::Error, fmt, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+    path::Path,
+};
 
 use casa_imaging_model::{
-    CompiledGeometryId, CompiledProblem, CompiledProblemId, NumericsContractId,
-    ObservationSnapshotId, ProblemInputIdentities, ReferenceDataKind,
+    CompiledGeometry, CompiledGeometryId, CompiledProblem, CompiledProblemId, NumericsContract,
+    NumericsContractId, ObservationReadSet, ObservationSnapshotId, ObservationTransactionContract,
+    ObservationWriteSet, ProblemInputIdentities, ProductKind, ProductRequirements,
+    ReconstructionContract, ReferenceDataKind, RequiredCapability, ScientificContract,
+    WeightingContract,
 };
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AdaptationId, AdaptationTransition, ClaimLifetime, ExecutionError, ExecutionKnobs,
-    ExecutionOutcome, ExecutionReceiptBinding, FenceKind, IoBufferKind, LeaseResource,
-    ReceiptError, ReceiptFailureKind, ReceiptStatus, ResourceAuthority, ResourceOverride,
-    ResourcePolicy, ScheduledWork, WorkImplementationId, WorkKind, WorkNodeId,
+    AdaptationId, AdaptationTransition, AllocationId, ClaimLifetime, ExecutionError,
+    ExecutionKnobs, ExecutionOutcome, ExecutionReceiptBinding, FenceKind, IoBufferKind,
+    LeaseResource, PhysicalSlotId, ReceiptError, ReceiptFailureKind, ReceiptStatus,
+    ResourceAuthority, ResourceOverride, ResourcePolicy, ScheduledWork, WorkImplementationId,
+    WorkKind, WorkNodeId,
     execution::{
-        ExecutionDag, ExecutionScheduler, SchedulerAction, SchedulerTerminal, WorkResult,
-        io_buffer_kind_supports_work_kind,
+        ExecutionDag, ExecutionScheduler, PublicationReservation, SchedulerAction,
+        SchedulerTerminal, WorkResult, io_buffer_kind_supports_work_kind,
+    },
+    observation_transaction::{
+        BoundObservationTransaction, ObservationTransactionPlanError, ObservationTransactionWork,
+        bind_observation_transaction,
     },
     receipt::{ReceiptFailure, ReceiptRecorder},
 };
 
 const EXECUTION_PLAN_IDENTITY_DOMAIN: &[u8] = b"casa-rs-execution-plan";
-const EXECUTION_PLAN_IDENTITY_VERSION: u32 = 4;
+const EXECUTION_PLAN_IDENTITY_VERSION: u32 = 7;
 const RESOURCE_POLICY_IDENTITY_DOMAIN: &[u8] = b"casa-rs-resource-policy";
 const RESOURCE_POLICY_IDENTITY_VERSION: u32 = 1;
 
@@ -913,14 +926,16 @@ pub struct PhysicalWorkBinding {
     execution_dag: ExecutionDag,
     prediction: PlanPrediction,
     artifacts: Vec<PlannedArtifact>,
+    observation_transaction: ObservationTransactionWork,
 }
 
 impl PhysicalWorkBinding {
-    /// Bind a complete immutable physical work DAG, prediction, and artifact ledger.
+    /// Bind a complete immutable physical work DAG, evidence contract, and transaction.
     pub fn new(
         execution_dag: ExecutionDag,
         prediction: PlanPrediction,
         mut artifacts: Vec<PlannedArtifact>,
+        observation_transaction: ObservationTransactionWork,
     ) -> Result<Self, PhysicalWorkBindingError> {
         for node in execution_dag.nodes().keys() {
             if !prediction.stages.contains_key(node) {
@@ -968,6 +983,7 @@ impl PhysicalWorkBinding {
             execution_dag,
             prediction,
             artifacts,
+            observation_transaction,
         })
     }
 
@@ -993,6 +1009,12 @@ impl PhysicalWorkBinding {
     #[must_use]
     pub fn artifacts(&self) -> &[PlannedArtifact] {
         &self.artifacts
+    }
+
+    /// Return the exact transaction checkpoints and staging events emitted by planning.
+    #[must_use]
+    pub const fn observation_transaction(&self) -> &ObservationTransactionWork {
+        &self.observation_transaction
     }
 }
 
@@ -1069,7 +1091,7 @@ fn has_publication_contract(node: &crate::WorkNode, stage: &StagePrediction) -> 
     {
         return false;
     }
-    let staged = node
+    node
         .claims
         .iter()
         .filter_map(|claim| match &claim.resource {
@@ -1078,19 +1100,9 @@ fn has_publication_contract(node: &crate::WorkNode, stage: &StagePrediction) -> 
                 use_kind: crate::StorageUseKind::StagedOutput,
             } if claim.amount > 0 => Some(demand_id),
             _ => None,
-        });
-    let final_outputs = node
-        .claims
-        .iter()
-        .filter_map(|claim| match &claim.resource {
-            LeaseResource::Storage {
-                demand_id,
-                use_kind: crate::StorageUseKind::FinalOutput,
-            } if claim.amount > 0 => Some(demand_id),
-            _ => None,
         })
-        .collect::<std::collections::BTreeSet<_>>();
-    staged.into_iter().any(|id| final_outputs.contains(id))
+        .next()
+        .is_some()
 }
 
 /// Stable identity of the exact host-use policy bound into a plan.
@@ -1217,6 +1229,7 @@ pub struct ExecutionPlan {
     execution_dag: ExecutionDag,
     prediction: PlanPrediction,
     artifacts: Vec<PlannedArtifact>,
+    observation_transaction: BoundObservationTransaction,
 }
 
 impl ExecutionPlan {
@@ -1297,6 +1310,39 @@ impl ExecutionPlan {
     pub fn artifacts(&self) -> &[PlannedArtifact] {
         &self.artifacts
     }
+
+    /// Return the exact problem-bound observation transaction sealed by planning.
+    #[must_use]
+    pub const fn observation_transaction(&self) -> &BoundObservationTransaction {
+        &self.observation_transaction
+    }
+}
+
+/// Failure from the planner or mandatory observation-transaction sealing.
+#[derive(Debug)]
+pub enum PlanError<E> {
+    /// The selected physical planner failed before producing complete work.
+    Planner(E),
+    /// The emitted DAG and transaction declaration do not implement the compiled problem.
+    ObservationTransaction(ObservationTransactionPlanError),
+}
+
+impl<E: fmt::Display> fmt::Display for PlanError<E> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Planner(error) => write!(formatter, "physical planning failed: {error}"),
+            Self::ObservationTransaction(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl<E: Error + 'static> Error for PlanError<E> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Planner(error) => Some(error),
+            Self::ObservationTransaction(error) => Some(error),
+        }
+    }
 }
 
 /// Seal planner-emitted physical work to the complete logical and planning context.
@@ -1304,8 +1350,14 @@ pub fn plan<E>(
     problem: &CompiledProblem,
     bindings: PlanningBindings,
     planner: impl FnOnce(&CompiledProblem, &PlanningBindings) -> Result<PhysicalWorkBinding, E>,
-) -> Result<ExecutionPlan, E> {
-    let physical_work = planner(problem, &bindings)?;
+) -> Result<ExecutionPlan, PlanError<E>> {
+    let physical_work = planner(problem, &bindings).map_err(PlanError::Planner)?;
+    let observation_transaction = bind_observation_transaction(
+        problem,
+        &physical_work.execution_dag,
+        physical_work.observation_transaction,
+    )
+    .map_err(PlanError::ObservationTransaction)?;
     let mut plan = ExecutionPlan {
         plan_id: ExecutionPlanId([0; 32]),
         problem_id: problem.problem_id(),
@@ -1319,6 +1371,7 @@ pub fn plan<E>(
         execution_dag: physical_work.execution_dag,
         prediction: physical_work.prediction,
         artifacts: physical_work.artifacts,
+        observation_transaction,
     };
     plan.plan_id = execution_plan_id(&plan);
     Ok(plan)
@@ -1448,6 +1501,131 @@ impl<E: Error + 'static> Error for RunError<E> {
     }
 }
 
+/// Compiled science visible to every work node without observation-source authority.
+#[derive(Clone, Copy, Debug)]
+pub struct CompiledWorkContext<'a> {
+    problem: &'a CompiledProblem,
+}
+
+impl<'a> CompiledWorkContext<'a> {
+    /// Return the stable compiled-problem identity.
+    #[must_use]
+    pub const fn problem_id(self) -> CompiledProblemId {
+        self.problem.problem_id()
+    }
+
+    /// Return compiled output geometry.
+    #[must_use]
+    pub const fn geometry(self) -> &'a CompiledGeometry {
+        self.problem.geometry()
+    }
+
+    /// Return the compiled scientific contract.
+    #[must_use]
+    pub const fn science(self) -> &'a ScientificContract {
+        self.problem.science()
+    }
+
+    /// Return compiled reconstruction semantics.
+    #[must_use]
+    pub const fn reconstruction(self) -> &'a ReconstructionContract {
+        self.problem.reconstruction()
+    }
+
+    /// Return compiled weighting semantics.
+    #[must_use]
+    pub const fn weighting(self) -> &'a WeightingContract {
+        self.problem.weighting()
+    }
+
+    /// Return exact required products.
+    #[must_use]
+    pub const fn products(self) -> &'a ProductRequirements {
+        self.problem.products()
+    }
+
+    /// Return the numerical contract.
+    #[must_use]
+    pub const fn numerics(self) -> &'a NumericsContract {
+        self.problem.numerics()
+    }
+
+    /// Return derived implementation capabilities.
+    #[must_use]
+    pub const fn required_capabilities(self) -> &'a BTreeSet<RequiredCapability> {
+        self.problem.required_capabilities()
+    }
+}
+
+/// Capability-scoped compiled inputs supplied to one exact work node.
+///
+/// Generic work receives compiled science but no MeasurementSet source set.
+/// Only typed observation reads, model writeback, and atomic publication
+/// receive their corresponding transaction authority.
+#[derive(Clone, Copy, Debug)]
+pub struct WorkExecutionContext<'a> {
+    compiled: CompiledWorkContext<'a>,
+    observation_reads: Option<&'a ObservationReadSet>,
+    model_writes: Option<&'a ObservationWriteSet>,
+    publication: Option<&'a ObservationTransactionContract>,
+    publication_resources: Option<PublicationResources<'a>>,
+}
+
+impl<'a> WorkExecutionContext<'a> {
+    /// Return compiled science common to every work node.
+    #[must_use]
+    pub const fn compiled(self) -> CompiledWorkContext<'a> {
+        self.compiled
+    }
+
+    /// Return exact MeasurementSet sources only for [`WorkKind::ObservationRead`].
+    #[must_use]
+    pub const fn observation_reads(self) -> Option<&'a ObservationReadSet> {
+        self.observation_reads
+    }
+
+    /// Return exact model-column writes only for the bound private writeback node.
+    #[must_use]
+    pub const fn model_writes(self) -> Option<&'a ObservationWriteSet> {
+        self.model_writes
+    }
+
+    /// Return the complete transaction only for the sole atomic Publication node.
+    #[must_use]
+    pub const fn publication(self) -> Option<&'a ObservationTransactionContract> {
+        self.publication
+    }
+
+    /// Return scheduler-owned resources only for the final atomic publish call.
+    ///
+    /// Presence proves that the admitted lease and every listed physical-memory
+    /// permit remain held until [`WorkImplementation::publish`] returns.
+    #[must_use]
+    pub const fn publication_resources(self) -> Option<PublicationResources<'a>> {
+        self.publication_resources
+    }
+}
+
+/// Read-only proof of resources retained for the final atomic publish call.
+#[derive(Clone, Copy, Debug)]
+pub struct PublicationResources<'a> {
+    reservation: &'a PublicationReservation,
+}
+
+impl<'a> PublicationResources<'a> {
+    /// Return the Resource Authority epoch of the still-live execution lease.
+    #[must_use]
+    pub const fn lease_epoch(self) -> u64 {
+        self.reservation.lease_epoch
+    }
+
+    /// Return the still-reserved physical slot for one publication allocation.
+    #[must_use]
+    pub fn allocation_slot(self, allocation: &AllocationId) -> Option<&'a PhysicalSlotId> {
+        self.reservation.allocations.get(allocation)
+    }
+}
+
 /// One exact plan-selected work-node adapter stored in an immutable registry.
 pub trait WorkImplementation {
     /// Execution failure.
@@ -1461,23 +1639,49 @@ pub trait WorkImplementation {
     /// Returning `Ok` means every fence declared by the node was launched and
     /// the returned evidence completely covers its plan-listed resource, I/O,
     /// and artifact work. Fences can subsequently be joined through
-    /// [`Self::wait_for_fence`]. Returning `Err` guarantees that no asynchronous
-    /// work escaped.
+    /// [`Self::wait_for_fence`].
+    /// Returning `Err` guarantees that no asynchronous work escaped.
+    /// A transaction-bound [`WorkKind::ObservationRead`] implementation
+    /// revalidates the compiled read generations and holds its declared
+    /// source-table locks through the complete work or fence event.
+    /// A [`WorkKind::Writeback`] implementation writes only private staging.
+    /// A [`WorkKind::Publication`] launch revalidates its bound input and write
+    /// preconditions while holding its declared locks but does not expose
+    /// staging before its publication fence succeeds.
     fn execute(
         &self,
-        problem: &CompiledProblem,
+        context: WorkExecutionContext<'_>,
         work: &ScheduledWork,
     ) -> Result<WorkMeasurements, Self::Error>;
 
     /// Block until one exact fence previously launched by [`Self::execute`]
     /// settles. An error means the fence settled unsuccessfully, so the
-    /// scheduler may drain and release resources after recording failure.
+    /// scheduler may drain and release resources after recording failure. For
+    /// [`WorkKind::Publication`], any launch or fence error leaves the previous
+    /// generation solely visible. Successful [`FenceKind::Publication`]
+    /// completion establishes publication readiness only; it does not expose
+    /// staging.
     fn wait_for_fence(
         &self,
-        problem: &CompiledProblem,
+        context: WorkExecutionContext<'_>,
         work: &ScheduledWork,
         fence: FenceKind,
     ) -> Result<(), Self::Error>;
+
+    /// Atomically activate all staged products and optional model-column output.
+    ///
+    /// The runtime invokes this exactly once, only after every fence and fallible
+    /// scheduler transition has settled successfully, while the transaction
+    /// lease, permits, and allocations remain held. Its returned evidence is
+    /// validated and persisted only after visibility changes. Returning an
+    /// error leaves the previous generation solely visible; returning success
+    /// is the final operation before [`ExecutionOutcome::Succeeded`] and
+    /// resource release.
+    fn publish(
+        &self,
+        context: WorkExecutionContext<'_>,
+        work: &ScheduledWork,
+    ) -> Result<WorkMeasurements, Self::Error>;
 }
 
 /// Immutable registry snapshot that resolves selected implementations by identity.
@@ -1541,7 +1745,8 @@ impl ExecutionStatus {
 pub enum RunDirective {
     /// Continue with the current plan-authorized configuration.
     Continue,
-    /// Cancel pending work and drain all launched work and fences.
+    /// Cancel pending work and drain launched work while publication remains reversible.
+    /// The controller is not consulted after atomic publication launches.
     Cancel,
     /// Apply one exact pre-authorized transition at its declared quiescence point.
     Adapt(AdaptationId),
@@ -1550,7 +1755,8 @@ pub enum RunDirective {
 /// Scheduling policy consulted by the sole validated [`run`] seam.
 pub trait RunController {
     /// Return the next request. The scheduler rejects any unlisted transition
-    /// or adaptation outside its exact global quiescence boundary.
+    /// or adaptation outside its exact global quiescence boundary. Successful
+    /// atomic Publication launch permanently closes this polling seam.
     fn directive(&mut self, status: &ExecutionStatus) -> RunDirective;
 }
 
@@ -1742,6 +1948,59 @@ fn validate_work_measurements(
     Ok(())
 }
 
+fn work_execution_context<'a>(
+    problem: &'a CompiledProblem,
+    transaction: &BoundObservationTransaction,
+    work: &ScheduledWork,
+) -> WorkExecutionContext<'a> {
+    let compiled = CompiledWorkContext { problem };
+    let transaction_work = transaction.work();
+    if work.node().kind == WorkKind::ObservationRead {
+        WorkExecutionContext {
+            compiled,
+            observation_reads: Some(problem.observation_transaction().read_set()),
+            model_writes: None,
+            publication: None,
+            publication_resources: None,
+        }
+    } else if transaction_work.model_column_staging() == Some(&work.node().id) {
+        WorkExecutionContext {
+            compiled,
+            observation_reads: None,
+            model_writes: Some(problem.observation_transaction().write_set()),
+            publication: None,
+            publication_resources: None,
+        }
+    } else if transaction_work.commit() == &work.node().id {
+        WorkExecutionContext {
+            compiled,
+            observation_reads: None,
+            model_writes: None,
+            publication: Some(problem.observation_transaction()),
+            publication_resources: None,
+        }
+    } else {
+        WorkExecutionContext {
+            compiled,
+            observation_reads: None,
+            model_writes: None,
+            publication: None,
+            publication_resources: None,
+        }
+    }
+}
+
+fn publication_execution_context<'a>(
+    problem: &'a CompiledProblem,
+    transaction: &BoundObservationTransaction,
+    work: &ScheduledWork,
+    reservation: &'a PublicationReservation,
+) -> WorkExecutionContext<'a> {
+    let mut context = work_execution_context(problem, transaction, work);
+    context.publication_resources = Some(PublicationResources { reservation });
+    context
+}
+
 /// Persist the bound plan before execution, drive its complete DAG to
 /// settlement, and atomically publish typed terminal evidence before returning.
 pub fn run<R, C>(
@@ -1857,7 +2116,13 @@ where
         }
         implementations.insert(identity.clone(), implementation);
     }
-    let mut scheduler = ExecutionScheduler::start(plan, authority).map_err(RunError::Scheduler)?;
+    let mut scheduler = ExecutionScheduler::start(
+        &plan.execution_dag,
+        &plan.resource_policy,
+        authority,
+        Some(plan.observation_transaction.work().commit()),
+    )
+    .map_err(RunError::Scheduler)?;
     let mut launched = BTreeMap::<WorkNodeId, ScheduledWork>::new();
     let mut pending = None;
     let mut controller_stopped = false;
@@ -1984,8 +2249,12 @@ where
                     }
                     continue;
                 }
-                match implementation.execute(problem, &work) {
+                let context = work_execution_context(problem, &plan.observation_transaction, &work);
+                match implementation.execute(context, &work) {
                     Ok(measurements) => {
+                        if work.node().kind == WorkKind::Publication {
+                            controller_stopped = true;
+                        }
                         match validate_work_measurements(plan, &work, &measurements) {
                             Ok(()) => {
                                 let mut receipt_error = receipt.fences_launched(&node_id).err();
@@ -2106,7 +2375,8 @@ where
                         .into_run_error());
                 };
                 let implementation = implementations[&work.node().implementation];
-                if let Err(source) = implementation.wait_for_fence(problem, work, fence.kind()) {
+                let context = work_execution_context(problem, &plan.observation_transaction, work);
+                if let Err(source) = implementation.wait_for_fence(context, work, fence.kind()) {
                     if pending.is_none() {
                         pending = Some(PendingRunError::Execution {
                             node: fence.node().clone(),
@@ -2146,6 +2416,39 @@ where
                         controller_stopped = true;
                     }
                 }
+            }
+            SchedulerAction::PublicationReady {
+                node: publication,
+                resources,
+            } => {
+                if let Some(failure) = pending.take() {
+                    return Err(failure.into_run_error());
+                }
+                if &publication != plan.observation_transaction.work().commit() {
+                    return Err(RunError::Scheduler(ExecutionError::InvalidState(format!(
+                        "scheduler exposed non-transaction publication node {}",
+                        publication.as_str()
+                    ))));
+                }
+                let work = launched.get(&publication).ok_or_else(|| {
+                    RunError::Scheduler(ExecutionError::InvalidState(
+                        "terminal publication has no launched work declaration".to_string(),
+                    ))
+                })?;
+                let implementation = implementations[&work.node().implementation];
+                let context = publication_execution_context(
+                    problem,
+                    &plan.observation_transaction,
+                    work,
+                    &resources,
+                );
+                implementation
+                    .publish(context, work)
+                    .map_err(|source| RunError::Execution {
+                        node: publication,
+                        source,
+                    })?;
+                return Ok(ExecutionOutcome::Succeeded);
             }
             SchedulerAction::Complete(terminal) => {
                 return match pending.take() {
@@ -2318,7 +2621,79 @@ fn execution_plan_id(plan: &ExecutionPlan) -> ExecutionPlanId {
             None => encoder.u8(0),
         }
     }
+    encode_observation_transaction(&mut encoder, &plan.observation_transaction);
     ExecutionPlanId(encoder.finish())
+}
+
+fn encode_observation_transaction(
+    encoder: &mut CanonicalEncoder,
+    transaction: &BoundObservationTransaction,
+) {
+    encoder.digest(transaction.problem_id().as_bytes());
+    encoder.digest(transaction.transaction_id().as_bytes());
+    encoder.digest(transaction.physical_work_id().as_bytes());
+    let work = transaction.work();
+    encoder.string(work.initial_consistency_check().as_str());
+    encode_dependencies(encoder, work.observation_reads());
+    encoder.string(work.final_reconciliation().as_str());
+    encoder.usize(work.required_product_staging().len());
+    for (product, completions) in work.required_product_staging() {
+        encoder.u8(product_tag(*product));
+        encode_dependencies(encoder, completions);
+    }
+    match work.model_column_staging() {
+        Some(node) => {
+            encoder.u8(1);
+            encoder.string(node.as_str());
+        }
+        None => encoder.u8(0),
+    }
+    encoder.string(work.commit().as_str());
+}
+
+fn encode_dependencies(
+    encoder: &mut CanonicalEncoder,
+    dependencies: &std::collections::BTreeSet<crate::WorkDependency>,
+) {
+    encoder.usize(dependencies.len());
+    for dependency in dependencies {
+        match dependency {
+            crate::WorkDependency::Work(node) => {
+                encoder.u8(0);
+                encoder.string(node.as_str());
+            }
+            crate::WorkDependency::Fence(fence) => {
+                encoder.u8(1);
+                encoder.string(fence.node().as_str());
+                encoder.u8(match fence.kind() {
+                    FenceKind::Device => 0,
+                    FenceKind::Io => 1,
+                    FenceKind::Writeback => 2,
+                    FenceKind::Publication => 3,
+                });
+            }
+        }
+    }
+}
+
+fn product_tag(product: ProductKind) -> u8 {
+    match product {
+        ProductKind::Psf => 0,
+        ProductKind::Residual => 1,
+        ProductKind::Model => 2,
+        ProductKind::RestoredImage => 3,
+        ProductKind::SumWeights => 4,
+        ProductKind::Mask => 5,
+        ProductKind::Weight => 6,
+        ProductKind::PrimaryBeam => 7,
+        ProductKind::Sensitivity => 8,
+        ProductKind::PbCorrectedImage => 9,
+        ProductKind::TaylorTerms => 10,
+        ProductKind::SpectralIndex => 11,
+        ProductKind::SpectralIndexError => 12,
+        ProductKind::PbCorrectedSpectralIndex => 13,
+        ProductKind::Beam => 14,
+    }
 }
 
 fn reference_data_tag(kind: ReferenceDataKind) -> u8 {

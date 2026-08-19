@@ -4,6 +4,7 @@
 
 mod execution;
 mod execution_bindings;
+mod observation_transaction;
 mod receipt;
 mod resource_authority;
 
@@ -11,10 +12,11 @@ pub use execution_bindings::{
     ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement, ArtifactRole, BindingKind,
     CacheIdentity, ExecutionEvidenceError, ExecutionPlan, ExecutionPlanId, ExecutionStatus,
     ImplementationRegistry, ImplementationRegistryId, IoMeasurement, IoPrediction,
-    PhysicalWorkBinding, PhysicalWorkBindingError, PhysicalWorkId, PlanPrediction, PlannedArtifact,
-    PlannerCostModelProfileId, PlanningBindings, PredictionConfidence, PredictionUncertainty,
-    RedactedPath, ResourceMeasurement, ResourcePolicyId, RunBindings, RunController, RunDirective,
-    RunError, RunToCompletion, StagePrediction, WorkImplementation, WorkMeasurements, plan, run,
+    PhysicalWorkBinding, PhysicalWorkBindingError, PhysicalWorkId, PlanError, PlanPrediction,
+    PlannedArtifact, PlannerCostModelProfileId, PlanningBindings, PredictionConfidence,
+    PredictionUncertainty, PublicationResources, RedactedPath, ResourceMeasurement,
+    ResourcePolicyId, RunBindings, RunController, RunDirective, RunError, RunToCompletion,
+    StagePrediction, WorkExecutionContext, WorkImplementation, WorkMeasurements, plan, run,
 };
 
 pub use execution::{
@@ -30,6 +32,9 @@ pub use receipt::{
     ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ReceiptAdaptation,
     ReceiptError, ReceiptFailureKind, ReceiptInfeasibilityCertificate, ReceiptRetention,
     ReceiptStatus,
+};
+pub use observation_transaction::{
+    BoundObservationTransaction, ObservationTransactionPlanError, ObservationTransactionWork,
 };
 pub use resource_authority::{
     Accelerator, AcceleratorDemand, AcceleratorId, AcceleratorKind, AlternativeId, CacheDemand,

@@ -5,8 +5,9 @@ use casa_imaging_model::{
     DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
     FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
     ImageShape, ImagingRequest, InstrumentResponse, ItrfPosition, MeasurementEquationContract,
-    MissingPointingPolicy, ModelInnerProduct, ModelStateIdentity, NumericPrecision, NumericalStage,
-    NumericsContract, ObservationPointingLaw, ObservationSnapshotInput, PhaseCentreLaw,
+    MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct, ModelStateIdentity,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ObservationSnapshotInput, ObservationTransactionRequirements, PhaseCentreLaw,
     PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
     PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
     ProblemInputIdentities, ProblemSpecification, ProductKind, ProductNormalization,
@@ -100,6 +101,10 @@ fn science() -> ScientificContract {
     )
 }
 
+fn read_only_transaction() -> ObservationTransactionRequirements {
+    ObservationTransactionRequirements::new(ModelColumnWrite::Disabled)
+}
+
 fn geometry() -> GeometryInput {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
@@ -160,6 +165,7 @@ fn specification(reverse: bool) -> ProblemSpecification {
             WeightDensityScope::GlobalSelection,
         ),
         products(reverse),
+        read_only_transaction(),
         numerics(reverse),
     )
 }
@@ -212,6 +218,38 @@ fn equivalent_science_has_one_canonical_compiled_identity() {
 }
 
 #[test]
+fn model_column_side_effects_are_compiled_into_problem_identity() {
+    let read_only =
+        compile_request(specification(false), inputs(false)).expect("compile read-only");
+    let writable = compile_request(
+        ProblemSpecification::new(
+            science(),
+            reconstruction(),
+            weighting(),
+            products(false),
+            ObservationTransactionRequirements::new(ModelColumnWrite::SelectedRows),
+            numerics(false),
+        ),
+        inputs(false),
+    )
+    .expect("compile model-column write");
+
+    assert_ne!(read_only.problem_id(), writable.problem_id());
+    assert_eq!(
+        writable.observation_transaction().observation_snapshot_id(),
+        writable.inputs().observation()
+    );
+    assert_eq!(
+        writable
+            .observation_transaction()
+            .write_set()
+            .model_columns()
+            .len(),
+        1
+    );
+}
+
+#[test]
 fn derived_capabilities_cover_normalization_without_naming_a_backend() {
     let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
@@ -247,6 +285,7 @@ fn natural_weighting_rejects_a_meaningless_per_channel_density_scope() {
             WeightDensityScope::PerOutputChannel,
         ),
         products(false),
+        read_only_transaction(),
         numerics(false),
     );
 
@@ -263,6 +302,7 @@ fn natural_weighting_declares_that_density_generation_is_not_applicable() {
         reconstruction(),
         WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
         products(false),
+        read_only_transaction(),
         numerics(false),
     );
 
@@ -286,6 +326,7 @@ fn incompatible_reconstruction_capabilities_fail_before_execution_inputs_exist()
         ),
         weighting(),
         products(false),
+        read_only_transaction(),
         numerics(false),
     );
 
@@ -316,6 +357,7 @@ fn channel_local_basis_must_match_compiled_geometry_channels() {
                 ProductNormalization::UnitResponse,
                 RestoringBeamPolicy::None,
             ),
+            read_only_transaction(),
             numerics(false),
         )
     };
@@ -354,6 +396,7 @@ fn one_term_mfs_uses_the_constant_basis_instead_of_taylor() {
         ),
         weighting(),
         products(false),
+        read_only_transaction(),
         numerics(false),
     );
 
@@ -382,6 +425,7 @@ fn flat_normalization_without_sensitivity_fails_at_compile_time() {
             ProductNormalization::FlatNoise,
             RestoringBeamPolicy::PerPlane,
         ),
+        read_only_transaction(),
         numerics(false),
     );
 
@@ -403,6 +447,7 @@ fn incomplete_or_non_finite_numerics_fail_at_compile_time() {
         reconstruction(),
         weighting(),
         products(false),
+        read_only_transaction(),
         NumericsContract::new(
             vec![NumericPrecision::F64],
             ReductionPolicy::DeterministicPairwise,
@@ -431,6 +476,7 @@ fn incomplete_or_non_finite_numerics_fail_at_compile_time() {
         reconstruction(),
         weighting(),
         products(false),
+        read_only_transaction(),
         NumericsContract::new(
             vec![NumericPrecision::F64],
             ReductionPolicy::Compensated,
@@ -467,6 +513,7 @@ fn derived_products_require_their_scientific_sources() {
             ProductNormalization::UnitResponse,
             RestoringBeamPolicy::PerPlane,
         ),
+        read_only_transaction(),
         numerics(false),
     );
 
@@ -504,6 +551,7 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
                 WeightDensityScope::GlobalSelection,
             ),
             products(false),
+            read_only_transaction(),
             numerics(false),
         )
     };
@@ -517,7 +565,7 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
         positive_zero.weighting().generation_id()
     );
     assert_ne!(positive_zero.problem_id(), changed.problem_id());
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 5);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 6);
 }
 
 #[test]
@@ -546,6 +594,7 @@ fn numerics_contract_has_an_independent_stable_identity() {
             reconstruction(),
             weighting(),
             products(false),
+            read_only_transaction(),
             changed,
         ),
         inputs(false),
@@ -579,6 +628,7 @@ fn multiscale_order_and_duplicate_scales_do_not_change_scientific_identity() {
                 ProductNormalization::UnitResponse,
                 RestoringBeamPolicy::PerPlane,
             ),
+            read_only_transaction(),
             numerics(false),
         )
     };
@@ -599,6 +649,7 @@ fn complete_science_contract_changes_identity_and_capabilities() {
             reconstruction(),
             weighting,
             products,
+            read_only_transaction(),
             numerics(false),
         )
     };
@@ -678,6 +729,7 @@ fn direction_dependent_response_requires_instrument_identity() {
         reconstruction(),
         weighting(),
         products(false),
+        read_only_transaction(),
         numerics(false),
     );
 
@@ -710,6 +762,7 @@ fn dirty_reconstruction_rejects_scientifically_unused_controls() {
                 ProductNormalization::UnitResponse,
                 RestoringBeamPolicy::None,
             ),
+            read_only_transaction(),
             numerics(false),
         )
     };
@@ -740,6 +793,7 @@ fn spectral_coupling_and_restoring_beam_policy_must_agree() {
                 reconstruction(),
                 weighting(),
                 products_with_beam(false, beam),
+                read_only_transaction(),
                 numerics(false),
             ),
             inputs(false),
@@ -780,6 +834,7 @@ fn invalid_science_contracts_fail_before_bulk_io() {
         reconstruction(),
         weighting(),
         products(false),
+        read_only_transaction(),
         numerics(false),
     );
     assert!(matches!(
@@ -803,6 +858,7 @@ fn invalid_polarization_is_a_reconstruction_contract_error() {
             ),
             weighting(),
             products(false),
+            read_only_transaction(),
             numerics(false),
         )
     };
@@ -828,12 +884,12 @@ fn invalid_polarization_is_a_reconstruction_contract_error() {
 }
 
 #[test]
-fn compiled_problem_identity_has_a_pinned_schema_five_digest() {
+fn compiled_problem_identity_has_a_pinned_schema_six_digest() {
     let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 5);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 6);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "4da0b614321b5dd00df98de5682fe8183a31193a12f30712c0df3dd714a7fc3a"
+        "a089ac5abff5a2ff111366750293481528cc136258b55c63875ccf1169bc7865"
     );
 }

@@ -11,7 +11,7 @@ use crate::compiled_problem::{
 };
 
 const OBSERVATION_SNAPSHOT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-observation-snapshot";
-const OBSERVATION_SNAPSHOT_IDENTITY_VERSION: u32 = 1;
+const OBSERVATION_SNAPSHOT_IDENTITY_VERSION: u32 = 2;
 const OBSERVATION_PROVENANCE_IDENTITY_DOMAIN: &[u8] = b"casa-rs-observation-provenance";
 const OBSERVATION_PROVENANCE_IDENTITY_VERSION: u32 = 1;
 
@@ -963,6 +963,19 @@ pub struct ColumnGeneration {
     identity: LogicalIdentity,
 }
 
+/// Exact existence and generation of the optional MAIN `MODEL_DATA` column.
+///
+/// This state is captured independently of [`SelectedColumns`] because an
+/// existing output-only model column is a write precondition without being an
+/// observation input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelColumnState {
+    /// `MODEL_DATA` did not exist when the snapshot was captured.
+    Absent,
+    /// `MODEL_DATA` existed with this storage-owner generation.
+    Present(LogicalIdentity),
+}
+
 impl ColumnGeneration {
     /// Construct one column generation binding.
     #[must_use]
@@ -1135,20 +1148,23 @@ pub struct SourceGenerations {
     consistency_token: ConsistencyToken,
     columns: SelectedColumns,
     metadata: Vec<MetadataGeneration>,
+    model_column: ModelColumnState,
 }
 
 impl SourceGenerations {
-    /// Construct source consistency, column, and metadata generations.
+    /// Construct source consistency, column, metadata, and optional model-column generations.
     #[must_use]
     pub const fn new(
         consistency_token: ConsistencyToken,
         columns: SelectedColumns,
         metadata: Vec<MetadataGeneration>,
+        model_column: ModelColumnState,
     ) -> Self {
         Self {
             consistency_token,
             columns,
             metadata,
+            model_column,
         }
     }
 
@@ -1178,6 +1194,12 @@ impl SourceGenerations {
             .find_map(|generation| (generation.kind == kind).then_some(generation.identity))
     }
 
+    /// Return the captured existence and generation of `MODEL_DATA`.
+    #[must_use]
+    pub const fn model_column(&self) -> ModelColumnState {
+        self.model_column
+    }
+
     fn canonicalize(&mut self) -> Result<(), CompileObservationError> {
         require_identity(self.consistency_token.0, "source consistency token")?;
         self.columns.canonicalize()?;
@@ -1192,6 +1214,23 @@ impl SourceGenerations {
         }
         for generation in &self.metadata {
             require_identity(generation.identity, "metadata generation")?;
+        }
+        match self.model_column {
+            ModelColumnState::Absent => {
+                if self.columns.generation(MsColumnKind::ModelData).is_some() {
+                    return Err(CompileObservationError::InconsistentModelColumnState);
+                }
+            }
+            ModelColumnState::Present(generation) => {
+                require_identity(generation, "MODEL_DATA generation")?;
+                if self
+                    .columns
+                    .generation(MsColumnKind::ModelData)
+                    .is_some_and(|selected| selected != generation)
+                {
+                    return Err(CompileObservationError::InconsistentModelColumnState);
+                }
+            }
         }
         for table in REQUIRED_METADATA_TABLES {
             if self.metadata(table).is_none() {
@@ -1411,6 +1450,11 @@ impl ObservationSnapshot {
                 &expected.generations.columns,
                 &actual.generations.columns,
             )?;
+            if expected.generations.model_column != actual.generations.model_column {
+                return Err(ObservationConsistencyError::ModelColumnStateChanged {
+                    measurement_set: source,
+                });
+            }
             compare_metadata(source, &expected.generations, &actual.generations)?;
             if expected.generations.consistency_token != actual.generations.consistency_token {
                 return Err(ObservationConsistencyError::ConsistencyTokenChanged {
@@ -1623,6 +1667,9 @@ pub enum CompileObservationError {
         /// Missing column.
         column: MsColumnKind,
     },
+    /// The optional `MODEL_DATA` state contradicted its selected generation.
+    #[error("MODEL_DATA state conflicts with its selected column generation")]
+    InconsistentModelColumnState,
     /// More than one generation was supplied for a metadata table.
     #[error("duplicate generation for metadata table {table:?}")]
     DuplicateMetadataGeneration {
@@ -1680,6 +1727,12 @@ pub enum ObservationConsistencyError {
         measurement_set: MeasurementSetIdentity,
         /// Mutated column.
         column: MsColumnKind,
+    },
+    /// The optional `MODEL_DATA` column appeared, disappeared, or changed generation.
+    #[error("MODEL_DATA state changed for source {measurement_set}")]
+    ModelColumnStateChanged {
+        /// Mutated source.
+        measurement_set: MeasurementSetIdentity,
     },
     /// The set of generation-tracked metadata tables changed.
     #[error("tracked metadata table set changed for source {measurement_set}")]
@@ -2125,6 +2178,13 @@ fn encode_generations(encoder: &mut CanonicalEncoder, generations: &SourceGenera
     for generation in &generations.metadata {
         encoder.u8(metadata_table_tag(generation.kind));
         encoder.identity(generation.identity);
+    }
+    match generations.model_column {
+        ModelColumnState::Absent => encoder.u8(0),
+        ModelColumnState::Present(generation) => {
+            encoder.u8(1);
+            encoder.identity(generation);
+        }
     }
 }
 

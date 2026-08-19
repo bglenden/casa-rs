@@ -6,6 +6,7 @@ mod compiled_problem;
 mod geometry;
 mod measurement_equation;
 mod observation;
+mod transaction;
 
 pub use compiled_problem::{
     CompileProblemError, CompiledProblem, CompiledProblemId, FiniteValuePolicy, ImagingRequest,
@@ -41,11 +42,18 @@ pub use measurement_equation::{
 pub use observation::{
     AntennaBaseline, AntennaSelection, ColumnGeneration, CompileObservationError, ConsistencyToken,
     CorrelationProduct, CorrelationSelection, CorrelationType, FlagPolicy, IdSelection,
-    IntentSelection, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, MsColumnKind,
-    ObservationConsistencyError, ObservationProvenanceId, ObservationSelection,
-    ObservationSnapshot, ObservationSnapshotId, ObservationSnapshotInput, ObservationSource,
-    ObservationSourceInput, ObservationSourceProvenance, ObservationSourceState, ObservationState,
-    ResolvedIntent, RowSelection, SelectedColumns, SelectedRows, SelectionBound, SourceGenerations,
-    SpectralWindowSelection, TimeRange, TimeSelection, UvDistanceRange, UvDistanceUnit,
-    UvSelection, VisibilityColumn, WeightColumn, compile_observation,
+    IntentSelection, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
+    ModelColumnState, MsColumnKind, ObservationConsistencyError, ObservationProvenanceId,
+    ObservationSelection, ObservationSnapshot, ObservationSnapshotId, ObservationSnapshotInput,
+    ObservationSource, ObservationSourceInput, ObservationSourceProvenance, ObservationSourceState,
+    ObservationState, ResolvedIntent, RowSelection, SelectedColumns, SelectedRows, SelectionBound,
+    SourceGenerations, SpectralWindowSelection, TimeRange, TimeSelection, UvDistanceRange,
+    UvDistanceUnit, UvSelection, VisibilityColumn, WeightColumn, compile_observation,
+};
+
+pub use transaction::{
+    MeasurementSetReadAccess, ModelColumnInitialization, ModelColumnPrecondition, ModelColumnWrite,
+    ModelColumnWriteAccess, ModelColumnWriteDisposition, ObservationReadSet,
+    ObservationTransactionContract, ObservationTransactionId, ObservationTransactionRequirements,
+    ObservationWriteSet, compile_observation_transaction,
 };

@@ -3,11 +3,11 @@
 use casa_imaging_model::{
     AntennaSelection, ColumnGeneration, ConsistencyToken, CorrelationProduct, CorrelationSelection,
     CorrelationType, FlagPolicy, IdSelection, IntentSelection, LogicalIdentity,
-    MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, ModelStateIdentity,
-    MsColumnKind, ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
-    ObservationSourceProvenance, ProblemInputIdentities, ReferenceDataKind, RowSelection,
-    SelectedColumns, SelectedRows, SourceGenerations, SpectralWindowSelection, TimeSelection,
-    UvSelection, VisibilityColumn, WeightColumn, compile_observation,
+    MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, ModelColumnState,
+    ModelStateIdentity, MsColumnKind, ObservationSelection, ObservationSnapshotInput,
+    ObservationSourceInput, ObservationSourceProvenance, ProblemInputIdentities, ReferenceDataKind,
+    RowSelection, SelectedColumns, SelectedRows, SourceGenerations, SpectralWindowSelection,
+    TimeSelection, UvSelection, VisibilityColumn, WeightColumn, compile_observation,
 };
 
 fn scoped_identity(seed: u8, scope: u8) -> LogicalIdentity {
@@ -100,6 +100,7 @@ pub fn problem_inputs(
                     columns,
                 ),
                 metadata,
+                ModelColumnState::Absent,
             ),
         )],
         reference_data,

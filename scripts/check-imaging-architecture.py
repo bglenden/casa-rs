@@ -65,7 +65,7 @@ ACCEPTED_WHOLE_RUN_ROUTER_SHA256 = (
     "c855dae5d5b4239e21fa0fe43d1d2f4bbb4114d245374db674fb81713af11a2d"
 )
 ACCEPTED_MATRIX_INVENTORY_SHA256 = (
-    "dc4ca134627402fa74744f56797c067e462e9566178a9188cadeb4c4b14714b0"
+    "b74ba7bf6511fc833484e35b63bd1bf6c143a5ae81f7080d69c02bea3ad4ba68"
 )
 ACCEPTED_PRODUCT_KIND_INVENTORY_SHA256 = (
     "f4e04101f0d6e89d9bc12584cd580f5f8924f80e71b867ee252422f648fdced5"
@@ -122,15 +122,15 @@ ACCEPTED_ISSUE_OUTCOMES_SHA256 = (
     "ffc816c216e9b969c1229f2e813d33a9e12118555e3b286ea66e769218d86713"
 )
 ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
-    "114ef002b698d8c3d01f233dac7c3385885c04b6f40bff4ad7d3cecfaea441ef"
+    "46de92a12587beaa9decc6bca6fd06e3f33c5a0e321f4cefc8ba03717c8ebf8f"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "4dbc6bf56d96c39c5a4a4cf1581a9389c4a0deed98d6f96fe4a64c826fc3c4f4"
+    "4b3eef60aff09269d3e4819f26ae47b6e1559b7148ac9bcfc0794e451dae5a8b"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "100690b6456c4c0656500249969ee9ebf714851d284a573ad4f5d9886ce58ca0"
+    "d71bfe9239498c2c45605575d36119bb8a8b5c9e751ab7f73becb20e5071073c"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 5
+ACCEPTED_MATRIX_CONTRACT_REVISION = 8
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -204,6 +204,18 @@ ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
         "compiled-problem-foundation-v1",
         "resource_gates",
     ): "64c0411b3e62a900072e12f74facbe311a718504883e650a5cc205c9d5b4bd25",
+    (
+        "observation-transaction-v1",
+        "thresholds",
+    ): "7175ad5bf3e0c9dc6aef191805384ae82e60ed2739614baef5ec15d11b64a54d",
+    (
+        "observation-transaction-v1",
+        "laws",
+    ): "418e0eb39337066849b06e25fdef8468ea0b9b3efbe7cd2ccc1c439cf5bb57a9",
+    (
+        "observation-transaction-v1",
+        "resource_gates",
+    ): "00f843a8c88d81cc6628ca569d49387d65f0626c2ef4fcb1b7e491fc4b465c47",
     (
         "resource-authority-foundation-v1",
         "thresholds",

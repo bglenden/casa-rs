@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use crate::execution_bindings::{CanonicalEncoder, ExecutionPlan as BoundExecutionPlan};
+use crate::execution_bindings::CanonicalEncoder;
 use crate::{
     CapabilityId, CapacityDomainId, CapacityViewId, DemandAlternative, DemandAlternatives,
     LeaseResource, MemoryCapacityKind, MemoryViewKind, PhysicalWorkId, QuiescencePoint,
@@ -13,7 +13,7 @@ use crate::{
 };
 
 const PHYSICAL_WORK_IDENTITY_DOMAIN: &[u8] = b"casa-rs-physical-work-dag";
-const PHYSICAL_WORK_IDENTITY_VERSION: u32 = 3;
+const PHYSICAL_WORK_IDENTITY_VERSION: u32 = 6;
 
 macro_rules! execution_identity {
     ($name:ident, $summary:literal) => {
@@ -93,11 +93,14 @@ pub enum WorkKind {
     Prefetch,
     /// Perform a declared source, transfer, or product I/O operation.
     Io,
+    /// Read the exact compiled MeasurementSet source set under its named locks.
+    ObservationRead,
     /// Serialize a prepared or scientific artifact.
     Serialization,
-    /// Complete a staged storage writeback.
+    /// Complete a private staged storage writeback without publishing it.
     Writeback,
-    /// Atomically publish completed products.
+    /// Revalidate and atomically publish completed products and optional
+    /// MeasurementSet side effects as one visible generation.
     Publication,
     /// Explicitly unmap, evict, destroy, or otherwise release externally
     /// retained storage before its physical slot becomes reusable.
@@ -133,7 +136,7 @@ pub enum FenceKind {
     Io,
     /// Durable staged-output writeback completion.
     Writeback,
-    /// Atomic product-publication completion.
+    /// Product and MeasurementSet-side-effect publication readiness completion.
     Publication,
 }
 
@@ -655,8 +658,21 @@ pub(crate) enum SchedulerAction {
         /// Asynchronous device, I/O, writeback, or publication fences.
         pending_fences: usize,
     },
+    /// Every fallible scheduler transition has settled while the terminal
+    /// publication node still owns its transaction authority and allocations.
+    PublicationReady {
+        node: WorkNodeId,
+        resources: PublicationReservation,
+    },
     /// The lease has been released and execution is terminal.
     Complete(SchedulerTerminal),
+}
+
+/// Exact scheduler-owned resources retained for the terminal publish call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PublicationReservation {
+    pub(crate) lease_epoch: u64,
+    pub(crate) allocations: BTreeMap<AllocationId, PhysicalSlotId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -706,6 +722,9 @@ pub(crate) struct ExecutionScheduler<'plan> {
     completed_fences: BTreeSet<FenceId>,
     failed_cleanup_fences: BTreeSet<FenceId>,
     deferred_permits: Vec<DeferredPermit>,
+    terminal_publication: Option<WorkNodeId>,
+    publication_permits: Vec<ResourcePermit>,
+    publication_allocations: BTreeSet<AllocationId>,
     active_allocations: BTreeMap<AllocationId, ActiveAllocation>,
     active_slots: BTreeMap<PhysicalSlotId, AllocationId>,
     quarantined_allocations: BTreeSet<AllocationId>,
@@ -720,13 +739,28 @@ impl<'plan> ExecutionScheduler<'plan> {
     /// Validate the bound DAG against topology, admit its sole resource
     /// alternative, and create a scheduler without executing work.
     pub(crate) fn start(
-        plan: &'plan BoundExecutionPlan,
+        dag: &'plan ExecutionDag,
+        resource_policy: &crate::ResourcePolicy,
         authority: &ResourceAuthority,
+        terminal_publication: Option<&WorkNodeId>,
     ) -> Result<Self, ExecutionError> {
-        let dag = plan.execution_dag();
+        if let Some(publication) = terminal_publication {
+            let node = dag.nodes.get(publication).ok_or_else(|| {
+                ExecutionError::invalid_plan(format!(
+                    "terminal publication node {} is absent from the execution DAG",
+                    publication.as_str()
+                ))
+            })?;
+            if node.kind != WorkKind::Publication {
+                return Err(ExecutionError::invalid_plan(format!(
+                    "terminal publication node {} is not Publication work",
+                    publication.as_str()
+                )));
+            }
+        }
         validate_topology(dag, authority.topology())?;
         let lease = authority.acquire(
-            plan.resource_policy().clone(),
+            resource_policy.clone(),
             DemandAlternatives {
                 required_capabilities: dag.required_resource_capabilities.clone(),
                 alternatives: vec![dag.resource_alternative.clone()],
@@ -762,6 +796,9 @@ impl<'plan> ExecutionScheduler<'plan> {
             completed_fences: BTreeSet::new(),
             failed_cleanup_fences: BTreeSet::new(),
             deferred_permits: Vec::new(),
+            terminal_publication: terminal_publication.cloned(),
+            publication_permits: Vec::new(),
+            publication_allocations: BTreeSet::new(),
             active_allocations: BTreeMap::new(),
             active_slots: BTreeMap::new(),
             quarantined_allocations: BTreeSet::new(),
@@ -891,6 +928,49 @@ impl<'plan> ExecutionScheduler<'plan> {
             .values()
             .all(|state| *state == NodeState::Settled)
         {
+            if let Some(publication) = &self.terminal_publication {
+                let expected_allocations = self.dag.nodes[publication]
+                    .allocations
+                    .iter()
+                    .map(|allocation_use| allocation_use.allocation.clone())
+                    .collect::<BTreeSet<_>>();
+                if self.publication_allocations != expected_allocations
+                    || self
+                        .active_allocations
+                        .keys()
+                        .cloned()
+                        .collect::<BTreeSet<_>>()
+                        != expected_allocations
+                {
+                    return Err(ExecutionError::invalid_state(
+                        "terminal publication does not retain its exact logical allocations",
+                    ));
+                }
+                if self.publication_permits.is_empty() {
+                    return Err(ExecutionError::invalid_state(
+                        "terminal publication lost its transaction resource authority",
+                    ));
+                }
+                let lease_epoch = self.lease_epoch().ok_or_else(|| {
+                    ExecutionError::invalid_state(
+                        "terminal publication lost its Resource Authority lease",
+                    )
+                })?;
+                let allocations = expected_allocations
+                    .into_iter()
+                    .map(|allocation| {
+                        let slot = self.active_allocations[&allocation].slot.clone();
+                        (allocation, slot)
+                    })
+                    .collect();
+                return Ok(SchedulerAction::PublicationReady {
+                    node: publication.clone(),
+                    resources: PublicationReservation {
+                        lease_epoch,
+                        allocations,
+                    },
+                });
+            }
             if !self.active_allocations.is_empty() {
                 return Err(ExecutionError::invalid_state(
                     "completed work retained a logical allocation beyond its terminal events",
@@ -912,7 +992,12 @@ impl<'plan> ExecutionScheduler<'plan> {
             ExecutionError::invalid_state(format!("work node {} is not running", node_id.as_str()))
         })?;
         self.states.insert(node_id.clone(), NodeState::WorkComplete);
+        let terminal_publication = self.terminal_publication.as_ref() == Some(&node_id);
         for held in active.permits {
+            if terminal_publication {
+                self.publication_permits.push(held.permit);
+                continue;
+            }
             match held.lifetime {
                 ClaimLifetime::Work => {
                     held.permit.release()?;
@@ -1291,6 +1376,7 @@ impl<'plan> ExecutionScheduler<'plan> {
             .values()
             .flat_map(|work| work.permits.iter().map(|held| &held.permit))
             .chain(self.deferred_permits.iter().map(|held| &held.permit))
+            .chain(self.publication_permits.iter())
             .filter(|permit| predicate(permit.resource()))
             .try_fold(0_u64, |total, permit| {
                 total
@@ -1309,7 +1395,20 @@ impl<'plan> ExecutionScheduler<'plan> {
             })
             .collect::<Vec<_>>();
         for allocation in completed {
-            self.release_allocation(&allocation)?;
+            let used_by_publication =
+                self.terminal_publication
+                    .as_ref()
+                    .is_some_and(|publication| {
+                        self.dag.nodes[publication]
+                            .allocations
+                            .iter()
+                            .any(|allocation_use| allocation_use.allocation == allocation)
+                    });
+            if used_by_publication {
+                self.publication_allocations.insert(allocation);
+            } else {
+                self.release_allocation(&allocation)?;
+            }
         }
         Ok(())
     }
@@ -1339,6 +1438,14 @@ impl<'plan> ExecutionScheduler<'plan> {
         for allocation in allocations {
             self.release_allocation(&allocation)?;
         }
+        self.publication_allocations.clear();
+        Ok(())
+    }
+
+    fn release_publication_permits(&mut self) -> Result<(), ExecutionError> {
+        for permit in std::mem::take(&mut self.publication_permits) {
+            permit.release()?;
+        }
         Ok(())
     }
 
@@ -1348,6 +1455,7 @@ impl<'plan> ExecutionScheduler<'plan> {
     ) -> Result<SchedulerAction, ExecutionError> {
         if self.quarantined_allocations.is_empty() {
             self.release_all_allocations()?;
+            self.release_publication_permits()?;
             return self.finish(outcome);
         }
         let releasable = self
@@ -1359,6 +1467,8 @@ impl<'plan> ExecutionScheduler<'plan> {
         for allocation in releasable {
             self.release_allocation(&allocation)?;
         }
+        self.publication_allocations.clear();
+        self.release_publication_permits()?;
         for allocation in &self.quarantined_allocations {
             let active = self.active_allocations.get(allocation).ok_or_else(|| {
                 ExecutionError::invalid_state(format!(
@@ -1386,6 +1496,7 @@ impl<'plan> ExecutionScheduler<'plan> {
         if !self.running.is_empty()
             || !self.outstanding_fences.is_empty()
             || !self.deferred_permits.is_empty()
+            || !self.publication_permits.is_empty()
             || !self.active_allocations.is_empty()
             || !self.active_slots.is_empty()
         {
@@ -1472,6 +1583,7 @@ impl<'plan> ExecutionScheduler<'plan> {
         if !self.running.is_empty()
             || !self.outstanding_fences.is_empty()
             || !self.deferred_permits.is_empty()
+            || !self.publication_permits.is_empty()
             || !self.active_allocations.is_empty()
             || !self.active_slots.is_empty()
             || !self.quarantined_allocations.is_empty()
@@ -1532,7 +1644,9 @@ fn validate_claims_against_demand(
     for node in nodes.values() {
         let mut totals = BTreeMap::<LeaseResource, u64>::new();
         for claim in &node.claims {
-            let total = totals.entry(claim.resource.clone()).or_default();
+            let total = totals
+                .entry(claim.resource.accounting_resource())
+                .or_default();
             *total = total.checked_add(claim.amount).ok_or_else(|| {
                 ExecutionError::invalid_plan(format!(
                     "work node {} resource claims overflow",
@@ -2009,6 +2123,10 @@ fn encode_lease_resource(encoder: &mut CanonicalEncoder, resource: &LeaseResourc
         ResidentCache => encoder.u8(15),
         Locks => encoder.u8(16),
         FileDescriptors => encoder.u8(17),
+        MeasurementSetLock { measurement_set } => {
+            encoder.u8(18);
+            encoder.digest(measurement_set.identity().as_bytes());
+        }
     }
 }
 
@@ -2106,6 +2224,7 @@ fn encode_work_kind(encoder: &mut CanonicalEncoder, kind: WorkKind) {
         WorkKind::Publication => 13,
         WorkKind::Synchronization => 14,
         WorkKind::Release => 15,
+        WorkKind::ObservationRead => 16,
     });
 }
 
@@ -2484,6 +2603,14 @@ fn validate_kind(node: &WorkNode) -> Result<(), ExecutionError> {
         }
         WorkKind::Spill | WorkKind::Prefetch => require_io_domain(node),
         WorkKind::Io => require_io_domain(node),
+        WorkKind::ObservationRead => {
+            require_io_domain(node)?;
+            require_claim(
+                node,
+                |resource| matches!(resource, LeaseResource::MeasurementSetLock { .. }),
+                "MeasurementSet lock",
+            )
+        }
         WorkKind::Serialization => Ok(()),
         WorkKind::Writeback => {
             require_io_domain(node)?;

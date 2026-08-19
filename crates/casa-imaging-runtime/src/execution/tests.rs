@@ -4,118 +4,16 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
 };
-
-use casa_imaging_model::{
-    AxisOrder, CentreLaws, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
-    DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
-    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest,
-    InstrumentResponse, MeasurementEquationContract, ModelInnerProduct, ModelStateIdentity,
-    NumericPrecision, NumericalStage, NumericsContract, PhaseCentreLaw, PointingCentreLaw,
-    PolarizationContract, PolarizationCoordinate, ProblemSpecification, ProductKind,
-    ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
-    StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile,
-};
-
-#[path = "../../tests/common/mod.rs"]
-mod common;
-
-use common::problem_inputs;
-
 use super::*;
 use crate::{
     Accelerator, AcceleratorDemand, AcceleratorId, AcceleratorKind, AlternativeId, CacheDemand,
     CapabilityPredicate, CapacityDomainId, CapacityViewId, CountDemand, CpuClassCapacity,
-    DemandAlternative, DemandEnvelope, ExternalPressure, HostInventory, ImplementationRegistryId,
-    IoBufferDemand, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
-    MemoryViewKind, PhysicalWorkBinding, PlannerCostModelProfileId, PlanningBindings, QueueDemand,
-    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
-    RateUnit, ResourceAuthority, ResourceHeadroom, ResourcePolicy, ResourceTopology,
-    RuntimeOverheadDemand, ScalingMetadata, plan,
+    DemandAlternative, DemandEnvelope, ExternalPressure, HostInventory, IoBufferDemand,
+    MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView, MemoryViewKind,
+    QueueDemand, QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource,
+    RateResourceId, RateUnit, ResourceAuthority, ResourceHeadroom, ResourcePolicy,
+    ResourceTopology, RuntimeOverheadDemand, ScalingMetadata,
 };
-
-fn compiled_problem() -> casa_imaging_model::CompiledProblem {
-    let direction = DirectionCoordinateSpec::new(
-        Projection::Sin,
-        SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-        [31.0, 31.0],
-        [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
-        [[1.0, 0.0], [0.0, 1.0]],
-        [180.0, 0.0],
-    );
-    let geometry = GeometryInput::new(
-        vec![ImageDomainSpec::new(
-            ImageDomainRole::Main,
-            ImageShape::new(64, 64),
-            direction,
-            FacetLayout::Single,
-            AxisOrder::new([
-                ImageAxis::DirectionLongitude,
-                ImageAxis::DirectionLatitude,
-                ImageAxis::Polarization,
-                ImageAxis::Spectral,
-            ]),
-        )],
-        CentreLaws::new(
-            PhaseCentreLaw::Observation,
-            DelayCentreLaw::PhaseTrackingCentre,
-            PointingCentreLaw::PhaseTrackingCentre,
-        ),
-        UvwCoordinateLaw::PhaseTrackingCentre,
-        SpectralCoordinateSpec::new(
-            FrequencyFrame::Topocentric,
-            FrequencyFrame::Topocentric,
-            SpectralFrameAnchor::NotApplicable,
-            SpectralWcs::Linear {
-                channels: 1,
-                reference_pixel: 0.0,
-                reference_frequency_hz: 1.4e9,
-                increment_hz: 1.0e6,
-            },
-            RestFrequency::NotApplicable,
-            DopplerConvention::NotApplicable,
-        ),
-    );
-    let specification = ProblemSpecification::new(
-        ScientificContract::new(
-            SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
-            MeasurementEquationContract::new(
-                InstrumentResponse::Scalar,
-                DeclaredInnerProducts::new(
-                    ModelInnerProduct::HermitianEuclidean,
-                    VisibilityInnerProduct::HermitianEuclidean,
-                ),
-            ),
-        ),
-        ReconstructionContract::new(
-            ReconstructionBasis::Constant,
-            ReconstructionAlgorithm::Hogbom,
-            ReconstructionControls::new(10, 0.1, 0.0),
-            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
-        ),
-        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
-        ProductRequirements::new(
-            vec![ProductKind::Psf, ProductKind::Residual, ProductKind::Model],
-            ProductNormalization::UnitResponse,
-            RestoringBeamPolicy::None,
-        ),
-        NumericsContract::new(
-            vec![NumericPrecision::F64],
-            ReductionPolicy::DeterministicPairwise,
-            FiniteValuePolicy::FlagInputRejectGenerated,
-            NumericalStage::ALL
-                .into_iter()
-                .map(|stage| (stage, StageErrorBudget::new(1.0e-12, 1.0e-3)))
-                .collect(),
-        ),
-    );
-    let inputs = problem_inputs(1, Vec::new(), ModelStateIdentity::Empty);
-    compile(ImagingRequest::new(specification, geometry, inputs))
-        .expect("valid scheduler test problem")
-}
 
 fn cpu_node(id: &str, dependencies: BTreeSet<WorkDependency>) -> WorkNode {
     WorkNode {
@@ -345,59 +243,7 @@ fn io_authority() -> ResourceAuthority {
     .expect("valid scheduler I/O inventory")
 }
 
-fn bound_plan(dag: ExecutionDag) -> crate::ExecutionPlan {
-    let problem = compiled_problem();
-    plan(
-        &problem,
-        PlanningBindings::new(
-            ImplementationRegistryId::from_sha256([7; 32]),
-            ResourcePolicy::Exclusive,
-            PlannerCostModelProfileId::from_sha256([8; 32]),
-        ),
-        |_, _| Ok::<_, std::convert::Infallible>(physical_work_binding(dag)),
-    )
-    .expect("physical planning succeeds")
-}
-
-fn physical_work_binding(dag: ExecutionDag) -> PhysicalWorkBinding {
-    let stages = dag
-        .nodes()
-        .values()
-        .map(|node| {
-            let mut stage = crate::StagePrediction::new(node.id.clone(), 1);
-            let mut buffers = BTreeMap::<crate::IoBufferKind, u64>::new();
-            for claim in &node.claims {
-                if let crate::LeaseResource::IoBuffer(kind) = claim.resource {
-                    let bytes = buffers.entry(kind).or_default();
-                    *bytes = bytes
-                        .checked_add(claim.amount)
-                        .expect("validated I/O-buffer claims fit u64");
-                }
-            }
-            if !buffers.is_empty() {
-                stage = stage.with_io(
-                    buffers
-                        .into_iter()
-                        .map(|(kind, bytes)| crate::IoPrediction::new(kind, bytes, 1))
-                        .collect(),
-                );
-            }
-            stage
-        })
-        .collect();
-    let prediction = crate::PlanPrediction::new(
-        u64::try_from(dag.nodes().len()).expect("node count"),
-        crate::PredictionConfidence::new(1_000_000).expect("confidence"),
-        Vec::new(),
-        stages,
-    )
-    .expect("complete test prediction");
-    PhysicalWorkBinding::new(dag, prediction, Vec::new()).expect("bound physical work")
-}
-
-fn inactive_release_predecessor_plan(
-    fenced_predecessor: bool,
-) -> (crate::ExecutionPlan, WorkNodeId) {
+fn inactive_release_predecessor_plan(fenced_predecessor: bool) -> (ExecutionDag, WorkNodeId) {
     let active_prepare_id = WorkNodeId::new("0-prepare-active");
     let inactive_prepare_id = WorkNodeId::new("z-prepare-inactive");
     let inactive_release_id = WorkNodeId::new("m-release-inactive");
@@ -594,7 +440,7 @@ fn inactive_release_predecessor_plan(
         },
     ];
     (
-        bound_plan(ExecutionDag::new(specification).expect("valid cleanup projection plan")),
+        ExecutionDag::new(specification).expect("valid cleanup projection plan"),
         active_release_id,
     )
 }
@@ -652,6 +498,7 @@ fn explicit_work_kinds_cannot_hide_their_resource_contracts() {
         WorkKind::Spill,
         WorkKind::Prefetch,
         WorkKind::Io,
+        WorkKind::ObservationRead,
         WorkKind::Writeback,
         WorkKind::Publication,
         WorkKind::Release,
@@ -664,47 +511,6 @@ fn explicit_work_kinds_cannot_hide_their_resource_contracts() {
             "{kind:?} must declare its typed domain and resources"
         );
     }
-}
-
-#[test]
-fn execution_plan_owns_the_bound_physical_work_dag() {
-    let problem = compiled_problem();
-    let dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
-        .expect("valid physical work");
-    let bindings = PlanningBindings::new(
-        ImplementationRegistryId::from_sha256([7; 32]),
-        ResourcePolicy::Exclusive,
-        PlannerCostModelProfileId::from_sha256([8; 32]),
-    );
-
-    let execution_plan = plan(&problem, bindings, |_, _| {
-        Ok::<_, std::convert::Infallible>(physical_work_binding(dag.clone()))
-    })
-    .expect("physical planning succeeds");
-
-    assert_eq!(execution_plan.execution_dag(), &dag);
-    assert_eq!(execution_plan.physical_work_id(), dag.physical_work_id());
-}
-
-#[test]
-fn execution_plan_owns_the_resource_policy_selected_during_planning() {
-    let problem = compiled_problem();
-    let dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
-        .expect("valid physical work");
-    let execution_plan = plan(
-        &problem,
-        PlanningBindings::new(
-            ImplementationRegistryId::from_sha256([7; 32]),
-            ResourcePolicy::Balanced,
-            PlannerCostModelProfileId::from_sha256([8; 32]),
-        ),
-        |_, _| Ok::<_, std::convert::Infallible>(physical_work_binding(dag)),
-    )
-    .expect("outer planning succeeds");
-
-    assert_eq!(execution_plan.resource_policy(), &ResourcePolicy::Balanced);
-    ExecutionScheduler::start(&execution_plan, &cpu_authority())
-        .expect("scheduler admits the plan under its sealed resource policy");
 }
 
 #[test]
@@ -807,10 +613,10 @@ fn scheduler_rejects_discrete_metal_memory_instead_of_inventing_a_mac_model() {
         slots: CountDemand::new(1, 1),
         command_queue_slots: CountDemand::new(1, 1),
     }];
-    let plan = bound_plan(ExecutionDag::new(specification).expect("valid declared Metal work"));
+    let plan = ExecutionDag::new(specification).expect("valid declared Metal work");
 
     assert!(matches!(
-        ExecutionScheduler::start(&plan, &authority),
+        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &authority, None),
         Err(ExecutionError::InvalidPlan(message)) if message.contains("unified")
     ));
 }
@@ -824,9 +630,11 @@ fn scheduler_dispatches_ready_work_deterministically_under_lease_limits() {
     specification.resource_alternative.demand.workers = CountDemand::new(2, 2);
     specification.resource_alternative.scaling.maximum_workers = 2;
     let dag = ExecutionDag::new(specification).expect("valid concurrent work");
-    let plan = bound_plan(dag);
+    let plan = dag;
     let authority = cpu_authority();
-    let mut scheduler = ExecutionScheduler::start(&plan, &authority).expect("admitted scheduler");
+    let mut scheduler =
+        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &authority, None)
+            .expect("admitted scheduler");
     assert!(scheduler.lease_epoch().is_some());
     assert_eq!(scheduler.knobs(), &ExecutionKnobs::serial());
 
@@ -1072,9 +880,14 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
         capacity_bytes: 100,
         compatibility,
     }];
-    let plan = bound_plan(ExecutionDag::new(specification).expect("valid reuse plan"));
-    let mut scheduler =
-        ExecutionScheduler::start(&plan, &unified_authority()).expect("admitted reuse plan");
+    let plan = ExecutionDag::new(specification).expect("valid reuse plan");
+    let mut scheduler = ExecutionScheduler::start(
+        &plan,
+        &ResourcePolicy::Exclusive,
+        &unified_authority(),
+        None,
+    )
+    .expect("admitted reuse plan");
 
     for (node_id, fences) in [
         (compute_id, vec![device_fence]),
@@ -1261,9 +1074,14 @@ fn disjoint_io_buffer_purposes_share_one_physical_memory_charge() {
         capacity_bytes: 600,
         compatibility,
     }];
-    let plan = bound_plan(ExecutionDag::new(specification).expect("valid I/O-buffer reuse plan"));
-    let mut scheduler = ExecutionScheduler::start(&plan, &unified_authority())
-        .expect("three logical 600-byte buffers admit as one 600-byte physical slot");
+    let plan = ExecutionDag::new(specification).expect("valid I/O-buffer reuse plan");
+    let mut scheduler = ExecutionScheduler::start(
+        &plan,
+        &ResourcePolicy::Exclusive,
+        &unified_authority(),
+        None,
+    )
+    .expect("three logical 600-byte buffers admit as one 600-byte physical slot");
 
     for (expected, fences) in [
         (first_id, first_fences),
@@ -1627,6 +1445,7 @@ fn asynchronous_payload_claims_cannot_end_with_synchronous_work() {
 
     for (kind, fences) in [
         (WorkKind::Io, BTreeSet::from([FenceKind::Io])),
+        (WorkKind::ObservationRead, BTreeSet::from([FenceKind::Io])),
         (
             WorkKind::Writeback,
             BTreeSet::from([FenceKind::Io, FenceKind::Writeback]),
@@ -1884,9 +1703,10 @@ fn cancellation_prevents_pending_publication_from_starting() {
         capacity_bytes: 100,
         compatibility,
     }];
-    let plan = bound_plan(ExecutionDag::new(specification).expect("valid publication plan"));
+    let plan = ExecutionDag::new(specification).expect("valid publication plan");
     let mut scheduler =
-        ExecutionScheduler::start(&plan, &io_authority()).expect("admitted publication plan");
+        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &io_authority(), None)
+            .expect("admitted publication plan");
 
     let SchedulerAction::Work(compute) = scheduler.next_action().expect("compute dispatch") else {
         panic!("compute must dispatch first");
@@ -1909,11 +1729,10 @@ fn failed_work_cancels_pending_nodes_and_releases_the_lease() {
         "b-pending",
         BTreeSet::from([WorkDependency::Work(failed.id.clone())]),
     );
-    let plan = bound_plan(
-        ExecutionDag::new(plan_spec(vec![failed, pending])).expect("valid failure plan"),
-    );
+    let plan = ExecutionDag::new(plan_spec(vec![failed, pending])).expect("valid failure plan");
     let mut scheduler =
-        ExecutionScheduler::start(&plan, &cpu_authority()).expect("admitted failure plan");
+        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &cpu_authority(), None)
+            .expect("admitted failure plan");
     let SchedulerAction::Work(work) = scheduler.next_action().expect("failed work dispatch") else {
         panic!("first work must dispatch");
     };
@@ -1961,9 +1780,10 @@ fn adaptation_requires_the_listed_transition_at_its_quiescence_point() {
         to: adapted.clone(),
         at: QuiescencePoint::MajorCycle,
     }];
-    let plan = bound_plan(ExecutionDag::new(specification).expect("valid adaptive plan"));
+    let plan = ExecutionDag::new(specification).expect("valid adaptive plan");
     let mut scheduler =
-        ExecutionScheduler::start(&plan, &cpu_authority()).expect("admitted adaptive plan");
+        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &cpu_authority(), None)
+            .expect("admitted adaptive plan");
 
     assert!(scheduler.adapt(&AdaptationId::new("larger-batch")).is_err());
     let SchedulerAction::Work(first) = scheduler.next_action().expect("major-cycle dispatch")
@@ -2435,9 +2255,10 @@ fn externally_retained_io_buffer_release_is_terminal_after_every_use() {
         .dependencies = BTreeSet::from([WorkDependency::Work(later_id)]);
     valid.logical_allocations[0].lifetime.release_after =
         BTreeSet::from([WorkDependency::Work(release_id.clone())]);
-    let plan = bound_plan(ExecutionDag::new(valid).expect("valid terminal mapping release"));
+    let plan = ExecutionDag::new(valid).expect("valid terminal mapping release");
     let mut scheduler =
-        ExecutionScheduler::start(&plan, &cpu_authority()).expect("admitted mapping plan");
+        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &cpu_authority(), None)
+            .expect("admitted mapping plan");
     let SchedulerAction::Work(prepare) = scheduler.next_action().expect("mapping preparation")
     else {
         panic!("mapping preparation must dispatch first");
@@ -2671,9 +2492,10 @@ fn cancellation_cleanup_respects_release_to_release_dependencies() {
             compatibility: storage_compatibility,
         },
     ];
-    let plan = bound_plan(ExecutionDag::new(specification).expect("valid ordered cleanup plan"));
+    let plan = ExecutionDag::new(specification).expect("valid ordered cleanup plan");
     let mut scheduler =
-        ExecutionScheduler::start(&plan, &io_authority()).expect("admitted cleanup plan");
+        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &io_authority(), None)
+            .expect("admitted cleanup plan");
 
     for expected in [&mapped_id, &storage_id] {
         let SchedulerAction::Work(work) = scheduler.next_action().expect("preparation dispatch")
@@ -2725,8 +2547,9 @@ fn cancellation_cleanup_respects_release_to_release_dependencies() {
 fn cancellation_cleanup_projects_out_inactive_release_work_and_fences() {
     for fenced_predecessor in [false, true] {
         let (plan, active_release_id) = inactive_release_predecessor_plan(fenced_predecessor);
-        let mut scheduler = ExecutionScheduler::start(&plan, &io_authority())
-            .expect("admitted cleanup projection plan");
+        let mut scheduler =
+            ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &io_authority(), None)
+                .expect("admitted cleanup projection plan");
         let SchedulerAction::Work(prepare) = scheduler.next_action().expect("active preparation")
         else {
             panic!("the active external allocation must be acquired first");
