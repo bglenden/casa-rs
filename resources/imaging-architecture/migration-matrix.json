@@ -71,7 +71,7 @@
   "baseline_manifest_digests": {
     "repo://crates/casa-calibration/src/continuum_subtract.rs": "742a5f3b8dc9fd46417d42e257a6a5a844c71a68928b757b3fc4f6fb1dfde229",
     "repo://crates/casa-imaging-model/src/lib.rs": "fd74590d5961ffcebef4f3baa15261a2e05a466cdd29506d302e692a7c693a6a",
-    "repo://crates/casa-imaging-runtime/src/lib.rs": "a37bf2629fe88f1a589084c861ed0d1e659556f0c49225887a1d6a2d4a74f6c8",
+    "repo://crates/casa-imaging-runtime/src/lib.rs": "276d058fde056829237f729ed127c1a7c522c6d27dfc36cc3a99c4a9c7775541",
     "repo://crates/casa-imaging/src/fft_backend.rs": "12594aabd44f66300b9a13e7ac92617f2eb3a6f0abca8263fd89cb5549cacb4a",
     "repo://docs/tutorial-parity/capability-matrix.md": "d809e0469c1661d7bba0c6ee0b208bf072d4e5a5bf2b2e4b01f6bddd227e8d4d",
     "repo://docs/tutorial-parity/outlierfile-inventory.md": "6b05d24e96a4708f5c754a05a1715278c613011a534a42a642fd04314448b005",

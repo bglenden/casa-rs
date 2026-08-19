@@ -10,20 +10,23 @@ use casa_imaging_model::{
     DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis,
     ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest, InstrumentResponse,
     LogicalIdentity, MeasurementEquationContract, MissingPointingPolicy, ModelStateIdentity,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
-    ObservationSnapshotId, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
-    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
-    PolarizationContract, PolarizationCoordinate, ProblemInputIdentities, ProblemSpecification,
-    ProductKind, ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw, PhaseCentreLaw,
+    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
+    ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements, Projection,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
+    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
     SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, WeightDensityScope,
     WeightingContract, WeightingScheme,
 };
 use casa_imaging_router::{
     DispatchError, ImagingRouter, LegacyWholeRunEnginePort, NativeEnginePort, RequestDisposition,
 };
+
+mod common;
+
+use common::problem_inputs;
 
 #[test]
 fn legacy_request_invokes_only_whole_run_legacy_engine() {
@@ -210,10 +213,6 @@ fn request_with_phase_centre(
             numerics,
         ),
         geometry,
-        ProblemInputIdentities::new(
-            ObservationSnapshotId::new(LogicalIdentity::from_sha256([1; 32])),
-            reference_data,
-            ModelStateIdentity::Empty,
-        ),
+        problem_inputs(1, reference_data, ModelStateIdentity::Empty),
     )
 }

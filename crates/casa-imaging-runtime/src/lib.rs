@@ -4,13 +4,17 @@
 
 mod execution;
 mod execution_bindings;
+mod receipt;
 mod resource_authority;
 
 pub use execution_bindings::{
-    BindingKind, ExecutionPlan, ExecutionPlanId, ExecutionStatus, ImplementationRegistry,
-    ImplementationRegistryId, PhysicalWorkBinding, PhysicalWorkId, PlannerCostModelProfileId,
-    PlanningBindings, ResourcePolicyId, RunBindings, RunController, RunDirective, RunError,
-    RunToCompletion, WorkImplementation, plan, run,
+    ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement, ArtifactRole, BindingKind,
+    CacheIdentity, ExecutionEvidenceError, ExecutionPlan, ExecutionPlanId, ExecutionStatus,
+    ImplementationRegistry, ImplementationRegistryId, IoMeasurement, IoPrediction,
+    PhysicalWorkBinding, PhysicalWorkBindingError, PhysicalWorkId, PlanPrediction, PlannedArtifact,
+    PlannerCostModelProfileId, PlanningBindings, PredictionConfidence, PredictionUncertainty,
+    RedactedPath, ResourceMeasurement, ResourcePolicyId, RunBindings, RunController, RunDirective,
+    RunError, RunToCompletion, StagePrediction, WorkImplementation, WorkMeasurements, plan, run,
 };
 
 pub use execution::{
@@ -20,6 +24,12 @@ pub use execution::{
     FenceKind, InitializationPolicy, LogicalAllocation, PhysicalSlot, PhysicalSlotId,
     ResourceClaim, ScheduledWork, SlotCompatibility, StorageMode, WorkDependency, WorkDomain,
     WorkImplementationId, WorkKind, WorkNode, WorkNodeId,
+};
+pub use receipt::{
+    BuildIdentity, CompiledProblemEvidence, ExecutionAttemptId, ExecutionProvenance,
+    ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ReceiptAdaptation,
+    ReceiptError, ReceiptFailureKind, ReceiptInfeasibilityCertificate, ReceiptRetention,
+    ReceiptStatus,
 };
 pub use resource_authority::{
     Accelerator, AcceleratorDemand, AcceleratorId, AcceleratorKind, AlternativeId, CacheDemand,

@@ -2430,6 +2430,18 @@ fn validate_domain(node: &WorkNode) -> Result<(), ExecutionError> {
 
 fn validate_kind(node: &WorkNode) -> Result<(), ExecutionError> {
     use crate::RuntimeOverheadKind;
+    for kind in node.claims.iter().filter_map(|claim| match claim.resource {
+        LeaseResource::IoBuffer(kind) => Some(kind),
+        _ => None,
+    }) {
+        if !io_buffer_kind_supports_work_kind(kind, node.kind) {
+            return Err(ExecutionError::invalid_plan(format!(
+                "{kind:?} I/O buffer is incompatible with {:?} work node {}",
+                node.kind,
+                node.id.as_str()
+            )));
+        }
+    }
     match node.kind {
         WorkKind::Preparation => Ok(()),
         WorkKind::Cache => require_claim(
@@ -2502,6 +2514,37 @@ fn validate_kind(node: &WorkNode) -> Result<(), ExecutionError> {
             }
         }
         WorkKind::DataCensus | WorkKind::ConvolutionFunction | WorkKind::Compute => Ok(()),
+    }
+}
+
+pub(crate) fn io_buffer_kind_supports_work_kind(
+    io_kind: crate::IoBufferKind,
+    work_kind: WorkKind,
+) -> bool {
+    match io_kind {
+        crate::IoBufferKind::SourceReadAhead => work_kind == WorkKind::Prefetch,
+        crate::IoBufferKind::Decode | crate::IoBufferKind::Preparation => {
+            work_kind == WorkKind::Preparation
+        }
+        crate::IoBufferKind::HostToDeviceTransfer | crate::IoBufferKind::DeviceToHostTransfer => {
+            work_kind == WorkKind::Transfer
+        }
+        crate::IoBufferKind::SpillRead => {
+            matches!(work_kind, WorkKind::Spill | WorkKind::Prefetch)
+        }
+        crate::IoBufferKind::SpillWrite => work_kind == WorkKind::Spill,
+        crate::IoBufferKind::Serialization => work_kind == WorkKind::Serialization,
+        crate::IoBufferKind::StorageManager => {
+            matches!(work_kind, WorkKind::Io | WorkKind::Release)
+        }
+        crate::IoBufferKind::TiledColumnWriter | crate::IoBufferKind::ScalarColumnWriter => {
+            work_kind == WorkKind::Io
+        }
+        crate::IoBufferKind::Writeback => work_kind == WorkKind::Writeback,
+        crate::IoBufferKind::Publication => work_kind == WorkKind::Publication,
+        crate::IoBufferKind::MappedPageCache => {
+            matches!(work_kind, WorkKind::Cache | WorkKind::Release)
+        }
     }
 }
 
