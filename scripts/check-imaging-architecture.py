@@ -53,13 +53,16 @@ ACCEPTED_LOGICAL_GRAPH_SHA256 = (
     "7101b6d90196b1ea3d3c750080d703bb5e305e91c8ac19553e1dda7ed58c4e33"
 )
 ACCEPTED_SOURCE_BOUNDARIES_SHA256 = (
-    "1ae88137a4bbf648546e290234c2dbb1617f6f5765153c2790431b288c98fb90"
+    "14f3c76ecb191da6edacd35ca4b12704608cb3d0c6aa82c3806d6edb068851f8"
 )
 ACCEPTED_FROZEN_TRANSITIONAL_EDGES_SHA256 = (
     "0077e28528d2160616d34e17fb7124586f346557917e0bfac99b0dff6739a1d1"
 )
 ACCEPTED_PACKAGE_POLICY_SHA256 = (
-    "9472cc715836519826e74784053046a1334d673541e7334069b8f6a4e14fab43"
+    "15804c2ee0e7d474181d0eddaa7cbce2d65b01bde789108abb4395f477e1b6a4"
+)
+ACCEPTED_WHOLE_RUN_ROUTER_SHA256 = (
+    "c855dae5d5b4239e21fa0fe43d1d2f4bbb4114d245374db674fb81713af11a2d"
 )
 ACCEPTED_MATRIX_INVENTORY_SHA256 = (
     "dc4ca134627402fa74744f56797c067e462e9566178a9188cadeb4c4b14714b0"
@@ -408,6 +411,10 @@ def validate_policy(
                 f"native_package_workspace_dependencies.{package} contains duplicates"
             )
 
+    validate_whole_run_router_policy(
+        policy, package_layers, classifications, native_rules
+    )
+
     legacy_packages = set(
         require_string_list(policy.get("legacy_packages"), "legacy_packages")
     )
@@ -477,6 +484,46 @@ def validate_policy(
             "required_migration_evidence_issues differs from the accepted issue scope: "
             f"added={sorted(set(required_issues) - ACCEPTED_MIGRATION_ISSUES)}, "
             f"removed={sorted(ACCEPTED_MIGRATION_ISSUES - set(required_issues))}"
+        )
+
+
+def validate_whole_run_router_policy(
+    policy: dict[str, Any],
+    package_layers: dict[str, str],
+    classifications: dict[str, str],
+    native_rules: dict[str, list[str]],
+) -> None:
+    router = policy.get("whole_run_router")
+    required = {
+        "package",
+        "source",
+        "router_type",
+        "dispatch_method",
+        "engine_ports",
+    }
+    if not isinstance(router, dict) or set(router) != required:
+        raise ArchitectureError(
+            f"whole_run_router must contain exactly {sorted(required)}"
+        )
+    package = require_string(router.get("package"), "whole_run_router.package")
+    source = require_string(router.get("source"), "whole_run_router.source")
+    require_string(router.get("router_type"), "whole_run_router.router_type")
+    require_string(router.get("dispatch_method"), "whole_run_router.dispatch_method")
+    require_string_list(router.get("engine_ports"), "whole_run_router.engine_ports")
+    source_path = Path(source)
+    if source_path.is_absolute() or ".." in source_path.parts or source_path.suffix != ".rs":
+        raise ArchitectureError("whole_run_router.source must be a repository Rust source")
+    if stable_digest(router) != ACCEPTED_WHOLE_RUN_ROUTER_SHA256:
+        raise ArchitectureError(
+            "whole-run migration router differs from the accepted owner"
+        )
+    if (
+        package_layers.get(package) != "application"
+        or classifications.get(package) != "native"
+        or native_rules.get(package) != ["casa-imaging-model"]
+    ):
+        raise ArchitectureError(
+            "whole-run migration router must be a native application package with only the imaging model dependency"
         )
 
 
@@ -892,6 +939,67 @@ def validate_source_boundaries(
             raise ArchitectureError(
                 f"source boundary {boundary['id']} differs from its accepted transitional violations"
             )
+
+
+def validate_whole_run_router_source(
+    policy: dict[str, Any], repo_root: Path = REPO_ROOT
+) -> None:
+    router = policy["whole_run_router"]
+    source_relative = Path(router["source"])
+    source_path = repo_root / source_relative
+    try:
+        source = source_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ArchitectureError(
+            f"whole-run migration router cannot read {source_relative}: {error}"
+        ) from error
+
+    matrix_name = Path(policy["migration_matrix"]).name
+    if "include_str!" not in source or matrix_name not in source:
+        raise ArchitectureError(
+            "whole-run migration router must embed the authoritative migration matrix"
+        )
+
+    owner_symbols = [router["router_type"], *router["engine_ports"]]
+    owners: dict[str, list[str]] = {symbol: [] for symbol in owner_symbols}
+    crates_root = repo_root / "crates"
+    if not crates_root.is_dir():
+        raise ArchitectureError("whole-run migration router cannot inspect crates")
+    for crate in sorted(crates_root.iterdir()):
+        source_root = crate / "src"
+        if not source_root.is_dir():
+            continue
+        for path in sorted(source_root.rglob("*.rs")):
+            try:
+                candidate = path.read_text(encoding="utf-8")
+            except OSError as error:
+                raise ArchitectureError(
+                    f"whole-run migration router cannot read {path}: {error}"
+                ) from error
+            for symbol in owner_symbols:
+                definition = re.compile(
+                    rf"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|trait|type)\s+{re.escape(symbol)}\b"
+                )
+                owners[symbol].extend(
+                    str(path.relative_to(repo_root))
+                    for _match in definition.finditer(candidate)
+                )
+
+    expected_owner = str(source_relative)
+    for symbol, actual_owners in owners.items():
+        if actual_owners != [expected_owner]:
+            raise ArchitectureError(
+                f"whole-run router symbol {symbol} must be owned exactly once by "
+                f"{expected_owner}: found={actual_owners}"
+            )
+
+    dispatch = re.compile(
+        rf"(?m)^\s*pub\s+fn\s+{re.escape(router['dispatch_method'])}\b"
+    )
+    if len(dispatch.findall(source)) != 1:
+        raise ArchitectureError(
+            "whole-run migration router must expose exactly one accepted dispatch method"
+        )
 
 
 def format_edges(edges: list[tuple[str, str, str]]) -> str:
@@ -1742,6 +1850,7 @@ def main() -> int:
         )
         validate_workspace(policy, metadata)
         validate_source_boundaries(policy)
+        validate_whole_run_router_source(policy)
 
         matrix_path = (
             resolve_input(args.migration_matrix)

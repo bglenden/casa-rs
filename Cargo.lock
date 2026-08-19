@@ -629,6 +629,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "casa-imaging-router"
+version = "0.27.0"
+dependencies = [
+ "casa-imaging-model",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "casa-imaging-runtime"
 version = "0.27.0"
 dependencies = [
