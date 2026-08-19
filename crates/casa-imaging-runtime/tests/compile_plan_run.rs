@@ -8,14 +8,19 @@ use std::{
 };
 
 use casa_imaging_model::{
-    CompiledGeometryId, FieldGeometry, FiniteValuePolicy, GeometryContract, ImagingRequest,
-    ImagingRequestVersion, InstrumentResponse, LogicalIdentity, MeasurementEquationContract,
-    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationSnapshotId,
+    AxisOrder, CentreLaws, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
+    DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis,
+    ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest, ImagingRequestVersion,
+    InstrumentResponse, LogicalIdentity, MeasurementEquationContract, MissingPointingPolicy,
+    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ObservationSnapshotId, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
+    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
     PolarizationContract, PolarizationCoordinate, ProblemInputIdentities, ProblemSpecification,
-    ProductKind, ProductNormalization, ProductRequirements, ProjectionGeometry,
-    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
-    ReductionPolicy, ReferenceDataKind, RestoringBeamPolicy, ScientificContract, SpectralContract,
-    SpectralCoupling, SpectralFrame, SpectralSampling, StageErrorBudget, WeightDensityScope,
+    ProductKind, ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, WeightDensityScope,
     WeightingContract, WeightingScheme, compile,
 };
 use casa_imaging_runtime::{
@@ -28,7 +33,62 @@ fn identity(byte: u8) -> LogicalIdentity {
     LogicalIdentity::from_sha256([byte; 32])
 }
 
+fn geometry(reference_pixel: f64) -> GeometryInput {
+    let direction = DirectionCoordinateSpec::new(
+        Projection::Sin,
+        SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+        [reference_pixel, 255.0],
+        [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
+        [[1.0, 0.0], [0.0, 1.0]],
+        [180.0, 0.0],
+    );
+    GeometryInput::new(
+        vec![ImageDomainSpec::new(
+            ImageDomainRole::Main,
+            ImageShape::new(512, 512),
+            direction,
+            FacetLayout::Single,
+            AxisOrder::new([
+                ImageAxis::DirectionLongitude,
+                ImageAxis::DirectionLatitude,
+                ImageAxis::Polarization,
+                ImageAxis::Spectral,
+            ]),
+        )],
+        CentreLaws::new(
+            PhaseCentreLaw::Fixed(direction.reference_direction()),
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::Observation(ObservationPointingLaw::new(
+                PointingDirectionColumn::Direction,
+                PointingDirectionSemantic::AntennaBoresight,
+                PointingTimeSampling::VisibilityTimeCentroid,
+                PointingInterpolation::GreatCircleShortestArc,
+                PointingExtrapolation::Reject,
+                MissingPointingPolicy::Reject,
+            )),
+        ),
+        UvwCoordinateLaw::PhaseTrackingCentre,
+        SpectralCoordinateSpec::new(
+            FrequencyFrame::Topocentric,
+            FrequencyFrame::Topocentric,
+            SpectralFrameAnchor::NotApplicable,
+            SpectralWcs::Linear {
+                channels: 1,
+                reference_pixel: 0.0,
+                reference_frequency_hz: 1.4e9,
+                increment_hz: 1.0e6,
+            },
+            RestFrequency::NotApplicable,
+            DopplerConvention::NotApplicable,
+        ),
+    )
+}
+
 fn request(observation: u8) -> ImagingRequest {
+    request_with_geometry(observation, geometry(255.0))
+}
+
+fn request_with_geometry(observation: u8, geometry: GeometryInput) -> ImagingRequest {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
         ReductionPolicy::Compensated,
@@ -40,20 +100,14 @@ fn request(observation: u8) -> ImagingRequest {
     );
     let specification = ProblemSpecification::new(
         ScientificContract::new(
-            GeometryContract::new(ProjectionGeometry::Coplanar, FieldGeometry::Single),
-            SpectralContract::new(
-                SpectralFrame::Native,
-                SpectralSampling::Identity,
-                SpectralCoupling::Independent,
-                None,
-            ),
-            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+            SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
             MeasurementEquationContract::new(InstrumentResponse::Scalar),
         ),
         ReconstructionContract::new(
             ReconstructionBasis::Constant,
             ReconstructionAlgorithm::Dirty,
             ReconstructionControls::new(0, 1.0, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         ),
         WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
         ProductRequirements::new(
@@ -65,9 +119,9 @@ fn request(observation: u8) -> ImagingRequest {
     );
     ImagingRequest::new(
         specification,
+        geometry,
         ProblemInputIdentities::new(
             ObservationSnapshotId::new(identity(observation)),
-            CompiledGeometryId::new(identity(2)),
             Vec::new(),
             ModelStateIdentity::Empty,
         ),
@@ -286,7 +340,7 @@ fn run_rejects_a_different_implementation_returned_under_the_bound_key() {
 #[test]
 fn versioned_request_compiles_before_physical_planning() {
     let request = request(1);
-    assert_eq!(request.version(), ImagingRequestVersion::V1);
+    assert_eq!(request.version(), ImagingRequestVersion::V2);
 
     let problem = compile(request).expect("logical compilation");
     assert_eq!(problem.numerics_id().as_bytes().len(), 32);
@@ -305,6 +359,10 @@ fn plan_seals_physical_work_and_every_required_binding() {
     .expect("physical planning");
 
     assert_eq!(execution_plan.problem_id(), problem.problem_id());
+    assert_eq!(
+        execution_plan.geometry_id(),
+        problem.geometry().geometry_id()
+    );
     assert_eq!(
         execution_plan.observation_snapshot_id(),
         problem.inputs().observation()
@@ -331,8 +389,8 @@ fn plan_seals_physical_work_and_every_required_binding() {
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            113, 113, 83, 196, 201, 219, 253, 182, 230, 19, 114, 198, 152, 111, 52, 7, 91, 205,
-            247, 183, 148, 158, 244, 86, 14, 136, 164, 206, 21, 159, 89, 48,
+            121, 216, 208, 231, 97, 87, 138, 23, 98, 12, 136, 178, 191, 132, 103, 164, 231, 79,
+            245, 132, 62, 13, 91, 118, 165, 26, 62, 39, 199, 55, 141, 113,
         ]
     );
 }
@@ -394,7 +452,6 @@ fn run_rejects_every_stale_problem_input_before_calling_the_executor() {
         (
             ProblemInputIdentities::new(
                 ObservationSnapshotId::new(identity(9)),
-                CompiledGeometryId::new(identity(2)),
                 Vec::new(),
                 ModelStateIdentity::Empty,
             ),
@@ -403,16 +460,6 @@ fn run_rejects_every_stale_problem_input_before_calling_the_executor() {
         (
             ProblemInputIdentities::new(
                 ObservationSnapshotId::new(identity(1)),
-                CompiledGeometryId::new(identity(9)),
-                Vec::new(),
-                ModelStateIdentity::Empty,
-            ),
-            BindingKind::CompiledGeometry,
-        ),
-        (
-            ProblemInputIdentities::new(
-                ObservationSnapshotId::new(identity(1)),
-                CompiledGeometryId::new(identity(2)),
                 vec![(ReferenceDataKind::Measures, identity(9))],
                 ModelStateIdentity::Empty,
             ),
@@ -421,7 +468,6 @@ fn run_rejects_every_stale_problem_input_before_calling_the_executor() {
         (
             ProblemInputIdentities::new(
                 ObservationSnapshotId::new(identity(1)),
-                CompiledGeometryId::new(identity(2)),
                 Vec::new(),
                 ModelStateIdentity::Seed(identity(9)),
             ),
@@ -447,6 +493,28 @@ fn run_rejects_every_stale_problem_input_before_calling_the_executor() {
     let result = run(&changed_problem, &execution_plan, &current, &registry);
     assert!(matches!(
         result,
+        Err(RunError::BindingMismatch {
+            binding: BindingKind::CompiledProblem
+        })
+    ));
+    let changed_geometry_problem =
+        compile(request_with_geometry(1, geometry(254.0))).expect("changed compiled geometry");
+    assert_ne!(
+        execution_plan.geometry_id(),
+        changed_geometry_problem.geometry().geometry_id()
+    );
+    let current = RunBindings::new(
+        changed_geometry_problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    assert!(matches!(
+        run(
+            &changed_geometry_problem,
+            &execution_plan,
+            &current,
+            &registry
+        ),
         Err(RunError::BindingMismatch {
             binding: BindingKind::CompiledProblem
         })

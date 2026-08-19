@@ -3,15 +3,15 @@
 use std::{error::Error, fmt};
 
 use casa_imaging_model::{
-    CompiledProblem, CompiledProblemId, LogicalIdentity, NumericsContractId, ObservationSnapshotId,
-    ProblemInputIdentities, ReferenceDataKind,
+    CompiledGeometryId, CompiledProblem, CompiledProblemId, LogicalIdentity, NumericsContractId,
+    ObservationSnapshotId, ProblemInputIdentities, ReferenceDataKind,
 };
 use sha2::{Digest, Sha256};
 
 use crate::{ResourceOverride, ResourcePolicy};
 
 const EXECUTION_PLAN_IDENTITY_DOMAIN: &[u8] = b"casa-rs-execution-plan";
-const EXECUTION_PLAN_IDENTITY_VERSION: u32 = 1;
+const EXECUTION_PLAN_IDENTITY_VERSION: u32 = 2;
 const RESOURCE_POLICY_IDENTITY_DOMAIN: &[u8] = b"casa-rs-resource-policy";
 const RESOURCE_POLICY_IDENTITY_VERSION: u32 = 1;
 
@@ -213,6 +213,7 @@ pub struct ExecutionPlan {
     plan_id: ExecutionPlanId,
     problem_id: CompiledProblemId,
     problem_inputs: ProblemInputIdentities,
+    geometry: CompiledGeometryId,
     numerics: NumericsContractId,
     implementation_registry: ImplementationRegistryId,
     resource_policy: ResourcePolicyId,
@@ -238,6 +239,12 @@ impl ExecutionPlan {
     #[must_use]
     pub const fn observation_snapshot_id(&self) -> ObservationSnapshotId {
         self.problem_inputs.observation()
+    }
+
+    /// Return the compiler-derived coordinate and image-domain geometry identity.
+    #[must_use]
+    pub const fn geometry_id(&self) -> CompiledGeometryId {
+        self.geometry
     }
 
     /// Return the exact numerical-contract identity.
@@ -288,6 +295,7 @@ pub fn plan<E>(
         plan_id: ExecutionPlanId([0; 32]),
         problem_id: problem.problem_id(),
         problem_inputs: problem.inputs().clone(),
+        geometry: problem.geometry().geometry_id(),
         numerics: problem.numerics_id(),
         implementation_registry: bindings.implementation_registry,
         resource_policy: bindings.resource_policy_id,
@@ -461,10 +469,10 @@ fn validate_bindings<E>(
 ) -> Result<(), RunError<E>> {
     let mismatch = if plan.problem_id != problem.problem_id() {
         Some(BindingKind::CompiledProblem)
+    } else if plan.geometry != problem.geometry().geometry_id() {
+        Some(BindingKind::CompiledGeometry)
     } else if plan.problem_inputs.observation() != current.problem_inputs.observation() {
         Some(BindingKind::ObservationSnapshot)
-    } else if plan.problem_inputs.geometry() != current.problem_inputs.geometry() {
-        Some(BindingKind::CompiledGeometry)
     } else if !same_reference_snapshots(
         plan.problem_inputs.reference_data(),
         current.problem_inputs.reference_data(),
@@ -546,7 +554,7 @@ fn execution_plan_id(plan: &ExecutionPlan) -> ExecutionPlanId {
     encoder.u32(EXECUTION_PLAN_IDENTITY_VERSION);
     encoder.digest(plan.problem_id.as_bytes());
     encoder.digest(plan.problem_inputs.observation().identity().as_bytes());
-    encoder.digest(plan.problem_inputs.geometry().identity().as_bytes());
+    encoder.digest(plan.geometry.as_bytes());
     encoder.usize(plan.problem_inputs.reference_data().len());
     for (kind, identity) in plan.problem_inputs.reference_data() {
         encoder.u8(reference_data_tag(*kind));

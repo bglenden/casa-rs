@@ -1,22 +1,36 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::{
-    CompileProblemError, CompiledGeometryId, FieldGeometry, FiniteValuePolicy, GeometryContract,
-    ImagingRequest, InstrumentResponse, LogicalIdentity, MeasurementEquationContract,
-    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationSnapshotId,
-    PolarizationContract, PolarizationCoordinate, ProblemInputIdentities, ProblemSpecification,
-    ProductKind, ProductNormalization, ProductRequirements, ProjectionGeometry,
-    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
-    ReductionPolicy, ReferenceDataKind, RequiredCapability, RestoringBeamPolicy,
-    ScientificContract, SpectralContract, SpectralCoupling, SpectralFrame, SpectralSampling,
-    StageErrorBudget, UvTaper, WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    AxisOrder, CentreLaws, CompileProblemError, DelayCentreLaw, DirectionCoordinateSpec,
+    DirectionFrame, DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FrequencyFrame,
+    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest,
+    InstrumentResponse, ItrfPosition, LogicalIdentity, MeasurementEquationContract,
+    MissingPointingPolicy, ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract,
+    ObservationPointingLaw, ObservationSnapshotId, PhaseCentreLaw, PointingCentreLaw,
+    PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
+    ProblemInputIdentities, ProblemSpecification, ProductKind, ProductNormalization,
+    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
+    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
+    RequiredCapability, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSampling, SpectralWcs, StageErrorBudget, TimeScale, UvTaper, UvwCoordinateLaw,
+    WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
 
 fn compile_request(
     specification: ProblemSpecification,
     inputs: ProblemInputIdentities,
 ) -> Result<casa_imaging_model::CompiledProblem, CompileProblemError> {
-    compile(ImagingRequest::new(specification, inputs))
+    compile_with_geometry(specification, geometry(), inputs)
+}
+
+fn compile_with_geometry(
+    specification: ProblemSpecification,
+    geometry: GeometryInput,
+    inputs: ProblemInputIdentities,
+) -> Result<casa_imaging_model::CompiledProblem, CompileProblemError> {
+    compile(ImagingRequest::new(specification, geometry, inputs))
 }
 
 fn identity(byte: u8) -> LogicalIdentity {
@@ -46,6 +60,7 @@ fn reconstruction() -> ReconstructionContract {
         ReconstructionBasis::Taylor { terms: 2 },
         ReconstructionAlgorithm::Mtmfs,
         ReconstructionControls::new(100, 0.1, 0.0),
+        PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
     )
 }
 
@@ -72,15 +87,59 @@ fn products_with_beam(reverse: bool, restoring_beam: RestoringBeamPolicy) -> Pro
 
 fn science() -> ScientificContract {
     ScientificContract::new(
-        GeometryContract::new(ProjectionGeometry::Coplanar, FieldGeometry::Single),
-        SpectralContract::new(
-            SpectralFrame::Native,
-            SpectralSampling::Identity,
-            SpectralCoupling::Independent,
-            None,
-        ),
-        PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
         MeasurementEquationContract::new(InstrumentResponse::Scalar),
+    )
+}
+
+fn geometry() -> GeometryInput {
+    let direction = DirectionCoordinateSpec::new(
+        Projection::Sin,
+        SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+        [255.0, 255.0],
+        [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
+        [[1.0, 0.0], [0.0, 1.0]],
+        [180.0, 0.0],
+    );
+    GeometryInput::new(
+        vec![ImageDomainSpec::new(
+            ImageDomainRole::Main,
+            ImageShape::new(512, 512),
+            direction,
+            FacetLayout::Single,
+            AxisOrder::new([
+                ImageAxis::DirectionLongitude,
+                ImageAxis::DirectionLatitude,
+                ImageAxis::Polarization,
+                ImageAxis::Spectral,
+            ]),
+        )],
+        CentreLaws::new(
+            PhaseCentreLaw::Fixed(direction.reference_direction()),
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::Observation(ObservationPointingLaw::new(
+                PointingDirectionColumn::Direction,
+                PointingDirectionSemantic::AntennaBoresight,
+                PointingTimeSampling::VisibilityTimeCentroid,
+                PointingInterpolation::GreatCircleShortestArc,
+                PointingExtrapolation::Reject,
+                MissingPointingPolicy::Reject,
+            )),
+        ),
+        UvwCoordinateLaw::PhaseTrackingCentre,
+        SpectralCoordinateSpec::new(
+            FrequencyFrame::Topocentric,
+            FrequencyFrame::Topocentric,
+            SpectralFrameAnchor::NotApplicable,
+            SpectralWcs::Linear {
+                channels: 1,
+                reference_pixel: 0.0,
+                reference_frequency_hz: 1.4e9,
+                increment_hz: 1.0e6,
+            },
+            RestFrequency::NotApplicable,
+            DopplerConvention::NotApplicable,
+        ),
     )
 }
 
@@ -114,7 +173,6 @@ fn inputs(reverse: bool) -> ProblemInputIdentities {
     }
     ProblemInputIdentities::new(
         ObservationSnapshotId::new(identity(1)),
-        CompiledGeometryId::new(identity(2)),
         references,
         ModelStateIdentity::Seed(identity(5)),
     )
@@ -123,7 +181,6 @@ fn inputs(reverse: bool) -> ProblemInputIdentities {
 fn inputs_with_instrument() -> ProblemInputIdentities {
     ProblemInputIdentities::new(
         ObservationSnapshotId::new(identity(1)),
-        CompiledGeometryId::new(identity(2)),
         vec![
             (ReferenceDataKind::Measures, identity(3)),
             (ReferenceDataKind::Ephemeris, identity(4)),
@@ -221,6 +278,7 @@ fn incompatible_reconstruction_capabilities_fail_before_execution_inputs_exist()
             ReconstructionBasis::Constant,
             ReconstructionAlgorithm::Mtmfs,
             ReconstructionControls::new(100, 0.1, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         ),
         weighting(),
         products(false),
@@ -234,6 +292,53 @@ fn incompatible_reconstruction_capabilities_fail_before_execution_inputs_exist()
 }
 
 #[test]
+fn channel_local_basis_must_match_compiled_geometry_channels() {
+    let channel_local = |channels| {
+        ProblemSpecification::new(
+            science(),
+            ReconstructionContract::new(
+                ReconstructionBasis::ChannelLocal { channels },
+                ReconstructionAlgorithm::Dirty,
+                ReconstructionControls::new(0, 1.0, 0.0),
+                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+            ),
+            weighting(),
+            ProductRequirements::new(
+                vec![
+                    ProductKind::Psf,
+                    ProductKind::Residual,
+                    ProductKind::SumWeights,
+                ],
+                ProductNormalization::UnitResponse,
+                RestoringBeamPolicy::None,
+            ),
+            numerics(false),
+        )
+    };
+    let two_channel_geometry =
+        geometry().with_spectral(geometry().spectral().clone().with_wcs(SpectralWcs::Linear {
+            channels: 2,
+            reference_pixel: 0.0,
+            reference_frequency_hz: 1.4e9,
+            increment_hz: 1.0e6,
+        }));
+
+    compile_with_geometry(
+        channel_local(2),
+        two_channel_geometry.clone(),
+        inputs(false),
+    )
+    .expect("matching channel-local geometry");
+    assert!(matches!(
+        compile_with_geometry(channel_local(1), two_channel_geometry, inputs(false)),
+        Err(CompileProblemError::SpectralChannelCountMismatch {
+            geometry_channels: 2,
+            reconstruction_channels: 1,
+        })
+    ));
+}
+
+#[test]
 fn one_term_mfs_uses_the_constant_basis_instead_of_taylor() {
     let specification = ProblemSpecification::new(
         science(),
@@ -241,6 +346,7 @@ fn one_term_mfs_uses_the_constant_basis_instead_of_taylor() {
             ReconstructionBasis::Taylor { terms: 1 },
             ReconstructionAlgorithm::Mtmfs,
             ReconstructionControls::new(100, 0.1, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         ),
         weighting(),
         products(false),
@@ -342,6 +448,7 @@ fn derived_products_require_their_scientific_sources() {
             ReconstructionBasis::Constant,
             ReconstructionAlgorithm::Hogbom,
             ReconstructionControls::new(100, 0.1, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         ),
         weighting(),
         ProductRequirements::new(
@@ -369,7 +476,6 @@ fn derived_products_require_their_scientific_sources() {
 fn duplicate_reference_families_are_rejected_instead_of_ordered_accidentally() {
     let inputs = ProblemInputIdentities::new(
         ObservationSnapshotId::new(identity(1)),
-        CompiledGeometryId::new(identity(2)),
         vec![
             (ReferenceDataKind::Measures, identity(3)),
             (ReferenceDataKind::Measures, identity(4)),
@@ -405,7 +511,7 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
 
     assert_eq!(negative_zero.problem_id(), positive_zero.problem_id());
     assert_ne!(positive_zero.problem_id(), changed.problem_id());
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 2);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 3);
 }
 
 #[test]
@@ -453,6 +559,7 @@ fn multiscale_order_and_duplicate_scales_do_not_change_scientific_identity() {
                 ReconstructionBasis::Constant,
                 ReconstructionAlgorithm::Multiscale { scales_px },
                 ReconstructionControls::new(100, 0.1, 0.0),
+                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
             ),
             weighting(),
             ProductRequirements::new(
@@ -492,46 +599,63 @@ fn complete_science_contract_changes_identity_and_capabilities() {
     let baseline = compile_request(make(science(), weighting(), products(false)), inputs(false))
         .expect("baseline");
     let widefield_science = ScientificContract::new(
-        GeometryContract::new(ProjectionGeometry::NonCoplanarW, FieldGeometry::Mosaic),
         SpectralContract::new(
-            SpectralFrame::Lsrk,
             SpectralSampling::Linear,
             SpectralCoupling::CommonRestoringBeam,
-            Some(1.420_405_751_77e9),
         ),
-        PolarizationContract::new(vec![
-            PolarizationCoordinate::StokesI,
-            PolarizationCoordinate::StokesQ,
-            PolarizationCoordinate::StokesU,
-            PolarizationCoordinate::StokesV,
-        ]),
         MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam),
     );
+    let widefield_geometry = geometry()
+        .with_domains(vec![geometry().domains()[0].clone().with_facets(
+            FacetLayout::Regular {
+                columns: 2,
+                rows: 2,
+            },
+        )])
+        .with_spectral(
+            geometry()
+                .spectral()
+                .clone()
+                .with_output_frame(FrequencyFrame::Lsrk)
+                .with_anchor(SpectralFrameAnchor::Conversion {
+                    epoch: Epoch::new(59_000.0, TimeScale::Utc),
+                    direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+                    observatory_position: ItrfPosition::new(
+                        -1_601_188.0,
+                        -5_041_977.0,
+                        3_554_875.0,
+                    ),
+                })
+                .with_rest_frequency(RestFrequency::Line {
+                    hertz: 1.420_405_751_77e9,
+                })
+                .with_doppler_convention(DopplerConvention::Radio),
+        );
     let tapered = WeightingContract::new(
         WeightingScheme::Briggs { robust: 0.5 },
         WeightDensityScope::GlobalSelection,
     )
     .with_uv_taper(UvTaper::new(12_000.0, 8_000.0, 0.25));
-    let widefield = compile_request(
+    let widefield = compile_with_geometry(
         make(
             widefield_science,
             tapered,
             products_with_beam(false, RestoringBeamPolicy::Common),
         ),
+        widefield_geometry,
         inputs_with_instrument(),
     )
     .expect("widefield science");
 
     assert_ne!(baseline.problem_id(), widefield.problem_id());
     for capability in [
-        RequiredCapability::NonCoplanarWGeometry,
-        RequiredCapability::MosaicGeometry,
+        RequiredCapability::FacetedGeometry,
         RequiredCapability::SpectralFrameTransform,
         RequiredCapability::SpectralResampling,
         RequiredCapability::CommonBeamSpectralCoupling,
         RequiredCapability::PrimaryBeamResponse,
         RequiredCapability::UvTaper,
-        RequiredCapability::Polarization(PolarizationCoordinate::StokesQ),
+        RequiredCapability::Polarization(PolarizationCoordinate::StokesI),
     ] {
         assert!(widefield.required_capabilities().contains(&capability));
     }
@@ -540,14 +664,7 @@ fn complete_science_contract_changes_identity_and_capabilities() {
 #[test]
 fn direction_dependent_response_requires_instrument_identity() {
     let direction_dependent = ScientificContract::new(
-        GeometryContract::new(ProjectionGeometry::Coplanar, FieldGeometry::Single),
-        SpectralContract::new(
-            SpectralFrame::Native,
-            SpectralSampling::Identity,
-            SpectralCoupling::Independent,
-            None,
-        ),
-        PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
         MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam),
     );
     let specification = ProblemSpecification::new(
@@ -575,6 +692,7 @@ fn dirty_reconstruction_rejects_scientifically_unused_controls() {
                 ReconstructionBasis::Constant,
                 ReconstructionAlgorithm::Dirty,
                 ReconstructionControls::new(0, gain, threshold),
+                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
             ),
             weighting(),
             ProductRequirements::new(
@@ -605,14 +723,7 @@ fn dirty_reconstruction_rejects_scientifically_unused_controls() {
 fn spectral_coupling_and_restoring_beam_policy_must_agree() {
     let science_with_coupling = |coupling| {
         ScientificContract::new(
-            GeometryContract::new(ProjectionGeometry::Coplanar, FieldGeometry::Single),
-            SpectralContract::new(
-                SpectralFrame::Native,
-                SpectralSampling::Identity,
-                coupling,
-                None,
-            ),
-            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+            SpectralContract::new(SpectralSampling::Identity, coupling),
             MeasurementEquationContract::new(InstrumentResponse::Scalar),
         )
     };
@@ -649,40 +760,13 @@ fn spectral_coupling_and_restoring_beam_policy_must_agree() {
 
 #[test]
 fn invalid_science_contracts_fail_before_bulk_io() {
-    let invalid_mosaic = ScientificContract::new(
-        GeometryContract::new(ProjectionGeometry::Coplanar, FieldGeometry::Mosaic),
-        SpectralContract::new(
-            SpectralFrame::Native,
-            SpectralSampling::Identity,
-            SpectralCoupling::Independent,
-            None,
-        ),
-        PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
-        MeasurementEquationContract::new(InstrumentResponse::Scalar),
-    );
-    let specification = ProblemSpecification::new(
-        invalid_mosaic,
-        reconstruction(),
-        weighting(),
-        products(false),
-        numerics(false),
-    );
-    assert!(matches!(
-        compile_request(specification, inputs(false)),
-        Err(CompileProblemError::InvalidScientificContract { .. })
-    ));
-
     let invalid_sampling = ScientificContract::new(
-        GeometryContract::new(ProjectionGeometry::Coplanar, FieldGeometry::Single),
         SpectralContract::new(
-            SpectralFrame::Native,
             SpectralSampling::ChannelAverage {
                 channels_per_bin: 0,
             },
             SpectralCoupling::Independent,
-            None,
         ),
-        PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         MeasurementEquationContract::new(InstrumentResponse::Scalar),
     );
     let specification = ProblemSpecification::new(
@@ -698,40 +782,52 @@ fn invalid_science_contracts_fail_before_bulk_io() {
             reason: "spectral channel averaging requires a positive bin width"
         })
     ));
+}
 
-    let invalid_polarization = ScientificContract::new(
-        GeometryContract::new(ProjectionGeometry::Coplanar, FieldGeometry::Single),
-        SpectralContract::new(
-            SpectralFrame::Native,
-            SpectralSampling::Identity,
-            SpectralCoupling::Independent,
-            None,
-        ),
-        PolarizationContract::new(Vec::new()),
-        MeasurementEquationContract::new(InstrumentResponse::Scalar),
-    );
-    let specification = ProblemSpecification::new(
-        invalid_polarization,
-        reconstruction(),
-        weighting(),
-        products(false),
-        numerics(false),
-    );
+#[test]
+fn invalid_polarization_is_a_reconstruction_contract_error() {
+    let specification = |coordinates| {
+        ProblemSpecification::new(
+            science(),
+            ReconstructionContract::new(
+                ReconstructionBasis::Constant,
+                ReconstructionAlgorithm::Dirty,
+                ReconstructionControls::new(0, 1.0, 0.0),
+                PolarizationContract::new(coordinates),
+            ),
+            weighting(),
+            products(false),
+            numerics(false),
+        )
+    };
+
     assert!(matches!(
-        compile_request(specification, inputs(false)),
-        Err(CompileProblemError::InvalidScientificContract {
+        compile_request(specification(Vec::new()), inputs(false)),
+        Err(CompileProblemError::InvalidReconstructionContract {
             reason: "at least one polarization coordinate must be requested"
+        })
+    ));
+    assert!(matches!(
+        compile_request(
+            specification(vec![
+                PolarizationCoordinate::StokesI,
+                PolarizationCoordinate::LinearXx,
+            ]),
+            inputs(false),
+        ),
+        Err(CompileProblemError::InvalidReconstructionContract {
+            reason: "one reconstruction cannot mix Stokes, linear, and circular coordinates"
         })
     ));
 }
 
 #[test]
-fn compiled_problem_identity_has_a_pinned_schema_two_digest() {
+fn compiled_problem_identity_has_a_pinned_schema_three_digest() {
     let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 2);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 3);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "c486305a146bda4ba64fd82781a21bfe4013abf9cbfdfe19a7be995ddd707801"
+        "59bce25914ae4167dc46849604e3872d68a3276a680c15fbca61cc6f0c0557b2"
     );
 }
