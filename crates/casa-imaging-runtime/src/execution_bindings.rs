@@ -56,6 +56,10 @@ digest_identity!(
     "Stable content identity of one immutable implementation-registry snapshot."
 );
 digest_identity!(
+    ImplementationId,
+    "Stable identity of one executable implementation in a registry snapshot."
+);
+digest_identity!(
     PlannerCostModelProfileId,
     "Stable content identity of one reviewed planner cost-model profile."
 );
@@ -63,6 +67,36 @@ digest_identity!(
     PhysicalWorkId,
     "Stable content identity of the physical work emitted by planning."
 );
+
+/// Physical work and the sole registry implementation selected to execute it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PhysicalWorkBinding {
+    physical_work: PhysicalWorkId,
+    implementation: ImplementationId,
+}
+
+impl PhysicalWorkBinding {
+    /// Bind planned physical work to exactly one implementation identity.
+    #[must_use]
+    pub const fn new(physical_work: PhysicalWorkId, implementation: ImplementationId) -> Self {
+        Self {
+            physical_work,
+            implementation,
+        }
+    }
+
+    /// Return the stable physical-work identity.
+    #[must_use]
+    pub const fn physical_work_id(self) -> PhysicalWorkId {
+        self.physical_work
+    }
+
+    /// Return the selected implementation identity.
+    #[must_use]
+    pub const fn implementation_id(self) -> ImplementationId {
+        self.implementation
+    }
+}
 
 /// Stable identity of the exact host-use policy bound into a plan.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -184,6 +218,7 @@ pub struct ExecutionPlan {
     resource_policy: ResourcePolicyId,
     planner_cost_model_profile: PlannerCostModelProfileId,
     physical_work: PhysicalWorkId,
+    implementation: ImplementationId,
 }
 
 impl ExecutionPlan {
@@ -234,13 +269,19 @@ impl ExecutionPlan {
     pub const fn physical_work_id(&self) -> PhysicalWorkId {
         self.physical_work
     }
+
+    /// Return the sole implementation selected to execute this plan.
+    #[must_use]
+    pub const fn implementation_id(&self) -> ImplementationId {
+        self.implementation
+    }
 }
 
 /// Seal planner-emitted physical work to the complete logical and planning context.
 pub fn plan<E>(
     problem: &CompiledProblem,
     bindings: PlanningBindings,
-    planner: impl FnOnce(&CompiledProblem, &PlanningBindings) -> Result<PhysicalWorkId, E>,
+    planner: impl FnOnce(&CompiledProblem, &PlanningBindings) -> Result<PhysicalWorkBinding, E>,
 ) -> Result<ExecutionPlan, E> {
     let physical_work = planner(problem, &bindings)?;
     let mut plan = ExecutionPlan {
@@ -251,7 +292,8 @@ pub fn plan<E>(
         implementation_registry: bindings.implementation_registry,
         resource_policy: bindings.resource_policy_id,
         planner_cost_model_profile: bindings.planner_cost_model_profile,
-        physical_work,
+        physical_work: physical_work.physical_work,
+        implementation: physical_work.implementation,
     };
     plan.plan_id = execution_plan_id(&plan);
     Ok(plan)
@@ -261,7 +303,6 @@ pub fn plan<E>(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunBindings {
     problem_inputs: ProblemInputIdentities,
-    implementation_registry: ImplementationRegistryId,
     resource_policy: ResourcePolicyId,
     planner_cost_model_profile: PlannerCostModelProfileId,
 }
@@ -271,13 +312,11 @@ impl RunBindings {
     #[must_use]
     pub fn new(
         problem_inputs: ProblemInputIdentities,
-        implementation_registry: ImplementationRegistryId,
         resource_policy: &ResourcePolicy,
         planner_cost_model_profile: PlannerCostModelProfileId,
     ) -> Self {
         Self {
             problem_inputs,
-            implementation_registry,
             resource_policy: resource_policy_id(resource_policy),
             planner_cost_model_profile,
         }
@@ -299,6 +338,8 @@ pub enum BindingKind {
     ModelState,
     /// Implementation-registry snapshot identity.
     ImplementationRegistry,
+    /// Selected implementation identity.
+    Implementation,
     /// Resource-policy identity.
     ResourcePolicy,
     /// Planner cost-model profile identity.
@@ -313,6 +354,11 @@ pub enum RunError<E> {
         /// Exact rejected binding.
         binding: BindingKind,
     },
+    /// The bound registry snapshot does not contain the selected implementation.
+    ImplementationUnavailable {
+        /// Exact selected implementation missing from the registry.
+        implementation: ImplementationId,
+    },
     /// The exactly selected executor returned an error.
     Execution(E),
 }
@@ -323,6 +369,12 @@ impl<E: fmt::Display> fmt::Display for RunError<E> {
             Self::BindingMismatch { binding } => {
                 write!(formatter, "execution plan binding mismatch: {binding:?}")
             }
+            Self::ImplementationUnavailable { implementation } => {
+                write!(
+                    formatter,
+                    "bound implementation is unavailable: {implementation}"
+                )
+            }
             Self::Execution(error) => write!(formatter, "execution failed: {error}"),
         }
     }
@@ -331,21 +383,75 @@ impl<E: fmt::Display> fmt::Display for RunError<E> {
 impl<E: Error + 'static> Error for RunError<E> {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::BindingMismatch { .. } => None,
+            Self::BindingMismatch { .. } | Self::ImplementationUnavailable { .. } => None,
             Self::Execution(error) => Some(error),
         }
     }
 }
 
-/// Validate every binding and execute exactly the supplied immutable plan.
-pub fn run<T, E>(
+/// One executable implementation stored in an immutable registry snapshot.
+pub trait ExecutionImplementation {
+    /// Successful execution output.
+    type Output;
+    /// Execution failure.
+    type Error;
+
+    /// Return this implementation's stable registry identity.
+    fn implementation_id(&self) -> ImplementationId;
+
+    /// Execute the already validated physical plan.
+    fn execute(
+        &self,
+        problem: &CompiledProblem,
+        plan: &ExecutionPlan,
+    ) -> Result<Self::Output, Self::Error>;
+}
+
+/// Immutable registry snapshot that resolves selected implementations by identity.
+pub trait ImplementationRegistry {
+    /// Homogeneous execution interface stored by this registry.
+    type Implementation: ExecutionImplementation;
+
+    /// Return the exact snapshot identity bound during planning.
+    fn registry_id(&self) -> ImplementationRegistryId;
+
+    /// Resolve one implementation without substituting another candidate.
+    fn resolve(&self, id: ImplementationId) -> Option<&Self::Implementation>;
+}
+
+/// Validate every binding, resolve the selected implementation, and execute it.
+pub fn run<R>(
     problem: &CompiledProblem,
     plan: &ExecutionPlan,
     current: &RunBindings,
-    executor: impl FnOnce(&CompiledProblem, &ExecutionPlan) -> Result<T, E>,
-) -> Result<T, RunError<E>> {
+    registry: &R,
+) -> Result<
+    <R::Implementation as ExecutionImplementation>::Output,
+    RunError<<R::Implementation as ExecutionImplementation>::Error>,
+>
+where
+    R: ImplementationRegistry,
+{
     validate_bindings(problem, plan, current)?;
-    executor(problem, plan).map_err(RunError::Execution)
+    if plan.implementation_registry != registry.registry_id() {
+        return Err(RunError::BindingMismatch {
+            binding: BindingKind::ImplementationRegistry,
+        });
+    }
+    let implementation =
+        registry
+            .resolve(plan.implementation)
+            .ok_or(RunError::ImplementationUnavailable {
+                implementation: plan.implementation,
+            })?;
+    if implementation.implementation_id() != plan.implementation {
+        return Err(RunError::BindingMismatch {
+            binding: BindingKind::Implementation,
+        });
+    }
+    implementation
+        .execute(problem, plan)
+        .map_err(RunError::Execution)
 }
 
 fn validate_bindings<E>(
@@ -366,8 +472,6 @@ fn validate_bindings<E>(
         Some(BindingKind::ReferenceDataSnapshots)
     } else if plan.problem_inputs.model() != current.problem_inputs.model() {
         Some(BindingKind::ModelState)
-    } else if plan.implementation_registry != current.implementation_registry {
-        Some(BindingKind::ImplementationRegistry)
     } else if plan.resource_policy != current.resource_policy {
         Some(BindingKind::ResourcePolicy)
     } else if plan.planner_cost_model_profile != current.planner_cost_model_profile {
@@ -464,6 +568,7 @@ fn execution_plan_id(plan: &ExecutionPlan) -> ExecutionPlanId {
     encoder.digest(plan.resource_policy.as_bytes());
     encoder.digest(plan.planner_cost_model_profile.as_bytes());
     encoder.digest(plan.physical_work.as_bytes());
+    encoder.digest(plan.implementation.as_bytes());
     ExecutionPlanId(encoder.finish())
 }
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::{
+    collections::BTreeMap,
     error::Error,
     io,
     sync::atomic::{AtomicUsize, Ordering},
@@ -18,7 +19,8 @@ use casa_imaging_model::{
     WeightingContract, WeightingScheme, compile,
 };
 use casa_imaging_runtime::{
-    BindingKind, ImplementationRegistryId, PhysicalWorkId, PlannerCostModelProfileId,
+    BindingKind, ExecutionImplementation, ImplementationId, ImplementationRegistry,
+    ImplementationRegistryId, PhysicalWorkBinding, PhysicalWorkId, PlannerCostModelProfileId,
     PlanningBindings, ResourcePolicy, RunBindings, RunError, plan, run,
 };
 
@@ -80,6 +82,207 @@ fn cost_model(byte: u8) -> PlannerCostModelProfileId {
     PlannerCostModelProfileId::from_sha256([byte; 32])
 }
 
+fn implementation(byte: u8) -> ImplementationId {
+    ImplementationId::from_sha256([byte; 32])
+}
+
+#[derive(Debug)]
+struct RecordingExecutor {
+    id: ImplementationId,
+    label: &'static str,
+    failure: Option<&'static str>,
+    calls: AtomicUsize,
+}
+
+impl ExecutionImplementation for RecordingExecutor {
+    type Error = io::Error;
+    type Output = &'static str;
+
+    fn implementation_id(&self) -> ImplementationId {
+        self.id
+    }
+
+    fn execute(
+        &self,
+        _problem: &casa_imaging_model::CompiledProblem,
+        _plan: &casa_imaging_runtime::ExecutionPlan,
+    ) -> Result<Self::Output, Self::Error> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        match self.failure {
+            Some(message) => Err(io::Error::other(message)),
+            None => Ok(self.label),
+        }
+    }
+}
+
+fn physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
+    PhysicalWorkBinding::new(
+        PhysicalWorkId::from_sha256([5; 32]),
+        implementation(implementation_byte),
+    )
+}
+
+fn test_registry(
+    registry_byte: u8,
+    implementation_byte: u8,
+    label: &'static str,
+    failure: Option<&'static str>,
+) -> TestRegistry {
+    TestRegistry {
+        id: registry(registry_byte),
+        executors: BTreeMap::from([(
+            implementation(implementation_byte),
+            RecordingExecutor {
+                id: implementation(implementation_byte),
+                label,
+                failure,
+                calls: AtomicUsize::new(0),
+            },
+        )]),
+    }
+}
+
+struct TestRegistry {
+    id: ImplementationRegistryId,
+    executors: BTreeMap<ImplementationId, RecordingExecutor>,
+}
+
+impl ImplementationRegistry for TestRegistry {
+    type Implementation = RecordingExecutor;
+
+    fn registry_id(&self) -> ImplementationRegistryId {
+        self.id
+    }
+
+    fn resolve(&self, id: ImplementationId) -> Option<&Self::Implementation> {
+        self.executors.get(&id)
+    }
+}
+
+#[test]
+fn run_can_invoke_only_the_implementation_identity_sealed_by_plan() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| {
+            Ok::<_, ()>(PhysicalWorkBinding::new(
+                PhysicalWorkId::from_sha256([5; 32]),
+                implementation(6),
+            ))
+        },
+    )
+    .expect("physical planning");
+    let selected = RecordingExecutor {
+        id: implementation(6),
+        label: "selected",
+        failure: None,
+        calls: AtomicUsize::new(0),
+    };
+    let different = RecordingExecutor {
+        id: implementation(7),
+        label: "different",
+        failure: None,
+        calls: AtomicUsize::new(0),
+    };
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([
+            (implementation(6), selected),
+            (implementation(7), different),
+        ]),
+    };
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+
+    let output = run(&problem, &execution_plan, &current, &registry).expect("bound execution");
+
+    assert_eq!(output, "selected");
+    assert_eq!(
+        registry.executors[&implementation(6)]
+            .calls
+            .load(Ordering::SeqCst),
+        1
+    );
+    assert_eq!(
+        registry.executors[&implementation(7)]
+            .calls
+            .load(Ordering::SeqCst),
+        0
+    );
+}
+
+#[test]
+fn run_rejects_a_registry_that_cannot_resolve_the_bound_implementation() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical_work(6)),
+    )
+    .expect("physical planning");
+    let registry = test_registry(3, 7, "different", None);
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+
+    let result = run(&problem, &execution_plan, &current, &registry);
+
+    assert!(matches!(
+        result,
+        Err(RunError::ImplementationUnavailable { implementation: id })
+            if id == implementation(6)
+    ));
+    assert_eq!(
+        registry.executors[&implementation(7)]
+            .calls
+            .load(Ordering::SeqCst),
+        0
+    );
+}
+
+#[test]
+fn run_rejects_a_different_implementation_returned_under_the_bound_key() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical_work(6)),
+    )
+    .expect("physical planning");
+    let mut registry = test_registry(3, 6, "different", None);
+    registry
+        .executors
+        .get_mut(&implementation(6))
+        .expect("registered key")
+        .id = implementation(7);
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+
+    let result = run(&problem, &execution_plan, &current, &registry);
+
+    assert!(matches!(
+        result,
+        Err(RunError::BindingMismatch {
+            binding: BindingKind::Implementation
+        })
+    ));
+    assert_eq!(
+        registry.executors[&implementation(6)]
+            .calls
+            .load(Ordering::SeqCst),
+        0
+    );
+}
+
 #[test]
 fn versioned_request_compiles_before_physical_planning() {
     let request = request(1);
@@ -97,7 +300,7 @@ fn plan_seals_physical_work_and_every_required_binding() {
     let execution_plan = plan(&problem, bindings.clone(), |problem, bindings| {
         assert_eq!(problem.problem_id(), expected_problem_id);
         assert_eq!(bindings.resource_policy(), &ResourcePolicy::Balanced);
-        Ok::<_, ()>(PhysicalWorkId::from_sha256([5; 32]))
+        Ok::<_, ()>(physical_work(6))
     })
     .expect("physical planning");
 
@@ -120,17 +323,16 @@ fn plan_seals_physical_work_and_every_required_binding() {
         execution_plan.physical_work_id(),
         PhysicalWorkId::from_sha256([5; 32])
     );
+    assert_eq!(execution_plan.implementation_id(), implementation(6));
 
-    let repeated = plan(&problem, bindings, |_, _| {
-        Ok::<_, ()>(PhysicalWorkId::from_sha256([5; 32]))
-    })
-    .expect("repeat physical planning");
+    let repeated = plan(&problem, bindings, |_, _| Ok::<_, ()>(physical_work(6)))
+        .expect("repeat physical planning");
     assert_eq!(execution_plan.plan_id(), repeated.plan_id());
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            62, 72, 52, 115, 0, 123, 86, 214, 10, 79, 159, 87, 245, 86, 220, 151, 210, 164, 157,
-            206, 156, 161, 75, 218, 182, 140, 165, 107, 220, 77, 170, 252,
+            113, 113, 83, 196, 201, 219, 253, 182, 230, 19, 114, 198, 152, 111, 52, 7, 91, 205,
+            247, 183, 148, 158, 244, 86, 14, 136, 164, 206, 21, 159, 89, 48,
         ]
     );
 }
@@ -141,40 +343,38 @@ fn run_rejects_changed_registry_policy_and_cost_model_bindings() {
     let execution_plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| Ok::<_, ()>(PhysicalWorkId::from_sha256([5; 32])),
+        |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
-    let current = |registry_id, policy, cost_model_id| {
-        RunBindings::new(problem.inputs().clone(), registry_id, policy, cost_model_id)
-    };
-    let reject = |bindings| run(&problem, &execution_plan, &bindings, |_, _| Ok::<_, ()>(()));
+    let current =
+        |policy, cost_model_id| RunBindings::new(problem.inputs().clone(), policy, cost_model_id);
+    let reject = |bindings, registry| run(&problem, &execution_plan, &bindings, registry);
+    let wrong_registry = test_registry(9, 6, "selected", None);
+    let correct_registry = test_registry(3, 6, "selected", None);
 
     assert!(matches!(
-        reject(current(
-            registry(9),
-            &ResourcePolicy::Balanced,
-            cost_model(4)
-        )),
+        reject(
+            current(&ResourcePolicy::Balanced, cost_model(4)),
+            &wrong_registry
+        ),
         Err(RunError::BindingMismatch {
             binding: BindingKind::ImplementationRegistry
         })
     ));
     assert!(matches!(
-        reject(current(
-            registry(3),
-            &ResourcePolicy::Exclusive,
-            cost_model(4)
-        )),
+        reject(
+            current(&ResourcePolicy::Exclusive, cost_model(4)),
+            &correct_registry
+        ),
         Err(RunError::BindingMismatch {
             binding: BindingKind::ResourcePolicy
         })
     ));
     assert!(matches!(
-        reject(current(
-            registry(3),
-            &ResourcePolicy::Balanced,
-            cost_model(9)
-        )),
+        reject(
+            current(&ResourcePolicy::Balanced, cost_model(9)),
+            &correct_registry
+        ),
         Err(RunError::BindingMismatch {
             binding: BindingKind::PlannerCostModelProfile
         })
@@ -186,10 +386,10 @@ fn run_rejects_every_stale_problem_input_before_calling_the_executor() {
     let problem = compile(request(1)).expect("logical compilation");
     let bindings = PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4));
     let execution_plan = plan(&problem, bindings.clone(), |_, _| {
-        Ok::<_, ()>(PhysicalWorkId::from_sha256([5; 32]))
+        Ok::<_, ()>(physical_work(6))
     })
     .expect("physical planning");
-    let calls = AtomicUsize::new(0);
+    let registry = test_registry(3, 6, "selected", None);
     let stale_inputs = [
         (
             ProblemInputIdentities::new(
@@ -230,16 +430,8 @@ fn run_rejects_every_stale_problem_input_before_calling_the_executor() {
     ];
 
     for (inputs, expected) in stale_inputs {
-        let stale = RunBindings::new(
-            inputs,
-            registry(3),
-            &ResourcePolicy::Balanced,
-            cost_model(4),
-        );
-        let result = run(&problem, &execution_plan, &stale, |_, _| {
-            calls.fetch_add(1, Ordering::SeqCst);
-            Ok::<_, ()>(())
-        });
+        let stale = RunBindings::new(inputs, &ResourcePolicy::Balanced, cost_model(4));
+        let result = run(&problem, &execution_plan, &stale, &registry);
         assert!(matches!(
             result,
             Err(RunError::BindingMismatch { binding }) if binding == expected
@@ -249,21 +441,22 @@ fn run_rejects_every_stale_problem_input_before_calling_the_executor() {
     let changed_problem = compile(request(9)).expect("changed logical problem");
     let current = RunBindings::new(
         changed_problem.inputs().clone(),
-        registry(3),
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let result = run(&changed_problem, &execution_plan, &current, |_, _| {
-        calls.fetch_add(1, Ordering::SeqCst);
-        Ok::<_, ()>(())
-    });
+    let result = run(&changed_problem, &execution_plan, &current, &registry);
     assert!(matches!(
         result,
         Err(RunError::BindingMismatch {
             binding: BindingKind::CompiledProblem
         })
     ));
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        registry.executors[&implementation(6)]
+            .calls
+            .load(Ordering::SeqCst),
+        0
+    );
 }
 
 #[test]
@@ -271,32 +464,25 @@ fn run_executes_one_exactly_bound_plan_without_routing_or_replanning() {
     let problem = compile(request(1)).expect("logical compilation");
     let bindings = PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4));
     let execution_plan = plan(&problem, bindings.clone(), |_, _| {
-        Ok::<_, ()>(PhysicalWorkId::from_sha256([5; 32]))
+        Ok::<_, ()>(physical_work(6))
     })
     .expect("physical planning");
     let current = RunBindings::new(
         problem.inputs().clone(),
-        registry(3),
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let calls = AtomicUsize::new(0);
+    let registry = test_registry(3, 6, "executed", None);
 
-    let output = run(
-        &problem,
-        &execution_plan,
-        &current,
-        |executed_problem, executed_plan| {
-            calls.fetch_add(1, Ordering::SeqCst);
-            assert_eq!(executed_problem.problem_id(), problem.problem_id());
-            assert_eq!(executed_plan.plan_id(), execution_plan.plan_id());
-            Ok::<_, ()>("executed")
-        },
-    )
-    .expect("exact execution");
+    let output = run(&problem, &execution_plan, &current, &registry).expect("exact execution");
 
     assert_eq!(output, "executed");
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        registry.executors[&implementation(6)]
+            .calls
+            .load(Ordering::SeqCst),
+        1
+    );
 }
 
 #[test]
@@ -305,20 +491,17 @@ fn run_preserves_the_selected_executors_error_chain() {
     let execution_plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| Ok::<_, ()>(PhysicalWorkId::from_sha256([5; 32])),
+        |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
     let current = RunBindings::new(
         problem.inputs().clone(),
-        registry(3),
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
+    let registry = test_registry(3, 6, "selected", Some("selected executor failed"));
 
-    let error = run(&problem, &execution_plan, &current, |_, _| {
-        Err::<(), _>(io::Error::other("selected executor failed"))
-    })
-    .expect_err("executor failure");
+    let error = run(&problem, &execution_plan, &current, &registry).expect_err("executor failure");
 
     assert_eq!(
         error.source().map(ToString::to_string).as_deref(),
