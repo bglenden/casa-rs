@@ -9,17 +9,22 @@ use casa_imaging_model::{
     AxisOrder, CentreLaws, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
     DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis,
     ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest, InstrumentResponse,
-    LogicalIdentity, MeasurementEquationContract, MissingPointingPolicy, ModelStateIdentity,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
-    ObservationSnapshotId, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
-    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
-    PolarizationContract, PolarizationCoordinate, ProblemInputIdentities, ProblemSpecification,
-    ProductKind, ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
-    StageErrorBudget, UvwCoordinateLaw, WeightDensityScope, WeightingContract, WeightingScheme,
+    MeasurementEquationContract, MissingPointingPolicy, ModelStateIdentity, NumericPrecision,
+    NumericalStage, NumericsContract, ObservationPointingLaw, PhaseCentreLaw, PointingCentreLaw,
+    PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
+    ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements, Projection,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, WeightDensityScope,
+    WeightingContract, WeightingScheme,
 };
+
+#[path = "../tests/common/mod.rs"]
+mod common;
+
+use common::problem_inputs;
 
 use super::{
     DispatchError, ImagingRouter, LegacyWholeRunEnginePort, MIGRATION_MATRIX_JSON,
@@ -155,8 +160,7 @@ fn matrix_contract_revision_is_a_positive_u32() {
     assert_eq!(revision, 5);
 
     for invalid in [serde_json::json!(0), serde_json::json!("5")] {
-        let mut matrix =
-            serde_json::from_str::<serde_json::Value>(MIGRATION_MATRIX_JSON).unwrap();
+        let mut matrix = serde_json::from_str::<serde_json::Value>(MIGRATION_MATRIX_JSON).unwrap();
         matrix["contract_revision"] = invalid;
         assert!(parse_matrix(&serde_json::to_string(&matrix).unwrap()).is_err());
     }
@@ -375,10 +379,6 @@ fn request(
             ),
         ),
         geometry,
-        ProblemInputIdentities::new(
-            ObservationSnapshotId::new(LogicalIdentity::from_sha256([1; 32])),
-            Vec::new(),
-            ModelStateIdentity::Empty,
-        ),
+        problem_inputs(1, Vec::new(), ModelStateIdentity::Empty),
     )
 }

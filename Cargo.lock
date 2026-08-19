@@ -643,7 +643,10 @@ version = "0.27.0"
 dependencies = [
  "casa-imaging-model",
  "objc2-metal",
+ "serde",
+ "serde_json",
  "sha2",
+ "tempfile",
 ]
 
 [[package]]

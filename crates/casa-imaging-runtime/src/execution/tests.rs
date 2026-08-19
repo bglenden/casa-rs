@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+};
 
 use casa_imaging_model::{
     AxisOrder, CentreLaws, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
@@ -345,9 +348,45 @@ fn bound_plan(dag: ExecutionDag) -> crate::ExecutionPlan {
             ResourcePolicy::Exclusive,
             PlannerCostModelProfileId::from_sha256([8; 32]),
         ),
-        |_, _| Ok::<_, std::convert::Infallible>(PhysicalWorkBinding::new(dag)),
+        |_, _| Ok::<_, std::convert::Infallible>(physical_work_binding(dag)),
     )
     .expect("physical planning succeeds")
+}
+
+fn physical_work_binding(dag: ExecutionDag) -> PhysicalWorkBinding {
+    let stages = dag
+        .nodes()
+        .values()
+        .map(|node| {
+            let mut stage = crate::StagePrediction::new(node.id.clone(), 1);
+            let mut buffers = BTreeMap::<crate::IoBufferKind, u64>::new();
+            for claim in &node.claims {
+                if let crate::LeaseResource::IoBuffer(kind) = claim.resource {
+                    let bytes = buffers.entry(kind).or_default();
+                    *bytes = bytes
+                        .checked_add(claim.amount)
+                        .expect("validated I/O-buffer claims fit u64");
+                }
+            }
+            if !buffers.is_empty() {
+                stage = stage.with_io(
+                    buffers
+                        .into_iter()
+                        .map(|(kind, bytes)| crate::IoPrediction::new(kind, bytes, 1))
+                        .collect(),
+                );
+            }
+            stage
+        })
+        .collect();
+    let prediction = crate::PlanPrediction::new(
+        u64::try_from(dag.nodes().len()).expect("node count"),
+        crate::PredictionConfidence::new(1_000_000).expect("confidence"),
+        Vec::new(),
+        stages,
+    )
+    .expect("complete test prediction");
+    PhysicalWorkBinding::new(dag, prediction, Vec::new()).expect("bound physical work")
 }
 
 fn inactive_release_predecessor_plan(
@@ -369,7 +408,12 @@ fn inactive_release_predecessor_plan(
         lifetime: ClaimLifetime::Work,
     };
     let mut active_prepare = cpu_node(active_prepare_id.as_str(), BTreeSet::new());
-    active_prepare.kind = WorkKind::Preparation;
+    active_prepare.kind = WorkKind::Cache;
+    active_prepare.claims.push(ResourceClaim {
+        resource: crate::LeaseResource::ResidentCache,
+        amount: 100,
+        lifetime: ClaimLifetime::Work,
+    });
     active_prepare
         .claims
         .push(work_claim(crate::IoBufferKind::MappedPageCache));
@@ -377,7 +421,12 @@ fn inactive_release_predecessor_plan(
         .allocations
         .push(work_use(active_allocation.clone()));
     let mut inactive_prepare = cpu_node(inactive_prepare_id.as_str(), BTreeSet::new());
-    inactive_prepare.kind = WorkKind::Preparation;
+    inactive_prepare.kind = WorkKind::Cache;
+    inactive_prepare.claims.push(ResourceClaim {
+        resource: crate::LeaseResource::ResidentCache,
+        amount: 100,
+        lifetime: ClaimLifetime::Work,
+    });
     inactive_prepare
         .claims
         .push(work_claim(crate::IoBufferKind::MappedPageCache));
@@ -463,6 +512,11 @@ fn inactive_release_predecessor_plan(
         .demand
         .io_buffers
         .mapped_page_cache_bytes = 100;
+    specification.resource_alternative.demand.caches = CacheDemand {
+        hard_resident_bytes: 100,
+        preferred_resident_bytes: 100,
+    };
+    specification.initial_knobs.cache_retention_bytes = 100;
     if fenced_predecessor {
         specification.resource_alternative.demand.rates = vec![RateDemand {
             demand_id: "io-rate".to_string(),
@@ -618,7 +672,7 @@ fn execution_plan_owns_the_bound_physical_work_dag() {
     );
 
     let execution_plan = plan(&problem, bindings, |_, _| {
-        Ok::<_, std::convert::Infallible>(PhysicalWorkBinding::new(dag.clone()))
+        Ok::<_, std::convert::Infallible>(physical_work_binding(dag.clone()))
     })
     .expect("physical planning succeeds");
 
@@ -638,7 +692,7 @@ fn execution_plan_owns_the_resource_policy_selected_during_planning() {
             ResourcePolicy::Balanced,
             PlannerCostModelProfileId::from_sha256([8; 32]),
         ),
-        |_, _| Ok::<_, std::convert::Infallible>(PhysicalWorkBinding::new(dag)),
+        |_, _| Ok::<_, std::convert::Infallible>(physical_work_binding(dag)),
     )
     .expect("outer planning succeeds");
 
@@ -1111,7 +1165,7 @@ fn disjoint_io_buffer_purposes_share_one_physical_memory_charge() {
     };
     let first = make_node(
         first_id.clone(),
-        WorkKind::Io,
+        WorkKind::Prefetch,
         crate::IoBufferKind::SourceReadAhead,
         BTreeSet::new(),
         first_fences.clone(),
@@ -1286,9 +1340,9 @@ fn io_buffer_claims_and_logical_allocations_match_exactly() {
         ExecutionDag::new(specification.clone()).expect("exact buffer accounting is valid");
     let mut changed_purpose = specification.clone();
     changed_purpose.nodes[0].claims[1].resource =
-        crate::LeaseResource::IoBuffer(crate::IoBufferKind::SourceReadAhead);
+        crate::LeaseResource::IoBuffer(crate::IoBufferKind::Decode);
     changed_purpose.logical_allocations[0].purpose =
-        AllocationPurpose::IoBuffer(crate::IoBufferKind::SourceReadAhead);
+        AllocationPurpose::IoBuffer(crate::IoBufferKind::Decode);
     changed_purpose
         .resource_alternative
         .demand
@@ -1298,38 +1352,17 @@ fn io_buffer_claims_and_logical_allocations_match_exactly() {
         .resource_alternative
         .demand
         .io_buffers
-        .source_read_ahead_bytes = 100;
+        .decode_bytes = 100;
     let changed =
         ExecutionDag::new(changed_purpose).expect("changed typed buffer purpose is valid");
     assert_ne!(canonical.physical_work_id(), changed.physical_work_id());
-    let mut retained_storage = specification.clone();
-    retained_storage.nodes[0].claims[1].resource =
-        crate::LeaseResource::IoBuffer(crate::IoBufferKind::MappedPageCache);
-    retained_storage.logical_allocations[0].purpose =
-        AllocationPurpose::IoBuffer(crate::IoBufferKind::MappedPageCache);
-    retained_storage
-        .resource_alternative
-        .demand
-        .io_buffers
-        .preparation_bytes = 0;
-    retained_storage
-        .resource_alternative
-        .demand
-        .io_buffers
-        .mapped_page_cache_bytes = 100;
-    let error = ExecutionDag::new(retained_storage)
-        .expect_err("mapped residency needs an explicit unmap or eviction node");
-    assert!(
-        matches!(error, ExecutionError::InvalidPlan(message) if message.contains("terminal release"))
-    );
-
     let mut orphan_claim = specification.clone();
     orphan_claim.nodes[0].allocations.clear();
     let mut amount_mismatch = specification.clone();
     amount_mismatch.nodes[0].claims[1].amount = 99;
     let mut kind_mismatch = specification.clone();
     kind_mismatch.nodes[0].claims[1].resource =
-        crate::LeaseResource::IoBuffer(crate::IoBufferKind::SourceReadAhead);
+        crate::LeaseResource::IoBuffer(crate::IoBufferKind::Decode);
     kind_mismatch
         .resource_alternative
         .demand
@@ -1339,7 +1372,7 @@ fn io_buffer_claims_and_logical_allocations_match_exactly() {
         .resource_alternative
         .demand
         .io_buffers
-        .source_read_ahead_bytes = 100;
+        .decode_bytes = 100;
     let mut unused_ceiling = specification;
     unused_ceiling
         .resource_alternative
@@ -1357,6 +1390,86 @@ fn io_buffer_claims_and_logical_allocations_match_exactly() {
     let error = ExecutionDag::new(unused_ceiling)
         .expect_err("nonzero buffer demand must be used by the work graph");
     assert!(matches!(error, ExecutionError::InvalidPlan(message) if message.contains("unused")));
+}
+
+#[test]
+fn every_io_buffer_kind_has_exact_supported_and_unsupported_work_semantics() {
+    let all_work_kinds = [
+        WorkKind::DataCensus,
+        WorkKind::Preparation,
+        WorkKind::Cache,
+        WorkKind::ConvolutionFunction,
+        WorkKind::FftPlanning,
+        WorkKind::Jit,
+        WorkKind::Compute,
+        WorkKind::Transfer,
+        WorkKind::Spill,
+        WorkKind::Prefetch,
+        WorkKind::Io,
+        WorkKind::Serialization,
+        WorkKind::Writeback,
+        WorkKind::Publication,
+        WorkKind::Release,
+        WorkKind::Synchronization,
+    ];
+    let mappings = [
+        (
+            crate::IoBufferKind::SourceReadAhead,
+            &[WorkKind::Prefetch][..],
+        ),
+        (crate::IoBufferKind::Decode, &[WorkKind::Preparation][..]),
+        (
+            crate::IoBufferKind::Preparation,
+            &[WorkKind::Preparation][..],
+        ),
+        (
+            crate::IoBufferKind::HostToDeviceTransfer,
+            &[WorkKind::Transfer][..],
+        ),
+        (
+            crate::IoBufferKind::DeviceToHostTransfer,
+            &[WorkKind::Transfer][..],
+        ),
+        (
+            crate::IoBufferKind::SpillRead,
+            &[WorkKind::Spill, WorkKind::Prefetch][..],
+        ),
+        (crate::IoBufferKind::SpillWrite, &[WorkKind::Spill][..]),
+        (
+            crate::IoBufferKind::Serialization,
+            &[WorkKind::Serialization][..],
+        ),
+        (
+            crate::IoBufferKind::StorageManager,
+            &[WorkKind::Io, WorkKind::Release][..],
+        ),
+        (crate::IoBufferKind::TiledColumnWriter, &[WorkKind::Io][..]),
+        (crate::IoBufferKind::ScalarColumnWriter, &[WorkKind::Io][..]),
+        (crate::IoBufferKind::Writeback, &[WorkKind::Writeback][..]),
+        (
+            crate::IoBufferKind::Publication,
+            &[WorkKind::Publication][..],
+        ),
+        (
+            crate::IoBufferKind::MappedPageCache,
+            &[WorkKind::Cache, WorkKind::Release][..],
+        ),
+    ];
+    assert_eq!(
+        mappings.map(|(kind, _)| kind),
+        crate::IoBufferKind::ALL,
+        "the semantic mapping must enumerate every typed I/O buffer exactly once"
+    );
+
+    for (io_kind, supported) in mappings {
+        for work_kind in all_work_kinds {
+            assert_eq!(
+                io_buffer_kind_supports_work_kind(io_kind, work_kind),
+                supported.contains(&work_kind),
+                "{io_kind:?} support for {work_kind:?}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -2228,7 +2341,12 @@ fn externally_retained_io_buffer_release_is_terminal_after_every_use() {
         lifetime: ClaimLifetime::Work,
     };
     let mut prepare = cpu_node(prepare_id.as_str(), BTreeSet::new());
-    prepare.kind = WorkKind::Preparation;
+    prepare.kind = WorkKind::Cache;
+    prepare.claims.push(ResourceClaim {
+        resource: crate::LeaseResource::ResidentCache,
+        amount: 100,
+        lifetime: ClaimLifetime::Work,
+    });
     prepare.claims.push(buffer_claim());
     prepare.allocations.push(buffer_use());
     let mut release = cpu_node(
@@ -2242,6 +2360,12 @@ fn externally_retained_io_buffer_release_is_terminal_after_every_use() {
         later_id.as_str(),
         BTreeSet::from([WorkDependency::Work(release_id.clone())]),
     );
+    later.kind = WorkKind::Cache;
+    later.claims.push(ResourceClaim {
+        resource: crate::LeaseResource::ResidentCache,
+        amount: 100,
+        lifetime: ClaimLifetime::Work,
+    });
     later.claims.push(buffer_claim());
     later.allocations.push(buffer_use());
     let mut specification = plan_spec(vec![prepare, release, later]);
@@ -2250,6 +2374,11 @@ fn externally_retained_io_buffer_release_is_terminal_after_every_use() {
         .demand
         .io_buffers
         .mapped_page_cache_bytes = 100;
+    specification.resource_alternative.demand.caches = CacheDemand {
+        hard_resident_bytes: 100,
+        preferred_resident_bytes: 100,
+    };
+    specification.initial_knobs.cache_retention_bytes = 100;
     specification.resource_alternative.demand.memory = vec![MemoryDemand {
         allocation_id: "mapped-slot".to_string(),
         hard_bytes: 100,
@@ -2348,7 +2477,12 @@ fn cancellation_cleanup_respects_release_to_release_dependencies() {
         lifetime: ClaimLifetime::Work,
     };
     let mut mapped_prepare = cpu_node(mapped_prepare_id.as_str(), BTreeSet::new());
-    mapped_prepare.kind = WorkKind::Preparation;
+    mapped_prepare.kind = WorkKind::Cache;
+    mapped_prepare.claims.push(ResourceClaim {
+        resource: crate::LeaseResource::ResidentCache,
+        amount: 100,
+        lifetime: ClaimLifetime::Work,
+    });
     mapped_prepare
         .claims
         .push(buffer_claim(crate::IoBufferKind::MappedPageCache));
@@ -2356,13 +2490,34 @@ fn cancellation_cleanup_respects_release_to_release_dependencies() {
         .allocations
         .push(buffer_use(mapped_id.clone()));
     let mut storage_prepare = cpu_node(storage_prepare_id.as_str(), BTreeSet::new());
-    storage_prepare.kind = WorkKind::Preparation;
-    storage_prepare
-        .claims
-        .push(buffer_claim(crate::IoBufferKind::StorageManager));
-    storage_prepare
-        .allocations
-        .push(buffer_use(storage_id.clone()));
+    storage_prepare.kind = WorkKind::Io;
+    storage_prepare.domain = WorkDomain::Io;
+    storage_prepare.claims = vec![
+        ResourceClaim {
+            resource: crate::LeaseResource::Rate {
+                demand_id: "io-rate".to_string(),
+            },
+            amount: 1,
+            lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+        },
+        ResourceClaim {
+            resource: crate::LeaseResource::Queue {
+                demand_id: "io-queue".to_string(),
+            },
+            amount: 1,
+            lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+        },
+        ResourceClaim {
+            resource: crate::LeaseResource::IoBuffer(crate::IoBufferKind::StorageManager),
+            amount: 100,
+            lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+        },
+    ];
+    storage_prepare.allocations = vec![AllocationUse {
+        allocation: storage_id.clone(),
+        lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+    }];
+    storage_prepare.fences = BTreeSet::from([FenceKind::Io]);
     let mut first_release = cpu_node(
         first_release_id.as_str(),
         BTreeSet::from([WorkDependency::Work(mapped_prepare_id.clone())]),
@@ -2398,7 +2553,7 @@ fn cancellation_cleanup_respects_release_to_release_dependencies() {
     let mut second_release = cpu_node(
         second_release_id.as_str(),
         BTreeSet::from([
-            WorkDependency::Work(storage_prepare_id.clone()),
+            WorkDependency::Fence(FenceId::new(storage_prepare_id.clone(), FenceKind::Io)),
             WorkDependency::Fence(FenceId::new(first_release_id.clone(), FenceKind::Io)),
         ]),
     );
@@ -2449,6 +2604,11 @@ fn cancellation_cleanup_respects_release_to_release_dependencies() {
         .demand
         .io_buffers
         .storage_manager_bytes = 100;
+    specification.resource_alternative.demand.caches = CacheDemand {
+        hard_resident_bytes: 100,
+        preferred_resident_bytes: 100,
+    };
+    specification.initial_knobs.cache_retention_bytes = 100;
     let compatibility = |layout| SlotCompatibility {
         memory_domain: CapacityDomainId::new("host-memory"),
         views: BTreeSet::from([CapacityViewId::new("host-memory")]),
@@ -2482,7 +2642,7 @@ fn cancellation_cleanup_respects_release_to_release_dependencies() {
             compatibility: storage_compatibility.clone(),
             physical_slot: PhysicalSlotId::new("storage-slot"),
             lifetime: AllocationLifetime {
-                acquire_at: storage_prepare_id,
+                acquire_at: storage_prepare_id.clone(),
                 release_after: BTreeSet::from([WorkDependency::Work(second_release_id.clone())]),
             },
         },
@@ -2518,6 +2678,11 @@ fn cancellation_cleanup_respects_release_to_release_dependencies() {
         scheduler
             .finish_work(work.node().id.clone(), WorkResult::Succeeded)
             .expect("preparation settles");
+        if work.node().id == storage_prepare_id {
+            scheduler
+                .complete_fence(FenceId::new(storage_prepare_id.clone(), FenceKind::Io))
+                .expect("storage-manager preparation fence settles");
+        }
     }
     scheduler.cancel().expect("cancellation enters cleanup");
 
@@ -2725,5 +2890,346 @@ fn temporal_reuse_requires_release_strictly_before_the_next_acquisition() {
 
     assert!(
         matches!(error, ExecutionError::InvalidPlan(message) if message.contains("strictly ordered"))
+    );
+}
+
+#[test]
+fn receipt_store_checkpoints_atomically_rejects_corruption_and_enforces_retention() {
+    let problem = compiled_problem();
+    let dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
+        .expect("valid physical work");
+    let plan = bound_plan(dag);
+    let provenance = |attempt, build| {
+        crate::ExecutionProvenance::new(
+            crate::ExecutionAttemptId::from_sha256([attempt; 32]),
+            crate::BuildIdentity::from_sha256([build; 32]),
+        )
+    };
+
+    let directory = tempfile::tempdir().expect("receipt directory");
+    let store = crate::ExecutionReceiptStore::new(
+        directory.path(),
+        crate::ReceiptRetention::new(2, 1_048_576).expect("retention"),
+    )
+    .expect("receipt store");
+    let first = provenance(61, 62);
+    let mut recorder = store.begin(first, &problem, &plan).expect("begin receipt");
+    assert_eq!(
+        store
+            .open(first.attempt_id())
+            .expect("initial receipt")
+            .status(),
+        crate::ReceiptStatus::Running
+    );
+    assert!(matches!(
+        store.begin(first, &problem, &plan),
+        Err(crate::ReceiptError::AttemptAlreadyExists)
+    ));
+
+    let work = WorkNodeId::new("work");
+    recorder
+        .work_started(&work)
+        .expect("atomically checkpoint started work");
+    let checkpoint = store
+        .open(first.attempt_id())
+        .expect("reopen intermediate checkpoint");
+    assert_eq!(
+        checkpoint.node_status(&work),
+        Some(crate::ReceiptStatus::Running)
+    );
+    drop(recorder);
+    assert_eq!(
+        store
+            .open(first.attempt_id())
+            .expect("aborted receipt")
+            .status(),
+        crate::ReceiptStatus::Aborted
+    );
+    assert!(
+        fs::read_dir(directory.path())
+            .expect("receipt entries")
+            .all(|entry| entry
+                .expect("receipt entry")
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".receipt.json"))
+    );
+
+    let path = directory
+        .path()
+        .join(format!("{}.receipt.json", first.attempt_id()));
+    let original = fs::read(&path).expect("serialized receipt");
+    let mut corrupted: serde_json::Value = serde_json::from_slice(&original).expect("receipt JSON");
+    corrupted["receipt"]["revision"] = serde_json::Value::from(999_u64);
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&corrupted).expect("corrupt JSON"),
+    )
+    .expect("write corrupt receipt");
+    assert!(matches!(
+        store.open(first.attempt_id()),
+        Err(crate::ReceiptError::IntegrityMismatch)
+    ));
+
+    let mut unsupported: serde_json::Value =
+        serde_json::from_slice(&original).expect("receipt JSON");
+    unsupported["schema"]["version"] = serde_json::Value::from(999_u64);
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&unsupported).expect("unsupported JSON"),
+    )
+    .expect("write unsupported receipt");
+    assert!(matches!(
+        store.open(first.attempt_id()),
+        Err(crate::ReceiptError::UnsupportedSchema { version: 999, .. })
+    ));
+    fs::write(&path, original).expect("restore receipt");
+
+    let pruning_directory = tempfile::tempdir().expect("pruning directory");
+    let pruning_store = crate::ExecutionReceiptStore::new(
+        pruning_directory.path(),
+        crate::ReceiptRetention::new(1, 1_048_576).expect("retention"),
+    )
+    .expect("pruning store");
+    let pruned = provenance(63, 64);
+    drop(
+        pruning_store
+            .begin(pruned, &problem, &plan)
+            .expect("first retained receipt"),
+    );
+    let retained = provenance(65, 66);
+    let retained_recorder = pruning_store
+        .begin(retained, &problem, &plan)
+        .expect("terminal evidence can be pruned within the count ceiling");
+    assert!(matches!(
+        pruning_store.open(pruned.attempt_id()),
+        Err(crate::ReceiptError::Io { .. })
+    ));
+    drop(retained_recorder);
+
+    let active_directory = tempfile::tempdir().expect("active directory");
+    let active_store = crate::ExecutionReceiptStore::new(
+        active_directory.path(),
+        crate::ReceiptRetention::new(1, 1_048_576).expect("retention"),
+    )
+    .expect("active store");
+    let active = provenance(67, 68);
+    let active_recorder = active_store
+        .begin(active, &problem, &plan)
+        .expect("active receipt");
+    assert!(matches!(
+        active_store.begin(provenance(69, 70), &problem, &plan),
+        Err(crate::ReceiptError::RetentionExceeded)
+    ));
+    assert_eq!(
+        active_store
+            .open(active.attempt_id())
+            .expect("active evidence preserved")
+            .status(),
+        crate::ReceiptStatus::Running
+    );
+    drop(active_recorder);
+
+    let byte_directory = tempfile::tempdir().expect("byte-bound directory");
+    let byte_store = crate::ExecutionReceiptStore::new(
+        byte_directory.path(),
+        crate::ReceiptRetention::new(1, 1).expect("retention"),
+    )
+    .expect("byte-bound store");
+    assert!(matches!(
+        byte_store.begin(provenance(71, 72), &problem, &plan),
+        Err(crate::ReceiptError::RetentionExceeded)
+    ));
+}
+
+#[test]
+fn receipt_store_rejects_an_initial_checkpoint_that_cannot_hold_terminal_evidence() {
+    let problem = compiled_problem();
+    let dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
+        .expect("valid physical work");
+    let plan = bound_plan(dag);
+    let provenance = |attempt, build| {
+        crate::ExecutionProvenance::new(
+            crate::ExecutionAttemptId::from_sha256([attempt; 32]),
+            crate::BuildIdentity::from_sha256([build; 32]),
+        )
+    };
+
+    let sizing_directory = tempfile::tempdir().expect("sizing directory");
+    let sizing_store = crate::ExecutionReceiptStore::new(
+        sizing_directory.path(),
+        crate::ReceiptRetention::new(1, 1_048_576).expect("retention"),
+    )
+    .expect("sizing store");
+    let sizing_provenance = provenance(73, 74);
+    let recorder = sizing_store
+        .begin(sizing_provenance, &problem, &plan)
+        .expect("initial checkpoint");
+    let receipt_path = sizing_directory
+        .path()
+        .join(format!("{}.receipt.json", sizing_provenance.attempt_id()));
+    let running_bytes = fs::metadata(&receipt_path).expect("running receipt").len();
+    drop(recorder);
+    let terminal_bytes = fs::metadata(&receipt_path).expect("terminal receipt").len();
+    assert!(
+        terminal_bytes > running_bytes,
+        "the fixture must expose the Running-to-terminal growth hazard"
+    );
+
+    let constrained_directory = tempfile::tempdir().expect("constrained directory");
+    let constrained_store = crate::ExecutionReceiptStore::new(
+        constrained_directory.path(),
+        crate::ReceiptRetention::new(1, terminal_bytes - 1).expect("retention"),
+    )
+    .expect("constrained store");
+
+    assert!(matches!(
+        constrained_store.begin(provenance(75, 76), &problem, &plan),
+        Err(crate::ReceiptError::RetentionExceeded)
+    ));
+    assert!(
+        fs::read_dir(constrained_directory.path())
+            .expect("constrained receipt directory")
+            .next()
+            .is_none(),
+        "failed preflight must not leave durable Running evidence"
+    );
+}
+
+#[test]
+fn receipt_store_reserves_json_escaped_terminal_evidence_before_begin() {
+    let problem = compiled_problem();
+    let dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
+        .expect("valid physical work");
+    let plan = bound_plan(dag);
+    let provenance = |attempt| {
+        crate::ExecutionProvenance::new(
+            crate::ExecutionAttemptId::from_sha256([attempt; 32]),
+            crate::BuildIdentity::from_sha256([83; 32]),
+        )
+    };
+    let terminal_size = |attempt, resource: String| {
+        let directory = tempfile::tempdir().expect("terminal sizing directory");
+        let store = crate::ExecutionReceiptStore::new(
+            directory.path(),
+            crate::ReceiptRetention::new(1, 1_048_576).expect("retention"),
+        )
+        .expect("terminal sizing store");
+        let identity = provenance(attempt);
+        let mut recorder = store
+            .begin(identity, &problem, &plan)
+            .expect("initial checkpoint");
+        recorder
+            .finish(
+                crate::ReceiptStatus::Infeasible,
+                Some(crate::receipt::ReceiptFailure::infeasible(
+                    &crate::ResourceError::Infeasible {
+                        resource,
+                        required: u64::MAX,
+                        available: 0,
+                    },
+                )),
+            )
+            .expect("terminal checkpoint");
+        fs::metadata(
+            directory
+                .path()
+                .join(format!("{}.receipt.json", identity.attempt_id())),
+        )
+        .expect("terminal receipt")
+        .len()
+    };
+    let plain_bytes = terminal_size(84, "x".repeat(128));
+    let escaped_bytes = terminal_size(85, "\0".repeat(128));
+    assert!(
+        escaped_bytes > plain_bytes,
+        "control characters must expose JSON escaping growth"
+    );
+    let between = plain_bytes + (escaped_bytes - plain_bytes) / 2;
+    let constrained_directory = tempfile::tempdir().expect("constrained directory");
+    let constrained_store = crate::ExecutionReceiptStore::new(
+        constrained_directory.path(),
+        crate::ReceiptRetention::new(1, between).expect("retention"),
+    )
+    .expect("constrained store");
+
+    assert!(matches!(
+        constrained_store.begin(provenance(86), &problem, &plan),
+        Err(crate::ReceiptError::RetentionExceeded)
+    ));
+    assert!(
+        fs::read_dir(constrained_directory.path())
+            .expect("constrained receipt directory")
+            .next()
+            .is_none(),
+        "escaped terminal evidence must be reserved before Running is persisted"
+    );
+}
+
+#[test]
+fn receipts_reopen_machine_readable_infeasibility_certificates() {
+    let problem = compiled_problem();
+    let dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
+        .expect("valid physical work");
+    let plan = bound_plan(dag);
+    let directory = tempfile::tempdir().expect("receipt directory");
+    let store = crate::ExecutionReceiptStore::new(
+        directory.path(),
+        crate::ReceiptRetention::new(2, 1_048_576).expect("retention"),
+    )
+    .expect("receipt store");
+    let provenance = |attempt| {
+        crate::ExecutionProvenance::new(
+            crate::ExecutionAttemptId::from_sha256([attempt; 32]),
+            crate::BuildIdentity::from_sha256([77; 32]),
+        )
+    };
+
+    let no_capable = provenance(78);
+    let mut recorder = store
+        .begin(no_capable, &problem, &plan)
+        .expect("begin no-capable receipt");
+    recorder
+        .finish(
+            crate::ReceiptStatus::Infeasible,
+            Some(crate::receipt::ReceiptFailure::infeasible(
+                &crate::ResourceError::NoCapableAlternative,
+            )),
+        )
+        .expect("finish no-capable receipt");
+    assert_eq!(
+        store
+            .open(no_capable.attempt_id())
+            .expect("no-capable receipt")
+            .infeasibility_certificate(),
+        Some(crate::ReceiptInfeasibilityCertificate::NoCapableAlternative)
+    );
+
+    let insufficient = provenance(79);
+    let mut recorder = store
+        .begin(insufficient, &problem, &plan)
+        .expect("begin quantitative receipt");
+    recorder
+        .finish(
+            crate::ReceiptStatus::Infeasible,
+            Some(crate::receipt::ReceiptFailure::infeasible(
+                &crate::ResourceError::Infeasible {
+                    resource: "host-memory".to_string(),
+                    required: 4_096,
+                    available: 1_024,
+                },
+            )),
+        )
+        .expect("finish quantitative receipt");
+    assert_eq!(
+        store
+            .open(insufficient.attempt_id())
+            .expect("quantitative receipt")
+            .infeasibility_certificate(),
+        Some(crate::ReceiptInfeasibilityCertificate::Infeasible {
+            resource: "host-memory".to_string(),
+            required: 4_096,
+            available: 1_024,
+        })
     );
 }
