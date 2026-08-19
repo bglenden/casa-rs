@@ -22,7 +22,11 @@ _Avoid_: Gridder configuration, sample coordinate cache
 **Observation Snapshot**:
 The immutable logical identity and consistency generation of selected MS data,
 metadata, reference tables, ephemerides, and input models. It is a manifest,
-not a materialized copy of bulk samples.
+not a materialized copy of bulk samples. Its compiler canonicalizes exact
+per-MS row, SPW/channel, and correlation semantics plus selected column and
+metadata generations. Selected rows are retained only as counts and an ordered
+row-sequence digest. Content identity ignores source location and request order;
+a separate provenance identity preserves them.
 _Avoid_: MeasurementSet clone, input path
 
 **Selected Observation**:

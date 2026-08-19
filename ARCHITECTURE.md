@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-07-19
+Last reality check: 2026-08-19
 Verification: just docs-check
 
 ## System purpose
@@ -130,10 +130,21 @@ laws, not an identity. Observation pointing records the selected MeasurementSet
 column and meaning plus timestamp, interpolation, extrapolation, and missing-row
 policies without evaluating rows. Spectral geometry retains exact channel
 centres and N+1 boundaries, or a linear WCS law that derives both exactly;
-spectral transforms remain unevaluated. `plan` seals planner-emitted physical
-work to the exact compiled problem and geometry, observation/reference/model
-snapshots, Numerics
-Contract, implementation-registry snapshot, Resource Policy, and reviewed
+spectral transforms remain unevaluated. `compile_observation` is the sole
+constructor of Observation Snapshot identity. It canonicalizes each resolved
+MeasurementSet field/time/UV/baseline/scan/observation/intent/array predicate,
+SPW/DDID/channel selection, correlation coordinate, selected data/flag/weight
+column, coordinate and metadata generation, consistency token, reference-data
+identity, and input-model identity. Selected MAIN rows remain a count plus an
+ordered-row digest; visibility samples, row arrays, chunks, and execution order
+are never retained. Content identity is independent of source location and
+request order, while a separate provenance identity retains both. Current
+legacy adapters still resolve selection expressions and evaluate rows; T17/#503
+owns their bounded transfer and deletion.
+
+`plan` seals planner-emitted physical work to the exact compiled problem and
+geometry, the complete Observation Snapshot, Numerics Contract,
+implementation-registry snapshot, Resource Policy, and reviewed
 planner cost-model profile. The plan owns the complete immutable physical work
 DAG: explicit nodes and dependencies, per-node implementation identities,
 resource claims, logical allocation lifetimes, compatible reusable physical
@@ -342,8 +353,11 @@ or provider semantics that bypass the Rust-owned contracts.
 
 ### Imaging execution
 
-`casars-imager` owns MeasurementSet selection, bounded source streaming, mode
-dispatch, runtime policy, protocol telemetry, and persisted product writing.
+During migration, `casars-imager` owns user-facing MeasurementSet expression
+resolution, bounded source streaming, mode dispatch, runtime policy, protocol
+telemetry, and persisted product writing. Resolved immutable selection identity
+belongs only to `casa-imaging-model`'s Observation Snapshot compiler; the legacy
+application does not yet consume that contract in production.
 `casa-imaging` remains the prepared-visibility computation boundary for
 weighting, gridding/degridding, FFTs, normalization, deconvolution, restoration,
 and product semantics.

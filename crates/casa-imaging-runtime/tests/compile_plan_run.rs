@@ -14,15 +14,14 @@ use casa_imaging_model::{
     AxisOrder, CentreLaws, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
     DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis,
     ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest, ImagingRequestVersion,
-    InstrumentResponse, LogicalIdentity, MeasurementEquationContract, MissingPointingPolicy,
-    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
-    ObservationSnapshotId, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
-    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
-    PolarizationContract, PolarizationCoordinate, ProblemInputIdentities, ProblemSpecification,
-    ProductKind, ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    InstrumentResponse, MeasurementEquationContract, MissingPointingPolicy, ModelStateIdentity,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw, PhaseCentreLaw,
+    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
+    ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements, Projection,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
+    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
     SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, WeightDensityScope,
     WeightingContract, WeightingScheme, compile,
 };
@@ -43,9 +42,9 @@ use casa_imaging_runtime::{
     WorkImplementationId, WorkKind, WorkNode, WorkNodeId, plan, run,
 };
 
-fn identity(byte: u8) -> LogicalIdentity {
-    LogicalIdentity::from_sha256([byte; 32])
-}
+mod common;
+
+use common::{identity, problem_inputs};
 
 fn geometry(reference_pixel: f64) -> GeometryInput {
     let direction = DirectionCoordinateSpec::new(
@@ -134,11 +133,7 @@ fn request_with_geometry(observation: u8, geometry: GeometryInput) -> ImagingReq
     ImagingRequest::new(
         specification,
         geometry,
-        ProblemInputIdentities::new(
-            ObservationSnapshotId::new(identity(observation)),
-            Vec::new(),
-            ModelStateIdentity::Empty,
-        ),
+        problem_inputs(observation, Vec::new(), ModelStateIdentity::Empty),
     )
 }
 
@@ -974,8 +969,8 @@ fn plan_seals_physical_work_and_every_required_binding() {
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            139, 119, 206, 145, 96, 7, 133, 39, 71, 236, 46, 204, 202, 72, 183, 141, 163, 208, 45,
-            134, 162, 148, 178, 87, 27, 41, 193, 170, 120, 192, 49, 6,
+            214, 235, 125, 15, 173, 160, 186, 29, 59, 168, 195, 226, 203, 204, 245, 8, 38, 239, 96,
+            26, 77, 235, 116, 213, 144, 9, 91, 215, 169, 118, 89, 64,
         ]
     );
 }
@@ -1035,27 +1030,19 @@ fn run_rejects_every_stale_problem_input_before_calling_the_executor() {
     let registry = test_registry(3, 6, None);
     let stale_inputs = [
         (
-            ProblemInputIdentities::new(
-                ObservationSnapshotId::new(identity(9)),
-                Vec::new(),
-                ModelStateIdentity::Empty,
-            ),
+            problem_inputs(9, Vec::new(), ModelStateIdentity::Empty),
             BindingKind::ObservationSnapshot,
         ),
         (
-            ProblemInputIdentities::new(
-                ObservationSnapshotId::new(identity(1)),
+            problem_inputs(
+                1,
                 vec![(ReferenceDataKind::Measures, identity(9))],
                 ModelStateIdentity::Empty,
             ),
             BindingKind::ReferenceDataSnapshots,
         ),
         (
-            ProblemInputIdentities::new(
-                ObservationSnapshotId::new(identity(1)),
-                Vec::new(),
-                ModelStateIdentity::Seed(identity(9)),
-            ),
+            problem_inputs(1, Vec::new(), ModelStateIdentity::Seed(identity(9))),
             BindingKind::ModelState,
         ),
     ];

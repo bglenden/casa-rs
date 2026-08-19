@@ -6,9 +6,10 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::geometry::{CompileGeometryError, CompiledGeometry, GeometryInput, compile_geometry};
+use crate::observation::{ObservationSnapshot, ObservationSnapshotId};
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 3;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 4;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
 const NUMERICS_CONTRACT_IDENTITY_VERSION: u32 = 1;
 
@@ -64,24 +65,6 @@ impl fmt::Display for LogicalIdentity {
     }
 }
 
-/// Stable identity of an immutable observation snapshot manifest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ObservationSnapshotId(LogicalIdentity);
-
-impl ObservationSnapshotId {
-    /// Wrap an observation manifest content identity.
-    #[must_use]
-    pub const fn new(identity: LogicalIdentity) -> Self {
-        Self(identity)
-    }
-
-    /// Return the wrapped logical identity.
-    #[must_use]
-    pub const fn identity(self) -> LogicalIdentity {
-        self.0
-    }
-}
-
 /// Authoritative reference-data family bound into an imaging problem.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ReferenceDataKind {
@@ -111,54 +94,38 @@ pub enum ModelStateIdentity {
 /// Immutable identities required to compile one logical problem.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProblemInputIdentities {
-    observation: ObservationSnapshotId,
-    reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
-    model: ModelStateIdentity,
+    observation: ObservationSnapshot,
 }
 
 impl ProblemInputIdentities {
-    /// Construct input identities. Compilation canonicalizes reference ordering.
+    /// Bind a compiler-derived observation snapshot as the sole input authority.
     #[must_use]
-    pub fn new(
-        observation: ObservationSnapshotId,
-        reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
-        model: ModelStateIdentity,
-    ) -> Self {
-        Self {
-            observation,
-            reference_data,
-            model,
-        }
+    pub const fn new(observation: ObservationSnapshot) -> Self {
+        Self { observation }
     }
 
     /// Return the observation snapshot identity.
     #[must_use]
     pub const fn observation(&self) -> ObservationSnapshotId {
-        self.observation
+        self.observation.snapshot_id()
+    }
+
+    /// Return the complete immutable observation snapshot.
+    #[must_use]
+    pub const fn observation_snapshot(&self) -> &ObservationSnapshot {
+        &self.observation
     }
 
     /// Return reference identities in canonical family order after compilation.
     #[must_use]
     pub fn reference_data(&self) -> &[(ReferenceDataKind, LogicalIdentity)] {
-        &self.reference_data
+        self.observation.reference_data()
     }
 
     /// Return the initial model-state identity.
     #[must_use]
     pub const fn model(&self) -> ModelStateIdentity {
-        self.model
-    }
-
-    fn canonicalize(mut self) -> Result<Self, CompileProblemError> {
-        self.reference_data.sort_unstable_by_key(|(kind, _)| *kind);
-        if let Some(kind) = self
-            .reference_data
-            .windows(2)
-            .find_map(|pair| (pair[0].0 == pair[1].0).then_some(pair[0].0))
-        {
-            return Err(CompileProblemError::DuplicateReferenceData(kind));
-        }
-        Ok(self)
+        self.observation.model()
     }
 }
 
@@ -1168,9 +1135,6 @@ pub enum CompileProblemError {
     /// Coordinate or image-domain geometry is invalid or incomplete.
     #[error(transparent)]
     Geometry(#[from] CompileGeometryError),
-    /// More than one identity was supplied for one reference-data family.
-    #[error("duplicate reference-data identity for {0:?}")]
-    DuplicateReferenceData(ReferenceDataKind),
     /// Reconstruction and capability requirements contradict each other.
     #[error("invalid capability combination: {reason}")]
     InvalidCapabilityCombination {
@@ -1233,7 +1197,6 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         geometry,
         inputs,
     } = request;
-    let inputs = inputs.canonicalize()?;
     let geometry = compile_geometry(geometry, &inputs)?;
     let science = specification.science;
     let products = specification.products.canonicalize();
@@ -1288,7 +1251,7 @@ fn validate_science(
     }
     if science.measurement_equation.instrument_response != InstrumentResponse::Scalar
         && !inputs
-            .reference_data
+            .reference_data()
             .iter()
             .any(|(kind, _)| *kind == ReferenceDataKind::Instrument)
     {
@@ -1597,14 +1560,14 @@ fn canonical_problem_id(
     let mut encoder = CanonicalEncoder::new();
     encoder.bytes(COMPILED_PROBLEM_IDENTITY_DOMAIN);
     encoder.u32(COMPILED_PROBLEM_IDENTITY_VERSION);
-    encoder.identity(inputs.observation.0);
+    encoder.identity(inputs.observation().identity());
     encoder.digest(geometry.geometry_id().as_bytes());
-    encoder.usize(inputs.reference_data.len());
-    for (kind, identity) in &inputs.reference_data {
+    encoder.usize(inputs.reference_data().len());
+    for (kind, identity) in inputs.reference_data() {
         encoder.u8(reference_data_tag(*kind));
         encoder.identity(*identity);
     }
-    match inputs.model {
+    match inputs.model() {
         ModelStateIdentity::Empty => encoder.u8(0),
         ModelStateIdentity::Seed(identity) => {
             encoder.u8(1);
@@ -1752,6 +1715,10 @@ impl CanonicalEncoder {
     }
 
     pub(crate) fn u32(&mut self, value: u32) {
+        self.0.update(value.to_le_bytes());
+    }
+
+    pub(crate) fn u64(&mut self, value: u64) {
         self.0.update(value.to_le_bytes());
     }
 

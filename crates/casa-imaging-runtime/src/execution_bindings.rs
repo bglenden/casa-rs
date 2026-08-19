@@ -3,7 +3,7 @@
 use std::{collections::BTreeMap, error::Error, fmt};
 
 use casa_imaging_model::{
-    CompiledGeometryId, CompiledProblem, CompiledProblemId, LogicalIdentity, NumericsContractId,
+    CompiledGeometryId, CompiledProblem, CompiledProblemId, NumericsContractId,
     ObservationSnapshotId, ProblemInputIdentities, ReferenceDataKind,
 };
 use sha2::{Digest, Sha256};
@@ -833,15 +833,12 @@ fn validate_bindings<E>(
         Some(BindingKind::CompiledProblem)
     } else if plan.geometry != problem.geometry().geometry_id() {
         Some(BindingKind::CompiledGeometry)
-    } else if plan.problem_inputs.observation() != current.problem_inputs.observation() {
-        Some(BindingKind::ObservationSnapshot)
-    } else if !same_reference_snapshots(
-        plan.problem_inputs.reference_data(),
-        current.problem_inputs.reference_data(),
-    ) {
+    } else if plan.problem_inputs.reference_data() != current.problem_inputs.reference_data() {
         Some(BindingKind::ReferenceDataSnapshots)
     } else if plan.problem_inputs.model() != current.problem_inputs.model() {
         Some(BindingKind::ModelState)
+    } else if plan.problem_inputs.observation() != current.problem_inputs.observation() {
+        Some(BindingKind::ObservationSnapshot)
     } else if plan.resource_policy_id != current.resource_policy {
         Some(BindingKind::ResourcePolicy)
     } else if plan.planner_cost_model_profile != current.planner_cost_model_profile {
@@ -853,13 +850,6 @@ fn validate_bindings<E>(
         Some(binding) => Err(RunError::BindingMismatch { binding }),
         None => Ok(()),
     }
-}
-
-fn same_reference_snapshots(
-    planned: &[(ReferenceDataKind, LogicalIdentity)],
-    current: &[(ReferenceDataKind, LogicalIdentity)],
-) -> bool {
-    planned.len() == current.len() && planned.iter().all(|binding| current.contains(binding))
 }
 
 fn resource_policy_id(policy: &ResourcePolicy) -> ResourcePolicyId {
