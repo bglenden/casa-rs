@@ -632,7 +632,9 @@ dependencies = [
 name = "casa-imaging-runtime"
 version = "0.27.0"
 dependencies = [
+ "casa-imaging-model",
  "objc2-metal",
+ "sha2",
 ]
 
 [[package]]

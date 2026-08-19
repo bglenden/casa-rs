@@ -2,16 +2,22 @@
 
 use casa_imaging_model::{
     CompileProblemError, CompiledGeometryId, FieldGeometry, FiniteValuePolicy, GeometryContract,
-    InstrumentResponse, LogicalIdentity, MeasurementEquationContract, ModelStateIdentity,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationSnapshotId,
+    ImagingRequest, InstrumentResponse, LogicalIdentity, MeasurementEquationContract,
+    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationSnapshotId,
     PolarizationContract, PolarizationCoordinate, ProblemInputIdentities, ProblemSpecification,
     ProductKind, ProductNormalization, ProductRequirements, ProjectionGeometry,
     ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
     ReductionPolicy, ReferenceDataKind, RequiredCapability, RestoringBeamPolicy,
     ScientificContract, SpectralContract, SpectralCoupling, SpectralFrame, SpectralSampling,
-    StageErrorBudget, UvTaper, WeightDensityScope, WeightingContract, WeightingScheme,
-    compile_problem,
+    StageErrorBudget, UvTaper, WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
+
+fn compile_request(
+    specification: ProblemSpecification,
+    inputs: ProblemInputIdentities,
+) -> Result<casa_imaging_model::CompiledProblem, CompileProblemError> {
+    compile(ImagingRequest::new(specification, inputs))
+}
 
 fn identity(byte: u8) -> LogicalIdentity {
     LogicalIdentity::from_sha256([byte; 32])
@@ -129,8 +135,8 @@ fn inputs_with_instrument() -> ProblemInputIdentities {
 
 #[test]
 fn equivalent_science_has_one_canonical_compiled_identity() {
-    let first = compile_problem(specification(false), inputs(false)).expect("compile first");
-    let reordered = compile_problem(specification(true), inputs(true)).expect("compile reordered");
+    let first = compile_request(specification(false), inputs(false)).expect("compile first");
+    let reordered = compile_request(specification(true), inputs(true)).expect("compile reordered");
 
     assert_eq!(first.problem_id(), reordered.problem_id());
     assert_eq!(
@@ -146,7 +152,7 @@ fn equivalent_science_has_one_canonical_compiled_identity() {
 
 #[test]
 fn derived_capabilities_cover_normalization_without_naming_a_backend() {
-    let compiled = compile_problem(specification(false), inputs(false)).expect("compile problem");
+    let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
     assert!(
         compiled
@@ -184,7 +190,7 @@ fn natural_weighting_rejects_a_meaningless_per_channel_density_scope() {
     );
 
     assert!(matches!(
-        compile_problem(specification, inputs(false)),
+        compile_request(specification, inputs(false)),
         Err(CompileProblemError::InvalidWeighting { .. })
     ));
 }
@@ -199,7 +205,7 @@ fn natural_weighting_declares_that_density_generation_is_not_applicable() {
         numerics(false),
     );
 
-    let compiled = compile_problem(specification, inputs(false)).expect("natural weighting");
+    let compiled = compile_request(specification, inputs(false)).expect("natural weighting");
     assert!(
         compiled
             .required_capabilities()
@@ -222,7 +228,7 @@ fn incompatible_reconstruction_capabilities_fail_before_execution_inputs_exist()
     );
 
     assert!(matches!(
-        compile_problem(specification, inputs(false)),
+        compile_request(specification, inputs(false)),
         Err(CompileProblemError::InvalidCapabilityCombination { .. })
     ));
 }
@@ -242,7 +248,7 @@ fn one_term_mfs_uses_the_constant_basis_instead_of_taylor() {
     );
 
     assert!(matches!(
-        compile_problem(specification, inputs(false)),
+        compile_request(specification, inputs(false)),
         Err(CompileProblemError::InvalidCapabilityCombination { .. })
     ));
 }
@@ -270,7 +276,7 @@ fn flat_normalization_without_sensitivity_fails_at_compile_time() {
     );
 
     assert!(matches!(
-        compile_problem(specification, inputs(false)),
+        compile_request(specification, inputs(false)),
         Err(CompileProblemError::InvalidNormalizationCombination { .. })
     ));
 }
@@ -295,7 +301,7 @@ fn incomplete_or_non_finite_numerics_fail_at_compile_time() {
         ),
     );
     assert!(matches!(
-        compile_problem(incomplete_specification, inputs(false)),
+        compile_request(incomplete_specification, inputs(false)),
         Err(CompileProblemError::InvalidNumerics { .. })
     ));
 
@@ -323,7 +329,7 @@ fn incomplete_or_non_finite_numerics_fail_at_compile_time() {
         ),
     );
     assert!(matches!(
-        compile_problem(non_finite_specification, inputs(false)),
+        compile_request(non_finite_specification, inputs(false)),
         Err(CompileProblemError::InvalidNumerics { .. })
     ));
 }
@@ -354,7 +360,7 @@ fn derived_products_require_their_scientific_sources() {
     );
 
     assert!(matches!(
-        compile_problem(specification, inputs(false)),
+        compile_request(specification, inputs(false)),
         Err(CompileProblemError::InvalidProductCombination { .. })
     ));
 }
@@ -372,7 +378,7 @@ fn duplicate_reference_families_are_rejected_instead_of_ordered_accidentally() {
     );
 
     assert_eq!(
-        compile_problem(specification(false), inputs),
+        compile_request(specification(false), inputs),
         Err(CompileProblemError::DuplicateReferenceData(
             ReferenceDataKind::Measures
         ))
@@ -393,13 +399,49 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
             numerics(false),
         )
     };
-    let negative_zero = compile_problem(with_robust(-0.0), inputs(false)).expect("negative zero");
-    let positive_zero = compile_problem(with_robust(0.0), inputs(false)).expect("positive zero");
-    let changed = compile_problem(with_robust(0.5), inputs(false)).expect("changed science");
+    let negative_zero = compile_request(with_robust(-0.0), inputs(false)).expect("negative zero");
+    let positive_zero = compile_request(with_robust(0.0), inputs(false)).expect("positive zero");
+    let changed = compile_request(with_robust(0.5), inputs(false)).expect("changed science");
 
     assert_eq!(negative_zero.problem_id(), positive_zero.problem_id());
     assert_ne!(positive_zero.problem_id(), changed.problem_id());
     assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 2);
+}
+
+#[test]
+fn numerics_contract_has_an_independent_stable_identity() {
+    let first = compile_request(specification(false), inputs(false)).expect("compile first");
+    let reordered = compile_request(specification(true), inputs(true)).expect("compile reordered");
+    assert_eq!(first.numerics_id(), reordered.numerics_id());
+    assert_eq!(
+        first.numerics_id().as_bytes(),
+        [
+            248, 232, 21, 246, 91, 89, 229, 141, 87, 199, 232, 27, 197, 224, 106, 80, 183, 210,
+            185, 125, 118, 131, 243, 133, 31, 193, 111, 19, 68, 150, 117, 86,
+        ]
+    );
+
+    let mut changed = numerics(false);
+    changed = NumericsContract::new(
+        changed.permitted_precisions().to_vec(),
+        ReductionPolicy::DeterministicPairwise,
+        changed.finite_values(),
+        changed.stage_error_budgets().to_vec(),
+    );
+    let changed = compile_request(
+        ProblemSpecification::new(
+            science(),
+            reconstruction(),
+            weighting(),
+            products(false),
+            changed,
+        ),
+        inputs(false),
+    )
+    .expect("compile changed numerics");
+
+    assert_ne!(first.numerics_id(), changed.numerics_id());
+    assert_eq!(casa_imaging_model::NumericsContractId::SCHEMA_VERSION, 1);
 }
 
 #[test]
@@ -427,9 +469,9 @@ fn multiscale_order_and_duplicate_scales_do_not_change_scientific_identity() {
             numerics(false),
         )
     };
-    let canonical = compile_problem(specification(vec![0.0, 3.0, 10.0]), inputs(false))
+    let canonical = compile_request(specification(vec![0.0, 3.0, 10.0]), inputs(false))
         .expect("canonical scales");
-    let reordered = compile_problem(specification(vec![10.0, 3.0, -0.0, 3.0]), inputs(false))
+    let reordered = compile_request(specification(vec![10.0, 3.0, -0.0, 3.0]), inputs(false))
         .expect("reordered scales");
 
     assert_eq!(canonical.problem_id(), reordered.problem_id());
@@ -447,7 +489,7 @@ fn complete_science_contract_changes_identity_and_capabilities() {
             numerics(false),
         )
     };
-    let baseline = compile_problem(make(science(), weighting(), products(false)), inputs(false))
+    let baseline = compile_request(make(science(), weighting(), products(false)), inputs(false))
         .expect("baseline");
     let widefield_science = ScientificContract::new(
         GeometryContract::new(ProjectionGeometry::NonCoplanarW, FieldGeometry::Mosaic),
@@ -470,7 +512,7 @@ fn complete_science_contract_changes_identity_and_capabilities() {
         WeightDensityScope::GlobalSelection,
     )
     .with_uv_taper(UvTaper::new(12_000.0, 8_000.0, 0.25));
-    let widefield = compile_problem(
+    let widefield = compile_request(
         make(
             widefield_science,
             tapered,
@@ -517,7 +559,7 @@ fn direction_dependent_response_requires_instrument_identity() {
     );
 
     assert!(matches!(
-        compile_problem(specification, inputs(false)),
+        compile_request(specification, inputs(false)),
         Err(CompileProblemError::InvalidScientificContract {
             reason: "direction-dependent response requires bound instrument reference data"
         })
@@ -548,10 +590,10 @@ fn dirty_reconstruction_rejects_scientifically_unused_controls() {
         )
     };
 
-    compile_problem(dirty(1.0, 0.0), inputs(false)).expect("canonical dirty problem");
+    compile_request(dirty(1.0, 0.0), inputs(false)).expect("canonical dirty problem");
     for specification in [dirty(0.1, 0.0), dirty(1.0, 0.5)] {
         assert!(matches!(
-            compile_problem(specification, inputs(false)),
+            compile_request(specification, inputs(false)),
             Err(CompileProblemError::InvalidCapabilityCombination {
                 reason: "dirty reconstruction requires canonical inactive controls: gain 1 and threshold 0"
             })
@@ -575,7 +617,7 @@ fn spectral_coupling_and_restoring_beam_policy_must_agree() {
         )
     };
     let compile = |coupling, beam| {
-        compile_problem(
+        compile_request(
             ProblemSpecification::new(
                 science_with_coupling(coupling),
                 reconstruction(),
@@ -626,7 +668,7 @@ fn invalid_science_contracts_fail_before_bulk_io() {
         numerics(false),
     );
     assert!(matches!(
-        compile_problem(specification, inputs(false)),
+        compile_request(specification, inputs(false)),
         Err(CompileProblemError::InvalidScientificContract { .. })
     ));
 
@@ -651,7 +693,7 @@ fn invalid_science_contracts_fail_before_bulk_io() {
         numerics(false),
     );
     assert!(matches!(
-        compile_problem(specification, inputs(false)),
+        compile_request(specification, inputs(false)),
         Err(CompileProblemError::InvalidScientificContract {
             reason: "spectral channel averaging requires a positive bin width"
         })
@@ -676,7 +718,7 @@ fn invalid_science_contracts_fail_before_bulk_io() {
         numerics(false),
     );
     assert!(matches!(
-        compile_problem(specification, inputs(false)),
+        compile_request(specification, inputs(false)),
         Err(CompileProblemError::InvalidScientificContract {
             reason: "at least one polarization coordinate must be requested"
         })
@@ -685,7 +727,7 @@ fn invalid_science_contracts_fail_before_bulk_io() {
 
 #[test]
 fn compiled_problem_identity_has_a_pinned_schema_two_digest() {
-    let compiled = compile_problem(specification(false), inputs(false)).expect("compile problem");
+    let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
     assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 2);
     assert_eq!(

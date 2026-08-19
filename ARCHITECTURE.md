@@ -122,6 +122,16 @@ Additional constraints:
   readable dependency policy and migration matrix under
   `resources/imaging-architecture/` are enforced by `just arch-check`.
 
+The native interface has one `ImagingRequest` contract (version 1) and exactly
+one `compile` / `plan` / `run` sequence. `compile` validates and canonicalizes
+logical science only. `plan` seals planner-emitted physical work to the exact
+compiled problem, observation/reference/model snapshots, Numerics Contract,
+implementation-registry snapshot, Resource Policy, and reviewed planner
+cost-model profile. `run` validates those identities before entering the
+selected executor; a mismatch cannot recompile, reroute, replan, or invoke the
+executor. The physical work is represented by a stable identity at this
+foundation seam; ADR-0010 work-DAG structure and scheduling land in T10/#496.
+
 ## Runtime model
 
 Most crates are synchronous Rust libraries with CLI/TUI frontends and test

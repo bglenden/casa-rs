@@ -6,13 +6,13 @@ mod compiled_problem;
 
 pub use compiled_problem::{
     CompileProblemError, CompiledGeometryId, CompiledProblem, CompiledProblemId, FieldGeometry,
-    FiniteValuePolicy, GeometryContract, InstrumentResponse, LogicalIdentity,
-    MeasurementEquationContract, ModelStateIdentity, NumericPrecision, NumericalStage,
-    NumericsContract, ObservationSnapshotId, PolarizationContract, PolarizationCoordinate,
-    ProblemInputIdentities, ProblemSpecification, ProductKind, ProductNormalization,
-    ProductRequirements, ProjectionGeometry, ReconstructionAlgorithm, ReconstructionBasis,
-    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
-    RequiredCapability, RestoringBeamPolicy, ScientificContract, SpectralContract,
-    SpectralCoupling, SpectralFrame, SpectralSampling, StageErrorBudget, UvTaper,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile_problem,
+    FiniteValuePolicy, GeometryContract, ImagingRequest, ImagingRequestVersion, InstrumentResponse,
+    LogicalIdentity, MeasurementEquationContract, ModelStateIdentity, NumericPrecision,
+    NumericalStage, NumericsContract, NumericsContractId, ObservationSnapshotId,
+    PolarizationContract, PolarizationCoordinate, ProblemInputIdentities, ProblemSpecification,
+    ProductKind, ProductNormalization, ProductRequirements, ProjectionGeometry,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, ReferenceDataKind, RequiredCapability, RestoringBeamPolicy,
+    ScientificContract, SpectralContract, SpectralCoupling, SpectralFrame, SpectralSampling,
+    StageErrorBudget, UvTaper, WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };

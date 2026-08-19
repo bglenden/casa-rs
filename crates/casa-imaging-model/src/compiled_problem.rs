@@ -7,6 +7,28 @@ use thiserror::Error;
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
 const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 2;
+const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
+const NUMERICS_CONTRACT_IDENTITY_VERSION: u32 = 1;
+
+/// Version of the sole native imaging request contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImagingRequestVersion {
+    /// Initial mathematical imaging request contract.
+    V1,
+}
+
+impl ImagingRequestVersion {
+    /// Current request version accepted by [`compile`].
+    pub const CURRENT: Self = Self::V1;
+
+    /// Return the stable integer representation used at transport boundaries.
+    #[must_use]
+    pub const fn as_u32(self) -> u32 {
+        match self {
+            Self::V1 => 1,
+        }
+    }
+}
 
 /// A content identity supplied by an owner outside the problem compiler.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1022,6 +1044,32 @@ pub struct ProblemSpecification {
     numerics: NumericsContract,
 }
 
+/// One versioned, backend-independent native imaging request.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImagingRequest {
+    version: ImagingRequestVersion,
+    specification: ProblemSpecification,
+    inputs: ProblemInputIdentities,
+}
+
+impl ImagingRequest {
+    /// Construct a request in the current native contract version.
+    #[must_use]
+    pub const fn new(specification: ProblemSpecification, inputs: ProblemInputIdentities) -> Self {
+        Self {
+            version: ImagingRequestVersion::CURRENT,
+            specification,
+            inputs,
+        }
+    }
+
+    /// Return the exact request contract version.
+    #[must_use]
+    pub const fn version(&self) -> ImagingRequestVersion {
+        self.version
+    }
+}
+
 impl ProblemSpecification {
     /// Construct a logical problem specification.
     #[must_use]
@@ -1114,6 +1162,35 @@ impl CompiledProblemId {
     }
 }
 
+/// Stable comparable identity of a complete numerical contract.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NumericsContractId(LogicalIdentity);
+
+impl NumericsContractId {
+    /// Identity schema version used by the canonical encoder.
+    pub const SCHEMA_VERSION: u32 = NUMERICS_CONTRACT_IDENTITY_VERSION;
+
+    /// Return the exact SHA-256 digest.
+    #[must_use]
+    pub const fn as_bytes(self) -> [u8; 32] {
+        self.0.as_bytes()
+    }
+}
+
+impl fmt::Debug for NumericsContractId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("NumericsContractId(")?;
+        write_hex(formatter, &self.as_bytes())?;
+        formatter.write_str(")")
+    }
+}
+
+impl fmt::Display for NumericsContractId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_hex(formatter, &self.as_bytes())
+    }
+}
+
 impl fmt::Debug for CompiledProblemId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("CompiledProblemId(")?;
@@ -1132,6 +1209,7 @@ impl fmt::Display for CompiledProblemId {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompiledProblem {
     problem_id: CompiledProblemId,
+    numerics_id: NumericsContractId,
     inputs: ProblemInputIdentities,
     science: ScientificContract,
     reconstruction: ReconstructionContract,
@@ -1146,6 +1224,12 @@ impl CompiledProblem {
     #[must_use]
     pub const fn problem_id(&self) -> CompiledProblemId {
         self.problem_id
+    }
+
+    /// Return the exact numerical-contract identity.
+    #[must_use]
+    pub const fn numerics_id(&self) -> NumericsContractId {
+        self.numerics_id
     }
 
     /// Return immutable input identities.
@@ -1235,11 +1319,13 @@ pub enum CompileProblemError {
     },
 }
 
-/// Compile and validate one immutable backend-independent imaging problem.
-pub fn compile_problem(
-    specification: ProblemSpecification,
-    inputs: ProblemInputIdentities,
-) -> Result<CompiledProblem, CompileProblemError> {
+/// Compile and validate one immutable backend-independent imaging request.
+pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProblemError> {
+    let ImagingRequest {
+        version: ImagingRequestVersion::V1,
+        specification,
+        inputs,
+    } = request;
     let inputs = inputs.canonicalize()?;
     let science = specification.science.canonicalize()?;
     let products = specification.products.canonicalize();
@@ -1263,8 +1349,10 @@ pub fn compile_problem(
         &products,
         &numerics,
     );
+    let numerics_id = canonical_numerics_id(&numerics);
     Ok(CompiledProblem {
         problem_id,
+        numerics_id,
         inputs,
         science,
         reconstruction,
@@ -1745,6 +1833,19 @@ fn canonical_problem_id(
         RestoringBeamPolicy::PerPlane => 1,
         RestoringBeamPolicy::Common => 2,
     });
+    encode_numerics(&mut encoder, numerics);
+    CompiledProblemId(LogicalIdentity::from_sha256(encoder.finish()))
+}
+
+fn canonical_numerics_id(numerics: &NumericsContract) -> NumericsContractId {
+    let mut encoder = CanonicalEncoder::new();
+    encoder.bytes(NUMERICS_CONTRACT_IDENTITY_DOMAIN);
+    encoder.u32(NUMERICS_CONTRACT_IDENTITY_VERSION);
+    encode_numerics(&mut encoder, numerics);
+    NumericsContractId(LogicalIdentity::from_sha256(encoder.finish()))
+}
+
+fn encode_numerics(encoder: &mut CanonicalEncoder, numerics: &NumericsContract) {
     encoder.usize(numerics.permitted_precisions.len());
     for precision in &numerics.permitted_precisions {
         encoder.u8(match precision {
@@ -1766,7 +1867,6 @@ fn canonical_problem_id(
         encoder.f64(budget.absolute);
         encoder.f64(budget.relative);
     }
-    CompiledProblemId(LogicalIdentity::from_sha256(encoder.finish()))
 }
 
 struct CanonicalEncoder(Sha256);

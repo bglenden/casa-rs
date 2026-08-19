@@ -2,7 +2,14 @@
 #![warn(missing_docs)]
 //! Process-level resource inventory, arbitration, and leases for imaging.
 
+mod execution_bindings;
 mod resource_authority;
+
+pub use execution_bindings::{
+    BindingKind, ExecutionPlan, ExecutionPlanId, ImplementationRegistryId, PhysicalWorkId,
+    PlannerCostModelProfileId, PlanningBindings, ResourcePolicyId, RunBindings, RunError, plan,
+    run,
+};
 
 pub use resource_authority::{
     Accelerator, AcceleratorDemand, AcceleratorId, AcceleratorKind, AlternativeId, CacheDemand,
