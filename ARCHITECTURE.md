@@ -122,14 +122,21 @@ Additional constraints:
   readable dependency policy and migration matrix under
   `resources/imaging-architecture/` are enforced by `just arch-check`.
 
-The native interface has one `ImagingRequest` contract (version 1) and exactly
+The native interface has one `ImagingRequest` contract (version 2) and exactly
 one `compile` / `plan` / `run` sequence. `compile` validates and canonicalizes
-logical science only. `plan` seals planner-emitted physical work to the exact
-compiled problem, observation/reference/model snapshots, Numerics Contract,
-implementation-registry snapshot, Resource Policy, and reviewed planner
-cost-model profile. `run` validates those identities before entering the
-selected executor; a mismatch cannot recompile, reroute, replan, or invoke the
-executor. The physical work is represented by a stable identity at this
+logical science, including immutable coordinate and image-domain geometry.
+Compiled Geometry identity is derived only by `compile`; callers supply geometry
+laws, not an identity. Observation pointing records the selected MeasurementSet
+column and meaning plus timestamp, interpolation, extrapolation, and missing-row
+policies without evaluating rows. Spectral geometry retains exact channel
+centres and N+1 boundaries, or a linear WCS law that derives both exactly;
+spectral transforms remain unevaluated. `plan` seals planner-emitted physical
+work to the exact compiled problem and geometry, observation/reference/model
+snapshots, Numerics
+Contract, implementation-registry snapshot, Resource Policy, and reviewed
+planner cost-model profile. `run` validates those identities before entering
+the selected executor; a mismatch cannot recompile, reroute, replan, or invoke
+the executor. The physical work is represented by a stable identity at this
 foundation seam; ADR-0010 work-DAG structure and scheduling land in T10/#496.
 
 ## Runtime model
