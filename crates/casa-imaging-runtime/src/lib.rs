@@ -6,7 +6,8 @@ mod execution_bindings;
 mod resource_authority;
 
 pub use execution_bindings::{
-    BindingKind, ExecutionPlan, ExecutionPlanId, ImplementationRegistryId, PhysicalWorkId,
+    BindingKind, ExecutionImplementation, ExecutionPlan, ExecutionPlanId, ImplementationId,
+    ImplementationRegistry, ImplementationRegistryId, PhysicalWorkBinding, PhysicalWorkId,
     PlannerCostModelProfileId, PlanningBindings, ResourcePolicyId, RunBindings, RunError, plan,
     run,
 };
