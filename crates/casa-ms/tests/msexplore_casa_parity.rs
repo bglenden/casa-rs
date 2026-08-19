@@ -2,6 +2,7 @@
 #![cfg(feature = "slow-tests")]
 
 use std::cmp::Ordering;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -28,6 +29,67 @@ use common::casa_plotms::{discover_casa_python, ngc5921_ms_path, skip_reason};
 fn casa_plotms_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn configure_casa_plotms_command(command: &mut Command) {
+    configure_casa_plotms_command_with(command, |name| std::env::var_os(name));
+}
+
+fn configure_casa_plotms_command_with(
+    command: &mut Command,
+    mut inherited: impl FnMut(&str) -> Option<OsString>,
+) {
+    for (name, fallback) in [
+        ("DISPLAY", ":99"),
+        ("QT_QPA_PLATFORM", "offscreen"),
+        ("MPLBACKEND", "Agg"),
+    ] {
+        command.env(
+            name,
+            inherited(name).unwrap_or_else(|| OsString::from(fallback)),
+        );
+    }
+}
+
+#[test]
+fn casa_plotms_commands_default_to_headless_environment_and_preserve_overrides() {
+    let mut defaults = Command::new("casa");
+    configure_casa_plotms_command_with(&mut defaults, |_| None);
+    let defaults = defaults
+        .get_envs()
+        .map(|(name, value)| {
+            (
+                name.to_string_lossy().into_owned(),
+                value
+                    .expect("configured environment value")
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(defaults["DISPLAY"], ":99");
+    assert_eq!(defaults["QT_QPA_PLATFORM"], "offscreen");
+    assert_eq!(defaults["MPLBACKEND"], "Agg");
+
+    let mut overrides = Command::new("casa");
+    configure_casa_plotms_command_with(&mut overrides, |name| {
+        Some(OsString::from(format!("explicit-{name}")))
+    });
+    let overrides = overrides
+        .get_envs()
+        .map(|(name, value)| {
+            (
+                name.to_string_lossy().into_owned(),
+                value
+                    .expect("configured environment value")
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(overrides["DISPLAY"], "explicit-DISPLAY");
+    assert_eq!(overrides["QT_QPA_PLATFORM"], "explicit-QT_QPA_PLATFORM");
+    assert_eq!(overrides["MPLBACKEND"], "explicit-MPLBACKEND");
 }
 
 #[test]
@@ -2047,16 +2109,15 @@ except Exception:
         script.push_str("plotms(**kwargs)\n");
     }
 
-    let result = Command::new(&casa.program)
+    let mut command = Command::new(&casa.program);
+    command
         .current_dir(temp.path())
         .arg("-c")
         .arg(&script)
         .env("CASA_VIS", &local_ms_path)
-        .env("CASA_OUT", &output)
-        .env(
-            "DISPLAY",
-            std::env::var("DISPLAY").unwrap_or_else(|_| ":0".to_string()),
-        )
+        .env("CASA_OUT", &output);
+    configure_casa_plotms_command(&mut command);
+    let result = command
         .output()
         .map_err(|error| format!("spawn casa plotms sequence: {error}"))?;
     if !result.status.success() {
@@ -2128,19 +2189,16 @@ kwargs = {
     }
     script.push_str("plotms(**kwargs)\n");
 
-    let result = Command::new(&casa.program)
+    let mut command = Command::new(&casa.program);
+    command
         .current_dir(temp.path())
         .arg("-c")
         .arg(&script)
         .env("CASA_VIS", &local_ms_path)
         .env("CASA_OUT", &output)
-        .env("CASA_EXPFORMAT", expformat)
-        // `casaplotms` checks only for the presence of DISPLAY, even when
-        // exporting with `showgui=False` on macOS.
-        .env(
-            "DISPLAY",
-            std::env::var("DISPLAY").unwrap_or_else(|_| ":0".to_string()),
-        )
+        .env("CASA_EXPFORMAT", expformat);
+    configure_casa_plotms_command(&mut command);
+    let result = command
         .output()
         .map_err(|error| format!("spawn casa plotms: {error}"))?;
     if !result.status.success() {
