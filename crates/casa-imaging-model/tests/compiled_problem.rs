@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, CompileObservationError, CompileProblemError, DelayCentreLaw,
-    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
+    AxisOrder, CentreLaws, CompileObservationError, CompileProblemError, DeclaredInnerProducts,
+    DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
     FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
     ImageShape, ImagingRequest, InstrumentResponse, ItrfPosition, MeasurementEquationContract,
-    MissingPointingPolicy, ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract,
-    ObservationPointingLaw, ObservationSnapshotInput, PhaseCentreLaw, PointingCentreLaw,
-    PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    MissingPointingPolicy, ModelInnerProduct, ModelStateIdentity, NumericPrecision, NumericalStage,
+    NumericsContract, ObservationPointingLaw, ObservationSnapshotInput, PhaseCentreLaw,
+    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
     PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
     ProblemInputIdentities, ProblemSpecification, ProductKind, ProductNormalization,
     ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
@@ -15,7 +15,8 @@ use casa_imaging_model::{
     RequiredCapability, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
     SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
     SpectralSampling, SpectralWcs, StageErrorBudget, TimeScale, UvTaper, UvwCoordinateLaw,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
+    VisibilityInnerProduct, WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    compile_observation,
 };
 
 mod common;
@@ -64,6 +65,13 @@ fn reconstruction() -> ReconstructionContract {
     )
 }
 
+fn inner_products() -> DeclaredInnerProducts {
+    DeclaredInnerProducts::new(
+        ModelInnerProduct::HermitianEuclidean,
+        VisibilityInnerProduct::HermitianEuclidean,
+    )
+}
+
 fn products(reverse: bool) -> ProductRequirements {
     products_with_beam(reverse, RestoringBeamPolicy::PerPlane)
 }
@@ -88,7 +96,7 @@ fn products_with_beam(reverse: bool, restoring_beam: RestoringBeamPolicy) -> Pro
 fn science() -> ScientificContract {
     ScientificContract::new(
         SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
-        MeasurementEquationContract::new(InstrumentResponse::Scalar),
+        MeasurementEquationContract::new(InstrumentResponse::Scalar, inner_products()),
     )
 }
 
@@ -504,8 +512,12 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
     let changed = compile_request(with_robust(0.5), inputs(false)).expect("changed science");
 
     assert_eq!(negative_zero.problem_id(), positive_zero.problem_id());
+    assert_eq!(
+        negative_zero.weighting().generation_id(),
+        positive_zero.weighting().generation_id()
+    );
     assert_ne!(positive_zero.problem_id(), changed.problem_id());
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 4);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 5);
 }
 
 #[test]
@@ -597,7 +609,7 @@ fn complete_science_contract_changes_identity_and_capabilities() {
             SpectralSampling::Linear,
             SpectralCoupling::CommonRestoringBeam,
         ),
-        MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam),
+        MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products()),
     );
     let widefield_geometry = geometry()
         .with_domains(vec![geometry().domains()[0].clone().with_facets(
@@ -659,7 +671,7 @@ fn complete_science_contract_changes_identity_and_capabilities() {
 fn direction_dependent_response_requires_instrument_identity() {
     let direction_dependent = ScientificContract::new(
         SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
-        MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam),
+        MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products()),
     );
     let specification = ProblemSpecification::new(
         direction_dependent,
@@ -718,7 +730,7 @@ fn spectral_coupling_and_restoring_beam_policy_must_agree() {
     let science_with_coupling = |coupling| {
         ScientificContract::new(
             SpectralContract::new(SpectralSampling::Identity, coupling),
-            MeasurementEquationContract::new(InstrumentResponse::Scalar),
+            MeasurementEquationContract::new(InstrumentResponse::Scalar, inner_products()),
         )
     };
     let compile = |coupling, beam| {
@@ -761,7 +773,7 @@ fn invalid_science_contracts_fail_before_bulk_io() {
             },
             SpectralCoupling::Independent,
         ),
-        MeasurementEquationContract::new(InstrumentResponse::Scalar),
+        MeasurementEquationContract::new(InstrumentResponse::Scalar, inner_products()),
     );
     let specification = ProblemSpecification::new(
         invalid_sampling,
@@ -816,12 +828,12 @@ fn invalid_polarization_is_a_reconstruction_contract_error() {
 }
 
 #[test]
-fn compiled_problem_identity_has_a_pinned_schema_four_digest() {
+fn compiled_problem_identity_has_a_pinned_schema_five_digest() {
     let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 4);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 5);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "59e3c01064b31c49207e1eca09bd76dc4683d66eabc42ed31e18789a350db4e3"
+        "4da0b614321b5dd00df98de5682fe8183a31193a12f30712c0df3dd714a7fc3a"
     );
 }

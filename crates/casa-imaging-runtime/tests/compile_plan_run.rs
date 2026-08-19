@@ -11,20 +11,20 @@ use std::{
 };
 
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
-    DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis,
-    ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest, ImagingRequestVersion,
-    InstrumentResponse, MeasurementEquationContract, MetadataTableKind, MissingPointingPolicy,
-    ModelStateIdentity, MsColumnKind, NumericPrecision, NumericalStage, NumericsContract,
-    ObservationPointingLaw, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
-    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
-    PolarizationContract, PolarizationCoordinate, ProblemSpecification, ProductKind,
-    ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile,
+    AxisOrder, CentreLaws, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
+    DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
+    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest,
+    ImagingRequestVersion, InstrumentResponse, MeasurementEquationContract, MetadataTableKind,
+    MissingPointingPolicy, ModelInnerProduct, ModelStateIdentity, MsColumnKind, NumericPrecision,
+    NumericalStage, NumericsContract, ObservationPointingLaw, PhaseCentreLaw, PointingCentreLaw,
+    PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
+    ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements, Projection,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
+    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
+    WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
 use casa_imaging_runtime::{
     AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,
@@ -118,6 +118,20 @@ fn request_with_geometry_and_references(
     geometry: GeometryInput,
     references: Vec<(ReferenceDataKind, casa_imaging_model::LogicalIdentity)>,
 ) -> ImagingRequest {
+    request_with_geometry_references_and_weighting(
+        observation,
+        geometry,
+        references,
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+    )
+}
+
+fn request_with_geometry_references_and_weighting(
+    observation: u8,
+    geometry: GeometryInput,
+    references: Vec<(ReferenceDataKind, casa_imaging_model::LogicalIdentity)>,
+    weighting: WeightingContract,
+) -> ImagingRequest {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
         ReductionPolicy::Compensated,
@@ -130,7 +144,13 @@ fn request_with_geometry_and_references(
     let specification = ProblemSpecification::new(
         ScientificContract::new(
             SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
-            MeasurementEquationContract::new(InstrumentResponse::Scalar),
+            MeasurementEquationContract::new(
+                InstrumentResponse::Scalar,
+                DeclaredInnerProducts::new(
+                    ModelInnerProduct::HermitianEuclidean,
+                    VisibilityInnerProduct::HermitianEuclidean,
+                ),
+            ),
         ),
         ReconstructionContract::new(
             ReconstructionBasis::Constant,
@@ -138,7 +158,7 @@ fn request_with_geometry_and_references(
             ReconstructionControls::new(0, 1.0, 0.0),
             PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         ),
-        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+        weighting,
         ProductRequirements::new(
             vec![ProductKind::Psf],
             ProductNormalization::UnitResponse,
@@ -1767,8 +1787,8 @@ fn plan_seals_physical_work_and_every_required_binding() {
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            165, 232, 109, 30, 178, 180, 101, 245, 168, 86, 50, 118, 177, 171, 114, 60, 169, 145,
-            69, 174, 97, 146, 208, 111, 104, 165, 52, 33, 122, 163, 98, 99,
+            20, 27, 232, 113, 28, 7, 86, 91, 8, 36, 216, 4, 85, 77, 105, 28, 239, 121, 193, 218,
+            180, 24, 233, 133, 138, 50, 87, 197, 216, 104, 15, 30,
         ]
     );
 }
@@ -2290,6 +2310,38 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
 }
 
 #[test]
+fn effective_problem_projection_normalizes_signed_zero_like_canonical_identities() {
+    let compile_with_robust = |robust| {
+        compile(request_with_geometry_references_and_weighting(
+            81,
+            geometry(255.0),
+            Vec::new(),
+            WeightingContract::new(
+                WeightingScheme::Briggs { robust },
+                WeightDensityScope::GlobalSelection,
+            ),
+        ))
+        .expect("logical compilation")
+    };
+    let positive_zero = compile_with_robust(0.0);
+    let negative_zero = compile_with_robust(-0.0);
+
+    assert_eq!(positive_zero.problem_id(), negative_zero.problem_id());
+    assert_eq!(
+        positive_zero.weighting().generation_id(),
+        negative_zero.weighting().generation_id()
+    );
+
+    let positive_projection = CompiledProblemEvidence::project(&positive_zero);
+    let negative_projection = CompiledProblemEvidence::project(&negative_zero);
+    assert_eq!(
+        positive_projection.field("weighting.scheme.robust"),
+        Some("f64:0000000000000000")
+    );
+    assert_eq!(positive_projection, negative_projection);
+}
+
+#[test]
 fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
     let problem = compile(request_with_geometry_and_references(
         81,
@@ -2347,7 +2399,7 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
         .expect("antenna generation")
         .to_string();
 
-    assert_eq!(projected.schema_version(), 1);
+    assert_eq!(projected.schema_version(), 2);
     assert_eq!(projected, &CompiledProblemEvidence::project(&problem));
     assert_eq!(
         projected.field("science.spectral.sampling"),
@@ -2358,11 +2410,82 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
         Some("scalar")
     );
     assert_eq!(
+        projected.field("science.measurement_equation.inner_products.model"),
+        Some("hermitian_euclidean")
+    );
+    assert_eq!(
+        projected.field("science.measurement_equation.operator.transforms.0.kind"),
+        Some("spectral_basis")
+    );
+    assert_eq!(
+        projected.field("science.measurement_equation.operator.transforms.1.kind"),
+        Some("polarization")
+    );
+    assert_eq!(
+        projected.field("science.measurement_equation.operator.transforms.2.kind"),
+        Some("direction_dependent_response")
+    );
+    assert_eq!(
+        projected.field("science.measurement_equation.operator.transforms.3.kind"),
+        Some("phase")
+    );
+    assert_eq!(
+        projected.field("science.normal_equation.output.normalization"),
+        Some("unnormalized")
+    );
+    assert_eq!(
+        projected.field("science.normal_equation.forms.0"),
+        Some("right_hand_side_a_star_w_d")
+    );
+    assert_eq!(
+        projected.field("science.normal_equation.forms.1"),
+        Some("residual_a_star_w_d_minus_a_x")
+    );
+    assert_eq!(
+        projected.field("science.normal_equation.forms.2"),
+        Some("normal_operator_a_star_w_a")
+    );
+    assert_eq!(
         projected.field("reconstruction.algorithm.kind"),
         Some("dirty")
     );
     assert_eq!(projected.field("weighting.scheme.kind"), Some("natural"));
+    assert_eq!(
+        projected.field("weighting.generation.identity"),
+        Some(
+            problem
+                .normal_equation()
+                .weighting()
+                .generation_id()
+                .to_string()
+                .as_str()
+        )
+    );
+    assert_eq!(
+        projected.field("weighting.sources.0.flag_policy"),
+        Some("flag_or_flag_row")
+    );
+    assert_eq!(
+        projected.field("weighting.generation.snapshot_identity"),
+        Some(problem.inputs().observation().to_string().as_str())
+    );
+    assert_eq!(
+        projected.field("weighting.sources.0.input_weight_column"),
+        Some("weight")
+    );
     assert_eq!(projected.field("products.requested.0"), Some("psf"));
+    assert_eq!(
+        projected.field("products.normalization_boundary.input"),
+        Some("unnormalized")
+    );
+    assert_eq!(
+        projected.field("products.normalization_boundary.operations.0.kind"),
+        Some("normalize")
+    );
+    assert_eq!(
+        projected.field("products.normalization_boundary.operations.1.kind"),
+        Some("convert_units")
+    );
     assert_eq!(projected.field("numerics.reduction"), Some("compensated"));
     assert_eq!(
         projected.field("geometry.domains.0.direction.projection"),

@@ -81,6 +81,16 @@ A row transfers to `Native` only when the same change:
 Before transfer, corrective and performance changes land only in the row's
 current owner. After transfer, they land only in the native owner.
 
+T14/#500 is a boundary checkpoint, not a product-row transfer. The compiled
+measurement equation ends at an explicitly unnormalized normal state, while
+normalization, residual scaling, restoration, PB correction, blanking, and
+unit conversion are typed as Product Contract operations. `product.image` and
+`product.image-pbcor` therefore remain `LegacyWholeRun`: T13/#499 must land the
+Product Graph and atomic store, T39/#525 owns common-beam restoration, T47/#533
+owns PB/sensitivity and mosaic normalization algorithms, and T43/#529 owns
+wideband `product.alpha-pbcor` behavior. Their legacy writers are removed only
+under the transfer ratchet above.
+
 The architecture checker validates schema, the independently pinned logical
 graph, canonical inventories, complete Acceptance Contracts, complete binding
 row ledger, structured issue outcomes, content-pinned evidence locators,

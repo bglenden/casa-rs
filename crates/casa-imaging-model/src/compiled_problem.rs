@@ -6,10 +6,16 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::geometry::{CompileGeometryError, CompiledGeometry, GeometryInput, compile_geometry};
-use crate::observation::{ObservationSnapshot, ObservationSnapshotId};
+use crate::measurement_equation::{
+    DeclaredInnerProducts, ModelInnerProduct, NormalEquationContract, NormalStateNormalization,
+    PairedMeasurementTransform, ProductBoundaryOperation, ProductNormalizationBoundary,
+    VisibilityInnerProduct, WeightingOperatorContract, compile_normal_equation,
+    compile_product_boundary,
+};
+use crate::observation::{FlagPolicy, ObservationSnapshot, ObservationSnapshotId, WeightColumn};
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 4;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 5;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
 const NUMERICS_CONTRACT_IDENTITY_VERSION: u32 = 1;
 
@@ -281,14 +287,19 @@ pub enum InstrumentResponse {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MeasurementEquationContract {
     instrument_response: InstrumentResponse,
+    inner_products: DeclaredInnerProducts,
 }
 
 impl MeasurementEquationContract {
     /// Construct measurement-equation requirements.
     #[must_use]
-    pub const fn new(instrument_response: InstrumentResponse) -> Self {
+    pub const fn new(
+        instrument_response: InstrumentResponse,
+        inner_products: DeclaredInnerProducts,
+    ) -> Self {
         Self {
             instrument_response,
+            inner_products,
         }
     }
 
@@ -296,6 +307,12 @@ impl MeasurementEquationContract {
     #[must_use]
     pub const fn instrument_response(self) -> InstrumentResponse {
         self.instrument_response
+    }
+
+    /// Return the model and visibility inner products defining the adjoint.
+    #[must_use]
+    pub const fn inner_products(self) -> DeclaredInnerProducts {
+        self.inner_products
     }
 }
 
@@ -646,6 +663,7 @@ pub struct ProductRequirements {
     products: Vec<ProductKind>,
     normalization: ProductNormalization,
     restoring_beam: RestoringBeamPolicy,
+    normalization_boundary: ProductNormalizationBoundary,
 }
 
 impl ProductRequirements {
@@ -656,10 +674,13 @@ impl ProductRequirements {
         normalization: ProductNormalization,
         restoring_beam: RestoringBeamPolicy,
     ) -> Self {
+        let normalization_boundary =
+            compile_product_boundary(&products, normalization, restoring_beam);
         Self {
             products,
             normalization,
             restoring_beam,
+            normalization_boundary,
         }
     }
 
@@ -681,9 +702,17 @@ impl ProductRequirements {
         self.restoring_beam
     }
 
+    /// Return the downstream handoff that keeps product operations outside A*.
+    #[must_use]
+    pub const fn normalization_boundary(&self) -> &ProductNormalizationBoundary {
+        &self.normalization_boundary
+    }
+
     fn canonicalize(mut self) -> Self {
         self.products.sort_unstable();
         self.products.dedup();
+        self.normalization_boundary =
+            compile_product_boundary(&self.products, self.normalization, self.restoring_beam);
         self
     }
 
@@ -1061,7 +1090,7 @@ pub struct CompiledProblem {
     geometry: CompiledGeometry,
     science: ScientificContract,
     reconstruction: ReconstructionContract,
-    weighting: WeightingContract,
+    normal_equation: NormalEquationContract,
     products: ProductRequirements,
     numerics: NumericsContract,
     required_capabilities: BTreeSet<RequiredCapability>,
@@ -1104,10 +1133,16 @@ impl CompiledProblem {
         &self.reconstruction
     }
 
-    /// Return visibility-weighting requirements.
+    /// Return the compiled positive-semidefinite data metric W.
     #[must_use]
-    pub const fn weighting(&self) -> &WeightingContract {
-        &self.weighting
+    pub const fn weighting(&self) -> &WeightingOperatorContract {
+        self.normal_equation.weighting()
+    }
+
+    /// Return the typed A/A*, W, b, g(x), and H contract.
+    #[must_use]
+    pub const fn normal_equation(&self) -> &NormalEquationContract {
+        &self.normal_equation
     }
 
     /// Return product requirements.
@@ -1206,11 +1241,18 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
     let reconstruction = specification.reconstruction.canonicalize()?;
     validate_weighting(specification.weighting)?;
     validate_products(&science, &reconstruction, &products)?;
+    let normal_equation = compile_normal_equation(
+        &geometry,
+        &inputs,
+        &science,
+        &reconstruction,
+        specification.weighting,
+    );
     let required_capabilities = derive_capabilities(
         &geometry,
         &science,
         &reconstruction,
-        specification.weighting,
+        normal_equation.weighting(),
         &products,
     );
     let problem_id = canonical_problem_id(
@@ -1218,7 +1260,7 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         &geometry,
         &science,
         &reconstruction,
-        specification.weighting,
+        &normal_equation,
         &products,
         &numerics,
     );
@@ -1230,7 +1272,7 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         geometry,
         science,
         reconstruction,
-        weighting: specification.weighting,
+        normal_equation,
         products,
         numerics,
         required_capabilities,
@@ -1473,7 +1515,7 @@ fn derive_capabilities(
     geometry: &CompiledGeometry,
     science: &ScientificContract,
     reconstruction: &ReconstructionContract,
-    weighting: WeightingContract,
+    weighting: &WeightingOperatorContract,
     products: &ProductRequirements,
 ) -> BTreeSet<RequiredCapability> {
     let mut capabilities = BTreeSet::new();
@@ -1510,7 +1552,7 @@ fn derive_capabilities(
             capabilities.insert(RequiredCapability::FullMuellerResponse);
         }
     }
-    if weighting.uv_taper.is_some() {
+    if weighting.uv_taper().is_some() {
         capabilities.insert(RequiredCapability::UvTaper);
     }
     capabilities.insert(match reconstruction.basis {
@@ -1525,7 +1567,7 @@ fn derive_capabilities(
         ReconstructionAlgorithm::Multiscale { .. } => RequiredCapability::MultiscaleReconstruction,
         ReconstructionAlgorithm::Mtmfs => RequiredCapability::MtmfsReconstruction,
     });
-    capabilities.insert(match weighting.scheme {
+    capabilities.insert(match weighting.scheme() {
         WeightingScheme::Natural => RequiredCapability::NaturalWeighting,
         WeightingScheme::Uniform => RequiredCapability::UniformWeighting,
         WeightingScheme::Briggs { .. } => RequiredCapability::BriggsWeighting,
@@ -1553,7 +1595,7 @@ fn canonical_problem_id(
     geometry: &CompiledGeometry,
     science: &ScientificContract,
     reconstruction: &ReconstructionContract,
-    weighting: WeightingContract,
+    normal_equation: &NormalEquationContract,
     products: &ProductRequirements,
     numerics: &NumericsContract,
 ) -> CompiledProblemId {
@@ -1596,6 +1638,93 @@ fn canonical_problem_id(
         InstrumentResponse::PrimaryBeam => 1,
         InstrumentResponse::FullMueller => 2,
     });
+    let inner_products = science.measurement_equation.inner_products;
+    encoder.u8(match inner_products.model() {
+        ModelInnerProduct::HermitianEuclidean => 0,
+    });
+    encoder.u8(match inner_products.visibility() {
+        VisibilityInnerProduct::HermitianEuclidean => 0,
+    });
+    let operator = normal_equation.measurement_operator();
+    encoder.digest(operator.domain().geometry().as_bytes());
+    encoder.u8(match operator.domain().basis() {
+        ReconstructionBasis::Constant => 0,
+        ReconstructionBasis::Taylor { .. } => 1,
+        ReconstructionBasis::ChannelLocal { .. } => 2,
+    });
+    encoder.usize(operator.domain().polarization().coordinates().len());
+    for coordinate in operator.domain().polarization().coordinates() {
+        encoder.u8(polarization_tag(*coordinate));
+    }
+    encoder.identity(operator.codomain().observation().identity());
+    encoder.usize(operator.transforms().len());
+    for transform in operator.transforms() {
+        match transform {
+            PairedMeasurementTransform::SpectralBasis { basis } => {
+                encoder.u8(0);
+                match basis {
+                    ReconstructionBasis::Constant => encoder.u8(0),
+                    ReconstructionBasis::Taylor { terms } => {
+                        encoder.u8(1);
+                        encoder.usize(*terms);
+                    }
+                    ReconstructionBasis::ChannelLocal { channels } => {
+                        encoder.u8(2);
+                        encoder.usize(*channels);
+                    }
+                }
+            }
+            PairedMeasurementTransform::PolarizationMapping => encoder.u8(1),
+            PairedMeasurementTransform::DirectionDependentResponse { response } => {
+                encoder.u8(2);
+                encoder.u8(match response {
+                    InstrumentResponse::Scalar => 0,
+                    InstrumentResponse::PrimaryBeam => 1,
+                    InstrumentResponse::FullMueller => 2,
+                });
+            }
+            PairedMeasurementTransform::PhaseRotation { convention } => {
+                encoder.u8(3);
+                encoder.u8(match convention {
+                    crate::geometry::VisibilityPhaseConvention::NegativeTwoPiFrequencyDelay => 0,
+                });
+            }
+            PairedMeasurementTransform::SpectralResampling { sampling } => {
+                encoder.u8(4);
+                encoder.u8(match sampling {
+                    SpectralSampling::Nearest => 0,
+                    SpectralSampling::Linear => 1,
+                    SpectralSampling::Identity | SpectralSampling::ChannelAverage { .. } => {
+                        unreachable!("compiled spectral resampling is nearest or linear")
+                    }
+                });
+            }
+            PairedMeasurementTransform::ChannelIntegration { channels_per_bin } => {
+                encoder.u8(5);
+                encoder.usize(*channels_per_bin);
+            }
+        }
+    }
+    let compiled_weighting = normal_equation.weighting();
+    encoder.digest(compiled_weighting.generation_id().as_bytes());
+    encoder.identity(compiled_weighting.snapshot().identity());
+    encoder.usize(compiled_weighting.sources().len());
+    for source in compiled_weighting.sources() {
+        encoder.identity(source.source().identity());
+        encoder.u8(match source.flags() {
+            FlagPolicy::FlagOrFlagRow => 0,
+        });
+        encoder.u8(match source.input_weights() {
+            WeightColumn::Weight => 0,
+            WeightColumn::WeightSpectrum => 1,
+        });
+        encoder.identity(source.flag_generation());
+        encoder.identity(source.flag_row_generation());
+        encoder.identity(source.input_weight_generation());
+    }
+    encoder.u8(match normal_equation.output().normalization() {
+        NormalStateNormalization::Unnormalized => 0,
+    });
     match reconstruction.basis {
         ReconstructionBasis::Constant => encoder.u8(0),
         ReconstructionBasis::Taylor { terms } => {
@@ -1627,7 +1756,7 @@ fn canonical_problem_id(
     for coordinate in &reconstruction.polarization.coordinates {
         encoder.u8(polarization_tag(*coordinate));
     }
-    match weighting.scheme {
+    match compiled_weighting.scheme() {
         WeightingScheme::Natural => encoder.u8(0),
         WeightingScheme::Uniform => encoder.u8(1),
         WeightingScheme::Briggs { robust } => {
@@ -1639,18 +1768,18 @@ fn canonical_problem_id(
             encoder.f64(robust);
         }
     }
-    encoder.u8(match weighting.density_scope {
+    encoder.u8(match compiled_weighting.density_scope() {
         WeightDensityScope::NotApplicable => 0,
         WeightDensityScope::GlobalSelection => 1,
         WeightDensityScope::PerOutputChannel => 2,
     });
-    match weighting.uv_taper {
+    match compiled_weighting.uv_taper() {
         None => encoder.u8(0),
         Some(taper) => {
             encoder.u8(1);
-            encoder.f64(taper.major_lambda);
-            encoder.f64(taper.minor_lambda);
-            encoder.f64(taper.position_angle_rad);
+            encoder.f64(taper.major_lambda());
+            encoder.f64(taper.minor_lambda());
+            encoder.f64(taper.position_angle_rad());
         }
     }
     encoder.usize(products.products.len());
@@ -1667,6 +1796,31 @@ fn canonical_problem_id(
         RestoringBeamPolicy::PerPlane => 1,
         RestoringBeamPolicy::Common => 2,
     });
+    encoder.usize(products.normalization_boundary.operations().len());
+    for operation in products.normalization_boundary.operations() {
+        match operation {
+            ProductBoundaryOperation::Normalize(normalization) => {
+                encoder.u8(0);
+                encoder.u8(match normalization {
+                    ProductNormalization::UnitResponse => 0,
+                    ProductNormalization::FlatNoise => 1,
+                    ProductNormalization::FlatSky => 2,
+                });
+            }
+            ProductBoundaryOperation::ScaleResidual => encoder.u8(1),
+            ProductBoundaryOperation::Restore(policy) => {
+                encoder.u8(2);
+                encoder.u8(match policy {
+                    RestoringBeamPolicy::None => 0,
+                    RestoringBeamPolicy::PerPlane => 1,
+                    RestoringBeamPolicy::Common => 2,
+                });
+            }
+            ProductBoundaryOperation::CorrectPrimaryBeam => encoder.u8(3),
+            ProductBoundaryOperation::BlankInvalid => encoder.u8(4),
+            ProductBoundaryOperation::ConvertUnits => encoder.u8(5),
+        }
+    }
     encode_numerics(&mut encoder, numerics);
     CompiledProblemId(LogicalIdentity::from_sha256(encoder.finish()))
 }
