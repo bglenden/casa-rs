@@ -145,7 +145,8 @@ class ArchitecturePolicyTests(unittest.TestCase):
     def test_native_dependency_allowlist_cannot_authorize_itself(self) -> None:
         policy = copy.deepcopy(self.policy)
         policy["native_package_workspace_dependencies"]["casa-imaging-runtime"] = [
-            "casa-imaging-model"
+            "casa-imaging-model",
+            "casa-ms",
         ]
         with self.assertRaisesRegex(
             checker.ArchitectureError,

@@ -10,6 +10,10 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[dependencies]
+casa-imaging-model = { path = "../casa-imaging-model" }
+sha2 = "0.10"
+
 [target.'cfg(all(target_os = "macos", not(coverage)))'.dependencies]
 objc2-metal = { version = "0.3.2", default-features = false, features = [
     "MTLCommandQueue",
