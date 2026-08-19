@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::{error::Error, fmt};
+use std::{collections::BTreeMap, error::Error, fmt};
 
 use casa_imaging_model::{
     CompiledGeometryId, CompiledProblem, CompiledProblemId, LogicalIdentity, NumericsContractId,
@@ -8,10 +8,15 @@ use casa_imaging_model::{
 };
 use sha2::{Digest, Sha256};
 
-use crate::{ResourceOverride, ResourcePolicy};
+use crate::{
+    AdaptationId, AdaptationTransition, ExecutionError, ExecutionKnobs, ExecutionOutcome,
+    FenceKind, ResourceAuthority, ResourceOverride, ResourcePolicy, ScheduledWork,
+    WorkImplementationId, WorkKind, WorkNodeId,
+    execution::{ExecutionDag, ExecutionScheduler, SchedulerAction, SchedulerTerminal, WorkResult},
+};
 
 const EXECUTION_PLAN_IDENTITY_DOMAIN: &[u8] = b"casa-rs-execution-plan";
-const EXECUTION_PLAN_IDENTITY_VERSION: u32 = 2;
+const EXECUTION_PLAN_IDENTITY_VERSION: u32 = 3;
 const RESOURCE_POLICY_IDENTITY_DOMAIN: &[u8] = b"casa-rs-resource-policy";
 const RESOURCE_POLICY_IDENTITY_VERSION: u32 = 1;
 
@@ -56,10 +61,6 @@ digest_identity!(
     "Stable content identity of one immutable implementation-registry snapshot."
 );
 digest_identity!(
-    ImplementationId,
-    "Stable identity of one executable implementation in a registry snapshot."
-);
-digest_identity!(
     PlannerCostModelProfileId,
     "Stable content identity of one reviewed planner cost-model profile."
 );
@@ -68,33 +69,29 @@ digest_identity!(
     "Stable content identity of the physical work emitted by planning."
 );
 
-/// Physical work and the sole registry implementation selected to execute it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Complete physical work emitted by the sole planning seam.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PhysicalWorkBinding {
-    physical_work: PhysicalWorkId,
-    implementation: ImplementationId,
+    execution_dag: ExecutionDag,
 }
 
 impl PhysicalWorkBinding {
-    /// Bind planned physical work to exactly one implementation identity.
+    /// Bind a complete immutable physical work DAG.
     #[must_use]
-    pub const fn new(physical_work: PhysicalWorkId, implementation: ImplementationId) -> Self {
-        Self {
-            physical_work,
-            implementation,
-        }
+    pub const fn new(execution_dag: ExecutionDag) -> Self {
+        Self { execution_dag }
     }
 
     /// Return the stable physical-work identity.
     #[must_use]
-    pub const fn physical_work_id(self) -> PhysicalWorkId {
-        self.physical_work
+    pub const fn physical_work_id(&self) -> PhysicalWorkId {
+        self.execution_dag.physical_work_id()
     }
 
-    /// Return the selected implementation identity.
+    /// Return the complete immutable physical work DAG.
     #[must_use]
-    pub const fn implementation_id(self) -> ImplementationId {
-        self.implementation
+    pub const fn execution_dag(&self) -> &ExecutionDag {
+        &self.execution_dag
     }
 }
 
@@ -216,10 +213,10 @@ pub struct ExecutionPlan {
     geometry: CompiledGeometryId,
     numerics: NumericsContractId,
     implementation_registry: ImplementationRegistryId,
-    resource_policy: ResourcePolicyId,
+    resource_policy: ResourcePolicy,
+    resource_policy_id: ResourcePolicyId,
     planner_cost_model_profile: PlannerCostModelProfileId,
-    physical_work: PhysicalWorkId,
-    implementation: ImplementationId,
+    execution_dag: ExecutionDag,
 }
 
 impl ExecutionPlan {
@@ -262,7 +259,13 @@ impl ExecutionPlan {
     /// Return the exact resource-policy identity.
     #[must_use]
     pub const fn resource_policy_id(&self) -> ResourcePolicyId {
-        self.resource_policy
+        self.resource_policy_id
+    }
+
+    /// Return the host-use policy selected during planning.
+    #[must_use]
+    pub const fn resource_policy(&self) -> &ResourcePolicy {
+        &self.resource_policy
     }
 
     /// Return the exact reviewed cost-model profile identity.
@@ -274,13 +277,13 @@ impl ExecutionPlan {
     /// Return the stable identity of the emitted physical work.
     #[must_use]
     pub const fn physical_work_id(&self) -> PhysicalWorkId {
-        self.physical_work
+        self.execution_dag.physical_work_id()
     }
 
-    /// Return the sole implementation selected to execute this plan.
+    /// Return the complete immutable physical work DAG selected by planning.
     #[must_use]
-    pub const fn implementation_id(&self) -> ImplementationId {
-        self.implementation
+    pub const fn execution_dag(&self) -> &ExecutionDag {
+        &self.execution_dag
     }
 }
 
@@ -298,10 +301,10 @@ pub fn plan<E>(
         geometry: problem.geometry().geometry_id(),
         numerics: problem.numerics_id(),
         implementation_registry: bindings.implementation_registry,
-        resource_policy: bindings.resource_policy_id,
+        resource_policy: bindings.resource_policy,
+        resource_policy_id: bindings.resource_policy_id,
         planner_cost_model_profile: bindings.planner_cost_model_profile,
-        physical_work: physical_work.physical_work,
-        implementation: physical_work.implementation,
+        execution_dag: physical_work.execution_dag,
     };
     plan.plan_id = execution_plan_id(&plan);
     Ok(plan)
@@ -346,15 +349,14 @@ pub enum BindingKind {
     ModelState,
     /// Implementation-registry snapshot identity.
     ImplementationRegistry,
-    /// Selected implementation identity.
-    Implementation,
     /// Resource-policy identity.
     ResourcePolicy,
     /// Planner cost-model profile identity.
     PlannerCostModelProfile,
 }
 
-/// Failure from exact plan binding validation or the selected executor.
+/// Failure from exact plan binding validation, resource-backed scheduling, or
+/// one plan-selected work implementation.
 #[derive(Debug, PartialEq, Eq)]
 pub enum RunError<E> {
     /// A binding changed after planning; execution was not entered.
@@ -362,13 +364,27 @@ pub enum RunError<E> {
         /// Exact rejected binding.
         binding: BindingKind,
     },
-    /// The bound registry snapshot does not contain the selected implementation.
+    /// The bound registry snapshot does not contain one selected work implementation.
     ImplementationUnavailable {
         /// Exact selected implementation missing from the registry.
-        implementation: ImplementationId,
+        implementation: WorkImplementationId,
     },
-    /// The exactly selected executor returned an error.
-    Execution(E),
+    /// The registry returned an adapter under a different stable identity.
+    ImplementationMismatch {
+        /// Identity selected by the immutable DAG.
+        planned: WorkImplementationId,
+        /// Identity reported by the resolved adapter.
+        observed: WorkImplementationId,
+    },
+    /// Resource admission or deterministic scheduling failed.
+    Scheduler(ExecutionError),
+    /// One exact plan-owned work node or its asynchronous fence failed.
+    Execution {
+        /// Node whose adapter reported the failure.
+        node: WorkNodeId,
+        /// Adapter failure retained as the error source.
+        source: E,
+    },
 }
 
 impl<E: fmt::Display> fmt::Display for RunError<E> {
@@ -380,10 +396,20 @@ impl<E: fmt::Display> fmt::Display for RunError<E> {
             Self::ImplementationUnavailable { implementation } => {
                 write!(
                     formatter,
-                    "bound implementation is unavailable: {implementation}"
+                    "bound implementation is unavailable: {}",
+                    implementation.as_str()
                 )
             }
-            Self::Execution(error) => write!(formatter, "execution failed: {error}"),
+            Self::ImplementationMismatch { planned, observed } => write!(
+                formatter,
+                "implementation registry returned {} for planned work adapter {}",
+                observed.as_str(),
+                planned.as_str()
+            ),
+            Self::Scheduler(error) => write!(formatter, "execution scheduling failed: {error}"),
+            Self::Execution { node, source } => {
+                write!(formatter, "work node {} failed: {source}", node.as_str())
+            }
         }
     }
 }
@@ -391,54 +417,163 @@ impl<E: fmt::Display> fmt::Display for RunError<E> {
 impl<E: Error + 'static> Error for RunError<E> {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::BindingMismatch { .. } | Self::ImplementationUnavailable { .. } => None,
-            Self::Execution(error) => Some(error),
+            Self::BindingMismatch { .. }
+            | Self::ImplementationUnavailable { .. }
+            | Self::ImplementationMismatch { .. } => None,
+            Self::Scheduler(error) => Some(error),
+            Self::Execution { source, .. } => Some(source),
         }
     }
 }
 
-/// One executable implementation stored in an immutable registry snapshot.
-pub trait ExecutionImplementation {
-    /// Successful execution output.
-    type Output;
+/// One exact plan-selected work-node adapter stored in an immutable registry.
+pub trait WorkImplementation {
     /// Execution failure.
-    type Error;
+    type Error: Error + 'static;
 
-    /// Return this implementation's stable registry identity.
-    fn implementation_id(&self) -> ImplementationId;
+    /// Return this adapter's stable plan identity.
+    fn implementation_id(&self) -> &WorkImplementationId;
 
-    /// Execute the already validated physical plan.
-    fn execute(
+    /// Launch or synchronously execute exactly one scheduled node.
+    ///
+    /// Returning `Ok(())` means every fence declared by the node was launched
+    /// and can subsequently be joined through [`Self::wait_for_fence`].
+    /// Returning `Err` guarantees that no asynchronous work escaped.
+    fn execute(&self, problem: &CompiledProblem, work: &ScheduledWork) -> Result<(), Self::Error>;
+
+    /// Block until one exact fence previously launched by [`Self::execute`]
+    /// settles. An error means the fence settled unsuccessfully, so the
+    /// scheduler may drain and release resources after recording failure.
+    fn wait_for_fence(
         &self,
         problem: &CompiledProblem,
-        plan: &ExecutionPlan,
-    ) -> Result<Self::Output, Self::Error>;
+        work: &ScheduledWork,
+        fence: FenceKind,
+    ) -> Result<(), Self::Error>;
 }
 
 /// Immutable registry snapshot that resolves selected implementations by identity.
 pub trait ImplementationRegistry {
     /// Homogeneous execution interface stored by this registry.
-    type Implementation: ExecutionImplementation;
+    type Implementation: WorkImplementation;
 
     /// Return the exact snapshot identity bound during planning.
     fn registry_id(&self) -> ImplementationRegistryId;
 
     /// Resolve one implementation without substituting another candidate.
-    fn resolve(&self, id: ImplementationId) -> Option<&Self::Implementation>;
+    fn resolve(&self, id: &WorkImplementationId) -> Option<&Self::Implementation>;
 }
 
-/// Validate every binding, resolve the selected implementation, and execute it.
-pub fn run<R>(
+/// Immutable scheduler state exposed to a run controller without exposing the
+/// scheduler or its Resource Lease.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionStatus {
+    lease_epoch: u64,
+    pressure_changed: bool,
+    knobs: ExecutionKnobs,
+    applied_adaptations: Vec<AdaptationId>,
+    eligible_adaptations: Vec<AdaptationTransition>,
+}
+
+impl ExecutionStatus {
+    /// Returns the Resource Authority epoch backing this run.
+    #[must_use]
+    pub const fn lease_epoch(&self) -> u64 {
+        self.lease_epoch
+    }
+
+    /// Returns whether external pressure changed since lease admission.
+    #[must_use]
+    pub const fn pressure_changed(&self) -> bool {
+        self.pressure_changed
+    }
+
+    /// Returns the exact current plan-authorized execution configuration.
+    #[must_use]
+    pub const fn knobs(&self) -> &ExecutionKnobs {
+        &self.knobs
+    }
+
+    /// Returns the transitions already applied by this run.
+    #[must_use]
+    pub fn applied_adaptations(&self) -> &[AdaptationId] {
+        &self.applied_adaptations
+    }
+
+    /// Returns only transitions applicable at the current globally idle cut.
+    /// The list is empty while work or fences are active.
+    #[must_use]
+    pub fn eligible_adaptations(&self) -> &[AdaptationTransition] {
+        &self.eligible_adaptations
+    }
+}
+
+/// One controller request interpreted only through the plan-owned scheduler.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RunDirective {
+    /// Continue with the current plan-authorized configuration.
+    Continue,
+    /// Cancel pending work and drain all launched work and fences.
+    Cancel,
+    /// Apply one exact pre-authorized transition at its declared quiescence point.
+    Adapt(AdaptationId),
+}
+
+/// Scheduling policy consulted by the sole validated [`run`] seam.
+pub trait RunController {
+    /// Return the next request. The scheduler rejects any unlisted transition
+    /// or adaptation outside its exact global quiescence boundary.
+    fn directive(&mut self, status: &ExecutionStatus) -> RunDirective;
+}
+
+/// Controller that executes the sealed initial configuration to completion.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RunToCompletion;
+
+impl RunController for RunToCompletion {
+    fn directive(&mut self, _status: &ExecutionStatus) -> RunDirective {
+        RunDirective::Continue
+    }
+}
+
+enum PendingRunError<E> {
+    Scheduler(ExecutionError),
+    Execution { node: WorkNodeId, source: E },
+}
+
+impl<E> PendingRunError<E> {
+    fn into_run_error(self) -> RunError<E> {
+        match self {
+            Self::Scheduler(error) => RunError::Scheduler(error),
+            Self::Execution { node, source } => RunError::Execution { node, source },
+        }
+    }
+}
+
+fn defer_scheduler_error<E>(
+    scheduler: &mut ExecutionScheduler<'_>,
+    pending: &mut Option<PendingRunError<E>>,
+    error: ExecutionError,
+) {
+    if pending.is_none() {
+        *pending = Some(PendingRunError::Scheduler(error));
+    }
+    scheduler.cancel_after_error();
+}
+
+/// Validate every binding, resolve every selected node adapter, acquire the
+/// plan's Resource Authority lease, and drive the complete DAG to settlement.
+pub fn run<R, C>(
     problem: &CompiledProblem,
     plan: &ExecutionPlan,
     current: &RunBindings,
     registry: &R,
-) -> Result<
-    <R::Implementation as ExecutionImplementation>::Output,
-    RunError<<R::Implementation as ExecutionImplementation>::Error>,
->
+    authority: &ResourceAuthority,
+    controller: &mut C,
+) -> Result<ExecutionOutcome, RunError<<R::Implementation as WorkImplementation>::Error>>
 where
     R: ImplementationRegistry,
+    C: RunController,
 {
     validate_bindings(problem, plan, current)?;
     if plan.implementation_registry != registry.registry_id() {
@@ -446,20 +581,247 @@ where
             binding: BindingKind::ImplementationRegistry,
         });
     }
-    let implementation =
-        registry
-            .resolve(plan.implementation)
-            .ok_or(RunError::ImplementationUnavailable {
-                implementation: plan.implementation,
-            })?;
-    if implementation.implementation_id() != plan.implementation {
-        return Err(RunError::BindingMismatch {
-            binding: BindingKind::Implementation,
-        });
+    let mut implementations = BTreeMap::new();
+    for identity in plan.execution_dag.selected_implementations() {
+        let implementation =
+            registry
+                .resolve(identity)
+                .ok_or_else(|| RunError::ImplementationUnavailable {
+                    implementation: identity.clone(),
+                })?;
+        if implementation.implementation_id() != identity {
+            return Err(RunError::ImplementationMismatch {
+                planned: identity.clone(),
+                observed: implementation.implementation_id().clone(),
+            });
+        }
+        implementations.insert(identity.clone(), implementation);
     }
-    implementation
-        .execute(problem, plan)
-        .map_err(RunError::Execution)
+    let mut scheduler = ExecutionScheduler::start(plan, authority).map_err(RunError::Scheduler)?;
+    let mut launched = BTreeMap::<WorkNodeId, ScheduledWork>::new();
+    let mut pending = None;
+    let mut controller_stopped = false;
+    loop {
+        if pending.is_none() && !controller_stopped {
+            let status = match (scheduler.lease_epoch(), scheduler.pressure_changed()) {
+                (Some(lease_epoch), Ok(Some(pressure_changed))) => ExecutionStatus {
+                    lease_epoch,
+                    pressure_changed,
+                    knobs: scheduler.knobs().clone(),
+                    applied_adaptations: scheduler.applied_adaptations().to_vec(),
+                    eligible_adaptations: scheduler.eligible_adaptations(),
+                },
+                (None, _) | (_, Ok(None)) => {
+                    defer_scheduler_error(
+                        &mut scheduler,
+                        &mut pending,
+                        ExecutionError::InvalidState(
+                            "active execution cannot observe its Resource Authority lease"
+                                .to_string(),
+                        ),
+                    );
+                    controller_stopped = true;
+                    continue;
+                }
+                (_, Err(error)) => {
+                    defer_scheduler_error(&mut scheduler, &mut pending, error);
+                    controller_stopped = true;
+                    continue;
+                }
+            };
+            match controller.directive(&status) {
+                RunDirective::Continue => {}
+                RunDirective::Cancel => {
+                    if let Err(error) = scheduler.cancel() {
+                        defer_scheduler_error(&mut scheduler, &mut pending, error);
+                    }
+                    controller_stopped = true;
+                }
+                RunDirective::Adapt(adaptation) => {
+                    let eligible = status
+                        .eligible_adaptations
+                        .iter()
+                        .map(|transition| transition.id.clone())
+                        .collect::<Vec<_>>();
+                    if !eligible.contains(&adaptation) {
+                        defer_scheduler_error(
+                            &mut scheduler,
+                            &mut pending,
+                            ExecutionError::IneligibleAdaptation {
+                                requested: adaptation,
+                                eligible,
+                            },
+                        );
+                        controller_stopped = true;
+                    } else if let Err(error) = scheduler.adapt(&adaptation) {
+                        defer_scheduler_error(&mut scheduler, &mut pending, error);
+                        controller_stopped = true;
+                    }
+                }
+            }
+        }
+        let action = match scheduler.next_action() {
+            Ok(action) => action,
+            Err(error) if pending.is_none() => {
+                defer_scheduler_error(&mut scheduler, &mut pending, error);
+                controller_stopped = true;
+                continue;
+            }
+            Err(_) => {
+                let _ = scheduler.quarantine();
+                return Err(pending
+                    .take()
+                    .expect("draining scheduler error has a primary failure")
+                    .into_run_error());
+            }
+        };
+        match action {
+            SchedulerAction::Work(work) => {
+                let work = *work;
+                let node_id = work.node().id.clone();
+                let implementation = implementations[&work.node().implementation];
+                match implementation.execute(problem, &work) {
+                    Ok(()) => {
+                        launched.insert(node_id.clone(), work);
+                        if let Err(error) = scheduler.finish_work(node_id, WorkResult::Succeeded) {
+                            defer_scheduler_error(&mut scheduler, &mut pending, error);
+                            controller_stopped = true;
+                        }
+                    }
+                    Err(source) => {
+                        if work.node().kind == WorkKind::Release {
+                            if pending.is_none() {
+                                pending = Some(PendingRunError::Execution {
+                                    node: node_id.clone(),
+                                    source,
+                                });
+                            }
+                            controller_stopped = true;
+                            if scheduler.fail_release_work(&node_id).is_err() {
+                                let _ = scheduler.quarantine();
+                                return Err(pending
+                                    .take()
+                                    .expect("release failure is retained")
+                                    .into_run_error());
+                            }
+                            scheduler.cancel_after_error();
+                            continue;
+                        }
+                        let diagnostic = source.to_string();
+                        pending = Some(PendingRunError::Execution {
+                            node: node_id.clone(),
+                            source,
+                        });
+                        controller_stopped = true;
+                        match scheduler.finish_work(
+                            node_id,
+                            WorkResult::Failed {
+                                message: diagnostic,
+                            },
+                        ) {
+                            Ok(fences) => {
+                                for fence in fences {
+                                    if scheduler.complete_fence(fence).is_err() {
+                                        let _ = scheduler.quarantine();
+                                        return Err(pending
+                                            .take()
+                                            .expect("executor failure is retained")
+                                            .into_run_error());
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                scheduler.cancel_after_error();
+                            }
+                        }
+                    }
+                }
+            }
+            SchedulerAction::Waiting { .. } => {
+                let Some(fence) = scheduler.next_pending_fence() else {
+                    let error = ExecutionError::InvalidState(
+                        "scheduler reported waiting without an outstanding fence".to_string(),
+                    );
+                    if pending.is_none() {
+                        defer_scheduler_error(&mut scheduler, &mut pending, error);
+                        controller_stopped = true;
+                        continue;
+                    }
+                    let _ = scheduler.quarantine();
+                    return Err(pending
+                        .take()
+                        .expect("waiting failure has a primary error")
+                        .into_run_error());
+                };
+                let Some(work) = launched.get(fence.node()) else {
+                    let _ = scheduler.quarantine();
+                    return Err(pending
+                        .take()
+                        .unwrap_or_else(|| {
+                            PendingRunError::Scheduler(ExecutionError::InvalidState(
+                                "outstanding fence has no launched work declaration".to_string(),
+                            ))
+                        })
+                        .into_run_error());
+                };
+                let implementation = implementations[&work.node().implementation];
+                if let Err(source) = implementation.wait_for_fence(problem, work, fence.kind()) {
+                    if work.node().kind == WorkKind::Release {
+                        if pending.is_none() {
+                            pending = Some(PendingRunError::Execution {
+                                node: fence.node().clone(),
+                                source,
+                            });
+                        }
+                        controller_stopped = true;
+                        if scheduler.fail_release_fence(fence).is_err() {
+                            let _ = scheduler.quarantine();
+                            return Err(pending
+                                .take()
+                                .expect("release fence failure is retained")
+                                .into_run_error());
+                        }
+                        scheduler.cancel_after_error();
+                        continue;
+                    }
+                    if pending.is_none() {
+                        pending = Some(PendingRunError::Execution {
+                            node: fence.node().clone(),
+                            source,
+                        });
+                    }
+                    controller_stopped = true;
+                    if scheduler
+                        .fail_fence(fence.clone(), "asynchronous work failed".to_string())
+                        .is_err()
+                    {
+                        let _ = scheduler.quarantine();
+                        return Err(pending
+                            .take()
+                            .expect("fence failure is retained")
+                            .into_run_error());
+                    }
+                } else if let Err(error) = scheduler.complete_fence(fence) {
+                    defer_scheduler_error(&mut scheduler, &mut pending, error);
+                    controller_stopped = true;
+                }
+            }
+            SchedulerAction::Complete(terminal) => {
+                return match pending.take() {
+                    Some(failure) => Err(failure.into_run_error()),
+                    None => match terminal {
+                        SchedulerTerminal::Succeeded => Ok(ExecutionOutcome::Succeeded),
+                        SchedulerTerminal::Cancelled => Ok(ExecutionOutcome::Cancelled),
+                        SchedulerTerminal::Failed { .. } => {
+                            Err(RunError::Scheduler(ExecutionError::InvalidState(
+                                "scheduler reported failure without its adapter error".to_string(),
+                            )))
+                        }
+                    },
+                };
+            }
+        }
+    }
 }
 
 fn validate_bindings<E>(
@@ -480,7 +842,7 @@ fn validate_bindings<E>(
         Some(BindingKind::ReferenceDataSnapshots)
     } else if plan.problem_inputs.model() != current.problem_inputs.model() {
         Some(BindingKind::ModelState)
-    } else if plan.resource_policy != current.resource_policy {
+    } else if plan.resource_policy_id != current.resource_policy {
         Some(BindingKind::ResourcePolicy)
     } else if plan.planner_cost_model_profile != current.planner_cost_model_profile {
         Some(BindingKind::PlannerCostModelProfile)
@@ -573,10 +935,9 @@ fn execution_plan_id(plan: &ExecutionPlan) -> ExecutionPlanId {
     }
     encoder.digest(plan.numerics.as_bytes());
     encoder.digest(plan.implementation_registry.as_bytes());
-    encoder.digest(plan.resource_policy.as_bytes());
+    encoder.digest(plan.resource_policy_id.as_bytes());
     encoder.digest(plan.planner_cost_model_profile.as_bytes());
-    encoder.digest(plan.physical_work.as_bytes());
-    encoder.digest(plan.implementation.as_bytes());
+    encoder.digest(plan.execution_dag.physical_work_id().as_bytes());
     ExecutionPlanId(encoder.finish())
 }
 
@@ -590,43 +951,43 @@ fn reference_data_tag(kind: ReferenceDataKind) -> u8 {
     }
 }
 
-struct CanonicalEncoder(Sha256);
+pub(crate) struct CanonicalEncoder(Sha256);
 
 impl CanonicalEncoder {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(Sha256::new())
     }
 
-    fn u8(&mut self, value: u8) {
+    pub(crate) fn u8(&mut self, value: u8) {
         self.0.update([value]);
     }
 
-    fn u32(&mut self, value: u32) {
+    pub(crate) fn u32(&mut self, value: u32) {
         self.0.update(value.to_le_bytes());
     }
 
-    fn u64(&mut self, value: u64) {
+    pub(crate) fn u64(&mut self, value: u64) {
         self.0.update(value.to_le_bytes());
     }
 
-    fn usize(&mut self, value: usize) {
+    pub(crate) fn usize(&mut self, value: usize) {
         self.0.update((value as u128).to_le_bytes());
     }
 
-    fn bytes(&mut self, value: &[u8]) {
+    pub(crate) fn bytes(&mut self, value: &[u8]) {
         self.usize(value.len());
         self.0.update(value);
     }
 
-    fn string(&mut self, value: &str) {
+    pub(crate) fn string(&mut self, value: &str) {
         self.bytes(value.as_bytes());
     }
 
-    fn digest(&mut self, value: [u8; 32]) {
+    pub(crate) fn digest(&mut self, value: [u8; 32]) {
         self.0.update(value);
     }
 
-    fn optional_u64(&mut self, value: Option<u64>) {
+    pub(crate) fn optional_u64(&mut self, value: Option<u64>) {
         match value {
             Some(value) => {
                 self.u8(1);
@@ -636,7 +997,7 @@ impl CanonicalEncoder {
         }
     }
 
-    fn finish(self) -> [u8; 32] {
+    pub(crate) fn finish(self) -> [u8; 32] {
         self.0.finalize().into()
     }
 }

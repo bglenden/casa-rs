@@ -134,10 +134,23 @@ spectral transforms remain unevaluated. `plan` seals planner-emitted physical
 work to the exact compiled problem and geometry, observation/reference/model
 snapshots, Numerics
 Contract, implementation-registry snapshot, Resource Policy, and reviewed
-planner cost-model profile. `run` validates those identities before entering
-the selected executor; a mismatch cannot recompile, reroute, replan, or invoke
-the executor. The physical work is represented by a stable identity at this
-foundation seam; ADR-0010 work-DAG structure and scheduling land in T10/#496.
+planner cost-model profile. The plan owns the complete immutable physical work
+DAG: explicit nodes and dependencies, per-node implementation identities,
+resource claims, logical allocation lifetimes, compatible reusable physical
+slots, asynchronous fences, quiescence points, and pre-authorized adaptations.
+`run` validates the bindings and registry snapshot, acquires the plan's sole
+Resource Authority lease, then privately drives every node and fence to a
+terminal outcome. Registry adapters execute only one exact scheduled node; no
+whole-plan executor or public scheduler can bypass the compile/plan/run seam.
+Controllers can observe only plan-listed transitions eligible at the current
+global cut. Cancellation, rejected directives, and adapter errors drain every
+launched fence before `run` returns; mapped pages and storage-manager state also
+execute their plan-owned terminal release nodes in dependency order. If release
+cannot be established, the scheduler drains all other work and fences, then
+retains only each failed physical-slot reservation fail-closed.
+Typed I/O-buffer ceilings bound concurrent logical activity while MemoryDemand
+and plan-owned physical slots are the sole physical-byte charge, allowing
+compatible buffers from disjoint processing segments to reuse storage.
 
 ## Runtime model
 

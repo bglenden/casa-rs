@@ -14,6 +14,10 @@ fn single_alternative(demand: DemandEnvelope) -> DemandAlternatives {
             scaling: ScalingMetadata {
                 minimum_workers: 1,
                 maximum_workers: workers,
+                maximum_batch_size: 1,
+                maximum_tile_width: 1,
+                maximum_tile_height: 1,
+                maximum_slab_depth: 1,
                 memory_bytes_per_worker: BTreeMap::new(),
             },
             quiescence_points: BTreeSet::from([QuiescencePoint::RunBoundary]),
@@ -352,6 +356,10 @@ fn authority_selects_a_capable_feasible_alternative_and_reserves_its_headroom() 
         scaling: ScalingMetadata {
             minimum_workers: 1,
             maximum_workers: 4,
+            maximum_batch_size: 1,
+            maximum_tile_width: 1,
+            maximum_tile_height: 1,
+            maximum_slab_depth: 1,
             memory_bytes_per_worker: BTreeMap::from([(domain.clone(), 100)]),
         },
         quiescence_points: BTreeSet::from([QuiescencePoint::MajorCycle]),
@@ -441,6 +449,10 @@ fn cache_headroom_is_charged_to_its_physical_host_memory_domain() {
             scaling: ScalingMetadata {
                 minimum_workers: 1,
                 maximum_workers: 1,
+                maximum_batch_size: 1,
+                maximum_tile_width: 1,
+                maximum_tile_height: 1,
+                maximum_slab_depth: 1,
                 memory_bytes_per_worker: BTreeMap::new(),
             },
             quiescence_points: BTreeSet::from([QuiescencePoint::RunBoundary]),
@@ -672,15 +684,141 @@ fn lease_permits_enforce_named_hard_limits_and_own_capacity_until_drop() {
 
     assert_eq!(
         authority
-            .acquire(ResourcePolicy::Exclusive, demand("blocked", 871))
-            .expect_err("the released lease still owns 130 physical bytes including buffers")
+            .acquire(ResourcePolicy::Exclusive, demand("blocked", 881))
+            .expect_err("the released lease still owns 110 physical bytes")
             .available(),
-        Some(870)
+        Some(890)
     );
     drop(permit);
     authority
-        .acquire(ResourcePolicy::Exclusive, demand("after-drop", 871))
+        .acquire(ResourcePolicy::Exclusive, demand("after-drop", 881))
         .expect("dropping the last permit returns the pending lease reservation");
+}
+
+#[test]
+fn io_buffer_activity_ceilings_do_not_duplicate_physical_slot_capacity() {
+    let domain = CapacityDomainId::new("unified-memory");
+    let host = CapacityViewId::new("host-memory");
+    let authority = ResourceAuthority::with_inventory(inventory_with_views(vec![MemoryView {
+        id: host.clone(),
+        domain: domain.clone(),
+        kind: MemoryViewKind::Host,
+    }]))
+    .expect("valid I/O-buffer accounting inventory");
+    let demand = DemandEnvelope {
+        host_memory_view: host.clone(),
+        memory: vec![MemoryDemand {
+            allocation_id: "shared-io-slot".to_string(),
+            hard_bytes: 600,
+            preferred_bytes: 600,
+            views: vec![host],
+        }],
+        workers: CountDemand::new(1, 1),
+        overhead: RuntimeOverheadDemand::zero(),
+        storage: Vec::new(),
+        rates: Vec::new(),
+        caches: CacheDemand::zero(),
+        locks: CountDemand::zero(),
+        file_descriptors: CountDemand::zero(),
+        queues: Vec::new(),
+        transfers: Vec::new(),
+        accelerators: Vec::new(),
+        io_buffers: IoBufferDemand {
+            source_read_ahead_bytes: 600,
+            writeback_bytes: 600,
+            publication_bytes: 600,
+            ..IoBufferDemand::zero()
+        },
+    };
+
+    let lease = authority
+        .acquire(ResourcePolicy::Exclusive, single_alternative(demand))
+        .expect("three disjoint logical ceilings share one physical 600-byte slot");
+
+    assert_eq!(lease.hard_ceilings().memory_bytes(&domain), 600);
+    for kind in [
+        IoBufferKind::SourceReadAhead,
+        IoBufferKind::Writeback,
+        IoBufferKind::Publication,
+    ] {
+        assert_eq!(
+            lease.declared_limit(&LeaseResource::IoBuffer(kind)),
+            Some(600)
+        );
+    }
+}
+
+#[test]
+fn narrowed_quarantine_reserves_only_memory_without_retaining_policy_caps() {
+    let domain = CapacityDomainId::new("unified-memory");
+    let host = CapacityViewId::new("host-memory");
+    let authority = ResourceAuthority::with_inventory(inventory_with_views(vec![MemoryView {
+        id: host.clone(),
+        domain: domain.clone(),
+        kind: MemoryViewKind::Host,
+    }]))
+    .expect("valid quarantine-policy inventory");
+    let demand = |allocation: Option<(&str, u64)>, workers| DemandEnvelope {
+        host_memory_view: host.clone(),
+        memory: allocation
+            .map(|(allocation_id, bytes)| MemoryDemand {
+                allocation_id: allocation_id.to_string(),
+                hard_bytes: bytes,
+                preferred_bytes: bytes,
+                views: vec![host.clone()],
+            })
+            .into_iter()
+            .collect(),
+        workers: CountDemand::new(workers, workers),
+        overhead: RuntimeOverheadDemand::zero(),
+        storage: Vec::new(),
+        rates: Vec::new(),
+        caches: CacheDemand::zero(),
+        locks: CountDemand::zero(),
+        file_descriptors: CountDemand::zero(),
+        queues: Vec::new(),
+        transfers: Vec::new(),
+        accelerators: Vec::new(),
+        io_buffers: IoBufferDemand::zero(),
+    };
+    let lease = authority
+        .acquire(
+            ResourcePolicy::Interactive,
+            single_alternative(demand(Some(("failed-slot", 100)), 1)),
+        )
+        .expect("interactive failed run is admitted");
+    let failed_slot = lease
+        .permit(
+            LeaseResource::Memory {
+                allocation_id: "failed-slot".to_string(),
+            },
+            100,
+        )
+        .expect("failed physical slot is live");
+
+    lease
+        .quarantine_memory_permits(vec![failed_slot])
+        .expect("quarantine narrows to the failed memory permit");
+
+    let exclusive = authority
+        .acquire(
+            ResourcePolicy::Exclusive,
+            single_alternative(demand(None, 4)),
+        )
+        .expect("quarantined Interactive policy does not cap unrelated Exclusive workers");
+    assert!(
+        exclusive
+            .release()
+            .expect("exclusive worker lease releases")
+            .is_released()
+    );
+    let error = authority
+        .acquire(
+            ResourcePolicy::Exclusive,
+            single_alternative(demand(Some(("too-large", 901)), 1)),
+        )
+        .expect_err("the quarantined one hundred memory bytes remain unavailable");
+    assert_eq!(error.available(), Some(900));
 }
 
 #[test]
