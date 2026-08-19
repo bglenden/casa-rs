@@ -3,11 +3,12 @@
 use casa_imaging_model::{
     AntennaSelection, ColumnGeneration, ConsistencyToken, CorrelationProduct, CorrelationSelection,
     CorrelationType, FlagPolicy, IdSelection, IntentSelection, LogicalIdentity,
-    MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, ModelStateIdentity,
-    MsColumnKind, ObservationSelection, ObservationSnapshot, ObservationSnapshotInput,
-    ObservationSourceInput, ObservationSourceProvenance, ProblemInputIdentities, ReferenceDataKind,
-    RowSelection, SelectedColumns, SelectedRows, SourceGenerations, SpectralWindowSelection,
-    TimeSelection, UvSelection, VisibilityColumn, WeightColumn, compile_observation,
+    MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, ModelColumnState,
+    ModelStateIdentity, MsColumnKind, ObservationSelection, ObservationSnapshot,
+    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
+    ProblemInputIdentities, ReferenceDataKind, RowSelection, SelectedColumns, SelectedRows,
+    SourceGenerations, SpectralWindowSelection, TimeSelection, UvSelection, VisibilityColumn,
+    WeightColumn, compile_observation,
 };
 
 pub fn identity(byte: u8) -> LogicalIdentity {
@@ -34,6 +35,25 @@ pub fn observation_snapshot(
 }
 
 pub fn observation_source(observation: u8) -> ObservationSourceInput {
+    observation_source_with_model_generation(observation, None)
+}
+
+pub fn observation_source_with_model_generation(
+    observation: u8,
+    model_generation: Option<LogicalIdentity>,
+) -> ObservationSourceInput {
+    observation_source_with_model_state(
+        observation,
+        model_generation.map_or(ModelColumnState::Absent, ModelColumnState::Present),
+        model_generation,
+    )
+}
+
+pub fn observation_source_with_model_state(
+    observation: u8,
+    model_column: ModelColumnState,
+    consumed_model_generation: Option<LogicalIdentity>,
+) -> ObservationSourceInput {
     let column_kinds = [
         MsColumnKind::Data,
         MsColumnKind::Flag,
@@ -55,13 +75,16 @@ pub fn observation_source(observation: u8) -> ObservationSourceInput {
         MsColumnKind::ObservationId,
         MsColumnKind::ArrayId,
     ];
-    let columns = column_kinds
+    let mut columns = column_kinds
         .into_iter()
         .enumerate()
         .map(|(index, kind)| {
             ColumnGeneration::new(kind, scoped_identity(observation, 20 + index as u8))
         })
-        .collect();
+        .collect::<Vec<_>>();
+    if let Some(generation) = consumed_model_generation {
+        columns.push(ColumnGeneration::new(MsColumnKind::ModelData, generation));
+    }
     let metadata_kinds = [
         MetadataTableKind::Antenna,
         MetadataTableKind::DataDescription,
@@ -114,10 +137,12 @@ pub fn observation_source(observation: u8) -> ObservationSourceInput {
                 columns,
             ),
             metadata,
+            model_column,
         ),
     )
 }
 
+#[allow(dead_code)]
 pub fn problem_inputs(
     observation: u8,
     reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,

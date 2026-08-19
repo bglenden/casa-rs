@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use casa_imaging_model::MeasurementSetIdentity;
+
 static PRODUCTION_AUTHORITY: OnceLock<Result<ResourceAuthority, ResourceError>> = OnceLock::new();
 
 /// Stable identity of one physical memory-capacity domain.
@@ -960,6 +962,11 @@ pub enum LeaseResource {
     ResidentCache,
     /// Table or synchronization locks.
     Locks,
+    /// One exact MeasurementSet table lock, charged to the aggregate lock ceiling.
+    MeasurementSetLock {
+        /// Location-independent MeasurementSet identity protected by this lock.
+        measurement_set: MeasurementSetIdentity,
+    },
     /// File descriptors.
     FileDescriptors,
 }
@@ -1585,7 +1592,7 @@ impl ResourceLease {
 
     /// Returns the selected alternative's hard limit for one named resource.
     pub fn declared_limit(&self, resource: &LeaseResource) -> Option<u64> {
-        self.limits.get(resource).copied()
+        self.limits.get(&resource.accounting_resource()).copied()
     }
 
     /// Returns every named hard limit retained from the selected demand.
@@ -1617,12 +1624,17 @@ impl ResourceLease {
                 "cannot acquire a permit after release was requested".to_string(),
             ));
         }
+        let accounting_resource = resource.accounting_resource();
         let limit = record
             .limits
-            .get(&resource)
+            .get(&accounting_resource)
             .copied()
             .ok_or_else(|| ResourceError::UndeclaredLeaseResource(resource.clone()))?;
-        let consumed = record.consumed.get(&resource).copied().unwrap_or(0);
+        let consumed = record
+            .consumed
+            .get(&accounting_resource)
+            .copied()
+            .unwrap_or(0);
         let available = limit.saturating_sub(consumed);
         if amount > available {
             return Err(ResourceError::LeaseLimitExceeded {
@@ -1632,7 +1644,7 @@ impl ResourceLease {
             });
         }
         record.consumed.insert(
-            resource.clone(),
+            accounting_resource.clone(),
             consumed
                 .checked_add(amount)
                 .ok_or(ResourceError::Overflow("lease consumption"))?,
@@ -1641,6 +1653,7 @@ impl ResourceLease {
             inner: Arc::clone(&self.inner),
             lease_id: self.lease_id,
             resource,
+            accounting_resource,
             amount,
             released: false,
         })
@@ -1750,7 +1763,7 @@ impl ResourceLease {
                     )?;
                 }
                 let amount = retained_consumption
-                    .entry(permit.resource.clone())
+                    .entry(permit.accounting_resource.clone())
                     .or_default();
                 *amount = amount
                     .checked_add(permit.amount)
@@ -1799,6 +1812,7 @@ pub struct ResourcePermit {
     inner: Arc<AuthorityInner>,
     lease_id: u64,
     resource: LeaseResource,
+    accounting_resource: LeaseResource,
     amount: u64,
     released: bool,
 }
@@ -1816,7 +1830,12 @@ impl ResourcePermit {
 
     /// Releases this consumption and any now-quiescent pending lease.
     pub fn release(mut self) -> Result<LeaseRelease, ResourceError> {
-        let released = release_permit(&self.inner, self.lease_id, &self.resource, self.amount)?;
+        let released = release_permit(
+            &self.inner,
+            self.lease_id,
+            &self.accounting_resource,
+            self.amount,
+        )?;
         self.released = true;
         Ok(LeaseRelease { released })
     }
@@ -1825,7 +1844,21 @@ impl ResourcePermit {
 impl Drop for ResourcePermit {
     fn drop(&mut self) {
         if !self.released {
-            let _ = release_permit(&self.inner, self.lease_id, &self.resource, self.amount);
+            let _ = release_permit(
+                &self.inner,
+                self.lease_id,
+                &self.accounting_resource,
+                self.amount,
+            );
+        }
+    }
+}
+
+impl LeaseResource {
+    pub(crate) fn accounting_resource(&self) -> Self {
+        match self {
+            Self::MeasurementSetLock { .. } => Self::Locks,
+            resource => resource.clone(),
         }
     }
 }

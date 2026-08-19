@@ -10,14 +10,14 @@ use casa_imaging_model::{
     DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
     GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest,
     InstrumentResponse, LogicalIdentity, MeasurementEquationContract, MissingPointingPolicy,
-    ModelInnerProduct, ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract,
-    ObservationPointingLaw, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
-    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
-    PolarizationContract, PolarizationCoordinate, ProblemSpecification, ProductKind,
-    ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    ModelColumnWrite, ModelInnerProduct, NumericPrecision, NumericalStage, NumericsContract,
+    ObservationPointingLaw, ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw,
+    PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
+    ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements, Projection,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
+    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
     SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
     WeightDensityScope, WeightingContract, WeightingScheme,
 };
@@ -26,9 +26,6 @@ use casa_imaging_router::{
 };
 
 mod common;
-
-use common::problem_inputs;
-
 #[test]
 fn legacy_request_invokes_only_whole_run_legacy_engine() {
     let native_calls = Arc::new(AtomicUsize::new(0));
@@ -217,9 +214,10 @@ fn request_with_phase_centre(
                 ProductNormalization::UnitResponse,
                 RestoringBeamPolicy::None,
             ),
+            ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
             numerics,
         ),
         geometry,
-        problem_inputs(1, reference_data, ModelStateIdentity::Empty),
+        common::problem_inputs(reference_data),
     )
 }

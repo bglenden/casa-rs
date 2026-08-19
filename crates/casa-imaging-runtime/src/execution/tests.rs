@@ -9,12 +9,13 @@ use casa_imaging_model::{
     AxisOrder, CentreLaws, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
     DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
     GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest,
-    InstrumentResponse, MeasurementEquationContract, ModelInnerProduct, ModelStateIdentity,
-    NumericPrecision, NumericalStage, NumericsContract, PhaseCentreLaw, PointingCentreLaw,
-    PolarizationContract, PolarizationCoordinate, ProblemSpecification, ProductKind,
-    ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
+    InstrumentResponse, MeasurementEquationContract, ModelColumnWrite, ModelInnerProduct,
+    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract,
+    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
+    PolarizationCoordinate, ProblemSpecification, ProductKind, ProductNormalization,
+    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
+    ReconstructionContract, ReconstructionControls, ReductionPolicy, RestFrequency,
+    RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
     SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
     StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
     WeightingContract, WeightingScheme, compile,
@@ -23,7 +24,7 @@ use casa_imaging_model::{
 #[path = "../../tests/common/mod.rs"]
 mod common;
 
-use common::problem_inputs;
+use common::{identity, problem_inputs};
 
 use super::*;
 use crate::{
@@ -31,10 +32,11 @@ use crate::{
     CapabilityPredicate, CapacityDomainId, CapacityViewId, CountDemand, CpuClassCapacity,
     DemandAlternative, DemandEnvelope, ExternalPressure, HostInventory, ImplementationRegistryId,
     IoBufferDemand, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
-    MemoryViewKind, PhysicalWorkBinding, PlannerCostModelProfileId, PlanningBindings, QueueDemand,
-    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
-    RateUnit, ResourceAuthority, ResourceHeadroom, ResourcePolicy, ResourceTopology,
-    RuntimeOverheadDemand, ScalingMetadata, plan as authority_plan,
+    MemoryViewKind, ObservationTransactionWork, PhysicalWorkBinding, PlannerCostModelProfileId,
+    PlanningBindings, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint, RateDemand,
+    RateResource, RateResourceId, RateUnit, ResourceAuthority, ResourceHeadroom, ResourcePolicy,
+    ResourceTopology, RuntimeOverheadDemand, ScalingMetadata, StorageDemand, StorageDomain,
+    StorageDomainId, plan as authority_plan,
 };
 
 fn plan<E>(
@@ -67,6 +69,9 @@ fn plan<E>(
             Err(crate::PlanError::InvalidCandidate(error))
         }
         Err(crate::PlanError::Resource(error)) => Err(crate::PlanError::Resource(error)),
+        Err(crate::PlanError::ObservationTransaction(error)) => {
+            Err(crate::PlanError::ObservationTransaction(error))
+        }
         Err(crate::PlanError::Planner(error)) => match error {},
     }
 }
@@ -136,6 +141,7 @@ fn compiled_problem() -> casa_imaging_model::CompiledProblem {
             ProductNormalization::UnitResponse,
             RestoringBeamPolicy::None,
         ),
+        ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
         NumericsContract::new(
             vec![NumericPrecision::F64],
             ReductionPolicy::DeterministicPairwise,
@@ -337,6 +343,9 @@ fn io_authority() -> ResourceAuthority {
     let view = CapacityViewId::new("host-memory");
     let rate = RateResourceId::new("io-rate");
     let queue = QueueResourceId::new("io-queue");
+    let transaction_rate = RateResourceId::new("transaction-io-rate");
+    let transaction_queue = QueueResourceId::new("transaction-io-queue");
+    let transaction_storage = StorageDomainId::new("transaction-output");
     ResourceAuthority::with_inventory(HostInventory {
         topology: ResourceTopology {
             memory_domains: vec![MemoryCapacityDomain {
@@ -351,13 +360,23 @@ fn io_authority() -> ResourceAuthority {
             }],
             accelerators: Vec::new(),
             transfer_links: Vec::new(),
-            storage_domains: Vec::new(),
-            rate_resources: vec![RateResource::new(
-                rate.clone(),
-                RateUnit::BytesPerSecond,
-                100,
-            )],
-            queue_resources: vec![QueueResource::new(queue.clone(), 1)],
+            storage_domains: vec![StorageDomain {
+                id: transaction_storage.clone(),
+                root: std::path::PathBuf::from("/tmp/casa-rs-runtime-transaction-output"),
+                capacity_bytes: 1_024,
+                read_rate: transaction_rate.clone(),
+                write_rate: transaction_rate.clone(),
+                operations_rate: None,
+                queue: transaction_queue.clone(),
+            }],
+            rate_resources: vec![
+                RateResource::new(rate.clone(), RateUnit::BytesPerSecond, 100),
+                RateResource::new(transaction_rate.clone(), RateUnit::BytesPerSecond, 100),
+            ],
+            queue_resources: vec![
+                QueueResource::new(queue.clone(), 1),
+                QueueResource::new(transaction_queue.clone(), 1),
+            ],
             logical_cpu_threads: 2,
             performance_cpu_cores: CpuClassCapacity::Known(2),
             cache_capacity_bytes: 1_024,
@@ -367,9 +386,9 @@ fn io_authority() -> ResourceAuthority {
         pressure: ExternalPressure {
             memory_available_bytes: BTreeMap::from([(domain, 1_024)]),
             available_cpu_threads: 2,
-            storage_available_bytes: BTreeMap::new(),
-            rate_available_per_second: BTreeMap::from([(rate, 100)]),
-            queue_available_slots: BTreeMap::from([(queue, 1)]),
+            storage_available_bytes: BTreeMap::from([(transaction_storage, 1_024)]),
+            rate_available_per_second: BTreeMap::from([(rate, 100), (transaction_rate, 100)]),
+            queue_available_slots: BTreeMap::from([(queue, 1), (transaction_queue, 1)]),
             accelerator_available_slots: BTreeMap::new(),
             cache_available_bytes: 1_024,
             available_locks: 8,
@@ -434,6 +453,266 @@ fn execution_provenance(
 }
 
 fn physical_work_binding(dag: ExecutionDag) -> PhysicalWorkBinding {
+    let initial = WorkNodeId::new("transaction-check");
+    let read = WorkNodeId::new("transaction-read");
+    let reconciliation = WorkNodeId::new("transaction-reconciliation");
+    let stage = WorkNodeId::new("transaction-stage-products");
+    let commit = WorkNodeId::new("transaction-commit");
+    let implementation = WorkImplementationId::new("cpu-reference");
+    let publication_allocation = AllocationId::new("transaction-publication-buffer");
+    let publication_slot = PhysicalSlotId::new("transaction-publication-slot");
+    let publication_lifetime =
+        ClaimLifetime::through_fences([FenceKind::Io, FenceKind::Publication]);
+    let compatibility = SlotCompatibility {
+        memory_domain: CapacityDomainId::new("host-memory"),
+        views: BTreeSet::from([CapacityViewId::new("host-memory")]),
+        alignment_bytes: 1,
+        storage_mode: StorageMode::Host,
+        layout: AllocationLayout::new("transaction-publication-buffer"),
+        initialization: InitializationPolicy::Preserve,
+        access: AllocationAccess::ReadWrite,
+    };
+    let predecessors = dag
+        .nodes()
+        .values()
+        .flat_map(|node| node.dependencies.iter())
+        .map(|dependency| match dependency {
+            WorkDependency::Work(node) => node.clone(),
+            WorkDependency::Fence(fence) => fence.node().clone(),
+        })
+        .collect::<BTreeSet<_>>();
+    let terminals = dag
+        .nodes()
+        .values()
+        .filter(|node| !predecessors.contains(&node.id))
+        .flat_map(|node| {
+            if node.fences.is_empty() {
+                vec![WorkDependency::Work(node.id.clone())]
+            } else {
+                node.fences
+                    .iter()
+                    .map(|kind| WorkDependency::Fence(FenceId::new(node.id.clone(), *kind)))
+                    .collect()
+            }
+        })
+        .collect::<BTreeSet<_>>();
+    let read_completion = WorkDependency::Fence(FenceId::new(read.clone(), FenceKind::Io));
+    let mut nodes = dag.nodes().values().cloned().collect::<Vec<_>>();
+    for node in nodes.iter_mut().filter(|node| node.dependencies.is_empty()) {
+        node.dependencies.insert(read_completion.clone());
+    }
+    let measurement_set = casa_imaging_model::MeasurementSetIdentity::new(identity(1));
+    nodes.extend([
+        WorkNode {
+            id: initial.clone(),
+            kind: WorkKind::DataCensus,
+            domain: WorkDomain::Cpu,
+            implementation: implementation.clone(),
+            dependencies: BTreeSet::new(),
+            claims: vec![
+                ResourceClaim {
+                    resource: crate::LeaseResource::Workers,
+                    amount: 1,
+                    lifetime: ClaimLifetime::Work,
+                },
+                ResourceClaim {
+                    resource: crate::LeaseResource::MeasurementSetLock { measurement_set },
+                    amount: 1,
+                    lifetime: ClaimLifetime::Work,
+                },
+            ],
+            allocations: Vec::new(),
+            fences: BTreeSet::new(),
+            quiescence_after: BTreeSet::new(),
+        },
+        WorkNode {
+            id: read.clone(),
+            kind: WorkKind::ObservationRead,
+            domain: WorkDomain::Io,
+            implementation: implementation.clone(),
+            dependencies: BTreeSet::from([WorkDependency::Work(initial.clone())]),
+            claims: vec![
+                ResourceClaim {
+                    resource: crate::LeaseResource::Rate {
+                        demand_id: "transaction-io-rate".to_string(),
+                    },
+                    amount: 1,
+                    lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+                },
+                ResourceClaim {
+                    resource: crate::LeaseResource::Queue {
+                        demand_id: "transaction-io-queue".to_string(),
+                    },
+                    amount: 1,
+                    lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+                },
+                ResourceClaim {
+                    resource: crate::LeaseResource::MeasurementSetLock { measurement_set },
+                    amount: 1,
+                    lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+                },
+            ],
+            allocations: Vec::new(),
+            fences: BTreeSet::from([FenceKind::Io]),
+            quiescence_after: BTreeSet::new(),
+        },
+        WorkNode {
+            id: reconciliation.clone(),
+            kind: WorkKind::Compute,
+            domain: WorkDomain::Cpu,
+            implementation: implementation.clone(),
+            dependencies: terminals,
+            claims: vec![ResourceClaim {
+                resource: crate::LeaseResource::Workers,
+                amount: 1,
+                lifetime: ClaimLifetime::Work,
+            }],
+            allocations: Vec::new(),
+            fences: BTreeSet::new(),
+            quiescence_after: BTreeSet::new(),
+        },
+        WorkNode {
+            id: stage.clone(),
+            kind: WorkKind::Serialization,
+            domain: WorkDomain::Cpu,
+            implementation: implementation.clone(),
+            dependencies: BTreeSet::from([WorkDependency::Work(reconciliation.clone())]),
+            claims: vec![
+                ResourceClaim {
+                    resource: crate::LeaseResource::Workers,
+                    amount: 1,
+                    lifetime: ClaimLifetime::Work,
+                },
+                ResourceClaim {
+                    resource: crate::LeaseResource::Storage {
+                        demand_id: "transaction-output".to_string(),
+                        use_kind: crate::StorageUseKind::StagedOutput,
+                    },
+                    amount: 1,
+                    lifetime: ClaimLifetime::Work,
+                },
+            ],
+            allocations: Vec::new(),
+            fences: BTreeSet::new(),
+            quiescence_after: BTreeSet::new(),
+        },
+        WorkNode {
+            id: commit.clone(),
+            kind: WorkKind::Publication,
+            domain: WorkDomain::Io,
+            implementation,
+            dependencies: BTreeSet::from([WorkDependency::Work(stage.clone())]),
+            claims: vec![
+                ResourceClaim {
+                    resource: crate::LeaseResource::Rate {
+                        demand_id: "transaction-io-rate".to_string(),
+                    },
+                    amount: 1,
+                    lifetime: publication_lifetime.clone(),
+                },
+                ResourceClaim {
+                    resource: crate::LeaseResource::Queue {
+                        demand_id: "transaction-io-queue".to_string(),
+                    },
+                    amount: 1,
+                    lifetime: publication_lifetime.clone(),
+                },
+                ResourceClaim {
+                    resource: crate::LeaseResource::MeasurementSetLock { measurement_set },
+                    amount: 1,
+                    lifetime: publication_lifetime.clone(),
+                },
+                ResourceClaim {
+                    resource: crate::LeaseResource::Storage {
+                        demand_id: "transaction-output".to_string(),
+                        use_kind: crate::StorageUseKind::StagedOutput,
+                    },
+                    amount: 1,
+                    lifetime: publication_lifetime.clone(),
+                },
+                ResourceClaim {
+                    resource: crate::LeaseResource::IoBuffer(crate::IoBufferKind::Publication),
+                    amount: 1,
+                    lifetime: publication_lifetime.clone(),
+                },
+            ],
+            allocations: vec![AllocationUse {
+                allocation: publication_allocation.clone(),
+                lifetime: publication_lifetime,
+            }],
+            fences: BTreeSet::from([FenceKind::Io, FenceKind::Publication]),
+            quiescence_after: BTreeSet::new(),
+        },
+    ]);
+    let mut alternative = dag.resource_alternative().clone();
+    alternative.demand.memory.push(MemoryDemand {
+        allocation_id: "transaction-publication-slot".to_string(),
+        hard_bytes: 1,
+        preferred_bytes: 1,
+        views: vec![CapacityViewId::new("host-memory")],
+    });
+    alternative.demand.storage.push(StorageDemand {
+        demand_id: "transaction-output".to_string(),
+        domain: StorageDomainId::new("transaction-output"),
+        temporary_bytes: 0,
+        staged_output_bytes: 1,
+        final_output_bytes: 0,
+        persistent_cache_bytes: 0,
+        read_rate: CountDemand::zero(),
+        write_rate: CountDemand::zero(),
+        operations_rate: CountDemand::zero(),
+        queue_slots: CountDemand::zero(),
+    });
+    alternative.demand.rates.push(RateDemand {
+        demand_id: "transaction-io-rate".to_string(),
+        resource: RateResourceId::new("transaction-io-rate"),
+        amount: CountDemand::new(1, 1),
+    });
+    alternative.demand.queues.push(QueueDemand {
+        demand_id: "transaction-io-queue".to_string(),
+        resource: QueueResourceId::new("transaction-io-queue"),
+        slots: CountDemand::new(1, 1),
+    });
+    alternative.demand.locks = CountDemand::new(1, 1);
+    alternative.demand.io_buffers.publication_bytes = 1;
+    let mut logical_allocations = dag
+        .logical_allocations()
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    logical_allocations.push(LogicalAllocation {
+        id: publication_allocation,
+        bytes: 1,
+        purpose: AllocationPurpose::IoBuffer(crate::IoBufferKind::Publication),
+        compatibility: compatibility.clone(),
+        physical_slot: publication_slot.clone(),
+        lifetime: AllocationLifetime {
+            acquire_at: commit.clone(),
+            release_after: BTreeSet::from([
+                WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Io)),
+                WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Publication)),
+            ]),
+        },
+    });
+    let mut physical_slots = dag.physical_slots().values().cloned().collect::<Vec<_>>();
+    physical_slots.push(PhysicalSlot {
+        id: publication_slot,
+        lease_resource: crate::LeaseResource::Memory {
+            allocation_id: "transaction-publication-slot".to_string(),
+        },
+        capacity_bytes: 1,
+        compatibility,
+    });
+    let dag = ExecutionDag::new(ExecutionDagSpecification {
+        required_resource_capabilities: dag.required_resource_capabilities().clone(),
+        resource_alternative: alternative,
+        nodes,
+        logical_allocations,
+        physical_slots,
+        initial_knobs: dag.initial_knobs().clone(),
+        adaptations: dag.adaptations().values().cloned().collect(),
+    })
+    .expect("valid transaction-bound test plan");
     let stages = dag
         .nodes()
         .values()
@@ -466,12 +745,30 @@ fn physical_work_binding(dag: ExecutionDag) -> PhysicalWorkBinding {
         stages,
     )
     .expect("complete test prediction");
-    PhysicalWorkBinding::new(dag, prediction, Vec::new()).expect("bound physical work")
+    PhysicalWorkBinding::new(
+        dag,
+        prediction,
+        Vec::new(),
+        ObservationTransactionWork::new(
+            initial,
+            reconciliation,
+            [ProductKind::Psf, ProductKind::Residual, ProductKind::Model]
+                .into_iter()
+                .map(|product| {
+                    (
+                        product,
+                        BTreeSet::from([WorkDependency::Work(stage.clone())]),
+                    )
+                })
+                .collect(),
+            None,
+            commit,
+        ),
+    )
+    .expect("bound physical work")
 }
 
-fn inactive_release_predecessor_plan(
-    fenced_predecessor: bool,
-) -> (crate::ExecutionPlan, WorkNodeId) {
+fn inactive_release_predecessor_plan(fenced_predecessor: bool) -> (ExecutionDag, WorkNodeId) {
     let active_prepare_id = WorkNodeId::new("0-prepare-active");
     let inactive_prepare_id = WorkNodeId::new("z-prepare-inactive");
     let inactive_release_id = WorkNodeId::new("m-release-inactive");
@@ -668,7 +965,7 @@ fn inactive_release_predecessor_plan(
         },
     ];
     (
-        bound_plan(ExecutionDag::new(specification).expect("valid cleanup projection plan")),
+        ExecutionDag::new(specification).expect("valid cleanup projection plan"),
         active_release_id,
     )
 }
@@ -777,8 +1074,13 @@ fn execution_plan_owns_the_resource_policy_selected_during_planning() {
     .expect("outer planning succeeds");
 
     assert_eq!(execution_plan.resource_policy(), &ResourcePolicy::Balanced);
-    ExecutionScheduler::start(&execution_plan, &cpu_authority())
-        .expect("scheduler admits the plan under its sealed resource policy");
+    ExecutionScheduler::start(
+        execution_plan.execution_dag(),
+        execution_plan.resource_policy(),
+        &cpu_authority(),
+        Some(execution_plan.observation_transaction().work().commit()),
+    )
+    .expect("scheduler admits the plan under its sealed resource policy");
 }
 
 #[test]
@@ -942,10 +1244,10 @@ fn scheduler_rejects_discrete_metal_memory_instead_of_inventing_a_mac_model() {
         slots: CountDemand::new(1, 1),
         command_queue_slots: CountDemand::new(1, 1),
     }];
-    let plan = bound_plan(ExecutionDag::new(specification).expect("valid declared Metal work"));
+    let plan = ExecutionDag::new(specification).expect("valid declared Metal work");
 
     assert!(matches!(
-        ExecutionScheduler::start(&plan, &authority),
+        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &authority, None),
         Err(ExecutionError::InvalidPlan(message)) if message.contains("unified")
     ));
 }
@@ -959,9 +1261,11 @@ fn scheduler_dispatches_ready_work_deterministically_under_lease_limits() {
     specification.resource_alternative.demand.workers = CountDemand::new(2, 2);
     specification.resource_alternative.scaling.maximum_workers = 2;
     let dag = ExecutionDag::new(specification).expect("valid concurrent work");
-    let plan = bound_plan(dag);
+    let plan = dag;
     let authority = cpu_authority();
-    let mut scheduler = ExecutionScheduler::start(&plan, &authority).expect("admitted scheduler");
+    let mut scheduler =
+        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &authority, None)
+            .expect("admitted scheduler");
     assert!(scheduler.lease_epoch().is_some());
     assert_eq!(scheduler.knobs(), &ExecutionKnobs::serial());
 
@@ -1269,9 +1573,14 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
         capacity_bytes: 100,
         compatibility,
     }];
-    let plan = bound_plan(ExecutionDag::new(specification).expect("valid reuse plan"));
-    let mut scheduler =
-        ExecutionScheduler::start(&plan, &unified_authority()).expect("admitted reuse plan");
+    let plan = ExecutionDag::new(specification).expect("valid reuse plan");
+    let mut scheduler = ExecutionScheduler::start(
+        &plan,
+        &ResourcePolicy::Exclusive,
+        &unified_authority(),
+        None,
+    )
+    .expect("admitted reuse plan");
 
     for (node_id, fences) in [
         (compute_id, vec![device_fence]),
@@ -1472,9 +1781,14 @@ fn disjoint_io_buffer_purposes_share_one_physical_memory_charge() {
         capacity_bytes: 600,
         compatibility,
     }];
-    let plan = bound_plan(ExecutionDag::new(specification).expect("valid I/O-buffer reuse plan"));
-    let mut scheduler = ExecutionScheduler::start(&plan, &unified_authority())
-        .expect("three logical 600-byte buffers admit as one 600-byte physical slot");
+    let plan = ExecutionDag::new(specification).expect("valid I/O-buffer reuse plan");
+    let mut scheduler = ExecutionScheduler::start(
+        &plan,
+        &ResourcePolicy::Exclusive,
+        &unified_authority(),
+        None,
+    )
+    .expect("three logical 600-byte buffers admit as one 600-byte physical slot");
 
     for (expected, fences) in [
         (first_id, first_fences),
@@ -2095,9 +2409,10 @@ fn cancellation_prevents_pending_publication_from_starting() {
         capacity_bytes: 100,
         compatibility,
     }];
-    let plan = bound_plan(ExecutionDag::new(specification).expect("valid publication plan"));
+    let plan = ExecutionDag::new(specification).expect("valid publication plan");
     let mut scheduler =
-        ExecutionScheduler::start(&plan, &io_authority()).expect("admitted publication plan");
+        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &io_authority(), None)
+            .expect("admitted publication plan");
 
     let SchedulerAction::Work(compute) = scheduler.next_action().expect("compute dispatch") else {
         panic!("compute must dispatch first");
@@ -2120,11 +2435,10 @@ fn failed_work_cancels_pending_nodes_and_releases_the_lease() {
         "b-pending",
         BTreeSet::from([WorkDependency::Work(failed.id.clone())]),
     );
-    let plan = bound_plan(
-        ExecutionDag::new(plan_spec(vec![failed, pending])).expect("valid failure plan"),
-    );
+    let plan = ExecutionDag::new(plan_spec(vec![failed, pending])).expect("valid failure plan");
     let mut scheduler =
-        ExecutionScheduler::start(&plan, &cpu_authority()).expect("admitted failure plan");
+        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &cpu_authority(), None)
+            .expect("admitted failure plan");
     let SchedulerAction::Work(work) = scheduler.next_action().expect("failed work dispatch") else {
         panic!("first work must dispatch");
     };
@@ -2172,9 +2486,10 @@ fn adaptation_requires_the_listed_transition_at_its_quiescence_point() {
         to: adapted.clone(),
         at: QuiescencePoint::MajorCycle,
     }];
-    let plan = bound_plan(ExecutionDag::new(specification).expect("valid adaptive plan"));
+    let plan = ExecutionDag::new(specification).expect("valid adaptive plan");
     let mut scheduler =
-        ExecutionScheduler::start(&plan, &cpu_authority()).expect("admitted adaptive plan");
+        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &cpu_authority(), None)
+            .expect("admitted adaptive plan");
 
     assert!(scheduler.adapt(&AdaptationId::new("larger-batch")).is_err());
     let SchedulerAction::Work(first) = scheduler.next_action().expect("major-cycle dispatch")
@@ -2646,9 +2961,10 @@ fn externally_retained_io_buffer_release_is_terminal_after_every_use() {
         .dependencies = BTreeSet::from([WorkDependency::Work(later_id)]);
     valid.logical_allocations[0].lifetime.release_after =
         BTreeSet::from([WorkDependency::Work(release_id.clone())]);
-    let plan = bound_plan(ExecutionDag::new(valid).expect("valid terminal mapping release"));
+    let plan = ExecutionDag::new(valid).expect("valid terminal mapping release");
     let mut scheduler =
-        ExecutionScheduler::start(&plan, &cpu_authority()).expect("admitted mapping plan");
+        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &cpu_authority(), None)
+            .expect("admitted mapping plan");
     let SchedulerAction::Work(prepare) = scheduler.next_action().expect("mapping preparation")
     else {
         panic!("mapping preparation must dispatch first");
@@ -2882,9 +3198,10 @@ fn cancellation_cleanup_respects_release_to_release_dependencies() {
             compatibility: storage_compatibility,
         },
     ];
-    let plan = bound_plan(ExecutionDag::new(specification).expect("valid ordered cleanup plan"));
+    let plan = ExecutionDag::new(specification).expect("valid ordered cleanup plan");
     let mut scheduler =
-        ExecutionScheduler::start(&plan, &io_authority()).expect("admitted cleanup plan");
+        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &io_authority(), None)
+            .expect("admitted cleanup plan");
 
     for expected in [&mapped_id, &storage_id] {
         let SchedulerAction::Work(work) = scheduler.next_action().expect("preparation dispatch")
@@ -2936,8 +3253,9 @@ fn cancellation_cleanup_respects_release_to_release_dependencies() {
 fn cancellation_cleanup_projects_out_inactive_release_work_and_fences() {
     for fenced_predecessor in [false, true] {
         let (plan, active_release_id) = inactive_release_predecessor_plan(fenced_predecessor);
-        let mut scheduler = ExecutionScheduler::start(&plan, &io_authority())
-            .expect("admitted cleanup projection plan");
+        let mut scheduler =
+            ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &io_authority(), None)
+                .expect("admitted cleanup projection plan");
         let SchedulerAction::Work(prepare) = scheduler.next_action().expect("active preparation")
         else {
             panic!("the active external allocation must be acquired first");

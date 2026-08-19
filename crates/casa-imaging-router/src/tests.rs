@@ -9,14 +9,14 @@ use casa_imaging_model::{
     AxisOrder, CentreLaws, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
     DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
     GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest,
-    InstrumentResponse, MeasurementEquationContract, MissingPointingPolicy, ModelInnerProduct,
-    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
-    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
-    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
-    PolarizationCoordinate, ProblemSpecification, ProductKind, ProductNormalization,
-    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
-    ReconstructionContract, ReconstructionControls, ReductionPolicy, RestFrequency,
-    RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
+    InstrumentResponse, MeasurementEquationContract, MissingPointingPolicy, ModelColumnWrite,
+    ModelInnerProduct, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
+    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
+    PolarizationContract, PolarizationCoordinate, ProblemSpecification, ProductKind,
+    ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
     SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
     StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
     WeightingContract, WeightingScheme,
@@ -29,27 +29,27 @@ use casa_imaging_runtime::{
 #[path = "../tests/common/mod.rs"]
 mod common;
 
-use common::problem_inputs;
-
 use super::{
     DispatchError, ImagingRouter, LegacyWholeRunEnginePort, MIGRATION_MATRIX_JSON,
     MigrationRowKind, NativeEnginePort, RequestDisposition, RouteRecord, parse_matrix,
 };
 
-const STANDARD_DIRTY_ROWS: [&str; 6] = [
+const STANDARD_DIRTY_ROWS: [&str; 7] = [
     "capability.compiled-problem",
     "capability.continuum-mfs",
     "capability.ms-selection",
+    "capability.observation-transaction",
     "capability.standard-gridder",
     "capability.stokes-i",
     "product.psf",
 ];
 
-const MTMFS_ROWS: [&str; 8] = [
+const MTMFS_ROWS: [&str; 9] = [
     "capability.compiled-problem",
     "capability.major-minor-cycles",
     "capability.ms-selection",
     "capability.mtmfs",
+    "capability.observation-transaction",
     "capability.standard-gridder",
     "capability.stokes-i",
     "product.taylor-terms",
@@ -61,7 +61,7 @@ fn mixed_request_stays_wholly_legacy_until_its_last_required_row_transfers() {
     let native_calls = Arc::new(AtomicUsize::new(0));
     let legacy_calls = Arc::new(AtomicUsize::new(0));
     let mixed_router = router(
-        matrix_with_transfers(&STANDARD_DIRTY_ROWS[..5]),
+        matrix_with_transfers(&STANDARD_DIRTY_ROWS[..6]),
         Arc::clone(&native_calls),
         Arc::clone(&legacy_calls),
     );
@@ -296,6 +296,7 @@ fn authoritative_matrix_binding_drives_product_requirement() {
             "capability.compiled-problem",
             "capability.continuum-mfs",
             "capability.ms-selection",
+            "capability.observation-transaction",
             "capability.standard-gridder",
             "capability.stokes-i",
             "product.residual",
@@ -314,13 +315,67 @@ fn matrix_contract_revision_is_a_positive_u32() {
     .unwrap();
 
     let revision: u32 = routed.route().matrix_contract_revision();
-    assert_eq!(revision, 5);
+    assert_eq!(revision, 7);
 
     for invalid in [serde_json::json!(0), serde_json::json!("5")] {
         let mut matrix = serde_json::from_str::<serde_json::Value>(MIGRATION_MATRIX_JSON).unwrap();
         matrix["contract_revision"] = invalid;
         assert!(parse_matrix(&serde_json::to_string(&matrix).unwrap()).is_err());
     }
+}
+
+#[test]
+fn observation_transaction_contract_is_required_by_every_native_plan() {
+    let routed = router(
+        MIGRATION_MATRIX_JSON.to_string(),
+        Arc::new(AtomicUsize::new(0)),
+        Arc::new(AtomicUsize::new(0)),
+    )
+    .dispatch(standard_dirty_request())
+    .unwrap();
+
+    let transaction = routed
+        .route()
+        .requirements()
+        .iter()
+        .find(|requirement| requirement.id() == "capability.observation-transaction")
+        .expect("native plan requires its observation transaction");
+    assert_eq!(transaction.status(), RequestDisposition::Native);
+    assert_eq!(
+        transaction.acceptance_contract(),
+        "observation-transaction-v1"
+    );
+    assert_eq!(
+        transaction.source_evidence(),
+        [
+            "crates/casa-imaging-model/src/transaction.rs::pub struct ObservationTransactionContract",
+            "crates/casa-imaging-runtime/src/execution_bindings.rs::pub fn plan",
+            "crates/casa-imaging-runtime/src/observation_transaction.rs::pub(crate) fn bind_observation_transaction",
+        ]
+    );
+}
+
+#[test]
+fn selected_model_column_write_keeps_the_whole_request_legacy() {
+    let routed = router(
+        matrix_with_transfers(&STANDARD_DIRTY_ROWS),
+        Arc::new(AtomicUsize::new(0)),
+        Arc::new(AtomicUsize::new(0)),
+    )
+    .dispatch(standard_dirty_model_write_request())
+    .unwrap();
+
+    assert_eq!(
+        routed.route().disposition(),
+        RequestDisposition::LegacyWholeRun
+    );
+    let model_write = routed
+        .route()
+        .requirements()
+        .iter()
+        .find(|requirement| requirement.id() == "capability.model-column-write")
+        .expect("selected MODEL_DATA writes require their migration row");
+    assert_eq!(model_write.status(), RequestDisposition::LegacyWholeRun);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -433,6 +488,14 @@ fn matrix_with_product_binding(product: &str, row: &str) -> String {
 }
 
 fn standard_dirty_request() -> ImagingRequest {
+    standard_dirty_request_with(ModelColumnWrite::Disabled)
+}
+
+fn standard_dirty_model_write_request() -> ImagingRequest {
+    standard_dirty_request_with(ModelColumnWrite::SelectedRows)
+}
+
+fn standard_dirty_request_with(model_column_write: ModelColumnWrite) -> ImagingRequest {
     request(
         ReconstructionContract::new(
             ReconstructionBasis::Constant,
@@ -445,6 +508,7 @@ fn standard_dirty_request() -> ImagingRequest {
             ProductNormalization::UnitResponse,
             RestoringBeamPolicy::None,
         ),
+        model_column_write,
     )
 }
 
@@ -461,12 +525,14 @@ fn mtmfs_request() -> ImagingRequest {
             ProductNormalization::UnitResponse,
             RestoringBeamPolicy::None,
         ),
+        ModelColumnWrite::Disabled,
     )
 }
 
 fn request(
     reconstruction: ReconstructionContract,
     products: ProductRequirements,
+    model_column_write: ModelColumnWrite,
 ) -> ImagingRequest {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
@@ -531,6 +597,7 @@ fn request(
             reconstruction,
             WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
             products,
+            ObservationTransactionRequirements::new(model_column_write),
             NumericsContract::new(
                 vec![NumericPrecision::F64],
                 ReductionPolicy::Compensated,
@@ -542,6 +609,6 @@ fn request(
             ),
         ),
         geometry,
-        problem_inputs(1, Vec::new(), ModelStateIdentity::Empty),
+        common::problem_inputs(Vec::new()),
     )
 }

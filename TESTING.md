@@ -22,6 +22,13 @@ Verification: just verify
 - Bug fixes need regression tests.
 - Cross-crate and boundary changes need integration or contract coverage.
 - On-disk metadata or byte changes need the applicable 2x2 interop matrix: RR, RC, CR, CC.
+- Observation-transaction coverage must prove exact per-MS read/write sets,
+  mechanically derived typed observation reads, mutation-before-read ordering,
+  exact `ProductRequirements` staging coverage, reconciliation and
+  complete-staging cuts, mandatory sealing through `plan`, a terminal sole
+  lock-held atomic publication, no controller polling after publication launch,
+  and fail-closed cancellation plus admission, numerical, output, and
+  staging-fence failures.
 - Binary serialization changes need endian coverage.
 - Measures-data dependent tests must skip cleanly when runtime tables are unavailable.
 - C++ dependent tests must skip cleanly when `pkg-config casacore` is unavailable.

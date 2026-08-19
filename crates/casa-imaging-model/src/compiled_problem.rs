@@ -13,9 +13,13 @@ use crate::measurement_equation::{
     compile_product_boundary,
 };
 use crate::observation::{FlagPolicy, ObservationSnapshot, ObservationSnapshotId, WeightColumn};
+use crate::transaction::{
+    ObservationTransactionContract, ObservationTransactionRequirements,
+    compile_observation_transaction,
+};
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 5;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 6;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
 const NUMERICS_CONTRACT_IDENTITY_VERSION: u32 = 1;
 
@@ -915,6 +919,7 @@ pub struct ProblemSpecification {
     reconstruction: ReconstructionContract,
     weighting: WeightingContract,
     products: ProductRequirements,
+    observation_transaction: ObservationTransactionRequirements,
     numerics: NumericsContract,
 }
 
@@ -958,6 +963,7 @@ impl ProblemSpecification {
         reconstruction: ReconstructionContract,
         weighting: WeightingContract,
         products: ProductRequirements,
+        observation_transaction: ObservationTransactionRequirements,
         numerics: NumericsContract,
     ) -> Self {
         Self {
@@ -965,6 +971,7 @@ impl ProblemSpecification {
             reconstruction,
             weighting,
             products,
+            observation_transaction,
             numerics,
         }
     }
@@ -1092,6 +1099,7 @@ pub struct CompiledProblem {
     reconstruction: ReconstructionContract,
     normal_equation: NormalEquationContract,
     products: ProductRequirements,
+    observation_transaction: ObservationTransactionContract,
     numerics: NumericsContract,
     required_capabilities: BTreeSet<RequiredCapability>,
 }
@@ -1149,6 +1157,12 @@ impl CompiledProblem {
     #[must_use]
     pub const fn products(&self) -> &ProductRequirements {
         &self.products
+    }
+
+    /// Return exact snapshot-bound MeasurementSet read and write sets.
+    #[must_use]
+    pub const fn observation_transaction(&self) -> &ObservationTransactionContract {
+        &self.observation_transaction
     }
 
     /// Return numerical requirements.
@@ -1235,6 +1249,10 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
     let geometry = compile_geometry(geometry, &inputs)?;
     let science = specification.science;
     let products = specification.products.canonicalize();
+    let observation_transaction = compile_observation_transaction(
+        inputs.observation_snapshot(),
+        specification.observation_transaction,
+    );
     let numerics = specification.numerics.canonicalize()?;
     validate_science(&science, &inputs)?;
     validate_reconstruction(&specification.reconstruction, &geometry)?;
@@ -1255,15 +1273,16 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         normal_equation.weighting(),
         &products,
     );
-    let problem_id = canonical_problem_id(
-        &inputs,
-        &geometry,
-        &science,
-        &reconstruction,
-        &normal_equation,
-        &products,
-        &numerics,
-    );
+    let problem_id = canonical_problem_id(ProblemIdentityInput {
+        inputs: &inputs,
+        geometry: &geometry,
+        science: &science,
+        reconstruction: &reconstruction,
+        normal_equation: &normal_equation,
+        products: &products,
+        observation_transaction: &observation_transaction,
+        numerics: &numerics,
+    });
     let numerics_id = canonical_numerics_id(&numerics);
     Ok(CompiledProblem {
         problem_id,
@@ -1274,6 +1293,7 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         reconstruction,
         normal_equation,
         products,
+        observation_transaction,
         numerics,
         required_capabilities,
     })
@@ -1590,19 +1610,33 @@ fn derive_capabilities(
     capabilities
 }
 
-fn canonical_problem_id(
-    inputs: &ProblemInputIdentities,
-    geometry: &CompiledGeometry,
-    science: &ScientificContract,
-    reconstruction: &ReconstructionContract,
-    normal_equation: &NormalEquationContract,
-    products: &ProductRequirements,
-    numerics: &NumericsContract,
-) -> CompiledProblemId {
+struct ProblemIdentityInput<'a> {
+    inputs: &'a ProblemInputIdentities,
+    geometry: &'a CompiledGeometry,
+    science: &'a ScientificContract,
+    reconstruction: &'a ReconstructionContract,
+    normal_equation: &'a NormalEquationContract,
+    products: &'a ProductRequirements,
+    observation_transaction: &'a ObservationTransactionContract,
+    numerics: &'a NumericsContract,
+}
+
+fn canonical_problem_id(input: ProblemIdentityInput<'_>) -> CompiledProblemId {
+    let ProblemIdentityInput {
+        inputs,
+        geometry,
+        science,
+        reconstruction,
+        normal_equation,
+        products,
+        observation_transaction,
+        numerics,
+    } = input;
     let mut encoder = CanonicalEncoder::new();
     encoder.bytes(COMPILED_PROBLEM_IDENTITY_DOMAIN);
     encoder.u32(COMPILED_PROBLEM_IDENTITY_VERSION);
     encoder.identity(inputs.observation().identity());
+    encoder.digest(observation_transaction.transaction_id().as_bytes());
     encoder.digest(geometry.geometry_id().as_bytes());
     encoder.usize(inputs.reference_data().len());
     for (kind, identity) in inputs.reference_data() {

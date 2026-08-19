@@ -140,18 +140,54 @@ spectral transforms remain unevaluated. `compile_observation` is the sole
 constructor of Observation Snapshot identity. It canonicalizes each resolved
 MeasurementSet field/time/UV/baseline/scan/observation/intent/array predicate,
 SPW/DDID/channel selection, correlation coordinate, selected data/flag/weight
-column, coordinate and metadata generation, consistency token, reference-data
-identity, and input-model identity. Selected MAIN rows remain a count plus an
-ordered-row digest; visibility samples, row arrays, chunks, and execution order
-are never retained. Content identity is independent of source location and
-request order, while a separate provenance identity retains both. Current
-legacy adapters still resolve selection expressions and evaluate rows; T17/#503
-owns their bounded transfer and deletion.
+column, coordinate and metadata generation, independent optional `MODEL_DATA`
+state, consistency token, reference-data identity, and input-model identity.
+Selected MAIN rows remain a count plus an ordered-row digest; visibility
+samples, row arrays, chunks, and execution order are never retained. Content
+identity is independent of source location and request order, while a separate
+provenance identity retains both. Current legacy adapters still resolve
+selection expressions and evaluate rows; T17/#503 owns their bounded transfer
+and deletion.
 
-`plan` gives every structurally valid planner candidate to Resource Authority,
-which selects the first capable candidate feasible under the current topology,
-policy, pressure, and reservations. The provisional selection lease is released
-before `plan` seals that one candidate to the exact compiled problem and
+The Compiled Problem also owns one compiler-derived Observation Transaction.
+Its canonical read set contains every consumed per-MS selection, selected MAIN
+column generation, metadata generation, and consistency token. Optional
+`MODEL_DATA` writes carry exact selected-cell scope plus an absent-or-generation
+precondition captured independently of whether `MODEL_DATA` was read. Every
+`PhysicalWorkBinding` passed to the sole `plan` entrypoint must type every
+MeasurementSet source operation as `ObservationRead` and declare final
+complete-data reconciliation, private per-product and model-column staging
+events, and the sole Publication node. `plan` mechanically derives every
+observation-read terminal event and binds the declaration against the exact
+`CompiledProblem`; the crate-private binder rejects untyped lock-bearing I/O,
+product keys that differ from `ProductRequirements`, missing completion
+fences, any post-commit work, or any bypass publication. The sealed plan retains the
+compiled-problem, logical-transaction, and physical-work identities, and its
+versioned identity includes the complete transaction declaration. The initial
+consistency check precedes every observation read; every read precedes
+reconciliation; and the terminal commit waits for every other node's complete
+work or fence event. Controller polling ends when Publication launches.
+Initial-check, observation-read, and commit nodes reserve one table lock
+per source; every read revalidates under those locks. Staging storage,
+writeback/publication buffers, and commit fences are ordinary Resource Authority
+claims. The Publication adapter revalidates under all source locks and either
+activates every staged product and model-column generation together or leaves
+the prior generation solely visible. Mutation, cancellation, admission,
+numerical/output failure, or a failed staging fence therefore cannot expose a
+mixed generation.
+
+The Observation Transaction contract and binder do not themselves change
+`casa-ms`, casacore metadata, or persistent bytes. A storage adapter that
+implements the declared `MODEL_DATA` commit is the interoperability boundary
+and must pass the applicable Rust/C++ RR, RC, CR, and CC matrix before it can
+be selected by a production plan.
+
+`plan` is the only transaction-sealing path. It gives every structurally valid
+planner candidate to Resource Authority, which selects the first capable
+candidate feasible under the current topology, policy, pressure, and
+reservations. The provisional selection lease is released before `plan` seals
+that one candidate and its transaction declaration to the exact compiled
+problem and
 geometry, the complete Observation Snapshot, Numerics Contract,
 implementation-registry snapshot, Resource Policy, and reviewed planner
 cost-model profile. The plan owns the complete immutable physical work DAG:

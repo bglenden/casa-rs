@@ -15,19 +15,20 @@ use casa_imaging_model::{
     AxisOrder, CentreLaws, CompiledProblemId, DeclaredInnerProducts, DelayCentreLaw,
     DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FiniteValuePolicy, FlagPolicy,
     FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, InstrumentResponse, MeasurementEquationContract, ModelInnerProduct,
-    ModelStateIdentity, NormalEquationForm, NormalStateNormalization, NumericPrecision,
-    NumericalStage, NumericsContract, ObservationPointingLaw, PairedMeasurementTransform,
-    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
-    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
-    PolarizationCoordinate, ProblemSpecification, ProductBoundaryOperation, ProductKind,
-    ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
-    VisibilityPhaseConvention, WeightColumn, WeightDensityScope, WeightingContract,
-    WeightingGenerationId, WeightingScheme, compile,
+    ImagingRequest, InstrumentResponse, MeasurementEquationContract, ModelColumnWrite,
+    ModelInnerProduct, ModelStateIdentity, NormalEquationForm, NormalStateNormalization,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ObservationTransactionRequirements, PairedMeasurementTransform, PhaseCentreLaw,
+    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
+    ProblemSpecification, ProductBoundaryOperation, ProductKind, ProductNormalization,
+    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
+    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
+    RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
+    StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, VisibilityPhaseConvention,
+    WeightColumn, WeightDensityScope, WeightingContract, WeightingGenerationId, WeightingScheme,
+    compile,
 };
 
 mod common;
@@ -245,7 +246,14 @@ fn compile_contract(sampling: SpectralSampling) -> casa_imaging_model::CompiledP
     );
 
     compile(ImagingRequest::new(
-        ProblemSpecification::new(science, reconstruction, weighting, products, numerics),
+        ProblemSpecification::new(
+            science,
+            reconstruction,
+            weighting,
+            products,
+            ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
+            numerics,
+        ),
         geometry(),
         inputs,
     ))

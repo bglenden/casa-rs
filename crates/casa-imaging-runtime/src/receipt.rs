@@ -5710,6 +5710,7 @@ fn work_kind(kind: WorkKind) -> &'static str {
         WorkKind::Spill => "spill",
         WorkKind::Prefetch => "prefetch",
         WorkKind::Io => "io",
+        WorkKind::ObservationRead => "observation_read",
         WorkKind::Serialization => "serialization",
         WorkKind::Writeback => "writeback",
         WorkKind::Publication => "publication",
@@ -5810,6 +5811,9 @@ fn lease_resource(resource: &LeaseResource) -> String {
             format!("accelerator_queue:{}", stable_text(demand_id))
         }
         LeaseResource::ResidentCache => "resident_cache".to_string(),
+        LeaseResource::MeasurementSetLock { measurement_set } => {
+            format!("measurement_set_lock:{}", measurement_set)
+        }
         LeaseResource::Locks => "locks".to_string(),
         LeaseResource::FileDescriptors => "file_descriptors".to_string(),
     }

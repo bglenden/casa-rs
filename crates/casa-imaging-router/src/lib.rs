@@ -699,7 +699,19 @@ fn required_rows<'a>(
     problem: &CompiledProblem,
     catalog: &'a MatrixCatalog,
 ) -> Result<BTreeSet<&'a str>, String> {
-    let mut rows = BTreeSet::from(["capability.compiled-problem", "capability.ms-selection"]);
+    let mut rows = BTreeSet::from([
+        "capability.compiled-problem",
+        "capability.ms-selection",
+        "capability.observation-transaction",
+    ]);
+    if !problem
+        .observation_transaction()
+        .write_set()
+        .model_columns()
+        .is_empty()
+    {
+        rows.insert("capability.model-column-write");
+    }
     for capability in problem.required_capabilities() {
         match capability {
             RequiredCapability::FacetedGeometry => {

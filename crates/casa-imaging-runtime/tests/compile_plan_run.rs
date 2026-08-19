@@ -4,9 +4,10 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
     io,
+    path::PathBuf,
     sync::{
-        Mutex, OnceLock,
-        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
@@ -15,14 +16,15 @@ use casa_imaging_model::{
     DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
     GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest,
     ImagingRequestVersion, InstrumentResponse, MeasurementEquationContract, MetadataTableKind,
-    MissingPointingPolicy, ModelInnerProduct, ModelStateIdentity, MsColumnKind, NumericPrecision,
-    NumericalStage, NumericsContract, ObservationPointingLaw, PhaseCentreLaw, PointingCentreLaw,
-    PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
-    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
-    ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements, Projection,
-    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
-    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
-    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct, ModelStateIdentity, MsColumnKind,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
+    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
+    PolarizationContract, PolarizationCoordinate, ProblemSpecification, ProductKind,
+    ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
     SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
     WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
@@ -32,24 +34,24 @@ use casa_imaging_runtime::{
     ArtifactIdentity, ArtifactMeasurement, ArtifactRole, BindingKind, BuildIdentity, CacheDemand,
     CacheIdentity, CapabilityPredicate, CapacityDomainId, CapacityViewId, ClaimLifetime,
     CompiledProblemEvidence, CountDemand, CpuClassCapacity, DemandAlternative, DemandEnvelope,
-    ExecutionDag, ExecutionDagSpecification, ExecutionEvidenceError, ExecutionKnobs,
-    ExecutionOutcome, ExecutionProvenance, ExecutionReceiptBinding, ExecutionReceiptStore,
-    ExecutionRouteDisposition, ExecutionRouteEvidence, ExecutionRouteRequirement,
-    ExecutionRouteRequirementKind, ExecutionStatus, ExternalPressure, FenceId, FenceKind,
-    HostInventory, ImplementationRegistry, ImplementationRegistryId, InitializationPolicy,
-    IoBufferDemand, IoBufferKind, IoMeasurement, IoPrediction, LogicalAllocation,
-    MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView, MemoryViewKind,
-    PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanError,
-    PlanPrediction, PlannedArtifact, PlannerCostModelProfileId, PlanningBindings,
-    PredictionConfidence, PredictionUncertainty, QueueDemand, QueueResource, QueueResourceId,
-    QuiescencePoint, RateDemand, RateResource, RateResourceId, RateUnit, ReceiptFailureKind,
-    ReceiptRetention, ReceiptStatus, RedactedPath, ResourceAuthority, ResourceClaim,
-    ResourceHeadroom, ResourceMeasurement, ResourceOverride, ResourcePolicy, ResourceTopology,
-    RunBindings, RunController, RunDirective, RunError, RunToCompletion, RuntimeOverheadDemand,
-    ScalingMetadata, SlotCompatibility, StagePrediction, StorageDemand, StorageDomain,
-    StorageDomainId, StorageMode, StorageUseKind, WorkDependency, WorkDomain, WorkExecutionContext,
-    WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId,
-    plan as authority_plan, run as authority_run,
+    ExecutionDag, ExecutionDagSpecification, ExecutionError, ExecutionEvidenceError,
+    ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance,
+    ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionRouteDisposition,
+    ExecutionRouteEvidence, ExecutionRouteRequirement, ExecutionRouteRequirementKind,
+    ExecutionStatus, ExternalPressure, FenceId, FenceKind, HostInventory, ImplementationRegistry,
+    ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
+    IoPrediction, LeaseResource, LogicalAllocation, MemoryCapacityDomain, MemoryCapacityKind,
+    MemoryDemand, MemoryView, MemoryViewKind, ObservationTransactionWork, PhysicalSlot,
+    PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction,
+    PlannedArtifact, PlannerCostModelProfileId, PlanningBindings, PredictionConfidence,
+    PredictionUncertainty, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint,
+    RateDemand, RateResource, RateResourceId, RateUnit, ReceiptFailureKind, ReceiptRetention,
+    ReceiptStatus, RedactedPath, ResourceAuthority, ResourceClaim, ResourceError, ResourceHeadroom,
+    ResourceMeasurement, ResourceOverride, ResourcePolicy, ResourceTopology, RunBindings,
+    RunController, RunDirective, RunError, RunToCompletion, RuntimeOverheadDemand, ScalingMetadata,
+    SlotCompatibility, StagePrediction, StorageDomain, StorageDomainId, StorageMode,
+    WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementation, WorkImplementationId,
+    WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as authority_plan, run as authority_run,
 };
 
 mod common;
@@ -134,6 +136,64 @@ fn request_with_geometry_references_and_weighting(
     references: Vec<(ReferenceDataKind, casa_imaging_model::LogicalIdentity)>,
     weighting: WeightingContract,
 ) -> ImagingRequest {
+    request_with_geometry_references_weighting_products_and_model(
+        observation,
+        geometry,
+        references,
+        weighting,
+        vec![ProductKind::Psf],
+        ModelColumnWrite::Disabled,
+    )
+}
+
+fn request_with_products(
+    observation: u8,
+    geometry: GeometryInput,
+    products: Vec<ProductKind>,
+) -> ImagingRequest {
+    request_with_geometry_references_weighting_products_and_model(
+        observation,
+        geometry,
+        Vec::new(),
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+        products,
+        ModelColumnWrite::Disabled,
+    )
+}
+
+fn request_with_model_write(observation: u8) -> ImagingRequest {
+    request_with_products_and_model(
+        observation,
+        geometry(255.0),
+        vec![ProductKind::Psf],
+        ModelColumnWrite::SelectedRows,
+    )
+}
+
+fn request_with_products_and_model(
+    observation: u8,
+    geometry: GeometryInput,
+    products: Vec<ProductKind>,
+    model_column_write: ModelColumnWrite,
+) -> ImagingRequest {
+    request_with_geometry_references_weighting_products_and_model(
+        observation,
+        geometry,
+        Vec::new(),
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+        products,
+        model_column_write,
+    )
+}
+
+fn request_with_geometry_references_weighting_products_and_model(
+    observation: u8,
+    geometry: GeometryInput,
+    references: Vec<(ReferenceDataKind, casa_imaging_model::LogicalIdentity)>,
+    weighting: WeightingContract,
+    products: Vec<ProductKind>,
+    model_column_write: ModelColumnWrite,
+) -> ImagingRequest {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
         ReductionPolicy::Compensated,
@@ -162,10 +222,11 @@ fn request_with_geometry_references_and_weighting(
         ),
         weighting,
         ProductRequirements::new(
-            vec![ProductKind::Psf],
+            products,
             ProductNormalization::UnitResponse,
             RestoringBeamPolicy::None,
         ),
+        ObservationTransactionRequirements::new(model_column_write),
         numerics,
     );
     ImagingRequest::new(
@@ -202,6 +263,14 @@ fn recording_executor(
         observed_knobs: Mutex::new(Vec::new()),
         measurements: BTreeMap::new(),
         panic_on_execute: false,
+        publication_launched: None,
+        visible_generation: None,
+        failure_node: None,
+        fence_failure_event: None,
+        publication_failure: None,
+        generic_source_access: None,
+        visibility_during_fence_settlement: None,
+        publication_buffer_held: None,
     }
 }
 
@@ -216,6 +285,14 @@ struct RecordingExecutor {
     observed_knobs: Mutex<Vec<ExecutionKnobs>>,
     measurements: BTreeMap<WorkNodeId, (Vec<IoMeasurement>, Vec<ArtifactMeasurement>)>,
     panic_on_execute: bool,
+    publication_launched: Option<Arc<AtomicBool>>,
+    visible_generation: Option<Arc<AtomicUsize>>,
+    failure_node: Option<&'static str>,
+    fence_failure_event: Option<(&'static str, FenceKind)>,
+    publication_failure: Option<&'static str>,
+    generic_source_access: Option<Arc<AtomicBool>>,
+    visibility_during_fence_settlement: Option<Arc<AtomicBool>>,
+    publication_buffer_held: Option<Arc<AtomicBool>>,
 }
 
 impl WorkImplementation for RecordingExecutor {
@@ -225,61 +302,191 @@ impl WorkImplementation for RecordingExecutor {
         &self.id
     }
 
-    fn execute(
-        &self,
-        _problem: &casa_imaging_model::CompiledProblem,
-        work: &WorkExecutionContext,
-    ) -> Result<WorkMeasurements, Self::Error> {
+    fn execute(&self, context: WorkExecutionContext<'_>) -> Result<WorkMeasurements, Self::Error> {
+        let work = context.scheduled();
         assert!(!self.panic_on_execute, "interrupted adapter");
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.observed_knobs
             .lock()
             .expect("recording executor knobs lock")
             .push(work.knobs().clone());
-        match self.failure {
-            Some(message) => Err(io::Error::other(message)),
-            None => {
-                let resources = work
-                    .node()
-                    .claims
-                    .iter()
-                    .map(|claim| {
-                        ResourceMeasurement::new(
-                            claim.resource.clone(),
-                            claim.lifetime.clone(),
-                            claim.amount,
-                        )
-                    })
-                    .collect();
-                let (io, artifacts) = self
-                    .measurements
-                    .get(&work.node().id)
-                    .cloned()
-                    .unwrap_or_default();
-                Ok(WorkMeasurements::new(resources, io, artifacts))
-            }
+        if let Some(message) = self.failure {
+            return Err(io::Error::other(message));
         }
+        if self.failure_node == Some(work.node().id.as_str()) {
+            return Err(io::Error::other("stateful transaction execute failure"));
+        }
+        if work.node().kind == WorkKind::Io
+            && context.observation_reads().is_some()
+            && let Some(accessed) = &self.generic_source_access
+        {
+            accessed.store(true, Ordering::SeqCst);
+        }
+        if work.node().kind == WorkKind::Publication
+            && let Some(launched) = &self.publication_launched
+        {
+            launched.store(true, Ordering::SeqCst);
+        }
+        let resources = work
+            .node()
+            .claims
+            .iter()
+            .map(|claim| {
+                ResourceMeasurement::new(
+                    claim.resource.clone(),
+                    claim.lifetime.clone(),
+                    claim.amount,
+                )
+            })
+            .collect();
+        let (io, artifacts) = self
+            .measurements
+            .get(&work.node().id)
+            .cloned()
+            .unwrap_or_default();
+        Ok(WorkMeasurements::new(resources, io, artifacts))
     }
 
     fn wait_for_fence(
         &self,
-        _problem: &casa_imaging_model::CompiledProblem,
-        _work: &WorkExecutionContext,
+        context: WorkExecutionContext<'_>,
         fence: FenceKind,
     ) -> Result<(), Self::Error> {
+        let work = context.scheduled();
         self.fence_waits.fetch_add(1, Ordering::SeqCst);
-        match self.fence_failure {
-            Some(message) if self.fail_only_fence.is_none_or(|kind| kind == fence) => {
-                Err(io::Error::other(message))
-            }
-            Some(_) | None => Ok(()),
+        if let Some(message) = self.fence_failure
+            && self.fail_only_fence.is_none_or(|kind| kind == fence)
+        {
+            return Err(io::Error::other(message));
         }
+        if self.fence_failure_event == Some((work.node().id.as_str(), fence)) {
+            return Err(io::Error::other("stateful transaction fence failure"));
+        }
+        if self
+            .visible_generation
+            .as_ref()
+            .is_some_and(|visible| visible.load(Ordering::SeqCst) == 1)
+            && let Some(observed) = &self.visibility_during_fence_settlement
+        {
+            observed.store(true, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+
+    fn publish(&self, context: WorkExecutionContext<'_>) -> Result<(), Self::Error> {
+        let work = context.scheduled();
+        if work.node().kind != WorkKind::Publication || context.publication().is_none() {
+            return Err(io::Error::other(
+                "publication requires the transaction-bound Publication node",
+            ));
+        }
+        if let Some(message) = self.publication_failure {
+            return Err(io::Error::other(message));
+        }
+        if let Some(observed) = &self.publication_buffer_held {
+            let allocation = AllocationId::new("transaction-publication-buffer");
+            let slot = PhysicalSlotId::new("transaction-publication-slot");
+            observed.store(
+                context.publication_resources().is_some_and(|resources| {
+                    resources.lease_epoch() > 0
+                        && resources.allocation_slot(&allocation) == Some(&slot)
+                }),
+                Ordering::SeqCst,
+            );
+        }
+        if let Some(visible) = &self.visible_generation {
+            visible.store(1, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+}
+
+fn publication_recording_executor(
+    byte: u8,
+    launched: Arc<AtomicBool>,
+    visible_generation: Arc<AtomicUsize>,
+) -> RecordingExecutor {
+    RecordingExecutor {
+        id: implementation(byte),
+        failure: None,
+        fence_failure: None,
+        fail_only_fence: None,
+        calls: AtomicUsize::new(0),
+        fence_waits: AtomicUsize::new(0),
+        observed_knobs: Mutex::new(Vec::new()),
+        measurements: BTreeMap::new(),
+        panic_on_execute: false,
+        publication_launched: Some(launched),
+        visible_generation: Some(visible_generation),
+        failure_node: None,
+        fence_failure_event: None,
+        publication_failure: None,
+        generic_source_access: None,
+        visibility_during_fence_settlement: None,
+        publication_buffer_held: None,
+    }
+}
+
+fn failing_transaction_executor(
+    byte: u8,
+    visible_generation: Arc<AtomicUsize>,
+    failure_node: Option<&'static str>,
+    fence_failure_event: Option<(&'static str, FenceKind)>,
+    publication_failure: Option<&'static str>,
+) -> RecordingExecutor {
+    RecordingExecutor {
+        id: implementation(byte),
+        failure: None,
+        fence_failure: None,
+        fail_only_fence: None,
+        calls: AtomicUsize::new(0),
+        fence_waits: AtomicUsize::new(0),
+        observed_knobs: Mutex::new(Vec::new()),
+        measurements: BTreeMap::new(),
+        panic_on_execute: false,
+        publication_launched: None,
+        visible_generation: Some(visible_generation),
+        failure_node,
+        fence_failure_event,
+        publication_failure,
+        generic_source_access: None,
+        visibility_during_fence_settlement: None,
+        publication_buffer_held: None,
     }
 }
 
 fn physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
+    physical_work_with_transaction_staging(implementation_byte, None, false, false)
+}
+
+fn physical_work_with_product_staging(
+    implementation_byte: u8,
+    required_product_staging: Option<BTreeMap<ProductKind, BTreeSet<WorkDependency>>>,
+) -> PhysicalWorkBinding {
+    physical_work_with_transaction_staging(
+        implementation_byte,
+        required_product_staging,
+        false,
+        false,
+    )
+}
+
+fn physical_work_with_model_staging(implementation_byte: u8) -> PhysicalWorkBinding {
+    physical_work_with_transaction_staging(implementation_byte, None, true, false)
+}
+
+fn physical_work_with_early_publication_buffer(implementation_byte: u8) -> PhysicalWorkBinding {
+    physical_work_with_transaction_staging(implementation_byte, None, false, true)
+}
+
+fn physical_work_with_transaction_staging(
+    implementation_byte: u8,
+    required_product_staging: Option<BTreeMap<ProductKind, BTreeSet<WorkDependency>>>,
+    include_model_staging: bool,
+    acquire_publication_early: bool,
+) -> PhysicalWorkBinding {
     let work_implementation = implementation(implementation_byte);
-    let dag = ExecutionDag::new(ExecutionDagSpecification {
+    let specification = ExecutionDagSpecification {
         required_resource_capabilities: BTreeSet::new(),
         resource_alternative: DemandAlternative {
             id: AlternativeId::new("test-cpu"),
@@ -328,18 +535,18 @@ fn physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
                 dependencies: BTreeSet::new(),
                 claims: vec![
                     ResourceClaim {
-                        resource: casa_imaging_runtime::LeaseResource::Rate {
+                        resource: LeaseResource::Rate {
                             demand_id: "io-rate".to_string(),
                         },
                         amount: 1,
-                        lifetime: casa_imaging_runtime::ClaimLifetime::through_fence(FenceKind::Io),
+                        lifetime: ClaimLifetime::through_fence(FenceKind::Io),
                     },
                     ResourceClaim {
-                        resource: casa_imaging_runtime::LeaseResource::Queue {
+                        resource: LeaseResource::Queue {
                             demand_id: "io-queue".to_string(),
                         },
                         amount: 1,
-                        lifetime: casa_imaging_runtime::ClaimLifetime::through_fence(FenceKind::Io),
+                        lifetime: ClaimLifetime::through_fence(FenceKind::Io),
                     },
                 ],
                 allocations: Vec::new(),
@@ -356,9 +563,9 @@ fn physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
                     FenceKind::Io,
                 ))]),
                 claims: vec![ResourceClaim {
-                    resource: casa_imaging_runtime::LeaseResource::Workers,
+                    resource: LeaseResource::Workers,
                     amount: 1,
-                    lifetime: casa_imaging_runtime::ClaimLifetime::Work,
+                    lifetime: ClaimLifetime::Work,
                 }],
                 allocations: Vec::new(),
                 fences: BTreeSet::new(),
@@ -369,17 +576,451 @@ fn physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
         physical_slots: Vec::new(),
         initial_knobs: ExecutionKnobs::serial(),
         adaptations: Vec::new(),
-    })
-    .expect("valid test physical work DAG");
-    bind_physical_work(dag)
+    };
+    transaction_binding(
+        specification,
+        implementation(implementation_byte),
+        required_product_staging,
+        include_model_staging,
+        acquire_publication_early,
+    )
 }
 
-fn bind_physical_work(dag: ExecutionDag) -> PhysicalWorkBinding {
+fn transaction_binding(
+    mut specification: ExecutionDagSpecification,
+    work_implementation: WorkImplementationId,
+    required_product_staging: Option<BTreeMap<ProductKind, BTreeSet<WorkDependency>>>,
+    include_model_staging: bool,
+    acquire_publication_early: bool,
+) -> PhysicalWorkBinding {
+    let initial = WorkNodeId::new("transaction-check");
+    let read = WorkNodeId::new("transaction-read");
+    let reconciliation = WorkNodeId::new("transaction-reconciliation");
+    let product = WorkNodeId::new("transaction-stage-psf");
+    let model = WorkNodeId::new("transaction-stage-model");
+    let commit = WorkNodeId::new("transaction-commit");
+    let publication_allocation = AllocationId::new("transaction-publication-buffer");
+    let publication_slot = PhysicalSlotId::new("transaction-publication-slot");
+    let publication_lifetime =
+        ClaimLifetime::through_fences([FenceKind::Io, FenceKind::Publication]);
+    let publication_compatibility = SlotCompatibility {
+        memory_domain: CapacityDomainId::new("host-memory"),
+        views: BTreeSet::from([CapacityViewId::new("host-memory")]),
+        alignment_bytes: 1,
+        storage_mode: StorageMode::Host,
+        layout: AllocationLayout::new("transaction-publication-buffer"),
+        initialization: InitializationPolicy::Preserve,
+        access: AllocationAccess::ReadWrite,
+    };
+    let writeback_allocation = AllocationId::new("transaction-writeback-buffer");
+    let writeback_slot = PhysicalSlotId::new("transaction-writeback-slot");
+    let writeback_lifetime = ClaimLifetime::through_fences([FenceKind::Io, FenceKind::Writeback]);
+    let writeback_compatibility = SlotCompatibility {
+        memory_domain: CapacityDomainId::new("host-memory"),
+        views: BTreeSet::from([CapacityViewId::new("host-memory")]),
+        alignment_bytes: 1,
+        storage_mode: StorageMode::Host,
+        layout: AllocationLayout::new("transaction-writeback-buffer"),
+        initialization: InitializationPolicy::Preserve,
+        access: AllocationAccess::ReadWrite,
+    };
+
+    let predecessors = specification
+        .nodes
+        .iter()
+        .flat_map(|node| {
+            node.dependencies.iter().map(|dependency| match dependency {
+                WorkDependency::Work(node) => node,
+                WorkDependency::Fence(fence) => fence.node(),
+            })
+        })
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let terminals = specification
+        .nodes
+        .iter()
+        .filter(|node| !predecessors.contains(&node.id))
+        .flat_map(|node| {
+            if node.fences.is_empty() {
+                vec![WorkDependency::Work(node.id.clone())]
+            } else {
+                node.fences
+                    .iter()
+                    .map(|fence| WorkDependency::Fence(FenceId::new(node.id.clone(), *fence)))
+                    .collect()
+            }
+        })
+        .collect::<BTreeSet<_>>();
+    let read_completion = WorkDependency::Fence(FenceId::new(read.clone(), FenceKind::Io));
+    for node in specification
+        .nodes
+        .iter_mut()
+        .filter(|node| node.dependencies.is_empty())
+    {
+        node.dependencies.insert(read_completion.clone());
+    }
+
+    specification
+        .resource_alternative
+        .demand
+        .memory
+        .push(MemoryDemand {
+            allocation_id: "transaction-publication-slot".to_string(),
+            hard_bytes: 1,
+            preferred_bytes: 1,
+            views: vec![CapacityViewId::new("host-memory")],
+        });
+    if include_model_staging {
+        specification
+            .resource_alternative
+            .demand
+            .memory
+            .push(MemoryDemand {
+                allocation_id: "transaction-writeback-slot".to_string(),
+                hard_bytes: 1,
+                preferred_bytes: 1,
+                views: vec![CapacityViewId::new("host-memory")],
+            });
+    }
+    specification
+        .resource_alternative
+        .demand
+        .storage
+        .push(casa_imaging_runtime::StorageDemand {
+            demand_id: "transaction-output".to_string(),
+            domain: casa_imaging_runtime::StorageDomainId::new("atomic-output"),
+            temporary_bytes: 0,
+            staged_output_bytes: if include_model_staging { 2 } else { 1 },
+            final_output_bytes: 0,
+            persistent_cache_bytes: 0,
+            read_rate: CountDemand::zero(),
+            write_rate: CountDemand::zero(),
+            operations_rate: CountDemand::zero(),
+            queue_slots: CountDemand::zero(),
+        });
+    specification
+        .resource_alternative
+        .demand
+        .rates
+        .push(RateDemand {
+            demand_id: "transaction-io-rate".to_string(),
+            resource: RateResourceId::new("transaction-io-rate"),
+            amount: CountDemand::new(1, 1),
+        });
+    specification
+        .resource_alternative
+        .demand
+        .queues
+        .push(QueueDemand {
+            demand_id: "transaction-io-queue".to_string(),
+            resource: QueueResourceId::new("transaction-io-queue"),
+            slots: CountDemand::new(1, 1),
+        });
+    specification.resource_alternative.demand.locks = CountDemand::new(1, 1);
+    specification
+        .resource_alternative
+        .demand
+        .io_buffers
+        .publication_bytes = 1;
+    if include_model_staging {
+        specification
+            .resource_alternative
+            .demand
+            .io_buffers
+            .writeback_bytes = 1;
+    }
+
+    let mut commit_dependencies = BTreeSet::from([WorkDependency::Work(product.clone())]);
+    if include_model_staging {
+        commit_dependencies.extend([
+            WorkDependency::Fence(FenceId::new(model.clone(), FenceKind::Io)),
+            WorkDependency::Fence(FenceId::new(model.clone(), FenceKind::Writeback)),
+        ]);
+    }
+    let mut product_claims = vec![
+        ResourceClaim {
+            resource: LeaseResource::Workers,
+            amount: 1,
+            lifetime: ClaimLifetime::Work,
+        },
+        ResourceClaim {
+            resource: LeaseResource::Storage {
+                demand_id: "transaction-output".to_string(),
+                use_kind: casa_imaging_runtime::StorageUseKind::StagedOutput,
+            },
+            amount: 1,
+            lifetime: ClaimLifetime::Work,
+        },
+    ];
+    let product_allocations = if acquire_publication_early {
+        product_claims.push(ResourceClaim {
+            resource: LeaseResource::IoBuffer(IoBufferKind::Publication),
+            amount: 1,
+            lifetime: ClaimLifetime::Work,
+        });
+        vec![AllocationUse {
+            allocation: publication_allocation.clone(),
+            lifetime: ClaimLifetime::Work,
+        }]
+    } else {
+        Vec::new()
+    };
+
+    specification.nodes.extend([
+        WorkNode {
+            id: initial.clone(),
+            kind: WorkKind::DataCensus,
+            domain: WorkDomain::Cpu,
+            implementation: work_implementation.clone(),
+            dependencies: BTreeSet::new(),
+            claims: vec![
+                ResourceClaim {
+                    resource: LeaseResource::Workers,
+                    amount: 1,
+                    lifetime: ClaimLifetime::Work,
+                },
+                ResourceClaim {
+                    resource: LeaseResource::MeasurementSetLock {
+                        measurement_set: casa_imaging_model::MeasurementSetIdentity::new(identity(
+                            1,
+                        )),
+                    },
+                    amount: 1,
+                    lifetime: ClaimLifetime::Work,
+                },
+            ],
+            allocations: Vec::new(),
+            fences: BTreeSet::new(),
+            quiescence_after: BTreeSet::new(),
+        },
+        WorkNode {
+            id: read.clone(),
+            kind: WorkKind::ObservationRead,
+            domain: WorkDomain::Io,
+            implementation: work_implementation.clone(),
+            dependencies: BTreeSet::from([WorkDependency::Work(initial.clone())]),
+            claims: vec![
+                ResourceClaim {
+                    resource: LeaseResource::Rate {
+                        demand_id: "transaction-io-rate".to_string(),
+                    },
+                    amount: 1,
+                    lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+                },
+                ResourceClaim {
+                    resource: LeaseResource::Queue {
+                        demand_id: "transaction-io-queue".to_string(),
+                    },
+                    amount: 1,
+                    lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+                },
+                ResourceClaim {
+                    resource: LeaseResource::MeasurementSetLock {
+                        measurement_set: casa_imaging_model::MeasurementSetIdentity::new(identity(
+                            1,
+                        )),
+                    },
+                    amount: 1,
+                    lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+                },
+            ],
+            allocations: Vec::new(),
+            fences: BTreeSet::from([FenceKind::Io]),
+            quiescence_after: BTreeSet::new(),
+        },
+        WorkNode {
+            id: reconciliation.clone(),
+            kind: WorkKind::Compute,
+            domain: WorkDomain::Cpu,
+            implementation: work_implementation.clone(),
+            dependencies: terminals,
+            claims: vec![ResourceClaim {
+                resource: LeaseResource::Workers,
+                amount: 1,
+                lifetime: ClaimLifetime::Work,
+            }],
+            allocations: Vec::new(),
+            fences: BTreeSet::new(),
+            quiescence_after: BTreeSet::new(),
+        },
+        WorkNode {
+            id: product.clone(),
+            kind: WorkKind::Serialization,
+            domain: WorkDomain::Cpu,
+            implementation: work_implementation.clone(),
+            dependencies: BTreeSet::from([WorkDependency::Work(reconciliation.clone())]),
+            claims: product_claims,
+            allocations: product_allocations,
+            fences: BTreeSet::new(),
+            quiescence_after: BTreeSet::new(),
+        },
+        WorkNode {
+            id: commit.clone(),
+            kind: WorkKind::Publication,
+            domain: WorkDomain::Io,
+            implementation: work_implementation.clone(),
+            dependencies: commit_dependencies,
+            claims: vec![
+                ResourceClaim {
+                    resource: LeaseResource::Rate {
+                        demand_id: "transaction-io-rate".to_string(),
+                    },
+                    amount: 1,
+                    lifetime: publication_lifetime.clone(),
+                },
+                ResourceClaim {
+                    resource: LeaseResource::Queue {
+                        demand_id: "transaction-io-queue".to_string(),
+                    },
+                    amount: 1,
+                    lifetime: publication_lifetime.clone(),
+                },
+                ResourceClaim {
+                    resource: LeaseResource::MeasurementSetLock {
+                        measurement_set: casa_imaging_model::MeasurementSetIdentity::new(identity(
+                            1,
+                        )),
+                    },
+                    amount: 1,
+                    lifetime: publication_lifetime.clone(),
+                },
+                ResourceClaim {
+                    resource: LeaseResource::Storage {
+                        demand_id: "transaction-output".to_string(),
+                        use_kind: casa_imaging_runtime::StorageUseKind::StagedOutput,
+                    },
+                    amount: 1,
+                    lifetime: publication_lifetime.clone(),
+                },
+                ResourceClaim {
+                    resource: LeaseResource::IoBuffer(IoBufferKind::Publication),
+                    amount: 1,
+                    lifetime: publication_lifetime.clone(),
+                },
+            ],
+            allocations: vec![AllocationUse {
+                allocation: publication_allocation.clone(),
+                lifetime: publication_lifetime.clone(),
+            }],
+            fences: BTreeSet::from([FenceKind::Io, FenceKind::Publication]),
+            quiescence_after: BTreeSet::new(),
+        },
+    ]);
+    if include_model_staging {
+        specification.nodes.push(WorkNode {
+            id: model.clone(),
+            kind: WorkKind::Writeback,
+            domain: WorkDomain::Io,
+            implementation: work_implementation.clone(),
+            dependencies: BTreeSet::from([WorkDependency::Work(reconciliation.clone())]),
+            claims: vec![
+                ResourceClaim {
+                    resource: LeaseResource::Rate {
+                        demand_id: "transaction-io-rate".to_string(),
+                    },
+                    amount: 1,
+                    lifetime: writeback_lifetime.clone(),
+                },
+                ResourceClaim {
+                    resource: LeaseResource::Queue {
+                        demand_id: "transaction-io-queue".to_string(),
+                    },
+                    amount: 1,
+                    lifetime: writeback_lifetime.clone(),
+                },
+                ResourceClaim {
+                    resource: LeaseResource::Storage {
+                        demand_id: "transaction-output".to_string(),
+                        use_kind: casa_imaging_runtime::StorageUseKind::StagedOutput,
+                    },
+                    amount: 1,
+                    lifetime: writeback_lifetime.clone(),
+                },
+                ResourceClaim {
+                    resource: LeaseResource::IoBuffer(IoBufferKind::Writeback),
+                    amount: 1,
+                    lifetime: writeback_lifetime.clone(),
+                },
+            ],
+            allocations: vec![AllocationUse {
+                allocation: writeback_allocation.clone(),
+                lifetime: writeback_lifetime,
+            }],
+            fences: BTreeSet::from([FenceKind::Io, FenceKind::Writeback]),
+            quiescence_after: BTreeSet::new(),
+        });
+    }
+    specification.logical_allocations.push(LogicalAllocation {
+        id: publication_allocation,
+        bytes: 1,
+        purpose: AllocationPurpose::IoBuffer(IoBufferKind::Publication),
+        compatibility: publication_compatibility.clone(),
+        physical_slot: publication_slot.clone(),
+        lifetime: AllocationLifetime {
+            acquire_at: if acquire_publication_early {
+                product.clone()
+            } else {
+                commit.clone()
+            },
+            release_after: BTreeSet::from([
+                WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Io)),
+                WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Publication)),
+            ]),
+        },
+    });
+    specification.physical_slots.push(PhysicalSlot {
+        id: publication_slot,
+        lease_resource: LeaseResource::Memory {
+            allocation_id: "transaction-publication-slot".to_string(),
+        },
+        capacity_bytes: 1,
+        compatibility: publication_compatibility,
+    });
+    if include_model_staging {
+        specification.logical_allocations.push(LogicalAllocation {
+            id: writeback_allocation,
+            bytes: 1,
+            purpose: AllocationPurpose::IoBuffer(IoBufferKind::Writeback),
+            compatibility: writeback_compatibility.clone(),
+            physical_slot: writeback_slot.clone(),
+            lifetime: AllocationLifetime {
+                acquire_at: model.clone(),
+                release_after: BTreeSet::from([
+                    WorkDependency::Fence(FenceId::new(model.clone(), FenceKind::Io)),
+                    WorkDependency::Fence(FenceId::new(model.clone(), FenceKind::Writeback)),
+                ]),
+            },
+        });
+        specification.physical_slots.push(PhysicalSlot {
+            id: writeback_slot,
+            lease_resource: LeaseResource::Memory {
+                allocation_id: "transaction-writeback-slot".to_string(),
+            },
+            capacity_bytes: 1,
+            compatibility: writeback_compatibility,
+        });
+    }
+
+    let dag = ExecutionDag::new(specification).expect("valid transaction-bound physical work");
     let stages = dag
         .nodes()
-        .keys()
-        .cloned()
-        .map(|node| StagePrediction::new(node, 100))
+        .values()
+        .map(|node| {
+            let io = node
+                .claims
+                .iter()
+                .filter_map(|claim| match claim.resource {
+                    LeaseResource::IoBuffer(kind) => Some(IoPrediction::new(kind, claim.amount, 1)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let stage = StagePrediction::new(node.id.clone(), 100);
+            if io.is_empty() {
+                stage
+            } else {
+                stage.with_io(io)
+            }
+        })
         .collect();
     let prediction = PlanPrediction::new(
         u64::try_from(dag.nodes().len()).expect("node count") * 100,
@@ -387,277 +1028,141 @@ fn bind_physical_work(dag: ExecutionDag) -> PhysicalWorkBinding {
         vec![PredictionUncertainty::new("source-throughput", 50)],
         stages,
     )
-    .expect("complete prediction");
-    PhysicalWorkBinding::new(dag, prediction, Vec::new()).expect("bound physical work")
+    .expect("complete transaction prediction");
+    PhysicalWorkBinding::new(
+        dag,
+        prediction,
+        Vec::new(),
+        ObservationTransactionWork::new(
+            initial,
+            reconciliation,
+            required_product_staging.unwrap_or_else(|| {
+                BTreeMap::from([(
+                    ProductKind::Psf,
+                    BTreeSet::from([WorkDependency::Work(product)]),
+                )])
+            }),
+            include_model_staging.then_some(model),
+            commit,
+        ),
+    )
+    .expect("bound transaction physical work")
 }
 
 fn evidenced_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
+    let base = physical_work(implementation_byte);
+    let base_dag = base.execution_dag();
     let read = WorkNodeId::new("read");
-    let execute = WorkNodeId::new("execute");
-    let publish = WorkNodeId::new("publish");
-    let slot = PhysicalSlotId::new("evidence-io-slot");
+    let publish = WorkNodeId::new("transaction-commit");
     let source_buffer = AllocationId::new("source-read-ahead-buffer");
-    let publication_buffer = AllocationId::new("publication-buffer");
+    let source_slot = PhysicalSlotId::new("source-read-ahead-slot");
     let compatibility = SlotCompatibility {
         memory_domain: CapacityDomainId::new("host-memory"),
         views: BTreeSet::from([CapacityViewId::new("host-memory")]),
         alignment_bytes: 64,
         storage_mode: StorageMode::Host,
-        layout: AllocationLayout::new("evidence-io-buffer"),
+        layout: AllocationLayout::new("source-read-ahead-buffer"),
         initialization: InitializationPolicy::OverwriteBeforeRead,
         access: AllocationAccess::ReadWrite,
     };
-    let dag = ExecutionDag::new(ExecutionDagSpecification {
-        required_resource_capabilities: BTreeSet::new(),
-        resource_alternative: DemandAlternative {
-            id: AlternativeId::new("evidenced-cpu"),
-            capabilities: CapabilityPredicate::default(),
-            demand: DemandEnvelope {
-                host_memory_view: CapacityViewId::new("host-memory"),
-                memory: vec![MemoryDemand {
-                    allocation_id: "evidence-io-memory".to_string(),
-                    hard_bytes: 32,
-                    preferred_bytes: 32,
-                    views: vec![CapacityViewId::new("host-memory")],
-                }],
-                workers: CountDemand::new(1, 1),
-                overhead: RuntimeOverheadDemand::zero(),
-                storage: vec![StorageDemand {
-                    demand_id: "output-storage".to_string(),
-                    domain: StorageDomainId::new("test-output"),
-                    temporary_bytes: 0,
-                    staged_output_bytes: 2_048,
-                    final_output_bytes: 2_048,
-                    persistent_cache_bytes: 0,
-                    read_rate: CountDemand::zero(),
-                    write_rate: CountDemand::new(1, 1),
-                    operations_rate: CountDemand::zero(),
-                    queue_slots: CountDemand::new(1, 1),
-                }],
-                rates: vec![RateDemand {
-                    demand_id: "io-rate".to_string(),
-                    resource: RateResourceId::new("io-rate"),
-                    amount: CountDemand::new(1, 1),
-                }],
-                caches: CacheDemand::zero(),
-                locks: CountDemand::zero(),
-                file_descriptors: CountDemand::zero(),
-                queues: vec![QueueDemand {
-                    demand_id: "io-queue".to_string(),
-                    resource: QueueResourceId::new("io-queue"),
-                    slots: CountDemand::new(1, 1),
-                }],
-                transfers: Vec::new(),
-                accelerators: Vec::new(),
-                io_buffers: IoBufferDemand {
-                    source_read_ahead_bytes: 32,
-                    publication_bytes: 32,
-                    ..IoBufferDemand::zero()
-                },
-            },
-            headroom: ResourceHeadroom::default(),
-            scaling: ScalingMetadata {
-                minimum_workers: 1,
-                maximum_workers: 1,
-                maximum_batch_size: 1,
-                maximum_tile_width: 1,
-                maximum_tile_height: 1,
-                maximum_slab_depth: 1,
-                memory_bytes_per_worker: BTreeMap::new(),
-            },
-            quiescence_points: BTreeSet::from([QuiescencePoint::RunBoundary]),
+    let mut alternative = base_dag.resource_alternative().clone();
+    alternative.demand.memory.push(MemoryDemand {
+        allocation_id: "source-read-ahead-memory".to_string(),
+        hard_bytes: 32,
+        preferred_bytes: 32,
+        views: vec![CapacityViewId::new("host-memory")],
+    });
+    alternative.demand.io_buffers.source_read_ahead_bytes = 32;
+    let mut nodes = base_dag.nodes().values().cloned().collect::<Vec<_>>();
+    let read_node = nodes
+        .iter_mut()
+        .find(|node| node.id == read)
+        .expect("source read node");
+    read_node.claims.push(ResourceClaim {
+        resource: LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead),
+        amount: 32,
+        lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+    });
+    read_node.allocations.push(AllocationUse {
+        allocation: source_buffer.clone(),
+        lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+    });
+    let mut logical_allocations = base_dag
+        .logical_allocations()
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    logical_allocations.push(LogicalAllocation {
+        id: source_buffer,
+        bytes: 32,
+        purpose: AllocationPurpose::IoBuffer(IoBufferKind::SourceReadAhead),
+        compatibility: compatibility.clone(),
+        physical_slot: source_slot.clone(),
+        lifetime: AllocationLifetime {
+            acquire_at: read.clone(),
+            release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                read.clone(),
+                FenceKind::Io,
+            ))]),
         },
-        nodes: vec![
-            WorkNode {
-                id: read.clone(),
-                kind: WorkKind::Prefetch,
-                domain: WorkDomain::Io,
-                implementation: implementation(implementation_byte),
-                dependencies: BTreeSet::new(),
-                claims: vec![
-                    ResourceClaim {
-                        resource: casa_imaging_runtime::LeaseResource::Rate {
-                            demand_id: "io-rate".to_string(),
-                        },
-                        amount: 1,
-                        lifetime: ClaimLifetime::through_fence(FenceKind::Io),
-                    },
-                    ResourceClaim {
-                        resource: casa_imaging_runtime::LeaseResource::Queue {
-                            demand_id: "io-queue".to_string(),
-                        },
-                        amount: 1,
-                        lifetime: ClaimLifetime::through_fence(FenceKind::Io),
-                    },
-                    ResourceClaim {
-                        resource: casa_imaging_runtime::LeaseResource::IoBuffer(
-                            IoBufferKind::SourceReadAhead,
-                        ),
-                        amount: 32,
-                        lifetime: ClaimLifetime::through_fence(FenceKind::Io),
-                    },
-                ],
-                allocations: vec![AllocationUse {
-                    allocation: source_buffer.clone(),
-                    lifetime: ClaimLifetime::through_fence(FenceKind::Io),
-                }],
-                fences: BTreeSet::from([FenceKind::Io]),
-                quiescence_after: BTreeSet::new(),
-            },
-            WorkNode {
-                id: execute.clone(),
-                kind: WorkKind::Compute,
-                domain: WorkDomain::Cpu,
-                implementation: implementation(implementation_byte),
-                dependencies: BTreeSet::from([WorkDependency::Fence(FenceId::new(
-                    read.clone(),
-                    FenceKind::Io,
-                ))]),
-                claims: vec![ResourceClaim {
-                    resource: casa_imaging_runtime::LeaseResource::Workers,
-                    amount: 1,
-                    lifetime: ClaimLifetime::Work,
-                }],
-                allocations: Vec::new(),
-                fences: BTreeSet::new(),
-                quiescence_after: BTreeSet::new(),
-            },
-            WorkNode {
-                id: publish.clone(),
-                kind: WorkKind::Publication,
-                domain: WorkDomain::Io,
-                implementation: implementation(implementation_byte),
-                dependencies: BTreeSet::from([WorkDependency::Work(execute)]),
-                claims: vec![
-                    ResourceClaim {
-                        resource: casa_imaging_runtime::LeaseResource::IoBuffer(
-                            IoBufferKind::Publication,
-                        ),
-                        amount: 32,
-                        lifetime: ClaimLifetime::through_fences([
-                            FenceKind::Io,
-                            FenceKind::Publication,
-                        ]),
-                    },
-                    ResourceClaim {
-                        resource: casa_imaging_runtime::LeaseResource::Storage {
-                            demand_id: "output-storage".to_string(),
-                            use_kind: StorageUseKind::StagedOutput,
-                        },
-                        amount: 2_048,
-                        lifetime: ClaimLifetime::through_fences([
-                            FenceKind::Io,
-                            FenceKind::Publication,
-                        ]),
-                    },
-                    ResourceClaim {
-                        resource: casa_imaging_runtime::LeaseResource::Storage {
-                            demand_id: "output-storage".to_string(),
-                            use_kind: StorageUseKind::FinalOutput,
-                        },
-                        amount: 2_048,
-                        lifetime: ClaimLifetime::through_fences([
-                            FenceKind::Io,
-                            FenceKind::Publication,
-                        ]),
-                    },
-                    ResourceClaim {
-                        resource: casa_imaging_runtime::LeaseResource::StorageWriteRate {
-                            demand_id: "output-storage".to_string(),
-                        },
-                        amount: 1,
-                        lifetime: ClaimLifetime::through_fences([
-                            FenceKind::Io,
-                            FenceKind::Publication,
-                        ]),
-                    },
-                    ResourceClaim {
-                        resource: casa_imaging_runtime::LeaseResource::StorageQueue {
-                            demand_id: "output-storage".to_string(),
-                        },
-                        amount: 1,
-                        lifetime: ClaimLifetime::through_fences([
-                            FenceKind::Io,
-                            FenceKind::Publication,
-                        ]),
-                    },
-                ],
-                allocations: vec![AllocationUse {
-                    allocation: publication_buffer.clone(),
-                    lifetime: ClaimLifetime::through_fences([
-                        FenceKind::Io,
-                        FenceKind::Publication,
-                    ]),
-                }],
-                fences: BTreeSet::from([FenceKind::Io, FenceKind::Publication]),
-                quiescence_after: BTreeSet::new(),
-            },
-        ],
-        logical_allocations: vec![
-            LogicalAllocation {
-                id: source_buffer,
-                bytes: 32,
-                purpose: AllocationPurpose::IoBuffer(IoBufferKind::SourceReadAhead),
-                compatibility: compatibility.clone(),
-                physical_slot: slot.clone(),
-                lifetime: AllocationLifetime {
-                    acquire_at: read.clone(),
-                    release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
-                        read.clone(),
-                        FenceKind::Io,
-                    ))]),
-                },
-            },
-            LogicalAllocation {
-                id: publication_buffer,
-                bytes: 32,
-                purpose: AllocationPurpose::IoBuffer(IoBufferKind::Publication),
-                compatibility: compatibility.clone(),
-                physical_slot: slot.clone(),
-                lifetime: AllocationLifetime {
-                    acquire_at: publish.clone(),
-                    release_after: BTreeSet::from([
-                        WorkDependency::Fence(FenceId::new(publish.clone(), FenceKind::Io)),
-                        WorkDependency::Fence(FenceId::new(
-                            publish.clone(),
-                            FenceKind::Publication,
-                        )),
-                    ]),
-                },
-            },
-        ],
-        physical_slots: vec![PhysicalSlot {
-            id: slot,
-            lease_resource: casa_imaging_runtime::LeaseResource::Memory {
-                allocation_id: "evidence-io-memory".to_string(),
-            },
-            capacity_bytes: 32,
-            compatibility,
-        }],
-        initial_knobs: ExecutionKnobs::serial(),
-        adaptations: Vec::new(),
+    });
+    let mut physical_slots = base_dag
+        .physical_slots()
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    physical_slots.push(PhysicalSlot {
+        id: source_slot,
+        lease_resource: LeaseResource::Memory {
+            allocation_id: "source-read-ahead-memory".to_string(),
+        },
+        capacity_bytes: 32,
+        compatibility,
+    });
+    let dag = ExecutionDag::new(ExecutionDagSpecification {
+        required_resource_capabilities: base_dag.required_resource_capabilities().clone(),
+        resource_alternative: alternative,
+        nodes,
+        logical_allocations,
+        physical_slots,
+        initial_knobs: base_dag.initial_knobs().clone(),
+        adaptations: base_dag.adaptations().values().cloned().collect(),
     })
-    .expect("valid evidenced physical work DAG");
+    .expect("valid evidenced transaction DAG");
     let stages = dag
         .nodes()
-        .keys()
+        .values()
         .map(|node| {
-            let stage = StagePrediction::new(node.clone(), 100);
-            if node == &read {
+            let stage = StagePrediction::new(node.id.clone(), 100);
+            if node.id == read {
                 stage.with_io(vec![IoPrediction::new(
                     IoBufferKind::SourceReadAhead,
                     8_192,
                     4,
                 )])
-            } else if node == &publish {
+            } else if node.id == publish {
                 stage.with_io(vec![IoPrediction::new(IoBufferKind::Publication, 2_048, 1)])
             } else {
-                stage
+                let io = node
+                    .claims
+                    .iter()
+                    .filter_map(|claim| match claim.resource {
+                        LeaseResource::IoBuffer(kind) => {
+                            Some(IoPrediction::new(kind, claim.amount, 1))
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                if io.is_empty() {
+                    stage
+                } else {
+                    stage.with_io(io)
+                }
             }
         })
         .collect();
     let prediction = PlanPrediction::new(
-        300,
+        u64::try_from(dag.nodes().len()).expect("node count") * 100,
         PredictionConfidence::new(900_000).expect("confidence"),
         vec![PredictionUncertainty::new("source-throughput", 50)],
         stages,
@@ -686,8 +1191,9 @@ fn evidenced_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
                 None,
             ),
         ],
+        base.observation_transaction().clone(),
     )
-    .expect("bound evidenced physical work")
+    .expect("bound evidenced transaction work")
 }
 
 fn adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
@@ -696,7 +1202,7 @@ fn adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
     let boundary_id = WorkNodeId::new("major-boundary");
     let mut adapted = ExecutionKnobs::serial();
     adapted.batch_size = 2;
-    let dag = ExecutionDag::new(ExecutionDagSpecification {
+    let specification = ExecutionDagSpecification {
         required_resource_capabilities: BTreeSet::new(),
         resource_alternative: DemandAlternative {
             id: AlternativeId::new("adaptive-cpu"),
@@ -783,9 +1289,14 @@ fn adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
             to: adapted,
             at: QuiescencePoint::MajorCycle,
         }],
-    })
-    .expect("valid adaptive physical work DAG");
-    bind_physical_work(dag)
+    };
+    transaction_binding(
+        specification,
+        implementation(implementation_byte),
+        None,
+        false,
+        false,
+    )
 }
 
 fn auditable_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
@@ -831,41 +1342,51 @@ fn auditable_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
         )]),
         resource_alternative: alternative,
         nodes,
-        logical_allocations: vec![LogicalAllocation {
-            id: allocation,
-            bytes: 64,
-            purpose: AllocationPurpose::Data,
-            compatibility: compatibility.clone(),
-            physical_slot: slot.clone(),
-            lifetime: AllocationLifetime {
-                acquire_at: WorkNodeId::new("first-major-work"),
-                release_after: BTreeSet::from([WorkDependency::Work(WorkNodeId::new(
-                    "minor-work",
-                ))]),
-            },
-        }],
-        physical_slots: vec![PhysicalSlot {
-            id: slot,
-            lease_resource: casa_imaging_runtime::LeaseResource::Memory {
-                allocation_id: "audit-memory".to_string(),
-            },
-            capacity_bytes: 64,
-            compatibility,
-        }],
+        logical_allocations: base_dag
+            .logical_allocations()
+            .values()
+            .cloned()
+            .chain([LogicalAllocation {
+                id: allocation,
+                bytes: 64,
+                purpose: AllocationPurpose::Data,
+                compatibility: compatibility.clone(),
+                physical_slot: slot.clone(),
+                lifetime: AllocationLifetime {
+                    acquire_at: WorkNodeId::new("first-major-work"),
+                    release_after: BTreeSet::from([WorkDependency::Work(WorkNodeId::new(
+                        "minor-work",
+                    ))]),
+                },
+            }])
+            .collect(),
+        physical_slots: base_dag
+            .physical_slots()
+            .values()
+            .cloned()
+            .chain([PhysicalSlot {
+                id: slot,
+                lease_resource: casa_imaging_runtime::LeaseResource::Memory {
+                    allocation_id: "audit-memory".to_string(),
+                },
+                capacity_bytes: 64,
+                compatibility,
+            }])
+            .collect(),
         initial_knobs: base_dag.initial_knobs().clone(),
         adaptations: base_dag.adaptations().values().cloned().collect(),
     })
     .expect("valid auditable physical work DAG");
-    let binding = bind_physical_work(dag);
     PhysicalWorkBinding::new(
-        binding.execution_dag().clone(),
-        binding.prediction().clone(),
+        dag,
+        base.prediction().clone(),
         vec![PlannedArtifact::new(
             ArtifactIdentity::from_sha256([51; 32]),
             WorkNodeId::new("first-major-work"),
             ArtifactRole::Cache,
             Some(CacheIdentity::from_sha256([52; 32])),
         )],
+        base.observation_transaction().clone(),
     )
     .expect("auditable physical work binding")
 }
@@ -960,7 +1481,7 @@ fn release_failure_physical_work(
     if fail_at_fence {
         initial_knobs.io_depth = 2;
     }
-    let dag = ExecutionDag::new(ExecutionDagSpecification {
+    let specification = ExecutionDagSpecification {
         required_resource_capabilities: BTreeSet::new(),
         resource_alternative: DemandAlternative {
             id: AlternativeId::new(if fail_at_fence {
@@ -1113,33 +1634,14 @@ fn release_failure_physical_work(
             ..initial_knobs
         },
         adaptations: Vec::new(),
-    })
-    .expect("valid external-release failure DAG");
-    let stages = dag
-        .nodes()
-        .keys()
-        .map(|node| {
-            let stage = StagePrediction::new(node.clone(), 100);
-            if node == &prepare_id || node == &release_id {
-                stage.with_io(vec![IoPrediction::new(
-                    IoBufferKind::MappedPageCache,
-                    100,
-                    1,
-                )])
-            } else {
-                stage
-            }
-        })
-        .collect();
-    let prediction = PlanPrediction::new(
-        u64::try_from(dag.nodes().len()).expect("node count") * 100,
-        PredictionConfidence::new(900_000).expect("confidence"),
-        vec![PredictionUncertainty::new("source-throughput", 50)],
-        stages,
+    };
+    transaction_binding(
+        specification,
+        implementation(implementation_byte),
+        None,
+        false,
+        false,
     )
-    .expect("complete release-failure prediction");
-    PhysicalWorkBinding::new(dag, prediction, Vec::new())
-        .expect("bound external-release failure work")
 }
 
 fn test_registry(
@@ -1169,7 +1671,7 @@ struct RejectAfterLaunch {
 impl RunController for RejectAfterLaunch {
     fn directive(&mut self, status: &ExecutionStatus) -> RunDirective {
         self.polls += 1;
-        if self.polls == 1 {
+        if self.polls <= 2 {
             RunDirective::Continue
         } else {
             assert!(status.eligible_adaptations().is_empty());
@@ -1217,6 +1719,45 @@ impl RunController for CancelAfterLaunch {
     }
 }
 
+struct CancelAtPublicationState {
+    publication_launched: Arc<AtomicBool>,
+    visible_generation: Arc<AtomicUsize>,
+    after_fence: bool,
+    requested: bool,
+}
+
+struct AdaptAtPublicationLaunch {
+    publication_launched: Arc<AtomicBool>,
+    requested: bool,
+}
+
+impl RunController for AdaptAtPublicationLaunch {
+    fn directive(&mut self, _status: &ExecutionStatus) -> RunDirective {
+        if self.publication_launched.load(Ordering::SeqCst) && !self.requested {
+            self.requested = true;
+            RunDirective::Adapt(AdaptationId::new("post-publication-adaptation"))
+        } else {
+            RunDirective::Continue
+        }
+    }
+}
+
+impl RunController for CancelAtPublicationState {
+    fn directive(&mut self, _status: &ExecutionStatus) -> RunDirective {
+        let reached = if self.after_fence {
+            self.visible_generation.load(Ordering::SeqCst) == 1
+        } else {
+            self.publication_launched.load(Ordering::SeqCst)
+        };
+        if reached && !self.requested {
+            self.requested = true;
+            RunDirective::Cancel
+        } else {
+            RunDirective::Continue
+        }
+    }
+}
+
 impl ImplementationRegistry for TestRegistry {
     type Implementation = RecordingExecutor;
 
@@ -1232,70 +1773,68 @@ impl ImplementationRegistry for TestRegistry {
 fn authority() -> &'static ResourceAuthority {
     static AUTHORITY: OnceLock<&'static ResourceAuthority> = OnceLock::new();
     AUTHORITY.get_or_init(|| {
-        let domain = CapacityDomainId::new("host-memory");
-        let view = CapacityViewId::new("host-memory");
-        let rate = RateResourceId::new("io-rate");
-        let queue = QueueResourceId::new("io-queue");
-        let storage = StorageDomainId::new("test-output");
-        let storage_read = RateResourceId::new("test-output-read");
-        let storage_write = RateResourceId::new("test-output-write");
-        let storage_queue = QueueResourceId::new("test-output-queue");
-        ResourceAuthority::install_production_inventory(HostInventory {
-            topology: ResourceTopology {
-                memory_domains: vec![MemoryCapacityDomain {
-                    id: domain.clone(),
-                    kind: MemoryCapacityKind::Host,
-                    capacity_bytes: 1_024,
-                }],
-                memory_views: vec![MemoryView {
-                    id: view,
-                    domain: domain.clone(),
-                    kind: MemoryViewKind::Host,
-                }],
-                accelerators: Vec::new(),
-                transfer_links: Vec::new(),
-                storage_domains: vec![StorageDomain {
-                    id: storage.clone(),
-                    root: std::path::PathBuf::from("/tmp/casa-rs-runtime-test-output"),
-                    capacity_bytes: 16_384,
-                    read_rate: storage_read.clone(),
-                    write_rate: storage_write.clone(),
-                    operations_rate: None,
-                    queue: storage_queue.clone(),
-                }],
-                rate_resources: vec![
-                    RateResource::new(rate.clone(), RateUnit::BytesPerSecond, 16),
-                    RateResource::new(storage_read.clone(), RateUnit::BytesPerSecond, 16),
-                    RateResource::new(storage_write.clone(), RateUnit::BytesPerSecond, 16),
-                ],
-                queue_resources: vec![
-                    QueueResource::new(queue.clone(), 4),
-                    QueueResource::new(storage_queue.clone(), 4),
-                ],
-                logical_cpu_threads: 4,
-                performance_cpu_cores: CpuClassCapacity::Known(4),
-                cache_capacity_bytes: 1_024,
-                lock_capacity: 4,
-                file_descriptor_capacity: 16,
-            },
-            pressure: ExternalPressure {
-                memory_available_bytes: BTreeMap::from([(domain, 1_024)]),
-                available_cpu_threads: 4,
-                storage_available_bytes: BTreeMap::from([(storage, 16_384)]),
-                rate_available_per_second: BTreeMap::from([
-                    (rate, 16),
-                    (storage_read, 16),
-                    (storage_write, 16),
-                ]),
-                queue_available_slots: BTreeMap::from([(queue, 4), (storage_queue, 4)]),
-                accelerator_available_slots: BTreeMap::new(),
-                cache_available_bytes: 1_024,
-                available_locks: 4,
-                available_file_descriptors: 16,
-            },
-        })
-        .expect("install deterministic runtime inventory")
+        ResourceAuthority::install_production_inventory(runtime_inventory(4))
+            .expect("install deterministic runtime inventory")
     })
+}
+
+fn runtime_inventory(available_locks: u64) -> HostInventory {
+    let domain = CapacityDomainId::new("host-memory");
+    let view = CapacityViewId::new("host-memory");
+    let rate = RateResourceId::new("io-rate");
+    let queue = QueueResourceId::new("io-queue");
+    let transaction_rate = RateResourceId::new("transaction-io-rate");
+    let transaction_queue = QueueResourceId::new("transaction-io-queue");
+    let storage = StorageDomainId::new("atomic-output");
+    HostInventory {
+        topology: ResourceTopology {
+            memory_domains: vec![MemoryCapacityDomain {
+                id: domain.clone(),
+                kind: MemoryCapacityKind::Host,
+                capacity_bytes: 1_024,
+            }],
+            memory_views: vec![MemoryView {
+                id: view,
+                domain: domain.clone(),
+                kind: MemoryViewKind::Host,
+            }],
+            accelerators: Vec::new(),
+            transfer_links: Vec::new(),
+            storage_domains: vec![StorageDomain {
+                id: storage.clone(),
+                root: PathBuf::from("/tmp/casa-rs-imaging-runtime-tests"),
+                capacity_bytes: 1_024,
+                read_rate: rate.clone(),
+                write_rate: rate.clone(),
+                operations_rate: None,
+                queue: queue.clone(),
+            }],
+            rate_resources: vec![
+                RateResource::new(rate.clone(), RateUnit::BytesPerSecond, 16),
+                RateResource::new(transaction_rate.clone(), RateUnit::BytesPerSecond, 16),
+            ],
+            queue_resources: vec![
+                QueueResource::new(queue.clone(), 4),
+                QueueResource::new(transaction_queue.clone(), 4),
+            ],
+            logical_cpu_threads: 4,
+            performance_cpu_cores: CpuClassCapacity::Known(4),
+            cache_capacity_bytes: 1_024,
+            lock_capacity: 4,
+            file_descriptor_capacity: 16,
+        },
+        pressure: ExternalPressure {
+            memory_available_bytes: BTreeMap::from([(domain, 1_024)]),
+            available_cpu_threads: 4,
+            storage_available_bytes: BTreeMap::from([(storage, 1_024)]),
+            rate_available_per_second: BTreeMap::from([(rate, 16), (transaction_rate, 16)]),
+            queue_available_slots: BTreeMap::from([(queue, 4), (transaction_queue, 4)]),
+            accelerator_available_slots: BTreeMap::new(),
+            cache_available_bytes: 1_024,
+            available_locks,
+            available_file_descriptors: 16,
+        },
+    }
 }
 
 fn run_lock() -> &'static Mutex<()> {
@@ -1423,7 +1962,8 @@ fn execute_plan(
 
 #[test]
 fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semantics() {
-    let io_dag = physical_work(6).execution_dag().clone();
+    let io_base = physical_work(6);
+    let io_dag = io_base.execution_dag().clone();
     let io_prediction = PlanPrediction::new(
         200,
         PredictionConfidence::new(900_000).expect("confidence"),
@@ -1448,7 +1988,12 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
     .expect("well-formed prediction ledger");
 
     assert!(matches!(
-        PhysicalWorkBinding::new(io_dag, io_prediction, Vec::new()),
+        PhysicalWorkBinding::new(
+            io_dag,
+            io_prediction,
+            Vec::new(),
+            io_base.observation_transaction().clone(),
+        ),
         Err(PhysicalWorkBindingError::IoKindMismatch {
             kind: IoBufferKind::SourceReadAhead,
             work_kind: WorkKind::Compute,
@@ -1501,14 +2046,20 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
     )
     .expect("well-formed prediction ledger");
     assert!(matches!(
-        PhysicalWorkBinding::new(contract_dag, contract_prediction, Vec::new()),
+        PhysicalWorkBinding::new(
+            contract_dag,
+            contract_prediction,
+            Vec::new(),
+            contract_base.observation_transaction().clone(),
+        ),
         Err(PhysicalWorkBindingError::MissingIoContract {
             kind: IoBufferKind::SourceReadAhead,
             ..
         })
     ));
 
-    let publication_dag = physical_work(6).execution_dag().clone();
+    let publication_base = physical_work(6);
+    let publication_dag = publication_base.execution_dag().clone();
     let publication_prediction = PlanPrediction::new(
         200,
         PredictionConfidence::new(900_000).expect("confidence"),
@@ -1529,14 +2080,20 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
     );
 
     assert!(matches!(
-        PhysicalWorkBinding::new(publication_dag, publication_prediction, vec![output]),
+        PhysicalWorkBinding::new(
+            publication_dag,
+            publication_prediction,
+            vec![output],
+            publication_base.observation_transaction().clone(),
+        ),
         Err(PhysicalWorkBindingError::MissingPublicationContract { .. })
     ));
 }
 
 #[test]
 fn physical_work_binding_rejects_typed_io_contracts_without_predictions() {
-    let dag = evidenced_physical_work(6).execution_dag().clone();
+    let base = evidenced_physical_work(6);
+    let dag = base.execution_dag().clone();
     let prediction = PlanPrediction::new(
         300,
         PredictionConfidence::new(900_000).expect("confidence"),
@@ -1550,7 +2107,12 @@ fn physical_work_binding_rejects_typed_io_contracts_without_predictions() {
     .expect("complete stage ledger with no typed I/O evidence");
 
     assert!(matches!(
-        PhysicalWorkBinding::new(dag, prediction, Vec::new()),
+        PhysicalWorkBinding::new(
+            dag,
+            prediction,
+            Vec::new(),
+            base.observation_transaction().clone(),
+        ),
         Err(PhysicalWorkBindingError::MissingIoPrediction { .. })
     ));
 }
@@ -1624,7 +2186,7 @@ fn physical_work_binding_rejects_cpu_io_buffer_contracts_without_predictions() {
             .keys()
             .map(|node| {
                 let stage = StagePrediction::new(node.clone(), 100);
-                if node.as_str() == "publish" {
+                if node.as_str() == "transaction-commit" {
                     stage.with_io(vec![IoPrediction::new(IoBufferKind::Publication, 2_048, 1)])
                 } else {
                     stage
@@ -1635,7 +2197,12 @@ fn physical_work_binding_rejects_cpu_io_buffer_contracts_without_predictions() {
     .expect("complete prediction ledger without preparation I/O evidence");
 
     assert!(matches!(
-        PhysicalWorkBinding::new(dag, prediction, Vec::new()),
+        PhysicalWorkBinding::new(
+            dag,
+            prediction,
+            Vec::new(),
+            base.observation_transaction().clone(),
+        ),
         Err(PhysicalWorkBindingError::MissingIoPrediction {
             kind: IoBufferKind::Preparation,
             ..
@@ -1727,19 +2294,51 @@ fn run_can_invoke_only_the_implementation_identity_sealed_by_plan() {
         registry.executors[&implementation(6)]
             .calls
             .load(Ordering::SeqCst),
-        2
+        7,
+        "two planned nodes and five mandatory transaction nodes must execute"
     );
     assert_eq!(
         registry.executors[&implementation(6)]
             .fence_waits
             .load(Ordering::SeqCst),
-        1
+        4,
+        "planned and transaction reads plus both publication fences must settle"
     );
     assert_eq!(
         registry.executors[&implementation(7)]
             .calls
             .load(Ordering::SeqCst),
         0
+    );
+}
+
+#[test]
+fn generic_io_cannot_receive_observation_sources() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical_work(6)),
+    )
+    .expect("physical planning");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let generic_source_access = Arc::new(AtomicBool::new(false));
+    let mut executor = recording_executor(6, None, None);
+    executor.generic_source_access = Some(Arc::clone(&generic_source_access));
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+
+    execute_plan(&problem, &execution_plan, &current, &registry).expect("bound execution");
+
+    assert!(
+        !generic_source_access.load(Ordering::SeqCst),
+        "generic Io must not receive the MeasurementSet observation source set"
     );
 }
 
@@ -1821,6 +2420,7 @@ fn versioned_request_compiles_before_physical_planning() {
 
 #[test]
 fn plan_seals_physical_work_and_every_required_binding() {
+    assert_eq!(ExecutionPlanId::SCHEMA_VERSION, 6);
     let problem = compile(request(1)).expect("logical compilation");
     let expected_problem_id = problem.problem_id();
     let bindings = PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4));
@@ -1854,6 +2454,18 @@ fn plan_seals_physical_work_and_every_required_binding() {
         execution_plan.physical_work_id(),
         execution_plan.execution_dag().physical_work_id()
     );
+    assert_eq!(
+        execution_plan.observation_transaction().problem_id(),
+        problem.problem_id()
+    );
+    assert_eq!(
+        execution_plan.observation_transaction().transaction_id(),
+        problem.observation_transaction().transaction_id()
+    );
+    assert_eq!(
+        execution_plan.observation_transaction().physical_work_id(),
+        execution_plan.physical_work_id()
+    );
 
     let repeated = plan(&problem, bindings, |_, _| Ok::<_, ()>(physical_work(6)))
         .expect("repeat physical planning");
@@ -1861,9 +2473,78 @@ fn plan_seals_physical_work_and_every_required_binding() {
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            20, 27, 232, 113, 28, 7, 86, 91, 8, 36, 216, 4, 85, 77, 105, 28, 239, 121, 193, 218,
-            180, 24, 233, 133, 138, 50, 87, 197, 216, 104, 15, 30,
+            50, 82, 44, 253, 147, 108, 140, 234, 107, 182, 127, 134, 177, 23, 66, 27, 6, 38, 149,
+            24, 253, 180, 183, 8, 196, 76, 220, 189, 186, 72, 78, 163,
         ]
+    );
+}
+
+#[test]
+fn transaction_seal_rejects_omitted_required_product_staging() {
+    let problem = compile(request_with_products(
+        1,
+        geometry(255.0),
+        vec![ProductKind::Psf, ProductKind::Residual],
+    ))
+    .expect("two-product logical compilation");
+    let product_completion = || {
+        BTreeSet::from([WorkDependency::Work(WorkNodeId::new(
+            "transaction-stage-psf",
+        ))])
+    };
+    plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| {
+            Ok::<_, io::Error>(physical_work_with_product_staging(
+                6,
+                Some(BTreeMap::from([
+                    (ProductKind::Psf, product_completion()),
+                    (ProductKind::Residual, product_completion()),
+                ])),
+            ))
+        },
+    )
+    .expect("canonical complete two-product transaction seal");
+
+    let result = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| {
+            Ok::<_, io::Error>(physical_work_with_product_staging(
+                6,
+                Some(BTreeMap::from([(ProductKind::Psf, product_completion())])),
+            ))
+        },
+    );
+
+    let error = result.expect_err("one omitted product must fail the exact plan seal");
+    assert_eq!(
+        error.to_string(),
+        "invalid observation transaction plan: required product staging keys {Psf} do not match compiled product requirements {Psf, Residual}"
+    );
+}
+
+#[test]
+fn transaction_seal_blocks_unbound_transaction_work() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let result = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| {
+            Ok::<_, io::Error>(physical_work_with_product_staging(
+                6,
+                Some(BTreeMap::from([(
+                    ProductKind::Psf,
+                    BTreeSet::from([WorkDependency::Work(WorkNodeId::new("execute"))]),
+                )])),
+            ))
+        },
+    );
+
+    assert!(
+        matches!(result, Err(PlanError::ObservationTransaction(_))),
+        "the public plan boundary must reject physical work that bypasses transaction sealing"
     );
 }
 
@@ -2014,13 +2695,15 @@ fn run_executes_one_exactly_bound_plan_without_routing_or_replanning() {
         registry.executors[&implementation(6)]
             .calls
             .load(Ordering::SeqCst),
-        2
+        7,
+        "two planned nodes and five mandatory transaction nodes must execute"
     );
     assert_eq!(
         registry.executors[&implementation(6)]
             .fence_waits
             .load(Ordering::SeqCst),
-        1
+        4,
+        "planned and transaction reads plus both publication fences must settle"
     );
 }
 
@@ -2081,7 +2764,7 @@ fn rejected_post_launch_adaptation_drains_fences_before_returning() {
         registry.executors[&implementation(6)]
             .calls
             .load(Ordering::SeqCst),
-        1
+        2
     );
     assert_eq!(
         registry.executors[&implementation(6)]
@@ -2125,14 +2808,19 @@ fn run_applies_an_eligible_transition_to_later_scheduled_work() {
         .observed_knobs
         .lock()
         .expect("recorded knobs");
-    assert_eq!(observed.len(), 3);
-    assert_eq!(observed[0], ExecutionKnobs::serial());
-    assert_eq!(observed[1], ExecutionKnobs::serial());
-    assert_eq!(observed[2].batch_size, 2);
+    assert_eq!(observed.len(), 8);
+    assert!(
+        observed[..4]
+            .iter()
+            .all(|knobs| knobs == &ExecutionKnobs::serial())
+    );
+    let mut adapted = ExecutionKnobs::serial();
+    adapted.batch_size = 2;
+    assert!(observed[4..].iter().all(|knobs| knobs == &adapted));
 }
 
 #[test]
-fn run_cancellation_drains_the_outstanding_fence_and_releases_authority_capacity() {
+fn run_cancellation_at_the_pre_read_cut_releases_authority_capacity() {
     let problem = compile(request(1)).expect("logical compilation");
     let execution_plan = plan(
         &problem,
@@ -2145,7 +2833,19 @@ fn run_cancellation_drains_the_outstanding_fence_and_releases_authority_capacity
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let registry = test_registry(3, 6, None);
+    let publication_launched = Arc::new(AtomicBool::new(false));
+    let visible_generation = Arc::new(AtomicUsize::new(0));
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(
+            implementation(6),
+            publication_recording_executor(
+                6,
+                publication_launched,
+                Arc::clone(&visible_generation),
+            ),
+        )]),
+    };
     let mut cancelling = CancelAfterLaunch::default();
 
     let cancelled = run(
@@ -2160,6 +2860,11 @@ fn run_cancellation_drains_the_outstanding_fence_and_releases_authority_capacity
 
     assert_eq!(cancelled, ExecutionOutcome::Cancelled);
     assert_eq!(
+        visible_generation.load(Ordering::SeqCst),
+        0,
+        "pre-read cancellation must retain the old visible generation"
+    );
+    assert_eq!(
         registry.executors[&implementation(6)]
             .calls
             .load(Ordering::SeqCst),
@@ -2169,7 +2874,8 @@ fn run_cancellation_drains_the_outstanding_fence_and_releases_authority_capacity
         registry.executors[&implementation(6)]
             .fence_waits
             .load(Ordering::SeqCst),
-        1
+        0,
+        "cancellation after consistency checking must prevent the observation read from launching"
     );
     let mut completion = RunToCompletion;
     assert_eq!(
@@ -2184,17 +2890,399 @@ fn run_cancellation_drains_the_outstanding_fence_and_releases_authority_capacity
         .expect("released authority admits the same plan again"),
         ExecutionOutcome::Succeeded
     );
+    assert_eq!(visible_generation.load(Ordering::SeqCst), 1);
     assert_eq!(
         registry.executors[&implementation(6)]
             .calls
             .load(Ordering::SeqCst),
-        3
+        8
     );
     assert_eq!(
         registry.executors[&implementation(6)]
             .fence_waits
             .load(Ordering::SeqCst),
-        2
+        4
+    );
+}
+
+#[test]
+fn cancellation_cannot_report_cancelled_after_atomic_publication_is_irrevocable() {
+    for after_fence in [false, true] {
+        let problem = compile(request(1)).expect("logical compilation");
+        let execution_plan = plan(
+            &problem,
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+            |_, _| Ok::<_, ()>(physical_work(6)),
+        )
+        .expect("physical planning");
+        let current = RunBindings::new(
+            problem.inputs().clone(),
+            &ResourcePolicy::Balanced,
+            cost_model(4),
+        );
+        let publication_launched = Arc::new(AtomicBool::new(false));
+        let visible_generation = Arc::new(AtomicUsize::new(0));
+        let registry = TestRegistry {
+            id: registry(3),
+            executors: BTreeMap::from([(
+                implementation(6),
+                publication_recording_executor(
+                    6,
+                    Arc::clone(&publication_launched),
+                    Arc::clone(&visible_generation),
+                ),
+            )]),
+        };
+        let mut controller = CancelAtPublicationState {
+            publication_launched,
+            visible_generation: Arc::clone(&visible_generation),
+            after_fence,
+            requested: false,
+        };
+        let _guard = run_lock().lock().expect("runtime test lock");
+
+        let outcome = run(
+            &problem,
+            &execution_plan,
+            &current,
+            &registry,
+            authority(),
+            &mut controller,
+        )
+        .expect("late cancellation must settle the committed transaction");
+
+        assert!(
+            !controller.requested,
+            "controller polling must stop once atomic publication launches"
+        );
+        assert_eq!(visible_generation.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            outcome,
+            ExecutionOutcome::Succeeded,
+            "a cancellation request cannot report Cancelled once publication {}",
+            if after_fence {
+                "has completed"
+            } else {
+                "has launched"
+            }
+        );
+    }
+}
+
+#[test]
+fn controller_cannot_adapt_after_atomic_publication_is_irrevocable() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical_work(6)),
+    )
+    .expect("physical planning");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let publication_launched = Arc::new(AtomicBool::new(false));
+    let visible_generation = Arc::new(AtomicUsize::new(0));
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(
+            implementation(6),
+            publication_recording_executor(
+                6,
+                Arc::clone(&publication_launched),
+                Arc::clone(&visible_generation),
+            ),
+        )]),
+    };
+    let mut controller = AdaptAtPublicationLaunch {
+        publication_launched,
+        requested: false,
+    };
+    let _guard = run_lock().lock().expect("runtime test lock");
+
+    let outcome = run(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+    )
+    .expect("publication launch must close the controller seam");
+
+    assert_eq!(outcome, ExecutionOutcome::Succeeded);
+    assert_eq!(visible_generation.load(Ordering::SeqCst), 1);
+    assert!(
+        !controller.requested,
+        "the controller cannot adapt after atomic publication launches"
+    );
+}
+
+#[test]
+fn publication_visibility_is_final_after_fence_and_scheduler_settlement() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical_work(6)),
+    )
+    .expect("physical planning");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let publication_launched = Arc::new(AtomicBool::new(false));
+    let visible_generation = Arc::new(AtomicUsize::new(0));
+    let visible_during_settlement = Arc::new(AtomicBool::new(false));
+    let mut executor =
+        publication_recording_executor(6, publication_launched, Arc::clone(&visible_generation));
+    executor.visibility_during_fence_settlement = Some(Arc::clone(&visible_during_settlement));
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let mut controller = RunToCompletion;
+    let _guard = run_lock().lock().expect("runtime test lock");
+
+    let outcome = run(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+    )
+    .expect("atomic publication executes after settlement");
+
+    assert_eq!(outcome, ExecutionOutcome::Succeeded);
+    assert_eq!(visible_generation.load(Ordering::SeqCst), 1);
+    assert!(
+        !visible_during_settlement.load(Ordering::SeqCst),
+        "the new generation cannot become visible during fallible fence settlement"
+    );
+}
+
+#[test]
+fn earlier_acquired_publication_buffer_is_held_through_publish_and_then_released() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical_work_with_early_publication_buffer(6)),
+    )
+    .expect("earlier-acquired publication buffer is valid physical work");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let held_during_publish = Arc::new(AtomicBool::new(false));
+    let mut executor = recording_executor(6, None, None);
+    executor.publication_buffer_held = Some(Arc::clone(&held_during_publish));
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let _guard = run_lock().lock().expect("runtime test lock");
+
+    for attempt in 1..=2 {
+        held_during_publish.store(false, Ordering::SeqCst);
+        let mut controller = RunToCompletion;
+        let outcome = run(
+            &problem,
+            &execution_plan,
+            &current,
+            &registry,
+            authority(),
+            &mut controller,
+        )
+        .unwrap_or_else(|error| panic!("publication attempt {attempt} failed: {error}"));
+
+        assert_eq!(outcome, ExecutionOutcome::Succeeded);
+        assert!(
+            held_during_publish.load(Ordering::SeqCst),
+            "the earlier-acquired Publication buffer, slot, permit, and lease must remain held through publish"
+        );
+    }
+}
+
+#[test]
+fn transaction_failures_leave_the_old_generation_visible() {
+    for (label, failure_node, fence_failure_event, publication_failure) in [
+        ("input mutation", Some("transaction-check"), None, None),
+        (
+            "numerical reconciliation",
+            Some("transaction-reconciliation"),
+            None,
+            None,
+        ),
+        ("product output", Some("transaction-stage-psf"), None, None),
+        (
+            "atomic commit publication fence",
+            None,
+            Some(("transaction-commit", FenceKind::Publication)),
+            None,
+        ),
+        (
+            "atomic commit I/O fence",
+            None,
+            Some(("transaction-commit", FenceKind::Io)),
+            None,
+        ),
+        (
+            "atomic publication",
+            None,
+            None,
+            Some("publication failure"),
+        ),
+    ] {
+        let problem = compile(request(1)).expect("logical compilation");
+        let execution_plan = plan(
+            &problem,
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+            |_, _| Ok::<_, ()>(physical_work(6)),
+        )
+        .expect("physical planning");
+        let current = RunBindings::new(
+            problem.inputs().clone(),
+            &ResourcePolicy::Balanced,
+            cost_model(4),
+        );
+        let visible_generation = Arc::new(AtomicUsize::new(0));
+        let registry = TestRegistry {
+            id: registry(3),
+            executors: BTreeMap::from([(
+                implementation(6),
+                failing_transaction_executor(
+                    6,
+                    Arc::clone(&visible_generation),
+                    failure_node,
+                    fence_failure_event,
+                    publication_failure,
+                ),
+            )]),
+        };
+        let mut completion = RunToCompletion;
+        let _guard = run_lock().lock().expect("runtime test lock");
+
+        run(
+            &problem,
+            &execution_plan,
+            &current,
+            &registry,
+            authority(),
+            &mut completion,
+        )
+        .expect_err(label);
+
+        assert_eq!(
+            visible_generation.load(Ordering::SeqCst),
+            0,
+            "{label} cannot expose staged output"
+        );
+    }
+
+    let problem = compile(request_with_model_write(1)).expect("logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical_work_with_model_staging(6)),
+    )
+    .expect("model-write physical planning");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let visible_generation = Arc::new(AtomicUsize::new(0));
+    let model_registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(
+            implementation(6),
+            failing_transaction_executor(
+                6,
+                Arc::clone(&visible_generation),
+                None,
+                Some(("transaction-stage-model", FenceKind::Writeback)),
+                None,
+            ),
+        )]),
+    };
+    let mut completion = RunToCompletion;
+    let _guard = run_lock().lock().expect("runtime test lock");
+
+    run(
+        &problem,
+        &execution_plan,
+        &current,
+        &model_registry,
+        authority(),
+        &mut completion,
+    )
+    .expect_err("model-column writeback failure");
+
+    assert_eq!(
+        visible_generation.load(Ordering::SeqCst),
+        0,
+        "model-column writeback failure cannot expose staged output"
+    );
+
+    let problem = compile(request(1)).expect("logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical_work(6)),
+    )
+    .expect("physical planning");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let visible_generation = Arc::new(AtomicUsize::new(0));
+    let admission_registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(
+            implementation(6),
+            failing_transaction_executor(6, Arc::clone(&visible_generation), None, None, None),
+        )]),
+    };
+    let mut completion = RunToCompletion;
+    authority()
+        .update_external_pressure(runtime_inventory(0).pressure)
+        .expect("install zero-lock external pressure");
+
+    let result = run(
+        &problem,
+        &execution_plan,
+        &current,
+        &admission_registry,
+        authority(),
+        &mut completion,
+    );
+    authority()
+        .update_external_pressure(runtime_inventory(4).pressure)
+        .expect("restore external pressure");
+    let error = result.expect_err("resource admission must fail before transaction work");
+
+    assert!(matches!(
+        error,
+        RunError::Scheduler(ExecutionError::Resource(ResourceError::Infeasible {
+            ref resource,
+            required: 1,
+            available: 0,
+        })) if resource == "locks"
+    ));
+    assert_eq!(visible_generation.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        admission_registry.executors[&implementation(6)]
+            .calls
+            .load(Ordering::SeqCst),
+        0,
+        "failed admission cannot launch mutation or publication work"
     );
 }
 
@@ -2271,8 +3359,8 @@ fn release_failures_drain_independent_fences_and_quarantine_only_failed_slots() 
             executor_registry.executors[&implementation(6)]
                 .fence_waits
                 .load(Ordering::SeqCst),
-            1,
-            "every independent launched fence must drain after a Release failure"
+            2,
+            "the transaction-read and independent I/O fences must drain after a Release failure"
         );
 
         let readmission_plan = plan(
