@@ -6,21 +6,20 @@ use casa_imaging_model::{
     FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
     ImageShape, ImagingRequest, InstrumentResponse, ItrfPosition, LogicalIdentity,
     MeasurementEquationContract, MissingPointingPolicy, ModelStateIdentity, NumericPrecision,
-    NumericalStage, NumericsContract, ObservationPointingLaw, ObservationSnapshotId,
-    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
-    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
-    PolarizationCoordinate, ProblemInputIdentities, ProblemSpecification, ProductKind,
-    ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    NumericalStage, NumericsContract, ObservationPointingLaw, PhaseCentreLaw, PointingCentreLaw,
+    PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
+    ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements, Projection,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
+    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
     SpectralSampling, SpectralWcs, StageErrorBudget, TimeScale, UvwAxes, UvwCoordinateLaw, UvwUnit,
     VisibilityPhaseConvention, WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
 
-fn identity(byte: u8) -> LogicalIdentity {
-    LogicalIdentity::from_sha256([byte; 32])
-}
+mod common;
+
+use common::{identity, problem_inputs};
 
 fn observation_pointing() -> ObservationPointingLaw {
     ObservationPointingLaw::new(
@@ -123,11 +122,7 @@ fn request(
             numerics,
         ),
         geometry,
-        ProblemInputIdentities::new(
-            ObservationSnapshotId::new(identity(1)),
-            references,
-            ModelStateIdentity::Empty,
-        ),
+        problem_inputs(1, references, ModelStateIdentity::Empty),
     )
 }
 

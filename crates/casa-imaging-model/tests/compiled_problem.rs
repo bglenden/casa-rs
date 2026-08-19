@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, CompileProblemError, DelayCentreLaw, DirectionCoordinateSpec,
-    DirectionFrame, DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FrequencyFrame,
-    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest,
-    InstrumentResponse, ItrfPosition, LogicalIdentity, MeasurementEquationContract,
+    AxisOrder, CentreLaws, CompileObservationError, CompileProblemError, DelayCentreLaw,
+    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
+    FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
+    ImageShape, ImagingRequest, InstrumentResponse, ItrfPosition, MeasurementEquationContract,
     MissingPointingPolicy, ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract,
-    ObservationPointingLaw, ObservationSnapshotId, PhaseCentreLaw, PointingCentreLaw,
+    ObservationPointingLaw, ObservationSnapshotInput, PhaseCentreLaw, PointingCentreLaw,
     PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
     PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
     ProblemInputIdentities, ProblemSpecification, ProductKind, ProductNormalization,
@@ -15,8 +15,12 @@ use casa_imaging_model::{
     RequiredCapability, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
     SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
     SpectralSampling, SpectralWcs, StageErrorBudget, TimeScale, UvTaper, UvwCoordinateLaw,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
+
+mod common;
+
+use common::{identity, observation_source, problem_inputs};
 
 fn compile_request(
     specification: ProblemSpecification,
@@ -31,10 +35,6 @@ fn compile_with_geometry(
     inputs: ProblemInputIdentities,
 ) -> Result<casa_imaging_model::CompiledProblem, CompileProblemError> {
     compile(ImagingRequest::new(specification, geometry, inputs))
-}
-
-fn identity(byte: u8) -> LogicalIdentity {
-    LogicalIdentity::from_sha256([byte; 32])
 }
 
 fn numerics(reverse: bool) -> NumericsContract {
@@ -171,16 +171,12 @@ fn inputs(reverse: bool) -> ProblemInputIdentities {
     if reverse {
         references.reverse();
     }
-    ProblemInputIdentities::new(
-        ObservationSnapshotId::new(identity(1)),
-        references,
-        ModelStateIdentity::Seed(identity(5)),
-    )
+    problem_inputs(1, references, ModelStateIdentity::Seed(identity(5)))
 }
 
 fn inputs_with_instrument() -> ProblemInputIdentities {
-    ProblemInputIdentities::new(
-        ObservationSnapshotId::new(identity(1)),
+    problem_inputs(
+        1,
         vec![
             (ReferenceDataKind::Measures, identity(3)),
             (ReferenceDataKind::Ephemeris, identity(4)),
@@ -474,20 +470,18 @@ fn derived_products_require_their_scientific_sources() {
 
 #[test]
 fn duplicate_reference_families_are_rejected_instead_of_ordered_accidentally() {
-    let inputs = ProblemInputIdentities::new(
-        ObservationSnapshotId::new(identity(1)),
-        vec![
-            (ReferenceDataKind::Measures, identity(3)),
-            (ReferenceDataKind::Measures, identity(4)),
-        ],
-        ModelStateIdentity::Empty,
-    );
-
     assert_eq!(
-        compile_request(specification(false), inputs),
-        Err(CompileProblemError::DuplicateReferenceData(
-            ReferenceDataKind::Measures
-        ))
+        compile_observation(ObservationSnapshotInput::new(
+            vec![observation_source(1)],
+            vec![
+                (ReferenceDataKind::Measures, identity(3)),
+                (ReferenceDataKind::Measures, identity(4)),
+            ],
+            ModelStateIdentity::Empty,
+        )),
+        Err(CompileObservationError::DuplicateReferenceData {
+            kind: ReferenceDataKind::Measures,
+        })
     );
 }
 
@@ -511,7 +505,7 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
 
     assert_eq!(negative_zero.problem_id(), positive_zero.problem_id());
     assert_ne!(positive_zero.problem_id(), changed.problem_id());
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 3);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 4);
 }
 
 #[test]
@@ -822,12 +816,12 @@ fn invalid_polarization_is_a_reconstruction_contract_error() {
 }
 
 #[test]
-fn compiled_problem_identity_has_a_pinned_schema_three_digest() {
+fn compiled_problem_identity_has_a_pinned_schema_four_digest() {
     let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 3);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 4);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "59bce25914ae4167dc46849604e3872d68a3276a680c15fbca61cc6f0c0557b2"
+        "59e3c01064b31c49207e1eca09bd76dc4683d66eabc42ed31e18789a350db4e3"
     );
 }

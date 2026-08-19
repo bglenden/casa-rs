@@ -6,16 +6,21 @@ use casa_imaging_model::{
     AxisOrder, CentreLaws, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
     DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis,
     ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest, InstrumentResponse,
-    LogicalIdentity, MeasurementEquationContract, ModelStateIdentity, NumericPrecision,
-    NumericalStage, NumericsContract, ObservationSnapshotId, PhaseCentreLaw, PointingCentreLaw,
-    PolarizationContract, PolarizationCoordinate, ProblemInputIdentities, ProblemSpecification,
-    ProductKind, ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
+    MeasurementEquationContract, ModelStateIdentity, NumericPrecision, NumericalStage,
+    NumericsContract, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
+    PolarizationCoordinate, ProblemSpecification, ProductKind, ProductNormalization,
+    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
+    ReconstructionContract, ReconstructionControls, ReductionPolicy, RestFrequency,
+    RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
     SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
     StageErrorBudget, UvwCoordinateLaw, WeightDensityScope, WeightingContract, WeightingScheme,
     compile,
 };
+
+#[path = "../../tests/common/mod.rs"]
+mod common;
+
+use common::problem_inputs;
 
 use super::*;
 use crate::{
@@ -28,10 +33,6 @@ use crate::{
     RateUnit, ResourceAuthority, ResourceHeadroom, ResourcePolicy, ResourceTopology,
     RuntimeOverheadDemand, ScalingMetadata, plan,
 };
-
-fn identity(byte: u8) -> LogicalIdentity {
-    LogicalIdentity::from_sha256([byte; 32])
-}
 
 fn compiled_problem() -> casa_imaging_model::CompiledProblem {
     let direction = DirectionCoordinateSpec::new(
@@ -102,11 +103,7 @@ fn compiled_problem() -> casa_imaging_model::CompiledProblem {
                 .collect(),
         ),
     );
-    let inputs = ProblemInputIdentities::new(
-        ObservationSnapshotId::new(identity(1)),
-        Vec::new(),
-        ModelStateIdentity::Empty,
-    );
+    let inputs = problem_inputs(1, Vec::new(), ModelStateIdentity::Empty);
     compile(ImagingRequest::new(specification, geometry, inputs))
         .expect("valid scheduler test problem")
 }
