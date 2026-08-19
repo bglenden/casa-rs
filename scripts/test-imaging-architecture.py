@@ -154,6 +154,84 @@ class ArchitecturePolicyTests(unittest.TestCase):
         ):
             checker.validate_policy(policy)
 
+    def test_whole_run_router_owner_is_pinned(self) -> None:
+        policy = copy.deepcopy(self.policy)
+        policy["whole_run_router"]["package"] = "casa-imaging-runtime"
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"whole-run migration router differs from the accepted owner",
+        ):
+            checker.validate_policy(policy)
+
+    def test_whole_run_engine_ports_have_one_source_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / self.policy["whole_run_router"]["source"]
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                'const MATRIX: &str = include_str!("migration-matrix.json");\n'
+                "pub struct ImagingRouter;\n"
+                "impl ImagingRouter {\n"
+                "    pub fn dispatch(&self) {}\n"
+                "}\n"
+                "pub struct NativeEnginePort;\n"
+                "pub struct LegacyWholeRunEnginePort;\n",
+                encoding="utf-8",
+            )
+            checker.validate_whole_run_router_source(self.policy, root)
+
+            duplicate = root / "crates/duplicate/src/lib.rs"
+            duplicate.parent.mkdir(parents=True)
+            duplicate.write_text("pub struct NativeEnginePort;\n", encoding="utf-8")
+            with self.assertRaisesRegex(
+                checker.ArchitectureError,
+                r"whole-run router symbol NativeEnginePort must be owned exactly once",
+            ):
+                checker.validate_whole_run_router_source(self.policy, root)
+
+    def test_whole_run_router_must_embed_the_authoritative_matrix(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / self.policy["whole_run_router"]["source"]
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                "pub struct ImagingRouter;\n"
+                "impl ImagingRouter {\n"
+                "    pub fn dispatch(&self) {}\n"
+                "}\n"
+                "pub struct NativeEnginePort;\n"
+                "pub struct LegacyWholeRunEnginePort;\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                checker.ArchitectureError,
+                r"must embed the authoritative migration matrix",
+            ):
+                checker.validate_whole_run_router_source(self.policy, root)
+
+    def test_native_runtime_and_router_reject_legacy_imports(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "crates/casa-imaging-runtime/src"
+            router = root / "crates/casa-imaging-router/src"
+            runtime.mkdir(parents=True)
+            router.mkdir(parents=True)
+            (runtime / "lib.rs").write_text("", encoding="utf-8")
+            (router / "lib.rs").write_text(
+                "use casa_imaging::LegacyBackend;\n", encoding="utf-8"
+            )
+            boundary = next(
+                value
+                for value in self.policy["source_boundaries"]
+                if value["id"] == "native-runtime-router-legacy-isolation"
+            )
+            policy = {"source_boundaries": [boundary]}
+            with self.assertRaisesRegex(
+                checker.ArchitectureError,
+                r"native runtime or whole-run router imports a legacy imaging API",
+            ):
+                checker.validate_source_boundaries(policy, root)
+
     def test_workspace_check_rejects_frontend_backend_edge(self) -> None:
         policy = copy.deepcopy(self.policy)
         policy["package_layers"]["synthetic-frontend"] = "frontend"

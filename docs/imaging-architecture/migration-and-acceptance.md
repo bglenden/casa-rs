@@ -1,7 +1,7 @@
 # Imaging migration and acceptance matrix
 
 Truth class: normative
-Last reality check: 2026-08-18
+Last reality check: 2026-08-19
 Verification: `just arch-check`
 
 The authoritative machine-readable inventory is
@@ -39,8 +39,19 @@ therefore requires an explicit matrix revision and accepted digest update.
 
 `LegacyWholeRun` is an ownership classification, not a compatibility promise.
 It permits the current production implementation to remain reachable only
-through the future whole-run migration router. It never permits a native stage
-to call into legacy code or a failed native run to retry through legacy.
+through `casa-imaging-router` once a frontend is migrated to the router. It
+never permits a native stage to call into legacy code or a failed native run to
+retry through legacy.
+
+`casa-imaging-router` compiles each `ImagingRequest`, derives the required rows
+from the resulting immutable `CompiledProblem`, and records the matrix schema,
+contract revision, disposition, and complete evidence for each row. It then
+invokes exactly one sealed whole-run engine port. Enum-to-row bindings come
+directly from the matrix inventories already checked against their Rust enums;
+the router does not maintain a second binding table. `TemporarilyUnavailable`
+invokes neither port, and compile, matrix, native compile/plan/run, or selected
+legacy failures are terminal. Production code has no differential or
+stage-mixing entry point; test-only fake ports exercise both owners separately.
 
 ## Acceptance contracts
 
@@ -73,13 +84,16 @@ current owner. After transfer, they land only in the native owner.
 The architecture checker validates schema, the independently pinned logical
 graph, canonical inventories, complete Acceptance Contracts, complete binding
 row ledger, structured issue outcomes, content-pinned evidence locators,
-Migration Obligations, and source evidence. It binds the seventeen variant maps to their Rust
-enums, classifies every Cargo workspace package, requires native dependency
-sets to match exactly, scans native science and Rust/Swift frontend roots for
-forbidden backend/device imports, ratchets the existing legacy Rust-frontend
-violations while rejecting additions, and permits only the 16 exact frozen
-legacy edges plus three exact pre-existing transitional surface edges. Its mutation
-tests prove coordinated inventory and issue deletion, row reclassification,
+Migration Obligations, and source evidence. It binds the seventeen variant maps
+to their Rust enums, classifies every Cargo workspace package, requires native
+dependency sets to match exactly, pins `casa-imaging-router` as the sole owner
+of `ImagingRouter` and both whole-run engine ports, requires its direct matrix
+embedding, scans native science/runtime/router and Rust/Swift frontend roots for
+forbidden legacy/backend/device imports, ratchets the existing legacy
+Rust-frontend violations while rejecting additions, and permits only the 16
+exact frozen legacy edges plus three exact pre-existing transitional surface
+edges. Its mutation tests prove coordinated inventory and issue deletion, row
+reclassification, router relocation or duplication, matrix detachment,
 contract or graph weakening, unmapped packages, and forbidden logical,
 package, module, and Swift edges fail closed.
 

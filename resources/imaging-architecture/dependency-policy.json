@@ -50,6 +50,7 @@
     "casa-provider-contracts": "application",
     "casa-ms": "observation",
     "casa-imaging-model": "science",
+    "casa-imaging-router": "application",
     "casa-imaging-runtime": "execution",
     "casa-imaging": "legacy",
     "casars": "frontend",
@@ -64,6 +65,7 @@
     "casa-images": "support",
     "casa-imaging": "legacy",
     "casa-imaging-model": "native",
+    "casa-imaging-router": "native",
     "casa-imaging-runtime": "native",
     "casa-lattices": "support",
     "casa-logging": "support",
@@ -88,8 +90,21 @@
   },
   "native_package_workspace_dependencies": {
     "casa-imaging-model": [],
+    "casa-imaging-router": [
+      "casa-imaging-model"
+    ],
     "casa-imaging-runtime": [
       "casa-imaging-model"
+    ]
+  },
+  "whole_run_router": {
+    "package": "casa-imaging-router",
+    "source": "crates/casa-imaging-router/src/lib.rs",
+    "router_type": "ImagingRouter",
+    "dispatch_method": "dispatch",
+    "engine_ports": [
+      "NativeEnginePort",
+      "LegacyWholeRunEnginePort"
     ]
   },
   "device_dependency_prefixes": [
@@ -123,6 +138,23 @@
         {
           "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:casa_imaging_runtime|casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)\\b|\\b(?:casa_imaging_runtime|casa_imaging|casars_imager|ash|cuda|cudarc|metal|objc2_metal|opencl|vulkano|wgpu)::",
           "message": "native science Rust source imports an execution, backend, legacy, or device API"
+        }
+      ],
+      "accepted_violation_digest": null
+    },
+    {
+      "id": "native-runtime-router-legacy-isolation",
+      "roots": [
+        "crates/casa-imaging-runtime/src",
+        "crates/casa-imaging-router/src"
+      ],
+      "extensions": [
+        ".rs"
+      ],
+      "forbidden_patterns": [
+        {
+          "regex": "(?m)^\\s*(?:pub\\s+)?(?:use|extern\\s+crate)\\s+(?:casa_imaging|casars_imager)\\b|\\b(?:casa_imaging|casars_imager)::",
+          "message": "native runtime or whole-run router imports a legacy imaging API"
         }
       ],
       "accepted_violation_digest": null
