@@ -486,7 +486,12 @@ impl RuntimeOverheadDemand {
     }
 }
 
-/// Every bounded I/O buffer category attributable to one run.
+/// Concurrent active logical-byte ceilings for typed I/O-buffer purposes.
+///
+/// These values bound typed activity permits but do not reserve physical
+/// memory. The execution DAG assigns every such logical buffer to a
+/// MemoryDemand-backed PhysicalSlot, which is the sole byte-capacity charge
+/// and may be reused across disjoint compatible lifetimes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct IoBufferDemand {
     /// Source read-ahead buffers.
@@ -540,26 +545,25 @@ impl IoBufferDemand {
         }
     }
 
-    fn checked_total(self) -> Result<u64, ResourceError> {
-        checked_sum(
-            [
-                self.source_read_ahead_bytes,
-                self.decode_bytes,
-                self.preparation_bytes,
-                self.host_to_device_transfer_bytes,
-                self.device_to_host_transfer_bytes,
-                self.spill_read_bytes,
-                self.spill_write_bytes,
-                self.serialization_bytes,
-                self.storage_manager_bytes,
-                self.tiled_column_writer_bytes,
-                self.scalar_column_writer_bytes,
-                self.writeback_bytes,
-                self.publication_bytes,
-                self.mapped_page_cache_bytes,
-            ],
-            "I/O buffers",
-        )
+    /// Returns the concurrent logical-byte ceiling for one typed purpose.
+    #[must_use]
+    pub const fn bytes(self, kind: IoBufferKind) -> u64 {
+        match kind {
+            IoBufferKind::SourceReadAhead => self.source_read_ahead_bytes,
+            IoBufferKind::Decode => self.decode_bytes,
+            IoBufferKind::Preparation => self.preparation_bytes,
+            IoBufferKind::HostToDeviceTransfer => self.host_to_device_transfer_bytes,
+            IoBufferKind::DeviceToHostTransfer => self.device_to_host_transfer_bytes,
+            IoBufferKind::SpillRead => self.spill_read_bytes,
+            IoBufferKind::SpillWrite => self.spill_write_bytes,
+            IoBufferKind::Serialization => self.serialization_bytes,
+            IoBufferKind::StorageManager => self.storage_manager_bytes,
+            IoBufferKind::TiledColumnWriter => self.tiled_column_writer_bytes,
+            IoBufferKind::ScalarColumnWriter => self.scalar_column_writer_bytes,
+            IoBufferKind::Writeback => self.writeback_bytes,
+            IoBufferKind::Publication => self.publication_bytes,
+            IoBufferKind::MappedPageCache => self.mapped_page_cache_bytes,
+        }
     }
 }
 
@@ -720,6 +724,14 @@ pub struct ScalingMetadata {
     pub minimum_workers: u64,
     /// Largest supported worker count.
     pub maximum_workers: u64,
+    /// Largest plan-sealed batch size covered by the hard demand envelope.
+    pub maximum_batch_size: u64,
+    /// Largest plan-sealed tile width covered by the hard demand envelope.
+    pub maximum_tile_width: u64,
+    /// Largest plan-sealed tile height covered by the hard demand envelope.
+    pub maximum_tile_height: u64,
+    /// Largest plan-sealed slab depth covered by the hard demand envelope.
+    pub maximum_slab_depth: u64,
     /// Additional resident bytes per worker by physical memory domain.
     pub memory_bytes_per_worker: BTreeMap<CapacityDomainId, u64>,
 }
@@ -729,6 +741,8 @@ pub struct ScalingMetadata {
 pub enum QuiescencePoint {
     /// Entire run boundary.
     RunBoundary,
+    /// Boundary between declared processing stages.
+    Stage,
     /// Major-cycle boundary.
     MajorCycle,
     /// Tile-batch boundary.
@@ -805,7 +819,7 @@ pub enum RuntimeOverheadKind {
     CommandBuffer,
 }
 
-/// Named I/O-buffer category owned by a lease.
+/// Named logical I/O-buffer purpose owned by a lease.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IoBufferKind {
     /// Source read-ahead buffers.
@@ -836,6 +850,26 @@ pub enum IoBufferKind {
     Publication,
     /// Mapped-file and page-cache exposure.
     MappedPageCache,
+}
+
+impl IoBufferKind {
+    /// Every typed I/O-buffer purpose in canonical identity order.
+    pub const ALL: [Self; 14] = [
+        Self::SourceReadAhead,
+        Self::Decode,
+        Self::Preparation,
+        Self::HostToDeviceTransfer,
+        Self::DeviceToHostTransfer,
+        Self::SpillRead,
+        Self::SpillWrite,
+        Self::Serialization,
+        Self::StorageManager,
+        Self::TiledColumnWriter,
+        Self::ScalarColumnWriter,
+        Self::Writeback,
+        Self::Publication,
+        Self::MappedPageCache,
+    ];
 }
 
 /// Named storage-capacity category owned by a lease.
@@ -1159,6 +1193,7 @@ struct ResourceTotals {
 struct LeaseRecord {
     reserved: ResourceGrant,
     policy: ResourcePolicy,
+    quarantined: bool,
     limits: BTreeMap<LeaseResource, u64>,
     consumed: BTreeMap<LeaseResource, u64>,
     outstanding_fences: u64,
@@ -1251,7 +1286,7 @@ impl ResourceAuthority {
         Ok(state.pressure_epoch)
     }
 
-    fn with_inventory(inventory: HostInventory) -> Result<Self, ResourceError> {
+    pub(crate) fn with_inventory(inventory: HostInventory) -> Result<Self, ResourceError> {
         validate_inventory(&inventory)?;
         Ok(Self {
             inner: Arc::new(AuthorityInner {
@@ -1268,7 +1303,7 @@ impl ResourceAuthority {
     }
 
     /// Atomically selects, admits, and reserves one complete demand alternative.
-    pub fn acquire(
+    pub(crate) fn acquire(
         &self,
         policy: ResourcePolicy,
         alternatives: DemandAlternatives,
@@ -1353,6 +1388,7 @@ impl ResourceAuthority {
             LeaseRecord {
                 reserved,
                 policy,
+                quarantined: false,
                 limits: limits.clone(),
                 consumed: BTreeMap::new(),
                 outstanding_fences: 0,
@@ -1641,6 +1677,112 @@ impl ResourceLease {
         let released = request_release(&self.inner, self.lease_id)?;
         Ok(LeaseRelease { released })
     }
+
+    /// Retains only physical-memory permits whose external release could not
+    /// be proven, while releasing every other reservation owned by this run.
+    pub(crate) fn quarantine_memory_permits(
+        mut self,
+        mut permits: Vec<ResourcePermit>,
+    ) -> Result<(), ResourceError> {
+        let result = (|| {
+            if permits.is_empty() {
+                return Err(ResourceError::Invalid(
+                    "memory quarantine requires at least one retained permit".to_string(),
+                ));
+            }
+            let mut retained_consumption = BTreeMap::<LeaseResource, u64>::new();
+            let mut retained_reservation = ResourceGrant::default();
+            for permit in &permits {
+                if permit.released
+                    || permit.lease_id != self.lease_id
+                    || !Arc::ptr_eq(&permit.inner, &self.inner)
+                {
+                    return Err(ResourceError::Invalid(
+                        "memory quarantine received a permit from another or released lease"
+                            .to_string(),
+                    ));
+                }
+                let LeaseResource::Memory { allocation_id } = &permit.resource else {
+                    return Err(ResourceError::Invalid(
+                        "only physical memory permits may be quarantined".to_string(),
+                    ));
+                };
+                let memory = self
+                    .alternative
+                    .demand
+                    .memory
+                    .iter()
+                    .find(|memory| &memory.allocation_id == allocation_id)
+                    .ok_or_else(|| {
+                        ResourceError::Invalid(format!(
+                            "quarantined allocation {allocation_id} is absent from lease demand"
+                        ))
+                    })?;
+                if permit.amount > memory.hard_bytes {
+                    return Err(ResourceError::Invalid(format!(
+                        "quarantined allocation {allocation_id} exceeds its hard memory demand"
+                    )));
+                }
+                let domains = memory
+                    .views
+                    .iter()
+                    .map(|view_id| {
+                        self.inner
+                            .topology
+                            .memory_views
+                            .iter()
+                            .find(|view| &view.id == view_id)
+                            .map(|view| view.domain.clone())
+                            .ok_or_else(|| {
+                                ResourceError::Invalid(format!(
+                                    "quarantined allocation {allocation_id} references unknown memory view {}",
+                                    view_id.as_str()
+                                ))
+                            })
+                    })
+                    .collect::<Result<BTreeSet<_>, _>>()?;
+                for domain in domains {
+                    add_map_bytes(
+                        &mut retained_reservation.memory_bytes,
+                        domain,
+                        permit.amount,
+                        "quarantined memory",
+                    )?;
+                }
+                let amount = retained_consumption
+                    .entry(permit.resource.clone())
+                    .or_default();
+                *amount = amount
+                    .checked_add(permit.amount)
+                    .ok_or(ResourceError::Overflow("quarantined memory consumption"))?;
+            }
+            let mut state = self
+                .inner
+                .state
+                .lock()
+                .map_err(|_| ResourceError::AuthorityPoisoned)?;
+            let record = state.leases.get_mut(&self.lease_id).ok_or_else(|| {
+                ResourceError::Invalid("cannot quarantine an absent resource lease".to_string())
+            })?;
+            if record.consumed != retained_consumption {
+                return Err(ResourceError::Invalid(
+                    "memory quarantine requires every other resource permit to be released"
+                        .to_string(),
+                ));
+            }
+            record.reserved = retained_reservation;
+            record.release_requested = true;
+            record.quarantined = true;
+            Ok(())
+        })();
+        // Whether precise narrowing succeeded or not, dropping these handles
+        // must never make externally retained bytes available again.
+        self.release_requested = true;
+        for permit in &mut permits {
+            permit.released = true;
+        }
+        result
+    }
 }
 
 impl Drop for ResourceLease {
@@ -1794,6 +1936,10 @@ fn validate_alternative(
         || alternative.scaling.maximum_workers < alternative.scaling.minimum_workers
         || alternative.demand.workers.hard < alternative.scaling.minimum_workers
         || alternative.demand.workers.hard > alternative.scaling.maximum_workers
+        || alternative.scaling.maximum_batch_size == 0
+        || alternative.scaling.maximum_tile_width == 0
+        || alternative.scaling.maximum_tile_height == 0
+        || alternative.scaling.maximum_slab_depth == 0
     {
         return Err(ResourceError::Invalid(format!(
             "alternative {} has scaling metadata inconsistent with its worker ceiling",
@@ -2057,7 +2203,7 @@ fn apply_concurrent_policies(
     pressured: &ResourceGrant,
 ) -> PolicyAvailability {
     let mut available = apply_policy(topology, requested, pressured.clone());
-    for record in state.leases.values() {
+    for record in state.leases.values().filter(|record| !record.quarantined) {
         let active = apply_policy(topology, &record.policy, pressured.clone());
         intersect_grant(&mut available.hard, &active.hard);
         intersect_grant(&mut available.preferred, &active.preferred);
@@ -2071,7 +2217,7 @@ fn active_policy_capacity(
     pressured: &ResourceGrant,
 ) -> ResourceGrant {
     let mut available = pressured.clone();
-    for record in state.leases.values() {
+    for record in state.leases.values().filter(|record| !record.quarantined) {
         let active = apply_policy(topology, &record.policy, pressured.clone());
         intersect_grant(&mut available, &active.hard);
     }
@@ -2418,11 +2564,10 @@ impl DemandEnvelope {
                 )?;
             }
         }
-        let fixed_host_bytes = self
-            .overhead
-            .checked_total()?
-            .checked_add(self.io_buffers.checked_total()?)
-            .ok_or(ResourceError::Overflow("host-memory envelope"))?;
+        // I/O-buffer demands are concurrent logical-byte ceilings. Their
+        // physical bytes are admitted exactly once through MemoryDemand and
+        // may be reused by disjoint logical lifetimes in the execution DAG.
+        let fixed_host_bytes = self.overhead.checked_total()?;
         add_map_bytes(
             &mut hard_memory,
             (*host_domain).clone(),
@@ -2660,7 +2805,7 @@ impl DemandEnvelope {
 }
 
 impl DemandEnvelope {
-    fn lease_limits(&self) -> BTreeMap<LeaseResource, u64> {
+    pub(crate) fn lease_limits(&self) -> BTreeMap<LeaseResource, u64> {
         let mut limits = BTreeMap::new();
         for demand in &self.memory {
             limits.insert(
@@ -2697,47 +2842,8 @@ impl DemandEnvelope {
         ] {
             limits.insert(LeaseResource::RuntimeOverhead(kind), amount);
         }
-        for (kind, amount) in [
-            (
-                IoBufferKind::SourceReadAhead,
-                self.io_buffers.source_read_ahead_bytes,
-            ),
-            (IoBufferKind::Decode, self.io_buffers.decode_bytes),
-            (IoBufferKind::Preparation, self.io_buffers.preparation_bytes),
-            (
-                IoBufferKind::HostToDeviceTransfer,
-                self.io_buffers.host_to_device_transfer_bytes,
-            ),
-            (
-                IoBufferKind::DeviceToHostTransfer,
-                self.io_buffers.device_to_host_transfer_bytes,
-            ),
-            (IoBufferKind::SpillRead, self.io_buffers.spill_read_bytes),
-            (IoBufferKind::SpillWrite, self.io_buffers.spill_write_bytes),
-            (
-                IoBufferKind::Serialization,
-                self.io_buffers.serialization_bytes,
-            ),
-            (
-                IoBufferKind::StorageManager,
-                self.io_buffers.storage_manager_bytes,
-            ),
-            (
-                IoBufferKind::TiledColumnWriter,
-                self.io_buffers.tiled_column_writer_bytes,
-            ),
-            (
-                IoBufferKind::ScalarColumnWriter,
-                self.io_buffers.scalar_column_writer_bytes,
-            ),
-            (IoBufferKind::Writeback, self.io_buffers.writeback_bytes),
-            (IoBufferKind::Publication, self.io_buffers.publication_bytes),
-            (
-                IoBufferKind::MappedPageCache,
-                self.io_buffers.mapped_page_cache_bytes,
-            ),
-        ] {
-            limits.insert(LeaseResource::IoBuffer(kind), amount);
+        for kind in IoBufferKind::ALL {
+            limits.insert(LeaseResource::IoBuffer(kind), self.io_buffers.bytes(kind));
         }
         for demand in &self.storage {
             for (use_kind, amount) in [
