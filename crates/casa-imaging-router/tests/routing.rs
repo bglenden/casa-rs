@@ -6,19 +6,20 @@ use std::sync::{
 };
 
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
-    DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis,
-    ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest, InstrumentResponse,
-    LogicalIdentity, MeasurementEquationContract, MissingPointingPolicy, ModelStateIdentity,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw, PhaseCentreLaw,
-    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
-    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
-    ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements, Projection,
-    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
-    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
-    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, WeightDensityScope,
-    WeightingContract, WeightingScheme,
+    AxisOrder, CentreLaws, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
+    DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
+    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest,
+    InstrumentResponse, LogicalIdentity, MeasurementEquationContract, MissingPointingPolicy,
+    ModelInnerProduct, ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract,
+    ObservationPointingLaw, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
+    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
+    PolarizationContract, PolarizationCoordinate, ProblemSpecification, ProductKind,
+    ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
+    WeightDensityScope, WeightingContract, WeightingScheme,
 };
 use casa_imaging_router::{
     DispatchError, ImagingRouter, LegacyWholeRunEnginePort, NativeEnginePort, RequestDisposition,
@@ -196,7 +197,13 @@ fn request_with_phase_centre(
         ProblemSpecification::new(
             ScientificContract::new(
                 SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
-                MeasurementEquationContract::new(InstrumentResponse::Scalar),
+                MeasurementEquationContract::new(
+                    InstrumentResponse::Scalar,
+                    DeclaredInnerProducts::new(
+                        ModelInnerProduct::HermitianEuclidean,
+                        VisibilityInnerProduct::HermitianEuclidean,
+                    ),
+                ),
             ),
             ReconstructionContract::new(
                 ReconstructionBasis::Constant,

@@ -1,20 +1,21 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, CompileGeometryError, CompileProblemError, DelayCentreLaw,
-    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
+    AxisOrder, CentreLaws, CompileGeometryError, CompileProblemError, DeclaredInnerProducts,
+    DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
     FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
     ImageShape, ImagingRequest, InstrumentResponse, ItrfPosition, LogicalIdentity,
-    MeasurementEquationContract, MissingPointingPolicy, ModelStateIdentity, NumericPrecision,
-    NumericalStage, NumericsContract, ObservationPointingLaw, PhaseCentreLaw, PointingCentreLaw,
-    PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    MeasurementEquationContract, MissingPointingPolicy, ModelInnerProduct, ModelStateIdentity,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw, PhaseCentreLaw,
+    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
     PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
     ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements, Projection,
     ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
     ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
     SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
     SpectralSampling, SpectralWcs, StageErrorBudget, TimeScale, UvwAxes, UvwCoordinateLaw, UvwUnit,
-    VisibilityPhaseConvention, WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    VisibilityInnerProduct, VisibilityPhaseConvention, WeightDensityScope, WeightingContract,
+    WeightingScheme, compile,
 };
 
 mod common;
@@ -105,7 +106,13 @@ fn request(
         ProblemSpecification::new(
             ScientificContract::new(
                 SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
-                MeasurementEquationContract::new(InstrumentResponse::Scalar),
+                MeasurementEquationContract::new(
+                    InstrumentResponse::Scalar,
+                    DeclaredInnerProducts::new(
+                        ModelInnerProduct::HermitianEuclidean,
+                        VisibilityInnerProduct::HermitianEuclidean,
+                    ),
+                ),
             ),
             ReconstructionContract::new(
                 ReconstructionBasis::Constant,

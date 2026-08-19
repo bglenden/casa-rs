@@ -4,6 +4,7 @@
 
 mod compiled_problem;
 mod geometry;
+mod measurement_equation;
 mod observation;
 
 pub use compiled_problem::{
@@ -27,6 +28,14 @@ pub use geometry::{
     PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
     Projection, RestFrequency, SkyDirection, SpectralCoordinateSpec, SpectralFrameAnchor,
     SpectralWcs, TimeScale, UvwAxes, UvwCoordinateLaw, UvwUnit, VisibilityPhaseConvention,
+};
+
+pub use measurement_equation::{
+    DeclaredInnerProducts, MeasurementOperatorContract, ModelCoefficientSpace, ModelInnerProduct,
+    NormalEquationContract, NormalEquationForm, NormalStateNormalization, NormalStateSpace,
+    PairedMeasurementTransform, PairedTransformKind, ProductBoundaryOperation,
+    ProductNormalizationBoundary, VisibilityInnerProduct, VisibilitySampleSpace,
+    WeightingGenerationId, WeightingOperatorContract, WeightingSource,
 };
 
 pub use observation::{

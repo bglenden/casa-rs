@@ -6,18 +6,18 @@ use std::{
 };
 
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
-    DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis,
-    ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest, InstrumentResponse,
-    MeasurementEquationContract, ModelStateIdentity, NumericPrecision, NumericalStage,
-    NumericsContract, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
-    PolarizationCoordinate, ProblemSpecification, ProductKind, ProductNormalization,
-    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
-    ReconstructionContract, ReconstructionControls, ReductionPolicy, RestFrequency,
-    RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
+    AxisOrder, CentreLaws, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
+    DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
+    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest,
+    InstrumentResponse, MeasurementEquationContract, ModelInnerProduct, ModelStateIdentity,
+    NumericPrecision, NumericalStage, NumericsContract, PhaseCentreLaw, PointingCentreLaw,
+    PolarizationContract, PolarizationCoordinate, ProblemSpecification, ProductKind,
+    ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
     SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
-    StageErrorBudget, UvwCoordinateLaw, WeightDensityScope, WeightingContract, WeightingScheme,
-    compile,
+    StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile,
 };
 
 #[path = "../../tests/common/mod.rs"]
@@ -82,7 +82,13 @@ fn compiled_problem() -> casa_imaging_model::CompiledProblem {
     let specification = ProblemSpecification::new(
         ScientificContract::new(
             SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
-            MeasurementEquationContract::new(InstrumentResponse::Scalar),
+            MeasurementEquationContract::new(
+                InstrumentResponse::Scalar,
+                DeclaredInnerProducts::new(
+                    ModelInnerProduct::HermitianEuclidean,
+                    VisibilityInnerProduct::HermitianEuclidean,
+                ),
+            ),
         ),
         ReconstructionContract::new(
             ReconstructionBasis::Constant,

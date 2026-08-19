@@ -15,15 +15,17 @@ use casa_imaging_model::{
     AntennaSelection, CompiledGeometry, CompiledProblem, CorrelationType, DelayCentreLaw,
     DirectionFrame, DopplerConvention, FiniteValuePolicy, FlagPolicy, FrequencyFrame, IdSelection,
     ImageAxis, ImageDomainRole, InstrumentResponse, IntentSelection, LogicalIdentity,
-    MetadataTableKind, MissingPointingPolicy, ModelStateIdentity, MsColumnKind, NumericPrecision,
-    NumericalStage, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
-    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
-    PolarizationCoordinate, ProblemInputIdentities, ProductKind, ProductNormalization, Projection,
+    MetadataTableKind, MissingPointingPolicy, ModelInnerProduct, ModelStateIdentity, MsColumnKind,
+    NormalEquationForm, NormalStateNormalization, NumericPrecision, NumericalStage,
+    PairedMeasurementTransform, PairedTransformKind, PhaseCentreLaw, PointingCentreLaw,
+    PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationCoordinate, ProblemInputIdentities,
+    ProductBoundaryOperation, ProductKind, ProductNormalization, Projection,
     ReconstructionAlgorithm, ReconstructionBasis, ReductionPolicy, ReferenceDataKind,
     RequiredCapability, RestFrequency, RestoringBeamPolicy, SpectralCoupling, SpectralFrameAnchor,
     SpectralSampling, SpectralWcs, TimeScale, TimeSelection, UvDistanceUnit, UvSelection, UvwAxes,
-    UvwUnit, VisibilityColumn, VisibilityPhaseConvention, WeightColumn, WeightDensityScope,
-    WeightingScheme,
+    UvwUnit, VisibilityColumn, VisibilityInnerProduct, VisibilityPhaseConvention, WeightColumn,
+    WeightDensityScope, WeightingScheme,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -40,7 +42,7 @@ use crate::{
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
 const RECEIPT_SCHEMA_VERSION: u32 = 1;
-const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 1;
+const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 2;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const MAX_FAILURE_SUBJECT_BYTES: usize = 128;
 
@@ -3664,11 +3666,110 @@ fn project_science(fields: &mut BTreeMap<String, String>, problem: &CompiledProb
         "science.spectral.coupling",
         spectral_coupling(science.spectral().coupling()),
     );
+    let measurement = science.measurement_equation();
     evidence_field(
         fields,
         "science.measurement_equation.instrument_response",
-        instrument_response(science.measurement_equation().instrument_response()),
+        instrument_response(measurement.instrument_response()),
     );
+    evidence_field(
+        fields,
+        "science.measurement_equation.inner_products.model",
+        model_inner_product(measurement.inner_products().model()),
+    );
+    evidence_field(
+        fields,
+        "science.measurement_equation.inner_products.visibility",
+        visibility_inner_product(measurement.inner_products().visibility()),
+    );
+    let normal = problem.normal_equation();
+    let operator = normal.measurement_operator();
+    evidence_field(
+        fields,
+        "science.measurement_equation.operator.domain.geometry_identity",
+        hex(&operator.domain().geometry().as_bytes()),
+    );
+    evidence_field(
+        fields,
+        "science.measurement_equation.operator.domain.basis",
+        reconstruction_basis(operator.domain().basis()),
+    );
+    for (index, coordinate) in operator
+        .domain()
+        .polarization()
+        .coordinates()
+        .iter()
+        .enumerate()
+    {
+        evidence_field(
+            fields,
+            format!("science.measurement_equation.operator.domain.polarization.{index}"),
+            polarization_coordinate(*coordinate),
+        );
+    }
+    evidence_field(
+        fields,
+        "science.measurement_equation.operator.codomain.observation_identity",
+        hex(&operator.codomain().observation().as_bytes()),
+    );
+    for (index, transform) in operator.transforms().iter().enumerate() {
+        let prefix = format!("science.measurement_equation.operator.transforms.{index}");
+        evidence_field(
+            fields,
+            format!("{prefix}.kind"),
+            paired_transform_kind(transform.kind()),
+        );
+        match transform {
+            PairedMeasurementTransform::SpectralBasis { basis } => {
+                evidence_field(
+                    fields,
+                    format!("{prefix}.basis"),
+                    reconstruction_basis(*basis),
+                );
+            }
+            PairedMeasurementTransform::DirectionDependentResponse { response } => {
+                evidence_field(
+                    fields,
+                    format!("{prefix}.response"),
+                    instrument_response(*response),
+                );
+            }
+            PairedMeasurementTransform::PhaseRotation { convention } => {
+                evidence_field(
+                    fields,
+                    format!("{prefix}.convention"),
+                    visibility_phase(*convention),
+                );
+            }
+            PairedMeasurementTransform::SpectralResampling { sampling } => {
+                evidence_field(
+                    fields,
+                    format!("{prefix}.sampling"),
+                    spectral_sampling(*sampling),
+                );
+            }
+            PairedMeasurementTransform::ChannelIntegration { channels_per_bin } => {
+                evidence_field(
+                    fields,
+                    format!("{prefix}.channels_per_bin"),
+                    *channels_per_bin,
+                );
+            }
+            PairedMeasurementTransform::PolarizationMapping => {}
+        }
+    }
+    evidence_field(
+        fields,
+        "science.normal_equation.output.normalization",
+        normal_state_normalization(normal.output().normalization()),
+    );
+    for (index, form) in normal.forms().into_iter().enumerate() {
+        evidence_field(
+            fields,
+            format!("science.normal_equation.forms.{index}"),
+            normal_equation_form(form),
+        );
+    }
 }
 
 fn project_reconstruction(fields: &mut BTreeMap<String, String>, problem: &CompiledProblem) {
@@ -3734,7 +3835,7 @@ fn project_reconstruction(fields: &mut BTreeMap<String, String>, problem: &Compi
 }
 
 fn project_weighting(fields: &mut BTreeMap<String, String>, problem: &CompiledProblem) {
-    let weighting = *problem.weighting();
+    let weighting = problem.weighting();
     let scheme = weighting.scheme();
     evidence_field(fields, "weighting.scheme.kind", weighting_scheme(scheme));
     if let WeightingScheme::Briggs { robust } | WeightingScheme::BriggsBandwidthTaper { robust } =
@@ -3768,6 +3869,49 @@ fn project_weighting(fields: &mut BTreeMap<String, String>, problem: &CompiledPr
             );
         }
     }
+    evidence_field(
+        fields,
+        "weighting.generation.identity",
+        hex(&weighting.generation_id().as_bytes()),
+    );
+    evidence_field(
+        fields,
+        "weighting.generation.snapshot_identity",
+        hex(&weighting.snapshot().as_bytes()),
+    );
+    for (index, source) in weighting.sources().iter().enumerate() {
+        let prefix = format!("weighting.sources.{index}");
+        evidence_field(
+            fields,
+            format!("{prefix}.measurement_set_identity"),
+            hex(&source.source().identity().as_bytes()),
+        );
+        evidence_field(
+            fields,
+            format!("{prefix}.flag_policy"),
+            flag_policy(source.flags()),
+        );
+        evidence_field(
+            fields,
+            format!("{prefix}.input_weight_column"),
+            weight_column(source.input_weights()),
+        );
+        evidence_field(
+            fields,
+            format!("{prefix}.flag_generation"),
+            hex(&source.flag_generation().as_bytes()),
+        );
+        evidence_field(
+            fields,
+            format!("{prefix}.flag_row_generation"),
+            hex(&source.flag_row_generation().as_bytes()),
+        );
+        evidence_field(
+            fields,
+            format!("{prefix}.input_weight_generation"),
+            hex(&source.input_weight_generation().as_bytes()),
+        );
+    }
 }
 
 fn project_products(fields: &mut BTreeMap<String, String>, problem: &CompiledProblem) {
@@ -3789,6 +3933,36 @@ fn project_products(fields: &mut BTreeMap<String, String>, problem: &CompiledPro
         "products.restoring_beam",
         restoring_beam(products.restoring_beam()),
     );
+    let boundary = products.normalization_boundary();
+    evidence_field(
+        fields,
+        "products.normalization_boundary.input",
+        normal_state_normalization(boundary.input()),
+    );
+    for (index, operation) in boundary.operations().iter().enumerate() {
+        let prefix = format!("products.normalization_boundary.operations.{index}");
+        evidence_field(
+            fields,
+            format!("{prefix}.kind"),
+            product_boundary_operation(*operation),
+        );
+        match operation {
+            ProductBoundaryOperation::Normalize(normalization) => evidence_field(
+                fields,
+                format!("{prefix}.normalization"),
+                product_normalization(*normalization),
+            ),
+            ProductBoundaryOperation::Restore(policy) => evidence_field(
+                fields,
+                format!("{prefix}.restoring_beam"),
+                restoring_beam(*policy),
+            ),
+            ProductBoundaryOperation::ScaleResidual
+            | ProductBoundaryOperation::CorrectPrimaryBeam
+            | ProductBoundaryOperation::BlankInvalid
+            | ProductBoundaryOperation::ConvertUnits => {}
+        }
+    }
 }
 
 fn project_numerics(fields: &mut BTreeMap<String, String>, problem: &CompiledProblem) {
@@ -4519,7 +4693,8 @@ fn evidence_field(
 }
 
 fn stable_float(value: f64) -> String {
-    format!("f64:{:016x}", value.to_bits())
+    let bits = if value == 0.0 { 0 } else { value.to_bits() };
+    format!("f64:{bits:016x}")
 }
 
 fn spectral_sampling(value: SpectralSampling) -> &'static str {
@@ -4543,6 +4718,43 @@ fn instrument_response(value: InstrumentResponse) -> &'static str {
         InstrumentResponse::Scalar => "scalar",
         InstrumentResponse::PrimaryBeam => "primary_beam",
         InstrumentResponse::FullMueller => "full_mueller",
+    }
+}
+
+fn model_inner_product(value: ModelInnerProduct) -> &'static str {
+    match value {
+        ModelInnerProduct::HermitianEuclidean => "hermitian_euclidean",
+    }
+}
+
+fn visibility_inner_product(value: VisibilityInnerProduct) -> &'static str {
+    match value {
+        VisibilityInnerProduct::HermitianEuclidean => "hermitian_euclidean",
+    }
+}
+
+fn paired_transform_kind(value: PairedTransformKind) -> &'static str {
+    match value {
+        PairedTransformKind::SpectralBasis => "spectral_basis",
+        PairedTransformKind::Polarization => "polarization",
+        PairedTransformKind::DirectionDependentResponse => "direction_dependent_response",
+        PairedTransformKind::Phase => "phase",
+        PairedTransformKind::SpectralResampling => "spectral_resampling",
+        PairedTransformKind::ChannelIntegration => "channel_integration",
+    }
+}
+
+fn normal_state_normalization(value: NormalStateNormalization) -> &'static str {
+    match value {
+        NormalStateNormalization::Unnormalized => "unnormalized",
+    }
+}
+
+fn normal_equation_form(value: NormalEquationForm) -> &'static str {
+    match value {
+        NormalEquationForm::RightHandSide => "right_hand_side_a_star_w_d",
+        NormalEquationForm::Residual => "residual_a_star_w_d_minus_a_x",
+        NormalEquationForm::NormalOperator => "normal_operator_a_star_w_a",
     }
 }
 
@@ -4623,6 +4835,17 @@ fn product_normalization(value: ProductNormalization) -> &'static str {
         ProductNormalization::UnitResponse => "unit_response",
         ProductNormalization::FlatNoise => "flat_noise",
         ProductNormalization::FlatSky => "flat_sky",
+    }
+}
+
+fn product_boundary_operation(value: ProductBoundaryOperation) -> &'static str {
+    match value {
+        ProductBoundaryOperation::Normalize(_) => "normalize",
+        ProductBoundaryOperation::ScaleResidual => "scale_residual",
+        ProductBoundaryOperation::Restore(_) => "restore",
+        ProductBoundaryOperation::CorrectPrimaryBeam => "correct_primary_beam",
+        ProductBoundaryOperation::BlankInvalid => "blank_invalid",
+        ProductBoundaryOperation::ConvertUnits => "convert_units",
     }
 }
 
@@ -5222,7 +5445,17 @@ fn write_hex(formatter: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::maximum_json_serialized_text;
+    use super::{maximum_json_serialized_text, stable_float};
+
+    #[test]
+    fn stable_float_canonicalizes_only_signed_zero() {
+        assert_eq!(stable_float(0.0), stable_float(-0.0));
+        assert_ne!(stable_float(1.0), stable_float(-1.0));
+        assert_ne!(
+            stable_float(f64::from_bits(0x7ff8_0000_0000_0001)),
+            stable_float(f64::from_bits(0x7ff8_0000_0000_0002))
+        );
+    }
 
     #[test]
     fn worst_case_failure_node_prefers_json_escaped_size_over_raw_length() {
