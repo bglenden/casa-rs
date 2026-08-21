@@ -1,0 +1,1882 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: LGPL-3.0-or-later
+"""Enforce the ADR-0009 imaging ownership and dependency graph."""
+
+from __future__ import annotations
+
+import argparse
+import copy
+import hashlib
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_POLICY = REPO_ROOT / "resources/imaging-architecture/dependency-policy.json"
+VALID_STATUSES = {"Native", "LegacyWholeRun", "TemporarilyUnavailable"}
+MATRIX_KINDS = {"capability", "product", "solver", "frontend", "backend"}
+LOCATOR_KEYS = {"commit", "issue", "locator", "path", "receipt", "token", "url"}
+PACKAGE_CLASSIFICATIONS = {"native", "legacy", "surface", "support"}
+ACCEPTED_MIGRATION_ISSUES = frozenset(
+    {
+        35,
+        40,
+        42,
+        45,
+        52,
+        54,
+        55,
+        217,
+        319,
+        445,
+        446,
+        447,
+        448,
+        449,
+        450,
+        462,
+        466,
+        473,
+        478,
+    }
+)
+# Independent ratchets for readable policy and matrix scopes. Update a digest
+# only when review accepts the corresponding human-readable contract change.
+ACCEPTED_FROZEN_LEGACY_EDGES_SHA256 = (
+    "93cce3cc2d3979ce6af82b3d76529c7ec8768fb5cfc1b0ce500453d6e128f95f"
+)
+ACCEPTED_LOGICAL_GRAPH_SHA256 = (
+    "7101b6d90196b1ea3d3c750080d703bb5e305e91c8ac19553e1dda7ed58c4e33"
+)
+ACCEPTED_SOURCE_BOUNDARIES_SHA256 = (
+    "14f3c76ecb191da6edacd35ca4b12704608cb3d0c6aa82c3806d6edb068851f8"
+)
+ACCEPTED_FROZEN_TRANSITIONAL_EDGES_SHA256 = (
+    "0077e28528d2160616d34e17fb7124586f346557917e0bfac99b0dff6739a1d1"
+)
+ACCEPTED_PACKAGE_POLICY_SHA256 = (
+    "15804c2ee0e7d474181d0eddaa7cbce2d65b01bde789108abb4395f477e1b6a4"
+)
+ACCEPTED_WHOLE_RUN_ROUTER_SHA256 = (
+    "c855dae5d5b4239e21fa0fe43d1d2f4bbb4114d245374db674fb81713af11a2d"
+)
+ACCEPTED_MATRIX_INVENTORY_SHA256 = (
+    "dc4ca134627402fa74744f56797c067e462e9566178a9188cadeb4c4b14714b0"
+)
+ACCEPTED_PRODUCT_KIND_INVENTORY_SHA256 = (
+    "f4e04101f0d6e89d9bc12584cd580f5f8924f80e71b867ee252422f648fdced5"
+)
+ACCEPTED_PLANE_SELECTION_INVENTORY_SHA256 = (
+    "cea569c11700deee6bd533b79041f7038392bdbadcfaa7468db3263f3d52c7d9"
+)
+ACCEPTED_POLARIZATION_COORDINATE_INVENTORY_SHA256 = (
+    "245f24c2e462b7127fce91a899db1995ce82733ba3d88f5c425a04ec49e32376"
+)
+ACCEPTED_CUBE_INTERPOLATION_INVENTORY_SHA256 = (
+    "c5de582d14d11af38ab9e2ea1833b6a2a222798616466df785b402d96715b8d0"
+)
+ACCEPTED_STANDARD_MFS_BACKEND_INVENTORY_SHA256 = (
+    "28cc3eef3336bac19e51906067f85a0373308e3132d8976a8d19a3aced8432b9"
+)
+ACCEPTED_SPECTRAL_MODE_INVENTORY_SHA256 = (
+    "3a1a8e62103ec316b3bacc996acaf1b426f831b0de2c2db1834b038065d6fe04"
+)
+ACCEPTED_IMAGER_SPECTRAL_MODE_INVENTORY_SHA256 = (
+    "3a1a8e62103ec316b3bacc996acaf1b426f831b0de2c2db1834b038065d6fe04"
+)
+ACCEPTED_GRIDDER_REQUEST_INVENTORY_SHA256 = (
+    "0921c6e8f01dcaebf2c3b32ebc8d34f6811951343f6cbe1b2bee39f3440fe6dc"
+)
+ACCEPTED_DECONVOLVER_INVENTORY_SHA256 = (
+    "57648c06caa082706e5af79f623a54e90b8faccf6cdc2f4105f0bd0718965ca9"
+)
+ACCEPTED_IMAGER_DECONVOLVER_INVENTORY_SHA256 = (
+    "57648c06caa082706e5af79f623a54e90b8faccf6cdc2f4105f0bd0718965ca9"
+)
+ACCEPTED_IMAGER_CUBE_INTERPOLATION_INVENTORY_SHA256 = (
+    "b955f223aebede1f69e75c17ea2ed83bd280557b6cf361dff6a4fd620e673162"
+)
+ACCEPTED_FFT_BACKEND_CHOICE_INVENTORY_SHA256 = (
+    "21bc32c858a3e6f4e13a174b5764cc900dd3d8becce641decae5c3e47e32aecf"
+)
+ACCEPTED_IMAGING_FFT_BACKEND_POLICY_INVENTORY_SHA256 = (
+    "6e72c455ac075eed27b502a635d0c8e0c2ce63c5ece70fea48c13ed2a40ad380"
+)
+ACCEPTED_STANDARD_MFS_ACCELERATION_POLICY_INVENTORY_SHA256 = (
+    "5a746c70358a33c038c9ccf37167ab29998f7b55aef418f43b8d7b1ea4953de3"
+)
+ACCEPTED_STANDARD_MFS_MINOR_CYCLE_BACKEND_INVENTORY_SHA256 = (
+    "d96f704776bd4e88fee221e14e7c863894c5a7c1e6e2d3d0510976ad76a1822e"
+)
+ACCEPTED_SINGLE_PLANE_ACCELERATION_POLICY_INVENTORY_SHA256 = (
+    "d762618f2f100f2af0ea77f2244e19bd7d07d911ae23500432ae667f56bd46c6"
+)
+ACCEPTED_PER_PLANE_EXECUTION_BACKEND_INVENTORY_SHA256 = (
+    "2f622825a283efc3580072ae37c6dbf78dc52530923b9a1c56834a44f23b2583"
+)
+ACCEPTED_ISSUE_OUTCOMES_SHA256 = (
+    "ffc816c216e9b969c1229f2e813d33a9e12118555e3b286ea66e769218d86713"
+)
+ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
+    "114ef002b698d8c3d01f233dac7c3385885c04b6f40bff4ad7d3cecfaea441ef"
+)
+ACCEPTED_MATRIX_ROWS_SHA256 = (
+    "4dbc6bf56d96c39c5a4a4cf1581a9389c4a0deed98d6f96fe4a64c826fc3c4f4"
+)
+ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
+    "72fca92636fb724099e7f669040f4c1ec6167888036b5f90c8a2421fcfbc6d6e"
+)
+ACCEPTED_MATRIX_CONTRACT_REVISION = 5
+ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
+    (
+        "scientific-products-v1",
+        "thresholds",
+    ): "5901406c1962290ee48d0469215648626d533eb570a0102ff897b4be7f6617f2",
+    (
+        "scientific-products-v1",
+        "laws",
+    ): "6745a2f81613e17391855ab4852e0a96dddb1eeabc2e8a774f40c999a01bd5f2",
+    (
+        "scientific-products-v1",
+        "resource_gates",
+    ): "94265d172ea8f06b33f6fb7e12b20950f2c155d76f7ba9b65fadedcc2d21f063",
+    (
+        "exact-routing-v1",
+        "thresholds",
+    ): "1b43e32c11597e61403d4fc5ede4096d56757a205a9b10195a3c5ae9fbf56dda",
+    (
+        "exact-routing-v1",
+        "laws",
+    ): "640f5af8c6808ebba8df8d36cc2b30fa5422e7e671785c931f5d034940b199b2",
+    (
+        "exact-routing-v1",
+        "resource_gates",
+    ): "eb78168712b4c76af00e3370b5c77ab42093abf7facbbd39dd03d9927bdb54c9",
+    (
+        "solver-trajectory-v1",
+        "thresholds",
+    ): "fae7cf28a7684a5ce99918d9dda32a801858937f0010a19482745e3f5429348b",
+    (
+        "solver-trajectory-v1",
+        "laws",
+    ): "355f98e0a49fa7aed996fa1b3901dbdeddcce9a63a53739661384b7e9cf9343e",
+    (
+        "solver-trajectory-v1",
+        "resource_gates",
+    ): "734da223aa029439cfe88bbd8262317f72ab4f9ef74944837bd90e4ba5367879",
+    (
+        "surface-roundtrip-v1",
+        "thresholds",
+    ): "ecb9972ac8b934c2b9899134f520becf2b1f455c4be7fb240ef4d428c69662b6",
+    (
+        "surface-roundtrip-v1",
+        "laws",
+    ): "c556b7560741297e5a3ac6fde951586f7b52cfd990d237d7c0e05f5f261fd510",
+    (
+        "surface-roundtrip-v1",
+        "resource_gates",
+    ): "0299b84af3b12db3e0606ca191c15b731d46cb1ebd952de7c3e49869200e0301",
+    (
+        "resource-authority-v1",
+        "thresholds",
+    ): "dc6fe75624085924abbf6e68b848b137031561589fa319213454dce096222d4e",
+    (
+        "resource-authority-v1",
+        "laws",
+    ): "717747298f9e62c82e138de22271f887144ac8b3f2df817db8c25eb28fec044d",
+    (
+        "resource-authority-v1",
+        "resource_gates",
+    ): "6d8f3b420bf813fe9707607bc4cdd7ddf351a13a94b4d11e87e56ae39e1eece3",
+    (
+        "compiled-problem-foundation-v1",
+        "thresholds",
+    ): "563fc508ff7f1c835fb5388883d4175ddb04dafcceb5b3958f6a0ea3722aa1da",
+    (
+        "compiled-problem-foundation-v1",
+        "laws",
+    ): "032d42173b6ab94ae4a48104fbc23bb25683cd9e5a4ace84f7605d914f3795b3",
+    (
+        "compiled-problem-foundation-v1",
+        "resource_gates",
+    ): "64c0411b3e62a900072e12f74facbe311a718504883e650a5cc205c9d5b4bd25",
+    (
+        "resource-authority-foundation-v1",
+        "thresholds",
+    ): "2bf2c8ef26b906914acaa8402af3465208fa62665bc791e1abc811beaaa129fb",
+    (
+        "resource-authority-foundation-v1",
+        "laws",
+    ): "ae7f8f9db6532d96dd1190edf2c3a2999cd803f62e9f64eb93c199bd5740847a",
+    (
+        "resource-authority-foundation-v1",
+        "resource_gates",
+    ): "57a2e38fb806ad695f9fdf846690a9e020d48fff59521f3a2b995fcf43b23d5f",
+}
+
+
+class ArchitectureError(RuntimeError):
+    """Raised when an imaging architecture contract is invalid."""
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--policy",
+        type=Path,
+        default=DEFAULT_POLICY,
+        help="dependency policy JSON (default: repository policy)",
+    )
+    parser.add_argument(
+        "--metadata",
+        type=Path,
+        help="read Cargo metadata JSON instead of querying the live workspace",
+    )
+    parser.add_argument(
+        "--migration-matrix",
+        type=Path,
+        help="override the optional migration-matrix path declared by the policy",
+    )
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="mutate synthetic contracts to prove that forbidden states fail",
+    )
+    return parser.parse_args()
+
+
+def load_object(path: Path, context: str) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ArchitectureError(
+            f"cannot load {context} {display_path(path)}: {error}"
+        ) from error
+    if not isinstance(value, dict):
+        raise ArchitectureError(
+            f"{context} {display_path(path)} must contain an object"
+        )
+    return value
+
+
+def display_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def require_string(value: Any, context: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ArchitectureError(f"{context} must be a non-empty string")
+    return value
+
+
+def require_string_list(value: Any, context: str) -> list[str]:
+    if not isinstance(value, list) or not value:
+        raise ArchitectureError(f"{context} must be a non-empty array")
+    result = [
+        require_string(item, f"{context}[{index}]") for index, item in enumerate(value)
+    ]
+    if len(set(result)) != len(result):
+        raise ArchitectureError(f"{context} contains duplicates")
+    return result
+
+
+def validate_policy(
+    policy: dict[str, Any], *, enforce_accepted_scope: bool = True
+) -> None:
+    if policy.get("schema_version") != 1:
+        raise ArchitectureError("dependency policy schema_version must be 1")
+    require_string(policy.get("decision"), "dependency policy decision")
+    layers = require_string_list(policy.get("layers"), "dependency policy layers")
+    layer_set = set(layers)
+    if "legacy" not in layer_set:
+        raise ArchitectureError("dependency policy layers must include legacy")
+
+    allowed = policy.get("allowed_logical_edges")
+    if not isinstance(allowed, dict) or set(allowed) != layer_set:
+        raise ArchitectureError(
+            "allowed_logical_edges must define every layer exactly once"
+        )
+    for source in layers:
+        targets = allowed[source]
+        if not isinstance(targets, list):
+            raise ArchitectureError(f"allowed_logical_edges.{source} must be an array")
+        if len(targets) != len(set(targets)):
+            raise ArchitectureError(
+                f"allowed_logical_edges.{source} contains duplicates"
+            )
+        unknown = sorted(set(targets) - layer_set)
+        if unknown:
+            raise ArchitectureError(
+                f"allowed_logical_edges.{source} names unknown layers: {unknown}"
+            )
+        if source in targets:
+            raise ArchitectureError(
+                f"allowed_logical_edges.{source} may not contain itself"
+            )
+        if source != "legacy" and "legacy" in targets:
+            raise ArchitectureError(
+                f"native layer {source} may not import legacy; T04 owns the sole router seam"
+            )
+    if "backend" in allowed["application"]:
+        raise ArchitectureError(
+            "allowed_logical_edges.application may not contain backend; applications invoke execution plans"
+        )
+    accepted_graph = {"layers": layers, "allowed_logical_edges": allowed}
+    if stable_digest(accepted_graph) != ACCEPTED_LOGICAL_GRAPH_SHA256:
+        raise ArchitectureError(
+            "logical imaging layers or allowed edges differ from the accepted graph"
+        )
+
+    package_layers = policy.get("package_layers")
+    if not isinstance(package_layers, dict) or not package_layers:
+        raise ArchitectureError("package_layers must be a non-empty object")
+    for package, layer in package_layers.items():
+        require_string(package, "package_layers key")
+        if layer not in layer_set:
+            raise ArchitectureError(f"package {package} names unknown layer {layer!r}")
+
+    classifications = policy.get("workspace_package_classification")
+    if not isinstance(classifications, dict) or not classifications:
+        raise ArchitectureError(
+            "workspace_package_classification must be a non-empty object"
+        )
+    for package, classification in classifications.items():
+        require_string(package, "workspace_package_classification key")
+        if classification not in PACKAGE_CLASSIFICATIONS:
+            raise ArchitectureError(
+                f"workspace package {package} has unknown classification {classification!r}"
+            )
+    missing_classifications = sorted(set(package_layers) - set(classifications))
+    if missing_classifications:
+        raise ArchitectureError(
+            f"logical imaging packages lack workspace classification: {missing_classifications}"
+        )
+    unmapped_surfaces = sorted(
+        package
+        for package, classification in classifications.items()
+        if classification == "surface" and package not in package_layers
+    )
+    if unmapped_surfaces:
+        raise ArchitectureError(
+            f"imaging surface packages lack logical layers: {unmapped_surfaces}"
+        )
+    for package, layer in package_layers.items():
+        classification = classifications[package]
+        if layer == "legacy" and classification != "legacy":
+            raise ArchitectureError(
+                f"legacy package {package} must be classified legacy"
+            )
+        if layer != "legacy" and classification not in {"native", "surface"}:
+            raise ArchitectureError(
+                f"logical imaging package {package} must be classified native or surface"
+            )
+
+    native_rules = policy.get("native_package_workspace_dependencies")
+    if not isinstance(native_rules, dict):
+        raise ArchitectureError(
+            "native_package_workspace_dependencies must be an object"
+        )
+    classified_native = {
+        package
+        for package, classification in classifications.items()
+        if classification == "native"
+    }
+    if set(native_rules) != classified_native:
+        raise ArchitectureError(
+            "native_package_workspace_dependencies must define every native package exactly: "
+            f"added={sorted(set(native_rules) - classified_native)}, "
+            f"removed={sorted(classified_native - set(native_rules))}"
+        )
+    for package, dependencies in native_rules.items():
+        if package_layers.get(package) in (None, "legacy"):
+            raise ArchitectureError(
+                f"native dependency rule {package} is not a native package"
+            )
+        if not isinstance(dependencies, list) or any(
+            not isinstance(dependency, str) or not dependency
+            for dependency in dependencies
+        ):
+            raise ArchitectureError(
+                f"native_package_workspace_dependencies.{package} must be a string array"
+            )
+        if len(dependencies) != len(set(dependencies)):
+            raise ArchitectureError(
+                f"native_package_workspace_dependencies.{package} contains duplicates"
+            )
+
+    validate_whole_run_router_policy(
+        policy, package_layers, classifications, native_rules
+    )
+
+    legacy_packages = set(
+        require_string_list(policy.get("legacy_packages"), "legacy_packages")
+    )
+    mapped_legacy = {
+        package for package, layer in package_layers.items() if layer == "legacy"
+    }
+    if legacy_packages != mapped_legacy:
+        raise ArchitectureError(
+            "legacy_packages must exactly match packages assigned to the legacy layer"
+        )
+    classified_legacy = {
+        package
+        for package, classification in classifications.items()
+        if classification == "legacy"
+    }
+    if classified_legacy != legacy_packages:
+        raise ArchitectureError(
+            "legacy package classification must exactly match legacy_packages"
+        )
+    frozen_edges(policy)
+    frozen_transitional_edges(policy)
+
+    prefixes = require_string_list(
+        policy.get("device_dependency_prefixes"), "device_dependency_prefixes"
+    )
+    if any(prefix != prefix.lower() for prefix in prefixes):
+        raise ArchitectureError("device_dependency_prefixes must be lowercase")
+    device_free = require_string_list(
+        policy.get("device_free_layers"), "device_free_layers"
+    )
+    unknown_device_free = sorted(set(device_free) - layer_set)
+    if unknown_device_free:
+        raise ArchitectureError(
+            f"device_free_layers names unknown layers: {unknown_device_free}"
+        )
+    if enforce_accepted_scope:
+        package_policy = {
+            "package_layers": package_layers,
+            "workspace_package_classification": classifications,
+            "native_package_workspace_dependencies": native_rules,
+            "device_dependency_prefixes": prefixes,
+            "device_free_layers": device_free,
+        }
+        if stable_digest(package_policy) != ACCEPTED_PACKAGE_POLICY_SHA256:
+            raise ArchitectureError(
+                "workspace package layers, classifications, native dependencies, or device policy differ from the accepted scope"
+            )
+
+    source_boundaries = policy.get("source_boundaries")
+    validate_source_boundary_policy(source_boundaries)
+    if stable_digest(source_boundaries) != ACCEPTED_SOURCE_BOUNDARIES_SHA256:
+        raise ArchitectureError("source boundaries differ from the accepted policy")
+
+    require_string(policy.get("migration_matrix"), "migration_matrix")
+    required_issues = policy.get("required_migration_evidence_issues")
+    if (
+        not isinstance(required_issues, list)
+        or not required_issues
+        or any(not isinstance(issue, int) or issue <= 0 for issue in required_issues)
+        or len(required_issues) != len(set(required_issues))
+    ):
+        raise ArchitectureError(
+            "required_migration_evidence_issues must be a unique array of positive integers"
+        )
+    if set(required_issues) != ACCEPTED_MIGRATION_ISSUES:
+        raise ArchitectureError(
+            "required_migration_evidence_issues differs from the accepted issue scope: "
+            f"added={sorted(set(required_issues) - ACCEPTED_MIGRATION_ISSUES)}, "
+            f"removed={sorted(ACCEPTED_MIGRATION_ISSUES - set(required_issues))}"
+        )
+
+
+def validate_whole_run_router_policy(
+    policy: dict[str, Any],
+    package_layers: dict[str, str],
+    classifications: dict[str, str],
+    native_rules: dict[str, list[str]],
+) -> None:
+    router = policy.get("whole_run_router")
+    required = {
+        "package",
+        "source",
+        "router_type",
+        "dispatch_method",
+        "engine_ports",
+    }
+    if not isinstance(router, dict) or set(router) != required:
+        raise ArchitectureError(
+            f"whole_run_router must contain exactly {sorted(required)}"
+        )
+    package = require_string(router.get("package"), "whole_run_router.package")
+    source = require_string(router.get("source"), "whole_run_router.source")
+    require_string(router.get("router_type"), "whole_run_router.router_type")
+    require_string(router.get("dispatch_method"), "whole_run_router.dispatch_method")
+    require_string_list(router.get("engine_ports"), "whole_run_router.engine_ports")
+    source_path = Path(source)
+    if source_path.is_absolute() or ".." in source_path.parts or source_path.suffix != ".rs":
+        raise ArchitectureError("whole_run_router.source must be a repository Rust source")
+    if stable_digest(router) != ACCEPTED_WHOLE_RUN_ROUTER_SHA256:
+        raise ArchitectureError(
+            "whole-run migration router differs from the accepted owner"
+        )
+    if (
+        package_layers.get(package) != "application"
+        or classifications.get(package) != "native"
+        or native_rules.get(package) != ["casa-imaging-model"]
+    ):
+        raise ArchitectureError(
+            "whole-run migration router must be a native application package with only the imaging model dependency"
+        )
+
+
+def validate_source_boundary_policy(value: Any) -> None:
+    if not isinstance(value, list) or not value:
+        raise ArchitectureError("source_boundaries must be a non-empty array")
+    identifiers: set[str] = set()
+    for index, boundary in enumerate(value):
+        context = f"source_boundaries[{index}]"
+        if not isinstance(boundary, dict):
+            raise ArchitectureError(f"{context} must be an object")
+        if set(boundary) != {
+            "id",
+            "roots",
+            "extensions",
+            "forbidden_patterns",
+            "accepted_violation_digest",
+        }:
+            raise ArchitectureError(
+                f"{context} must contain id, roots, extensions, forbidden_patterns, and accepted_violation_digest only"
+            )
+        identifier = require_string(boundary.get("id"), f"{context}.id")
+        if identifier in identifiers:
+            raise ArchitectureError(f"source_boundaries repeats id {identifier}")
+        identifiers.add(identifier)
+        roots = require_string_list(boundary.get("roots"), f"{context}.roots")
+        for root_text in roots:
+            root = Path(root_text)
+            if root.is_absolute() or ".." in root.parts:
+                raise ArchitectureError(
+                    f"{context}.roots must stay inside the repository"
+                )
+        extensions = require_string_list(
+            boundary.get("extensions"), f"{context}.extensions"
+        )
+        if any(not extension.startswith(".") for extension in extensions):
+            raise ArchitectureError(f"{context}.extensions must start with a dot")
+        patterns = boundary.get("forbidden_patterns")
+        if not isinstance(patterns, list) or not patterns:
+            raise ArchitectureError(
+                f"{context}.forbidden_patterns must be a non-empty array"
+            )
+        for pattern_index, pattern in enumerate(patterns):
+            pattern_context = f"{context}.forbidden_patterns[{pattern_index}]"
+            if not isinstance(pattern, dict) or set(pattern) != {"regex", "message"}:
+                raise ArchitectureError(
+                    f"{pattern_context} must contain regex and message only"
+                )
+            expression = require_string(
+                pattern.get("regex"), f"{pattern_context}.regex"
+            )
+            require_string(pattern.get("message"), f"{pattern_context}.message")
+            try:
+                re.compile(expression)
+            except re.error as error:
+                raise ArchitectureError(
+                    f"{pattern_context}.regex is invalid: {error}"
+                ) from error
+        accepted_digest = boundary.get("accepted_violation_digest")
+        if accepted_digest is not None and not re.fullmatch(
+            r"[0-9a-f]{64}", str(accepted_digest)
+        ):
+            raise ArchitectureError(
+                f"{context}.accepted_violation_digest must be null or a lowercase SHA-256 digest"
+            )
+
+
+def edge_tuple(edge: Any, context: str) -> tuple[str, str, str]:
+    if not isinstance(edge, dict):
+        raise ArchitectureError(f"{context} must be an object")
+    if set(edge) != {"source", "target", "kind"}:
+        raise ArchitectureError(f"{context} must contain source, target, and kind only")
+    source = require_string(edge.get("source"), f"{context}.source")
+    target = require_string(edge.get("target"), f"{context}.target")
+    kind = require_string(edge.get("kind"), f"{context}.kind")
+    if kind not in {"normal", "build"}:
+        raise ArchitectureError(f"{context}.kind must be normal or build")
+    return source, target, kind
+
+
+def frozen_edges(policy: dict[str, Any]) -> set[tuple[str, str, str]]:
+    values = policy.get("frozen_legacy_workspace_edges")
+    if not isinstance(values, list) or not values:
+        raise ArchitectureError(
+            "frozen_legacy_workspace_edges must be a non-empty array"
+        )
+    result = {
+        edge_tuple(edge, f"frozen_legacy_workspace_edges[{index}]")
+        for index, edge in enumerate(values)
+    }
+    if len(result) != len(values):
+        raise ArchitectureError("frozen_legacy_workspace_edges contains duplicates")
+    if stable_digest(sorted(result)) != ACCEPTED_FROZEN_LEGACY_EDGES_SHA256:
+        raise ArchitectureError(
+            "frozen_legacy_workspace_edges differs from the 16 accepted exceptions"
+        )
+    legacy = set(policy["legacy_packages"])
+    for source, target, _kind in result:
+        if source not in legacy and target not in legacy:
+            raise ArchitectureError(
+                f"frozen legacy edge {source} -> {target} does not touch a legacy package"
+            )
+    return result
+
+
+def frozen_transitional_edges(
+    policy: dict[str, Any],
+) -> set[tuple[str, str, str]]:
+    values = policy.get("frozen_transitional_workspace_edges")
+    if not isinstance(values, list) or not values:
+        raise ArchitectureError(
+            "frozen_transitional_workspace_edges must be a non-empty array"
+        )
+    result = {
+        edge_tuple(edge, f"frozen_transitional_workspace_edges[{index}]")
+        for index, edge in enumerate(values)
+    }
+    if len(result) != len(values):
+        raise ArchitectureError(
+            "frozen_transitional_workspace_edges contains duplicates"
+        )
+    if stable_digest(sorted(result)) != ACCEPTED_FROZEN_TRANSITIONAL_EDGES_SHA256:
+        raise ArchitectureError(
+            "frozen_transitional_workspace_edges differs from the accepted exceptions"
+        )
+    package_layers = policy["package_layers"]
+    legacy = set(policy["legacy_packages"])
+    for source, target, _kind in result:
+        if source not in package_layers or target not in package_layers:
+            raise ArchitectureError(
+                f"frozen transitional edge {source} -> {target} lacks a logical package layer"
+            )
+        if source in legacy or target in legacy:
+            raise ArchitectureError(
+                f"frozen transitional edge {source} -> {target} belongs in the legacy ledger"
+            )
+        try:
+            validate_logical_edge(
+                policy, package_layers[source], package_layers[target]
+            )
+        except ArchitectureError:
+            continue
+        raise ArchitectureError(
+            f"frozen transitional edge {source} -> {target} is already allowed by the logical graph"
+        )
+    return result
+
+
+def validate_logical_edge(policy: dict[str, Any], source: str, target: str) -> None:
+    layers = set(policy["layers"])
+    if source not in layers or target not in layers:
+        raise ArchitectureError(
+            f"logical edge names an unknown layer: {source} -> {target}"
+        )
+    if target not in policy["allowed_logical_edges"][source]:
+        raise ArchitectureError(f"forbidden logical imaging edge: {source} -> {target}")
+
+
+def load_cargo_metadata(path: Path | None) -> dict[str, Any]:
+    if path is not None:
+        return load_object(path, "Cargo metadata")
+    try:
+        result = subprocess.run(
+            ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        detail = (
+            error.stderr.strip()
+            if isinstance(error, subprocess.CalledProcessError)
+            else str(error)
+        )
+        raise ArchitectureError(
+            f"cannot query live Cargo metadata: {detail}"
+        ) from error
+    try:
+        value = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise ArchitectureError(
+            f"Cargo metadata returned invalid JSON: {error}"
+        ) from error
+    if not isinstance(value, dict):
+        raise ArchitectureError("Cargo metadata must contain an object")
+    return value
+
+
+def workspace_edges(
+    metadata: dict[str, Any],
+) -> tuple[set[str], set[tuple[str, str, str]], dict[str, list[dict[str, Any]]]]:
+    packages = metadata.get("packages")
+    if not isinstance(packages, list):
+        raise ArchitectureError("Cargo metadata packages must be an array")
+    names: set[str] = set()
+    edges: set[tuple[str, str, str]] = set()
+    dependencies: dict[str, list[dict[str, Any]]] = {}
+    for index, package in enumerate(packages):
+        if not isinstance(package, dict):
+            raise ArchitectureError(
+                f"Cargo metadata packages[{index}] must be an object"
+            )
+        name = require_string(
+            package.get("name"), f"Cargo metadata packages[{index}].name"
+        )
+        if name in names:
+            raise ArchitectureError(f"Cargo metadata repeats package {name}")
+        names.add(name)
+        package_dependencies = package.get("dependencies", [])
+        if not isinstance(package_dependencies, list) or any(
+            not isinstance(dependency, dict) for dependency in package_dependencies
+        ):
+            raise ArchitectureError(
+                f"Cargo metadata dependencies for {name} must be an array"
+            )
+        dependencies[name] = package_dependencies
+        for dependency in package_dependencies:
+            if dependency.get("path") is None:
+                continue
+            kind = dependency.get("kind") or "normal"
+            if kind not in {"normal", "build"}:
+                continue
+            target = require_string(
+                dependency.get("name"), f"Cargo metadata dependency target for {name}"
+            )
+            edges.add((name, target, kind))
+    return names, edges, dependencies
+
+
+def matches_dependency_prefix(name: str, prefix: str) -> bool:
+    normalized = name.lower().replace("_", "-")
+    return normalized == prefix or normalized.startswith(prefix + "-")
+
+
+def validate_workspace(policy: dict[str, Any], metadata: dict[str, Any]) -> None:
+    package_names, edges, dependencies = workspace_edges(metadata)
+    package_layers: dict[str, str] = policy["package_layers"]
+    classifications: dict[str, str] = policy["workspace_package_classification"]
+    added_packages = sorted(package_names - set(classifications))
+    removed_packages = sorted(set(classifications) - package_names)
+    if added_packages or removed_packages:
+        raise ArchitectureError(
+            "workspace package classification differs from Cargo metadata: "
+            f"added={added_packages}, removed={removed_packages}"
+        )
+    missing = sorted(set(package_layers) - package_names)
+    if missing:
+        raise ArchitectureError(
+            f"policy-owned workspace packages are missing: {missing}"
+        )
+
+    legacy = set(policy["legacy_packages"])
+    actual_legacy = {edge for edge in edges if edge[0] in legacy or edge[1] in legacy}
+    expected_legacy = frozen_edges(policy)
+    added = sorted(actual_legacy - expected_legacy)
+    removed = sorted(expected_legacy - actual_legacy)
+    if added or removed:
+        raise ArchitectureError(
+            "frozen legacy workspace edges changed: "
+            f"added={format_edges(added)}, removed={format_edges(removed)}"
+        )
+
+    expected_transitional = frozen_transitional_edges(policy)
+    missing_transitional = sorted(expected_transitional - edges)
+    if missing_transitional:
+        raise ArchitectureError(
+            "frozen transitional workspace edges changed: "
+            f"removed={format_edges(missing_transitional)}"
+        )
+
+    for source, target, kind in sorted(edges):
+        if (source, target, kind) in expected_legacy | expected_transitional:
+            continue
+        source_layer = package_layers.get(source)
+        target_layer = package_layers.get(target)
+        if source_layer is None or source_layer == "legacy" or target_layer is None:
+            continue
+        if target_layer == "legacy":
+            raise ArchitectureError(
+                f"native package imports legacy: {source}({source_layer}) -> {target}(legacy)"
+            )
+        if source_layer == target_layer:
+            continue
+        try:
+            validate_logical_edge(policy, source_layer, target_layer)
+        except ArchitectureError as error:
+            raise ArchitectureError(
+                f"{error}; package edge {source} -> {target}"
+            ) from error
+
+    native_rules: dict[str, list[str]] = policy["native_package_workspace_dependencies"]
+    for package, allowed in native_rules.items():
+        actual = {target for source, target, _kind in edges if source == package}
+        unexpected = sorted(actual - set(allowed))
+        missing_dependencies = sorted(set(allowed) - actual)
+        if unexpected:
+            raise ArchitectureError(
+                f"native package {package} has undeclared workspace dependencies: {unexpected}"
+            )
+        if missing_dependencies:
+            raise ArchitectureError(
+                f"native package {package} is missing declared workspace dependencies: "
+                f"{missing_dependencies}"
+            )
+
+    device_free = set(policy["device_free_layers"])
+    prefixes: list[str] = policy["device_dependency_prefixes"]
+    for package, classification in classifications.items():
+        layer = package_layers.get(package)
+        if classification != "surface" and layer not in device_free:
+            continue
+        for dependency in dependencies[package]:
+            kind = dependency.get("kind") or "normal"
+            if kind not in {"normal", "build"}:
+                continue
+            name = require_string(
+                dependency.get("name"),
+                f"Cargo metadata dependency target for {package}",
+            )
+            prefix = next(
+                (
+                    candidate
+                    for candidate in prefixes
+                    if matches_dependency_prefix(name, candidate)
+                ),
+                None,
+            )
+            if prefix is not None:
+                raise ArchitectureError(
+                    f"device-free package {package}({layer or classification}) imports {name} "
+                    f"(forbidden family {prefix})"
+                )
+
+
+def source_boundary_violations(
+    boundary: dict[str, Any], repo_root: Path = REPO_ROOT
+) -> list[dict[str, Any]]:
+    violations = []
+    extensions = set(boundary["extensions"])
+    for root_text in boundary["roots"]:
+        root = repo_root / root_text
+        if not root.is_dir():
+            raise ArchitectureError(
+                f"source boundary {boundary['id']} cannot read root {root_text}"
+            )
+        for path in sorted(root.rglob("*")):
+            if not path.is_file() or path.suffix not in extensions:
+                continue
+            try:
+                source = path.read_text(encoding="utf-8")
+            except OSError as error:
+                raise ArchitectureError(
+                    f"source boundary {boundary['id']} cannot read {path}: {error}"
+                ) from error
+            relative = str(path.relative_to(repo_root))
+            for pattern_index, forbidden in enumerate(boundary["forbidden_patterns"]):
+                for match in re.finditer(forbidden["regex"], source):
+                    violations.append(
+                        {
+                            "path": relative,
+                            "pattern": pattern_index,
+                            "match": match.group(0),
+                            "context": normalized_violation_context(source, match),
+                            "line": source.count("\n", 0, match.start()) + 1,
+                            "message": forbidden["message"],
+                        }
+                    )
+    return violations
+
+
+def normalized_violation_context(source: str, match: re.Match[str]) -> str:
+    line_start = source.rfind("\n", 0, match.start()) + 1
+    line_end = source.find("\n", match.end())
+    if line_end == -1:
+        line_end = len(source)
+    first_line = source[line_start:line_end]
+    if re.match(r"\s*(?:pub\s+)?(?:use|extern\s+crate)\b", first_line):
+        statement_end = source.find(";", match.end())
+        if statement_end != -1:
+            line_end = statement_end + 1
+    return " ".join(source[line_start:line_end].split())
+
+
+def source_boundary_violation_digest(violations: list[dict[str, Any]]) -> str:
+    fingerprint = [
+        {
+            "path": violation["path"],
+            "pattern": violation["pattern"],
+            "match": violation["match"],
+            "context": violation["context"],
+        }
+        for violation in violations
+    ]
+    return stable_digest(fingerprint)
+
+
+def validate_source_boundaries(
+    policy: dict[str, Any], repo_root: Path = REPO_ROOT
+) -> None:
+    for boundary in policy["source_boundaries"]:
+        violations = source_boundary_violations(boundary, repo_root)
+        accepted_digest = boundary["accepted_violation_digest"]
+        if accepted_digest is None:
+            if not violations:
+                continue
+            violation = violations[0]
+            raise ArchitectureError(
+                f"{violation['message']}: {violation['path']}:{violation['line']}"
+            )
+        actual_digest = source_boundary_violation_digest(violations)
+        if actual_digest != accepted_digest:
+            raise ArchitectureError(
+                f"source boundary {boundary['id']} differs from its accepted transitional violations"
+            )
+
+
+def validate_whole_run_router_source(
+    policy: dict[str, Any], repo_root: Path = REPO_ROOT
+) -> None:
+    router = policy["whole_run_router"]
+    source_relative = Path(router["source"])
+    source_path = repo_root / source_relative
+    try:
+        source = source_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ArchitectureError(
+            f"whole-run migration router cannot read {source_relative}: {error}"
+        ) from error
+
+    matrix_name = Path(policy["migration_matrix"]).name
+    if "include_str!" not in source or matrix_name not in source:
+        raise ArchitectureError(
+            "whole-run migration router must embed the authoritative migration matrix"
+        )
+
+    owner_symbols = [router["router_type"], *router["engine_ports"]]
+    owners: dict[str, list[str]] = {symbol: [] for symbol in owner_symbols}
+    crates_root = repo_root / "crates"
+    if not crates_root.is_dir():
+        raise ArchitectureError("whole-run migration router cannot inspect crates")
+    for crate in sorted(crates_root.iterdir()):
+        source_root = crate / "src"
+        if not source_root.is_dir():
+            continue
+        for path in sorted(source_root.rglob("*.rs")):
+            try:
+                candidate = path.read_text(encoding="utf-8")
+            except OSError as error:
+                raise ArchitectureError(
+                    f"whole-run migration router cannot read {path}: {error}"
+                ) from error
+            for symbol in owner_symbols:
+                definition = re.compile(
+                    rf"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|trait|type)\s+{re.escape(symbol)}\b"
+                )
+                owners[symbol].extend(
+                    str(path.relative_to(repo_root))
+                    for _match in definition.finditer(candidate)
+                )
+
+    expected_owner = str(source_relative)
+    for symbol, actual_owners in owners.items():
+        if actual_owners != [expected_owner]:
+            raise ArchitectureError(
+                f"whole-run router symbol {symbol} must be owned exactly once by "
+                f"{expected_owner}: found={actual_owners}"
+            )
+
+    dispatch = re.compile(
+        rf"(?m)^\s*pub\s+fn\s+{re.escape(router['dispatch_method'])}\b"
+    )
+    if len(dispatch.findall(source)) != 1:
+        raise ArchitectureError(
+            "whole-run migration router must expose exactly one accepted dispatch method"
+        )
+
+
+def format_edges(edges: list[tuple[str, str, str]]) -> str:
+    return (
+        "["
+        + ", ".join(f"{source}->{target}({kind})" for source, target, kind in edges)
+        + "]"
+    )
+
+
+def validate_acceptance_contract(identifier: str, contract: dict[str, Any]) -> None:
+    context = f"acceptance contract {identifier}"
+    required = {
+        "baseline_identity",
+        "comparator",
+        "thresholds",
+        "laws",
+        "resource_gates",
+        "evidence_tiers",
+    }
+    if set(contract) != required:
+        raise ArchitectureError(f"{context} must contain exactly {sorted(required)}")
+    require_string(contract.get("baseline_identity"), f"{context}.baseline_identity")
+    comparator = contract.get("comparator")
+    if not isinstance(comparator, dict):
+        raise ArchitectureError(f"{context}.comparator must be an object")
+    comparator_fields = {
+        "kind",
+        "normalized_rms_ceiling",
+        "denominator",
+        "preprocessing",
+    }
+    if set(comparator) != comparator_fields:
+        raise ArchitectureError(
+            f"{context}.comparator must contain exactly {sorted(comparator_fields)}"
+        )
+    require_string(comparator.get("kind"), f"{context}.comparator.kind")
+    require_string(
+        comparator.get("preprocessing"), f"{context}.comparator.preprocessing"
+    )
+    ceiling = comparator.get("normalized_rms_ceiling")
+    if ceiling is not None:
+        if (
+            isinstance(ceiling, bool)
+            or not isinstance(ceiling, (int, float))
+            or ceiling < 0
+        ):
+            raise ArchitectureError(
+                f"{context}.comparator.normalized_rms_ceiling must be null or non-negative"
+            )
+        if ceiling > 0.001:
+            raise ArchitectureError(
+                f"{context}.comparator.normalized_rms_ceiling may not exceed 0.001"
+            )
+        require_string(
+            comparator.get("denominator"), f"{context}.comparator.denominator"
+        )
+    elif comparator.get("denominator") is not None:
+        raise ArchitectureError(
+            f"{context}.comparator.denominator must be null without a normalized RMS ceiling"
+        )
+    require_string_list(contract.get("thresholds"), f"{context}.thresholds")
+    require_string_list(contract.get("laws"), f"{context}.laws")
+    require_string_list(contract.get("resource_gates"), f"{context}.resource_gates")
+    require_string_list(contract.get("evidence_tiers"), f"{context}.evidence_tiers")
+
+
+def contract_ids(value: Any) -> set[str]:
+    if isinstance(value, dict):
+        result = set()
+        for identifier, contract in value.items():
+            identifier = require_string(identifier, "acceptance_contracts key")
+            result.add(identifier)
+            if not isinstance(contract, dict):
+                raise ArchitectureError(
+                    f"acceptance contract {identifier} must be an object"
+                )
+            validate_acceptance_contract(identifier, contract)
+        return result
+    if isinstance(value, list):
+        result: set[str] = set()
+        for index, contract in enumerate(value):
+            if not isinstance(contract, dict):
+                raise ArchitectureError(
+                    f"acceptance_contracts[{index}] must be an object"
+                )
+            identifier = require_string(
+                contract.get("id"), f"acceptance_contracts[{index}].id"
+            )
+            if identifier in result:
+                raise ArchitectureError(f"acceptance_contracts repeats {identifier}")
+            result.add(identifier)
+            validate_acceptance_contract(identifier, contract)
+        return result
+    raise ArchitectureError("acceptance_contracts must be an object or array")
+
+
+def validate_locator(value: Any, context: str) -> None:
+    if isinstance(value, str):
+        require_string(value, context)
+        return
+    if isinstance(value, dict):
+        if not value or not (set(value) & LOCATOR_KEYS):
+            raise ArchitectureError(
+                f"{context} must contain at least one locator key: {sorted(LOCATOR_KEYS)}"
+            )
+        for key in set(value) & LOCATOR_KEYS:
+            locator = value[key]
+            if isinstance(locator, int) and key == "issue" and locator > 0:
+                continue
+            require_string(locator, f"{context}.{key}")
+        return
+    raise ArchitectureError(f"{context} must be a locator string or object")
+
+
+def validate_locator_collection(value: Any, context: str) -> None:
+    if not isinstance(value, list) or not value:
+        raise ArchitectureError(f"{context} must be a non-empty array")
+    for index, locator in enumerate(value):
+        validate_locator(locator, f"{context}[{index}]")
+
+
+def validate_source_evidence(value: Any, context: str) -> None:
+    validate_locator_collection(value, context)
+    for index, locator in enumerate(value):
+        if not isinstance(locator, str) or "::" not in locator:
+            raise ArchitectureError(
+                f"{context}[{index}] must be a repository-relative path::token locator"
+            )
+        path_text, token = locator.rsplit("::", 1)
+        path = Path(path_text)
+        if path.is_absolute() or ".." in path.parts:
+            raise ArchitectureError(
+                f"{context}[{index}] path must stay inside the repository"
+            )
+        require_string(token, f"{context}[{index}] token")
+        source_path = REPO_ROOT / path
+        try:
+            source = source_path.read_text(encoding="utf-8")
+        except OSError as error:
+            raise ArchitectureError(
+                f"{context}[{index}] cannot read source evidence {path_text}: {error}"
+            ) from error
+        if token not in source:
+            raise ArchitectureError(
+                f"{context}[{index}] source evidence token {token!r} was not found in {path_text}"
+            )
+
+
+def baseline_manifest_content(locator: str, context: str) -> bytes:
+    if not locator.startswith("repo://"):
+        raise ArchitectureError(
+            f"{context} must be a repository baseline locator with pinned content"
+        )
+    relative, separator, fragment = locator.removeprefix("repo://").partition("#")
+    path = Path(relative)
+    if not relative or path.is_absolute() or ".." in path.parts:
+        raise ArchitectureError(f"{context} path must stay inside the repository")
+    try:
+        content = (REPO_ROOT / path).read_bytes()
+    except OSError as error:
+        raise ArchitectureError(
+            f"{context} cannot read baseline manifest {relative}: {error}"
+        ) from error
+    if separator:
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise ArchitectureError(
+                f"{context} baseline fragment requires UTF-8 content: {error}"
+            ) from error
+        if not fragment or fragment not in text:
+            raise ArchitectureError(
+                f"{context} baseline fragment {fragment!r} was not found in {relative}"
+            )
+    return content
+
+
+def validate_baseline_manifest_registry(value: Any) -> dict[str, str]:
+    context = "migration matrix baseline_manifest_digests"
+    if not isinstance(value, dict) or not value:
+        raise ArchitectureError(f"{context} must be a non-empty object")
+    for locator, digest in value.items():
+        require_string(locator, f"{context} locator")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ArchitectureError(
+                f"{context}.{locator} must be a lowercase SHA-256 digest"
+            )
+        content = baseline_manifest_content(locator, f"{context}.{locator}")
+        actual = hashlib.sha256(content).hexdigest()
+        if actual != digest:
+            raise ArchitectureError(
+                f"{context}.{locator} content digest differs: expected {digest}, actual {actual}"
+            )
+    return value
+
+
+def validate_baseline_manifests(
+    value: Any, context: str, registry: dict[str, str]
+) -> set[str]:
+    validate_locator_collection(value, context)
+    used = set()
+    for index, locator in enumerate(value):
+        if not isinstance(locator, str) or locator not in registry:
+            raise ArchitectureError(
+                f"{context}[{index}] must reference a content-pinned baseline manifest"
+            )
+        used.add(locator)
+    return used
+
+
+def issue_number(value: Any, context: str) -> int:
+    if isinstance(value, int) and value > 0:
+        return value
+    if isinstance(value, str):
+        match = re.fullmatch(r"#?(\d+)", value.strip())
+        if match and int(match.group(1)) > 0:
+            return int(match.group(1))
+    raise ArchitectureError(f"{context} must be a positive issue number")
+
+
+def validate_issue_outcomes(value: Any) -> set[int]:
+    if not isinstance(value, list) or not value:
+        raise ArchitectureError(
+            "migration matrix issue_outcomes must be a non-empty array"
+        )
+    fields = {
+        "issue",
+        "required_outcome",
+        "current_owner",
+        "destination_tickets",
+        "acceptance_gates",
+        "deletion_or_retention_condition",
+    }
+    issues: set[int] = set()
+    for index, outcome in enumerate(value):
+        context = f"migration matrix issue_outcomes[{index}]"
+        if not isinstance(outcome, dict) or set(outcome) != fields:
+            raise ArchitectureError(f"{context} must contain exactly {sorted(fields)}")
+        issue = issue_number(outcome.get("issue"), f"{context}.issue")
+        if issue in issues:
+            raise ArchitectureError(
+                f"migration matrix issue_outcomes repeats issue {issue}"
+            )
+        issues.add(issue)
+        require_string(outcome.get("required_outcome"), f"{context}.required_outcome")
+        require_string(outcome.get("current_owner"), f"{context}.current_owner")
+        require_string_list(
+            outcome.get("destination_tickets"), f"{context}.destination_tickets"
+        )
+        require_string_list(
+            outcome.get("acceptance_gates"), f"{context}.acceptance_gates"
+        )
+        require_string(
+            outcome.get("deletion_or_retention_condition"),
+            f"{context}.deletion_or_retention_condition",
+        )
+    return issues
+
+
+def stable_digest(value: Any) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def rust_unit_enum_variants(path: Path, identifier: str) -> set[str]:
+    try:
+        source = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ArchitectureError(
+            f"cannot read Rust enum source {display_path(path)}: {error}"
+        ) from error
+    declaration = re.search(
+        rf"\b(?:pub(?:\([^)]*\))?\s+)?enum\s+{re.escape(identifier)}\s*\{{",
+        source,
+    )
+    if declaration is None:
+        raise ArchitectureError(
+            f"cannot find Rust enum {identifier} in {display_path(path)}"
+        )
+    depth = 1
+    end = declaration.end()
+    while end < len(source) and depth:
+        character = source[end]
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+        end += 1
+    if depth:
+        raise ArchitectureError(
+            f"Rust enum {identifier} in {display_path(path)} has no closing brace"
+        )
+    body = source[declaration.end() : end - 1]
+    variants = set(re.findall(r"(?m)^\s*([A-Z][A-Za-z0-9_]*)\s*,\s*$", body))
+    if not variants:
+        raise ArchitectureError(
+            f"Rust enum {identifier} in {display_path(path)} has no unit variants"
+        )
+    return variants
+
+
+def validate_rust_enum_inventory(
+    matrix: dict[str, Any],
+    field: str,
+    enum_path: Path,
+    enum_identifier: str,
+    accepted_digest: str,
+) -> None:
+    inventory = matrix.get(field)
+    if not isinstance(inventory, dict) or not inventory:
+        raise ArchitectureError(f"migration matrix {field} must be a non-empty object")
+    for variant, row in inventory.items():
+        require_string(variant, f"migration matrix {field} key")
+        require_string(row, f"migration matrix {field}.{variant}")
+    variants = rust_unit_enum_variants(enum_path, enum_identifier)
+    if set(inventory) != variants:
+        raise ArchitectureError(
+            f"migration matrix {field} differs from {enum_identifier}: "
+            f"added={sorted(set(inventory) - variants)}, "
+            f"removed={sorted(variants - set(inventory))}"
+        )
+    if stable_digest(inventory) != accepted_digest:
+        raise ArchitectureError(
+            f"migration matrix {field} differs from {enum_identifier}"
+        )
+
+
+def validate_migration_matrix(
+    matrix: dict[str, Any],
+    policy: dict[str, Any],
+    *,
+    enforce_accepted_scope: bool = True,
+) -> None:
+    if matrix.get("schema_version") != 1:
+        raise ArchitectureError("migration matrix schema_version must be 1")
+    if enforce_accepted_scope:
+        if matrix.get("programme_issue") != 486 or matrix.get("owner_issue") != 487:
+            raise ArchitectureError(
+                "migration matrix programme_issue and owner_issue must remain #486 and #487"
+            )
+        if matrix.get("status_values") != [
+            "Native",
+            "LegacyWholeRun",
+            "TemporarilyUnavailable",
+        ]:
+            raise ArchitectureError(
+                "migration matrix status_values differ from the accepted dispositions"
+            )
+    revision = matrix.get("contract_revision")
+    if not (
+        isinstance(revision, int)
+        and revision > 0
+        or isinstance(revision, str)
+        and revision.strip()
+    ):
+        raise ArchitectureError(
+            "migration matrix contract_revision must be positive or non-empty"
+        )
+    if enforce_accepted_scope and revision != ACCEPTED_MATRIX_CONTRACT_REVISION:
+        raise ArchitectureError(
+            "migration matrix contract_revision differs from the accepted revision"
+        )
+    known_contracts = contract_ids(matrix.get("acceptance_contracts"))
+    if not known_contracts:
+        raise ArchitectureError("migration matrix must define acceptance contracts")
+    if enforce_accepted_scope:
+        accepted_contracts = {
+            identifier for identifier, _field in ACCEPTED_CONTRACT_REQUIREMENT_SHA256
+        }
+        if known_contracts != accepted_contracts:
+            raise ArchitectureError(
+                "migration matrix acceptance contracts differ from the accepted scope"
+            )
+        for (
+            identifier,
+            field,
+        ), accepted in ACCEPTED_CONTRACT_REQUIREMENT_SHA256.items():
+            if (
+                stable_digest(matrix["acceptance_contracts"][identifier][field])
+                != accepted
+            ):
+                raise ArchitectureError(
+                    f"acceptance contract {identifier}.{field} differs from the accepted scope"
+                )
+        if (
+            stable_digest(matrix["acceptance_contracts"])
+            != ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256
+        ):
+            raise ArchitectureError(
+                "migration matrix acceptance contract content differs from the accepted scope"
+            )
+
+    declared_crosswalk = matrix.get("required_issue_crosswalk")
+    if not isinstance(declared_crosswalk, list) or any(
+        not isinstance(issue, int) or issue <= 0 for issue in declared_crosswalk
+    ):
+        raise ArchitectureError(
+            "migration matrix required_issue_crosswalk must be an array of positive integers"
+        )
+    if len(declared_crosswalk) != len(set(declared_crosswalk)):
+        raise ArchitectureError(
+            "migration matrix required_issue_crosswalk contains duplicates"
+        )
+    expected_crosswalk = set(policy["required_migration_evidence_issues"])
+    if set(declared_crosswalk) != expected_crosswalk:
+        raise ArchitectureError(
+            "migration matrix required_issue_crosswalk differs from dependency policy: "
+            f"added={sorted(set(declared_crosswalk) - expected_crosswalk)}, "
+            f"removed={sorted(expected_crosswalk - set(declared_crosswalk))}"
+        )
+    if enforce_accepted_scope and set(declared_crosswalk) != ACCEPTED_MIGRATION_ISSUES:
+        raise ArchitectureError(
+            "migration matrix required_issue_crosswalk differs from the accepted issue scope"
+        )
+
+    inventory = matrix.get("inventory")
+    if not isinstance(inventory, dict) or set(inventory) != MATRIX_KINDS:
+        raise ArchitectureError(
+            f"migration matrix inventory must define exactly {sorted(MATRIX_KINDS)}"
+        )
+    inventory_pairs: set[tuple[str, str]] = set()
+    for kind in sorted(MATRIX_KINDS):
+        identifiers = require_string_list(
+            inventory.get(kind), f"migration matrix inventory.{kind}"
+        )
+        inventory_pairs.update((kind, identifier) for identifier in identifiers)
+    if enforce_accepted_scope:
+        if stable_digest(inventory) != ACCEPTED_MATRIX_INVENTORY_SHA256:
+            raise ArchitectureError(
+                "migration matrix inventory differs from the canonical imaging inventory"
+            )
+        validate_rust_enum_inventory(
+            matrix,
+            "product_kind_inventory",
+            REPO_ROOT / "crates/casa-imaging-model/src/compiled_problem.rs",
+            "ProductKind",
+            ACCEPTED_PRODUCT_KIND_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "plane_selection_inventory",
+            REPO_ROOT / "crates/casars-imager/src/task_contract.rs",
+            "ImagerPlaneSelection",
+            ACCEPTED_PLANE_SELECTION_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "polarization_coordinate_inventory",
+            REPO_ROOT / "crates/casa-imaging-model/src/compiled_problem.rs",
+            "PolarizationCoordinate",
+            ACCEPTED_POLARIZATION_COORDINATE_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "cube_interpolation_inventory",
+            REPO_ROOT / "crates/casa-ms/src/spectral_selection.rs",
+            "CubeInterpolation",
+            ACCEPTED_CUBE_INTERPOLATION_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "standard_mfs_backend_inventory",
+            REPO_ROOT / "crates/casa-imaging/src/lib.rs",
+            "StandardMfsBackend",
+            ACCEPTED_STANDARD_MFS_BACKEND_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "spectral_mode_inventory",
+            REPO_ROOT / "crates/casars-imager/src/lib.rs",
+            "SpectralMode",
+            ACCEPTED_SPECTRAL_MODE_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "imager_spectral_mode_inventory",
+            REPO_ROOT / "crates/casars-imager/src/task_contract.rs",
+            "ImagerSpectralMode",
+            ACCEPTED_IMAGER_SPECTRAL_MODE_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "gridder_request_inventory",
+            REPO_ROOT / "crates/casars-imager/src/lib.rs",
+            "GridderRequest",
+            ACCEPTED_GRIDDER_REQUEST_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "deconvolver_inventory",
+            REPO_ROOT / "crates/casa-imaging/src/types.rs",
+            "Deconvolver",
+            ACCEPTED_DECONVOLVER_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "imager_deconvolver_inventory",
+            REPO_ROOT / "crates/casars-imager/src/task_contract.rs",
+            "ImagerDeconvolver",
+            ACCEPTED_IMAGER_DECONVOLVER_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "imager_cube_interpolation_inventory",
+            REPO_ROOT / "crates/casars-imager/src/task_contract.rs",
+            "ImagerCubeInterpolation",
+            ACCEPTED_IMAGER_CUBE_INTERPOLATION_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "fft_backend_choice_inventory",
+            REPO_ROOT / "crates/casa-imaging/src/fft_backend.rs",
+            "FftBackendChoice",
+            ACCEPTED_FFT_BACKEND_CHOICE_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "imaging_fft_backend_policy_inventory",
+            REPO_ROOT / "crates/casars-imager/src/lib.rs",
+            "ImagingFftBackendPolicy",
+            ACCEPTED_IMAGING_FFT_BACKEND_POLICY_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "standard_mfs_acceleration_policy_inventory",
+            REPO_ROOT / "crates/casars-imager/src/lib.rs",
+            "StandardMfsAccelerationPolicy",
+            ACCEPTED_STANDARD_MFS_ACCELERATION_POLICY_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "standard_mfs_minor_cycle_backend_inventory",
+            REPO_ROOT / "crates/casa-imaging/src/lib.rs",
+            "StandardMfsMinorCycleBackend",
+            ACCEPTED_STANDARD_MFS_MINOR_CYCLE_BACKEND_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "single_plane_acceleration_policy_inventory",
+            REPO_ROOT / "crates/casa-imaging/src/single_plane_plan.rs",
+            "SinglePlaneAccelerationPolicy",
+            ACCEPTED_SINGLE_PLANE_ACCELERATION_POLICY_INVENTORY_SHA256,
+        )
+        validate_rust_enum_inventory(
+            matrix,
+            "per_plane_execution_backend_inventory",
+            REPO_ROOT / "crates/casars-imager/src/lib.rs",
+            "PerPlaneExecutionBackend",
+            ACCEPTED_PER_PLANE_EXECUTION_BACKEND_INVENTORY_SHA256,
+        )
+    baseline_registry = validate_baseline_manifest_registry(
+        matrix.get("baseline_manifest_digests")
+    )
+    if (
+        enforce_accepted_scope
+        and stable_digest(baseline_registry)
+        != ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256
+    ):
+        raise ArchitectureError(
+            "migration matrix baseline manifest digests differ from the accepted evidence"
+        )
+
+    outcome_issues = (
+        validate_issue_outcomes(matrix.get("issue_outcomes"))
+        if enforce_accepted_scope
+        else set()
+    )
+    if enforce_accepted_scope and outcome_issues != ACCEPTED_MIGRATION_ISSUES:
+        raise ArchitectureError(
+            "migration matrix issue_outcomes differs from the accepted issue scope: "
+            f"added={sorted(outcome_issues - ACCEPTED_MIGRATION_ISSUES)}, "
+            f"removed={sorted(ACCEPTED_MIGRATION_ISSUES - outcome_issues)}"
+        )
+    if (
+        enforce_accepted_scope
+        and stable_digest(matrix["issue_outcomes"]) != ACCEPTED_ISSUE_OUTCOMES_SHA256
+    ):
+        raise ArchitectureError(
+            "migration matrix issue_outcomes content differs from the accepted crosswalk outcomes"
+        )
+
+    rows = matrix.get("rows")
+    if not isinstance(rows, list) or not rows:
+        raise ArchitectureError("migration matrix rows must be a non-empty array")
+    row_ids: set[str] = set()
+    row_pairs: set[tuple[str, str]] = set()
+    covered_issues: set[int] = set()
+    used_baselines: set[str] = set()
+    required_fields = {
+        "id",
+        "kind",
+        "status",
+        "current_owner",
+        "destination_tickets",
+        "evidence_issues",
+        "baseline_manifests",
+        "acceptance_contract",
+        "transfer_point",
+        "deletion_condition",
+        "migration_obligation",
+        "source_evidence",
+    }
+    for index, row in enumerate(rows):
+        context = f"migration matrix rows[{index}]"
+        if not isinstance(row, dict):
+            raise ArchitectureError(f"{context} must be an object")
+        if set(row) != required_fields:
+            raise ArchitectureError(
+                f"{context} must contain exactly {sorted(required_fields)}"
+            )
+        identifier = require_string(row.get("id"), f"{context}.id")
+        if identifier in row_ids:
+            raise ArchitectureError(f"migration matrix repeats row id {identifier}")
+        row_ids.add(identifier)
+        kind = require_string(row.get("kind"), f"{context}.kind")
+        if kind not in MATRIX_KINDS:
+            raise ArchitectureError(
+                f"{context}.kind must be one of {sorted(MATRIX_KINDS)}"
+            )
+        row_pairs.add((kind, identifier))
+        status = row.get("status")
+        if status not in VALID_STATUSES:
+            raise ArchitectureError(
+                f"{context}.status must be one of {sorted(VALID_STATUSES)}"
+            )
+        require_string(row.get("current_owner"), f"{context}.current_owner")
+        require_string_list(
+            row.get("destination_tickets"), f"{context}.destination_tickets"
+        )
+        evidence = row.get("evidence_issues")
+        if not isinstance(evidence, list) or not evidence:
+            raise ArchitectureError(
+                f"{context}.evidence_issues must be a non-empty array"
+            )
+        covered_issues.update(
+            issue_number(issue, f"{context}.evidence_issues[{issue_index}]")
+            for issue_index, issue in enumerate(evidence)
+        )
+        used_baselines.update(
+            validate_baseline_manifests(
+                row.get("baseline_manifests"),
+                f"{context}.baseline_manifests",
+                baseline_registry,
+            )
+        )
+        contract = require_string(
+            row.get("acceptance_contract"), f"{context}.acceptance_contract"
+        )
+        if contract not in known_contracts:
+            raise ArchitectureError(
+                f"{context} references unknown acceptance contract {contract}"
+            )
+        require_string(row.get("transfer_point"), f"{context}.transfer_point")
+        require_string(row.get("deletion_condition"), f"{context}.deletion_condition")
+        obligation = row.get("migration_obligation")
+        if status == "Native":
+            if obligation is not None:
+                raise ArchitectureError(
+                    f"{context}.migration_obligation must be null for Native"
+                )
+        elif not isinstance(obligation, dict) or not obligation:
+            raise ArchitectureError(
+                f"{context}.migration_obligation must be a non-empty object until Native"
+            )
+        else:
+            require_string(
+                obligation.get("ticket"), f"{context}.migration_obligation.ticket"
+            )
+            require_string(
+                obligation.get("reason"), f"{context}.migration_obligation.reason"
+            )
+        validate_source_evidence(
+            row.get("source_evidence"), f"{context}.source_evidence"
+        )
+
+    if row_pairs != inventory_pairs:
+        raise ArchitectureError(
+            "migration matrix inventory and rows differ: "
+            f"missing={sorted(inventory_pairs - row_pairs)}, "
+            f"extra={sorted(row_pairs - inventory_pairs)}"
+        )
+    if used_baselines != set(baseline_registry):
+        raise ArchitectureError(
+            "migration matrix baseline digest registry and rows differ: "
+            f"unused={sorted(set(baseline_registry) - used_baselines)}, "
+            f"unpinned={sorted(used_baselines - set(baseline_registry))}"
+        )
+
+    missing_issues = sorted(expected_crosswalk - covered_issues)
+    if missing_issues:
+        raise ArchitectureError(
+            f"migration matrix omits required crosswalk issues: {missing_issues}"
+        )
+    if enforce_accepted_scope and stable_digest(rows) != ACCEPTED_MATRIX_ROWS_SHA256:
+        raise ArchitectureError(
+            "migration matrix row ledger differs from the accepted scope"
+        )
+
+
+def run_policy_self_test(policy: dict[str, Any]) -> None:
+    allowed = {
+        (source, target)
+        for source, targets in policy["allowed_logical_edges"].items()
+        for target in targets
+    }
+    for source in policy["layers"]:
+        for target in policy["layers"]:
+            if (source, target) in allowed:
+                continue
+            try:
+                validate_logical_edge(policy, source, target)
+            except ArchitectureError:
+                continue
+            raise ArchitectureError(
+                f"self-test accepted forbidden logical edge {source} -> {target}"
+            )
+
+
+def synthetic_matrix(policy: dict[str, Any]) -> dict[str, Any]:
+    baseline = "repo://scripts/check-imaging-architecture.py#class ArchitectureError"
+    return {
+        "schema_version": 1,
+        "contract_revision": 1,
+        "required_issue_crosswalk": policy["required_migration_evidence_issues"],
+        "acceptance_contracts": {
+            "synthetic": {
+                "baseline_identity": "synthetic identity",
+                "comparator": {
+                    "kind": "synthetic",
+                    "normalized_rms_ceiling": None,
+                    "denominator": None,
+                    "preprocessing": "none",
+                },
+                "thresholds": ["synthetic threshold"],
+                "laws": ["synthetic law"],
+                "resource_gates": ["synthetic resource gate"],
+                "evidence_tiers": ["synthetic evidence tier"],
+            }
+        },
+        "baseline_manifest_digests": {
+            baseline: hashlib.sha256(
+                (REPO_ROOT / "scripts/check-imaging-architecture.py").read_bytes()
+            ).hexdigest()
+        },
+        "inventory": {
+            "capability": ["synthetic-row"],
+            "product": ["synthetic-product"],
+            "solver": ["synthetic-solver"],
+            "frontend": ["synthetic-frontend"],
+            "backend": ["synthetic-backend"],
+        },
+        "rows": [
+            {
+                "id": "synthetic-row",
+                "kind": "capability",
+                "status": "LegacyWholeRun",
+                "current_owner": "synthetic legacy",
+                "destination_tickets": ["#488"],
+                "evidence_issues": policy["required_migration_evidence_issues"],
+                "baseline_manifests": [baseline],
+                "acceptance_contract": "synthetic",
+                "transfer_point": "synthetic transfer",
+                "deletion_condition": "synthetic deletion",
+                "migration_obligation": {
+                    "ticket": "#488",
+                    "reason": "synthetic obligation",
+                },
+                "source_evidence": [
+                    "scripts/check-imaging-architecture.py::class ArchitectureError"
+                ],
+            },
+            *[
+                {
+                    "id": identifier,
+                    "kind": kind,
+                    "status": "Native",
+                    "current_owner": "synthetic native",
+                    "destination_tickets": ["#488"],
+                    "evidence_issues": policy["required_migration_evidence_issues"],
+                    "baseline_manifests": [baseline],
+                    "acceptance_contract": "synthetic",
+                    "transfer_point": "synthetic transfer",
+                    "deletion_condition": "synthetic canonical owner",
+                    "migration_obligation": None,
+                    "source_evidence": [
+                        "scripts/check-imaging-architecture.py::class ArchitectureError"
+                    ],
+                }
+                for kind, identifier in [
+                    ("product", "synthetic-product"),
+                    ("solver", "synthetic-solver"),
+                    ("frontend", "synthetic-frontend"),
+                    ("backend", "synthetic-backend"),
+                ]
+            ],
+        ],
+    }
+
+
+def run_matrix_self_test(policy: dict[str, Any]) -> None:
+    base = synthetic_matrix(policy)
+    validate_migration_matrix(base, policy, enforce_accepted_scope=False)
+    mutations = []
+    bad_status = copy.deepcopy(base)
+    bad_status["rows"][0]["status"] = "Fallback"
+    mutations.append(bad_status)
+    missing_contract = copy.deepcopy(base)
+    missing_contract["rows"][0]["acceptance_contract"] = "missing"
+    mutations.append(missing_contract)
+    missing_obligation = copy.deepcopy(base)
+    missing_obligation["rows"][0]["migration_obligation"] = None
+    mutations.append(missing_obligation)
+    missing_issue = copy.deepcopy(base)
+    for row in missing_issue["rows"]:
+        row["evidence_issues"] = [488]
+    mutations.append(missing_issue)
+    changed_crosswalk = copy.deepcopy(base)
+    changed_crosswalk["required_issue_crosswalk"] = [488]
+    mutations.append(changed_crosswalk)
+    duplicate = copy.deepcopy(base)
+    duplicate["rows"].append(copy.deepcopy(duplicate["rows"][0]))
+    mutations.append(duplicate)
+    for index, mutation in enumerate(mutations):
+        try:
+            validate_migration_matrix(mutation, policy, enforce_accepted_scope=False)
+        except ArchitectureError:
+            continue
+        raise ArchitectureError(f"migration-matrix self-test mutation {index} passed")
+
+
+def resolve_input(path: Path, base: Path = REPO_ROOT) -> Path:
+    return path if path.is_absolute() else base / path
+
+
+def main() -> int:
+    args = parse_args()
+    try:
+        policy_path = resolve_input(args.policy)
+        policy = load_object(policy_path, "dependency policy")
+        validate_policy(policy)
+        if args.self_test:
+            run_policy_self_test(policy)
+            run_matrix_self_test(policy)
+
+        metadata = load_cargo_metadata(
+            resolve_input(args.metadata) if args.metadata else None
+        )
+        validate_workspace(policy, metadata)
+        validate_source_boundaries(policy)
+        validate_whole_run_router_source(policy)
+
+        matrix_path = (
+            resolve_input(args.migration_matrix)
+            if args.migration_matrix
+            else resolve_input(Path(policy["migration_matrix"]))
+        )
+        if not matrix_path.is_file():
+            raise ArchitectureError(
+                f"required migration matrix is missing or not a file: {display_path(matrix_path)}"
+            )
+        matrix = load_object(matrix_path, "migration matrix")
+        validate_migration_matrix(matrix, policy)
+        matrix_rows = len(matrix["rows"])
+        print(
+            "imaging-architecture: validated "
+            f"{len(metadata['packages'])} workspace packages, "
+            f"{len(policy['layers'])} logical layers, "
+            f"{len(policy['frozen_legacy_workspace_edges'])} frozen legacy edges, "
+            f"{len(policy['frozen_transitional_workspace_edges'])} frozen transitional edges, "
+            f"{matrix_rows} migration rows"
+        )
+        return 0
+    except ArchitectureError as error:
+        print(f"imaging-architecture: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

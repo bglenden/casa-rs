@@ -1,0 +1,24 @@
+[package]
+name = "casa-imaging-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Process resource authority for CASA-compatible imaging"
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-imaging-model = { path = "../casa-imaging-model" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+
+[target.'cfg(all(target_os = "macos", not(coverage)))'.dependencies]
+objc2-metal = { version = "0.3.2", default-features = false, features = [
+    "MTLCommandQueue",
+    "MTLDevice",
+] }

@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-07-19
+Last reality check: 2026-08-19
 Verification: just docs-check
 
 ## System purpose
@@ -17,6 +17,8 @@ coordinates, measures, and related workflows.
 | core codecs (`casa-values`, `casa-aipsio`) | Internal generic value model and AipsIO-style framing used by higher layers | Rust ecosystem crates only |
 | foundation crates (`casa-types`, `casa-measures-data`, `casa-measures-tools`) | Public scalar/quanta/measures algorithms and contracts plus explicit runtime-data validation, loading, installation, and maintenance | core codecs; `casa-measures-data` also uses canonical `casa-tables` accessors |
 | persistent storage (`casa-tables`) | CASA table persistence, codecs, data managers/storage backends, schema/mutation APIs, and TaQL engine | core codecs, foundation crates |
+| native imaging contracts (`casa-imaging-model`, `casa-imaging-runtime`) | Immutable logical imaging problems plus process-level resource topology, policies, demand envelopes, arbitration, and leases | `casa-imaging-model` has no workspace dependencies; `casa-imaging-runtime` may depend on the model but never on current legacy imaging crates |
+| imaging migration router (`casa-imaging-router`) | Sole pre-plan whole-run dispatch owner, deriving authoritative capability rows and recording one `Native`, `LegacyWholeRun`, or `TemporarilyUnavailable` disposition | `casa-imaging-model` only; its sealed engine ports cannot invoke or mix stages and the crate has no legacy dependency |
 | domain libraries (`casa-ms`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-imaging`, `casa-calibration`, `casa-vla`) | Higher-level astronomy data models and algorithms built on table/image persistence | foundation crates, `casa-tables`, selected peer domain crates where documented |
 | boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | The generic provider envelope, canonical parameter and application catalogs, task/session surface definitions, and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
 | parameter and task runtime (`casa-task-runtime`) | Format-neutral parameter resolution, sparse TOML profiles, migrations, typed task/session lifecycle coordination, managed Last storage, and the common one-shot task CLI host | boundary contracts and `casa-types`; must not implement provider science behavior |
@@ -29,6 +31,25 @@ coordinates, measures, and related workflows.
 Preferred direction is:
 
 `core codecs -> foundations -> persistent storage / domain libraries -> boundary contracts -> parameter runtime / notebook runtime -> apps/runtimes`
+
+Native imaging follows its stricter accepted direction:
+
+`science -> observation / reconstruction -> products -> execution -> backends -> application -> frontends`
+
+`casa-imaging-model` owns the dependency-free science/reconstruction/product
+contract introduced by ADR-0009. `casa-imaging-runtime` owns execution-resource
+contracts introduced by ADR-0010 and may depend inward on the model.
+`casa-imaging-router` is the application-layer owner of the one pre-plan
+migration decision. It compiles the logical request, derives every applicable
+matrix row, records the authoritative row evidence, and invokes exactly one
+whole-run engine port. A selected native failure is terminal; the router never
+retries through legacy or exposes stage-level delegation. The current
+`casa-imaging` and `casars-imager` crates remain frozen legacy owners during the
+migration; their exact existing edges are ratcheted rather than treated as
+permission for new native dependencies. Three current surface-to-domain edges
+that violate the accepted logical direction are separately frozen as
+transitional exceptions; the architecture gate permits no additions to either
+ledger.
 
 with `casa-test-support` outside the product dependency chain.
 
@@ -100,6 +121,67 @@ Additional constraints:
   domain-library reads and `casa-notebook` operations into GUI-appropriate
   projections, but it must not become a second implementation of persistence,
   task semantics, or provider contracts.
+- Native frontends select a versioned request and `ResourcePolicy`; they do not
+  inspect hosts or devices, select imaging implementations, allocate work
+  buffers, or define scientific products. Native model code depends on no
+  MeasurementSet, backend, device, cache, or allocation API. The machine-
+  readable dependency policy and migration matrix under
+  `resources/imaging-architecture/` are enforced by `just arch-check`.
+
+The native interface has one `ImagingRequest` contract (version 2) and exactly
+one `compile` / `plan` / `run` sequence. `compile` validates and canonicalizes
+logical science, including immutable coordinate and image-domain geometry.
+Compiled Geometry identity is derived only by `compile`; callers supply geometry
+laws, not an identity. Observation pointing records the selected MeasurementSet
+column and meaning plus timestamp, interpolation, extrapolation, and missing-row
+policies without evaluating rows. Spectral geometry retains exact channel
+centres and N+1 boundaries, or a linear WCS law that derives both exactly;
+spectral transforms remain unevaluated. `compile_observation` is the sole
+constructor of Observation Snapshot identity. It canonicalizes each resolved
+MeasurementSet field/time/UV/baseline/scan/observation/intent/array predicate,
+SPW/DDID/channel selection, correlation coordinate, selected data/flag/weight
+column, coordinate and metadata generation, consistency token, reference-data
+identity, and input-model identity. Selected MAIN rows remain a count plus an
+ordered-row digest; visibility samples, row arrays, chunks, and execution order
+are never retained. Content identity is independent of source location and
+request order, while a separate provenance identity retains both. Current
+legacy adapters still resolve selection expressions and evaluate rows; T17/#503
+owns their bounded transfer and deletion.
+
+`plan` gives every structurally valid planner candidate to Resource Authority,
+which selects the first capable candidate feasible under the current topology,
+policy, pressure, and reservations. The provisional selection lease is released
+before `plan` seals that one candidate to the exact compiled problem and
+geometry, the complete Observation Snapshot, Numerics Contract,
+implementation-registry snapshot, Resource Policy, and reviewed planner
+cost-model profile. The plan owns the complete immutable physical work DAG:
+explicit nodes and dependencies, per-node implementation identities, resource
+claims, logical allocation lifetimes, compatible reusable physical slots,
+asynchronous fences, quiescence points, and pre-authorized adaptations. `run`
+validates the bindings and registry snapshot, reacquires the selected plan's
+sole Resource Authority lease, then privately drives every node and fence to a
+terminal outcome. Registry adapters execute only one exact scheduled node and
+receive only scheduler-issued, lease-epoch-bound resource and allocation
+capabilities for that call. Fence callbacks receive a freshly narrowed context
+containing only claims and allocations still live through that exact fence;
+work-scoped capabilities are never replayed after synchronous completion. No
+whole-plan executor or public scheduler can bypass the compile/plan/run seam.
+Controllers can observe only plan-listed transitions eligible at the current
+global cut. Cancellation, rejected directives, and adapter errors drain every
+launched fence before `run` returns; mapped pages and storage-manager state also
+execute their plan-owned terminal release nodes in dependency order. If release
+cannot be established, the scheduler drains all other work and fences, then
+retains only each failed physical-slot reservation fail-closed.
+Typed I/O-buffer ceilings bound concurrent logical activity while MemoryDemand
+and plan-owned physical slots are the sole physical-byte charge, allowing
+compatible buffers from disjoint processing segments to reuse storage.
+Every execution receipt also retains the router's exact migration-matrix schema,
+contract revision, overall disposition, and every canonical requirement row's
+owner, tickets, issue evidence, baselines, Acceptance Contract, transfer point,
+deletion condition, source evidence, and any active obligation. Stores opened
+on the same canonical receipt root share one process-wide mutation lock and
+must agree on one registered retention policy, so pruning and persistence
+enforce one aggregate retention ceiling.
 
 ## Runtime model
 
@@ -291,8 +373,11 @@ or provider semantics that bypass the Rust-owned contracts.
 
 ### Imaging execution
 
-`casars-imager` owns MeasurementSet selection, bounded source streaming, mode
-dispatch, runtime policy, protocol telemetry, and persisted product writing.
+During migration, `casars-imager` owns user-facing MeasurementSet expression
+resolution, bounded source streaming, mode dispatch, runtime policy, protocol
+telemetry, and persisted product writing. Resolved immutable selection identity
+belongs only to `casa-imaging-model`'s Observation Snapshot compiler; the legacy
+application does not yet consume that contract in production.
 `casa-imaging` remains the prepared-visibility computation boundary for
 weighting, gridding/degridding, FFTs, normalization, deconvolution, restoration,
 and product semantics.
@@ -492,15 +577,20 @@ compatibility block facade or normal-path host full-grid upload is retained.
 - On-disk interoperability with casacore-compatible formats is more important than mirroring C++ APIs directly.
 - Heavy CASA parity suites must stay opt-in rather than in the default `cargo test --workspace` path.
 - Some cross-language and parity tests must skip cleanly when `pkg-config casacore` or measures data are unavailable.
-- GitHub issues and pull requests are the authoritative work record; some
-  architecture checks are still lightweight/document-oriented rather than full
-  mechanical boundary enforcement.
+- GitHub issues and pull requests are the authoritative work record.
 
 ## Known current gaps / debt
 
 - GitHub Project/issue adoption is now the planning source of truth, but older `docs/Planning/` material still exists and may need incremental retirement or summarization.
 - `just` provides a stable command vocabulary, but some contributors may still use the underlying `cargo` and `scripts/*` commands directly until it is installed locally.
-- Boundary enforcement is partly manual today; `just arch-check` currently validates the documented surface and ADR index rather than all crate dependency rules mechanically.
+- Current production frontends still enter the frozen legacy implementation;
+  their later migrations will bind adapters to `casa-imaging-router`. Until a
+  request's last required row transfers, the router keeps that request wholly
+  legacy. `just arch-check` pins the router package, source, matrix binding, and
+  unique engine-port ownership; it also rejects unclassified workspace
+  packages, non-exact native dependency sets, forbidden Rust/Swift source
+  imports, and any change to the 16 exact frozen legacy or three exact
+  transitional edges.
 
 ## ADR index
 
@@ -513,3 +603,6 @@ compatibility block facade or normal-path host full-grid upload is retained.
 | 0005 | Native macOS GUI prototype boundary | accepted |
 | 0006 | Unified parameter catalog and sparse profiles | accepted |
 | 0007 | Scientific notebooks and assistant boundary | accepted |
+| 0008 | Casacore storage and bounded MeasurementSet writes | accepted |
+| 0009 | Mathematical imaging architecture | accepted |
+| 0010 | Unified imaging resource authority | accepted |

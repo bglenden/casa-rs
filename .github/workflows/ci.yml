@@ -26,6 +26,9 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Check architecture
+        run: scripts/arch-check.sh
+
       - name: Check SPDX license headers
         run: scripts/check-spdx.sh
 
