@@ -33,21 +33,23 @@ use casa_imaging_runtime::{
     CacheIdentity, CapabilityPredicate, CapacityDomainId, CapacityViewId, ClaimLifetime,
     CompiledProblemEvidence, CountDemand, CpuClassCapacity, DemandAlternative, DemandEnvelope,
     ExecutionDag, ExecutionDagSpecification, ExecutionEvidenceError, ExecutionKnobs,
-    ExecutionOutcome, ExecutionProvenance, ExecutionReceiptStore, ExecutionStatus,
-    ExternalPressure, FenceId, FenceKind, HostInventory, ImplementationRegistry,
-    ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
-    IoPrediction, LogicalAllocation, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand,
-    MemoryView, MemoryViewKind, PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding,
-    PhysicalWorkBindingError, PlanPrediction, PlannedArtifact, PlannerCostModelProfileId,
-    PlanningBindings, PredictionConfidence, PredictionUncertainty, QueueDemand, QueueResource,
-    QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId, RateUnit,
-    ReceiptFailureKind, ReceiptRetention, ReceiptStatus, RedactedPath, ResourceAuthority,
-    ResourceClaim, ResourceHeadroom, ResourceMeasurement, ResourceOverride, ResourcePolicy,
-    ResourceTopology, RunBindings, RunController, RunDirective, RunError, RunToCompletion,
-    RuntimeOverheadDemand, ScalingMetadata, ScheduledWork, SlotCompatibility, StagePrediction,
-    StorageDemand, StorageDomain, StorageDomainId, StorageMode, StorageUseKind, WorkDependency,
-    WorkDomain, WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements, WorkNode,
-    WorkNodeId, plan, run as run_receipted,
+    ExecutionOutcome, ExecutionProvenance, ExecutionReceiptBinding, ExecutionReceiptStore,
+    ExecutionRouteDisposition, ExecutionRouteEvidence, ExecutionRouteRequirement,
+    ExecutionRouteRequirementKind, ExecutionStatus, ExternalPressure, FenceId, FenceKind,
+    HostInventory, ImplementationRegistry, ImplementationRegistryId, InitializationPolicy,
+    IoBufferDemand, IoBufferKind, IoMeasurement, IoPrediction, LogicalAllocation,
+    MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView, MemoryViewKind,
+    PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanError,
+    PlanPrediction, PlannedArtifact, PlannerCostModelProfileId, PlanningBindings,
+    PredictionConfidence, PredictionUncertainty, QueueDemand, QueueResource, QueueResourceId,
+    QuiescencePoint, RateDemand, RateResource, RateResourceId, RateUnit, ReceiptFailureKind,
+    ReceiptRetention, ReceiptStatus, RedactedPath, ResourceAuthority, ResourceClaim,
+    ResourceHeadroom, ResourceMeasurement, ResourceOverride, ResourcePolicy, ResourceTopology,
+    RunBindings, RunController, RunDirective, RunError, RunToCompletion, RuntimeOverheadDemand,
+    ScalingMetadata, SlotCompatibility, StagePrediction, StorageDemand, StorageDomain,
+    StorageDomainId, StorageMode, StorageUseKind, WorkDependency, WorkDomain, WorkExecutionContext,
+    WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId,
+    plan as authority_plan, run as authority_run,
 };
 
 mod common;
@@ -226,7 +228,7 @@ impl WorkImplementation for RecordingExecutor {
     fn execute(
         &self,
         _problem: &casa_imaging_model::CompiledProblem,
-        work: &ScheduledWork,
+        work: &WorkExecutionContext,
     ) -> Result<WorkMeasurements, Self::Error> {
         assert!(!self.panic_on_execute, "interrupted adapter");
         self.calls.fetch_add(1, Ordering::SeqCst);
@@ -262,7 +264,7 @@ impl WorkImplementation for RecordingExecutor {
     fn wait_for_fence(
         &self,
         _problem: &casa_imaging_model::CompiledProblem,
-        _work: &ScheduledWork,
+        _work: &WorkExecutionContext,
         fence: FenceKind,
     ) -> Result<(), Self::Error> {
         self.fence_waits.fetch_add(1, Ordering::SeqCst);
@@ -1301,6 +1303,46 @@ fn run_lock() -> &'static Mutex<()> {
     &RUN_LOCK
 }
 
+fn plan<E>(
+    problem: &casa_imaging_model::CompiledProblem,
+    bindings: PlanningBindings,
+    planner: impl FnOnce(
+        &casa_imaging_model::CompiledProblem,
+        &PlanningBindings,
+    ) -> Result<PhysicalWorkBinding, E>,
+) -> Result<casa_imaging_runtime::ExecutionPlan, PlanError<E>> {
+    let _guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    authority_plan(problem, bindings, authority(), |problem, bindings| {
+        planner(problem, bindings).map(|candidate| vec![candidate])
+    })
+}
+
+fn execution_provenance(
+    attempt: casa_imaging_runtime::ExecutionAttemptId,
+    build: BuildIdentity,
+) -> ExecutionProvenance {
+    ExecutionProvenance::new(
+        attempt,
+        build,
+        ExecutionRouteEvidence::new(
+            1,
+            1,
+            ExecutionRouteDisposition::Native,
+            vec![
+                ExecutionRouteRequirement::new(
+                    "capability.compiled-problem",
+                    ExecutionRouteRequirementKind::Capability,
+                    ExecutionRouteDisposition::Native,
+                )
+                .expect("canonical route row"),
+            ],
+        )
+        .expect("canonical native route"),
+    )
+}
+
 fn run<C: RunController>(
     problem: &casa_imaging_model::CompiledProblem,
     plan: &casa_imaging_runtime::ExecutionPlan,
@@ -1322,10 +1364,27 @@ fn run<C: RunController>(
         registry,
         authority,
         controller,
-        receipts.bind(ExecutionProvenance::new(
+        receipts.bind(execution_provenance(
             casa_imaging_runtime::ExecutionAttemptId::from_sha256([241; 32]),
             BuildIdentity::from_sha256([242; 32]),
         )),
+    )
+}
+
+fn run_receipted<C: RunController>(
+    problem: &casa_imaging_model::CompiledProblem,
+    plan: &casa_imaging_runtime::ExecutionPlan,
+    current: &RunBindings,
+    registry: &TestRegistry,
+    authority: &ResourceAuthority,
+    controller: &mut C,
+    receipt: ExecutionReceiptBinding<'_>,
+) -> Result<ExecutionOutcome, RunError<io::Error>> {
+    let _guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    authority_run(
+        problem, plan, current, registry, authority, controller, receipt,
     )
 }
 
@@ -1335,7 +1394,6 @@ fn execute_plan(
     current: &RunBindings,
     registry: &TestRegistry,
 ) -> Result<ExecutionOutcome, RunError<io::Error>> {
-    let _guard = run_lock().lock().expect("runtime test lock");
     let mut controller = RunToCompletion;
     run(
         problem,
@@ -1991,7 +2049,6 @@ fn rejected_post_launch_adaptation_drains_fences_before_returning() {
     );
     let registry = test_registry(3, 6, None);
     let mut controller = RejectAfterLaunch::default();
-    let _guard = run_lock().lock().expect("runtime test lock");
 
     let error = run(
         &problem,
@@ -2035,7 +2092,6 @@ fn run_applies_an_eligible_transition_to_later_scheduled_work() {
     );
     let registry = test_registry(3, 6, None);
     let mut controller = AdaptAtMajorBoundary::default();
-    let _guard = run_lock().lock().expect("runtime test lock");
 
     let outcome = run(
         &problem,
@@ -2075,7 +2131,6 @@ fn run_cancellation_drains_the_outstanding_fence_and_releases_authority_capacity
     );
     let registry = test_registry(3, 6, None);
     let mut cancelling = CancelAfterLaunch::default();
-    let _guard = run_lock().lock().expect("runtime test lock");
 
     let cancelled = run(
         &problem,
@@ -2135,7 +2190,6 @@ fn release_failures_drain_independent_fences_and_quarantine_only_failed_slots() 
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let _guard = run_lock().lock().expect("runtime test lock");
 
     for fail_at_fence in [false, true] {
         let execution_plan = plan(
@@ -2248,12 +2302,11 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
     )
     .expect("receipt store");
-    let provenance = ExecutionProvenance::new(
+    let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([9; 32]),
         BuildIdentity::from_sha256([10; 32]),
     );
     let mut controller = RunToCompletion;
-    let _guard = run_lock().lock().expect("runtime test lock");
 
     let outcome = run_receipted(
         &problem,
@@ -2262,7 +2315,7 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         &registry,
         authority(),
         &mut controller,
-        receipts.bind(provenance),
+        receipts.bind(provenance.clone()),
     )
     .expect("receipted execution");
     let receipt = receipts
@@ -2270,7 +2323,14 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         .expect("reopen durable receipt");
 
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
-    assert_eq!(receipt.schema_version(), 1);
+    assert_eq!(receipt.schema_version(), 2);
+    assert_eq!(receipt.route_matrix_schema_version(), 1);
+    assert_eq!(receipt.route_matrix_contract_revision(), 1);
+    assert_eq!(receipt.route_disposition(), "native");
+    assert_eq!(
+        receipt.route_requirement_identities(),
+        vec!["capability.compiled-problem"]
+    );
     assert_eq!(receipt.status(), ReceiptStatus::Completed);
     assert_eq!(receipt.plan_identity(), execution_plan.plan_id().as_bytes());
     assert_eq!(receipt.problem_identity(), problem.problem_id().as_bytes());
@@ -2367,12 +2427,11 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
         ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
     )
     .expect("receipt store");
-    let provenance = ExecutionProvenance::new(
+    let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([83; 32]),
         BuildIdentity::from_sha256([84; 32]),
     );
     let mut controller = RunToCompletion;
-    let _guard = run_lock().lock().expect("runtime test lock");
 
     run_receipted(
         &problem,
@@ -2381,7 +2440,7 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
         &registry,
         authority(),
         &mut controller,
-        receipts.bind(provenance),
+        receipts.bind(provenance.clone()),
     )
     .expect("receipted execution");
     let reopened = receipts.open(provenance.attempt_id()).expect("receipt");
@@ -2562,12 +2621,11 @@ fn receipt_reopens_the_complete_selected_plan_projection() {
         ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
     )
     .expect("receipt store");
-    let provenance = ExecutionProvenance::new(
+    let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([61; 32]),
         BuildIdentity::from_sha256([62; 32]),
     );
     let mut controller = AdaptAtMajorBoundary::default();
-    let _guard = run_lock().lock().expect("runtime test lock");
 
     run_receipted(
         &problem,
@@ -2576,7 +2634,7 @@ fn receipt_reopens_the_complete_selected_plan_projection() {
         &registry,
         authority(),
         &mut controller,
-        receipts.bind(provenance),
+        receipts.bind(provenance.clone()),
     )
     .expect("receipted execution");
     let receipt = receipts.open(provenance.attempt_id()).expect("receipt");
@@ -2672,12 +2730,11 @@ fn receipt_compares_plan_predictions_with_actual_stage_resource_and_fence_use() 
         ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
     )
     .expect("receipt store");
-    let provenance = ExecutionProvenance::new(
+    let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([11; 32]),
         BuildIdentity::from_sha256([12; 32]),
     );
     let mut controller = RunToCompletion;
-    let _guard = run_lock().lock().expect("runtime test lock");
 
     run_receipted(
         &problem,
@@ -2686,7 +2743,7 @@ fn receipt_compares_plan_predictions_with_actual_stage_resource_and_fence_use() 
         &registry,
         authority(),
         &mut controller,
-        receipts.bind(provenance),
+        receipts.bind(provenance.clone()),
     )
     .expect("receipted execution");
     let receipt = receipts.open(provenance.attempt_id()).expect("receipt");
@@ -2792,12 +2849,11 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
         ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
     )
     .expect("receipt store");
-    let provenance = ExecutionProvenance::new(
+    let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([37; 32]),
         BuildIdentity::from_sha256([38; 32]),
     );
     let mut controller = RunToCompletion;
-    let _guard = run_lock().lock().expect("runtime test lock");
 
     run_receipted(
         &problem,
@@ -2806,7 +2862,7 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
         &registry,
         authority(),
         &mut controller,
-        receipts.bind(provenance),
+        receipts.bind(provenance.clone()),
     )
     .expect("receipted execution");
     let receipt = receipts.open(provenance.attempt_id()).expect("receipt");
@@ -2940,12 +2996,11 @@ fn failed_publication_fence_never_records_a_published_output() {
         ReceiptRetention::new(1, 1_048_576).expect("retention"),
     )
     .expect("receipt store");
-    let provenance = ExecutionProvenance::new(
+    let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([87; 32]),
         BuildIdentity::from_sha256([88; 32]),
     );
     let mut controller = RunToCompletion;
-    let _guard = run_lock().lock().expect("runtime test lock");
 
     let error = run_receipted(
         &problem,
@@ -2954,7 +3009,7 @@ fn failed_publication_fence_never_records_a_published_output() {
         &registry,
         authority(),
         &mut controller,
-        receipts.bind(provenance),
+        receipts.bind(provenance.clone()),
     )
     .expect_err("publication fence failure must fail the run");
     assert!(matches!(
@@ -3002,11 +3057,9 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
         )
         .expect("receipt store")
     };
-    let _guard = run_lock().lock().expect("runtime test lock");
-
     let failed_directory = tempfile::tempdir().expect("failed receipt directory");
     let failed_receipts = store(failed_directory.path());
-    let failed_provenance = ExecutionProvenance::new(
+    let failed_provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([41; 32]),
         BuildIdentity::from_sha256([42; 32]),
     );
@@ -3020,7 +3073,7 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
             &failed_registry,
             authority(),
             &mut completion,
-            failed_receipts.bind(failed_provenance),
+            failed_receipts.bind(failed_provenance.clone()),
         ),
         Err(RunError::Execution { .. })
     ));
@@ -3041,7 +3094,7 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
 
     let cancelled_directory = tempfile::tempdir().expect("cancelled receipt directory");
     let cancelled_receipts = store(cancelled_directory.path());
-    let cancelled_provenance = ExecutionProvenance::new(
+    let cancelled_provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([43; 32]),
         BuildIdentity::from_sha256([44; 32]),
     );
@@ -3055,7 +3108,7 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
             &successful_registry,
             authority(),
             &mut cancellation,
-            cancelled_receipts.bind(cancelled_provenance),
+            cancelled_receipts.bind(cancelled_provenance.clone()),
         )
         .expect("cancelled execution"),
         ExecutionOutcome::Cancelled
@@ -3076,7 +3129,7 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
 
     let mutation_directory = tempfile::tempdir().expect("mutation receipt directory");
     let mutation_receipts = store(mutation_directory.path());
-    let mutation_provenance = ExecutionProvenance::new(
+    let mutation_provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([45; 32]),
         BuildIdentity::from_sha256([46; 32]),
     );
@@ -3094,7 +3147,7 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
             &successful_registry,
             authority(),
             &mut completion,
-            mutation_receipts.bind(mutation_provenance),
+            mutation_receipts.bind(mutation_provenance.clone()),
         ),
         Err(RunError::BindingMismatch { .. })
     ));
@@ -3111,55 +3164,9 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
         Some(ReceiptStatus::NotStarted)
     );
 
-    let constrained_policy = ResourcePolicy::Explicit(ResourceOverride {
-        workers: Some(0),
-        ..ResourceOverride::default()
-    });
-    let infeasible_plan = plan(
-        &problem,
-        PlanningBindings::new(registry(3), constrained_policy.clone(), cost_model(4)),
-        |_, _| Ok::<_, ()>(physical_work(6)),
-    )
-    .expect("infeasible physical plan remains recordable");
-    let infeasible_current =
-        RunBindings::new(problem.inputs().clone(), &constrained_policy, cost_model(4));
-    let infeasible_directory = tempfile::tempdir().expect("infeasible receipt directory");
-    let infeasible_receipts = store(infeasible_directory.path());
-    let infeasible_provenance = ExecutionProvenance::new(
-        casa_imaging_runtime::ExecutionAttemptId::from_sha256([47; 32]),
-        BuildIdentity::from_sha256([48; 32]),
-    );
-    let mut completion = RunToCompletion;
-    assert!(matches!(
-        run_receipted(
-            &problem,
-            &infeasible_plan,
-            &infeasible_current,
-            &successful_registry,
-            authority(),
-            &mut completion,
-            infeasible_receipts.bind(infeasible_provenance),
-        ),
-        Err(RunError::Scheduler(
-            casa_imaging_runtime::ExecutionError::Resource(_)
-        ))
-    ));
-    let infeasible = infeasible_receipts
-        .open(infeasible_provenance.attempt_id())
-        .expect("infeasible receipt");
-    assert_eq!(infeasible.status(), ReceiptStatus::Infeasible);
-    assert_eq!(
-        infeasible.failure_kind(),
-        Some(ReceiptFailureKind::ResourceInfeasible)
-    );
-    assert_eq!(
-        infeasible.node_status(&WorkNodeId::new("read")),
-        Some(ReceiptStatus::NotStarted)
-    );
-
     let aborted_directory = tempfile::tempdir().expect("aborted receipt directory");
     let aborted_receipts = store(aborted_directory.path());
-    let aborted_provenance = ExecutionProvenance::new(
+    let aborted_provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([49; 32]),
         BuildIdentity::from_sha256([50; 32]),
     );
@@ -3178,7 +3185,7 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
             &interrupted_registry,
             authority(),
             &mut completion,
-            aborted_receipts.bind(aborted_provenance),
+            aborted_receipts.bind(aborted_provenance.clone()),
         );
     }));
     assert!(interrupted.is_err());

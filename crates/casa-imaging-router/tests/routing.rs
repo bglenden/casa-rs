@@ -36,14 +36,14 @@ fn legacy_request_invokes_only_whole_run_legacy_engine() {
     let router = ImagingRouter::new(
         NativeEnginePort::new({
             let native_calls = Arc::clone(&native_calls);
-            move |_| {
+            move |_, _| {
                 native_calls.fetch_add(1, Ordering::SeqCst);
                 Ok::<_, &'static str>("native")
             }
         }),
         LegacyWholeRunEnginePort::new({
             let legacy_calls = Arc::clone(&legacy_calls);
-            move |_| {
+            move |_, _| {
                 legacy_calls.fetch_add(1, Ordering::SeqCst);
                 Ok::<_, &'static str>("legacy")
             }
@@ -68,14 +68,14 @@ fn unavailable_request_invokes_neither_engine_and_reports_its_migration_obligati
     let router = ImagingRouter::new(
         NativeEnginePort::new({
             let native_calls = Arc::clone(&native_calls);
-            move |_| {
+            move |_, _| {
                 native_calls.fetch_add(1, Ordering::SeqCst);
                 Ok::<_, &'static str>("native")
             }
         }),
         LegacyWholeRunEnginePort::new({
             let legacy_calls = Arc::clone(&legacy_calls);
-            move |_| {
+            move |_, _| {
                 legacy_calls.fetch_add(1, Ordering::SeqCst);
                 Ok::<_, &'static str>("legacy")
             }

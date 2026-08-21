@@ -9,13 +9,14 @@ use casa_imaging_model::{
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AdaptationId, AdaptationTransition, ClaimLifetime, ExecutionError, ExecutionKnobs,
-    ExecutionOutcome, ExecutionReceiptBinding, FenceKind, IoBufferKind, LeaseResource,
-    ReceiptError, ReceiptFailureKind, ReceiptStatus, ResourceAuthority, ResourceOverride,
-    ResourcePolicy, ScheduledWork, WorkImplementationId, WorkKind, WorkNodeId,
+    AdaptationId, AdaptationTransition, ClaimLifetime, DemandAlternatives, ExecutionError,
+    ExecutionKnobs, ExecutionOutcome, ExecutionReceiptBinding, FenceKind, IoBufferKind,
+    LeaseResource, ReceiptError, ReceiptFailureKind, ReceiptStatus, ResourceAuthority,
+    ResourceError, ResourceOverride, ResourcePolicy, WorkExecutionContext, WorkImplementationId,
+    WorkKind, WorkNodeId,
     execution::{
         ExecutionDag, ExecutionScheduler, SchedulerAction, SchedulerTerminal, WorkResult,
-        io_buffer_kind_supports_work_kind,
+        io_buffer_kind_supports_work_kind, validate_topology,
     },
     receipt::{ReceiptFailure, ReceiptRecorder},
 };
@@ -1299,13 +1300,87 @@ impl ExecutionPlan {
     }
 }
 
-/// Seal planner-emitted physical work to the complete logical and planning context.
+/// Physical planning or Resource Authority selection failure.
+#[derive(Debug)]
+pub enum PlanError<E> {
+    /// The physical planner could not produce candidates.
+    Planner(E),
+    /// A candidate was structurally incompatible with the authority topology.
+    InvalidCandidate(ExecutionError),
+    /// No candidate could be admitted under current policy, pressure, and reservations.
+    Resource(ResourceError),
+}
+
+impl<E: fmt::Display> fmt::Display for PlanError<E> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Planner(error) => write!(formatter, "physical planner failed: {error}"),
+            Self::InvalidCandidate(error) => {
+                write!(formatter, "physical candidate failed: {error}")
+            }
+            Self::Resource(error) => write!(
+                formatter,
+                "Resource Authority rejected every physical candidate: {error}"
+            ),
+        }
+    }
+}
+
+impl<E: Error + 'static> Error for PlanError<E> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Planner(error) => Some(error),
+            Self::InvalidCandidate(error) => Some(error),
+            Self::Resource(error) => Some(error),
+        }
+    }
+}
+
+/// Ask the Resource Authority to select one feasible planner-emitted physical candidate and seal it.
 pub fn plan<E>(
     problem: &CompiledProblem,
     bindings: PlanningBindings,
-    planner: impl FnOnce(&CompiledProblem, &PlanningBindings) -> Result<PhysicalWorkBinding, E>,
-) -> Result<ExecutionPlan, E> {
-    let physical_work = planner(problem, &bindings)?;
+    authority: &ResourceAuthority,
+    planner: impl FnOnce(&CompiledProblem, &PlanningBindings) -> Result<Vec<PhysicalWorkBinding>, E>,
+) -> Result<ExecutionPlan, PlanError<E>> {
+    let candidates = planner(problem, &bindings).map_err(PlanError::Planner)?;
+    let Some(first) = candidates.first() else {
+        return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
+            "physical planner emitted no candidates".to_string(),
+        )));
+    };
+    let required_capabilities = first.execution_dag.required_resource_capabilities().clone();
+    for candidate in &candidates {
+        if candidate.execution_dag.required_resource_capabilities() != &required_capabilities {
+            return Err(PlanError::InvalidCandidate(ExecutionError::InvalidPlan(
+                "physical candidates disagree on required resource capabilities".to_string(),
+            )));
+        }
+        validate_topology(&candidate.execution_dag, authority.topology())
+            .map_err(PlanError::InvalidCandidate)?;
+    }
+    let lease = authority
+        .acquire(
+            bindings.resource_policy.clone(),
+            DemandAlternatives {
+                required_capabilities,
+                alternatives: candidates
+                    .iter()
+                    .map(|candidate| candidate.execution_dag.resource_alternative().clone())
+                    .collect(),
+            },
+        )
+        .map_err(PlanError::Resource)?;
+    let selected = lease.selected_alternative().clone();
+    drop(lease);
+    let physical_work = candidates
+        .into_iter()
+        .find(|candidate| candidate.execution_dag.resource_alternative().id == selected)
+        .ok_or_else(|| {
+            PlanError::InvalidCandidate(ExecutionError::InvalidState(
+                "Resource Authority selected an absent physical candidate".to_string(),
+            ))
+        })?;
     let mut plan = ExecutionPlan {
         plan_id: ExecutionPlanId([0; 32]),
         problem_id: problem.problem_id(),
@@ -1466,7 +1541,7 @@ pub trait WorkImplementation {
     fn execute(
         &self,
         problem: &CompiledProblem,
-        work: &ScheduledWork,
+        work: &WorkExecutionContext,
     ) -> Result<WorkMeasurements, Self::Error>;
 
     /// Block until one exact fence previously launched by [`Self::execute`]
@@ -1475,7 +1550,7 @@ pub trait WorkImplementation {
     fn wait_for_fence(
         &self,
         problem: &CompiledProblem,
-        work: &ScheduledWork,
+        work: &WorkExecutionContext,
         fence: FenceKind,
     ) -> Result<(), Self::Error>;
 }
@@ -1615,7 +1690,7 @@ fn terminal_drain_error<E>(
 
 fn validate_work_measurements(
     plan: &ExecutionPlan,
-    work: &ScheduledWork,
+    work: &WorkExecutionContext,
     measurements: &WorkMeasurements,
 ) -> Result<(), ExecutionEvidenceError> {
     let node = &work.node().id;
@@ -1867,7 +1942,7 @@ where
         implementations.insert(identity.clone(), implementation);
     }
     let mut scheduler = ExecutionScheduler::start(plan, authority).map_err(RunError::Scheduler)?;
-    let mut launched = BTreeMap::<WorkNodeId, ScheduledWork>::new();
+    let mut launched = BTreeMap::<WorkNodeId, WorkExecutionContext>::new();
     let mut pending = None;
     let mut controller_stopped = false;
     loop {

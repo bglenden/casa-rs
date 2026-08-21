@@ -41,7 +41,10 @@ impl<Output, EngineError> NativeEnginePort<Output, EngineError> {
     /// Seal a native whole-run adapter behind the router-owned port.
     #[must_use]
     pub fn new(
-        run: impl Fn(&CompiledProblem) -> Result<Output, EngineError> + Send + Sync + 'static,
+        run: impl Fn(&CompiledProblem, &RouteRecord) -> Result<Output, EngineError>
+        + Send
+        + Sync
+        + 'static,
     ) -> Self {
         Self { run: Box::new(run) }
     }
@@ -56,14 +59,17 @@ impl<Output, EngineError> LegacyWholeRunEnginePort<Output, EngineError> {
     /// Seal the sole legacy whole-run adapter behind the router-owned port.
     #[must_use]
     pub fn new(
-        run: impl Fn(&CompiledProblem) -> Result<Output, EngineError> + Send + Sync + 'static,
+        run: impl Fn(&CompiledProblem, &RouteRecord) -> Result<Output, EngineError>
+        + Send
+        + Sync
+        + 'static,
     ) -> Self {
         Self { run: Box::new(run) }
     }
 }
 
 type EngineFn<Output, EngineError> =
-    dyn Fn(&CompiledProblem) -> Result<Output, EngineError> + Send + Sync;
+    dyn Fn(&CompiledProblem, &RouteRecord) -> Result<Output, EngineError> + Send + Sync;
 
 /// Evidence recorded for one pre-plan whole-run routing decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -405,11 +411,11 @@ impl<Output, EngineError> ImagingRouter<Output, EngineError> {
         let problem = compile(request).map_err(DispatchError::Compile)?;
         let route = self.route(&problem).map_err(DispatchError::InvalidMatrix)?;
         match route.disposition {
-            RequestDisposition::Native => match (self.native.run)(&problem) {
+            RequestDisposition::Native => match (self.native.run)(&problem, &route) {
                 Ok(output) => Ok(DispatchOutcome { route, output }),
                 Err(source) => Err(DispatchError::Native { route, source }),
             },
-            RequestDisposition::LegacyWholeRun => match (self.legacy.run)(&problem) {
+            RequestDisposition::LegacyWholeRun => match (self.legacy.run)(&problem, &route) {
                 Ok(output) => Ok(DispatchOutcome { route, output }),
                 Err(source) => Err(DispatchError::LegacyWholeRun { route, source }),
             },

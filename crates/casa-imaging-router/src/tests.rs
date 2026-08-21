@@ -99,6 +99,31 @@ fn mixed_request_stays_wholly_legacy_until_its_last_required_row_transfers() {
 }
 
 #[test]
+fn selected_engine_receives_the_exact_route_record() {
+    let router = ImagingRouter::with_matrix_json(
+        NativeEnginePort::new(|_, route| Ok::<_, &'static str>(route.clone())),
+        LegacyWholeRunEnginePort::new(|_, route| Ok::<_, &'static str>(route.clone())),
+        matrix_with_transfers(&STANDARD_DIRTY_ROWS),
+    );
+
+    let outcome = router.dispatch(standard_dirty_request()).unwrap();
+
+    assert_eq!(outcome.output(), outcome.route());
+    assert_eq!(outcome.output().matrix_schema_version(), 1);
+    assert_eq!(outcome.output().matrix_contract_revision(), 5);
+    assert_eq!(outcome.output().disposition(), RequestDisposition::Native);
+    assert_eq!(
+        outcome
+            .output()
+            .requirements()
+            .iter()
+            .map(|requirement| requirement.id())
+            .collect::<Vec<_>>(),
+        STANDARD_DIRTY_ROWS
+    );
+}
+
+#[test]
 fn mtmfs_request_derives_its_solver_and_major_minor_cycle_rows() {
     let routed = router(
         MIGRATION_MATRIX_JSON.to_string(),
@@ -186,11 +211,11 @@ fn native_compile_plan_or_run_failure_never_invokes_legacy() {
         let native_counter = Arc::clone(&native_calls);
         let legacy_counter = Arc::clone(&legacy_calls);
         let router = ImagingRouter::with_matrix_json(
-            NativeEnginePort::new(move |_| {
+            NativeEnginePort::new(move |_, _| {
                 native_counter.fetch_add(1, Ordering::SeqCst);
                 Err(failure)
             }),
-            LegacyWholeRunEnginePort::new(move |_| {
+            LegacyWholeRunEnginePort::new(move |_, _| {
                 legacy_counter.fetch_add(1, Ordering::SeqCst);
                 Ok("legacy")
             }),
@@ -237,11 +262,11 @@ fn router(
     legacy_calls: Arc<AtomicUsize>,
 ) -> ImagingRouter<&'static str, &'static str> {
     ImagingRouter::with_matrix_json(
-        NativeEnginePort::new(move |_| {
+        NativeEnginePort::new(move |_, _| {
             native_calls.fetch_add(1, Ordering::SeqCst);
             Ok("native")
         }),
-        LegacyWholeRunEnginePort::new(move |_| {
+        LegacyWholeRunEnginePort::new(move |_, _| {
             legacy_calls.fetch_add(1, Ordering::SeqCst);
             Ok("legacy")
         }),

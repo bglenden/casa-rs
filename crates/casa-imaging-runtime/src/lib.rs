@@ -11,10 +11,11 @@ pub use execution_bindings::{
     ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement, ArtifactRole, BindingKind,
     CacheIdentity, ExecutionEvidenceError, ExecutionPlan, ExecutionPlanId, ExecutionStatus,
     ImplementationRegistry, ImplementationRegistryId, IoMeasurement, IoPrediction,
-    PhysicalWorkBinding, PhysicalWorkBindingError, PhysicalWorkId, PlanPrediction, PlannedArtifact,
-    PlannerCostModelProfileId, PlanningBindings, PredictionConfidence, PredictionUncertainty,
-    RedactedPath, ResourceMeasurement, ResourcePolicyId, RunBindings, RunController, RunDirective,
-    RunError, RunToCompletion, StagePrediction, WorkImplementation, WorkMeasurements, plan, run,
+    PhysicalWorkBinding, PhysicalWorkBindingError, PhysicalWorkId, PlanError, PlanPrediction,
+    PlannedArtifact, PlannerCostModelProfileId, PlanningBindings, PredictionConfidence,
+    PredictionUncertainty, RedactedPath, ResourceMeasurement, ResourcePolicyId, RunBindings,
+    RunController, RunDirective, RunError, RunToCompletion, StagePrediction, WorkImplementation,
+    WorkMeasurements, plan, run,
 };
 
 pub use execution::{
@@ -22,14 +23,16 @@ pub use execution::{
     AllocationLifetime, AllocationPurpose, AllocationUse, ClaimLifetime, ExecutionDag,
     ExecutionDagSpecification, ExecutionError, ExecutionKnobs, ExecutionOutcome, FenceId,
     FenceKind, InitializationPolicy, LogicalAllocation, PhysicalSlot, PhysicalSlotId,
-    ResourceClaim, ScheduledWork, SlotCompatibility, StorageMode, WorkDependency, WorkDomain,
-    WorkImplementationId, WorkKind, WorkNode, WorkNodeId,
+    ResourceClaim, SlotCompatibility, StorageMode, WorkAllocationCapability, WorkDependency,
+    WorkDomain, WorkExecutionContext, WorkImplementationId, WorkKind, WorkNode, WorkNodeId,
+    WorkResourceCapability,
 };
 pub use receipt::{
     BuildIdentity, CompiledProblemEvidence, ExecutionAttemptId, ExecutionProvenance,
-    ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ReceiptAdaptation,
-    ReceiptError, ReceiptFailureKind, ReceiptInfeasibilityCertificate, ReceiptRetention,
-    ReceiptStatus,
+    ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionRouteDisposition,
+    ExecutionRouteEvidence, ExecutionRouteRequirement, ExecutionRouteRequirementKind,
+    ReceiptAdaptation, ReceiptError, ReceiptFailureKind, ReceiptInfeasibilityCertificate,
+    ReceiptRetention, ReceiptStatus,
 };
 pub use resource_authority::{
     Accelerator, AcceleratorDemand, AcceleratorId, AcceleratorKind, AlternativeId, CacheDemand,

@@ -622,14 +622,80 @@ pub(crate) enum SchedulerTerminal {
     },
 }
 
-/// Immutable exact node dispatch passed to a plan-selected work adapter.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ScheduledWork {
-    node: WorkNode,
-    knobs: ExecutionKnobs,
+/// Scheduler-issued proof of one lease-attributed resource claim.
+#[derive(Debug, PartialEq, Eq)]
+pub struct WorkResourceCapability {
+    resource: LeaseResource,
+    amount: u64,
+    lifetime: ClaimLifetime,
 }
 
-impl ScheduledWork {
+impl WorkResourceCapability {
+    /// Return the exact lease resource owned for this adapter call.
+    #[must_use]
+    pub const fn resource(&self) -> &LeaseResource {
+        &self.resource
+    }
+
+    /// Return the maximum concurrent amount owned by this capability.
+    #[must_use]
+    pub const fn amount(&self) -> u64 {
+        self.amount
+    }
+
+    /// Return the point through which the capability remains live.
+    #[must_use]
+    pub const fn lifetime(&self) -> &ClaimLifetime {
+        &self.lifetime
+    }
+}
+
+/// Scheduler-issued proof of one plan-owned allocation and physical slot.
+#[derive(Debug, PartialEq, Eq)]
+pub struct WorkAllocationCapability {
+    allocation: AllocationId,
+    physical_slot: PhysicalSlotId,
+    capacity_bytes: u64,
+    lifetime: ClaimLifetime,
+}
+
+impl WorkAllocationCapability {
+    /// Return the plan-owned logical allocation generation.
+    #[must_use]
+    pub const fn allocation(&self) -> &AllocationId {
+        &self.allocation
+    }
+
+    /// Return the exact reusable physical slot currently owned by the allocation.
+    #[must_use]
+    pub const fn physical_slot(&self) -> &PhysicalSlotId {
+        &self.physical_slot
+    }
+
+    /// Return the slot's hard byte capacity.
+    #[must_use]
+    pub const fn capacity_bytes(&self) -> u64 {
+        self.capacity_bytes
+    }
+
+    /// Return the point through which this adapter call retains the allocation.
+    #[must_use]
+    pub const fn lifetime(&self) -> &ClaimLifetime {
+        &self.lifetime
+    }
+}
+
+/// Non-constructible, lease-scoped execution context for one exact plan node.
+#[derive(Debug, PartialEq, Eq)]
+pub struct WorkExecutionContext {
+    node: WorkNode,
+    knobs: ExecutionKnobs,
+    lease_epoch: u64,
+    resources: Vec<WorkResourceCapability>,
+    allocations: Vec<WorkAllocationCapability>,
+}
+
+impl WorkExecutionContext {
     /// Returns the exact planned work declaration.
     #[must_use]
     pub const fn node(&self) -> &WorkNode {
@@ -641,13 +707,31 @@ impl ScheduledWork {
     pub const fn knobs(&self) -> &ExecutionKnobs {
         &self.knobs
     }
+
+    /// Return the Resource Authority lease epoch that issued these capabilities.
+    #[must_use]
+    pub const fn lease_epoch(&self) -> u64 {
+        self.lease_epoch
+    }
+
+    /// Return only the scheduler-issued resource capabilities for this call.
+    #[must_use]
+    pub fn resources(&self) -> &[WorkResourceCapability] {
+        &self.resources
+    }
+
+    /// Return only the scheduler-issued allocation capabilities for this call.
+    #[must_use]
+    pub fn allocations(&self) -> &[WorkAllocationCapability] {
+        &self.allocations
+    }
 }
 
 /// One deterministic scheduler decision.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum SchedulerAction {
     /// Execute this exact plan-owned node.
-    Work(Box<ScheduledWork>),
+    Work(Box<WorkExecutionContext>),
     /// No additional node currently fits; launched work or fences can unblock it.
     Waiting {
         /// Synchronously executing nodes.
@@ -1182,7 +1266,7 @@ impl<'plan> ExecutionScheduler<'plan> {
     fn try_dispatch(
         &mut self,
         node_id: &WorkNodeId,
-    ) -> Result<Option<ScheduledWork>, ExecutionError> {
+    ) -> Result<Option<WorkExecutionContext>, ExecutionError> {
         let node = self.dag.nodes[node_id].clone();
         if !self.within_execution_limits(&node)? {
             return Ok(None);
@@ -1191,6 +1275,7 @@ impl<'plan> ExecutionScheduler<'plan> {
             .lease
             .as_ref()
             .ok_or_else(|| ExecutionError::invalid_state("execution lease was released"))?;
+        let lease_epoch = lease.epoch();
         let mut claims = node.claims.iter().collect::<Vec<_>>();
         claims.sort_unstable_by(|left, right| {
             (&left.resource, &left.lifetime).cmp(&(&right.resource, &right.lifetime))
@@ -1242,12 +1327,37 @@ impl<'plan> ExecutionScheduler<'plan> {
             );
         }
         self.states.insert(node.id.clone(), NodeState::Running);
+        let resources = permits
+            .iter()
+            .map(|held| WorkResourceCapability {
+                resource: held.permit.resource().clone(),
+                amount: held.permit.amount(),
+                lifetime: held.lifetime.clone(),
+            })
+            .collect();
+        let allocation_capabilities = node
+            .allocations
+            .iter()
+            .map(|usage| {
+                let allocation = &self.dag.logical_allocations[&usage.allocation];
+                let slot = &self.dag.physical_slots[&allocation.physical_slot];
+                WorkAllocationCapability {
+                    allocation: usage.allocation.clone(),
+                    physical_slot: allocation.physical_slot.clone(),
+                    capacity_bytes: slot.capacity_bytes,
+                    lifetime: usage.lifetime.clone(),
+                }
+            })
+            .collect();
         self.running
             .insert(node.id.clone(), ActiveWork { permits, fences });
         self.available_quiescence.clear();
-        Ok(Some(ScheduledWork {
+        Ok(Some(WorkExecutionContext {
             node,
             knobs: self.knobs.clone(),
+            lease_epoch,
+            resources,
+            allocations: allocation_capabilities,
         }))
     }
 
@@ -1558,7 +1668,7 @@ fn validate_claims_against_demand(
     Ok(())
 }
 
-fn validate_topology(
+pub(crate) fn validate_topology(
     dag: &ExecutionDag,
     topology: &ResourceTopology,
 ) -> Result<(), ExecutionError> {

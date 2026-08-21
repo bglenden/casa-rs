@@ -34,8 +34,42 @@ use crate::{
     MemoryViewKind, PhysicalWorkBinding, PlannerCostModelProfileId, PlanningBindings, QueueDemand,
     QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
     RateUnit, ResourceAuthority, ResourceHeadroom, ResourcePolicy, ResourceTopology,
-    RuntimeOverheadDemand, ScalingMetadata, plan,
+    RuntimeOverheadDemand, ScalingMetadata, plan as authority_plan,
 };
+
+fn plan<E>(
+    problem: &casa_imaging_model::CompiledProblem,
+    bindings: PlanningBindings,
+    planner: impl FnOnce(
+        &casa_imaging_model::CompiledProblem,
+        &PlanningBindings,
+    ) -> Result<PhysicalWorkBinding, E>,
+) -> Result<crate::ExecutionPlan, crate::PlanError<E>> {
+    let candidate = planner(problem, &bindings).map_err(crate::PlanError::Planner)?;
+    let demand = &candidate.execution_dag().resource_alternative().demand;
+    let uses_unified_domain = candidate
+        .execution_dag()
+        .physical_slots()
+        .values()
+        .any(|slot| slot.compatibility.memory_domain.as_str() == "unified-memory");
+    let authority = if !demand.accelerators.is_empty() || uses_unified_domain {
+        unified_authority()
+    } else if !demand.rates.is_empty() || !demand.queues.is_empty() {
+        io_authority()
+    } else {
+        cpu_authority()
+    };
+    match authority_plan(problem, bindings, &authority, |_, _| {
+        Ok::<_, std::convert::Infallible>(vec![candidate])
+    }) {
+        Ok(plan) => Ok(plan),
+        Err(crate::PlanError::InvalidCandidate(error)) => {
+            Err(crate::PlanError::InvalidCandidate(error))
+        }
+        Err(crate::PlanError::Resource(error)) => Err(crate::PlanError::Resource(error)),
+        Err(crate::PlanError::Planner(error)) => match error {},
+    }
+}
 
 fn compiled_problem() -> casa_imaging_model::CompiledProblem {
     let direction = DirectionCoordinateSpec::new(
@@ -357,6 +391,30 @@ fn bound_plan(dag: ExecutionDag) -> crate::ExecutionPlan {
         |_, _| Ok::<_, std::convert::Infallible>(physical_work_binding(dag)),
     )
     .expect("physical planning succeeds")
+}
+
+fn execution_provenance(
+    attempt: crate::ExecutionAttemptId,
+    build: crate::BuildIdentity,
+) -> crate::ExecutionProvenance {
+    crate::ExecutionProvenance::new(
+        attempt,
+        build,
+        crate::ExecutionRouteEvidence::new(
+            1,
+            1,
+            crate::ExecutionRouteDisposition::Native,
+            vec![
+                crate::ExecutionRouteRequirement::new(
+                    "capability.compiled-problem",
+                    crate::ExecutionRouteRequirementKind::Capability,
+                    crate::ExecutionRouteDisposition::Native,
+                )
+                .expect("canonical route row"),
+            ],
+        )
+        .expect("canonical native route"),
+    )
 }
 
 fn physical_work_binding(dag: ExecutionDag) -> PhysicalWorkBinding {
@@ -708,6 +766,67 @@ fn execution_plan_owns_the_resource_policy_selected_during_planning() {
 }
 
 #[test]
+fn planning_seals_the_first_resource_authority_feasible_candidate() {
+    let problem = compiled_problem();
+    let mut infeasible = plan_spec(vec![cpu_node("work", BTreeSet::new())]);
+    infeasible.resource_alternative.id = AlternativeId::new("parallel");
+    infeasible.resource_alternative.demand.workers = CountDemand::new(3, 3);
+    infeasible.resource_alternative.scaling.minimum_workers = 3;
+    infeasible.resource_alternative.scaling.maximum_workers = 3;
+    infeasible.initial_knobs.workers = 3;
+    let mut feasible = plan_spec(vec![cpu_node("work", BTreeSet::new())]);
+    feasible.resource_alternative.id = AlternativeId::new("serial");
+    let candidates = vec![
+        physical_work_binding(ExecutionDag::new(infeasible).expect("parallel candidate")),
+        physical_work_binding(ExecutionDag::new(feasible).expect("serial candidate")),
+    ];
+
+    let plan = authority_plan(
+        &problem,
+        PlanningBindings::new(
+            ImplementationRegistryId::from_sha256([7; 32]),
+            ResourcePolicy::Exclusive,
+            PlannerCostModelProfileId::from_sha256([8; 32]),
+        ),
+        &cpu_authority(),
+        |_, _| Ok::<_, std::convert::Infallible>(candidates),
+    )
+    .expect("serial candidate is feasible");
+
+    assert_eq!(
+        plan.execution_dag().resource_alternative().id,
+        AlternativeId::new("serial")
+    );
+}
+
+#[test]
+fn planning_fails_before_sealing_when_no_candidate_is_feasible() {
+    let problem = compiled_problem();
+    let mut infeasible = plan_spec(vec![cpu_node("work", BTreeSet::new())]);
+    infeasible.resource_alternative.id = AlternativeId::new("parallel");
+    infeasible.resource_alternative.demand.workers = CountDemand::new(3, 3);
+    infeasible.resource_alternative.scaling.minimum_workers = 3;
+    infeasible.resource_alternative.scaling.maximum_workers = 3;
+    infeasible.initial_knobs.workers = 3;
+    let candidate =
+        physical_work_binding(ExecutionDag::new(infeasible).expect("parallel candidate"));
+
+    let error = authority_plan(
+        &problem,
+        PlanningBindings::new(
+            ImplementationRegistryId::from_sha256([7; 32]),
+            ResourcePolicy::Exclusive,
+            PlannerCostModelProfileId::from_sha256([8; 32]),
+        ),
+        &cpu_authority(),
+        |_, _| Ok::<_, std::convert::Infallible>(vec![candidate]),
+    )
+    .expect_err("no candidate fits the authority inventory");
+
+    assert!(matches!(error, crate::PlanError::Resource(_)));
+}
+
+#[test]
 fn scheduler_rejects_discrete_metal_memory_instead_of_inventing_a_mac_model() {
     let host_domain = CapacityDomainId::new("host-memory");
     let device_domain = CapacityDomainId::new("device-memory");
@@ -834,6 +953,15 @@ fn scheduler_dispatches_ready_work_deterministically_under_lease_limits() {
         panic!("first scheduler action must dispatch work");
     };
     assert_eq!(first.node().id, WorkNodeId::new("a-first"));
+    assert_eq!(first.lease_epoch(), scheduler.lease_epoch().unwrap());
+    assert_eq!(first.resources().len(), 1);
+    assert_eq!(
+        first.resources()[0].resource(),
+        &crate::LeaseResource::Workers
+    );
+    assert_eq!(first.resources()[0].amount(), 1);
+    assert_eq!(first.resources()[0].lifetime(), &ClaimLifetime::Work);
+    assert!(first.allocations().is_empty());
     assert_eq!(
         first.node().implementation,
         WorkImplementationId::new("cpu-reference")
@@ -1090,6 +1218,16 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
             panic!("pipeline node must dispatch");
         };
         assert_eq!(work.node().id, node_id);
+        assert_eq!(work.allocations().len(), 1);
+        assert_eq!(
+            work.allocations()[0].allocation(),
+            &AllocationId::new("first-grid")
+        );
+        assert_eq!(
+            work.allocations()[0].physical_slot(),
+            &PhysicalSlotId::new("reused-slot")
+        );
+        assert_eq!(work.allocations()[0].capacity_bytes(), 100);
         let declared = scheduler
             .finish_work(node_id.clone(), WorkResult::Succeeded)
             .expect("pipeline work completes");
@@ -1111,6 +1249,10 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
         panic!("slot may be reused only after every fence");
     };
     assert_eq!(second.node().id, WorkNodeId::new("e-reuse"));
+    assert_eq!(
+        second.allocations()[0].allocation(),
+        &AllocationId::new("second-grid")
+    );
     scheduler
         .finish_work(second.node().id.clone(), WorkResult::Succeeded)
         .expect("consumer completes");
@@ -2906,7 +3048,7 @@ fn receipt_store_checkpoints_atomically_rejects_corruption_and_enforces_retentio
         .expect("valid physical work");
     let plan = bound_plan(dag);
     let provenance = |attempt, build| {
-        crate::ExecutionProvenance::new(
+        execution_provenance(
             crate::ExecutionAttemptId::from_sha256([attempt; 32]),
             crate::BuildIdentity::from_sha256([build; 32]),
         )
@@ -2919,7 +3061,9 @@ fn receipt_store_checkpoints_atomically_rejects_corruption_and_enforces_retentio
     )
     .expect("receipt store");
     let first = provenance(61, 62);
-    let mut recorder = store.begin(first, &problem, &plan).expect("begin receipt");
+    let mut recorder = store
+        .begin(first.clone(), &problem, &plan)
+        .expect("begin receipt");
     assert_eq!(
         store
             .open(first.attempt_id())
@@ -2928,7 +3072,7 @@ fn receipt_store_checkpoints_atomically_rejects_corruption_and_enforces_retentio
         crate::ReceiptStatus::Running
     );
     assert!(matches!(
-        store.begin(first, &problem, &plan),
+        store.begin(first.clone(), &problem, &plan),
         Err(crate::ReceiptError::AttemptAlreadyExists)
     ));
 
@@ -3000,7 +3144,7 @@ fn receipt_store_checkpoints_atomically_rejects_corruption_and_enforces_retentio
     let pruned = provenance(63, 64);
     drop(
         pruning_store
-            .begin(pruned, &problem, &plan)
+            .begin(pruned.clone(), &problem, &plan)
             .expect("first retained receipt"),
     );
     let retained = provenance(65, 66);
@@ -3021,7 +3165,7 @@ fn receipt_store_checkpoints_atomically_rejects_corruption_and_enforces_retentio
     .expect("active store");
     let active = provenance(67, 68);
     let active_recorder = active_store
-        .begin(active, &problem, &plan)
+        .begin(active.clone(), &problem, &plan)
         .expect("active receipt");
     assert!(matches!(
         active_store.begin(provenance(69, 70), &problem, &plan),
@@ -3055,7 +3199,7 @@ fn receipt_store_rejects_an_initial_checkpoint_that_cannot_hold_terminal_evidenc
         .expect("valid physical work");
     let plan = bound_plan(dag);
     let provenance = |attempt, build| {
-        crate::ExecutionProvenance::new(
+        execution_provenance(
             crate::ExecutionAttemptId::from_sha256([attempt; 32]),
             crate::BuildIdentity::from_sha256([build; 32]),
         )
@@ -3069,7 +3213,7 @@ fn receipt_store_rejects_an_initial_checkpoint_that_cannot_hold_terminal_evidenc
     .expect("sizing store");
     let sizing_provenance = provenance(73, 74);
     let recorder = sizing_store
-        .begin(sizing_provenance, &problem, &plan)
+        .begin(sizing_provenance.clone(), &problem, &plan)
         .expect("initial checkpoint");
     let receipt_path = sizing_directory
         .path()
@@ -3109,7 +3253,7 @@ fn receipt_store_reserves_json_escaped_terminal_evidence_before_begin() {
         .expect("valid physical work");
     let plan = bound_plan(dag);
     let provenance = |attempt| {
-        crate::ExecutionProvenance::new(
+        execution_provenance(
             crate::ExecutionAttemptId::from_sha256([attempt; 32]),
             crate::BuildIdentity::from_sha256([83; 32]),
         )
@@ -3123,7 +3267,7 @@ fn receipt_store_reserves_json_escaped_terminal_evidence_before_begin() {
         .expect("terminal sizing store");
         let identity = provenance(attempt);
         let mut recorder = store
-            .begin(identity, &problem, &plan)
+            .begin(identity.clone(), &problem, &plan)
             .expect("initial checkpoint");
         recorder
             .finish(
@@ -3185,7 +3329,7 @@ fn receipts_reopen_machine_readable_infeasibility_certificates() {
     )
     .expect("receipt store");
     let provenance = |attempt| {
-        crate::ExecutionProvenance::new(
+        execution_provenance(
             crate::ExecutionAttemptId::from_sha256([attempt; 32]),
             crate::BuildIdentity::from_sha256([77; 32]),
         )
@@ -3193,7 +3337,7 @@ fn receipts_reopen_machine_readable_infeasibility_certificates() {
 
     let no_capable = provenance(78);
     let mut recorder = store
-        .begin(no_capable, &problem, &plan)
+        .begin(no_capable.clone(), &problem, &plan)
         .expect("begin no-capable receipt");
     recorder
         .finish(
@@ -3213,7 +3357,7 @@ fn receipts_reopen_machine_readable_infeasibility_certificates() {
 
     let insufficient = provenance(79);
     let mut recorder = store
-        .begin(insufficient, &problem, &plan)
+        .begin(insufficient.clone(), &problem, &plan)
         .expect("begin quantitative receipt");
     recorder
         .finish(

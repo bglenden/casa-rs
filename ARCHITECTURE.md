@@ -148,17 +148,22 @@ request order, while a separate provenance identity retains both. Current
 legacy adapters still resolve selection expressions and evaluate rows; T17/#503
 owns their bounded transfer and deletion.
 
-`plan` seals planner-emitted physical work to the exact compiled problem and
+`plan` gives every structurally valid planner candidate to Resource Authority,
+which selects the first capable candidate feasible under the current topology,
+policy, pressure, and reservations. The provisional selection lease is released
+before `plan` seals that one candidate to the exact compiled problem and
 geometry, the complete Observation Snapshot, Numerics Contract,
-implementation-registry snapshot, Resource Policy, and reviewed
-planner cost-model profile. The plan owns the complete immutable physical work
-DAG: explicit nodes and dependencies, per-node implementation identities,
-resource claims, logical allocation lifetimes, compatible reusable physical
-slots, asynchronous fences, quiescence points, and pre-authorized adaptations.
-`run` validates the bindings and registry snapshot, acquires the plan's sole
-Resource Authority lease, then privately drives every node and fence to a
-terminal outcome. Registry adapters execute only one exact scheduled node; no
-whole-plan executor or public scheduler can bypass the compile/plan/run seam.
+implementation-registry snapshot, Resource Policy, and reviewed planner
+cost-model profile. The plan owns the complete immutable physical work DAG:
+explicit nodes and dependencies, per-node implementation identities, resource
+claims, logical allocation lifetimes, compatible reusable physical slots,
+asynchronous fences, quiescence points, and pre-authorized adaptations. `run`
+validates the bindings and registry snapshot, reacquires the selected plan's
+sole Resource Authority lease, then privately drives every node and fence to a
+terminal outcome. Registry adapters execute only one exact scheduled node and
+receive only scheduler-issued, lease-epoch-bound resource and allocation
+capabilities for that call; no whole-plan executor or public scheduler can
+bypass the compile/plan/run seam.
 Controllers can observe only plan-listed transitions eligible at the current
 global cut. Cancellation, rejected directives, and adapter errors drain every
 launched fence before `run` returns; mapped pages and storage-manager state also
@@ -168,6 +173,10 @@ retains only each failed physical-slot reservation fail-closed.
 Typed I/O-buffer ceilings bound concurrent logical activity while MemoryDemand
 and plan-owned physical slots are the sole physical-byte charge, allowing
 compatible buffers from disjoint processing segments to reuse storage.
+Every execution receipt also retains the router's exact migration-matrix schema,
+contract revision, overall disposition, and canonical requirement rows. Stores
+opened on the same canonical receipt root share one process-wide mutation lock,
+so pruning and persistence enforce one aggregate retention ceiling.
 
 ## Runtime model
 
