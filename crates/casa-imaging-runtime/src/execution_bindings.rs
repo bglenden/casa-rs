@@ -1604,6 +1604,15 @@ fn defer_scheduler_error<E>(
     scheduler.cancel_after_error();
 }
 
+fn terminal_drain_error<E>(
+    scheduler: &mut ExecutionScheduler<'_>,
+    pending: &mut Option<PendingRunError<E>>,
+    invariant: &'static str,
+) -> RunError<E> {
+    let _ = scheduler.quarantine();
+    pending.take().expect(invariant).into_run_error()
+}
+
 fn validate_work_measurements(
     plan: &ExecutionPlan,
     work: &ScheduledWork,
@@ -1931,11 +1940,11 @@ where
                 continue;
             }
             Err(_) => {
-                let _ = scheduler.quarantine();
-                return Err(pending
-                    .take()
-                    .expect("draining scheduler error has a primary failure")
-                    .into_run_error());
+                return Err(terminal_drain_error(
+                    &mut scheduler,
+                    &mut pending,
+                    "draining scheduler error has a primary failure",
+                ));
             }
         };
         match action {
@@ -1949,11 +1958,11 @@ where
                     let _ = receipt.work_failed(&node_id);
                     if work.node().kind == WorkKind::Release {
                         if scheduler.fail_release_work(&node_id).is_err() {
-                            let _ = scheduler.quarantine();
-                            return Err(pending
-                                .take()
-                                .expect("receipt checkpoint failure is retained")
-                                .into_run_error());
+                            return Err(terminal_drain_error(
+                                &mut scheduler,
+                                &mut pending,
+                                "receipt checkpoint failure is retained",
+                            ));
                         }
                         continue;
                     }
@@ -1966,20 +1975,20 @@ where
                         Ok(fences) => {
                             for fence in fences {
                                 if scheduler.complete_fence(fence).is_err() {
-                                    let _ = scheduler.quarantine();
-                                    return Err(pending
-                                        .take()
-                                        .expect("receipt checkpoint failure is retained")
-                                        .into_run_error());
+                                    return Err(terminal_drain_error(
+                                        &mut scheduler,
+                                        &mut pending,
+                                        "receipt checkpoint failure is retained",
+                                    ));
                                 }
                             }
                         }
                         Err(_) => {
-                            let _ = scheduler.quarantine();
-                            return Err(pending
-                                .take()
-                                .expect("receipt checkpoint failure is retained")
-                                .into_run_error());
+                            return Err(terminal_drain_error(
+                                &mut scheduler,
+                                &mut pending,
+                                "receipt checkpoint failure is retained",
+                            ));
                         }
                     }
                     continue;
@@ -2018,11 +2027,11 @@ where
                                     .finish_work(node_id, WorkResult::Succeeded)
                                     .is_err()
                                 {
-                                    let _ = scheduler.quarantine();
-                                    return Err(pending
-                                        .take()
-                                        .expect("evidence failure is retained")
-                                        .into_run_error());
+                                    return Err(terminal_drain_error(
+                                        &mut scheduler,
+                                        &mut pending,
+                                        "evidence failure is retained",
+                                    ));
                                 }
                                 scheduler.cancel_after_error();
                             }
@@ -2039,11 +2048,11 @@ where
                             }
                             controller_stopped = true;
                             if scheduler.fail_release_work(&node_id).is_err() {
-                                let _ = scheduler.quarantine();
-                                return Err(pending
-                                    .take()
-                                    .expect("release failure is retained")
-                                    .into_run_error());
+                                return Err(terminal_drain_error(
+                                    &mut scheduler,
+                                    &mut pending,
+                                    "release failure is retained",
+                                ));
                             }
                             scheduler.cancel_after_error();
                             continue;
@@ -2063,11 +2072,11 @@ where
                             Ok(fences) => {
                                 for fence in fences {
                                     if scheduler.complete_fence(fence).is_err() {
-                                        let _ = scheduler.quarantine();
-                                        return Err(pending
-                                            .take()
-                                            .expect("executor failure is retained")
-                                            .into_run_error());
+                                        return Err(terminal_drain_error(
+                                            &mut scheduler,
+                                            &mut pending,
+                                            "executor failure is retained",
+                                        ));
                                     }
                                 }
                             }
@@ -2088,11 +2097,11 @@ where
                         controller_stopped = true;
                         continue;
                     }
-                    let _ = scheduler.quarantine();
-                    return Err(pending
-                        .take()
-                        .expect("waiting failure has a primary error")
-                        .into_run_error());
+                    return Err(terminal_drain_error(
+                        &mut scheduler,
+                        &mut pending,
+                        "waiting failure has a primary error",
+                    ));
                 };
                 let Some(work) = launched.get(fence.node()) else {
                     let _ = scheduler.quarantine();
@@ -2117,11 +2126,11 @@ where
                     controller_stopped = true;
                     if work.node().kind == WorkKind::Release {
                         if scheduler.fail_release_fence(fence).is_err() {
-                            let _ = scheduler.quarantine();
-                            return Err(pending
-                                .take()
-                                .expect("release fence failure is retained")
-                                .into_run_error());
+                            return Err(terminal_drain_error(
+                                &mut scheduler,
+                                &mut pending,
+                                "release fence failure is retained",
+                            ));
                         }
                         scheduler.cancel_after_error();
                         continue;
@@ -2130,11 +2139,11 @@ where
                         .fail_fence(fence.clone(), "asynchronous work failed".to_string())
                         .is_err()
                     {
-                        let _ = scheduler.quarantine();
-                        return Err(pending
-                            .take()
-                            .expect("fence failure is retained")
-                            .into_run_error());
+                        return Err(terminal_drain_error(
+                            &mut scheduler,
+                            &mut pending,
+                            "fence failure is retained",
+                        ));
                     }
                 } else {
                     if let Err(error) = receipt.fence_completed(&fence) {
