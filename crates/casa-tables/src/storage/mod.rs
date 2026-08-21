@@ -53,9 +53,9 @@ use self::incremental_stman::{
     write_ism_file_scalar_column_sources,
 };
 use self::standard_stman::{
-    read_ssm_array_column_rows, read_ssm_file, read_ssm_file_columns,
-    read_ssm_required_scalar_columns_rows, read_ssm_scalar_column_rows, write_ssm_file,
-    write_ssm_file_indexed, write_ssm_file_scalar_column_sources,
+    read_ssm_array_column_rows, read_ssm_array_column_rows_2d_channel_range_typed, read_ssm_file,
+    read_ssm_file_columns, read_ssm_required_scalar_columns_rows, read_ssm_scalar_column_rows,
+    write_ssm_file, write_ssm_file_indexed, write_ssm_file_scalar_column_sources,
 };
 use self::stman_aipsio::scalar_value_is_default;
 use self::stman_aipsio::{
@@ -2933,6 +2933,30 @@ impl CompositeStorage {
                 request.channel_start,
                 request.channel_count,
             ),
+            "StandardStMan" => {
+                let group_col_descs = bound_cols
+                    .iter()
+                    .map(|(bound_desc_idx, _)| &table_dat.table_desc.columns[*bound_desc_idx])
+                    .collect::<Vec<_>>();
+                let target_col_idx = bound_cols
+                    .iter()
+                    .position(|(bound_desc_idx, _)| *bound_desc_idx == desc_idx)
+                    .ok_or_else(|| {
+                        StorageError::FormatMismatch(format!(
+                            "array column '{column}' missing data-manager binding index"
+                        ))
+                    })?;
+                let data_path = table_path.join(format!("{}{}", TABLE_DATA_FILE_PREFIX, dm.seq_nr));
+                read_ssm_array_column_rows_2d_channel_range_typed(
+                    &data_path,
+                    &dm.data,
+                    &group_col_descs,
+                    target_col_idx,
+                    request.selected_rows,
+                    request.channel_start,
+                    request.channel_count,
+                )
+            }
             other => Err(StorageError::FormatMismatch(format!(
                 "typed selected 2-D channel reads for column '{}' require TiledShapeStMan, found {other}",
                 request.column

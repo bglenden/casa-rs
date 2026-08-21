@@ -70,6 +70,8 @@ pub mod validate;
 pub mod visibility_buffer;
 pub mod write_session;
 
+mod selected_observation_buffer;
+mod selected_pointing;
 #[cfg(test)]
 pub(crate) mod test_helpers;
 
@@ -87,7 +89,7 @@ pub use listobs::{
     ListObsUvPoint as MeasurementSetUvPoint, ListObsUvTrack as MeasurementSetUvTrack,
 };
 pub(crate) use listobs::{ListObsOptions, ListObsSummary, ListObsUvCoverage};
-pub use ms::MeasurementSet;
+pub use ms::{MainRowSelectionBlock, MainRowSelectionBlocks, MainRowSelectionFact, MeasurementSet};
 pub use msexplore::task_contract::{
     MSEXPLORE_TASK_PROTOCOL_NAME, MSEXPLORE_TASK_PROTOCOL_VERSION, MsExploreFlagEditRequest,
     MsExplorePlotArtifact, MsExplorePlotExportRequest, MsExploreRunTaskRequest,
@@ -129,6 +131,14 @@ pub use probes::{
 };
 pub use schema::SubtableId;
 pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
+pub use selected_observation_buffer::{
+    SelectedObservationBuffer, SelectedObservationBufferRequest, SelectedStoredSample,
+    SelectedStoredVisibility, SelectedVisibilityColumn, SelectedWeightColumn,
+};
+pub use selected_pointing::{
+    PointingDirectionBracket, PointingDirectionCandidate, PointingDirectionColumn,
+    PointingDirectionQuery, PointingReadPlan,
+};
 pub use selection::syntax::{
     ChannelSelection, ChannelSelectionSegment, SpwSelector, parse_numeric_id_selector,
     parse_spw_selector,

@@ -183,8 +183,10 @@ impl Table {
     ///
     /// Returns `Ok(())` immediately when no schema is attached. Otherwise,
     /// checks every cell in every row and returns the first [`TableError`]
-    /// encountered. This is called automatically by [`save`][Table::save],
-    /// [`open`][Table::open], and schema-setting methods.
+    /// encountered. This is called automatically by [`save`][Table::save] and
+    /// schema-setting methods. Persistent opens validate the table descriptor
+    /// while leaving row payloads lazy; call this method explicitly when an
+    /// exhaustive row validation is required.
     pub fn validate(&self) -> Result<(), TableError> {
         let Some(schema) = self.schema() else {
             return Ok(());

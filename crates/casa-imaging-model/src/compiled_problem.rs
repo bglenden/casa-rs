@@ -13,32 +13,40 @@ use crate::measurement_equation::{
     compile_product_boundary,
 };
 use crate::observation::{FlagPolicy, ObservationSnapshot, ObservationSnapshotId, WeightColumn};
+use crate::product_graph::{ProductGraph, compile_product_graph};
+use crate::selected_observation::{
+    SelectedObservationCommitment, SelectedObservationInspectionError,
+    compile_selected_observation_commitment, inspect_selected_observation,
+};
+use crate::selected_observation_sample::{
+    SelectedObservationGenerationId, SelectedObservationSample,
+};
 use crate::transaction::{
     ObservationTransactionContract, ObservationTransactionRequirements,
     compile_observation_transaction,
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 6;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 7;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
 const NUMERICS_CONTRACT_IDENTITY_VERSION: u32 = 1;
 
 /// Version of the sole native imaging request contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImagingRequestVersion {
-    /// Contract with compiler-owned immutable geometry.
-    V2,
+    /// Contract with compiler-owned immutable geometry and exact product-validity policies.
+    V3,
 }
 
 impl ImagingRequestVersion {
     /// Current request version accepted by [`compile`].
-    pub const CURRENT: Self = Self::V2;
+    pub const CURRENT: Self = Self::V3;
 
     /// Return the stable integer representation used at transport boundaries.
     #[must_use]
     pub const fn as_u32(self) -> u32 {
         match self {
-            Self::V2 => 2,
+            Self::V3 => 3,
         }
     }
 }
@@ -661,12 +669,175 @@ pub enum RestoringBeamPolicy {
     Common,
 }
 
+/// Comparison used to decide whether a product pixel has valid support.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductSupportComparison {
+    /// The measured support must be strictly greater than the configured threshold.
+    StrictlyGreater,
+}
+
+/// Persisted treatment of pixels outside a product's valid support.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductBlankingPolicy {
+    /// Store numeric zero and mark the corresponding validity mask false.
+    ZeroAndFalseMask,
+}
+
+/// Reference statistic used by the MT-MFS Taylor-support threshold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaylorSupportReference {
+    /// Positive maximum of the temporary principal-solution Taylor-zero residual.
+    PrincipalResidualTaylor0PositiveMaximum,
+}
+
+/// Failure to construct a finite product-validity policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum ProductValidityPolicyError {
+    /// Primary-beam support requires a finite positive cutoff.
+    #[error("primary-beam support cutoff must be finite and positive")]
+    InvalidPrimaryBeamCutoff,
+    /// Taylor support requires a finite fraction in `(0, 1]`.
+    #[error("Taylor support peak fraction must be finite, positive, and at most one")]
+    InvalidTaylorPeakFraction,
+}
+
+/// Exact primary-beam support and blanking policy carried by a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PrimaryBeamValidityPolicy {
+    cutoff_bits: u32,
+    comparison: ProductSupportComparison,
+    blanking: ProductBlankingPolicy,
+}
+
+impl PrimaryBeamValidityPolicy {
+    /// Construct an exact finite primary-beam support policy.
+    pub fn new(
+        cutoff: f32,
+        comparison: ProductSupportComparison,
+        blanking: ProductBlankingPolicy,
+    ) -> Result<Self, ProductValidityPolicyError> {
+        if !(cutoff.is_finite() && cutoff > 0.0) {
+            return Err(ProductValidityPolicyError::InvalidPrimaryBeamCutoff);
+        }
+        Ok(Self {
+            cutoff_bits: cutoff.to_bits(),
+            comparison,
+            blanking,
+        })
+    }
+
+    /// Return the exact primary-beam cutoff.
+    #[must_use]
+    pub fn cutoff(self) -> f32 {
+        f32::from_bits(self.cutoff_bits)
+    }
+
+    /// Return the exact support comparison.
+    #[must_use]
+    pub const fn comparison(self) -> ProductSupportComparison {
+        self.comparison
+    }
+
+    /// Return the exact persisted treatment outside support.
+    #[must_use]
+    pub const fn blanking(self) -> ProductBlankingPolicy {
+        self.blanking
+    }
+}
+
+/// Exact Taylor-coefficient support and blanking policy carried by a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaylorValidityPolicy {
+    reference: TaylorSupportReference,
+    peak_fraction_bits: u32,
+    comparison: ProductSupportComparison,
+    blanking: ProductBlankingPolicy,
+}
+
+impl TaylorValidityPolicy {
+    /// Construct an exact finite Taylor-support policy.
+    pub fn new(
+        reference: TaylorSupportReference,
+        peak_fraction: f32,
+        comparison: ProductSupportComparison,
+        blanking: ProductBlankingPolicy,
+    ) -> Result<Self, ProductValidityPolicyError> {
+        if !(peak_fraction.is_finite() && peak_fraction > 0.0 && peak_fraction <= 1.0) {
+            return Err(ProductValidityPolicyError::InvalidTaylorPeakFraction);
+        }
+        Ok(Self {
+            reference,
+            peak_fraction_bits: peak_fraction.to_bits(),
+            comparison,
+            blanking,
+        })
+    }
+
+    /// Return the reference statistic for the Taylor threshold.
+    #[must_use]
+    pub const fn reference(self) -> TaylorSupportReference {
+        self.reference
+    }
+
+    /// Return the fraction applied to the reference statistic.
+    #[must_use]
+    pub fn peak_fraction(self) -> f32 {
+        f32::from_bits(self.peak_fraction_bits)
+    }
+
+    /// Return the exact support comparison.
+    #[must_use]
+    pub const fn comparison(self) -> ProductSupportComparison {
+        self.comparison
+    }
+
+    /// Return the exact persisted treatment outside support.
+    #[must_use]
+    pub const fn blanking(self) -> ProductBlankingPolicy {
+        self.blanking
+    }
+}
+
+/// Exact compiler-owned validity policies for all requested products.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProductValidityPolicies {
+    primary_beam: PrimaryBeamValidityPolicy,
+    taylor: TaylorValidityPolicy,
+}
+
+impl ProductValidityPolicies {
+    /// Bind the exact primary-beam and Taylor validity policies into a request.
+    #[must_use]
+    pub const fn new(
+        primary_beam: PrimaryBeamValidityPolicy,
+        taylor: TaylorValidityPolicy,
+    ) -> Self {
+        Self {
+            primary_beam,
+            taylor,
+        }
+    }
+
+    /// Return the primary-beam support policy.
+    #[must_use]
+    pub const fn primary_beam(self) -> PrimaryBeamValidityPolicy {
+        self.primary_beam
+    }
+
+    /// Return the Taylor-coefficient support policy.
+    #[must_use]
+    pub const fn taylor(self) -> TaylorValidityPolicy {
+        self.taylor
+    }
+}
+
 /// Requested product set and publication semantics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductRequirements {
     products: Vec<ProductKind>,
     normalization: ProductNormalization,
     restoring_beam: RestoringBeamPolicy,
+    validity: ProductValidityPolicies,
     normalization_boundary: ProductNormalizationBoundary,
 }
 
@@ -677,6 +848,7 @@ impl ProductRequirements {
         products: Vec<ProductKind>,
         normalization: ProductNormalization,
         restoring_beam: RestoringBeamPolicy,
+        validity: ProductValidityPolicies,
     ) -> Self {
         let normalization_boundary =
             compile_product_boundary(&products, normalization, restoring_beam);
@@ -684,6 +856,7 @@ impl ProductRequirements {
             products,
             normalization,
             restoring_beam,
+            validity,
             normalization_boundary,
         }
     }
@@ -706,6 +879,12 @@ impl ProductRequirements {
         self.restoring_beam
     }
 
+    /// Return the exact product-validity policies supplied by the request.
+    #[must_use]
+    pub const fn validity(&self) -> ProductValidityPolicies {
+        self.validity
+    }
+
     /// Return the downstream handoff that keeps product operations outside A*.
     #[must_use]
     pub const fn normalization_boundary(&self) -> &ProductNormalizationBoundary {
@@ -720,7 +899,7 @@ impl ProductRequirements {
         self
     }
 
-    fn contains(&self, product: ProductKind) -> bool {
+    pub(crate) fn contains(&self, product: ProductKind) -> bool {
         self.products.binary_search(&product).is_ok()
     }
 }
@@ -1043,6 +1222,11 @@ impl CompiledProblemId {
     pub const fn as_bytes(self) -> [u8; 32] {
         self.0.as_bytes()
     }
+
+    #[cfg(test)]
+    pub(crate) const fn from_sha256_for_test(digest: [u8; 32]) -> Self {
+        Self(LogicalIdentity::from_sha256(digest))
+    }
 }
 
 /// Stable comparable identity of a complete numerical contract.
@@ -1100,6 +1284,8 @@ pub struct CompiledProblem {
     normal_equation: NormalEquationContract,
     products: ProductRequirements,
     observation_transaction: ObservationTransactionContract,
+    selected_observation: SelectedObservationCommitment,
+    product_graph: ProductGraph,
     numerics: NumericsContract,
     required_capabilities: BTreeSet<RequiredCapability>,
 }
@@ -1163,6 +1349,34 @@ impl CompiledProblem {
     #[must_use]
     pub const fn observation_transaction(&self) -> &ObservationTransactionContract {
         &self.observation_transaction
+    }
+
+    /// Return the sole compiler-owned selected-observation commitment.
+    #[must_use]
+    pub const fn selected_observation(&self) -> &SelectedObservationCommitment {
+        &self.selected_observation
+    }
+
+    /// Validate and identify one canonical selected-observation sample stream.
+    ///
+    /// The returned inspection is deterministic scientific validation only. It
+    /// does not prove retained source access, bind an execution attempt, or mint
+    /// traversal-completion or publication authority.
+    pub fn inspect_selected_observation(
+        &self,
+        samples: impl IntoIterator<Item = SelectedObservationSample>,
+    ) -> Result<(SelectedObservationGenerationId, u64), SelectedObservationInspectionError> {
+        inspect_selected_observation(
+            &self.selected_observation,
+            self.observation_transaction.write_set(),
+            samples,
+        )
+    }
+
+    /// Return the mandatory compiler-owned product topology and publication contract.
+    #[must_use]
+    pub const fn product_graph(&self) -> &ProductGraph {
+        &self.product_graph
     }
 
     /// Return numerical requirements.
@@ -1241,7 +1455,7 @@ pub enum CompileProblemError {
 /// Compile and validate one immutable backend-independent imaging request.
 pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProblemError> {
     let ImagingRequest {
-        version: ImagingRequestVersion::V2,
+        version: ImagingRequestVersion::V3,
         specification,
         geometry,
         inputs,
@@ -1266,6 +1480,15 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         &reconstruction,
         specification.weighting,
     );
+    let selected_observation = compile_selected_observation_commitment(
+        &observation_transaction,
+        geometry.geometry_id(),
+        normal_equation
+            .measurement_operator()
+            .codomain()
+            .inner_product(),
+        science.spectral().sampling(),
+    );
     let required_capabilities = derive_capabilities(
         &geometry,
         &science,
@@ -1284,6 +1507,14 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         numerics: &numerics,
     });
     let numerics_id = canonical_numerics_id(&numerics);
+    let product_graph = compile_product_graph(
+        problem_id,
+        normal_equation.weighting().generation_id(),
+        &geometry,
+        &reconstruction,
+        &products,
+    )
+    .map_err(|reason| CompileProblemError::InvalidProductCombination { reason })?;
     Ok(CompiledProblem {
         problem_id,
         numerics_id,
@@ -1294,6 +1525,8 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         normal_equation,
         products,
         observation_transaction,
+        selected_observation,
+        product_graph,
         numerics,
         required_capabilities,
     })
@@ -1506,6 +1739,24 @@ fn validate_products(
             reason: "Taylor products require a Taylor reconstruction basis",
         });
     }
+    if products.contains(ProductKind::TaylorTerms)
+        && ![
+            ProductKind::Psf,
+            ProductKind::Residual,
+            ProductKind::Model,
+            ProductKind::RestoredImage,
+            ProductKind::SumWeights,
+            ProductKind::Weight,
+            ProductKind::PrimaryBeam,
+            ProductKind::PbCorrectedImage,
+        ]
+        .into_iter()
+        .any(|product| products.contains(product))
+    {
+        return Err(CompileProblemError::InvalidProductCombination {
+            reason: "Taylor products require at least one concrete Taylor coefficient product",
+        });
+    }
     if products.contains(ProductKind::SpectralIndex)
         && !(taylor_terms >= 2 && products.contains(ProductKind::TaylorTerms))
     {
@@ -1681,11 +1932,7 @@ fn canonical_problem_id(input: ProblemIdentityInput<'_>) -> CompiledProblemId {
     });
     let operator = normal_equation.measurement_operator();
     encoder.digest(operator.domain().geometry().as_bytes());
-    encoder.u8(match operator.domain().basis() {
-        ReconstructionBasis::Constant => 0,
-        ReconstructionBasis::Taylor { .. } => 1,
-        ReconstructionBasis::ChannelLocal { .. } => 2,
-    });
+    encoder.u8(reconstruction_basis_tag(operator.domain().basis()));
     encoder.usize(operator.domain().polarization().coordinates().len());
     for coordinate in operator.domain().polarization().coordinates() {
         encoder.u8(polarization_tag(*coordinate));
@@ -1696,14 +1943,13 @@ fn canonical_problem_id(input: ProblemIdentityInput<'_>) -> CompiledProblemId {
         match transform {
             PairedMeasurementTransform::SpectralBasis { basis } => {
                 encoder.u8(0);
+                encoder.u8(reconstruction_basis_tag(*basis));
                 match basis {
-                    ReconstructionBasis::Constant => encoder.u8(0),
+                    ReconstructionBasis::Constant => {}
                     ReconstructionBasis::Taylor { terms } => {
-                        encoder.u8(1);
                         encoder.usize(*terms);
                     }
                     ReconstructionBasis::ChannelLocal { channels } => {
-                        encoder.u8(2);
                         encoder.usize(*channels);
                     }
                 }
@@ -1759,29 +2005,28 @@ fn canonical_problem_id(input: ProblemIdentityInput<'_>) -> CompiledProblemId {
     encoder.u8(match normal_equation.output().normalization() {
         NormalStateNormalization::Unnormalized => 0,
     });
+    encoder.u8(reconstruction_basis_tag(reconstruction.basis));
     match reconstruction.basis {
-        ReconstructionBasis::Constant => encoder.u8(0),
+        ReconstructionBasis::Constant => {}
         ReconstructionBasis::Taylor { terms } => {
-            encoder.u8(1);
             encoder.usize(terms);
         }
         ReconstructionBasis::ChannelLocal { channels } => {
-            encoder.u8(2);
             encoder.usize(channels);
         }
     }
+    encoder.u8(reconstruction_algorithm_tag(&reconstruction.algorithm));
     match &reconstruction.algorithm {
-        ReconstructionAlgorithm::Dirty => encoder.u8(0),
-        ReconstructionAlgorithm::Hogbom => encoder.u8(1),
-        ReconstructionAlgorithm::Clark => encoder.u8(2),
+        ReconstructionAlgorithm::Dirty
+        | ReconstructionAlgorithm::Hogbom
+        | ReconstructionAlgorithm::Clark
+        | ReconstructionAlgorithm::Mtmfs => {}
         ReconstructionAlgorithm::Multiscale { scales_px } => {
-            encoder.u8(3);
             encoder.usize(scales_px.len());
             for scale in scales_px {
                 encoder.f64(*scale);
             }
         }
-        ReconstructionAlgorithm::Mtmfs => encoder.u8(4),
     }
     encoder.usize(reconstruction.controls.max_minor_iterations);
     encoder.f64(reconstruction.controls.gain);
@@ -1829,6 +2074,25 @@ fn canonical_problem_id(input: ProblemIdentityInput<'_>) -> CompiledProblemId {
         RestoringBeamPolicy::None => 0,
         RestoringBeamPolicy::PerPlane => 1,
         RestoringBeamPolicy::Common => 2,
+    });
+    let primary_beam_validity = products.validity.primary_beam();
+    encoder.u32(primary_beam_validity.cutoff().to_bits());
+    encoder.u8(match primary_beam_validity.comparison() {
+        ProductSupportComparison::StrictlyGreater => 0,
+    });
+    encoder.u8(match primary_beam_validity.blanking() {
+        ProductBlankingPolicy::ZeroAndFalseMask => 0,
+    });
+    let taylor_validity = products.validity.taylor();
+    encoder.u8(match taylor_validity.reference() {
+        TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum => 0,
+    });
+    encoder.u32(taylor_validity.peak_fraction().to_bits());
+    encoder.u8(match taylor_validity.comparison() {
+        ProductSupportComparison::StrictlyGreater => 0,
+    });
+    encoder.u8(match taylor_validity.blanking() {
+        ProductBlankingPolicy::ZeroAndFalseMask => 0,
     });
     encoder.usize(products.normalization_boundary.operations().len());
     for operation in products.normalization_boundary.operations() {
@@ -1906,6 +2170,10 @@ impl CanonicalEncoder {
         self.0.update(value.to_le_bytes());
     }
 
+    pub(crate) fn i32(&mut self, value: i32) {
+        self.0.update(value.to_le_bytes());
+    }
+
     pub(crate) fn u64(&mut self, value: u64) {
         self.0.update(value.to_le_bytes());
     }
@@ -1928,6 +2196,11 @@ impl CanonicalEncoder {
     }
 
     pub(crate) fn f64(&mut self, value: f64) {
+        let bits = if value == 0.0 { 0 } else { value.to_bits() };
+        self.0.update(bits.to_le_bytes());
+    }
+
+    pub(crate) fn f32(&mut self, value: f32) {
         let bits = if value == 0.0 { 0 } else { value.to_bits() };
         self.0.update(bits.to_le_bytes());
     }
@@ -1967,7 +2240,25 @@ fn product_tag(product: ProductKind) -> u8 {
     }
 }
 
-fn polarization_tag(coordinate: PolarizationCoordinate) -> u8 {
+pub(crate) fn reconstruction_basis_tag(basis: ReconstructionBasis) -> u8 {
+    match basis {
+        ReconstructionBasis::Constant => 0,
+        ReconstructionBasis::Taylor { .. } => 1,
+        ReconstructionBasis::ChannelLocal { .. } => 2,
+    }
+}
+
+pub(crate) fn reconstruction_algorithm_tag(algorithm: &ReconstructionAlgorithm) -> u8 {
+    match algorithm {
+        ReconstructionAlgorithm::Dirty => 0,
+        ReconstructionAlgorithm::Hogbom => 1,
+        ReconstructionAlgorithm::Clark => 2,
+        ReconstructionAlgorithm::Multiscale { .. } => 3,
+        ReconstructionAlgorithm::Mtmfs => 4,
+    }
+}
+
+pub(crate) fn polarization_tag(coordinate: PolarizationCoordinate) -> u8 {
     match coordinate {
         PolarizationCoordinate::StokesI => 0,
         PolarizationCoordinate::StokesQ => 1,

@@ -4,7 +4,10 @@
 
 mod execution;
 mod execution_bindings;
+mod observation_read;
 mod observation_transaction;
+mod product_publication;
+mod publication_layout;
 mod receipt;
 mod resource_authority;
 
@@ -16,7 +19,12 @@ pub use execution_bindings::{
     PlannedArtifact, PlannerCostModelProfileId, PlanningBindings, PredictionConfidence,
     PredictionUncertainty, PublicationResources, RedactedPath, ResourceMeasurement,
     ResourcePolicyId, RunBindings, RunController, RunDirective, RunError, RunToCompletion,
-    StagePrediction, WorkExecutionContext, WorkImplementation, WorkMeasurements, plan, run,
+    StagePrediction, WorkCompletion, WorkExecutionContext, WorkImplementation, WorkMeasurements,
+    plan, run,
+};
+pub use observation_read::{
+    ObservationReadCompletion, ObservationReadCompletionError, ObservationReadCompletionOwner,
+    ObservationReadSourceReport,
 };
 
 pub use execution::{
@@ -27,14 +35,27 @@ pub use execution::{
     ResourceClaim, ScheduledWork, SlotCompatibility, StorageMode, WorkDependency, WorkDomain,
     WorkImplementationId, WorkKind, WorkNode, WorkNodeId,
 };
-pub use receipt::{
-    BuildIdentity, CompiledProblemEvidence, ExecutionAttemptId, ExecutionProvenance,
-    ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ReceiptAdaptation,
-    ReceiptError, ReceiptFailureKind, ReceiptInfeasibilityCertificate, ReceiptRetention,
-    ReceiptStatus,
-};
 pub use observation_transaction::{
     BoundObservationTransaction, ObservationTransactionPlanError, ObservationTransactionWork,
+};
+pub use product_publication::{
+    ProductPlannedArtifact, ProductPublicationBinding, ProductPublicationBindingError,
+};
+pub use publication_layout::{
+    PhysicalLayoutId, PublicationBoundKind, PublicationLayoutError, PublicationLayoutLedger,
+    PublicationMappedStaging, PublicationParticipant, PublicationPhysicalLayout,
+    PublicationResourceBounds, PublicationResourceBoundsError, PublicationStaging,
+    PublicationStagingError,
+};
+pub use receipt::{
+    BuildIdentity, CompiledProblemEvidence, ExecutionAttemptId, ExecutionProvenance,
+    ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ProductAxesEvidence,
+    ProductBeamEvidence, ProductExecutionEvidence, ProductGraphEvidence, ProductGraphNodeEvidence,
+    ProductParticipantEvidence, ProductPayloadEvidence, ProductPublicationMemberEvidence,
+    ProductSourceBindingEvidence, ProductSourceEvidence, PublicationMappedStagingEvidence,
+    PublicationPhysicalLayoutEvidence, PublicationStagingEvidence, ReceiptAdaptation, ReceiptError,
+    ReceiptFailureKind, ReceiptInfeasibilityCertificate, ReceiptRetention, ReceiptStatus,
+    RestoringBeamEvidence,
 };
 pub use resource_authority::{
     Accelerator, AcceleratorDemand, AcceleratorId, AcceleratorKind, AlternativeId, CacheDemand,

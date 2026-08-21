@@ -629,6 +629,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "casa-imaging-observation"
+version = "0.27.0"
+dependencies = [
+ "casa-imaging-model",
+ "casa-ms",
+ "casa-types",
+ "ndarray",
+ "num-complex",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "casa-imaging-router"
 version = "0.27.0"
 dependencies = [

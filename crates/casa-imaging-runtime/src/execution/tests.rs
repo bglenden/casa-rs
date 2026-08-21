@@ -1,20 +1,141 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_imaging_model::{
+    AxisOrder, CentreLaws, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
+    DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
+    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest,
+    InstrumentResponse, MeasurementEquationContract, ModelColumnWrite, ModelInnerProduct,
+    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract,
+    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
+    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemSpecification, ProductBlankingPolicy,
+    ProductKind, ProductNormalization, ProductRequirements, ProductSourceGenerationId,
+    ProductSupportComparison, ProductValidityPolicies, Projection, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
+    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, UvwCoordinateLaw,
+    VisibilityInnerProduct, WeightDensityScope, WeightingContract, WeightingScheme, compile,
+};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
 };
+
+#[path = "../../tests/common/mod.rs"]
+mod common;
+
+use common::problem_inputs;
+
+fn validity_policies() -> ProductValidityPolicies {
+    ProductValidityPolicies::new(
+        PrimaryBeamValidityPolicy::new(
+            0.2,
+            ProductSupportComparison::StrictlyGreater,
+            ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid PB policy fixture"),
+        TaylorValidityPolicy::new(
+            TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
+            0.1,
+            ProductSupportComparison::StrictlyGreater,
+            ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid Taylor policy fixture"),
+    )
+}
 use super::*;
 use crate::{
     Accelerator, AcceleratorDemand, AcceleratorId, AcceleratorKind, AlternativeId, CacheDemand,
     CapabilityPredicate, CapacityDomainId, CapacityViewId, CountDemand, CpuClassCapacity,
-    DemandAlternative, DemandEnvelope, ExternalPressure, HostInventory, IoBufferDemand,
-    MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView, MemoryViewKind,
-    QueueDemand, QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource,
-    RateResourceId, RateUnit, ResourceAuthority, ResourceHeadroom, ResourcePolicy,
-    ResourceTopology, RuntimeOverheadDemand, ScalingMetadata,
+    DemandAlternative, DemandEnvelope, ExternalPressure, HostInventory, ImplementationRegistryId,
+    IoBufferDemand, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
+    MemoryViewKind, PhysicalWorkBinding, PlannerCostModelProfileId, PlanningBindings, QueueDemand,
+    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
+    RateUnit, ResourceAuthority, ResourceHeadroom, ResourcePolicy, ResourceTopology,
+    RuntimeOverheadDemand, ScalingMetadata, plan,
 };
 
+fn compiled_problem() -> casa_imaging_model::CompiledProblem {
+    let direction = DirectionCoordinateSpec::new(
+        Projection::Sin,
+        SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+        [31.0, 31.0],
+        [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
+        [[1.0, 0.0], [0.0, 1.0]],
+        [180.0, 0.0],
+    );
+    let geometry = GeometryInput::new(
+        vec![ImageDomainSpec::new(
+            ImageDomainRole::Main,
+            ImageShape::new(64, 64),
+            direction,
+            FacetLayout::Single,
+            AxisOrder::new([
+                ImageAxis::DirectionLongitude,
+                ImageAxis::DirectionLatitude,
+                ImageAxis::Polarization,
+                ImageAxis::Spectral,
+            ]),
+        )],
+        CentreLaws::new(
+            PhaseCentreLaw::Observation,
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::PhaseTrackingCentre,
+        ),
+        UvwCoordinateLaw::PhaseTrackingCentre,
+        SpectralCoordinateSpec::new(
+            FrequencyFrame::Topocentric,
+            FrequencyFrame::Topocentric,
+            SpectralFrameAnchor::NotApplicable,
+            SpectralWcs::Linear {
+                channels: 1,
+                reference_pixel: 0.0,
+                reference_frequency_hz: 1.4e9,
+                increment_hz: 1.0e6,
+            },
+            RestFrequency::NotApplicable,
+            DopplerConvention::NotApplicable,
+        ),
+    );
+    let specification = ProblemSpecification::new(
+        ScientificContract::new(
+            SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+            MeasurementEquationContract::new(
+                InstrumentResponse::Scalar,
+                DeclaredInnerProducts::new(
+                    ModelInnerProduct::HermitianEuclidean,
+                    VisibilityInnerProduct::HermitianEuclidean,
+                ),
+            ),
+        ),
+        ReconstructionContract::new(
+            ReconstructionBasis::Constant,
+            ReconstructionAlgorithm::Hogbom,
+            ReconstructionControls::new(10, 0.1, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        ),
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+        ProductRequirements::new(
+            vec![ProductKind::Psf, ProductKind::Residual, ProductKind::Model],
+            ProductNormalization::UnitResponse,
+            RestoringBeamPolicy::None,
+            validity_policies(),
+        ),
+        ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
+        NumericsContract::new(
+            vec![NumericPrecision::F64],
+            ReductionPolicy::DeterministicPairwise,
+            FiniteValuePolicy::FlagInputRejectGenerated,
+            NumericalStage::ALL
+                .into_iter()
+                .map(|stage| (stage, StageErrorBudget::new(1.0e-12, 1.0e-3)))
+                .collect(),
+        ),
+    );
+    let inputs = problem_inputs(1, Vec::new(), ModelStateIdentity::Empty);
+    compile(ImagingRequest::new(specification, geometry, inputs))
+        .expect("valid scheduler test problem")
+}
 fn cpu_node(id: &str, dependencies: BTreeSet<WorkDependency>) -> WorkNode {
     WorkNode {
         id: WorkNodeId::new(id),
@@ -243,6 +364,520 @@ fn io_authority() -> ResourceAuthority {
     .expect("valid scheduler I/O inventory")
 }
 
+fn bound_plan(dag: ExecutionDag, resource_policy: ResourcePolicy) -> crate::ExecutionPlan {
+    let problem = compiled_problem();
+    let graph = problem.product_graph();
+    let generation = graph
+        .bind_generation(
+            graph
+                .sources()
+                .iter()
+                .map(|source| {
+                    graph
+                        .bind_source_generation(
+                            source.source_id(),
+                            ProductSourceGenerationId::from_sha256([41; 32]),
+                        )
+                        .expect("bind product source")
+                })
+                .collect(),
+        )
+        .expect("bind product generation");
+    let artifacts = graph
+        .publication()
+        .members()
+        .iter()
+        .map(|node| {
+            (
+                *node,
+                crate::ArtifactIdentity::from_sha256(
+                    generation
+                        .artifact_id(*node)
+                        .expect("publication artifact")
+                        .as_bytes(),
+                ),
+            )
+        })
+        .collect();
+    let physical_work = physical_work_with_publication(dag, artifacts);
+    plan(
+        &problem,
+        PlanningBindings::new(
+            generation,
+            ImplementationRegistryId::from_sha256([7; 32]),
+            resource_policy,
+            PlannerCostModelProfileId::from_sha256([8; 32]),
+        ),
+        |_, _| Ok::<_, std::convert::Infallible>(physical_work),
+    )
+    .expect("physical planning succeeds")
+}
+
+fn physical_work_with_publication(
+    dag: ExecutionDag,
+    artifacts: Vec<(casa_imaging_model::ProductNodeId, crate::ArtifactIdentity)>,
+) -> PhysicalWorkBinding {
+    let product_count = u64::try_from(artifacts.len()).expect("product count fits u64");
+    let staged_bytes = product_count
+        .checked_mul(1_024)
+        .expect("test staging bound fits u64");
+    let final_bytes = product_count
+        .checked_mul(1_024)
+        .expect("test final bound fits u64");
+    let writer_bytes = product_count
+        .checked_mul(256)
+        .expect("test writer bound fits u64");
+    let mapped_bytes = writer_bytes;
+    let publication = WorkNodeId::new("product-publication");
+    let writer = WorkNodeId::new("product-writer");
+    let mapped = WorkNodeId::new("product-mapped-pages");
+    let mapped_release = WorkNodeId::new("product-mapped-release");
+    let allocation = AllocationId::new("product-publication-buffer");
+    let writer_allocation = AllocationId::new("product-writer-buffer");
+    let mapped_allocation = AllocationId::new("product-mapped-pages");
+    let slot = PhysicalSlotId::new("product-publication-slot");
+    let writer_slot = PhysicalSlotId::new("product-writer-slot");
+    let mapped_slot = PhysicalSlotId::new("product-mapped-slot");
+    let implementation = dag
+        .nodes()
+        .values()
+        .next()
+        .expect("test plan has work")
+        .implementation
+        .clone();
+    let compatibility = SlotCompatibility {
+        memory_domain: CapacityDomainId::new("host-memory"),
+        views: BTreeSet::from([dag.resource_alternative().demand.host_memory_view.clone()]),
+        alignment_bytes: 1,
+        storage_mode: StorageMode::Host,
+        layout: AllocationLayout::new("product-publication-buffer"),
+        initialization: InitializationPolicy::OverwriteBeforeRead,
+        access: AllocationAccess::ReadWrite,
+    };
+    let mut alternative = dag.resource_alternative().clone();
+    alternative.demand.memory.push(MemoryDemand {
+        allocation_id: "product-publication-buffer".to_string(),
+        hard_bytes: writer_bytes,
+        preferred_bytes: writer_bytes,
+        views: vec![alternative.demand.host_memory_view.clone()],
+    });
+    alternative.demand.memory.extend([
+        MemoryDemand {
+            allocation_id: "product-writer-buffer".to_string(),
+            hard_bytes: writer_bytes,
+            preferred_bytes: writer_bytes,
+            views: vec![alternative.demand.host_memory_view.clone()],
+        },
+        MemoryDemand {
+            allocation_id: "product-mapped-pages".to_string(),
+            hard_bytes: mapped_bytes,
+            preferred_bytes: mapped_bytes,
+            views: vec![alternative.demand.host_memory_view.clone()],
+        },
+    ]);
+    alternative.demand.storage.push(crate::StorageDemand {
+        demand_id: "product-output".to_string(),
+        domain: crate::StorageDomainId::new("product-output"),
+        temporary_bytes: 0,
+        staged_output_bytes: staged_bytes,
+        final_output_bytes: final_bytes,
+        persistent_cache_bytes: 0,
+        read_rate: CountDemand::zero(),
+        write_rate: CountDemand::new(1, 1),
+        operations_rate: CountDemand::zero(),
+        queue_slots: CountDemand::new(1, 1),
+    });
+    alternative.demand.rates.push(RateDemand {
+        demand_id: "io-rate".to_string(),
+        resource: RateResourceId::new("io-rate"),
+        amount: CountDemand::new(1, 1),
+    });
+    alternative.demand.queues.push(QueueDemand {
+        demand_id: "io-queue".to_string(),
+        resource: QueueResourceId::new("io-queue"),
+        slots: CountDemand::new(1, 1),
+    });
+    alternative.demand.io_buffers.publication_bytes = alternative
+        .demand
+        .io_buffers
+        .publication_bytes
+        .checked_add(writer_bytes)
+        .expect("test publication buffer fits u64");
+    alternative.demand.io_buffers.tiled_column_writer_bytes = writer_bytes;
+    alternative.demand.io_buffers.mapped_page_cache_bytes = mapped_bytes;
+    alternative.demand.caches = CacheDemand {
+        hard_resident_bytes: mapped_bytes,
+        preferred_resident_bytes: mapped_bytes,
+    };
+    let dependencies = dag
+        .nodes()
+        .values()
+        .flat_map(|node| {
+            if node.fences.is_empty() {
+                vec![WorkDependency::Work(node.id.clone())]
+            } else {
+                node.fences
+                    .iter()
+                    .map(|kind| WorkDependency::Fence(FenceId::new(node.id.clone(), *kind)))
+                    .collect()
+            }
+        })
+        .collect();
+    let publication_node = WorkNode {
+        id: publication.clone(),
+        kind: WorkKind::Publication,
+        domain: WorkDomain::Io,
+        implementation: implementation.clone(),
+        dependencies: BTreeSet::from([WorkDependency::Work(mapped_release.clone())]),
+        claims: vec![
+            ResourceClaim {
+                resource: crate::LeaseResource::IoBuffer(crate::IoBufferKind::Publication),
+                amount: writer_bytes,
+                lifetime: ClaimLifetime::through_fences([FenceKind::Io, FenceKind::Publication]),
+            },
+            ResourceClaim {
+                resource: crate::LeaseResource::Storage {
+                    demand_id: "product-output".to_string(),
+                    use_kind: crate::StorageUseKind::StagedOutput,
+                },
+                amount: staged_bytes,
+                lifetime: ClaimLifetime::through_fences([FenceKind::Io, FenceKind::Publication]),
+            },
+            ResourceClaim {
+                resource: crate::LeaseResource::Storage {
+                    demand_id: "product-output".to_string(),
+                    use_kind: crate::StorageUseKind::FinalOutput,
+                },
+                amount: final_bytes,
+                lifetime: ClaimLifetime::through_fences([FenceKind::Io, FenceKind::Publication]),
+            },
+            ResourceClaim {
+                resource: crate::LeaseResource::StorageWriteRate {
+                    demand_id: "product-output".to_string(),
+                },
+                amount: 1,
+                lifetime: ClaimLifetime::through_fences([FenceKind::Io, FenceKind::Publication]),
+            },
+            ResourceClaim {
+                resource: crate::LeaseResource::StorageQueue {
+                    demand_id: "product-output".to_string(),
+                },
+                amount: 1,
+                lifetime: ClaimLifetime::through_fences([FenceKind::Io, FenceKind::Publication]),
+            },
+        ],
+        allocations: vec![AllocationUse {
+            allocation: allocation.clone(),
+            lifetime: ClaimLifetime::through_fences([FenceKind::Io, FenceKind::Publication]),
+        }],
+        fences: BTreeSet::from([FenceKind::Io, FenceKind::Publication]),
+        quiescence_after: BTreeSet::new(),
+    };
+    let mut nodes = dag.nodes().values().cloned().collect::<Vec<_>>();
+    nodes.extend([
+        WorkNode {
+            id: writer.clone(),
+            kind: WorkKind::Io,
+            domain: WorkDomain::Io,
+            implementation: implementation.clone(),
+            dependencies,
+            claims: vec![
+                ResourceClaim {
+                    resource: crate::LeaseResource::Rate {
+                        demand_id: "io-rate".to_string(),
+                    },
+                    amount: 1,
+                    lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+                },
+                ResourceClaim {
+                    resource: crate::LeaseResource::Queue {
+                        demand_id: "io-queue".to_string(),
+                    },
+                    amount: 1,
+                    lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+                },
+                ResourceClaim {
+                    resource: crate::LeaseResource::IoBuffer(
+                        crate::IoBufferKind::TiledColumnWriter,
+                    ),
+                    amount: writer_bytes,
+                    lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+                },
+                ResourceClaim {
+                    resource: crate::LeaseResource::Storage {
+                        demand_id: "product-output".to_string(),
+                        use_kind: crate::StorageUseKind::StagedOutput,
+                    },
+                    amount: staged_bytes,
+                    lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+                },
+            ],
+            allocations: vec![AllocationUse {
+                allocation: writer_allocation.clone(),
+                lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+            }],
+            fences: BTreeSet::from([FenceKind::Io]),
+            quiescence_after: BTreeSet::new(),
+        },
+        WorkNode {
+            id: mapped.clone(),
+            kind: WorkKind::Cache,
+            domain: WorkDomain::Cpu,
+            implementation: implementation.clone(),
+            dependencies: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                writer.clone(),
+                FenceKind::Io,
+            ))]),
+            claims: vec![
+                ResourceClaim {
+                    resource: crate::LeaseResource::Workers,
+                    amount: 1,
+                    lifetime: ClaimLifetime::Work,
+                },
+                ResourceClaim {
+                    resource: crate::LeaseResource::IoBuffer(crate::IoBufferKind::MappedPageCache),
+                    amount: mapped_bytes,
+                    lifetime: ClaimLifetime::Work,
+                },
+                ResourceClaim {
+                    resource: crate::LeaseResource::ResidentCache,
+                    amount: mapped_bytes,
+                    lifetime: ClaimLifetime::Work,
+                },
+            ],
+            allocations: vec![AllocationUse {
+                allocation: mapped_allocation.clone(),
+                lifetime: ClaimLifetime::Work,
+            }],
+            fences: BTreeSet::new(),
+            quiescence_after: BTreeSet::new(),
+        },
+        WorkNode {
+            id: mapped_release.clone(),
+            kind: WorkKind::Release,
+            domain: WorkDomain::Cpu,
+            implementation,
+            dependencies: BTreeSet::from([WorkDependency::Work(mapped.clone())]),
+            claims: vec![
+                ResourceClaim {
+                    resource: crate::LeaseResource::Workers,
+                    amount: 1,
+                    lifetime: ClaimLifetime::Work,
+                },
+                ResourceClaim {
+                    resource: crate::LeaseResource::IoBuffer(crate::IoBufferKind::MappedPageCache),
+                    amount: mapped_bytes,
+                    lifetime: ClaimLifetime::Work,
+                },
+            ],
+            allocations: vec![AllocationUse {
+                allocation: mapped_allocation.clone(),
+                lifetime: ClaimLifetime::Work,
+            }],
+            fences: BTreeSet::new(),
+            quiescence_after: BTreeSet::new(),
+        },
+        publication_node,
+    ]);
+    let mut logical_allocations = dag
+        .logical_allocations()
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    logical_allocations.push(LogicalAllocation {
+        id: allocation,
+        bytes: writer_bytes,
+        purpose: AllocationPurpose::IoBuffer(crate::IoBufferKind::Publication),
+        compatibility: compatibility.clone(),
+        physical_slot: slot.clone(),
+        lifetime: AllocationLifetime {
+            acquire_at: publication.clone(),
+            release_after: BTreeSet::from([
+                WorkDependency::Fence(FenceId::new(publication.clone(), FenceKind::Io)),
+                WorkDependency::Fence(FenceId::new(publication.clone(), FenceKind::Publication)),
+            ]),
+        },
+    });
+    logical_allocations.extend([
+        LogicalAllocation {
+            id: writer_allocation,
+            bytes: writer_bytes,
+            purpose: AllocationPurpose::IoBuffer(crate::IoBufferKind::TiledColumnWriter),
+            compatibility: compatibility.clone(),
+            physical_slot: writer_slot.clone(),
+            lifetime: AllocationLifetime {
+                acquire_at: writer.clone(),
+                release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                    writer.clone(),
+                    FenceKind::Io,
+                ))]),
+            },
+        },
+        LogicalAllocation {
+            id: mapped_allocation,
+            bytes: mapped_bytes,
+            purpose: AllocationPurpose::IoBuffer(crate::IoBufferKind::MappedPageCache),
+            compatibility: compatibility.clone(),
+            physical_slot: mapped_slot.clone(),
+            lifetime: AllocationLifetime {
+                acquire_at: mapped.clone(),
+                release_after: BTreeSet::from([WorkDependency::Work(mapped_release.clone())]),
+            },
+        },
+    ]);
+    let mut physical_slots = dag.physical_slots().values().cloned().collect::<Vec<_>>();
+    physical_slots.push(PhysicalSlot {
+        id: slot,
+        lease_resource: crate::LeaseResource::Memory {
+            allocation_id: "product-publication-buffer".to_string(),
+        },
+        capacity_bytes: writer_bytes,
+        compatibility: compatibility.clone(),
+    });
+    physical_slots.extend([
+        PhysicalSlot {
+            id: writer_slot,
+            lease_resource: crate::LeaseResource::Memory {
+                allocation_id: "product-writer-buffer".to_string(),
+            },
+            capacity_bytes: writer_bytes,
+            compatibility: compatibility.clone(),
+        },
+        PhysicalSlot {
+            id: mapped_slot,
+            lease_resource: crate::LeaseResource::Memory {
+                allocation_id: "product-mapped-pages".to_string(),
+            },
+            capacity_bytes: mapped_bytes,
+            compatibility,
+        },
+    ]);
+    let dag = ExecutionDag::new(ExecutionDagSpecification {
+        required_resource_capabilities: dag.required_resource_capabilities().clone(),
+        resource_alternative: alternative,
+        nodes,
+        logical_allocations,
+        physical_slots,
+        initial_knobs: crate::ExecutionKnobs {
+            cache_retention_bytes: mapped_bytes,
+            ..dag.initial_knobs().clone()
+        },
+        adaptations: dag.adaptations().values().cloned().collect(),
+    })
+    .expect("valid product-publication test DAG");
+    let stages = dag
+        .nodes()
+        .values()
+        .map(|node| {
+            let stage = crate::StagePrediction::new(node.id.clone(), 1);
+            if node.id == publication {
+                stage.with_io(vec![crate::IoPrediction::new(
+                    crate::IoBufferKind::Publication,
+                    writer_bytes,
+                    1,
+                )])
+            } else if node.id == writer {
+                stage.with_io(vec![crate::IoPrediction::new(
+                    crate::IoBufferKind::TiledColumnWriter,
+                    writer_bytes,
+                    1,
+                )])
+            } else if node.id == mapped || node.id == mapped_release {
+                stage.with_io(vec![crate::IoPrediction::new(
+                    crate::IoBufferKind::MappedPageCache,
+                    mapped_bytes,
+                    1,
+                )])
+            } else {
+                stage
+            }
+        })
+        .collect();
+    let prediction = crate::PlanPrediction::new(
+        u64::try_from(dag.nodes().len()).expect("node count"),
+        crate::PredictionConfidence::new(1_000_000).expect("confidence"),
+        Vec::new(),
+        stages,
+    )
+    .expect("complete product-publication prediction");
+    let publication_layouts = crate::PublicationLayoutLedger::new(
+        artifacts
+            .iter()
+            .enumerate()
+            .map(|(ordinal, (product, artifact))| {
+                crate::PublicationPhysicalLayout::new(
+                    crate::PublicationParticipant::Product(*product),
+                    *artifact,
+                    crate::PhysicalLayoutId::from_sha256(
+                        [u8::try_from(ordinal + 1).expect("small product fixture"); 32],
+                    ),
+                    crate::PublicationStaging::new(
+                        writer.clone(),
+                        WorkDependency::Fence(FenceId::new(writer.clone(), FenceKind::Io)),
+                        crate::IoBufferKind::TiledColumnWriter,
+                        AllocationId::new("product-writer-buffer"),
+                        Some(
+                            crate::PublicationMappedStaging::new(
+                                mapped.clone(),
+                                WorkDependency::Work(mapped_release.clone()),
+                                AllocationId::new("product-mapped-pages"),
+                            )
+                            .expect("mapped product publication staging"),
+                        ),
+                    )
+                    .expect("product publication staging"),
+                    crate::PublicationResourceBounds::new(1_024, 1_024, 256, 256)
+                        .expect("product publication resource bounds"),
+                )
+            })
+            .collect(),
+    )
+    .expect("physical product layouts");
+    let artifacts = artifacts
+        .into_iter()
+        .map(|(_, artifact)| {
+            crate::PlannedArtifact::new(
+                artifact,
+                publication.clone(),
+                crate::ArtifactRole::Output,
+                None,
+            )
+        })
+        .collect();
+    let observation_transaction = crate::ObservationTransactionWork::new(
+        writer.clone(),
+        mapped,
+        [ProductKind::Psf, ProductKind::Residual, ProductKind::Model]
+            .into_iter()
+            .map(|product| {
+                (
+                    product,
+                    BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                        writer.clone(),
+                        FenceKind::Io,
+                    ))]),
+                )
+            })
+            .collect(),
+        None,
+        publication,
+    );
+    PhysicalWorkBinding::new(
+        dag,
+        prediction,
+        artifacts,
+        observation_transaction,
+        publication_layouts,
+    )
+    .expect("bound product-publication physical work")
+}
+
+fn start_scheduler<'plan>(
+    dag: &'plan ExecutionDag,
+    authority: &ResourceAuthority,
+) -> Result<ExecutionScheduler<'plan>, ExecutionError> {
+    ExecutionScheduler::start(dag, &ResourcePolicy::Exclusive, authority, None)
+}
 fn inactive_release_predecessor_plan(fenced_predecessor: bool) -> (ExecutionDag, WorkNodeId) {
     let active_prepare_id = WorkNodeId::new("0-prepare-active");
     let inactive_prepare_id = WorkNodeId::new("z-prepare-inactive");
@@ -514,6 +1149,33 @@ fn explicit_work_kinds_cannot_hide_their_resource_contracts() {
 }
 
 #[test]
+fn execution_plan_owns_the_bound_physical_work_dag() {
+    let dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
+        .expect("valid physical work");
+    let execution_plan = bound_plan(dag, ResourcePolicy::Exclusive);
+
+    assert!(
+        execution_plan
+            .execution_dag()
+            .nodes()
+            .contains_key(&WorkNodeId::new("work"))
+    );
+    assert_eq!(
+        execution_plan.product_publication().publication_node(),
+        &WorkNodeId::new("product-publication")
+    );
+}
+
+#[test]
+fn execution_plan_owns_the_resource_policy_selected_during_planning() {
+    let dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
+        .expect("valid physical work");
+    let execution_plan = bound_plan(dag, ResourcePolicy::Balanced);
+
+    assert_eq!(execution_plan.resource_policy(), &ResourcePolicy::Balanced);
+}
+
+#[test]
 fn scheduler_rejects_discrete_metal_memory_instead_of_inventing_a_mac_model() {
     let host_domain = CapacityDomainId::new("host-memory");
     let device_domain = CapacityDomainId::new("device-memory");
@@ -613,10 +1275,10 @@ fn scheduler_rejects_discrete_metal_memory_instead_of_inventing_a_mac_model() {
         slots: CountDemand::new(1, 1),
         command_queue_slots: CountDemand::new(1, 1),
     }];
-    let plan = ExecutionDag::new(specification).expect("valid declared Metal work");
+    let dag = ExecutionDag::new(specification).expect("valid declared Metal work");
 
     assert!(matches!(
-        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &authority, None),
+        start_scheduler(&dag, &authority),
         Err(ExecutionError::InvalidPlan(message)) if message.contains("unified")
     ));
 }
@@ -630,11 +1292,8 @@ fn scheduler_dispatches_ready_work_deterministically_under_lease_limits() {
     specification.resource_alternative.demand.workers = CountDemand::new(2, 2);
     specification.resource_alternative.scaling.maximum_workers = 2;
     let dag = ExecutionDag::new(specification).expect("valid concurrent work");
-    let plan = dag;
     let authority = cpu_authority();
-    let mut scheduler =
-        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &authority, None)
-            .expect("admitted scheduler");
+    let mut scheduler = start_scheduler(&dag, &authority).expect("admitted scheduler");
     assert!(scheduler.lease_epoch().is_some());
     assert_eq!(scheduler.knobs(), &ExecutionKnobs::serial());
 
@@ -880,14 +1539,8 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
         capacity_bytes: 100,
         compatibility,
     }];
-    let plan = ExecutionDag::new(specification).expect("valid reuse plan");
-    let mut scheduler = ExecutionScheduler::start(
-        &plan,
-        &ResourcePolicy::Exclusive,
-        &unified_authority(),
-        None,
-    )
-    .expect("admitted reuse plan");
+    let dag = ExecutionDag::new(specification).expect("valid reuse plan");
+    let mut scheduler = start_scheduler(&dag, &unified_authority()).expect("admitted reuse plan");
 
     for (node_id, fences) in [
         (compute_id, vec![device_fence]),
@@ -1074,14 +1727,9 @@ fn disjoint_io_buffer_purposes_share_one_physical_memory_charge() {
         capacity_bytes: 600,
         compatibility,
     }];
-    let plan = ExecutionDag::new(specification).expect("valid I/O-buffer reuse plan");
-    let mut scheduler = ExecutionScheduler::start(
-        &plan,
-        &ResourcePolicy::Exclusive,
-        &unified_authority(),
-        None,
-    )
-    .expect("three logical 600-byte buffers admit as one 600-byte physical slot");
+    let dag = ExecutionDag::new(specification).expect("valid I/O-buffer reuse plan");
+    let mut scheduler = start_scheduler(&dag, &unified_authority())
+        .expect("three logical 600-byte buffers admit as one 600-byte physical slot");
 
     for (expected, fences) in [
         (first_id, first_fences),
@@ -1703,10 +2351,8 @@ fn cancellation_prevents_pending_publication_from_starting() {
         capacity_bytes: 100,
         compatibility,
     }];
-    let plan = ExecutionDag::new(specification).expect("valid publication plan");
-    let mut scheduler =
-        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &io_authority(), None)
-            .expect("admitted publication plan");
+    let dag = ExecutionDag::new(specification).expect("valid publication plan");
+    let mut scheduler = start_scheduler(&dag, &io_authority()).expect("admitted publication plan");
 
     let SchedulerAction::Work(compute) = scheduler.next_action().expect("compute dispatch") else {
         panic!("compute must dispatch first");
@@ -1729,10 +2375,8 @@ fn failed_work_cancels_pending_nodes_and_releases_the_lease() {
         "b-pending",
         BTreeSet::from([WorkDependency::Work(failed.id.clone())]),
     );
-    let plan = ExecutionDag::new(plan_spec(vec![failed, pending])).expect("valid failure plan");
-    let mut scheduler =
-        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &cpu_authority(), None)
-            .expect("admitted failure plan");
+    let dag = ExecutionDag::new(plan_spec(vec![failed, pending])).expect("valid failure plan");
+    let mut scheduler = start_scheduler(&dag, &cpu_authority()).expect("admitted failure plan");
     let SchedulerAction::Work(work) = scheduler.next_action().expect("failed work dispatch") else {
         panic!("first work must dispatch");
     };
@@ -1780,10 +2424,8 @@ fn adaptation_requires_the_listed_transition_at_its_quiescence_point() {
         to: adapted.clone(),
         at: QuiescencePoint::MajorCycle,
     }];
-    let plan = ExecutionDag::new(specification).expect("valid adaptive plan");
-    let mut scheduler =
-        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &cpu_authority(), None)
-            .expect("admitted adaptive plan");
+    let dag = ExecutionDag::new(specification).expect("valid adaptive plan");
+    let mut scheduler = start_scheduler(&dag, &cpu_authority()).expect("admitted adaptive plan");
 
     assert!(scheduler.adapt(&AdaptationId::new("larger-batch")).is_err());
     let SchedulerAction::Work(first) = scheduler.next_action().expect("major-cycle dispatch")
@@ -2255,10 +2897,8 @@ fn externally_retained_io_buffer_release_is_terminal_after_every_use() {
         .dependencies = BTreeSet::from([WorkDependency::Work(later_id)]);
     valid.logical_allocations[0].lifetime.release_after =
         BTreeSet::from([WorkDependency::Work(release_id.clone())]);
-    let plan = ExecutionDag::new(valid).expect("valid terminal mapping release");
-    let mut scheduler =
-        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &cpu_authority(), None)
-            .expect("admitted mapping plan");
+    let dag = ExecutionDag::new(valid).expect("valid terminal mapping release");
+    let mut scheduler = start_scheduler(&dag, &cpu_authority()).expect("admitted mapping plan");
     let SchedulerAction::Work(prepare) = scheduler.next_action().expect("mapping preparation")
     else {
         panic!("mapping preparation must dispatch first");
@@ -2283,6 +2923,81 @@ fn externally_retained_io_buffer_release_is_terminal_after_every_use() {
         .expect_err("unmap work cannot precede a later use of externally retained storage");
     assert!(
         matches!(error, ExecutionError::InvalidPlan(message) if message.contains("terminal release"))
+    );
+}
+
+#[test]
+fn external_release_requires_prior_non_release_use() {
+    let release_id = WorkNodeId::new("release-only-mapping");
+    let allocation_id = AllocationId::new("release-only-mapped-pages");
+    let mut release = cpu_node(release_id.as_str(), BTreeSet::new());
+    release.kind = WorkKind::Release;
+    release.claims.extend([
+        ResourceClaim {
+            resource: crate::LeaseResource::IoBuffer(crate::IoBufferKind::MappedPageCache),
+            amount: 100,
+            lifetime: ClaimLifetime::Work,
+        },
+        ResourceClaim {
+            resource: crate::LeaseResource::ResidentCache,
+            amount: 100,
+            lifetime: ClaimLifetime::Work,
+        },
+    ]);
+    release.allocations.push(AllocationUse {
+        allocation: allocation_id.clone(),
+        lifetime: ClaimLifetime::Work,
+    });
+    let mut specification = plan_spec(vec![release]);
+    specification
+        .resource_alternative
+        .demand
+        .io_buffers
+        .mapped_page_cache_bytes = 100;
+    specification.resource_alternative.demand.caches = CacheDemand {
+        hard_resident_bytes: 100,
+        preferred_resident_bytes: 100,
+    };
+    specification.initial_knobs.cache_retention_bytes = 100;
+    specification.resource_alternative.demand.memory = vec![MemoryDemand {
+        allocation_id: "release-only-slot".to_string(),
+        hard_bytes: 100,
+        preferred_bytes: 100,
+        views: vec![CapacityViewId::new("host-memory")],
+    }];
+    let compatibility = SlotCompatibility {
+        memory_domain: CapacityDomainId::new("host-memory"),
+        views: BTreeSet::from([CapacityViewId::new("host-memory")]),
+        alignment_bytes: 64,
+        storage_mode: StorageMode::Host,
+        layout: AllocationLayout::new("release-only-mapped-pages"),
+        initialization: InitializationPolicy::Preserve,
+        access: AllocationAccess::ReadOnly,
+    };
+    specification.logical_allocations = vec![LogicalAllocation {
+        id: allocation_id,
+        bytes: 100,
+        purpose: AllocationPurpose::IoBuffer(crate::IoBufferKind::MappedPageCache),
+        compatibility: compatibility.clone(),
+        physical_slot: PhysicalSlotId::new("release-only-slot"),
+        lifetime: AllocationLifetime {
+            acquire_at: release_id.clone(),
+            release_after: BTreeSet::from([WorkDependency::Work(release_id)]),
+        },
+    }];
+    specification.physical_slots = vec![PhysicalSlot {
+        id: PhysicalSlotId::new("release-only-slot"),
+        lease_resource: crate::LeaseResource::Memory {
+            allocation_id: "release-only-slot".to_string(),
+        },
+        capacity_bytes: 100,
+        compatibility,
+    }];
+
+    let error = ExecutionDag::new(specification)
+        .expect_err("external release cannot be the allocation's only use");
+    assert!(
+        matches!(error, ExecutionError::InvalidPlan(message) if message.contains("prior non-release use"))
     );
 }
 
@@ -2492,10 +3207,8 @@ fn cancellation_cleanup_respects_release_to_release_dependencies() {
             compatibility: storage_compatibility,
         },
     ];
-    let plan = ExecutionDag::new(specification).expect("valid ordered cleanup plan");
-    let mut scheduler =
-        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &io_authority(), None)
-            .expect("admitted cleanup plan");
+    let dag = ExecutionDag::new(specification).expect("valid ordered cleanup plan");
+    let mut scheduler = start_scheduler(&dag, &io_authority()).expect("admitted cleanup plan");
 
     for expected in [&mapped_id, &storage_id] {
         let SchedulerAction::Work(work) = scheduler.next_action().expect("preparation dispatch")
@@ -2546,10 +3259,9 @@ fn cancellation_cleanup_respects_release_to_release_dependencies() {
 #[test]
 fn cancellation_cleanup_projects_out_inactive_release_work_and_fences() {
     for fenced_predecessor in [false, true] {
-        let (plan, active_release_id) = inactive_release_predecessor_plan(fenced_predecessor);
+        let (dag, active_release_id) = inactive_release_predecessor_plan(fenced_predecessor);
         let mut scheduler =
-            ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &io_authority(), None)
-                .expect("admitted cleanup projection plan");
+            start_scheduler(&dag, &io_authority()).expect("admitted cleanup projection plan");
         let SchedulerAction::Work(prepare) = scheduler.next_action().expect("active preparation")
         else {
             panic!("the active external allocation must be acquired first");
@@ -2727,7 +3439,7 @@ fn receipt_store_checkpoints_atomically_rejects_corruption_and_enforces_retentio
     let problem = compiled_problem();
     let dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
         .expect("valid physical work");
-    let plan = bound_plan(dag);
+    let plan = bound_plan(dag, ResourcePolicy::Exclusive);
     let provenance = |attempt, build| {
         crate::ExecutionProvenance::new(
             crate::ExecutionAttemptId::from_sha256([attempt; 32]),
@@ -2876,7 +3588,7 @@ fn receipt_store_rejects_an_initial_checkpoint_that_cannot_hold_terminal_evidenc
     let problem = compiled_problem();
     let dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
         .expect("valid physical work");
-    let plan = bound_plan(dag);
+    let plan = bound_plan(dag, ResourcePolicy::Exclusive);
     let provenance = |attempt, build| {
         crate::ExecutionProvenance::new(
             crate::ExecutionAttemptId::from_sha256([attempt; 32]),
@@ -2930,7 +3642,7 @@ fn receipt_store_reserves_json_escaped_terminal_evidence_before_begin() {
     let problem = compiled_problem();
     let dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
         .expect("valid physical work");
-    let plan = bound_plan(dag);
+    let plan = bound_plan(dag, ResourcePolicy::Exclusive);
     let provenance = |attempt| {
         crate::ExecutionProvenance::new(
             crate::ExecutionAttemptId::from_sha256([attempt; 32]),
@@ -3000,7 +3712,7 @@ fn receipts_reopen_machine_readable_infeasibility_certificates() {
     let problem = compiled_problem();
     let dag = ExecutionDag::new(plan_spec(vec![cpu_node("work", BTreeSet::new())]))
         .expect("valid physical work");
-    let plan = bound_plan(dag);
+    let plan = bound_plan(dag, ResourcePolicy::Exclusive);
     let directory = tempfile::tempdir().expect("receipt directory");
     let store = crate::ExecutionReceiptStore::new(
         directory.path(),

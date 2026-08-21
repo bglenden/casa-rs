@@ -15,24 +15,44 @@ use casa_imaging_model::{
     AxisOrder, CentreLaws, CompiledProblemId, DeclaredInnerProducts, DelayCentreLaw,
     DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FiniteValuePolicy, FlagPolicy,
     FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, InstrumentResponse, MeasurementEquationContract, ModelInnerProduct,
-    ModelStateIdentity, NormalEquationForm, NormalStateNormalization, NumericPrecision,
-    NumericalStage, NumericsContract, ObservationPointingLaw, PairedMeasurementTransform,
-    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
-    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
-    PolarizationCoordinate, ProblemSpecification, ProductBoundaryOperation, ProductKind,
-    ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
+    ImagingRequest, InstrumentResponse, MeasurementEquationContract, ModelColumnWrite,
+    ModelInnerProduct, ModelStateIdentity, NormalEquationForm, NormalStateNormalization,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ObservationTransactionRequirements, PairedMeasurementTransform, PhaseCentreLaw,
+    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
+    PrimaryBeamValidityPolicy, ProblemSpecification, ProductBlankingPolicy,
+    ProductBoundaryOperation, ProductKind, ProductNormalization, ProductRequirements,
+    ProductSupportComparison, ProductValidityPolicies, Projection, ReconstructionAlgorithm,
     ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
     ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
     SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
-    VisibilityPhaseConvention, WeightColumn, WeightDensityScope, WeightingContract,
-    WeightingGenerationId, WeightingScheme, compile,
+    SpectralSampling, SpectralWcs, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
+    UvwCoordinateLaw, VisibilityInnerProduct, VisibilityPhaseConvention, WeightColumn,
+    WeightDensityScope, WeightingContract, WeightingGenerationId, WeightingScheme, compile,
 };
 
 mod common;
 
 use common::{identity, problem_inputs};
+
+fn validity_policies() -> ProductValidityPolicies {
+    ProductValidityPolicies::new(
+        PrimaryBeamValidityPolicy::new(
+            0.2,
+            ProductSupportComparison::StrictlyGreater,
+            ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid PB policy fixture"),
+        TaylorValidityPolicy::new(
+            TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
+            0.1,
+            ProductSupportComparison::StrictlyGreater,
+            ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid Taylor policy fixture"),
+    )
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 struct Complex {
@@ -196,6 +216,13 @@ fn geometry() -> GeometryInput {
 }
 
 fn compile_contract(sampling: SpectralSampling) -> casa_imaging_model::CompiledProblem {
+    compile_contract_with_precision(sampling, NumericPrecision::F64)
+}
+
+fn compile_contract_with_precision(
+    sampling: SpectralSampling,
+    precision: NumericPrecision,
+) -> casa_imaging_model::CompiledProblem {
     let inner_products = DeclaredInnerProducts::new(
         ModelInnerProduct::HermitianEuclidean,
         VisibilityInnerProduct::HermitianEuclidean,
@@ -228,9 +255,10 @@ fn compile_contract(sampling: SpectralSampling) -> casa_imaging_model::CompiledP
         ],
         ProductNormalization::FlatNoise,
         RestoringBeamPolicy::PerPlane,
+        validity_policies(),
     );
     let numerics = NumericsContract::new(
-        vec![NumericPrecision::F64],
+        vec![precision],
         ReductionPolicy::Compensated,
         FiniteValuePolicy::FlagInputRejectGenerated,
         NumericalStage::ALL
@@ -245,11 +273,48 @@ fn compile_contract(sampling: SpectralSampling) -> casa_imaging_model::CompiledP
     );
 
     compile(ImagingRequest::new(
-        ProblemSpecification::new(science, reconstruction, weighting, products, numerics),
+        ProblemSpecification::new(
+            science,
+            reconstruction,
+            weighting,
+            products,
+            ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
+            numerics,
+        ),
         geometry(),
         inputs,
     ))
     .expect("compile typed measurement equation")
+}
+
+#[test]
+fn weighting_generation_identity_binds_sampling_and_numerics_not_execution_choices() {
+    let baseline = compile_contract(SpectralSampling::Linear);
+    let changed_sampling = compile_contract(SpectralSampling::Identity);
+    let changed_numerics =
+        compile_contract_with_precision(SpectralSampling::Linear, NumericPrecision::F32);
+    let weighting = baseline.normal_equation().weighting();
+
+    assert_eq!(WeightingGenerationId::SCHEMA_VERSION, 2);
+    assert_eq!(weighting.geometry_id(), baseline.geometry().geometry_id());
+    assert_eq!(weighting.spectral_sampling(), SpectralSampling::Linear);
+    assert_eq!(weighting.numerics_id(), baseline.numerics_id());
+    assert_ne!(
+        weighting.generation_id(),
+        changed_sampling
+            .normal_equation()
+            .weighting()
+            .generation_id(),
+        "spectral sampling changes complete-selection density semantics"
+    );
+    assert_ne!(
+        weighting.generation_id(),
+        changed_numerics
+            .normal_equation()
+            .weighting()
+            .generation_id(),
+        "numerics changes the frozen weighting reduction"
+    );
 }
 
 #[test]
@@ -392,10 +457,10 @@ fn paired_compositions_obey_linearity_and_weighted_adjointness() {
 }
 
 #[test]
-fn schema_five_problem_and_weighting_generation_identities_are_pinned() {
+fn schema_six_problem_and_weighting_generation_identities_are_pinned() {
     let problem = compile_contract(SpectralSampling::Linear);
 
-    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 5);
+    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 6);
     assert_eq!(WeightingGenerationId::SCHEMA_VERSION, 1);
     assert_eq!(
         (
@@ -407,7 +472,7 @@ fn schema_five_problem_and_weighting_generation_identities_are_pinned() {
                 .to_string(),
         ),
         (
-            "1b92f5c50ad9081c1f45e3ae959d0d66436e7f861205039cc629b69193f749ea".to_string(),
+            "a3406af7e9626a446f6096793072d6c93370d2c987ea967ef167bf5d1a2ff189".to_string(),
             "60dec5d9b99b65683119f97b83d56e77202f91acdd58731b0fff7d1bfde56d8d".to_string(),
         )
     );

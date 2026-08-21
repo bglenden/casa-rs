@@ -16,7 +16,7 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-use casa_tables::{LockMode, LockOptions, LockType, Table, TableOptions};
+use casa_tables::{LockMode, LockOptions, LockType, Table, TableError, TableOptions};
 use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
 /// Locate the test-built lock_helper binary.
@@ -118,6 +118,42 @@ fn write_lock_contention_across_processes() {
          stderr: {}",
         String::from_utf8_lossy(&output_b2.stderr)
     );
+}
+
+#[test]
+fn auto_locking_open_fails_when_write_lock_is_held_by_another_process() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let opts = create_test_table(tmp.path());
+    let helper = helper_binary();
+    let table_dir = opts.path().to_str().unwrap();
+    let signal_file = tmp.path().join("locked.signal");
+    let wait_file = tmp.path().join("release.signal");
+
+    let mut writer = Command::new(&helper)
+        .args([
+            table_dir,
+            "hold_write_lock",
+            signal_file.to_str().unwrap(),
+            wait_file.to_str().unwrap(),
+        ])
+        .spawn()
+        .expect("failed to spawn lock holder");
+    assert!(
+        wait_for_file(&signal_file, Duration::from_secs(10)),
+        "lock holder did not signal acquisition"
+    );
+
+    let blocked = Table::open_with_lock(opts.clone(), LockOptions::new(LockMode::AutoLocking));
+    assert!(
+        matches!(blocked, Err(TableError::LockFailed { .. })),
+        "AutoLocking open must fail without its initial read lock"
+    );
+
+    fs::write(&wait_file, "release").unwrap();
+    assert!(writer.wait().unwrap().success());
+
+    let unblocked = Table::open_with_lock(opts, LockOptions::new(LockMode::AutoLocking)).unwrap();
+    assert!(unblocked.has_lock(LockType::Read));
 }
 
 #[test]

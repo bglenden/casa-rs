@@ -84,12 +84,19 @@ current owner. After transfer, they land only in the native owner.
 T14/#500 is a boundary checkpoint, not a product-row transfer. The compiled
 measurement equation ends at an explicitly unnormalized normal state, while
 normalization, residual scaling, restoration, PB correction, blanking, and
-unit conversion are typed as Product Contract operations. `product.image` and
-`product.image-pbcor` therefore remain `LegacyWholeRun`: T13/#499 must land the
-Product Graph and atomic store, T39/#525 owns common-beam restoration, T47/#533
-owns PB/sensitivity and mosaic normalization algorithms, and T43/#529 owns
-wideband `product.alpha-pbcor` behavior. Their legacy writers are removed only
-under the transfer ratchet above.
+unit conversion are typed as Product Contract operations. T13/#499 now lands
+the mandatory compiler-owned Product Graph, exact Product Generation binding,
+sole Publication-node/fence plan seal, typed receipt projection, and the
+adapter-derived physical-layout ledger for every output. The physical ledger
+binds exact writer allocations and terminal staging/Release events while keeping
+logical payload bytes separate from staged/final/writer/mapped capacity. That
+seam still does not activate pixels or transfer a persistent writer. Every
+product row therefore remains `LegacyWholeRun`: #499 still owns its explicitly scoped
+atomic persistent-publication transfer, T18/#504 owns weighting and sum weights,
+T25/#511 owns CLEAN-mask generation, T39/#525 owns beam fitting and common-beam
+restoration, T43/#529 owns MT-MFS product mathematics, and T47/#533 owns
+PB/sensitivity and mosaic normalization. Legacy writers are removed only under
+the transfer ratchet above.
 
 The architecture checker validates schema, the independently pinned logical
 graph, canonical inventories, complete Acceptance Contracts, complete binding

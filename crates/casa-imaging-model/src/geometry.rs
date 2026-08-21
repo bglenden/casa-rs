@@ -26,6 +26,11 @@ impl CompiledGeometryId {
     pub const fn as_bytes(self) -> [u8; 32] {
         self.0.as_bytes()
     }
+
+    #[cfg(test)]
+    pub(crate) const fn from_sha256_for_test(digest: [u8; 32]) -> Self {
+        Self(LogicalIdentity::from_sha256(digest))
+    }
 }
 
 impl fmt::Debug for CompiledGeometryId {
@@ -1634,7 +1639,7 @@ fn encode_direction_coordinate(encoder: &mut CanonicalEncoder, direction: Direct
     }
 }
 
-fn encode_sky_direction(encoder: &mut CanonicalEncoder, direction: SkyDirection) {
+pub(crate) fn encode_sky_direction(encoder: &mut CanonicalEncoder, direction: SkyDirection) {
     encoder.u8(direction_frame_tag(direction.frame));
     encoder.f64(direction.longitude_rad);
     encoder.f64(direction.latitude_rad);
@@ -1708,12 +1713,7 @@ fn encode_spectral(encoder: &mut CanonicalEncoder, spectral: &SpectralCoordinate
         } => {
             encoder.u8(1);
             encoder.f64(epoch.mjd_days);
-            encoder.u8(match epoch.scale {
-                TimeScale::Utc => 0,
-                TimeScale::Tai => 1,
-                TimeScale::Tt => 2,
-                TimeScale::Tdb => 3,
-            });
+            encoder.u8(time_scale_tag(epoch.scale));
             encode_sky_direction(encoder, direction);
             for value in observatory_position.metres {
                 encoder.f64(value);
@@ -1791,11 +1791,20 @@ fn direction_frame_tag(frame: DirectionFrame) -> u8 {
     }
 }
 
-fn frequency_frame_tag(frame: FrequencyFrame) -> u8 {
+pub(crate) fn frequency_frame_tag(frame: FrequencyFrame) -> u8 {
     match frame {
         FrequencyFrame::Topocentric => 0,
         FrequencyFrame::Barycentric => 1,
         FrequencyFrame::Lsrk => 2,
+    }
+}
+
+pub(crate) fn time_scale_tag(scale: TimeScale) -> u8 {
+    match scale {
+        TimeScale::Utc => 0,
+        TimeScale::Tai => 1,
+        TimeScale::Tt => 2,
+        TimeScale::Tdb => 3,
     }
 }
 

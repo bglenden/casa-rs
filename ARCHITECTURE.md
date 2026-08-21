@@ -17,7 +17,7 @@ coordinates, measures, and related workflows.
 | core codecs (`casa-values`, `casa-aipsio`) | Internal generic value model and AipsIO-style framing used by higher layers | Rust ecosystem crates only |
 | foundation crates (`casa-types`, `casa-measures-data`, `casa-measures-tools`) | Public scalar/quanta/measures algorithms and contracts plus explicit runtime-data validation, loading, installation, and maintenance | core codecs; `casa-measures-data` also uses canonical `casa-tables` accessors |
 | persistent storage (`casa-tables`) | CASA table persistence, codecs, data managers/storage backends, schema/mutation APIs, and TaQL engine | core codecs, foundation crates |
-| native imaging contracts (`casa-imaging-model`, `casa-imaging-runtime`) | Immutable logical imaging problems plus process-level resource topology, policies, demand envelopes, arbitration, and leases | `casa-imaging-model` has no workspace dependencies; `casa-imaging-runtime` may depend on the model but never on current legacy imaging crates |
+| native imaging contracts (`casa-imaging-model`, `casa-imaging-observation`, `casa-imaging-runtime`) | Immutable logical imaging problems, bounded MeasurementSet observation access, plus process-level resource topology, policies, demand envelopes, arbitration, and leases | `casa-imaging-model` has no workspace dependencies; `casa-imaging-observation` depends inward on the model and `casa-ms`; `casa-imaging-runtime` may depend on the model but never on current legacy imaging crates |
 | imaging migration router (`casa-imaging-router`) | Sole pre-plan whole-run dispatch owner, deriving authoritative capability rows and recording one `Native`, `LegacyWholeRun`, or `TemporarilyUnavailable` disposition | `casa-imaging-model` only; its sealed engine ports cannot invoke or mix stages and the crate has no legacy dependency |
 | domain libraries (`casa-ms`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-imaging`, `casa-calibration`, `casa-vla`) | Higher-level astronomy data models and algorithms built on table/image persistence | foundation crates, `casa-tables`, selected peer domain crates where documented |
 | boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | The generic provider envelope, canonical parameter and application catalogs, task/session surface definitions, and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
@@ -37,8 +37,11 @@ Native imaging follows its stricter accepted direction:
 `science -> observation / reconstruction -> products -> execution -> backends -> application -> frontends`
 
 `casa-imaging-model` owns the dependency-free science/reconstruction/product
-contract introduced by ADR-0009. `casa-imaging-runtime` owns execution-resource
-contracts introduced by ADR-0010 and may depend inward on the model.
+contract introduced by ADR-0009. `casa-imaging-observation` owns retained,
+bounded MeasurementSet access and content-manifest evaluation without owning
+science semantics or execution policy. `casa-imaging-runtime` owns
+execution-resource contracts introduced by ADR-0010 and may depend inward on
+the model.
 `casa-imaging-router` is the application-layer owner of the one pre-plan
 migration decision. It compiles the logical request, derives every applicable
 matrix row, records the authoritative row evidence, and invokes exactly one
@@ -128,7 +131,7 @@ Additional constraints:
   readable dependency policy and migration matrix under
   `resources/imaging-architecture/` are enforced by `just arch-check`.
 
-The native interface has one `ImagingRequest` contract (version 2) and exactly
+The native interface has one `ImagingRequest` contract (version 3) and exactly
 one `compile` / `plan` / `run` sequence. `compile` validates and canonicalizes
 logical science, including immutable coordinate and image-domain geometry.
 Compiled Geometry identity is derived only by `compile`; callers supply geometry
@@ -182,14 +185,39 @@ implements the declared `MODEL_DATA` commit is the interoperability boundary
 and must pass the applicable Rust/C++ RR, RC, CR, and CC matrix before it can
 be selected by a production plan.
 
+The same `compile` call constructs one mandatory, compiler-owned `ProductGraph`
+inside every `CompiledProblem`; callers cannot omit, replace, or compile it as a
+separate step. Product Graph schema 3 canonically identifies the problem,
+required source slots, typed product roles and topological order, axes and WCS,
+units, normalization, beam and validity rules, dependencies, interoperable CASA
+image schemas, logical element/pixel/metadata payload envelopes, and the
+complete publication set. Logical payload bytes describe product meaning, not
+adapter staging, final-storage, mapped-page, or writer-buffer capacity. Its
+atomic publication join is
+`ProductPublicationJoin::ObservationTransaction`. A `ProductGeneration` binds
+every graph source slot to one exact authoritative generation and rejects missing,
+unexpected, duplicate, or stale bindings. This is product topology and identity,
+not product mathematics or a second image format: T18/#504 owns global weighting
+and sum weights, T25/#511 owns CLEAN-mask generation, T39/#525 owns beam fitting
+and common-beam restoration, T43/#529 owns MT-MFS product mathematics, and
+T47/#533 owns PB/sensitivity and mosaic normalization.
+
 `plan` is the only transaction-sealing path. It seals planner-emitted physical
-work to the exact compiled problem and
-geometry, the complete Observation Snapshot, Numerics Contract,
-implementation-registry snapshot, Resource Policy, and reviewed
+work to the exact compiled problem and geometry, the complete Observation
+Snapshot, Numerics Contract, Observation Transaction, one exact Product
+Generation, implementation-registry snapshot, Resource Policy, and reviewed
 planner cost-model profile. The plan owns the complete immutable physical work
 DAG: explicit nodes and dependencies, per-node implementation identities,
 resource claims, logical allocation lifetimes, compatible reusable physical
 slots, asynchronous fences, quiescence points, and pre-authorized adaptations.
+Every output also has one adapter-derived `PublicationPhysicalLayout`: stable
+layout identity, exact producing writer node/allocation/fence, optional mapped
+cache acquisition plus a distinct terminal `Release` event, and checked staged,
+final, writer-buffer, and mapped-cache bounds. `PublicationLayoutLedger`
+canonicalizes those participants, preserves serial slot reuse, sums members
+produced concurrently by one node, and requires the final Publication node to
+depend on every terminal staging event. The physical ledger changes neither the
+CASA image/MS byte format nor the compiler-owned logical payload envelope.
 `run` validates the bindings and registry snapshot, acquires the plan's sole
 Resource Authority lease, then privately drives every node and fence to a
 terminal outcome. Registry adapters execute only one exact scheduled node; no
@@ -203,6 +231,13 @@ retains only each failed physical-slot reservation fail-closed.
 Typed I/O-buffer ceilings bound concurrent logical activity while MemoryDemand
 and plan-owned physical slots are the sole physical-byte charge, allowing
 compatible buffers from disjoint processing segments to reuse storage.
+The sole public `plan` entrypoint also requires every member of the bound Product
+Generation to appear once as a planned output on exactly one `Publication` work
+node and its publication fence. The resulting `ProductPublicationBinding` and
+`ProductGenerationId` are sealed into execution-plan identity; the retained
+execution receipt reopens that generation as a typed identity from the same plan
+projection rather than duplicating artifact accounting. This join does not write
+pixels, add a provider contract, or change the persistent CASA image format.
 
 ## Runtime model
 

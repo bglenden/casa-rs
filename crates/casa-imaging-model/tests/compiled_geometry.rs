@@ -9,19 +9,38 @@ use casa_imaging_model::{
     ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
     ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
     PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
-    PolarizationContract, PolarizationCoordinate, ProblemSpecification, ProductKind,
-    ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
+    PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemSpecification,
+    ProductBlankingPolicy, ProductKind, ProductNormalization, ProductRequirements,
+    ProductSupportComparison, ProductValidityPolicies, Projection, ReconstructionAlgorithm,
     ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
     ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
     SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, StageErrorBudget, TimeScale, UvwAxes, UvwCoordinateLaw, UvwUnit,
-    VisibilityInnerProduct, VisibilityPhaseConvention, WeightDensityScope, WeightingContract,
-    WeightingScheme, compile,
+    SpectralSampling, SpectralWcs, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
+    TimeScale, UvwAxes, UvwCoordinateLaw, UvwUnit, VisibilityInnerProduct,
+    VisibilityPhaseConvention, WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
 
 mod common;
 
 use common::{identity, problem_inputs};
+
+fn validity_policies() -> ProductValidityPolicies {
+    ProductValidityPolicies::new(
+        PrimaryBeamValidityPolicy::new(
+            0.2,
+            ProductSupportComparison::StrictlyGreater,
+            ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid PB policy fixture"),
+        TaylorValidityPolicy::new(
+            TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
+            0.1,
+            ProductSupportComparison::StrictlyGreater,
+            ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid Taylor policy fixture"),
+    )
+}
 
 fn observation_pointing() -> ObservationPointingLaw {
     ObservationPointingLaw::new(
@@ -126,6 +145,7 @@ fn request(
                 vec![ProductKind::Psf],
                 ProductNormalization::UnitResponse,
                 RestoringBeamPolicy::None,
+                validity_policies(),
             ),
             ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
             numerics,

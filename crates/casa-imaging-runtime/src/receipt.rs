@@ -13,18 +13,24 @@ use std::{
 
 use casa_imaging_model::{
     AntennaSelection, CompiledGeometry, CompiledProblem, CorrelationType, DelayCentreLaw,
-    DirectionFrame, DopplerConvention, FiniteValuePolicy, FlagPolicy, FrequencyFrame, IdSelection,
-    ImageAxis, ImageDomainRole, InstrumentResponse, IntentSelection, LogicalIdentity,
-    MetadataTableKind, MissingPointingPolicy, ModelInnerProduct, ModelStateIdentity, MsColumnKind,
-    NormalEquationForm, NormalStateNormalization, NumericPrecision, NumericalStage,
-    PairedMeasurementTransform, PairedTransformKind, PhaseCentreLaw, PointingCentreLaw,
-    PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
-    PointingInterpolation, PointingTimeSampling, PolarizationCoordinate, ProblemInputIdentities,
-    ProductBoundaryOperation, ProductKind, ProductNormalization, Projection,
-    ReconstructionAlgorithm, ReconstructionBasis, ReductionPolicy, ReferenceDataKind,
-    RequiredCapability, RestFrequency, RestoringBeamPolicy, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, TimeScale, TimeSelection, UvDistanceUnit, UvSelection, UvwAxes,
-    UvwUnit, VisibilityColumn, VisibilityInnerProduct, VisibilityPhaseConvention, WeightColumn,
+    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FiniteValuePolicy,
+    FlagPolicy, FrequencyFrame, IdSelection, ImageAxis, ImageDomainRole, InstrumentResponse,
+    IntentSelection, ItrfPosition, LogicalIdentity, MetadataTableKind, MissingPointingPolicy,
+    ModelColumnInitialization, ModelColumnPrecondition, ModelColumnWriteDisposition,
+    ModelInnerProduct, ModelStateIdentity, MsColumnKind, NormalEquationForm,
+    NormalStateNormalization, NumericPrecision, NumericalStage, PairedMeasurementTransform,
+    PairedTransformKind, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
+    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
+    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities, ProductAxisKind,
+    ProductBeamRule, ProductBlankingPolicy, ProductBoundaryOperation, ProductElementRepresentation,
+    ProductGenerationId, ProductGraphId, ProductKind, ProductNormalization, ProductRole,
+    ProductSchema, ProductSourceGenerationId, ProductSourceRole, ProductSupportComparison,
+    ProductTerm, ProductUnit, ProductValidityRule, Projection, ReconstructionAlgorithm,
+    ReconstructionBasis, ReductionPolicy, ReferenceDataKind, RequiredCapability, RestFrequency,
+    RestoringBeamPolicy, SkyDirection, SpectralCoordinateSpec, SpectralCoupling,
+    SpectralFrameAnchor, SpectralSampling, SpectralWcs, TaylorSupportReference,
+    TaylorValidityPolicy, TimeScale, TimeSelection, UvDistanceUnit, UvSelection, UvwAxes, UvwUnit,
+    VisibilityColumn, VisibilityInnerProduct, VisibilityPhaseConvention, WeightColumn,
     WeightDensityScope, WeightingScheme,
 };
 use serde::{Deserialize, Serialize};
@@ -35,14 +41,14 @@ use crate::{
     AdaptationId, AdaptationTransition, AllocationId, AllocationPurpose, ArtifactDisposition,
     ArtifactIdentity, ArtifactMeasurement, ArtifactRole, CacheIdentity, CapabilityId,
     ClaimLifetime, DemandAlternative, ExecutionKnobs, ExecutionPlan, FenceId, FenceKind,
-    InitializationPolicy, IoBufferKind, LeaseResource, PhysicalSlotId, QuiescencePoint,
-    ResourcePolicy, StorageMode, WorkDependency, WorkDomain, WorkImplementationId, WorkKind,
-    WorkMeasurements, WorkNodeId,
+    InitializationPolicy, IoBufferKind, LeaseResource, PhysicalLayoutId, PhysicalSlotId,
+    PublicationParticipant, QuiescencePoint, ResourcePolicy, StorageMode, WorkDependency,
+    WorkDomain, WorkImplementationId, WorkKind, WorkMeasurements, WorkNodeId,
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 1;
-const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 2;
+const RECEIPT_SCHEMA_VERSION: u32 = 3;
+const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 5;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const MAX_FAILURE_SUBJECT_BYTES: usize = 128;
 
@@ -247,6 +253,7 @@ pub struct ExecutionReceipt {
 pub struct CompiledProblemEvidence {
     schema_version: u32,
     fields: BTreeMap<String, String>,
+    product_graph: ProductGraphEvidence,
 }
 
 impl CompiledProblemEvidence {
@@ -256,6 +263,7 @@ impl CompiledProblemEvidence {
         Self {
             schema_version: COMPILED_PROBLEM_EVIDENCE_VERSION,
             fields: project_problem_fields(problem),
+            product_graph: ProductGraphEvidence::new(problem),
         }
     }
 
@@ -276,6 +284,1748 @@ impl CompiledProblemEvidence {
     pub const fn fields(&self) -> &BTreeMap<String, String> {
         &self.fields
     }
+
+    /// Return the compiler-owned product graph audit projection.
+    #[must_use]
+    pub const fn product_graph(&self) -> &ProductGraphEvidence {
+        &self.product_graph
+    }
+}
+
+/// Immutable receipt projection of the compiler-owned Product Graph.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProductGraphEvidence {
+    schema_version: u32,
+    graph_identity: String,
+    sources: Vec<ProductSourceEvidence>,
+    nodes: Vec<ProductGraphNodeEvidence>,
+    publication_members: Vec<usize>,
+}
+
+impl ProductGraphEvidence {
+    fn new(problem: &CompiledProblem) -> Self {
+        let graph = problem.product_graph();
+        Self {
+            schema_version: graph.schema_version(),
+            graph_identity: hex(&graph.graph_id().as_bytes()),
+            sources: graph
+                .sources()
+                .iter()
+                .map(ProductSourceEvidence::new)
+                .collect(),
+            nodes: graph
+                .nodes()
+                .iter()
+                .map(ProductGraphNodeEvidence::new)
+                .collect(),
+            publication_members: graph
+                .publication()
+                .members()
+                .iter()
+                .map(|member| member.ordinal())
+                .collect(),
+        }
+    }
+
+    /// Return the embedded Product Graph schema version.
+    #[must_use]
+    pub const fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
+    /// Return the exact compiler-owned Product Graph identity.
+    #[must_use]
+    pub fn graph_id(&self) -> [u8; 32] {
+        parse_digest(&self.graph_identity)
+    }
+
+    /// Return every compiler-owned source slot in canonical order.
+    #[must_use]
+    pub fn sources(&self) -> &[ProductSourceEvidence] {
+        &self.sources
+    }
+
+    /// Return every projected graph node in canonical order.
+    #[must_use]
+    pub fn nodes(&self) -> &[ProductGraphNodeEvidence] {
+        &self.nodes
+    }
+
+    /// Return the exact physical publication members in canonical order.
+    #[must_use]
+    pub fn publication_members(&self) -> &[usize] {
+        &self.publication_members
+    }
+}
+
+/// One compiler-owned source slot preserved as immutable receipt evidence.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProductSourceEvidence {
+    source_ordinal: usize,
+    role: ProductSourceRoleProjection,
+    domain: ImageDomainProjection,
+    term: ProductTermProjection,
+}
+
+impl ProductSourceEvidence {
+    fn new(source: &casa_imaging_model::ProductSource) -> Self {
+        Self {
+            source_ordinal: source.source_id().ordinal(),
+            role: ProductSourceRoleProjection::new(source.role()),
+            domain: ImageDomainProjection::new(source.domain()),
+            term: ProductTermProjection::new(source.term()),
+        }
+    }
+
+    /// Return the graph-local source ordinal.
+    #[must_use]
+    pub const fn source_ordinal(&self) -> usize {
+        self.source_ordinal
+    }
+
+    /// Return the exact upstream generation role.
+    #[must_use]
+    pub const fn role(&self) -> ProductSourceRole {
+        self.role.to_runtime()
+    }
+
+    /// Return the image domain supplied by this source.
+    #[must_use]
+    pub fn domain(&self) -> ImageDomainRole {
+        self.domain.to_runtime()
+    }
+
+    /// Return the coefficient placement supplied by this source.
+    #[must_use]
+    pub const fn term(&self) -> ProductTerm {
+        self.term.to_runtime()
+    }
+}
+
+/// One immutable Product Graph node projection.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProductGraphNodeEvidence {
+    node_id: usize,
+    role: ProductRoleProjection,
+    name: Option<String>,
+    axes: ProductAxesEvidence,
+    unit: ProductUnitProjection,
+    normalization: Option<ProductNormalizationProjection>,
+    beam: ProductBeamEvidence,
+    validity: ProductValidityProjection,
+    schema: ProductSchemaProjection,
+    payload: ProductPayloadEvidence,
+    source_dependencies: Vec<usize>,
+    dependencies: Vec<usize>,
+}
+
+impl ProductGraphNodeEvidence {
+    fn new(node: &casa_imaging_model::ProductNode) -> Self {
+        Self {
+            node_id: node.node_id().ordinal(),
+            role: ProductRoleProjection::new(node.role()),
+            name: node.name().map(stable_text),
+            axes: ProductAxesEvidence::new(node.axes()),
+            unit: ProductUnitProjection::new(node.unit()),
+            normalization: node
+                .normalization()
+                .map(ProductNormalizationProjection::new),
+            beam: ProductBeamEvidence::new(node.beam()),
+            validity: ProductValidityProjection::new(node.validity()),
+            schema: ProductSchemaProjection::new(node.schema()),
+            payload: ProductPayloadEvidence::new(node.payload()),
+            source_dependencies: node
+                .source_dependencies()
+                .iter()
+                .map(|source| source.ordinal())
+                .collect(),
+            dependencies: node
+                .dependencies()
+                .iter()
+                .map(|dependency| dependency.ordinal())
+                .collect(),
+        }
+    }
+
+    /// Return the graph-local node identity.
+    #[must_use]
+    pub const fn node_ordinal(&self) -> usize {
+        self.node_id
+    }
+
+    /// Return the exact logical product role.
+    #[must_use]
+    pub const fn role(&self) -> ProductRole {
+        self.role.to_runtime()
+    }
+
+    /// Return the CASA-compatible suffix, when this node owns a persisted image.
+    #[must_use]
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    /// Return the exact coordinate and storage-axis projection.
+    #[must_use]
+    pub const fn axes(&self) -> &ProductAxesEvidence {
+        &self.axes
+    }
+
+    /// Return the required physical unit.
+    #[must_use]
+    pub const fn unit(&self) -> ProductUnit {
+        self.unit.to_runtime()
+    }
+
+    /// Return normalization semantics, when numeric normalization applies.
+    #[must_use]
+    pub const fn normalization(&self) -> Option<ProductNormalization> {
+        match self.normalization {
+            Some(normalization) => Some(normalization.to_runtime()),
+            None => None,
+        }
+    }
+
+    /// Return fitted, restoring, inherited, or absent beam semantics.
+    #[must_use]
+    pub const fn beam(&self) -> ProductBeamEvidence {
+        self.beam
+    }
+
+    /// Return the exact output-validity rule.
+    #[must_use]
+    pub fn validity(&self) -> ProductValidityRule {
+        self.validity.to_runtime()
+    }
+
+    /// Return the declared persistent representation.
+    #[must_use]
+    pub const fn schema(&self) -> ProductSchema {
+        self.schema.to_runtime()
+    }
+
+    /// Return the compiler-owned logical payload projection.
+    #[must_use]
+    pub const fn payload(&self) -> &ProductPayloadEvidence {
+        &self.payload
+    }
+
+    /// Return exact upstream source-slot dependencies.
+    #[must_use]
+    pub fn source_dependencies(&self) -> &[usize] {
+        &self.source_dependencies
+    }
+
+    /// Return graph-node dependencies, all of which precede this node.
+    #[must_use]
+    pub fn dependencies(&self) -> &[usize] {
+        &self.dependencies
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ProductSourceRoleProjection {
+    FinalNormalState,
+    FinalModel,
+    WeightingGeneration,
+    CleanMaskGeneration,
+    PrimaryBeamGeneration,
+    PrimaryBeamSpectralIndexGeneration,
+    SensitivityGeneration,
+    RestoringBeamGeneration,
+}
+
+impl ProductSourceRoleProjection {
+    const fn new(role: ProductSourceRole) -> Self {
+        match role {
+            ProductSourceRole::FinalNormalState => Self::FinalNormalState,
+            ProductSourceRole::FinalModel => Self::FinalModel,
+            ProductSourceRole::WeightingGeneration => Self::WeightingGeneration,
+            ProductSourceRole::CleanMaskGeneration => Self::CleanMaskGeneration,
+            ProductSourceRole::PrimaryBeamGeneration => Self::PrimaryBeamGeneration,
+            ProductSourceRole::PrimaryBeamSpectralIndexGeneration => {
+                Self::PrimaryBeamSpectralIndexGeneration
+            }
+            ProductSourceRole::SensitivityGeneration => Self::SensitivityGeneration,
+            ProductSourceRole::RestoringBeamGeneration => Self::RestoringBeamGeneration,
+        }
+    }
+
+    const fn to_runtime(self) -> ProductSourceRole {
+        match self {
+            Self::FinalNormalState => ProductSourceRole::FinalNormalState,
+            Self::FinalModel => ProductSourceRole::FinalModel,
+            Self::WeightingGeneration => ProductSourceRole::WeightingGeneration,
+            Self::CleanMaskGeneration => ProductSourceRole::CleanMaskGeneration,
+            Self::PrimaryBeamGeneration => ProductSourceRole::PrimaryBeamGeneration,
+            Self::PrimaryBeamSpectralIndexGeneration => {
+                ProductSourceRole::PrimaryBeamSpectralIndexGeneration
+            }
+            Self::SensitivityGeneration => ProductSourceRole::SensitivityGeneration,
+            Self::RestoringBeamGeneration => ProductSourceRole::RestoringBeamGeneration,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "name", rename_all = "snake_case")]
+enum ImageDomainProjection {
+    Main,
+    Outlier(String),
+}
+
+impl ImageDomainProjection {
+    fn new(domain: &ImageDomainRole) -> Self {
+        match domain {
+            ImageDomainRole::Main => Self::Main,
+            ImageDomainRole::Outlier(name) => Self::Outlier(stable_text(name)),
+        }
+    }
+
+    fn to_runtime(&self) -> ImageDomainRole {
+        match self {
+            Self::Main => ImageDomainRole::Main,
+            Self::Outlier(name) => ImageDomainRole::Outlier(name.clone()),
+        }
+    }
+}
+
+/// Exact coordinate and storage-axis facts preserved as receipt evidence.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProductAxesEvidence {
+    kind: ProductAxisKindProjection,
+    geometry_identity: String,
+    domain: ImageDomainProjection,
+    order: [ImageAxisProjection; 4],
+    shape: [usize; 4],
+    direction: DirectionCoordinateProjection,
+    spectral: SpectralCoordinateProjection,
+    polarization: Vec<PolarizationProjection>,
+}
+
+impl ProductAxesEvidence {
+    fn new(axes: &casa_imaging_model::ProductAxes) -> Self {
+        Self {
+            kind: ProductAxisKindProjection::new(axes.kind()),
+            geometry_identity: hex(&axes.geometry_id().as_bytes()),
+            domain: ImageDomainProjection::new(axes.domain()),
+            order: axes.order().positions().map(ImageAxisProjection::new),
+            shape: axes.shape(),
+            direction: DirectionCoordinateProjection::new(axes.direction()),
+            spectral: SpectralCoordinateProjection::new(axes.spectral()),
+            polarization: axes
+                .polarization()
+                .iter()
+                .copied()
+                .map(PolarizationProjection::new)
+                .collect(),
+        }
+    }
+
+    /// Return the logical axis role.
+    #[must_use]
+    pub const fn kind(&self) -> ProductAxisKind {
+        self.kind.to_runtime()
+    }
+
+    /// Return the exact compiler-owned geometry identity.
+    #[must_use]
+    pub fn geometry_identity(&self) -> [u8; 32] {
+        parse_digest(&self.geometry_identity)
+    }
+
+    /// Return the user-visible image domain.
+    #[must_use]
+    pub fn domain(&self) -> ImageDomainRole {
+        self.domain.to_runtime()
+    }
+
+    /// Return axes in CASA storage order.
+    #[must_use]
+    pub fn order(&self) -> [ImageAxis; 4] {
+        self.order.map(ImageAxisProjection::to_runtime)
+    }
+
+    /// Return exact extents in storage-axis order.
+    #[must_use]
+    pub const fn shape(&self) -> [usize; 4] {
+        self.shape
+    }
+
+    /// Return the exact direction-coordinate law.
+    #[must_use]
+    pub fn direction(&self) -> DirectionCoordinateSpec {
+        self.direction.to_runtime()
+    }
+
+    /// Return the exact spectral-coordinate law.
+    #[must_use]
+    pub fn spectral(&self) -> SpectralCoordinateSpec {
+        self.spectral.to_runtime()
+    }
+
+    /// Return reconstruction-owned polarization coordinates.
+    #[must_use]
+    pub fn polarization(&self) -> Vec<PolarizationCoordinate> {
+        self.polarization
+            .iter()
+            .copied()
+            .map(PolarizationProjection::to_runtime)
+            .collect()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ProductAxisKindProjection {
+    SkyImage,
+    PlaneState,
+    Metadata,
+}
+
+impl ProductAxisKindProjection {
+    const fn new(kind: ProductAxisKind) -> Self {
+        match kind {
+            ProductAxisKind::SkyImage => Self::SkyImage,
+            ProductAxisKind::PlaneState => Self::PlaneState,
+            ProductAxisKind::Metadata => Self::Metadata,
+        }
+    }
+
+    const fn to_runtime(self) -> ProductAxisKind {
+        match self {
+            Self::SkyImage => ProductAxisKind::SkyImage,
+            Self::PlaneState => ProductAxisKind::PlaneState,
+            Self::Metadata => ProductAxisKind::Metadata,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ImageAxisProjection {
+    DirectionLongitude,
+    DirectionLatitude,
+    Polarization,
+    Spectral,
+}
+
+impl ImageAxisProjection {
+    const fn new(axis: ImageAxis) -> Self {
+        match axis {
+            ImageAxis::DirectionLongitude => Self::DirectionLongitude,
+            ImageAxis::DirectionLatitude => Self::DirectionLatitude,
+            ImageAxis::Polarization => Self::Polarization,
+            ImageAxis::Spectral => Self::Spectral,
+        }
+    }
+
+    const fn to_runtime(self) -> ImageAxis {
+        match self {
+            Self::DirectionLongitude => ImageAxis::DirectionLongitude,
+            Self::DirectionLatitude => ImageAxis::DirectionLatitude,
+            Self::Polarization => ImageAxis::Polarization,
+            Self::Spectral => ImageAxis::Spectral,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct DirectionCoordinateProjection {
+    projection: ProjectionProjection,
+    frame: DirectionFrameProjection,
+    longitude_bits: u64,
+    latitude_bits: u64,
+    reference_pixel_bits: [u64; 2],
+    increment_rad_bits: [u64; 2],
+    pc_bits: [[u64; 2]; 2],
+    pole_deg_bits: [u64; 2],
+}
+
+impl DirectionCoordinateProjection {
+    fn new(direction: DirectionCoordinateSpec) -> Self {
+        let reference = direction.reference_direction();
+        Self {
+            projection: ProjectionProjection::new(direction.projection()),
+            frame: DirectionFrameProjection::new(reference.frame()),
+            longitude_bits: reference.longitude_rad().to_bits(),
+            latitude_bits: reference.latitude_rad().to_bits(),
+            reference_pixel_bits: direction.reference_pixel().map(f64::to_bits),
+            increment_rad_bits: direction.increment_rad().map(f64::to_bits),
+            pc_bits: direction.pc().map(|row| row.map(f64::to_bits)),
+            pole_deg_bits: direction.pole_deg().map(f64::to_bits),
+        }
+    }
+
+    fn to_runtime(self) -> DirectionCoordinateSpec {
+        DirectionCoordinateSpec::new(
+            self.projection.to_runtime(),
+            SkyDirection::new(
+                self.frame.to_runtime(),
+                f64::from_bits(self.longitude_bits),
+                f64::from_bits(self.latitude_bits),
+            ),
+            self.reference_pixel_bits.map(f64::from_bits),
+            self.increment_rad_bits.map(f64::from_bits),
+            self.pc_bits.map(|row| row.map(f64::from_bits)),
+            self.pole_deg_bits.map(f64::from_bits),
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ProjectionProjection {
+    Sin,
+}
+
+impl ProjectionProjection {
+    const fn new(projection: Projection) -> Self {
+        match projection {
+            Projection::Sin => Self::Sin,
+        }
+    }
+
+    const fn to_runtime(self) -> Projection {
+        match self {
+            Self::Sin => Projection::Sin,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DirectionFrameProjection {
+    Icrs,
+    J2000,
+    B1950,
+    Galactic,
+}
+
+impl DirectionFrameProjection {
+    const fn new(frame: DirectionFrame) -> Self {
+        match frame {
+            DirectionFrame::Icrs => Self::Icrs,
+            DirectionFrame::J2000 => Self::J2000,
+            DirectionFrame::B1950 => Self::B1950,
+            DirectionFrame::Galactic => Self::Galactic,
+        }
+    }
+
+    const fn to_runtime(self) -> DirectionFrame {
+        match self {
+            Self::Icrs => DirectionFrame::Icrs,
+            Self::J2000 => DirectionFrame::J2000,
+            Self::B1950 => DirectionFrame::B1950,
+            Self::Galactic => DirectionFrame::Galactic,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct SpectralCoordinateProjection {
+    source_frame: FrequencyFrameProjection,
+    output_frame: FrequencyFrameProjection,
+    anchor: SpectralAnchorProjection,
+    wcs: SpectralWcsProjection,
+    rest_frequency: RestFrequencyProjection,
+    doppler: DopplerProjection,
+}
+
+impl SpectralCoordinateProjection {
+    fn new(spectral: &SpectralCoordinateSpec) -> Self {
+        Self {
+            source_frame: FrequencyFrameProjection::new(spectral.source_frame()),
+            output_frame: FrequencyFrameProjection::new(spectral.output_frame()),
+            anchor: SpectralAnchorProjection::new(spectral.anchor()),
+            wcs: SpectralWcsProjection::new(spectral.wcs()),
+            rest_frequency: RestFrequencyProjection::new(spectral.rest_frequency()),
+            doppler: DopplerProjection::new(spectral.doppler_convention()),
+        }
+    }
+
+    fn to_runtime(&self) -> SpectralCoordinateSpec {
+        SpectralCoordinateSpec::new(
+            self.source_frame.to_runtime(),
+            self.output_frame.to_runtime(),
+            self.anchor.to_runtime(),
+            self.wcs.to_runtime(),
+            self.rest_frequency.to_runtime(),
+            self.doppler.to_runtime(),
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum FrequencyFrameProjection {
+    Topocentric,
+    Barycentric,
+    Lsrk,
+}
+
+impl FrequencyFrameProjection {
+    const fn new(frame: FrequencyFrame) -> Self {
+        match frame {
+            FrequencyFrame::Topocentric => Self::Topocentric,
+            FrequencyFrame::Barycentric => Self::Barycentric,
+            FrequencyFrame::Lsrk => Self::Lsrk,
+        }
+    }
+
+    const fn to_runtime(self) -> FrequencyFrame {
+        match self {
+            Self::Topocentric => FrequencyFrame::Topocentric,
+            Self::Barycentric => FrequencyFrame::Barycentric,
+            Self::Lsrk => FrequencyFrame::Lsrk,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum SpectralAnchorProjection {
+    NotApplicable,
+    Conversion {
+        epoch_mjd_bits: u64,
+        time_scale: TimeScaleProjection,
+        direction: DirectionValueProjection,
+        observatory_metres_bits: [u64; 3],
+    },
+}
+
+impl SpectralAnchorProjection {
+    fn new(anchor: SpectralFrameAnchor) -> Self {
+        match anchor {
+            SpectralFrameAnchor::NotApplicable => Self::NotApplicable,
+            SpectralFrameAnchor::Conversion {
+                epoch,
+                direction,
+                observatory_position,
+            } => Self::Conversion {
+                epoch_mjd_bits: epoch.mjd_days().to_bits(),
+                time_scale: TimeScaleProjection::new(epoch.scale()),
+                direction: DirectionValueProjection::new(direction),
+                observatory_metres_bits: observatory_position.metres().map(f64::to_bits),
+            },
+        }
+    }
+
+    fn to_runtime(self) -> SpectralFrameAnchor {
+        match self {
+            Self::NotApplicable => SpectralFrameAnchor::NotApplicable,
+            Self::Conversion {
+                epoch_mjd_bits,
+                time_scale,
+                direction,
+                observatory_metres_bits,
+            } => {
+                let metres = observatory_metres_bits.map(f64::from_bits);
+                SpectralFrameAnchor::Conversion {
+                    epoch: Epoch::new(f64::from_bits(epoch_mjd_bits), time_scale.to_runtime()),
+                    direction: direction.to_runtime(),
+                    observatory_position: ItrfPosition::new(metres[0], metres[1], metres[2]),
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct DirectionValueProjection {
+    frame: DirectionFrameProjection,
+    longitude_bits: u64,
+    latitude_bits: u64,
+}
+
+impl DirectionValueProjection {
+    fn new(direction: SkyDirection) -> Self {
+        Self {
+            frame: DirectionFrameProjection::new(direction.frame()),
+            longitude_bits: direction.longitude_rad().to_bits(),
+            latitude_bits: direction.latitude_rad().to_bits(),
+        }
+    }
+
+    fn to_runtime(self) -> SkyDirection {
+        SkyDirection::new(
+            self.frame.to_runtime(),
+            f64::from_bits(self.longitude_bits),
+            f64::from_bits(self.latitude_bits),
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum TimeScaleProjection {
+    Utc,
+    Tai,
+    Tt,
+    Tdb,
+}
+
+impl TimeScaleProjection {
+    const fn new(scale: TimeScale) -> Self {
+        match scale {
+            TimeScale::Utc => Self::Utc,
+            TimeScale::Tai => Self::Tai,
+            TimeScale::Tt => Self::Tt,
+            TimeScale::Tdb => Self::Tdb,
+        }
+    }
+
+    const fn to_runtime(self) -> TimeScale {
+        match self {
+            Self::Utc => TimeScale::Utc,
+            Self::Tai => TimeScale::Tai,
+            Self::Tt => TimeScale::Tt,
+            Self::Tdb => TimeScale::Tdb,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum SpectralWcsProjection {
+    Linear {
+        channels: usize,
+        reference_pixel_bits: u64,
+        reference_frequency_hz_bits: u64,
+        increment_hz_bits: u64,
+    },
+    Tabular {
+        channel_centres_hz_bits: Vec<u64>,
+        channel_boundaries_hz_bits: Vec<u64>,
+    },
+}
+
+impl SpectralWcsProjection {
+    fn new(wcs: &SpectralWcs) -> Self {
+        match wcs {
+            SpectralWcs::Linear {
+                channels,
+                reference_pixel,
+                reference_frequency_hz,
+                increment_hz,
+            } => Self::Linear {
+                channels: *channels,
+                reference_pixel_bits: reference_pixel.to_bits(),
+                reference_frequency_hz_bits: reference_frequency_hz.to_bits(),
+                increment_hz_bits: increment_hz.to_bits(),
+            },
+            SpectralWcs::Tabular {
+                channel_centres_hz,
+                channel_boundaries_hz,
+            } => Self::Tabular {
+                channel_centres_hz_bits: channel_centres_hz
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .collect(),
+                channel_boundaries_hz_bits: channel_boundaries_hz
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .collect(),
+            },
+        }
+    }
+
+    fn to_runtime(&self) -> SpectralWcs {
+        match self {
+            Self::Linear {
+                channels,
+                reference_pixel_bits,
+                reference_frequency_hz_bits,
+                increment_hz_bits,
+            } => SpectralWcs::Linear {
+                channels: *channels,
+                reference_pixel: f64::from_bits(*reference_pixel_bits),
+                reference_frequency_hz: f64::from_bits(*reference_frequency_hz_bits),
+                increment_hz: f64::from_bits(*increment_hz_bits),
+            },
+            Self::Tabular {
+                channel_centres_hz_bits,
+                channel_boundaries_hz_bits,
+            } => SpectralWcs::Tabular {
+                channel_centres_hz: channel_centres_hz_bits
+                    .iter()
+                    .copied()
+                    .map(f64::from_bits)
+                    .collect(),
+                channel_boundaries_hz: channel_boundaries_hz_bits
+                    .iter()
+                    .copied()
+                    .map(f64::from_bits)
+                    .collect(),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "hertz_bits", rename_all = "snake_case")]
+enum RestFrequencyProjection {
+    NotApplicable,
+    Line(u64),
+}
+
+impl RestFrequencyProjection {
+    fn new(frequency: RestFrequency) -> Self {
+        match frequency {
+            RestFrequency::NotApplicable => Self::NotApplicable,
+            RestFrequency::Line { hertz } => Self::Line(hertz.to_bits()),
+        }
+    }
+
+    fn to_runtime(self) -> RestFrequency {
+        match self {
+            Self::NotApplicable => RestFrequency::NotApplicable,
+            Self::Line(bits) => RestFrequency::Line {
+                hertz: f64::from_bits(bits),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DopplerProjection {
+    NotApplicable,
+    Radio,
+    Optical,
+    Relativistic,
+}
+
+impl DopplerProjection {
+    const fn new(value: DopplerConvention) -> Self {
+        match value {
+            DopplerConvention::NotApplicable => Self::NotApplicable,
+            DopplerConvention::Radio => Self::Radio,
+            DopplerConvention::Optical => Self::Optical,
+            DopplerConvention::Relativistic => Self::Relativistic,
+        }
+    }
+
+    const fn to_runtime(self) -> DopplerConvention {
+        match self {
+            Self::NotApplicable => DopplerConvention::NotApplicable,
+            Self::Radio => DopplerConvention::Radio,
+            Self::Optical => DopplerConvention::Optical,
+            Self::Relativistic => DopplerConvention::Relativistic,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PolarizationProjection {
+    StokesI,
+    StokesQ,
+    StokesU,
+    StokesV,
+    LinearXx,
+    LinearXy,
+    LinearYx,
+    LinearYy,
+    CircularRr,
+    CircularRl,
+    CircularLr,
+    CircularLl,
+}
+
+impl PolarizationProjection {
+    const fn new(value: PolarizationCoordinate) -> Self {
+        match value {
+            PolarizationCoordinate::StokesI => Self::StokesI,
+            PolarizationCoordinate::StokesQ => Self::StokesQ,
+            PolarizationCoordinate::StokesU => Self::StokesU,
+            PolarizationCoordinate::StokesV => Self::StokesV,
+            PolarizationCoordinate::LinearXx => Self::LinearXx,
+            PolarizationCoordinate::LinearXy => Self::LinearXy,
+            PolarizationCoordinate::LinearYx => Self::LinearYx,
+            PolarizationCoordinate::LinearYy => Self::LinearYy,
+            PolarizationCoordinate::CircularRr => Self::CircularRr,
+            PolarizationCoordinate::CircularRl => Self::CircularRl,
+            PolarizationCoordinate::CircularLr => Self::CircularLr,
+            PolarizationCoordinate::CircularLl => Self::CircularLl,
+        }
+    }
+
+    const fn to_runtime(self) -> PolarizationCoordinate {
+        match self {
+            Self::StokesI => PolarizationCoordinate::StokesI,
+            Self::StokesQ => PolarizationCoordinate::StokesQ,
+            Self::StokesU => PolarizationCoordinate::StokesU,
+            Self::StokesV => PolarizationCoordinate::StokesV,
+            Self::LinearXx => PolarizationCoordinate::LinearXx,
+            Self::LinearXy => PolarizationCoordinate::LinearXy,
+            Self::LinearYx => PolarizationCoordinate::LinearYx,
+            Self::LinearYy => PolarizationCoordinate::LinearYy,
+            Self::CircularRr => PolarizationCoordinate::CircularRr,
+            Self::CircularRl => PolarizationCoordinate::CircularRl,
+            Self::CircularLr => PolarizationCoordinate::CircularLr,
+            Self::CircularLl => PolarizationCoordinate::CircularLl,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ProductUnitProjection {
+    NotApplicable,
+    JyPerBeam,
+    JyPerPixel,
+    Dimensionless,
+    VisibilityWeight,
+}
+
+impl ProductUnitProjection {
+    const fn new(unit: ProductUnit) -> Self {
+        match unit {
+            ProductUnit::NotApplicable => Self::NotApplicable,
+            ProductUnit::JyPerBeam => Self::JyPerBeam,
+            ProductUnit::JyPerPixel => Self::JyPerPixel,
+            ProductUnit::Dimensionless => Self::Dimensionless,
+            ProductUnit::VisibilityWeight => Self::VisibilityWeight,
+        }
+    }
+
+    const fn to_runtime(self) -> ProductUnit {
+        match self {
+            Self::NotApplicable => ProductUnit::NotApplicable,
+            Self::JyPerBeam => ProductUnit::JyPerBeam,
+            Self::JyPerPixel => ProductUnit::JyPerPixel,
+            Self::Dimensionless => ProductUnit::Dimensionless,
+            Self::VisibilityWeight => ProductUnit::VisibilityWeight,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ProductNormalizationProjection {
+    UnitResponse,
+    FlatNoise,
+    FlatSky,
+}
+
+impl ProductNormalizationProjection {
+    const fn new(normalization: ProductNormalization) -> Self {
+        match normalization {
+            ProductNormalization::UnitResponse => Self::UnitResponse,
+            ProductNormalization::FlatNoise => Self::FlatNoise,
+            ProductNormalization::FlatSky => Self::FlatSky,
+        }
+    }
+
+    const fn to_runtime(self) -> ProductNormalization {
+        match self {
+            Self::UnitResponse => ProductNormalization::UnitResponse,
+            Self::FlatNoise => ProductNormalization::FlatNoise,
+            Self::FlatSky => ProductNormalization::FlatSky,
+        }
+    }
+}
+
+/// Beam semantics preserved without constructing graph authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum ProductBeamEvidence {
+    /// No beam metadata applies.
+    None,
+    /// Attach the fitted PSF beam set.
+    Fitted,
+    /// Restore using the exact policy.
+    Restoring(RestoringBeamEvidence),
+    /// Inherit from one graph-local node ordinal.
+    Inherit(usize),
+    /// Persist fitted and selected beam metadata.
+    Metadata(RestoringBeamEvidence),
+}
+
+impl ProductBeamEvidence {
+    const fn new(beam: ProductBeamRule) -> Self {
+        match beam {
+            ProductBeamRule::None => Self::None,
+            ProductBeamRule::Fitted => Self::Fitted,
+            ProductBeamRule::Restoring(policy) => {
+                Self::Restoring(RestoringBeamEvidence::new(policy))
+            }
+            ProductBeamRule::Inherit(node) => Self::Inherit(node.ordinal()),
+            ProductBeamRule::Metadata(policy) => Self::Metadata(RestoringBeamEvidence::new(policy)),
+        }
+    }
+}
+
+impl PartialEq<ProductBeamRule> for ProductBeamEvidence {
+    fn eq(&self, other: &ProductBeamRule) -> bool {
+        match (self, other) {
+            (Self::None, ProductBeamRule::None) | (Self::Fitted, ProductBeamRule::Fitted) => true,
+            (Self::Restoring(left), ProductBeamRule::Restoring(right))
+            | (Self::Metadata(left), ProductBeamRule::Metadata(right)) => {
+                left.to_runtime() == *right
+            }
+            (Self::Inherit(left), ProductBeamRule::Inherit(right)) => *left == right.ordinal(),
+            _ => false,
+        }
+    }
+}
+
+/// Receipt-local restoring-beam policy projection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RestoringBeamEvidence {
+    /// No restoring beam applies.
+    None,
+    /// Use one beam per plane.
+    PerPlane,
+    /// Use one common enclosing beam.
+    Common,
+}
+
+impl RestoringBeamEvidence {
+    const fn new(policy: RestoringBeamPolicy) -> Self {
+        match policy {
+            RestoringBeamPolicy::None => Self::None,
+            RestoringBeamPolicy::PerPlane => Self::PerPlane,
+            RestoringBeamPolicy::Common => Self::Common,
+        }
+    }
+
+    const fn to_runtime(self) -> RestoringBeamPolicy {
+        match self {
+            Self::None => RestoringBeamPolicy::None,
+            Self::PerPlane => RestoringBeamPolicy::PerPlane,
+            Self::Common => RestoringBeamPolicy::Common,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum ProductValidityProjection {
+    All,
+    FinalNormalState,
+    PrimaryBeam {
+        policy: PrimaryBeamPolicyProjection,
+    },
+    Taylor {
+        policy: TaylorPolicyProjection,
+    },
+    TaylorAndPrimaryBeam {
+        taylor: TaylorPolicyProjection,
+        primary_beam: PrimaryBeamPolicyProjection,
+    },
+}
+
+impl ProductValidityProjection {
+    fn new(validity: ProductValidityRule) -> Self {
+        match validity {
+            ProductValidityRule::All => Self::All,
+            ProductValidityRule::FinalNormalState => Self::FinalNormalState,
+            ProductValidityRule::PrimaryBeam(policy) => Self::PrimaryBeam {
+                policy: PrimaryBeamPolicyProjection::new(policy),
+            },
+            ProductValidityRule::Taylor(policy) => Self::Taylor {
+                policy: TaylorPolicyProjection::new(policy),
+            },
+            ProductValidityRule::TaylorAndPrimaryBeam {
+                taylor,
+                primary_beam,
+            } => Self::TaylorAndPrimaryBeam {
+                taylor: TaylorPolicyProjection::new(taylor),
+                primary_beam: PrimaryBeamPolicyProjection::new(primary_beam),
+            },
+        }
+    }
+
+    fn to_runtime(self) -> ProductValidityRule {
+        match self {
+            Self::All => ProductValidityRule::All,
+            Self::FinalNormalState => ProductValidityRule::FinalNormalState,
+            Self::PrimaryBeam { policy } => ProductValidityRule::PrimaryBeam(policy.to_runtime()),
+            Self::Taylor { policy } => ProductValidityRule::Taylor(policy.to_runtime()),
+            Self::TaylorAndPrimaryBeam {
+                taylor,
+                primary_beam,
+            } => ProductValidityRule::TaylorAndPrimaryBeam {
+                taylor: taylor.to_runtime(),
+                primary_beam: primary_beam.to_runtime(),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PrimaryBeamPolicyProjection {
+    cutoff_bits: u32,
+    comparison: SupportComparisonProjection,
+    blanking: BlankingProjection,
+}
+
+impl PrimaryBeamPolicyProjection {
+    fn new(policy: PrimaryBeamValidityPolicy) -> Self {
+        Self {
+            cutoff_bits: policy.cutoff().to_bits(),
+            comparison: SupportComparisonProjection::new(policy.comparison()),
+            blanking: BlankingProjection::new(policy.blanking()),
+        }
+    }
+
+    fn to_runtime(self) -> PrimaryBeamValidityPolicy {
+        PrimaryBeamValidityPolicy::new(
+            f32::from_bits(self.cutoff_bits),
+            self.comparison.to_runtime(),
+            self.blanking.to_runtime(),
+        )
+        .expect("validated receipt primary-beam policy")
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct TaylorPolicyProjection {
+    reference: TaylorReferenceProjection,
+    peak_fraction_bits: u32,
+    comparison: SupportComparisonProjection,
+    blanking: BlankingProjection,
+}
+
+impl TaylorPolicyProjection {
+    fn new(policy: TaylorValidityPolicy) -> Self {
+        Self {
+            reference: TaylorReferenceProjection::new(policy.reference()),
+            peak_fraction_bits: policy.peak_fraction().to_bits(),
+            comparison: SupportComparisonProjection::new(policy.comparison()),
+            blanking: BlankingProjection::new(policy.blanking()),
+        }
+    }
+
+    fn to_runtime(self) -> TaylorValidityPolicy {
+        TaylorValidityPolicy::new(
+            self.reference.to_runtime(),
+            f32::from_bits(self.peak_fraction_bits),
+            self.comparison.to_runtime(),
+            self.blanking.to_runtime(),
+        )
+        .expect("validated receipt Taylor policy")
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum TaylorReferenceProjection {
+    PrincipalResidualTaylor0PositiveMaximum,
+}
+
+impl TaylorReferenceProjection {
+    const fn new(reference: TaylorSupportReference) -> Self {
+        match reference {
+            TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum => {
+                Self::PrincipalResidualTaylor0PositiveMaximum
+            }
+        }
+    }
+
+    const fn to_runtime(self) -> TaylorSupportReference {
+        match self {
+            Self::PrincipalResidualTaylor0PositiveMaximum => {
+                TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum SupportComparisonProjection {
+    StrictlyGreater,
+}
+
+impl SupportComparisonProjection {
+    const fn new(comparison: ProductSupportComparison) -> Self {
+        match comparison {
+            ProductSupportComparison::StrictlyGreater => Self::StrictlyGreater,
+        }
+    }
+
+    const fn to_runtime(self) -> ProductSupportComparison {
+        match self {
+            Self::StrictlyGreater => ProductSupportComparison::StrictlyGreater,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum BlankingProjection {
+    ZeroAndFalseMask,
+}
+
+impl BlankingProjection {
+    const fn new(blanking: ProductBlankingPolicy) -> Self {
+        match blanking {
+            ProductBlankingPolicy::ZeroAndFalseMask => Self::ZeroAndFalseMask,
+        }
+    }
+
+    const fn to_runtime(self) -> ProductBlankingPolicy {
+        match self {
+            Self::ZeroAndFalseMask => ProductBlankingPolicy::ZeroAndFalseMask,
+        }
+    }
+}
+
+/// Logical payload and identity envelope preserved as receipt evidence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProductPayloadEvidence {
+    element_representation: ProductElementProjection,
+    logical_elements: u64,
+    logical_pixel_bytes: u64,
+    identity_metadata_bytes: u64,
+    identity_envelope_bytes: u64,
+}
+
+impl ProductPayloadEvidence {
+    fn new(payload: casa_imaging_model::ProductPayloadEnvelope) -> Self {
+        Self {
+            element_representation: ProductElementProjection::new(payload.element_representation()),
+            logical_elements: payload.logical_elements(),
+            logical_pixel_bytes: payload.logical_pixel_bytes(),
+            identity_metadata_bytes: payload.identity_metadata_bytes(),
+            identity_envelope_bytes: payload.identity_envelope_bytes(),
+        }
+    }
+
+    /// Return the exact logical element representation.
+    #[must_use]
+    pub const fn element_representation(&self) -> ProductElementRepresentation {
+        self.element_representation.to_runtime()
+    }
+
+    /// Return logical element count.
+    #[must_use]
+    pub const fn logical_elements(&self) -> u64 {
+        self.logical_elements
+    }
+
+    /// Return logical pixel bytes.
+    #[must_use]
+    pub const fn logical_pixel_bytes(&self) -> u64 {
+        self.logical_pixel_bytes
+    }
+
+    /// Return canonical identity-metadata bytes.
+    #[must_use]
+    pub const fn identity_metadata_bytes(&self) -> u64 {
+        self.identity_metadata_bytes
+    }
+
+    /// Return the complete logical identity envelope bytes.
+    #[must_use]
+    pub const fn identity_envelope_bytes(&self) -> u64 {
+        self.identity_envelope_bytes
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ProductElementProjection {
+    NotApplicable,
+    Float32,
+}
+
+impl ProductElementProjection {
+    const fn new(element: ProductElementRepresentation) -> Self {
+        match element {
+            ProductElementRepresentation::NotApplicable => Self::NotApplicable,
+            ProductElementRepresentation::Float32 => Self::Float32,
+        }
+    }
+
+    const fn to_runtime(self) -> ProductElementRepresentation {
+        match self {
+            Self::NotApplicable => ProductElementRepresentation::NotApplicable,
+            Self::Float32 => ProductElementRepresentation::Float32,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "term", rename_all = "snake_case")]
+enum ProductRoleProjection {
+    Psf(ProductTermProjection),
+    Residual(ProductTermProjection),
+    Model(ProductTermProjection),
+    RestoredImage(ProductTermProjection),
+    SumWeights(ProductTermProjection),
+    CleanMask,
+    Weight(ProductTermProjection),
+    PrimaryBeam(ProductTermProjection),
+    PrimaryBeamSpectralIndex,
+    Sensitivity,
+    PbCorrectedImage(ProductTermProjection),
+    TaylorCoefficientSet,
+    SpectralIndex,
+    SpectralIndexError,
+    PbCorrectedSpectralIndex,
+    BeamMetadata,
+}
+
+impl ProductRoleProjection {
+    const fn new(role: ProductRole) -> Self {
+        match role {
+            ProductRole::Psf(term) => Self::Psf(ProductTermProjection::new(term)),
+            ProductRole::Residual(term) => Self::Residual(ProductTermProjection::new(term)),
+            ProductRole::Model(term) => Self::Model(ProductTermProjection::new(term)),
+            ProductRole::RestoredImage(term) => {
+                Self::RestoredImage(ProductTermProjection::new(term))
+            }
+            ProductRole::SumWeights(term) => Self::SumWeights(ProductTermProjection::new(term)),
+            ProductRole::CleanMask => Self::CleanMask,
+            ProductRole::Weight(term) => Self::Weight(ProductTermProjection::new(term)),
+            ProductRole::PrimaryBeam(term) => Self::PrimaryBeam(ProductTermProjection::new(term)),
+            ProductRole::PrimaryBeamSpectralIndex => Self::PrimaryBeamSpectralIndex,
+            ProductRole::Sensitivity => Self::Sensitivity,
+            ProductRole::PbCorrectedImage(term) => {
+                Self::PbCorrectedImage(ProductTermProjection::new(term))
+            }
+            ProductRole::TaylorCoefficientSet => Self::TaylorCoefficientSet,
+            ProductRole::SpectralIndex => Self::SpectralIndex,
+            ProductRole::SpectralIndexError => Self::SpectralIndexError,
+            ProductRole::PbCorrectedSpectralIndex => Self::PbCorrectedSpectralIndex,
+            ProductRole::BeamMetadata => Self::BeamMetadata,
+        }
+    }
+
+    const fn to_runtime(self) -> ProductRole {
+        match self {
+            Self::Psf(term) => ProductRole::Psf(term.to_runtime()),
+            Self::Residual(term) => ProductRole::Residual(term.to_runtime()),
+            Self::Model(term) => ProductRole::Model(term.to_runtime()),
+            Self::RestoredImage(term) => ProductRole::RestoredImage(term.to_runtime()),
+            Self::SumWeights(term) => ProductRole::SumWeights(term.to_runtime()),
+            Self::CleanMask => ProductRole::CleanMask,
+            Self::Weight(term) => ProductRole::Weight(term.to_runtime()),
+            Self::PrimaryBeam(term) => ProductRole::PrimaryBeam(term.to_runtime()),
+            Self::PrimaryBeamSpectralIndex => ProductRole::PrimaryBeamSpectralIndex,
+            Self::Sensitivity => ProductRole::Sensitivity,
+            Self::PbCorrectedImage(term) => ProductRole::PbCorrectedImage(term.to_runtime()),
+            Self::TaylorCoefficientSet => ProductRole::TaylorCoefficientSet,
+            Self::SpectralIndex => ProductRole::SpectralIndex,
+            Self::SpectralIndexError => ProductRole::SpectralIndexError,
+            Self::PbCorrectedSpectralIndex => ProductRole::PbCorrectedSpectralIndex,
+            Self::BeamMetadata => ProductRole::BeamMetadata,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "ordinal", rename_all = "snake_case")]
+enum ProductTermProjection {
+    Single,
+    Taylor(usize),
+}
+
+impl ProductTermProjection {
+    const fn new(term: ProductTerm) -> Self {
+        match term {
+            ProductTerm::Single => Self::Single,
+            ProductTerm::Taylor(ordinal) => Self::Taylor(ordinal),
+        }
+    }
+
+    const fn to_runtime(self) -> ProductTerm {
+        match self {
+            Self::Single => ProductTerm::Single,
+            Self::Taylor(ordinal) => ProductTerm::Taylor(ordinal),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ProductSchemaProjection {
+    CasaPagedImageF32,
+    LogicalCollection,
+    CasaImageMetadata,
+}
+
+impl ProductSchemaProjection {
+    const fn new(schema: ProductSchema) -> Self {
+        match schema {
+            ProductSchema::CasaPagedImageF32 => Self::CasaPagedImageF32,
+            ProductSchema::LogicalCollection => Self::LogicalCollection,
+            ProductSchema::CasaImageMetadata => Self::CasaImageMetadata,
+        }
+    }
+
+    const fn to_runtime(self) -> ProductSchema {
+        match self {
+            Self::CasaPagedImageF32 => ProductSchema::CasaPagedImageF32,
+            Self::LogicalCollection => ProductSchema::LogicalCollection,
+            Self::CasaImageMetadata => ProductSchema::CasaImageMetadata,
+        }
+    }
+}
+
+/// Immutable receipt projection of one product generation and its publication seal.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProductExecutionEvidence {
+    generation_identity: String,
+    graph_identity: String,
+    source_bindings: Vec<ProductSourceBindingEvidence>,
+    publication_node: String,
+    members: Vec<ProductPublicationMemberEvidence>,
+}
+
+impl ProductExecutionEvidence {
+    fn new(plan: &ExecutionPlan) -> Self {
+        let generation = plan.product_generation();
+        Self {
+            generation_identity: hex(&generation.generation_id().as_bytes()),
+            graph_identity: hex(&generation.graph_id().as_bytes()),
+            source_bindings: generation
+                .source_bindings()
+                .iter()
+                .map(ProductSourceBindingEvidence::new)
+                .collect(),
+            publication_node: stable_text(plan.product_publication().publication_node().as_str()),
+            members: plan
+                .product_publication()
+                .artifacts()
+                .iter()
+                .map(|artifact| {
+                    let layout = plan
+                        .publication_layouts()
+                        .entries()
+                        .iter()
+                        .find(|layout| layout.artifact() == artifact.artifact())
+                        .expect("sealed product publication has one exact physical layout");
+                    ProductPublicationMemberEvidence::new(layout, plan.execution_dag())
+                })
+                .collect(),
+        }
+    }
+
+    /// Return the exact product generation sealed into the plan.
+    #[must_use]
+    pub fn generation_id(&self) -> ProductGenerationId {
+        ProductGenerationId::from_sha256(parse_digest(&self.generation_identity))
+    }
+
+    /// Return the compiler-owned graph that created the generation.
+    #[must_use]
+    pub fn graph_id(&self) -> [u8; 32] {
+        parse_digest(&self.graph_identity)
+    }
+
+    /// Return every exact upstream source-generation binding in canonical order.
+    #[must_use]
+    pub fn source_bindings(&self) -> &[ProductSourceBindingEvidence] {
+        &self.source_bindings
+    }
+
+    /// Return the sole plan node that owns publication.
+    #[must_use]
+    pub fn publication_node(&self) -> WorkNodeId {
+        WorkNodeId::new(self.publication_node.clone())
+    }
+
+    /// Return every exact physical publication member in canonical order.
+    #[must_use]
+    pub fn members(&self) -> &[ProductPublicationMemberEvidence] {
+        &self.members
+    }
+}
+
+/// One canonical upstream source-generation binding in receipt evidence.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProductSourceBindingEvidence {
+    source_ordinal: usize,
+    generation_identity: String,
+}
+
+impl ProductSourceBindingEvidence {
+    fn new(binding: &casa_imaging_model::ProductSourceBinding) -> Self {
+        Self {
+            source_ordinal: binding.source_id().ordinal(),
+            generation_identity: hex(&binding.generation_id().as_bytes()),
+        }
+    }
+
+    /// Return the graph-local source slot ordinal.
+    #[must_use]
+    pub const fn source_ordinal(&self) -> usize {
+        self.source_ordinal
+    }
+
+    /// Return the exact upstream generation identity.
+    #[must_use]
+    pub fn generation_id(&self) -> ProductSourceGenerationId {
+        ProductSourceGenerationId::from_sha256(parse_digest(&self.generation_identity))
+    }
+}
+
+/// Receipt-local semantic owner of one publication member.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "identity", rename_all = "snake_case")]
+pub enum ProductParticipantEvidence {
+    /// One graph-local physical product node ordinal.
+    Product(usize),
+    /// One MeasurementSet identity participating through MODEL_DATA.
+    ModelData(String),
+}
+
+impl ProductParticipantEvidence {
+    fn new(participant: PublicationParticipant) -> Self {
+        match participant {
+            PublicationParticipant::Product(node) => Self::Product(node.ordinal()),
+            PublicationParticipant::ModelData(measurement_set) => {
+                Self::ModelData(hex(&measurement_set.identity().as_bytes()))
+            }
+        }
+    }
+}
+
+/// One canonical publication member, planned artifact, and physical layout.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProductPublicationMemberEvidence {
+    participant: ProductParticipantEvidence,
+    planned_artifact: String,
+    layout: PublicationPhysicalLayoutEvidence,
+}
+
+impl ProductPublicationMemberEvidence {
+    fn new(layout: &crate::PublicationPhysicalLayout, execution_dag: &crate::ExecutionDag) -> Self {
+        Self {
+            participant: ProductParticipantEvidence::new(layout.participant()),
+            planned_artifact: hex(&layout.artifact().as_bytes()),
+            layout: PublicationPhysicalLayoutEvidence::new(layout, execution_dag),
+        }
+    }
+
+    /// Return the receipt-local semantic participant.
+    #[must_use]
+    pub const fn participant(&self) -> &ProductParticipantEvidence {
+        &self.participant
+    }
+
+    /// Return the exact planned output artifact.
+    #[must_use]
+    pub fn planned_artifact(&self) -> ArtifactIdentity {
+        ArtifactIdentity::from_sha256(parse_digest(&self.planned_artifact))
+    }
+
+    /// Return the adapter-derived physical layout projection.
+    #[must_use]
+    pub const fn layout(&self) -> &PublicationPhysicalLayoutEvidence {
+        &self.layout
+    }
+}
+
+/// Adapter-derived physical layout preserved only as immutable receipt evidence.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicationPhysicalLayoutEvidence {
+    layout_identity: String,
+    staging: PublicationStagingEvidence,
+    staged_storage_bytes: u64,
+    final_storage_bytes: u64,
+    writer_buffer_bytes: u64,
+    mapped_page_cache_bytes: u64,
+}
+
+impl PublicationPhysicalLayoutEvidence {
+    fn new(layout: &crate::PublicationPhysicalLayout, execution_dag: &crate::ExecutionDag) -> Self {
+        Self {
+            layout_identity: hex(&layout.layout_id().as_bytes()),
+            staging: PublicationStagingEvidence::new(layout.staging(), execution_dag),
+            staged_storage_bytes: layout.staged_storage_bytes(),
+            final_storage_bytes: layout.final_storage_bytes(),
+            writer_buffer_bytes: layout.writer_buffer_bytes(),
+            mapped_page_cache_bytes: layout.mapped_page_cache_bytes(),
+        }
+    }
+
+    /// Return the selected adapter writer/layout identity.
+    #[must_use]
+    pub fn layout_id(&self) -> PhysicalLayoutId {
+        PhysicalLayoutId::from_sha256(parse_digest(&self.layout_identity))
+    }
+
+    /// Return the exact producer-owned staging projection.
+    #[must_use]
+    pub const fn staging(&self) -> &PublicationStagingEvidence {
+        &self.staging
+    }
+
+    /// Return private staged-storage bytes.
+    #[must_use]
+    pub const fn staged_storage_bytes(&self) -> u64 {
+        self.staged_storage_bytes
+    }
+
+    /// Return activated final-storage bytes.
+    #[must_use]
+    pub const fn final_storage_bytes(&self) -> u64 {
+        self.final_storage_bytes
+    }
+
+    /// Return the maximum writer-owned buffer bytes.
+    #[must_use]
+    pub const fn writer_buffer_bytes(&self) -> u64 {
+        self.writer_buffer_bytes
+    }
+
+    /// Return mapped/page-cache exposure bytes.
+    #[must_use]
+    pub const fn mapped_page_cache_bytes(&self) -> u64 {
+        self.mapped_page_cache_bytes
+    }
+}
+
+/// Producer-owned staging facts preserved as immutable receipt evidence.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicationStagingEvidence {
+    producer: String,
+    terminal: String,
+    writer_buffer_kind: String,
+    writer_allocation: String,
+    writer_physical_slot: String,
+    writer_lease_resource: String,
+    mapped_page_cache: Option<PublicationMappedStagingEvidence>,
+}
+
+impl PublicationStagingEvidence {
+    fn new(staging: &crate::PublicationStaging, execution_dag: &crate::ExecutionDag) -> Self {
+        let (writer_physical_slot, writer_lease_resource) =
+            publication_allocation_projection(execution_dag, staging.writer_allocation());
+        Self {
+            producer: stable_text(staging.producer().as_str()),
+            terminal: dependency(staging.terminal()),
+            writer_buffer_kind: io_buffer(staging.writer_buffer_kind()).to_string(),
+            writer_allocation: stable_text(staging.writer_allocation().as_str()),
+            writer_physical_slot,
+            writer_lease_resource,
+            mapped_page_cache: staging
+                .mapped_page_cache()
+                .map(|mapped| PublicationMappedStagingEvidence::new(mapped, execution_dag)),
+        }
+    }
+
+    /// Return the exact staging producer.
+    #[must_use]
+    pub fn producer(&self) -> WorkNodeId {
+        WorkNodeId::new(self.producer.clone())
+    }
+
+    /// Return the producer terminal event required before publication.
+    #[must_use]
+    pub fn terminal(&self) -> WorkDependency {
+        parse_dependency(&self.terminal)
+    }
+
+    /// Return the adapter-selected writer buffer category.
+    #[must_use]
+    pub fn writer_buffer_kind(&self) -> IoBufferKind {
+        parse_io_buffer(&self.writer_buffer_kind)
+    }
+
+    /// Return the producer-owned writer allocation.
+    #[must_use]
+    pub fn writer_allocation(&self) -> AllocationId {
+        AllocationId::new(self.writer_allocation.clone())
+    }
+
+    /// Return the exact physical slot backing the writer allocation.
+    #[must_use]
+    pub fn writer_physical_slot(&self) -> PhysicalSlotId {
+        PhysicalSlotId::new(self.writer_physical_slot.clone())
+    }
+
+    /// Return the resource leased by the writer allocation's physical slot.
+    #[must_use]
+    pub fn writer_lease_resource(&self) -> LeaseResource {
+        parse_lease_resource(&self.writer_lease_resource)
+    }
+
+    /// Return mapped/page-cache staging, when the adapter requires it.
+    #[must_use]
+    pub const fn mapped_page_cache(&self) -> Option<&PublicationMappedStagingEvidence> {
+        self.mapped_page_cache.as_ref()
+    }
+}
+
+/// Mapped/page-cache staging facts preserved as immutable receipt evidence.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicationMappedStagingEvidence {
+    producer: String,
+    terminal: String,
+    allocation: String,
+    physical_slot: String,
+    lease_resource: String,
+}
+
+impl PublicationMappedStagingEvidence {
+    fn new(staging: &crate::PublicationMappedStaging, execution_dag: &crate::ExecutionDag) -> Self {
+        let (physical_slot, lease_resource) =
+            publication_allocation_projection(execution_dag, staging.allocation());
+        Self {
+            producer: stable_text(staging.producer().as_str()),
+            terminal: dependency(staging.terminal()),
+            allocation: stable_text(staging.allocation().as_str()),
+            physical_slot,
+            lease_resource,
+        }
+    }
+
+    /// Return the mapped-exposure producer.
+    #[must_use]
+    pub fn producer(&self) -> WorkNodeId {
+        WorkNodeId::new(self.producer.clone())
+    }
+
+    /// Return the distinct mapped release event.
+    #[must_use]
+    pub fn terminal(&self) -> WorkDependency {
+        parse_dependency(&self.terminal)
+    }
+
+    /// Return the mapped/page-cache allocation.
+    #[must_use]
+    pub fn allocation(&self) -> AllocationId {
+        AllocationId::new(self.allocation.clone())
+    }
+
+    /// Return the exact physical slot backing mapped/page-cache exposure.
+    #[must_use]
+    pub fn physical_slot(&self) -> PhysicalSlotId {
+        PhysicalSlotId::new(self.physical_slot.clone())
+    }
+
+    /// Return the resource leased by the mapped allocation's physical slot.
+    #[must_use]
+    pub fn lease_resource(&self) -> LeaseResource {
+        parse_lease_resource(&self.lease_resource)
+    }
+}
+
+fn publication_allocation_projection(
+    execution_dag: &crate::ExecutionDag,
+    allocation_id: &AllocationId,
+) -> (String, String) {
+    let allocation = execution_dag
+        .logical_allocations()
+        .get(allocation_id)
+        .expect("sealed publication staging owns one exact logical allocation");
+    let slot = execution_dag
+        .physical_slots()
+        .get(&allocation.physical_slot)
+        .expect("sealed publication staging allocation owns one exact physical slot");
+    (
+        stable_text(slot.id.as_str()),
+        lease_resource(&slot.lease_resource),
+    )
 }
 
 impl ExecutionReceipt {
@@ -344,6 +2094,12 @@ impl ExecutionReceipt {
     #[must_use]
     pub fn plan_identity(&self) -> [u8; 32] {
         parse_digest(&self.body.plan.plan_identity)
+    }
+
+    /// Return the exact product generation, publication binding, and physical layouts.
+    #[must_use]
+    pub const fn product_execution_evidence(&self) -> &ProductExecutionEvidence {
+        &self.body.plan.product_execution
     }
 
     /// Return the canonical compiled-problem identity.
@@ -1251,6 +3007,7 @@ impl ModelIdentityProjection {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct PlanProjection {
     plan_identity: String,
+    product_execution: ProductExecutionEvidence,
     dag_identity: String,
     implementation_registry_identity: String,
     resource_policy_identity: String,
@@ -1291,6 +3048,7 @@ impl PlanProjection {
             .collect();
         Self {
             plan_identity: hex(&plan.plan_id().as_bytes()),
+            product_execution: ProductExecutionEvidence::new(plan),
             dag_identity: hex(&plan.physical_work_id().as_bytes()),
             implementation_registry_identity: hex(&plan.implementation_registry_id().as_bytes()),
             resource_policy_identity: hex(&plan.resource_policy_id().as_bytes()),
@@ -2456,6 +4214,10 @@ pub(crate) struct ReceiptRecorder<'store> {
 }
 
 impl ReceiptRecorder<'_> {
+    pub(crate) fn attempt_id(&self) -> ExecutionAttemptId {
+        self.body.attempt()
+    }
+
     pub(crate) fn work_started(&mut self, node: &WorkNodeId) -> Result<(), ReceiptError> {
         let node_id = stable_text(node.as_str());
         let item = self
@@ -2470,12 +4232,16 @@ impl ReceiptRecorder<'_> {
         self.checkpoint()
     }
 
-    pub(crate) fn work_completed(
+    pub(crate) fn work_launched(
         &mut self,
         node: &WorkNodeId,
         measurements: &WorkMeasurements,
     ) -> Result<(), ReceiptError> {
         self.record_measurements(node, measurements)?;
+        self.checkpoint()
+    }
+
+    pub(crate) fn work_completed(&mut self, node: &WorkNodeId) -> Result<(), ReceiptError> {
         self.finish_node(node, ReceiptStatus::Completed)?;
         self.checkpoint()
     }
@@ -2519,7 +4285,11 @@ impl ReceiptRecorder<'_> {
 
     pub(crate) fn fence_completed(&mut self, fence: &FenceId) -> Result<(), ReceiptError> {
         self.finish_fence(fence, ReceiptStatus::Completed)?;
-        let publications = self.settled_publications(fence.node());
+        self.checkpoint()
+    }
+
+    pub(crate) fn publication_succeeded(&mut self, node: &WorkNodeId) -> Result<(), ReceiptError> {
+        let publications = self.settled_publications(node);
         for identity in &publications {
             self.artifact_by_identity_mut(identity)?.disposition =
                 Some(ArtifactDispositionProjection::Published);
@@ -2885,6 +4655,8 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
         &body.problem.observation_identity,
         &body.problem.numerics_identity,
         &body.plan.plan_identity,
+        &body.plan.product_execution.generation_identity,
+        &body.plan.product_execution.graph_identity,
         &body.plan.dag_identity,
         &body.plan.implementation_registry_identity,
         &body.plan.resource_policy_identity,
@@ -2954,6 +4726,7 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
     }
 
     validate_plan_projection(&body.plan, body.revision)?;
+    validate_product_execution(&body.problem.effective.product_graph, &body.plan)?;
     if let Some(failure) = &body.failure {
         if let Some(node) = &failure.node_id {
             require_integrity(body.plan.nodes.iter().any(|item| &item.node_id == node))?;
@@ -3005,7 +4778,12 @@ fn validate_problem_evidence(problem: &ProblemProjection) -> Result<(), ReceiptE
                 == Some(problem.numerics_identity.as_str())
             && evidence.field("geometry.identity") == Some(problem.geometry_identity.as_str())
             && evidence.field("observation.snapshot.identity")
-                == Some(problem.observation_identity.as_str()),
+                == Some(problem.observation_identity.as_str())
+            && evidence.field("observation_transaction.snapshot_identity")
+                == Some(problem.observation_identity.as_str())
+            && evidence
+                .field("observation_transaction.identity")
+                .is_some_and(is_digest),
     )?;
     require_integrity(evidence.fields.iter().all(|(path, value)| {
         !path.is_empty()
@@ -3014,11 +4792,13 @@ fn validate_problem_evidence(problem: &ProblemProjection) -> Result<(), ReceiptE
             })
             && is_redacted_text(value)
     }))?;
+    validate_data_description_evidence(&evidence.fields)?;
     for prefix in [
         "science.",
         "reconstruction.",
         "weighting.",
         "products.",
+        "observation_transaction.",
         "numerics.",
         "required_capabilities.",
         "geometry.",
@@ -3026,7 +4806,318 @@ fn validate_problem_evidence(problem: &ProblemProjection) -> Result<(), ReceiptE
     ] {
         require_integrity(evidence.fields.keys().any(|path| path.starts_with(prefix)))?;
     }
+    let graph = &evidence.product_graph;
+    require_integrity(
+        graph.schema_version == ProductGraphId::SCHEMA_VERSION
+            && is_digest(&graph.graph_identity)
+            && graph
+                .sources
+                .iter()
+                .map(|source| source.source_ordinal)
+                .eq(0..graph.sources.len())
+            && graph
+                .nodes
+                .iter()
+                .enumerate()
+                .all(|(ordinal, node)| node.node_id == ordinal)
+            && !graph.publication_members.is_empty(),
+    )?;
+    for source in &graph.sources {
+        require_integrity(match &source.domain {
+            ImageDomainProjection::Main => true,
+            ImageDomainProjection::Outlier(name) => is_redacted_text(name),
+        })?;
+    }
+    for node in &graph.nodes {
+        validate_product_graph_node(node, graph.sources.len())?;
+    }
+    let publication_members = graph
+        .publication_members
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let physical_members = graph
+        .nodes
+        .iter()
+        .filter(|node| node.schema == ProductSchemaProjection::CasaPagedImageF32)
+        .map(|node| node.node_id)
+        .collect::<Vec<_>>();
+    require_integrity(
+        publication_members.len() == graph.publication_members.len()
+            && graph.publication_members == physical_members
+            && graph.publication_members.iter().all(|member| {
+                graph
+                    .nodes
+                    .get(*member)
+                    .is_some_and(|node| node.schema == ProductSchemaProjection::CasaPagedImageF32)
+            }),
+    )?;
     Ok(())
+}
+
+fn validate_data_description_evidence(
+    fields: &BTreeMap<String, String>,
+) -> Result<(), ReceiptError> {
+    let source_count = fields
+        .get("observation.sources.count")
+        .map(String::as_str)
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|count| *count > 0 && *count <= fields.len())
+        .ok_or(ReceiptError::IntegrityMismatch)?;
+    let read_count = fields
+        .get("observation_transaction.read_set.count")
+        .map(String::as_str)
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|count| *count == source_count)
+        .ok_or(ReceiptError::IntegrityMismatch)?;
+    require_integrity(read_count == source_count)?;
+    let mut expected_paths = BTreeSet::new();
+    for source_index in 0..source_count {
+        let source_prefix = format!("observation.sources.{source_index}");
+        let source_identity = fields
+            .get(&format!("{source_prefix}.measurement_set_identity"))
+            .filter(|identity| is_digest(identity))
+            .ok_or(ReceiptError::IntegrityMismatch)?;
+        let transaction_identity = fields
+            .get(&format!(
+                "observation_transaction.read_set.{source_index}.measurement_set_identity"
+            ))
+            .filter(|identity| is_digest(identity))
+            .ok_or(ReceiptError::IntegrityMismatch)?;
+        require_integrity(source_identity == transaction_identity)?;
+        let catalog_prefix = format!("{source_prefix}.selection.data_descriptions");
+        let count_path = format!("{catalog_prefix}.count");
+        let count = fields
+            .get(&count_path)
+            .map(String::as_str)
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|count| *count <= fields.len() / 3)
+            .ok_or(ReceiptError::IntegrityMismatch)?;
+        let selected_rows = fields
+            .get(&format!("{source_prefix}.selection.rows.selected_count"))
+            .map(String::as_str)
+            .and_then(|value| value.parse::<u64>().ok())
+            .ok_or(ReceiptError::IntegrityMismatch)?;
+        require_integrity(selected_rows == 0 || count > 0)?;
+        expected_paths.insert(count_path);
+        let mut previous_data_description = None;
+        for index in 0..count {
+            let member_prefix = format!("{catalog_prefix}.{index}");
+            let data_description_path = format!("{member_prefix}.data_description_id");
+            let spectral_window_path = format!("{member_prefix}.spectral_window_id");
+            let polarization_path = format!("{member_prefix}.polarization_id");
+            let data_description_id = fields
+                .get(&data_description_path)
+                .map(String::as_str)
+                .and_then(|value| value.parse::<u32>().ok())
+                .filter(|value| i32::try_from(*value).is_ok())
+                .ok_or(ReceiptError::IntegrityMismatch)?;
+            let spectral_window_id = fields
+                .get(&spectral_window_path)
+                .map(String::as_str)
+                .and_then(|value| value.parse::<u32>().ok());
+            let polarization_id = fields
+                .get(&polarization_path)
+                .map(String::as_str)
+                .and_then(|value| value.parse::<u32>().ok());
+            require_integrity(spectral_window_id.is_some() && polarization_id.is_some())?;
+            require_integrity(
+                previous_data_description.is_none_or(|previous| previous < data_description_id),
+            )?;
+            previous_data_description = Some(data_description_id);
+            expected_paths.extend([
+                data_description_path,
+                spectral_window_path,
+                polarization_path,
+            ]);
+        }
+    }
+    require_integrity(fields.keys().all(|path| {
+        source_member_is_within(path, "observation.sources.", source_count)
+            && source_member_is_within(path, "observation_transaction.read_set.", source_count)
+    }))?;
+    require_integrity(fields.keys().all(|path| {
+        !path.contains(".selection.data_descriptions.") || expected_paths.contains(path)
+    }))
+}
+
+fn source_member_is_within(path: &str, prefix: &str, count: usize) -> bool {
+    let Some(member) = path.strip_prefix(prefix) else {
+        return true;
+    };
+    if member == "count" {
+        return true;
+    }
+    member.split_once('.').is_some_and(|(index_text, tail)| {
+        !tail.is_empty()
+            && index_text
+                .parse::<usize>()
+                .is_ok_and(|index| index < count && index_text == index.to_string())
+    })
+}
+
+fn validate_product_graph_node(
+    node: &ProductGraphNodeEvidence,
+    source_count: usize,
+) -> Result<(), ReceiptError> {
+    let physical = node.schema == ProductSchemaProjection::CasaPagedImageF32;
+    require_integrity(
+        node.name.as_deref().is_some_and(is_redacted_text) == physical
+            && is_digest(&node.axes.geometry_identity)
+            && validate_product_axes(&node.axes)
+            && validate_product_validity(node.validity)
+            && node
+                .source_dependencies
+                .windows(2)
+                .all(|pair| pair[0] < pair[1])
+            && node
+                .source_dependencies
+                .iter()
+                .all(|source| *source < source_count)
+            && node.dependencies.windows(2).all(|pair| pair[0] < pair[1])
+            && node
+                .dependencies
+                .iter()
+                .all(|dependency| *dependency < node.node_id)
+            && match node.beam {
+                ProductBeamEvidence::Inherit(dependency) => dependency < node.node_id,
+                _ => true,
+            },
+    )?;
+    validate_product_payload(&node.payload, node.schema, node.axes.shape)
+}
+
+fn validate_product_axes(axes: &ProductAxesEvidence) -> bool {
+    let distinct_axes = axes.order.iter().copied().collect::<BTreeSet<_>>();
+    let shape_valid = match axes.kind {
+        ProductAxisKindProjection::SkyImage | ProductAxisKindProjection::PlaneState => {
+            axes.shape.iter().all(|extent| *extent > 0)
+        }
+        ProductAxisKindProjection::Metadata => axes.shape.iter().all(|extent| *extent == 0),
+    };
+    shape_valid
+        && distinct_axes.len() == axes.order.len()
+        && !axes.polarization.is_empty()
+        && match &axes.domain {
+            ImageDomainProjection::Main => true,
+            ImageDomainProjection::Outlier(name) => is_redacted_text(name),
+        }
+        && validate_direction_projection(axes.direction)
+        && validate_spectral_projection(&axes.spectral)
+}
+
+fn validate_direction_projection(direction: DirectionCoordinateProjection) -> bool {
+    let finite = |bits| f64::from_bits(bits).is_finite();
+    finite(direction.longitude_bits)
+        && finite(direction.latitude_bits)
+        && direction.reference_pixel_bits.into_iter().all(finite)
+        && direction
+            .increment_rad_bits
+            .into_iter()
+            .all(|bits| finite(bits) && f64::from_bits(bits) != 0.0)
+        && direction.pc_bits.into_iter().flatten().all(finite)
+        && direction.pole_deg_bits.into_iter().all(finite)
+}
+
+fn validate_spectral_projection(spectral: &SpectralCoordinateProjection) -> bool {
+    let finite = |bits| f64::from_bits(bits).is_finite();
+    let anchor_valid = match spectral.anchor {
+        SpectralAnchorProjection::NotApplicable => true,
+        SpectralAnchorProjection::Conversion {
+            epoch_mjd_bits,
+            direction,
+            observatory_metres_bits,
+            ..
+        } => {
+            finite(epoch_mjd_bits)
+                && finite(direction.longitude_bits)
+                && finite(direction.latitude_bits)
+                && observatory_metres_bits.into_iter().all(finite)
+        }
+    };
+    let wcs_valid = match &spectral.wcs {
+        SpectralWcsProjection::Linear {
+            channels,
+            reference_pixel_bits,
+            reference_frequency_hz_bits,
+            increment_hz_bits,
+        } => {
+            *channels > 0
+                && finite(*reference_pixel_bits)
+                && f64::from_bits(*reference_frequency_hz_bits).is_finite()
+                && f64::from_bits(*reference_frequency_hz_bits) > 0.0
+                && finite(*increment_hz_bits)
+                && f64::from_bits(*increment_hz_bits) != 0.0
+        }
+        SpectralWcsProjection::Tabular {
+            channel_centres_hz_bits,
+            channel_boundaries_hz_bits,
+        } => {
+            !channel_centres_hz_bits.is_empty()
+                && channel_boundaries_hz_bits.len() == channel_centres_hz_bits.len() + 1
+                && channel_centres_hz_bits
+                    .iter()
+                    .chain(channel_boundaries_hz_bits)
+                    .all(|bits| f64::from_bits(*bits).is_finite() && f64::from_bits(*bits) > 0.0)
+        }
+    };
+    let rest_frequency_valid = match spectral.rest_frequency {
+        RestFrequencyProjection::NotApplicable => true,
+        RestFrequencyProjection::Line(bits) => {
+            f64::from_bits(bits).is_finite() && f64::from_bits(bits) > 0.0
+        }
+    };
+    anchor_valid && wcs_valid && rest_frequency_valid
+}
+
+fn validate_product_validity(validity: ProductValidityProjection) -> bool {
+    fn primary_beam(policy: PrimaryBeamPolicyProjection) -> bool {
+        let cutoff = f32::from_bits(policy.cutoff_bits);
+        cutoff.is_finite() && cutoff > 0.0
+    }
+    fn taylor(policy: TaylorPolicyProjection) -> bool {
+        let fraction = f32::from_bits(policy.peak_fraction_bits);
+        fraction.is_finite() && fraction > 0.0 && fraction <= 1.0
+    }
+    match validity {
+        ProductValidityProjection::All | ProductValidityProjection::FinalNormalState => true,
+        ProductValidityProjection::PrimaryBeam { policy } => primary_beam(policy),
+        ProductValidityProjection::Taylor { policy } => taylor(policy),
+        ProductValidityProjection::TaylorAndPrimaryBeam {
+            taylor: taylor_policy,
+            primary_beam: primary_beam_policy,
+        } => taylor(taylor_policy) && primary_beam(primary_beam_policy),
+    }
+}
+
+fn validate_product_payload(
+    payload: &ProductPayloadEvidence,
+    schema: ProductSchemaProjection,
+    shape: [usize; 4],
+) -> Result<(), ReceiptError> {
+    let shape_elements = shape.into_iter().try_fold(1_u64, |elements, extent| {
+        elements.checked_mul(u64::try_from(extent).ok()?)
+    });
+    require_integrity(
+        payload
+            .logical_pixel_bytes
+            .checked_add(payload.identity_metadata_bytes)
+            == Some(payload.identity_envelope_bytes)
+            && payload.identity_metadata_bytes > 0
+            && match (payload.element_representation, schema) {
+                (
+                    ProductElementProjection::NotApplicable,
+                    ProductSchemaProjection::LogicalCollection
+                    | ProductSchemaProjection::CasaImageMetadata,
+                ) => payload.logical_elements == 0 && payload.logical_pixel_bytes == 0,
+                (ProductElementProjection::Float32, ProductSchemaProjection::CasaPagedImageF32) => {
+                    Some(payload.logical_elements) == shape_elements
+                        && payload.logical_elements.checked_mul(4)
+                            == Some(payload.logical_pixel_bytes)
+                }
+                _ => false,
+            },
+    )
 }
 
 fn validate_plan_projection(plan: &PlanProjection, revision: u64) -> Result<(), ReceiptError> {
@@ -3178,7 +5269,7 @@ fn validate_plan_projection(plan: &PlanProjection, revision: u64) -> Result<(), 
     for slot in &plan.physical_slots {
         require_integrity(
             is_redacted_text(&slot.slot_identity)
-                && is_redacted_text(&slot.lease_resource)
+                && lease_resource_is_valid(&slot.lease_resource)
                 && slot.capacity_bytes > 0,
         )?;
         validate_compatibility_projection(&slot.compatibility)?;
@@ -3235,6 +5326,224 @@ fn validate_plan_projection(plan: &PlanProjection, revision: u64) -> Result<(), 
     }
     require_integrity(plan.prediction.confidence_ppm <= 1_000_000)?;
     Ok(())
+}
+
+fn validate_product_execution(
+    graph: &ProductGraphEvidence,
+    plan: &PlanProjection,
+) -> Result<(), ReceiptError> {
+    let product = &plan.product_execution;
+    require_integrity(
+        product.graph_identity == graph.graph_identity
+            && is_digest(&product.generation_identity)
+            && product
+                .source_bindings
+                .iter()
+                .map(|binding| binding.source_ordinal)
+                .eq(graph.sources.iter().map(|source| source.source_ordinal))
+            && product
+                .source_bindings
+                .iter()
+                .all(|binding| is_digest(&binding.generation_identity)),
+    )?;
+    require_integrity(
+        parse_digest(&product.generation_identity) == projected_product_generation_id(product),
+    )?;
+    let publication_nodes = plan
+        .nodes
+        .iter()
+        .filter(|node| node.kind == "publication")
+        .collect::<Vec<_>>();
+    require_integrity(
+        publication_nodes.len() == 1
+            && publication_nodes[0].node_id == product.publication_node
+            && product.members.len() == graph.publication_members.len(),
+    )?;
+    let valid_events = plan
+        .nodes
+        .iter()
+        .map(|node| format!("work:{}", node.node_id))
+        .chain(
+            plan.fences
+                .iter()
+                .map(|fence| format!("fence:{}:{}", fence.node_id, fence.kind)),
+        )
+        .collect::<BTreeSet<_>>();
+    for (member, expected_node) in product
+        .members
+        .iter()
+        .zip(graph.publication_members.iter().copied())
+    {
+        require_integrity(matches!(
+            &member.participant,
+            ProductParticipantEvidence::Product(node) if *node == expected_node
+        ))?;
+        require_integrity(is_digest(&member.planned_artifact))?;
+        require_integrity(
+            parse_digest(&member.planned_artifact)
+                == projected_product_artifact_id(&product.generation_identity, expected_node),
+        )?;
+        let planned = plan
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.artifact_identity == member.planned_artifact);
+        require_integrity(planned.is_some_and(|artifact| {
+            artifact.role == "output" && artifact.node_id == product.publication_node
+        }))?;
+        let layout = &member.layout;
+        let staging = &layout.staging;
+        require_integrity(
+            is_digest(&layout.layout_identity)
+                && layout.staged_storage_bytes > 0
+                && layout.final_storage_bytes > 0
+                && layout.writer_buffer_bytes > 0
+                && plan
+                    .nodes
+                    .iter()
+                    .any(|node| node.node_id == staging.producer)
+                && dependency_owner(&staging.terminal) == Some(staging.producer.as_str())
+                && valid_events.contains(&staging.terminal)
+                && projection_depends_on_event(plan, &product.publication_node, &staging.terminal)
+                && io_buffer_is_valid(&staging.writer_buffer_kind)
+                && crate::publication_layout::is_writer_buffer(parse_io_buffer(
+                    &staging.writer_buffer_kind,
+                ))
+                && plan
+                    .allocation_generations
+                    .iter()
+                    .any(|allocation| allocation.generation_identity == staging.writer_allocation)
+                && publication_allocation_matches(
+                    plan,
+                    &staging.writer_allocation,
+                    &staging.writer_physical_slot,
+                    &staging.writer_lease_resource,
+                )
+                && plan.nodes.iter().any(|node| {
+                    node.node_id == staging.producer
+                        && node
+                            .allocation_uses
+                            .iter()
+                            .any(|usage| usage.generation_identity == staging.writer_allocation)
+                }),
+        )?;
+        match &staging.mapped_page_cache {
+            Some(mapped) => require_integrity(
+                layout.mapped_page_cache_bytes > 0
+                    && plan
+                        .nodes
+                        .iter()
+                        .any(|node| node.node_id == mapped.producer)
+                    && dependency_owner(&mapped.terminal) != Some(mapped.producer.as_str())
+                    && valid_events.contains(&mapped.terminal)
+                    && projection_depends_on_event(
+                        plan,
+                        &product.publication_node,
+                        &mapped.terminal,
+                    )
+                    && plan
+                        .allocation_generations
+                        .iter()
+                        .any(|allocation| allocation.generation_identity == mapped.allocation)
+                    && publication_allocation_matches(
+                        plan,
+                        &mapped.allocation,
+                        &mapped.physical_slot,
+                        &mapped.lease_resource,
+                    )
+                    && plan.nodes.iter().any(|node| {
+                        node.node_id == mapped.producer
+                            && node
+                                .allocation_uses
+                                .iter()
+                                .any(|usage| usage.generation_identity == mapped.allocation)
+                    }),
+            )?,
+            None => require_integrity(layout.mapped_page_cache_bytes == 0)?,
+        }
+    }
+    Ok(())
+}
+
+fn publication_allocation_matches(
+    plan: &PlanProjection,
+    allocation_identity: &str,
+    physical_slot: &str,
+    lease_resource: &str,
+) -> bool {
+    let Some(allocation) = plan
+        .allocation_generations
+        .iter()
+        .find(|allocation| allocation.generation_identity == allocation_identity)
+    else {
+        return false;
+    };
+    allocation.physical_slot == physical_slot
+        && plan.physical_slots.iter().any(|slot| {
+            slot.slot_identity == physical_slot && slot.lease_resource == lease_resource
+        })
+}
+
+fn projected_product_generation_id(product: &ProductExecutionEvidence) -> [u8; 32] {
+    let mut digest = Sha256::new();
+    canonical_bytes(&mut digest, b"casa-rs-product-generation");
+    digest.update(1_u32.to_le_bytes());
+    digest.update(parse_digest(&product.graph_identity));
+    digest.update((product.source_bindings.len() as u128).to_le_bytes());
+    for binding in &product.source_bindings {
+        digest.update((binding.source_ordinal as u128).to_le_bytes());
+        digest.update(parse_digest(&binding.generation_identity));
+    }
+    digest.finalize().into()
+}
+
+fn projected_product_artifact_id(generation: &str, node: usize) -> [u8; 32] {
+    let mut digest = Sha256::new();
+    canonical_bytes(&mut digest, b"casa-rs-product-artifact");
+    digest.update(1_u32.to_le_bytes());
+    digest.update(parse_digest(generation));
+    digest.update((node as u128).to_le_bytes());
+    digest.finalize().into()
+}
+
+fn canonical_bytes(digest: &mut Sha256, value: &[u8]) {
+    digest.update((value.len() as u128).to_le_bytes());
+    digest.update(value);
+}
+
+fn dependency_owner(value: &str) -> Option<&str> {
+    if let Some(node) = value.strip_prefix("work:") {
+        return Some(node);
+    }
+    value
+        .strip_prefix("fence:")?
+        .rsplit_once(':')
+        .map(|(node, _)| node)
+}
+
+fn projection_depends_on_event(plan: &PlanProjection, node: &str, event: &str) -> bool {
+    fn visit(
+        plan: &PlanProjection,
+        node: &str,
+        event: &str,
+        visited: &mut BTreeSet<String>,
+    ) -> bool {
+        if !visited.insert(node.to_string()) {
+            return false;
+        }
+        let Some(node) = plan
+            .nodes
+            .iter()
+            .find(|candidate| candidate.node_id == node)
+        else {
+            return false;
+        };
+        node.dependencies.iter().any(|dependency| {
+            dependency == event
+                || dependency_owner(dependency)
+                    .is_some_and(|owner| visit(plan, owner, event, visited))
+        })
+    }
+    visit(plan, node, event, &mut BTreeSet::new())
 }
 
 fn validate_resource_policy_projection(
@@ -3441,6 +5750,7 @@ fn work_kind_is_valid(value: &str) -> bool {
     matches!(
         value,
         "data_census"
+            | "observation_read"
             | "preparation"
             | "cache"
             | "convolution_function"
@@ -3634,6 +5944,7 @@ fn project_problem_fields(problem: &CompiledProblem) -> BTreeMap<String, String>
     project_reconstruction(&mut fields, problem);
     project_weighting(&mut fields, problem);
     project_products(&mut fields, problem);
+    project_observation_transaction(&mut fields, problem);
     project_numerics(&mut fields, problem);
     for (index, capability) in problem.required_capabilities().iter().enumerate() {
         evidence_field(
@@ -3645,6 +5956,88 @@ fn project_problem_fields(problem: &CompiledProblem) -> BTreeMap<String, String>
     project_geometry(&mut fields, problem.geometry());
     project_observation(&mut fields, problem.inputs());
     fields
+}
+
+fn project_observation_transaction(
+    fields: &mut BTreeMap<String, String>,
+    problem: &CompiledProblem,
+) {
+    let transaction = problem.observation_transaction();
+    evidence_field(
+        fields,
+        "observation_transaction.identity",
+        hex(&transaction.transaction_id().as_bytes()),
+    );
+    evidence_field(
+        fields,
+        "observation_transaction.snapshot_identity",
+        hex(&transaction.observation_snapshot_id().as_bytes()),
+    );
+    evidence_field(
+        fields,
+        "observation_transaction.read_set.count",
+        transaction.read_set().sources().len(),
+    );
+    for (index, source) in transaction.read_set().sources().iter().enumerate() {
+        let prefix = format!("observation_transaction.read_set.{index}");
+        evidence_field(
+            fields,
+            format!("{prefix}.measurement_set_identity"),
+            hex(&source.measurement_set().identity().as_bytes()),
+        );
+        evidence_field(
+            fields,
+            format!("{prefix}.consistency_token"),
+            hex(&source.consistency_token().identity().as_bytes()),
+        );
+    }
+    for (index, write) in transaction.write_set().model_columns().iter().enumerate() {
+        let prefix = format!("observation_transaction.write_set.model_columns.{index}");
+        evidence_field(
+            fields,
+            format!("{prefix}.measurement_set_identity"),
+            hex(&write.measurement_set().identity().as_bytes()),
+        );
+        evidence_field(
+            fields,
+            format!("{prefix}.expected_consistency_token"),
+            hex(&write.expected_consistency_token().identity().as_bytes()),
+        );
+        match write.precondition() {
+            ModelColumnPrecondition::Absent => {
+                evidence_field(fields, format!("{prefix}.precondition"), "absent");
+            }
+            ModelColumnPrecondition::Generation(identity) => {
+                evidence_field(fields, format!("{prefix}.precondition"), "generation");
+                evidence_field(
+                    fields,
+                    format!("{prefix}.precondition_generation"),
+                    hex(&identity.as_bytes()),
+                );
+            }
+        }
+        match write.disposition() {
+            ModelColumnWriteDisposition::ReplaceSelectedCells => {
+                evidence_field(
+                    fields,
+                    format!("{prefix}.disposition"),
+                    "replace_selected_cells",
+                );
+            }
+            ModelColumnWriteDisposition::CreateAndInitializeAllRows {
+                row_count,
+                initialization: ModelColumnInitialization::Zero,
+            } => {
+                evidence_field(
+                    fields,
+                    format!("{prefix}.disposition"),
+                    "create_and_initialize_all_rows",
+                );
+                evidence_field(fields, format!("{prefix}.row_count"), row_count);
+                evidence_field(fields, format!("{prefix}.initialization"), "zero");
+            }
+        }
+    }
 }
 
 fn project_science(fields: &mut BTreeMap<String, String>, problem: &CompiledProblem) {
@@ -3932,6 +6325,14 @@ fn project_products(fields: &mut BTreeMap<String, String>, problem: &CompiledPro
         fields,
         "products.restoring_beam",
         restoring_beam(products.restoring_beam()),
+    );
+    evidence_field(
+        fields,
+        "products.validity.primary_beam.cutoff",
+        format!(
+            "f32:{:08x}",
+            products.validity().primary_beam().cutoff().to_bits()
+        ),
     );
     let boundary = products.normalization_boundary();
     evidence_field(
@@ -4347,6 +6748,11 @@ fn project_observation(fields: &mut BTreeMap<String, String>, inputs: &ProblemIn
         "observation.snapshot.provenance_identity",
         hex(&snapshot.provenance_id().as_bytes()),
     );
+    evidence_field(
+        fields,
+        "observation.sources.count",
+        snapshot.sources().len(),
+    );
     for (source_index, source) in snapshot.sources().iter().enumerate() {
         let prefix = format!("observation.sources.{source_index}");
         evidence_field(
@@ -4421,8 +6827,13 @@ fn project_observation_selection(
     );
     evidence_field(
         fields,
+        format!("{prefix}.data_descriptions.count"),
+        selection.data_descriptions().len(),
+    );
+    evidence_field(
+        fields,
         format!("{prefix}.rows.sequence_identity"),
-        hex(&rows.canonical_sequence_identity().as_bytes()),
+        hex(&rows.sequence_id().as_bytes()),
     );
     let row_filter = selection.rows_filter();
     project_id_selection(
@@ -4465,6 +6876,24 @@ fn project_observation_selection(
         &format!("{prefix}.row_filter.arrays"),
         row_filter.arrays(),
     );
+    for (index, data_description) in selection.data_descriptions().iter().enumerate() {
+        let data_description_prefix = format!("{prefix}.data_descriptions.{index}");
+        evidence_field(
+            fields,
+            format!("{data_description_prefix}.data_description_id"),
+            data_description.data_description_id(),
+        );
+        evidence_field(
+            fields,
+            format!("{data_description_prefix}.spectral_window_id"),
+            data_description.spectral_window_id(),
+        );
+        evidence_field(
+            fields,
+            format!("{data_description_prefix}.polarization_id"),
+            data_description.polarization_id(),
+        );
+    }
     for (index, window) in selection.spectral_windows().iter().enumerate() {
         let window_prefix = format!("{prefix}.spectral_windows.{index}");
         evidence_field(
@@ -4472,13 +6901,6 @@ fn project_observation_selection(
             format!("{window_prefix}.spectral_window_id"),
             window.spectral_window_id(),
         );
-        for (item, id) in window.data_description_ids().iter().enumerate() {
-            evidence_field(
-                fields,
-                format!("{window_prefix}.data_description_ids.{item}"),
-                *id,
-            );
-        }
         for (item, channel) in window.channel_indices().iter().enumerate() {
             evidence_field(
                 fields,
@@ -5177,6 +7599,7 @@ fn reference_kind(kind: ReferenceDataKind) -> &'static str {
 fn work_kind(kind: WorkKind) -> &'static str {
     match kind {
         WorkKind::DataCensus => "data_census",
+        WorkKind::ObservationRead => "observation_read",
         WorkKind::Preparation => "preparation",
         WorkKind::Cache => "cache",
         WorkKind::ConvolutionFunction => "convolution_function",
@@ -5213,6 +7636,22 @@ fn dependency(dependency: &WorkDependency) -> String {
             fence_kind(fence.kind())
         ),
     }
+}
+
+fn parse_dependency(value: &str) -> WorkDependency {
+    if let Some(node) = value.strip_prefix("work:") {
+        return WorkDependency::Work(WorkNodeId::new(node.to_string()));
+    }
+    let value = value
+        .strip_prefix("fence:")
+        .expect("validated receipt dependency projection");
+    let (node, kind) = value
+        .rsplit_once(':')
+        .expect("validated receipt fence dependency projection");
+    WorkDependency::Fence(FenceId::new(
+        WorkNodeId::new(node.to_string()),
+        parse_fence_kind(kind),
+    ))
 }
 
 fn claim_lifetime(lifetime: &ClaimLifetime) -> String {
@@ -5288,7 +7727,178 @@ fn lease_resource(resource: &LeaseResource) -> String {
         }
         LeaseResource::ResidentCache => "resident_cache".to_string(),
         LeaseResource::Locks => "locks".to_string(),
+        LeaseResource::MeasurementSetLock { measurement_set } => {
+            format!(
+                "measurement_set_lock:{}",
+                hex(&measurement_set.identity().as_bytes())
+            )
+        }
         LeaseResource::FileDescriptors => "file_descriptors".to_string(),
+    }
+}
+
+fn parse_lease_resource(value: &str) -> LeaseResource {
+    if let Some(allocation_id) = value.strip_prefix("memory:") {
+        return LeaseResource::Memory {
+            allocation_id: allocation_id.to_string(),
+        };
+    }
+    if let Some(kind) = value.strip_prefix("runtime_overhead:") {
+        return LeaseResource::RuntimeOverhead(parse_runtime_overhead(kind));
+    }
+    if let Some(kind) = value.strip_prefix("io_buffer:") {
+        return LeaseResource::IoBuffer(parse_io_buffer(kind));
+    }
+    if let Some(storage) = value.strip_prefix("storage:") {
+        let (demand_id, use_kind) = storage
+            .rsplit_once(':')
+            .expect("validated receipt storage lease resource");
+        return LeaseResource::Storage {
+            demand_id: demand_id.to_string(),
+            use_kind: parse_storage_use(use_kind),
+        };
+    }
+    if let Some(demand_id) = value.strip_prefix("storage_read_rate:") {
+        return LeaseResource::StorageReadRate {
+            demand_id: demand_id.to_string(),
+        };
+    }
+    if let Some(demand_id) = value.strip_prefix("storage_write_rate:") {
+        return LeaseResource::StorageWriteRate {
+            demand_id: demand_id.to_string(),
+        };
+    }
+    if let Some(demand_id) = value.strip_prefix("storage_operations_rate:") {
+        return LeaseResource::StorageOperationsRate {
+            demand_id: demand_id.to_string(),
+        };
+    }
+    if let Some(demand_id) = value.strip_prefix("storage_queue:") {
+        return LeaseResource::StorageQueue {
+            demand_id: demand_id.to_string(),
+        };
+    }
+    if let Some(demand_id) = value.strip_prefix("rate:") {
+        return LeaseResource::Rate {
+            demand_id: demand_id.to_string(),
+        };
+    }
+    if let Some(demand_id) = value.strip_prefix("queue:") {
+        return LeaseResource::Queue {
+            demand_id: demand_id.to_string(),
+        };
+    }
+    if let Some(demand_id) = value.strip_prefix("transfer_rate:") {
+        return LeaseResource::TransferRate {
+            demand_id: demand_id.to_string(),
+        };
+    }
+    if let Some(demand_id) = value.strip_prefix("transfer_queue:") {
+        return LeaseResource::TransferQueue {
+            demand_id: demand_id.to_string(),
+        };
+    }
+    if let Some(demand_id) = value.strip_prefix("accelerator:") {
+        return LeaseResource::Accelerator {
+            demand_id: demand_id.to_string(),
+        };
+    }
+    if let Some(demand_id) = value.strip_prefix("accelerator_queue:") {
+        return LeaseResource::AcceleratorCommandQueue {
+            demand_id: demand_id.to_string(),
+        };
+    }
+    if let Some(measurement_set) = value.strip_prefix("measurement_set_lock:") {
+        return LeaseResource::MeasurementSetLock {
+            measurement_set: casa_imaging_model::MeasurementSetIdentity::new(
+                LogicalIdentity::from_sha256(parse_digest(measurement_set)),
+            ),
+        };
+    }
+    match value {
+        "workers" => LeaseResource::Workers,
+        "resident_cache" => LeaseResource::ResidentCache,
+        "locks" => LeaseResource::Locks,
+        "file_descriptors" => LeaseResource::FileDescriptors,
+        _ => unreachable!("validated receipt lease-resource projection"),
+    }
+}
+
+fn lease_resource_is_valid(value: &str) -> bool {
+    if let Some(allocation_id) = value.strip_prefix("memory:") {
+        return is_redacted_text(allocation_id);
+    }
+    if let Some(kind) = value.strip_prefix("runtime_overhead:") {
+        return matches!(
+            kind,
+            "thread_stack"
+                | "allocator_fragmentation"
+                | "external_library"
+                | "fft_workspace"
+                | "driver"
+                | "jit"
+                | "command_buffer"
+        );
+    }
+    if let Some(kind) = value.strip_prefix("io_buffer:") {
+        return io_buffer_is_valid(kind);
+    }
+    if let Some(storage) = value.strip_prefix("storage:") {
+        return storage
+            .rsplit_once(':')
+            .is_some_and(|(demand_id, use_kind)| {
+                is_redacted_text(demand_id)
+                    && matches!(
+                        use_kind,
+                        "temporary" | "staged_output" | "final_output" | "persistent_cache"
+                    )
+            });
+    }
+    for prefix in [
+        "storage_read_rate:",
+        "storage_write_rate:",
+        "storage_operations_rate:",
+        "storage_queue:",
+        "rate:",
+        "queue:",
+        "transfer_rate:",
+        "transfer_queue:",
+        "accelerator:",
+        "accelerator_queue:",
+    ] {
+        if let Some(demand_id) = value.strip_prefix(prefix) {
+            return is_redacted_text(demand_id);
+        }
+    }
+    if let Some(measurement_set) = value.strip_prefix("measurement_set_lock:") {
+        return is_digest(measurement_set);
+    }
+    matches!(
+        value,
+        "workers" | "resident_cache" | "locks" | "file_descriptors"
+    )
+}
+
+fn parse_runtime_overhead(value: &str) -> crate::RuntimeOverheadKind {
+    match value {
+        "thread_stack" => crate::RuntimeOverheadKind::ThreadStack,
+        "allocator_fragmentation" => crate::RuntimeOverheadKind::AllocatorFragmentation,
+        "external_library" => crate::RuntimeOverheadKind::ExternalLibrary,
+        "fft_workspace" => crate::RuntimeOverheadKind::FftWorkspace,
+        "driver" => crate::RuntimeOverheadKind::Driver,
+        "jit" => crate::RuntimeOverheadKind::Jit,
+        "command_buffer" => crate::RuntimeOverheadKind::CommandBuffer,
+        _ => unreachable!("validated receipt runtime-overhead projection"),
+    }
+}
+
+fn parse_storage_use(value: &str) -> crate::StorageUseKind {
+    match value {
+        "temporary" => crate::StorageUseKind::Temporary,
+        "staged_output" => crate::StorageUseKind::StagedOutput,
+        "final_output" => crate::StorageUseKind::FinalOutput,
+        "persistent_cache" => crate::StorageUseKind::PersistentCache,
+        _ => unreachable!("validated receipt storage-use projection"),
     }
 }
 
@@ -5329,6 +7939,26 @@ fn io_buffer(kind: crate::IoBufferKind) -> &'static str {
         crate::IoBufferKind::Writeback => "writeback",
         crate::IoBufferKind::Publication => "publication",
         crate::IoBufferKind::MappedPageCache => "mapped_page_cache",
+    }
+}
+
+fn parse_io_buffer(value: &str) -> IoBufferKind {
+    match value {
+        "source_read_ahead" => IoBufferKind::SourceReadAhead,
+        "decode" => IoBufferKind::Decode,
+        "preparation" => IoBufferKind::Preparation,
+        "host_to_device_transfer" => IoBufferKind::HostToDeviceTransfer,
+        "device_to_host_transfer" => IoBufferKind::DeviceToHostTransfer,
+        "spill_read" => IoBufferKind::SpillRead,
+        "spill_write" => IoBufferKind::SpillWrite,
+        "serialization" => IoBufferKind::Serialization,
+        "storage_manager" => IoBufferKind::StorageManager,
+        "tiled_column_writer" => IoBufferKind::TiledColumnWriter,
+        "scalar_column_writer" => IoBufferKind::ScalarColumnWriter,
+        "writeback" => IoBufferKind::Writeback,
+        "publication" => IoBufferKind::Publication,
+        "mapped_page_cache" => IoBufferKind::MappedPageCache,
+        _ => unreachable!("validated receipt I/O-buffer projection"),
     }
 }
 
@@ -5445,7 +8075,211 @@ fn write_hex(formatter: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{maximum_json_serialized_text, stable_float};
+    use std::collections::BTreeMap;
+
+    use super::{
+        ReceiptError, maximum_json_serialized_text, stable_float,
+        validate_data_description_evidence,
+    };
+
+    #[test]
+    fn compiled_problem_evidence_requires_complete_data_description_tuples() {
+        let mut fields = BTreeMap::from([
+            ("observation.sources.count".to_string(), "1".to_string()),
+            (
+                "observation_transaction.read_set.count".to_string(),
+                "1".to_string(),
+            ),
+            (
+                "observation.sources.0.measurement_set_identity".to_string(),
+                "00".repeat(32),
+            ),
+            (
+                "observation_transaction.read_set.0.measurement_set_identity".to_string(),
+                "00".repeat(32),
+            ),
+            (
+                "observation.sources.0.selection.rows.selected_count".to_string(),
+                "1".to_string(),
+            ),
+            (
+                "observation.sources.0.selection.data_descriptions.count".to_string(),
+                "1".to_string(),
+            ),
+            (
+                "observation.sources.0.selection.data_descriptions.0.data_description_id"
+                    .to_string(),
+                "0".to_string(),
+            ),
+            (
+                "observation.sources.0.selection.data_descriptions.0.spectral_window_id"
+                    .to_string(),
+                "2".to_string(),
+            ),
+            (
+                "observation.sources.0.selection.data_descriptions.0.polarization_id".to_string(),
+                "3".to_string(),
+            ),
+        ]);
+        assert!(validate_data_description_evidence(&fields).is_ok());
+
+        let mut empty_catalog = fields.clone();
+        empty_catalog.insert(
+            "observation.sources.0.selection.data_descriptions.count".to_string(),
+            "0".to_string(),
+        );
+        empty_catalog.retain(|path, _| {
+            !path.starts_with("observation.sources.0.selection.data_descriptions.0.")
+        });
+        assert!(matches!(
+            validate_data_description_evidence(&empty_catalog),
+            Err(ReceiptError::IntegrityMismatch)
+        ));
+
+        let polarization = fields
+            .remove("observation.sources.0.selection.data_descriptions.0.polarization_id")
+            .expect("polarization fixture");
+        assert!(matches!(
+            validate_data_description_evidence(&fields),
+            Err(ReceiptError::IntegrityMismatch)
+        ));
+        fields.insert(
+            "observation.sources.0.selection.data_descriptions.0.polarization_id".to_string(),
+            polarization,
+        );
+        fields.insert(
+            "observation.sources.0.selection.data_descriptions.1.data_description_id".to_string(),
+            "1".to_string(),
+        );
+        assert!(matches!(
+            validate_data_description_evidence(&fields),
+            Err(ReceiptError::IntegrityMismatch)
+        ));
+    }
+
+    #[test]
+    fn compiled_problem_evidence_requires_exact_contiguous_observation_sources() {
+        let mut fields = BTreeMap::from([
+            ("observation.sources.count".to_string(), "2".to_string()),
+            (
+                "observation_transaction.read_set.count".to_string(),
+                "2".to_string(),
+            ),
+        ]);
+        for index in 0..2 {
+            let source = format!("observation.sources.{index}");
+            let read = format!("observation_transaction.read_set.{index}");
+            fields.insert(
+                format!("{source}.measurement_set_identity"),
+                format!("{index:064x}"),
+            );
+            fields.insert(
+                format!("{read}.measurement_set_identity"),
+                format!("{index:064x}"),
+            );
+            fields.insert(
+                format!("{source}.selection.rows.selected_count"),
+                "1".to_string(),
+            );
+            fields.insert(
+                format!("{source}.selection.data_descriptions.count"),
+                "1".to_string(),
+            );
+            fields.insert(
+                format!("{source}.selection.data_descriptions.0.data_description_id"),
+                index.to_string(),
+            );
+            fields.insert(
+                format!("{source}.selection.data_descriptions.0.spectral_window_id"),
+                index.to_string(),
+            );
+            fields.insert(
+                format!("{source}.selection.data_descriptions.0.polarization_id"),
+                index.to_string(),
+            );
+        }
+        assert!(validate_data_description_evidence(&fields).is_ok());
+
+        let source_one = fields
+            .iter()
+            .filter(|(path, _)| path.starts_with("observation.sources.1."))
+            .map(|(path, value)| (path.clone(), value.clone()))
+            .collect::<Vec<_>>();
+        for (path, _) in &source_one {
+            fields.remove(path);
+        }
+        assert!(matches!(
+            validate_data_description_evidence(&fields),
+            Err(ReceiptError::IntegrityMismatch)
+        ));
+        for (path, value) in source_one {
+            fields.insert(path, value);
+        }
+
+        fields.insert(
+            "observation.sources.2.measurement_set_identity".to_string(),
+            "02".repeat(32),
+        );
+        assert!(matches!(
+            validate_data_description_evidence(&fields),
+            Err(ReceiptError::IntegrityMismatch)
+        ));
+        fields.remove("observation.sources.2.measurement_set_identity");
+
+        fields.insert(
+            "observation.sources.01.measurement_set_identity".to_string(),
+            "01".repeat(32),
+        );
+        assert!(matches!(
+            validate_data_description_evidence(&fields),
+            Err(ReceiptError::IntegrityMismatch)
+        ));
+        fields.remove("observation.sources.01.measurement_set_identity");
+        fields.insert(
+            "observation.sources.0.".to_string(),
+            "malformed".to_string(),
+        );
+        assert!(matches!(
+            validate_data_description_evidence(&fields),
+            Err(ReceiptError::IntegrityMismatch)
+        ));
+        fields.remove("observation.sources.0.");
+
+        let source_zero_catalog = "observation.sources.0.selection.data_descriptions";
+        fields.insert(format!("{source_zero_catalog}.count"), "2".to_string());
+        for (field, value) in [
+            ("data_description_id", "1"),
+            ("spectral_window_id", "1"),
+            ("polarization_id", "1"),
+        ] {
+            fields.insert(
+                format!("{source_zero_catalog}.1.{field}"),
+                value.to_string(),
+            );
+        }
+        assert!(validate_data_description_evidence(&fields).is_ok());
+        fields.insert(
+            format!("{source_zero_catalog}.1.data_description_id"),
+            "0".to_string(),
+        );
+        assert!(matches!(
+            validate_data_description_evidence(&fields),
+            Err(ReceiptError::IntegrityMismatch)
+        ));
+        fields.insert(
+            format!("{source_zero_catalog}.1.data_description_id"),
+            "1".to_string(),
+        );
+
+        fields.insert(
+            "observation.sources.count".to_string(),
+            usize::MAX.to_string(),
+        );
+        assert!(matches!(
+            validate_data_description_evidence(&fields),
+            Err(ReceiptError::IntegrityMismatch)
+        ));
+    }
 
     #[test]
     fn stable_float_canonicalizes_only_signed_zero() {

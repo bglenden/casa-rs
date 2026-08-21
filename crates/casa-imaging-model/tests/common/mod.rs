@@ -2,13 +2,13 @@
 
 use casa_imaging_model::{
     AntennaSelection, ColumnGeneration, ConsistencyToken, CorrelationProduct, CorrelationSelection,
-    CorrelationType, FlagPolicy, IdSelection, IntentSelection, LogicalIdentity,
-    MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, ModelColumnState,
-    ModelStateIdentity, MsColumnKind, ObservationSelection, ObservationSnapshot,
+    CorrelationType, DataDescriptionSelection, FlagPolicy, IdSelection, IntentSelection,
+    LogicalIdentity, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
+    ModelColumnState, ModelStateIdentity, MsColumnKind, ObservationSelection, ObservationSnapshot,
     ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
-    ProblemInputIdentities, ReferenceDataKind, RowSelection, SelectedColumns, SelectedRows,
-    SourceGenerations, SpectralWindowSelection, TimeSelection, UvSelection, VisibilityColumn,
-    WeightColumn, compile_observation,
+    ProblemInputIdentities, ReferenceDataKind, RowSelection, SelectedColumns, SelectedMainRow,
+    SelectedRows, SourceGenerations, SpectralWindowSelection, TimeSelection, UvSelection,
+    VisibilityColumn, WeightColumn, compile_observation,
 };
 
 pub fn identity(byte: u8) -> LogicalIdentity {
@@ -104,7 +104,8 @@ pub fn observation_source_with_model_state(
         })
         .collect();
     let selection = ObservationSelection::new(
-        SelectedRows::new(1, 1, scoped_identity(observation, 2)),
+        SelectedRows::from_ordered_main_rows(1, [SelectedMainRow::new(0, 0)])
+            .expect("single selected MAIN row fixture"),
         RowSelection::new(
             IdSelection::All,
             TimeSelection::All,
@@ -115,7 +116,8 @@ pub fn observation_source_with_model_state(
             IntentSelection::All,
             IdSelection::All,
         ),
-        vec![SpectralWindowSelection::new(0, vec![0], vec![0])],
+        vec![DataDescriptionSelection::new(0, 0, 0)],
+        vec![SpectralWindowSelection::new(0, vec![0])],
         vec![CorrelationSelection::new(
             0,
             vec![CorrelationProduct::new(0, CorrelationType::StokesI)],

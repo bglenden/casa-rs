@@ -8,7 +8,7 @@ use crate::compiled_problem::CanonicalEncoder;
 use crate::{
     ColumnGeneration, ConsistencyToken, LogicalIdentity, MeasurementSetIdentity,
     MetadataGeneration, ModelColumnState, MsColumnKind, ObservationSelection, ObservationSnapshot,
-    ObservationSnapshotId,
+    ObservationSnapshotId, SelectedColumns,
 };
 
 const OBSERVATION_TRANSACTION_IDENTITY_DOMAIN: &[u8] = b"casa-rs-observation-transaction";
@@ -105,7 +105,7 @@ impl ObservationTransactionRequirements {
 pub struct MeasurementSetReadAccess {
     measurement_set: MeasurementSetIdentity,
     selection: ObservationSelection,
-    column_generations: Vec<ColumnGeneration>,
+    selected_columns: SelectedColumns,
     metadata: Vec<MetadataGeneration>,
     consistency_token: ConsistencyToken,
 }
@@ -123,10 +123,16 @@ impl MeasurementSetReadAccess {
         &self.selection
     }
 
+    /// Return exact visibility, flag, weight, and generated-column semantics.
+    #[must_use]
+    pub const fn selected_columns(&self) -> &SelectedColumns {
+        &self.selected_columns
+    }
+
     /// Return every MAIN column read and its exact generation, in canonical order.
     #[must_use]
     pub fn column_generations(&self) -> &[ColumnGeneration] {
-        &self.column_generations
+        self.selected_columns.generations()
     }
 
     /// Return every metadata-table generation read, in canonical order.
@@ -269,7 +275,7 @@ pub fn compile_observation_transaction(
             .map(|source| MeasurementSetReadAccess {
                 measurement_set: source.identity(),
                 selection: source.selection().clone(),
-                column_generations: source.generations().columns().generations().to_vec(),
+                selected_columns: source.generations().columns().clone(),
                 metadata: source.generations().metadata_generations().to_vec(),
                 consistency_token: source.generations().consistency_token(),
             })

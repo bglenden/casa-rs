@@ -14,18 +14,38 @@ use casa_imaging_model::{
     ObservationPointingLaw, ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw,
     PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
     PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
-    ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements, Projection,
-    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
-    ReductionPolicy, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
-    WeightDensityScope, WeightingContract, WeightingScheme,
+    PrimaryBeamValidityPolicy, ProblemSpecification, ProductBlankingPolicy, ProductKind,
+    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
+    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
+    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy,
+    ScientificContract, SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
+    SpectralFrameAnchor, SpectralSampling, SpectralWcs, StageErrorBudget, TaylorSupportReference,
+    TaylorValidityPolicy, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
+    WeightingContract, WeightingScheme,
 };
 
 #[path = "../tests/common/mod.rs"]
 mod common;
 
 use common::problem_inputs;
+
+fn validity_policies() -> ProductValidityPolicies {
+    ProductValidityPolicies::new(
+        PrimaryBeamValidityPolicy::new(
+            0.2,
+            ProductSupportComparison::StrictlyGreater,
+            ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid PB policy fixture"),
+        TaylorValidityPolicy::new(
+            TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
+            0.1,
+            ProductSupportComparison::StrictlyGreater,
+            ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid Taylor policy fixture"),
+    )
+}
 
 use super::{
     DispatchError, ImagingRouter, LegacyWholeRunEnginePort, MIGRATION_MATRIX_JSON,
@@ -42,7 +62,7 @@ const STANDARD_DIRTY_ROWS: [&str; 7] = [
     "product.psf",
 ];
 
-const MTMFS_ROWS: [&str; 9] = [
+const MTMFS_ROWS: [&str; 10] = [
     "capability.compiled-problem",
     "capability.major-minor-cycles",
     "capability.ms-selection",
@@ -50,6 +70,7 @@ const MTMFS_ROWS: [&str; 9] = [
     "capability.observation-transaction",
     "capability.standard-gridder",
     "capability.stokes-i",
+    "product.psf",
     "product.taylor-terms",
     "solver.mtmfs",
 ];
@@ -161,7 +182,7 @@ fn matrix_contract_revision_is_a_positive_u32() {
     .unwrap();
 
     let revision: u32 = routed.route().matrix_contract_revision();
-    assert_eq!(revision, 8);
+    assert_eq!(revision, 9);
 
     for invalid in [serde_json::json!(0), serde_json::json!("5")] {
         let mut matrix = serde_json::from_str::<serde_json::Value>(MIGRATION_MATRIX_JSON).unwrap();
@@ -353,6 +374,7 @@ fn standard_dirty_request_with(model_column_write: ModelColumnWrite) -> ImagingR
             vec![ProductKind::Psf],
             ProductNormalization::UnitResponse,
             RestoringBeamPolicy::None,
+            validity_policies(),
         ),
         model_column_write,
     )
@@ -367,9 +389,10 @@ fn mtmfs_request() -> ImagingRequest {
             PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         ),
         ProductRequirements::new(
-            vec![ProductKind::TaylorTerms],
+            vec![ProductKind::Psf, ProductKind::TaylorTerms],
             ProductNormalization::UnitResponse,
             RestoringBeamPolicy::None,
+            validity_policies(),
         ),
         ModelColumnWrite::Disabled,
     )

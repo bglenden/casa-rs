@@ -11,9 +11,11 @@ use crate::compiled_problem::{
 };
 
 const OBSERVATION_SNAPSHOT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-observation-snapshot";
-const OBSERVATION_SNAPSHOT_IDENTITY_VERSION: u32 = 2;
+const OBSERVATION_SNAPSHOT_IDENTITY_VERSION: u32 = 4;
 const OBSERVATION_PROVENANCE_IDENTITY_DOMAIN: &[u8] = b"casa-rs-observation-provenance";
 const OBSERVATION_PROVENANCE_IDENTITY_VERSION: u32 = 1;
+const SELECTED_ROW_SEQUENCE_IDENTITY_DOMAIN: &[u8] = b"casa-rs-selected-row-sequence";
+const SELECTED_ROW_SEQUENCE_IDENTITY_VERSION: u32 = 2;
 
 const REQUIRED_COORDINATE_COLUMNS: [MsColumnKind; 15] = [
     MsColumnKind::Uvw,
@@ -521,27 +523,218 @@ impl RowSelection {
     }
 }
 
-/// Compact exact identity of selected MAIN rows in physical row order.
+/// Stable storage-owner-reproducible identity of selected MAIN row coordinates.
+///
+/// There is deliberately no constructor from raw digest bytes. The identity
+/// can only be minted by validating and hashing the exact ordered row sequence.
+///
+/// ```compile_fail
+/// use casa_imaging_model::SelectedRowSequenceId;
+///
+/// let _ = SelectedRowSequenceId::from_sha256([0; 32]);
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SelectedRowSequenceId(LogicalIdentity);
+
+impl SelectedRowSequenceId {
+    /// Identity schema version used by the canonical encoder.
+    pub const SCHEMA_VERSION: u32 = SELECTED_ROW_SEQUENCE_IDENTITY_VERSION;
+
+    /// Return the exact SHA-256 digest.
+    #[must_use]
+    pub const fn as_bytes(self) -> [u8; 32] {
+        self.0.as_bytes()
+    }
+}
+
+/// One selected physical MAIN row and its resolved `DATA_DESC_ID`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SelectedMainRow {
+    physical_row: u64,
+    data_description_id: u32,
+}
+
+impl SelectedMainRow {
+    /// Construct one resolved MAIN row coordinate.
+    #[must_use]
+    pub const fn new(physical_row: u64, data_description_id: u32) -> Self {
+        Self {
+            physical_row,
+            data_description_id,
+        }
+    }
+
+    /// Return the physical MAIN row index.
+    #[must_use]
+    pub const fn physical_row(self) -> u64 {
+        self.physical_row
+    }
+
+    /// Return the resolved `DATA_DESC_ID` read from the MAIN row.
+    #[must_use]
+    pub const fn data_description_id(self) -> u32 {
+        self.data_description_id
+    }
+}
+
+impl fmt::Debug for SelectedRowSequenceId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "SelectedRowSequenceId({})", self.0)
+    }
+}
+
+impl fmt::Display for SelectedRowSequenceId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+/// Failure to create a canonical selected-row sequence manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum SelectedRowSequenceError {
+    /// The iterator's declared or observed row count cannot be represented canonically.
+    #[error("selected physical MAIN row count exceeds the canonical u64 domain")]
+    RowCountOverflow,
+    /// An iterator yielded a different number of rows than its exact-size contract declared.
+    #[error(
+        "selected physical MAIN row iterator declared {declared_row_count} rows but yielded {observed_row_count}"
+    )]
+    DeclaredRowCountMismatch {
+        /// Count declared by the exact-size iterator.
+        declared_row_count: u64,
+        /// Count actually observed while hashing rows.
+        observed_row_count: u64,
+    },
+    /// A physical row lies outside the captured MAIN row population.
+    #[error("physical MAIN row {row} lies outside source row count {source_row_count}")]
+    PhysicalRowOutOfRange {
+        /// Invalid physical row index.
+        row: u64,
+        /// Captured MAIN row population.
+        source_row_count: u64,
+    },
+    /// A physical row appeared more than once.
+    #[error("physical MAIN row {row} appears more than once")]
+    DuplicatePhysicalRow {
+        /// Duplicate physical row index.
+        row: u64,
+    },
+    /// Physical rows were not supplied in ascending MAIN order.
+    #[error("physical MAIN row {row} follows later row {previous_row}")]
+    DescendingPhysicalRow {
+        /// Prior physical row index.
+        previous_row: u64,
+        /// Descending physical row index.
+        row: u64,
+    },
+}
+
+/// Failure to reproduce a compiled selected-row manifest from a storage replay.
+#[derive(Debug, Error)]
+pub enum SelectedRowManifestValidationError<E>
+where
+    E: std::error::Error + 'static,
+{
+    /// The retained storage source could not produce the next row coordinate.
+    #[error("selected MAIN row replay failed")]
+    Source(#[source] E),
+    /// The replay produced an intrinsically invalid row sequence.
+    #[error(transparent)]
+    InvalidSequence(#[from] SelectedRowSequenceError),
+    /// The replay was valid but did not reproduce the compiled compact manifest.
+    #[error(
+        "selected MAIN row replay produced {observed_row_count} rows with sequence {observed_sequence_id}, expected {expected_row_count} rows with sequence {expected_sequence_id}"
+    )]
+    ManifestMismatch {
+        /// Compiled selected-row count.
+        expected_row_count: u64,
+        /// Replayed selected-row count.
+        observed_row_count: u64,
+        /// Compiled row/DDID sequence identity.
+        expected_sequence_id: SelectedRowSequenceId,
+        /// Replayed row/DDID sequence identity.
+        observed_sequence_id: SelectedRowSequenceId,
+    },
+}
+
+/// Compact exact manifest of selected MAIN row/DDID coordinates in physical row order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectedRows {
     source_row_count: u64,
     selected_row_count: u64,
-    canonical_sequence_identity: LogicalIdentity,
+    sequence_id: SelectedRowSequenceId,
+    used_data_description_ids: Vec<u32>,
 }
 
 impl SelectedRows {
-    /// Construct a row-sequence manifest without retaining row or sample arrays.
-    #[must_use]
-    pub const fn new(
+    /// Validate and identify MAIN row/DDID coordinates without retaining the row array.
+    ///
+    /// Validation is streaming and reports the first encountered invalid row.
+    /// Each row is checked for range, then adjacent duplication, then descending
+    /// order. A non-adjacent repetition necessarily encounters descending order
+    /// first, so no selection-sized duplicate set is retained.
+    pub fn from_ordered_main_rows<I>(
         source_row_count: u64,
-        selected_row_count: u64,
-        canonical_sequence_identity: LogicalIdentity,
-    ) -> Self {
-        Self {
+        rows: I,
+    ) -> Result<Self, SelectedRowSequenceError>
+    where
+        I: IntoIterator<Item = SelectedMainRow>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        let rows = rows.into_iter();
+        let selected_row_count =
+            u64::try_from(rows.len()).map_err(|_| SelectedRowSequenceError::RowCountOverflow)?;
+        let mut accumulator =
+            SelectedRowSequenceAccumulator::new(source_row_count, selected_row_count);
+        for row in rows {
+            accumulator.push(row)?;
+        }
+        let (observed_row_count, sequence_id, used_data_description_ids) = accumulator.finish();
+        if observed_row_count != selected_row_count {
+            return Err(SelectedRowSequenceError::DeclaredRowCountMismatch {
+                declared_row_count: selected_row_count,
+                observed_row_count,
+            });
+        }
+        Ok(Self {
             source_row_count,
             selected_row_count,
-            canonical_sequence_identity,
+            sequence_id,
+            used_data_description_ids,
+        })
+    }
+
+    /// Validate a fallible storage replay against this compact row/DDID manifest.
+    ///
+    /// The replay is inspected in one pass and is not retained. This operation
+    /// establishes only equality with the compiled row manifest; it does not
+    /// mint selected-observation completion or storage-consistency authority.
+    pub fn validate_ordered_main_rows<I, E>(
+        &self,
+        rows: I,
+    ) -> Result<(), SelectedRowManifestValidationError<E>>
+    where
+        I: IntoIterator<Item = Result<SelectedMainRow, E>>,
+        E: std::error::Error + 'static,
+    {
+        let mut accumulator =
+            SelectedRowSequenceAccumulator::new(self.source_row_count, self.selected_row_count);
+        for row in rows {
+            accumulator
+                .push(row.map_err(SelectedRowManifestValidationError::Source)?)
+                .map_err(SelectedRowManifestValidationError::InvalidSequence)?;
         }
+        let (observed_row_count, observed_sequence_id, _) = accumulator.finish();
+        if observed_row_count != self.selected_row_count || observed_sequence_id != self.sequence_id
+        {
+            return Err(SelectedRowManifestValidationError::ManifestMismatch {
+                expected_row_count: self.selected_row_count,
+                observed_row_count,
+                expected_sequence_id: self.sequence_id,
+                observed_sequence_id,
+            });
+        }
+        Ok(())
     }
 
     /// Return the source MAIN row count at capture.
@@ -556,10 +749,123 @@ impl SelectedRows {
         self.selected_row_count
     }
 
-    /// Return the digest of selected physical row numbers in ascending MAIN order.
+    /// Return the canonical identity of selected row/DDID coordinates in MAIN order.
     #[must_use]
-    pub const fn canonical_sequence_identity(&self) -> LogicalIdentity {
-        self.canonical_sequence_identity
+    pub const fn sequence_id(&self) -> SelectedRowSequenceId {
+        self.sequence_id
+    }
+
+    fn used_data_description_ids(&self) -> &[u32] {
+        &self.used_data_description_ids
+    }
+}
+
+pub(crate) struct SelectedRowSequenceAccumulator {
+    source_row_count: u64,
+    encoder: CanonicalEncoder,
+    observed_row_count: u64,
+    previous_row: Option<u64>,
+    used_data_description_ids: BTreeSet<u32>,
+}
+
+impl SelectedRowSequenceAccumulator {
+    pub(crate) fn new(source_row_count: u64, expected_row_count: u64) -> Self {
+        let mut encoder = CanonicalEncoder::new();
+        encoder.bytes(SELECTED_ROW_SEQUENCE_IDENTITY_DOMAIN);
+        encoder.u32(SELECTED_ROW_SEQUENCE_IDENTITY_VERSION);
+        encoder.u64(expected_row_count);
+        Self {
+            source_row_count,
+            encoder,
+            observed_row_count: 0,
+            previous_row: None,
+            used_data_description_ids: BTreeSet::new(),
+        }
+    }
+
+    pub(crate) fn push(
+        &mut self,
+        selected: SelectedMainRow,
+    ) -> Result<(), SelectedRowSequenceError> {
+        let row = selected.physical_row;
+        self.observed_row_count = self
+            .observed_row_count
+            .checked_add(1)
+            .ok_or(SelectedRowSequenceError::RowCountOverflow)?;
+        if row >= self.source_row_count {
+            return Err(SelectedRowSequenceError::PhysicalRowOutOfRange {
+                row,
+                source_row_count: self.source_row_count,
+            });
+        }
+        if self.previous_row == Some(row) {
+            return Err(SelectedRowSequenceError::DuplicatePhysicalRow { row });
+        }
+        if let Some(previous_row) = self.previous_row
+            && row < previous_row
+        {
+            return Err(SelectedRowSequenceError::DescendingPhysicalRow { previous_row, row });
+        }
+        self.encoder.u64(row);
+        self.encoder.u32(selected.data_description_id);
+        self.used_data_description_ids
+            .insert(selected.data_description_id);
+        self.previous_row = Some(row);
+        Ok(())
+    }
+
+    pub(crate) fn finish(self) -> (u64, SelectedRowSequenceId, Vec<u32>) {
+        (
+            self.observed_row_count,
+            SelectedRowSequenceId(LogicalIdentity::from_sha256(self.encoder.finish())),
+            self.used_data_description_ids.into_iter().collect(),
+        )
+    }
+
+    pub(crate) const fn observed_row_count(&self) -> u64 {
+        self.observed_row_count
+    }
+}
+
+/// One selected `DATA_DESCRIPTION` row and its exact coordinate pairing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DataDescriptionSelection {
+    data_description_id: u32,
+    spectral_window_id: u32,
+    polarization_id: u32,
+}
+
+impl DataDescriptionSelection {
+    /// Construct one resolved `DATA_DESCRIPTION` member.
+    #[must_use]
+    pub const fn new(
+        data_description_id: u32,
+        spectral_window_id: u32,
+        polarization_id: u32,
+    ) -> Self {
+        Self {
+            data_description_id,
+            spectral_window_id,
+            polarization_id,
+        }
+    }
+
+    /// Return the MAIN `DATA_DESC_ID` and `DATA_DESCRIPTION` row index.
+    #[must_use]
+    pub const fn data_description_id(self) -> u32 {
+        self.data_description_id
+    }
+
+    /// Return the referenced `SPECTRAL_WINDOW_ID`.
+    #[must_use]
+    pub const fn spectral_window_id(self) -> u32 {
+        self.spectral_window_id
+    }
+
+    /// Return the referenced `POLARIZATION_ID`.
+    #[must_use]
+    pub const fn polarization_id(self) -> u32 {
+        self.polarization_id
     }
 }
 
@@ -567,21 +873,15 @@ impl SelectedRows {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpectralWindowSelection {
     spectral_window_id: u32,
-    data_description_ids: Vec<u32>,
     channel_indices: Vec<u32>,
 }
 
 impl SpectralWindowSelection {
     /// Construct a resolved spectral-window/channel selection.
     #[must_use]
-    pub const fn new(
-        spectral_window_id: u32,
-        data_description_ids: Vec<u32>,
-        channel_indices: Vec<u32>,
-    ) -> Self {
+    pub const fn new(spectral_window_id: u32, channel_indices: Vec<u32>) -> Self {
         Self {
             spectral_window_id,
-            data_description_ids,
             channel_indices,
         }
     }
@@ -590,12 +890,6 @@ impl SpectralWindowSelection {
     #[must_use]
     pub const fn spectral_window_id(&self) -> u32 {
         self.spectral_window_id
-    }
-
-    /// Return every selected `DATA_DESC_ID` resolving to this window.
-    #[must_use]
-    pub fn data_description_ids(&self) -> &[u32] {
-        &self.data_description_ids
     }
 
     /// Return exact selected native channel indices in canonical order.
@@ -741,6 +1035,7 @@ impl CorrelationSelection {
 pub struct ObservationSelection {
     rows: SelectedRows,
     rows_filter: RowSelection,
+    data_descriptions: Vec<DataDescriptionSelection>,
     spectral_windows: Vec<SpectralWindowSelection>,
     correlations: Vec<CorrelationSelection>,
 }
@@ -751,12 +1046,14 @@ impl ObservationSelection {
     pub const fn new(
         rows: SelectedRows,
         rows_filter: RowSelection,
+        data_descriptions: Vec<DataDescriptionSelection>,
         spectral_windows: Vec<SpectralWindowSelection>,
         correlations: Vec<CorrelationSelection>,
     ) -> Self {
         Self {
             rows,
             rows_filter,
+            data_descriptions,
             spectral_windows,
             correlations,
         }
@@ -774,6 +1071,12 @@ impl ObservationSelection {
         &self.rows_filter
     }
 
+    /// Return the exact selected `DATA_DESCRIPTION` coordinate catalog.
+    #[must_use]
+    pub fn data_descriptions(&self) -> &[DataDescriptionSelection] {
+        &self.data_descriptions
+    }
+
     /// Return exact channel selections in canonical spectral-window order.
     #[must_use]
     pub fn spectral_windows(&self) -> &[SpectralWindowSelection] {
@@ -787,20 +1090,48 @@ impl ObservationSelection {
     }
 
     fn canonicalize(&mut self) -> Result<(), CompileObservationError> {
-        if self.rows.selected_row_count > self.rows.source_row_count {
-            return Err(CompileObservationError::InvalidSelectedRowCount);
-        }
-        require_identity(
-            self.rows.canonical_sequence_identity,
-            "selected row sequence",
-        )?;
         self.rows_filter.canonicalize()?;
+        self.data_descriptions
+            .sort_unstable_by_key(|selection| selection.data_description_id);
+        if let Some(data_description_id) = self.data_descriptions.windows(2).find_map(|pair| {
+            (pair[0].data_description_id == pair[1].data_description_id)
+                .then_some(pair[0].data_description_id)
+        }) {
+            return Err(CompileObservationError::DuplicateDataDescription {
+                data_description_id,
+            });
+        }
+        if let Some(data_description_id) = self
+            .data_descriptions
+            .iter()
+            .map(|selection| selection.data_description_id)
+            .find(|&data_description_id| i32::try_from(data_description_id).is_err())
+        {
+            return Err(
+                CompileObservationError::DataDescriptionIdOutsideMainDomain {
+                    data_description_id,
+                },
+            );
+        }
+        if self.rows.selected_row_count > 0 && self.data_descriptions.is_empty() {
+            return Err(CompileObservationError::NoDataDescriptionSelection);
+        }
+        if let Some(&data_description_id) =
+            self.rows.used_data_description_ids().iter().find(|&&used| {
+                !self
+                    .data_descriptions
+                    .iter()
+                    .any(|selection| selection.data_description_id == used)
+            })
+        {
+            return Err(CompileObservationError::SelectedRowDataDescriptionMissing {
+                data_description_id,
+            });
+        }
         for selection in &mut self.spectral_windows {
-            selection.data_description_ids.sort_unstable();
-            selection.data_description_ids.dedup();
             selection.channel_indices.sort_unstable();
             selection.channel_indices.dedup();
-            if selection.data_description_ids.is_empty() || selection.channel_indices.is_empty() {
+            if selection.channel_indices.is_empty() {
                 return Err(CompileObservationError::EmptySpectralWindowSelection {
                     spectral_window_id: selection.spectral_window_id,
                 });
@@ -854,6 +1185,54 @@ impl ObservationSelection {
             (pair[0].polarization_id == pair[1].polarization_id).then_some(pair[0].polarization_id)
         }) {
             return Err(CompileObservationError::DuplicatePolarization { polarization_id });
+        }
+        for data_description in &self.data_descriptions {
+            if self
+                .spectral_windows
+                .binary_search_by_key(&data_description.spectral_window_id, |selection| {
+                    selection.spectral_window_id
+                })
+                .is_err()
+            {
+                return Err(
+                    CompileObservationError::UnknownDataDescriptionSpectralWindow {
+                        data_description_id: data_description.data_description_id,
+                        spectral_window_id: data_description.spectral_window_id,
+                    },
+                );
+            }
+            if self
+                .correlations
+                .binary_search_by_key(&data_description.polarization_id, |selection| {
+                    selection.polarization_id
+                })
+                .is_err()
+            {
+                return Err(
+                    CompileObservationError::UnknownDataDescriptionPolarization {
+                        data_description_id: data_description.data_description_id,
+                        polarization_id: data_description.polarization_id,
+                    },
+                );
+            }
+        }
+        if let Some(spectral_window_id) = self.spectral_windows.iter().find_map(|selection| {
+            (!self.data_descriptions.iter().any(|data_description| {
+                data_description.spectral_window_id == selection.spectral_window_id
+            }))
+            .then_some(selection.spectral_window_id)
+        }) {
+            return Err(CompileObservationError::OrphanSpectralWindowSelection {
+                spectral_window_id,
+            });
+        }
+        if let Some(polarization_id) = self.correlations.iter().find_map(|selection| {
+            (!self.data_descriptions.iter().any(|data_description| {
+                data_description.polarization_id == selection.polarization_id
+            }))
+            .then_some(selection.polarization_id)
+        }) {
+            return Err(CompileObservationError::OrphanCorrelationSelection { polarization_id });
         }
         Ok(())
     }
@@ -1610,9 +1989,47 @@ pub enum CompileObservationError {
     /// More than one intent mapping was supplied for one state.
     #[error("more than one resolved intent was supplied for one STATE_ID")]
     DuplicateIntentState,
-    /// Selected rows exceeded the source row population.
-    #[error("selected row count exceeds the source MAIN row count")]
-    InvalidSelectedRowCount,
+    /// One `DATA_DESC_ID` appeared more than once.
+    #[error("duplicate DATA_DESCRIPTION selection for {data_description_id}")]
+    DuplicateDataDescription {
+        /// Duplicate `DATA_DESC_ID`.
+        data_description_id: u32,
+    },
+    /// A selected `DATA_DESC_ID` cannot be represented by the MeasurementSet MAIN `Int` column.
+    #[error("DATA_DESCRIPTION selection {data_description_id} exceeds the MAIN Int domain")]
+    DataDescriptionIdOutsideMainDomain {
+        /// Unrepresentable `DATA_DESC_ID`.
+        data_description_id: u32,
+    },
+    /// A selected MAIN row named a `DATA_DESC_ID` absent from the compiled catalog.
+    #[error("selected MAIN row references uncatalogued DATA_DESCRIPTION {data_description_id}")]
+    SelectedRowDataDescriptionMissing {
+        /// Uncatalogued `DATA_DESC_ID`.
+        data_description_id: u32,
+    },
+    /// Selected rows had no exact `DATA_DESCRIPTION` coordinate catalog.
+    #[error("selected rows require at least one DATA_DESCRIPTION selection")]
+    NoDataDescriptionSelection,
+    /// A selected `DATA_DESCRIPTION` row referenced an unselected spectral window.
+    #[error(
+        "DATA_DESCRIPTION {data_description_id} references unselected spectral window {spectral_window_id}"
+    )]
+    UnknownDataDescriptionSpectralWindow {
+        /// Selected `DATA_DESC_ID`.
+        data_description_id: u32,
+        /// Unselected `SPECTRAL_WINDOW_ID`.
+        spectral_window_id: u32,
+    },
+    /// A selected `DATA_DESCRIPTION` row referenced an unselected polarization setup.
+    #[error(
+        "DATA_DESCRIPTION {data_description_id} references unselected polarization {polarization_id}"
+    )]
+    UnknownDataDescriptionPolarization {
+        /// Selected `DATA_DESC_ID`.
+        data_description_id: u32,
+        /// Unselected `POLARIZATION_ID`.
+        polarization_id: u32,
+    },
     /// No spectral-window/channel semantics were supplied.
     #[error("selected rows require at least one spectral-window/channel selection")]
     NoSpectralWindowSelection,
@@ -1626,6 +2043,12 @@ pub enum CompileObservationError {
     #[error("duplicate spectral-window selection for {spectral_window_id}")]
     DuplicateSpectralWindow {
         /// Spectral-window identifier.
+        spectral_window_id: u32,
+    },
+    /// A selected spectral-window projection had no selected `DATA_DESCRIPTION` member.
+    #[error("spectral window {spectral_window_id} is not referenced by DATA_DESCRIPTION")]
+    OrphanSpectralWindowSelection {
+        /// Orphan `SPECTRAL_WINDOW_ID`.
         spectral_window_id: u32,
     },
     /// No correlation-coordinate semantics were supplied.
@@ -1653,6 +2076,12 @@ pub enum CompileObservationError {
     #[error("duplicate correlation selection for polarization {polarization_id}")]
     DuplicatePolarization {
         /// Polarization identifier.
+        polarization_id: u32,
+    },
+    /// A selected correlation projection had no selected `DATA_DESCRIPTION` member.
+    #[error("polarization {polarization_id} is not referenced by DATA_DESCRIPTION")]
+    OrphanCorrelationSelection {
+        /// Orphan `POLARIZATION_ID`.
         polarization_id: u32,
     },
     /// More than one generation was supplied for a MAIN column.
@@ -1773,16 +2202,14 @@ pub fn compile_observation(
         return Err(CompileObservationError::NoSources);
     }
     let mut sources = Vec::with_capacity(input.sources.len());
-    let mut selected_rows = 0u64;
+    let mut has_selected_rows = false;
     for (input_ordinal, source) in input.sources.into_iter().enumerate() {
         require_identity(source.identity.0, "MeasurementSet")?;
         let provenance = source.provenance;
         provenance.validate()?;
         let mut selection = source.selection;
         selection.canonicalize()?;
-        selected_rows = selected_rows
-            .checked_add(selection.rows.selected_row_count)
-            .ok_or(CompileObservationError::InvalidSelectedRowCount)?;
+        has_selected_rows |= selection.rows.selected_row_count > 0;
         let mut generations = source.generations;
         generations.canonicalize()?;
         sources.push(ObservationSource {
@@ -1793,7 +2220,7 @@ pub fn compile_observation(
             generations,
         });
     }
-    if selected_rows == 0 {
+    if !has_selected_rows {
         return Err(CompileObservationError::EmptySelection);
     }
     sources.sort_unstable_by_key(|source| source.identity);
@@ -2111,7 +2538,7 @@ fn canonical_provenance_id(
 fn encode_selection(encoder: &mut CanonicalEncoder, selection: &ObservationSelection) {
     encoder.u64(selection.rows.source_row_count);
     encoder.u64(selection.rows.selected_row_count);
-    encoder.identity(selection.rows.canonical_sequence_identity);
+    encoder.digest(selection.rows.sequence_id.as_bytes());
     encode_id_selection(encoder, &selection.rows_filter.fields);
     encode_time_selection(encoder, &selection.rows_filter.times);
     encode_uv_selection(encoder, &selection.rows_filter.uv_distances);
@@ -2141,13 +2568,15 @@ fn encode_selection(encoder: &mut CanonicalEncoder, selection: &ObservationSelec
     }
     encode_id_selection(encoder, &selection.rows_filter.arrays);
 
+    encoder.usize(selection.data_descriptions.len());
+    for data_description in &selection.data_descriptions {
+        encoder.u32(data_description.data_description_id);
+        encoder.u32(data_description.spectral_window_id);
+        encoder.u32(data_description.polarization_id);
+    }
     encoder.usize(selection.spectral_windows.len());
     for spectral_window in &selection.spectral_windows {
         encoder.u32(spectral_window.spectral_window_id);
-        encoder.usize(spectral_window.data_description_ids.len());
-        for data_description_id in &spectral_window.data_description_ids {
-            encoder.u32(*data_description_id);
-        }
         encoder.usize(spectral_window.channel_indices.len());
         for channel in &spectral_window.channel_indices {
             encoder.u32(*channel);
@@ -2336,7 +2765,7 @@ const fn metadata_table_tag(table: MetadataTableKind) -> u8 {
     }
 }
 
-const fn correlation_type_tag(correlation: CorrelationType) -> u8 {
+pub(crate) const fn correlation_type_tag(correlation: CorrelationType) -> u8 {
     match correlation {
         CorrelationType::StokesI => 0,
         CorrelationType::StokesQ => 1,

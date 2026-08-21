@@ -22,8 +22,10 @@ use casa_aipsio::internal::{AipsIoBufferWriter, AipsIoSliceReader, detect_aipsio
 use casa_aipsio::{AipsIo, ByteOrder};
 use ndarray::ShapeBuilder;
 
-use casa_types::{ArrayValue, ScalarValue, Value};
+use casa_types::{ArrayValue, Complex32, Complex64, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
+
+use crate::table::{SelectedArray2D, SelectedArray2DCells};
 
 use super::canonical::{
     canonical_element_size, read_bool_bits, read_f32_be, read_f32_le, read_f32_slice_be,
@@ -1616,6 +1618,367 @@ pub(crate) fn read_ssm_array_column_rows(
         });
     }
     Ok(Some(values))
+}
+
+pub(crate) fn read_ssm_array_column_rows_2d_channel_range_typed(
+    file_path: &Path,
+    dm_blob: &[u8],
+    col_descs: &[&ColumnDescContents],
+    target_col_idx: usize,
+    selected_rows: &[usize],
+    channel_start: usize,
+    channel_count: usize,
+) -> Result<Option<SelectedArray2DCells>, StorageError> {
+    if selected_rows.is_empty() {
+        return Ok(None);
+    }
+
+    let mut file = File::open(file_path)?;
+    let header = parse_ssm_header(&mut file)?;
+    let dm_info = parse_ssm_dm_blob(dm_blob)?;
+    let indices = parse_ssm_indices(&mut file, &header)?;
+    let col_desc = *col_descs.get(target_col_idx).ok_or_else(|| {
+        StorageError::FormatMismatch(format!(
+            "SSM array column index {target_col_idx} is out of range"
+        ))
+    })?;
+    if !is_ssm_array_file_indirect(col_desc) {
+        return Err(StorageError::FormatMismatch(format!(
+            "typed selected 2-D channel reads for StandardStMan require an indirect variable-shape array column, found '{}'",
+            col_desc.col_name
+        )));
+    }
+    let column_offset = *dm_info.column_offsets.get(target_col_idx).ok_or_else(|| {
+        StorageError::FormatMismatch(format!(
+            "SSM array column index {target_col_idx} missing column offset"
+        ))
+    })? as usize;
+    let index_nr = *dm_info.col_index_map.get(target_col_idx).ok_or_else(|| {
+        StorageError::FormatMismatch(format!(
+            "SSM array column index {target_col_idx} missing index mapping"
+        ))
+    })? as usize;
+    let index = indices.get(index_nr).ok_or_else(|| {
+        StorageError::FormatMismatch(format!(
+            "SSM column '{}' references index {index_nr} but only {} indices exist",
+            col_desc.col_name,
+            indices.len()
+        ))
+    })?;
+    let offsets = read_sparse_i64_offsets(&mut file, &header, index, column_offset, selected_rows)?;
+    if offsets.iter().all(|offset| *offset == 0) {
+        return Ok(None);
+    }
+    if let Some((out_idx, _)) = offsets.iter().enumerate().find(|(_, offset)| **offset == 0) {
+        return Err(StorageError::FormatMismatch(format!(
+            "SSM indirect array column '{}' is undefined at selected row {}",
+            col_desc.col_name, selected_rows[out_idx]
+        )));
+    }
+
+    let mut array_path = file_path.as_os_str().to_os_string();
+    array_path.push("i");
+    let array_path = std::path::PathBuf::from(array_path);
+    if !array_path.exists() {
+        return Err(StorageError::FormatMismatch(format!(
+            "SSM indirect array column '{}' has no array file",
+            col_desc.col_name
+        )));
+    }
+    let dt = CasacoreDataType::from_primitive_type(col_desc.require_primitive_type()?, false);
+    let mut reader = StManArrayFileReader::open(&array_path, header.big_endian)?;
+    let mut output = None::<Selected2DAccumulator>;
+    for (out_idx, (&row, &offset)) in selected_rows.iter().zip(&offsets).enumerate() {
+        let cell = reader
+            .read_array_2d_channel_range_at(offset, dt, channel_start, channel_count)?
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "SSM indirect array column '{}' is undefined at row {row}",
+                    col_desc.col_name
+                ))
+            })?;
+        match &mut output {
+            Some(output) => output.insert_row(
+                out_idx,
+                &cell,
+                selected_rows.len(),
+                channel_count,
+                &col_desc.col_name,
+            )?,
+            None => {
+                output = Some(Selected2DAccumulator::new(
+                    &cell,
+                    selected_rows.len(),
+                    channel_count,
+                    &col_desc.col_name,
+                )?);
+            }
+        }
+    }
+    output.map(Selected2DAccumulator::finish).transpose()
+}
+
+fn read_sparse_i64_offsets(
+    file: &mut File,
+    header: &SsmHeader,
+    index: &SsmIndex,
+    column_offset: usize,
+    selected_rows: &[usize],
+) -> Result<Vec<i64>, StorageError> {
+    let mut requests = selected_rows
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(out_idx, row)| (row, out_idx))
+        .collect::<Vec<_>>();
+    requests.sort_unstable_by_key(|&(row, _)| row);
+
+    let mut cached_bucket_nr = None;
+    let mut cached_bucket = Vec::new();
+    let mut offsets = vec![0; selected_rows.len()];
+    for (row, out_idx) in requests {
+        let (bucket_nr, start_row, _end_row) = index.find_bucket(row as u64).ok_or_else(|| {
+            StorageError::FormatMismatch(format!("SSM index has no bucket for row {row}"))
+        })?;
+        if cached_bucket_nr != Some(bucket_nr) {
+            cached_bucket = read_bucket(file, header, bucket_nr)?;
+            cached_bucket_nr = Some(bucket_nr);
+        }
+        let row_in_bucket = (row as u64 - start_row) as usize;
+        let start = column_offset
+            .checked_add(row_in_bucket.checked_mul(8).ok_or_else(|| {
+                StorageError::FormatMismatch("SSM indirect offset index overflow".to_string())
+            })?)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch("SSM indirect offset byte overflow".to_string())
+            })?;
+        let bytes: [u8; 8] = cached_bucket
+            .get(start..start + 8)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "SSM indirect offset for row {row} exceeds its bucket"
+                ))
+            })?
+            .try_into()
+            .expect("exact eight-byte offset slice");
+        offsets[out_idx] = if header.big_endian {
+            i64::from_be_bytes(bytes)
+        } else {
+            i64::from_le_bytes(bytes)
+        };
+    }
+    Ok(offsets)
+}
+
+fn copy_selected_row<T: Clone>(
+    values: &mut [T],
+    row: &ArrayD<T>,
+    out_row: usize,
+    row_count: usize,
+    axis0_count: usize,
+    channel_count: usize,
+) {
+    for channel in 0..channel_count {
+        for axis0 in 0..axis0_count {
+            values[(channel * row_count + out_row) * axis0_count + axis0] =
+                row[IxDyn(&[axis0, channel])].clone();
+        }
+    }
+}
+
+enum Selected2DAccumulator {
+    Bool {
+        row_count: usize,
+        axis0: usize,
+        channel_count: usize,
+        values: Vec<bool>,
+    },
+    Float32 {
+        row_count: usize,
+        axis0: usize,
+        channel_count: usize,
+        values: Vec<f32>,
+    },
+    Float64 {
+        row_count: usize,
+        axis0: usize,
+        channel_count: usize,
+        values: Vec<f64>,
+    },
+    Complex32 {
+        row_count: usize,
+        axis0: usize,
+        channel_count: usize,
+        values: Vec<Complex32>,
+    },
+    Complex64 {
+        row_count: usize,
+        axis0: usize,
+        channel_count: usize,
+        values: Vec<Complex64>,
+    },
+}
+
+impl Selected2DAccumulator {
+    fn new(
+        first: &ArrayValue,
+        row_count: usize,
+        channel_count: usize,
+        column: &str,
+    ) -> Result<Self, StorageError> {
+        let shape = first.shape();
+        if shape.len() != 2 || shape[1] != channel_count {
+            return Err(StorageError::FormatMismatch(format!(
+                "SSM selected array column '{column}' returned shape {shape:?}, expected [axis0, {channel_count}]"
+            )));
+        }
+        let axis0 = shape[0];
+        let len = row_count
+            .checked_mul(axis0)
+            .and_then(|value| value.checked_mul(channel_count))
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "SSM selected array column '{column}' output size overflow"
+                ))
+            })?;
+        let mut output = match first {
+            ArrayValue::Bool(_) => Self::Bool {
+                row_count,
+                axis0,
+                channel_count,
+                values: vec![false; len],
+            },
+            ArrayValue::Float32(_) => Self::Float32 {
+                row_count,
+                axis0,
+                channel_count,
+                values: vec![0.0; len],
+            },
+            ArrayValue::Float64(_) => Self::Float64 {
+                row_count,
+                axis0,
+                channel_count,
+                values: vec![0.0; len],
+            },
+            ArrayValue::Complex32(_) => Self::Complex32 {
+                row_count,
+                axis0,
+                channel_count,
+                values: vec![Complex32::new(0.0, 0.0); len],
+            },
+            ArrayValue::Complex64(_) => Self::Complex64 {
+                row_count,
+                axis0,
+                channel_count,
+                values: vec![Complex64::new(0.0, 0.0); len],
+            },
+            other => {
+                return Err(StorageError::FormatMismatch(format!(
+                    "typed selected 2-D read does not support {:?} for column '{column}'",
+                    other.primitive_type()
+                )));
+            }
+        };
+        output.insert_row(0, first, row_count, channel_count, column)?;
+        Ok(output)
+    }
+
+    fn insert_row(
+        &mut self,
+        out_row: usize,
+        row: &ArrayValue,
+        row_count: usize,
+        channel_count: usize,
+        column: &str,
+    ) -> Result<(), StorageError> {
+        macro_rules! insert {
+            ($expected:ident, $actual:ident, $axis0:ident, $values:ident) => {{
+                let ArrayValue::$actual(row) = row else {
+                    return Err(StorageError::FormatMismatch(format!(
+                        "SSM selected array column '{column}' has inconsistent primitive types"
+                    )));
+                };
+                if row.shape() != [*$axis0, channel_count] {
+                    return Err(StorageError::FormatMismatch(format!(
+                        "SSM selected array column '{column}' has inconsistent selected shapes"
+                    )));
+                }
+                copy_selected_row($values, row, out_row, row_count, *$axis0, channel_count);
+            }};
+        }
+        match self {
+            Self::Bool { axis0, values, .. } => insert!(Bool, Bool, axis0, values),
+            Self::Float32 { axis0, values, .. } => insert!(Float32, Float32, axis0, values),
+            Self::Float64 { axis0, values, .. } => insert!(Float64, Float64, axis0, values),
+            Self::Complex32 { axis0, values, .. } => {
+                insert!(Complex32, Complex32, axis0, values)
+            }
+            Self::Complex64 { axis0, values, .. } => {
+                insert!(Complex64, Complex64, axis0, values)
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> Result<SelectedArray2DCells, StorageError> {
+        Ok(match self {
+            Self::Bool {
+                row_count,
+                axis0,
+                channel_count,
+                values,
+            } => SelectedArray2DCells::Bool(SelectedArray2D::new(
+                row_count,
+                axis0,
+                channel_count,
+                values,
+            )),
+            Self::Float32 {
+                row_count,
+                axis0,
+                channel_count,
+                values,
+            } => SelectedArray2DCells::Float32(SelectedArray2D::new(
+                row_count,
+                axis0,
+                channel_count,
+                values,
+            )),
+            Self::Float64 {
+                row_count,
+                axis0,
+                channel_count,
+                values,
+            } => SelectedArray2DCells::Float64(SelectedArray2D::new(
+                row_count,
+                axis0,
+                channel_count,
+                values,
+            )),
+            Self::Complex32 {
+                row_count,
+                axis0,
+                channel_count,
+                values,
+            } => SelectedArray2DCells::Complex32(SelectedArray2D::new(
+                row_count,
+                axis0,
+                channel_count,
+                values,
+            )),
+            Self::Complex64 {
+                row_count,
+                axis0,
+                channel_count,
+                values,
+            } => SelectedArray2DCells::Complex64(SelectedArray2D::new(
+                row_count,
+                axis0,
+                channel_count,
+                values,
+            )),
+        })
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

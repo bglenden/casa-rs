@@ -14,12 +14,14 @@ use casa_imaging_model::{
     NumericsContract, ObservationPointingLaw, ObservationTransactionRequirements, PhaseCentreLaw,
     PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
     PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
-    ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements, Projection,
-    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
-    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
-    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
-    WeightDensityScope, WeightingContract, WeightingScheme,
+    PrimaryBeamValidityPolicy, ProblemSpecification, ProductBlankingPolicy, ProductKind,
+    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
+    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
+    ReconstructionControls, ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy,
+    ScientificContract, SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
+    SpectralFrameAnchor, SpectralSampling, SpectralWcs, StageErrorBudget, TaylorSupportReference,
+    TaylorValidityPolicy, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
+    WeightingContract, WeightingScheme,
 };
 use casa_imaging_router::{
     DispatchError, ImagingRouter, LegacyWholeRunEnginePort, NativeEnginePort, RequestDisposition,
@@ -28,6 +30,24 @@ use casa_imaging_router::{
 mod common;
 
 use common::problem_inputs;
+
+fn validity_policies() -> ProductValidityPolicies {
+    ProductValidityPolicies::new(
+        PrimaryBeamValidityPolicy::new(
+            0.2,
+            ProductSupportComparison::StrictlyGreater,
+            ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid PB policy fixture"),
+        TaylorValidityPolicy::new(
+            TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
+            0.1,
+            ProductSupportComparison::StrictlyGreater,
+            ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid Taylor policy fixture"),
+    )
+}
 
 #[test]
 fn legacy_request_invokes_only_whole_run_legacy_engine() {
@@ -216,6 +236,7 @@ fn request_with_phase_centre(
                 vec![ProductKind::Psf],
                 ProductNormalization::UnitResponse,
                 RestoringBeamPolicy::None,
+                validity_policies(),
             ),
             ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
             numerics,

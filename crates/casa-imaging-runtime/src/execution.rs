@@ -3117,6 +3117,12 @@ fn validate_external_release(
     allocation: &LogicalAllocation,
     uses: &[(&WorkNode, &AllocationUse)],
 ) -> Result<(), ExecutionError> {
+    if !uses.iter().any(|(node, _)| node.kind != WorkKind::Release) {
+        return Err(ExecutionError::invalid_plan(format!(
+            "logical allocation {} requires a prior non-release use",
+            allocation.id.as_str()
+        )));
+    }
     let release_uses = uses
         .iter()
         .copied()

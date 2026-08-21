@@ -1,28 +1,52 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, CompileObservationError, CompileProblemError, DeclaredInnerProducts,
-    DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
-    FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
-    ImageShape, ImagingRequest, InstrumentResponse, ItrfPosition, MeasurementEquationContract,
-    MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct, ModelStateIdentity,
+    AxisOrder, CentreLaws, ColumnGeneration, CompileObservationError, CompileProblemError,
+    ConsistencyToken, CorrelationProduct, CorrelationSelection, CorrelationType,
+    DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
+    DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FrequencyFrame, GeometryInput,
+    ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest, InstrumentResponse,
+    ItrfPosition, MeasurementEquationContract, MetadataGeneration, MetadataTableKind,
+    MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct, ModelStateIdentity, MsColumnKind,
     NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
-    ObservationSnapshotInput, ObservationTransactionRequirements, PhaseCentreLaw,
-    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
-    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
-    ProblemInputIdentities, ProblemSpecification, ProductKind, ProductNormalization,
-    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
-    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
-    RequiredCapability, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
+    ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
+    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
+    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
+    PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
+    ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
+    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
+    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
+    ReconstructionControls, ReductionPolicy, ReferenceDataKind, RequiredCapability, RestFrequency,
+    RestoringBeamPolicy, ScientificContract, SelectedColumns, SelectedMainRow,
+    SelectedObservationCommitmentId, SelectedRows, SkyDirection, SourceGenerations,
     SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, StageErrorBudget, TimeScale, UvTaper, UvwCoordinateLaw,
-    VisibilityInnerProduct, WeightDensityScope, WeightingContract, WeightingScheme, compile,
-    compile_observation,
+    SpectralSampling, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
+    TaylorSupportReference, TaylorValidityPolicy, TimeScale, UvTaper, UvwCoordinateLaw,
+    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
+    WeightingScheme, compile, compile_observation,
 };
 
 mod common;
 
-use common::{identity, observation_source, problem_inputs};
+use common::{identity, observation_snapshot, observation_source, problem_inputs};
+
+fn validity_policies() -> ProductValidityPolicies {
+    ProductValidityPolicies::new(
+        PrimaryBeamValidityPolicy::new(
+            0.2,
+            ProductSupportComparison::StrictlyGreater,
+            ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid PB policy fixture"),
+        TaylorValidityPolicy::new(
+            TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
+            0.1,
+            ProductSupportComparison::StrictlyGreater,
+            ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid Taylor policy fixture"),
+    )
+}
 
 fn compile_request(
     specification: ProblemSpecification,
@@ -91,7 +115,12 @@ fn products_with_beam(reverse: bool, restoring_beam: RestoringBeamPolicy) -> Pro
     if reverse {
         products.reverse();
     }
-    ProductRequirements::new(products, ProductNormalization::FlatNoise, restoring_beam)
+    ProductRequirements::new(
+        products,
+        ProductNormalization::FlatNoise,
+        restoring_beam,
+        validity_policies(),
+    )
 }
 
 fn science() -> ScientificContract {
@@ -198,6 +227,151 @@ fn inputs_with_instrument() -> ProblemInputIdentities {
         ],
         ModelStateIdentity::Seed(identity(5)),
     )
+}
+
+#[derive(Clone, Copy)]
+enum SelectedObservationInputMutation {
+    Rows,
+    Channels,
+    Correlations,
+    VisibilityColumnControl,
+    VisibilityColumn,
+    WeightColumnControl,
+    WeightColumn,
+    ColumnGeneration,
+    FlagGeneration,
+    MetadataGeneration,
+    ConsistencyToken,
+}
+
+fn selected_observation_inputs(
+    mutation: SelectedObservationInputMutation,
+) -> ProblemInputIdentities {
+    let reference_data = vec![
+        (ReferenceDataKind::Measures, identity(3)),
+        (ReferenceDataKind::Ephemeris, identity(4)),
+    ];
+    let model = ModelStateIdentity::Seed(identity(5));
+    let snapshot = observation_snapshot(1, reference_data.clone(), model);
+    let source = &snapshot.sources()[0];
+    let mut rows = source.selection().rows().clone();
+    let data_descriptions = source.selection().data_descriptions().to_vec();
+    let mut spectral_windows = source.selection().spectral_windows().to_vec();
+    let mut correlations = source.selection().correlations().to_vec();
+    let selected_columns = source.generations().columns();
+    let mut visibility = selected_columns.visibility();
+    let mut weight = selected_columns.weights();
+    let mut column_generations = selected_columns.generations().to_vec();
+    let mut metadata = source.generations().metadata_generations().to_vec();
+    let mut consistency_token = source.generations().consistency_token();
+
+    match mutation {
+        SelectedObservationInputMutation::Rows => {
+            rows = SelectedRows::from_ordered_main_rows(2, [SelectedMainRow::new(1, 0)])
+                .expect("changed selected MAIN row fixture");
+        }
+        SelectedObservationInputMutation::Channels => {
+            spectral_windows = vec![SpectralWindowSelection::new(0, vec![0, 1])];
+        }
+        SelectedObservationInputMutation::Correlations => {
+            correlations = vec![CorrelationSelection::new(
+                0,
+                vec![CorrelationProduct::new(0, CorrelationType::StokesQ)],
+            )];
+        }
+        mutation @ (SelectedObservationInputMutation::VisibilityColumnControl
+        | SelectedObservationInputMutation::VisibilityColumn) => {
+            column_generations.push(ColumnGeneration::new(
+                MsColumnKind::CorrectedData,
+                identity(102),
+            ));
+            if matches!(mutation, SelectedObservationInputMutation::VisibilityColumn) {
+                visibility = VisibilityColumn::CorrectedData;
+            }
+        }
+        mutation @ (SelectedObservationInputMutation::WeightColumnControl
+        | SelectedObservationInputMutation::WeightColumn) => {
+            column_generations.push(ColumnGeneration::new(
+                MsColumnKind::WeightSpectrum,
+                identity(103),
+            ));
+            if matches!(mutation, SelectedObservationInputMutation::WeightColumn) {
+                weight = WeightColumn::WeightSpectrum;
+            }
+        }
+        SelectedObservationInputMutation::ColumnGeneration => {
+            let generation = column_generations
+                .iter_mut()
+                .find(|generation| generation.kind() == MsColumnKind::Data)
+                .expect("DATA generation fixture");
+            *generation = ColumnGeneration::new(MsColumnKind::Data, identity(104));
+        }
+        SelectedObservationInputMutation::FlagGeneration => {
+            let generation = column_generations
+                .iter_mut()
+                .find(|generation| generation.kind() == MsColumnKind::Flag)
+                .expect("FLAG generation fixture");
+            *generation = ColumnGeneration::new(MsColumnKind::Flag, identity(106));
+        }
+        SelectedObservationInputMutation::MetadataGeneration => {
+            let generation = metadata
+                .iter_mut()
+                .find(|generation| generation.kind() == MetadataTableKind::Pointing)
+                .expect("POINTING generation fixture");
+            *generation = MetadataGeneration::new(MetadataTableKind::Pointing, identity(105));
+        }
+        SelectedObservationInputMutation::ConsistencyToken => {
+            consistency_token = ConsistencyToken::new(identity(107));
+        }
+    }
+
+    let selection = ObservationSelection::new(
+        rows,
+        source.selection().rows_filter().clone(),
+        data_descriptions,
+        spectral_windows,
+        correlations,
+    );
+    let generations = SourceGenerations::new(
+        consistency_token,
+        SelectedColumns::new(
+            visibility,
+            selected_columns.flags(),
+            weight,
+            column_generations,
+        ),
+        metadata,
+        source.generations().model_column(),
+    );
+    let snapshot = compile_observation(ObservationSnapshotInput::new(
+        vec![ObservationSourceInput::new(
+            source.identity(),
+            source.provenance().clone(),
+            selection,
+            generations,
+        )],
+        reference_data,
+        model,
+    ))
+    .expect("compile selected-observation mutation");
+    ProblemInputIdentities::new(snapshot)
+}
+
+fn multi_source_inputs(reverse: bool) -> ProblemInputIdentities {
+    let mut sources = vec![observation_source(1), observation_source(2)];
+    if reverse {
+        sources.reverse();
+    }
+    let snapshot = compile_observation(ObservationSnapshotInput::new(
+        sources,
+        vec![
+            (ReferenceDataKind::Measures, identity(3)),
+            (ReferenceDataKind::Ephemeris, identity(4)),
+        ],
+        ModelStateIdentity::Seed(identity(5)),
+    ))
+    .expect("compile multi-source selected observation");
+    ProblemInputIdentities::new(snapshot)
 }
 
 #[test]
@@ -356,6 +530,7 @@ fn channel_local_basis_must_match_compiled_geometry_channels() {
                 ],
                 ProductNormalization::UnitResponse,
                 RestoringBeamPolicy::None,
+                validity_policies(),
             ),
             read_only_transaction(),
             numerics(false),
@@ -424,6 +599,7 @@ fn flat_normalization_without_sensitivity_fails_at_compile_time() {
             ],
             ProductNormalization::FlatNoise,
             RestoringBeamPolicy::PerPlane,
+            validity_policies(),
         ),
         read_only_transaction(),
         numerics(false),
@@ -512,6 +688,7 @@ fn derived_products_require_their_scientific_sources() {
             ],
             ProductNormalization::UnitResponse,
             RestoringBeamPolicy::PerPlane,
+            validity_policies(),
         ),
         read_only_transaction(),
         numerics(false),
@@ -565,7 +742,7 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
         positive_zero.weighting().generation_id()
     );
     assert_ne!(positive_zero.problem_id(), changed.problem_id());
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 6);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 7);
 }
 
 #[test]
@@ -606,6 +783,347 @@ fn numerics_contract_has_an_independent_stable_identity() {
 }
 
 #[test]
+fn compiler_owns_the_selected_observation_commitment() {
+    let baseline = compile_request(specification(false), inputs(false)).expect("compile baseline");
+    let baseline_id = baseline.selected_observation().commitment_id();
+    let changed_sampling = compile_request(
+        ProblemSpecification::new(
+            ScientificContract::new(
+                SpectralContract::new(SpectralSampling::Linear, SpectralCoupling::Independent),
+                MeasurementEquationContract::new(InstrumentResponse::Scalar, inner_products()),
+            ),
+            reconstruction(),
+            weighting(),
+            products(false),
+            read_only_transaction(),
+            numerics(false),
+        ),
+        inputs(false),
+    )
+    .expect("compile changed sampling");
+    let changed_rows = compile_request(
+        specification(false),
+        selected_observation_inputs(SelectedObservationInputMutation::Rows),
+    )
+    .expect("compile changed rows");
+    let changed_channels = compile_request(
+        specification(false),
+        selected_observation_inputs(SelectedObservationInputMutation::Channels),
+    )
+    .expect("compile changed channels");
+    let changed_correlations = compile_request(
+        specification(false),
+        selected_observation_inputs(SelectedObservationInputMutation::Correlations),
+    )
+    .expect("compile changed correlations");
+    let visibility_column_control = compile_request(
+        specification(false),
+        selected_observation_inputs(SelectedObservationInputMutation::VisibilityColumnControl),
+    )
+    .expect("compile visibility-column control");
+    let changed_visibility_column = compile_request(
+        specification(false),
+        selected_observation_inputs(SelectedObservationInputMutation::VisibilityColumn),
+    )
+    .expect("compile changed visibility column");
+    let weight_column_control = compile_request(
+        specification(false),
+        selected_observation_inputs(SelectedObservationInputMutation::WeightColumnControl),
+    )
+    .expect("compile weight-column control");
+    let changed_weight_column = compile_request(
+        specification(false),
+        selected_observation_inputs(SelectedObservationInputMutation::WeightColumn),
+    )
+    .expect("compile changed weight column");
+    let changed_column_generation = compile_request(
+        specification(false),
+        selected_observation_inputs(SelectedObservationInputMutation::ColumnGeneration),
+    )
+    .expect("compile changed column generation");
+    let changed_flag_generation = compile_request(
+        specification(false),
+        selected_observation_inputs(SelectedObservationInputMutation::FlagGeneration),
+    )
+    .expect("compile changed FLAG generation");
+    let changed_metadata_generation = compile_request(
+        specification(false),
+        selected_observation_inputs(SelectedObservationInputMutation::MetadataGeneration),
+    )
+    .expect("compile changed metadata generation");
+    let changed_consistency_token = compile_request(
+        specification(false),
+        selected_observation_inputs(SelectedObservationInputMutation::ConsistencyToken),
+    )
+    .expect("compile changed consistency token");
+    let multi_source = compile_request(specification(false), multi_source_inputs(false))
+        .expect("compile multi-source selection");
+    let reordered_multi_source = compile_request(specification(false), multi_source_inputs(true))
+        .expect("compile reordered multi-source selection");
+    let changed_geometry = compile_with_geometry(
+        specification(false),
+        geometry().with_spectral(geometry().spectral().clone().with_wcs(SpectralWcs::Linear {
+            channels: 2,
+            reference_pixel: 0.0,
+            reference_frequency_hz: 1.4e9,
+            increment_hz: 1.0e6,
+        })),
+        inputs(false),
+    )
+    .expect("compile changed geometry");
+
+    let minimal_products = || {
+        ProductRequirements::new(
+            vec![ProductKind::Psf],
+            ProductNormalization::UnitResponse,
+            RestoringBeamPolicy::None,
+            validity_policies(),
+        )
+    };
+    let taylor_reconstruction = compile_request(
+        ProblemSpecification::new(
+            science(),
+            reconstruction(),
+            weighting(),
+            minimal_products(),
+            read_only_transaction(),
+            numerics(false),
+        ),
+        inputs(false),
+    )
+    .expect("compile Taylor reconstruction");
+    let constant_reconstruction = compile_request(
+        ProblemSpecification::new(
+            science(),
+            ReconstructionContract::new(
+                ReconstructionBasis::Constant,
+                ReconstructionAlgorithm::Clark,
+                ReconstructionControls::new(100, 0.1, 0.0),
+                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+            ),
+            weighting(),
+            minimal_products(),
+            read_only_transaction(),
+            numerics(false),
+        ),
+        inputs(false),
+    )
+    .expect("compile Constant reconstruction");
+    let changed_reconstruction_details = compile_request(
+        ProblemSpecification::new(
+            science(),
+            ReconstructionContract::new(
+                ReconstructionBasis::Taylor { terms: 3 },
+                ReconstructionAlgorithm::Mtmfs,
+                ReconstructionControls::new(250, 0.2, 0.01),
+                PolarizationContract::new(vec![PolarizationCoordinate::StokesQ]),
+            ),
+            weighting(),
+            products(false),
+            read_only_transaction(),
+            numerics(false),
+        ),
+        inputs(false),
+    )
+    .expect("compile changed reconstruction details");
+    let baseline_products = products(false);
+    let changed_products = compile_request(
+        ProblemSpecification::new(
+            science(),
+            reconstruction(),
+            weighting(),
+            ProductRequirements::new(
+                baseline_products.products().to_vec(),
+                ProductNormalization::FlatSky,
+                baseline_products.restoring_beam(),
+                baseline_products.validity(),
+            ),
+            read_only_transaction(),
+            numerics(false),
+        ),
+        inputs(false),
+    )
+    .expect("compile changed products");
+    let changed_weighting = compile_request(
+        ProblemSpecification::new(
+            science(),
+            reconstruction(),
+            WeightingContract::new(
+                WeightingScheme::Briggs { robust: -0.5 },
+                WeightDensityScope::GlobalSelection,
+            ),
+            products(false),
+            read_only_transaction(),
+            numerics(false),
+        ),
+        inputs(false),
+    )
+    .expect("compile changed weighting");
+    let baseline_numerics = numerics(false);
+    let changed_numerics = compile_request(
+        ProblemSpecification::new(
+            science(),
+            reconstruction(),
+            weighting(),
+            products(false),
+            read_only_transaction(),
+            NumericsContract::new(
+                baseline_numerics.permitted_precisions().to_vec(),
+                ReductionPolicy::DeterministicPairwise,
+                baseline_numerics.finite_values(),
+                baseline_numerics.stage_error_budgets().to_vec(),
+            ),
+        ),
+        inputs(false),
+    )
+    .expect("compile changed numerics");
+    let changed_write_policy = compile_request(
+        ProblemSpecification::new(
+            science(),
+            reconstruction(),
+            weighting(),
+            products(false),
+            ObservationTransactionRequirements::new(ModelColumnWrite::SelectedRows),
+            numerics(false),
+        ),
+        inputs(false),
+    )
+    .expect("compile changed model write policy");
+    let scalar_with_instrument = compile_request(specification(false), inputs_with_instrument())
+        .expect("compile scalar response with instrument reference");
+    let changed_instrument_response = compile_request(
+        ProblemSpecification::new(
+            ScientificContract::new(
+                SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+                MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products()),
+            ),
+            reconstruction(),
+            weighting(),
+            products(false),
+            read_only_transaction(),
+            numerics(false),
+        ),
+        inputs_with_instrument(),
+    )
+    .expect("compile changed instrument response");
+    let changed_spectral_coupling = compile_request(
+        ProblemSpecification::new(
+            ScientificContract::new(
+                SpectralContract::new(
+                    SpectralSampling::Identity,
+                    SpectralCoupling::CommonRestoringBeam,
+                ),
+                MeasurementEquationContract::new(InstrumentResponse::Scalar, inner_products()),
+            ),
+            reconstruction(),
+            weighting(),
+            products_with_beam(false, RestoringBeamPolicy::Common),
+            read_only_transaction(),
+            numerics(false),
+        ),
+        inputs(false),
+    )
+    .expect("compile changed spectral coupling");
+    let commitment = baseline.selected_observation();
+
+    assert_eq!(SelectedObservationCommitmentId::SCHEMA_VERSION, 1);
+    assert_eq!(
+        baseline_id.as_bytes(),
+        [
+            135, 173, 80, 22, 255, 111, 249, 164, 163, 196, 205, 136, 99, 212, 161, 197, 64, 72,
+            242, 16, 92, 229, 54, 217, 206, 218, 233, 218, 139, 47, 240, 58,
+        ]
+    );
+    assert_eq!(
+        commitment.observation_snapshot_id(),
+        baseline.inputs().observation()
+    );
+    assert_eq!(commitment.geometry_id(), baseline.geometry().geometry_id());
+    assert_eq!(
+        commitment.sample_evaluation().visibility_inner_product(),
+        VisibilityInnerProduct::HermitianEuclidean
+    );
+    assert_eq!(
+        commitment.sample_evaluation().spectral_sampling(),
+        SpectralSampling::Identity
+    );
+    assert_eq!(
+        commitment.read_set(),
+        baseline.observation_transaction().read_set()
+    );
+    for (mutation, problem) in [
+        ("selected rows", &changed_rows),
+        ("selected channels", &changed_channels),
+        ("selected correlations", &changed_correlations),
+        ("column generation", &changed_column_generation),
+        ("FLAG generation", &changed_flag_generation),
+        ("metadata generation", &changed_metadata_generation),
+        ("consistency token", &changed_consistency_token),
+        ("multi-source selection", &multi_source),
+        ("geometry", &changed_geometry),
+        ("paired spectral sampling", &changed_sampling),
+    ] {
+        assert_ne!(
+            baseline_id,
+            problem.selected_observation().commitment_id(),
+            "{mutation} must change selected-observation identity"
+        );
+    }
+    assert_ne!(
+        visibility_column_control
+            .selected_observation()
+            .commitment_id(),
+        changed_visibility_column
+            .selected_observation()
+            .commitment_id(),
+        "visibility-column semantics must change identity with generations held constant"
+    );
+    assert_ne!(
+        weight_column_control.selected_observation().commitment_id(),
+        changed_weight_column.selected_observation().commitment_id(),
+        "weight-column semantics must change identity with generations held constant"
+    );
+    assert_eq!(
+        multi_source.selected_observation().commitment_id(),
+        reordered_multi_source
+            .selected_observation()
+            .commitment_id(),
+        "canonical multi-source order must not depend on request order"
+    );
+    assert_eq!(
+        taylor_reconstruction.selected_observation().commitment_id(),
+        constant_reconstruction
+            .selected_observation()
+            .commitment_id(),
+        "Constant and Taylor reconstruction must not change selected-observation identity"
+    );
+    for (mutation, problem) in [
+        ("reconstruction details", &changed_reconstruction_details),
+        ("products", &changed_products),
+        ("weighting", &changed_weighting),
+        ("numerics", &changed_numerics),
+        ("model write policy", &changed_write_policy),
+        ("spectral coupling", &changed_spectral_coupling),
+    ] {
+        assert_eq!(
+            baseline_id,
+            problem.selected_observation().commitment_id(),
+            "{mutation} must not change selected-observation identity"
+        );
+    }
+    assert_eq!(
+        scalar_with_instrument
+            .selected_observation()
+            .commitment_id(),
+        changed_instrument_response
+            .selected_observation()
+            .commitment_id(),
+        "instrument response must not change selected-observation identity"
+    );
+    // Physical execution choices are absent from logical compilation and cannot enter this ID.
+}
+
+#[test]
 fn multiscale_order_and_duplicate_scales_do_not_change_scientific_identity() {
     let specification = |scales_px| {
         ProblemSpecification::new(
@@ -627,6 +1145,7 @@ fn multiscale_order_and_duplicate_scales_do_not_change_scientific_identity() {
                 ],
                 ProductNormalization::UnitResponse,
                 RestoringBeamPolicy::PerPlane,
+                validity_policies(),
             ),
             read_only_transaction(),
             numerics(false),
@@ -761,6 +1280,7 @@ fn dirty_reconstruction_rejects_scientifically_unused_controls() {
                 ],
                 ProductNormalization::UnitResponse,
                 RestoringBeamPolicy::None,
+                validity_policies(),
             ),
             read_only_transaction(),
             numerics(false),
@@ -884,12 +1404,12 @@ fn invalid_polarization_is_a_reconstruction_contract_error() {
 }
 
 #[test]
-fn compiled_problem_identity_has_a_pinned_schema_six_digest() {
+fn compiled_problem_identity_has_a_pinned_schema_seven_digest() {
     let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 6);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 7);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "a089ac5abff5a2ff111366750293481528cc136258b55c63875ccf1169bc7865"
+        "e74dc6f6015de2708948aa6331fa09d1c87d286e670f321d483c835e38b56b0c"
     );
 }

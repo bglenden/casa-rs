@@ -260,6 +260,22 @@ impl MsCalEngine {
         Ok(frame.with_direction(direction))
     }
 
+    pub(crate) fn direction_angles_j2000(
+        &self,
+        time_mjd_sec: f64,
+        angles_rad: [f64; 2],
+        source_ref: DirectionRef,
+    ) -> MsResult<[f64; 2]> {
+        if source_ref == DirectionRef::J2000 {
+            return Ok(angles_rad);
+        }
+        let raw = MDirection::from_angles(angles_rad[0], angles_rad[1], source_ref);
+        let frame = self.spectral_frame_observatory_direction(time_mjd_sec, raw.clone())?;
+        let converted = raw.convert_to(DirectionRef::J2000, &frame)?;
+        let (longitude_rad, latitude_rad) = converted.as_angles();
+        Ok([longitude_rad, latitude_rad])
+    }
+
     /// Get the field direction for the given field_id.
     fn field_dir(&self, field_id: usize) -> MsResult<&MDirection> {
         self.field_directions
@@ -599,6 +615,47 @@ impl MsCalEngine {
         let phrot = uvw_phase_rotation_vector(target_direction, source_dir);
         let phase_shift_m = dot3(phrot, imaging_uvw_m);
         Ok((imaging_uvw_m, phase_shift_m))
+    }
+
+    /// Reproject raw MS UVW coordinates to an explicit fixed J2000 direction.
+    ///
+    /// This is the scalar-angle form of [`Self::reproject_raw_uvw_to_direction`]
+    /// for callers that do not otherwise need to depend on the Measures value
+    /// types.
+    pub fn reproject_raw_uvw_to_j2000(
+        &self,
+        raw_uvw_m: [f64; 3],
+        source_field_id: usize,
+        target_direction_rad: [f64; 2],
+    ) -> MsResult<([f64; 3], f64)> {
+        let target = MDirection::from_angles(
+            target_direction_rad[0],
+            target_direction_rad[1],
+            DirectionRef::J2000,
+        );
+        self.reproject_raw_uvw_to_direction(raw_uvw_m, source_field_id, &target)
+    }
+
+    /// Reproject raw MS UVW for CASA GridFT density evaluation at a fixed J2000 centre.
+    ///
+    /// GridFT enters its UVW rotation through CASA's `negateUV` convention.
+    /// This operation therefore remains distinct from the operator-phase
+    /// transform returned by [`Self::reproject_raw_uvw_to_j2000`].
+    pub fn reproject_raw_uvw_for_density_to_j2000(
+        &self,
+        raw_uvw_m: [f64; 3],
+        source_field_id: usize,
+        target_direction_rad: [f64; 2],
+    ) -> MsResult<[f64; 3]> {
+        let source = self.field_dir(source_field_id)?;
+        let target = MDirection::from_angles(
+            target_direction_rad[0],
+            target_direction_rad[1],
+            DirectionRef::J2000,
+        );
+        let casa_input = [-raw_uvw_m[0], -raw_uvw_m[1], raw_uvw_m[2]];
+        let casa_output = row_vec3_mul_mat3(casa_input, uvw_rotation_matrix(source, &target));
+        Ok([-casa_output[0], -casa_output[1], casa_output[2]])
     }
 
     /// Reproject raw MS UVW coordinates to an explicit fixed J2000 direction
@@ -1060,7 +1117,7 @@ fn resolve_field_phase_direction_j2000_with_observatory(
     let field = ms.field()?;
     let raw = field.phase_dir(field_id)?;
     let (lon, lat) = phase_dir_constant(raw)?;
-    let source_ref = resolve_direction_reference(field.table(), "PHASE_DIR", field_id)?;
+    let source_ref = resolve_direction_reference(field.table(), "FIELD", "PHASE_DIR", field_id)?;
     let dir = MDirection::from_angles(lon, lat, source_ref);
     if source_ref == DirectionRef::J2000 {
         return Ok(dir);
@@ -1074,22 +1131,32 @@ fn resolve_field_phase_direction_j2000_with_observatory(
     Ok(dir.convert_to(DirectionRef::J2000, &frame)?)
 }
 
-fn resolve_direction_reference(table: &Table, column: &str, row: usize) -> MsResult<DirectionRef> {
+pub(crate) fn resolve_direction_reference(
+    table: &Table,
+    table_name: &str,
+    column: &str,
+    row: usize,
+) -> MsResult<DirectionRef> {
     let Some(desc) = TableMeasDesc::reconstruct(table, column) else {
         return Ok(DirectionRef::J2000);
     };
-    let refer = resolve_reference_string(table, &desc, row)?;
+    let refer = resolve_reference_string(table, table_name, &desc, row)?;
     refer
         .parse::<DirectionRef>()
         .map_err(|_| MsError::ColumnTypeMismatch {
             column: column.to_string(),
-            table: "FIELD".to_string(),
+            table: table_name.to_string(),
             expected: "a supported direction reference".to_string(),
             found: refer,
         })
 }
 
-fn resolve_reference_string(table: &Table, desc: &TableMeasDesc, row: usize) -> MsResult<String> {
+fn resolve_reference_string(
+    table: &Table,
+    table_name: &str,
+    desc: &TableMeasDesc,
+    row: usize,
+) -> MsResult<String> {
     match desc.ref_desc() {
         MeasRefDesc::Fixed { refer } => Ok(refer.clone()),
         MeasRefDesc::VariableInt {
@@ -1099,12 +1166,26 @@ fn resolve_reference_string(table: &Table, desc: &TableMeasDesc, row: usize) -> 
         } => {
             let code = match table.cell_accessor(row, ref_column)?.scalar()? {
                 &ScalarValue::Int32(value) => value,
-                &ScalarValue::Int64(value) => value as i32,
-                &ScalarValue::UInt32(value) => value as i32,
+                &ScalarValue::Int64(value) => {
+                    i32::try_from(value).map_err(|_| MsError::ColumnTypeMismatch {
+                        column: ref_column.clone(),
+                        table: table_name.to_string(),
+                        expected: "an integer direction reference in the Int32 domain".to_string(),
+                        found: value.to_string(),
+                    })?
+                }
+                &ScalarValue::UInt32(value) => {
+                    i32::try_from(value).map_err(|_| MsError::ColumnTypeMismatch {
+                        column: ref_column.clone(),
+                        table: table_name.to_string(),
+                        expected: "an integer direction reference in the Int32 domain".to_string(),
+                        found: value.to_string(),
+                    })?
+                }
                 other => {
                     return Err(MsError::ColumnTypeMismatch {
                         column: ref_column.clone(),
-                        table: "FIELD".to_string(),
+                        table: table_name.to_string(),
                         expected: "Int scalar".to_string(),
                         found: format!("{other:?}"),
                     });
@@ -1115,7 +1196,7 @@ fn resolve_reference_string(table: &Table, desc: &TableMeasDesc, row: usize) -> 
                     return tab_ref_types.get(index).cloned().ok_or_else(|| {
                         MsError::ColumnTypeMismatch {
                             column: desc.column_name().to_string(),
-                            table: "FIELD".to_string(),
+                            table: table_name.to_string(),
                             expected: "TabRefTypes index in bounds".to_string(),
                             found: format!("missing entry for TabRefCodes[{index}]"),
                         }
@@ -1123,7 +1204,7 @@ fn resolve_reference_string(table: &Table, desc: &TableMeasDesc, row: usize) -> 
                 }
             }
             Err(MsError::InvalidMeasureCode {
-                table: "FIELD".to_string(),
+                table: table_name.to_string(),
                 column: ref_column.clone(),
                 code,
             })
@@ -1133,7 +1214,7 @@ fn resolve_reference_string(table: &Table, desc: &TableMeasDesc, row: usize) -> 
                 ScalarValue::String(value) => Ok(value.clone()),
                 other => Err(MsError::ColumnTypeMismatch {
                     column: ref_column.clone(),
-                    table: "FIELD".to_string(),
+                    table: table_name.to_string(),
                     expected: "String scalar".to_string(),
                     found: format!("{other:?}"),
                 }),

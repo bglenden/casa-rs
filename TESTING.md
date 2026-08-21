@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-08-14
+Last reality check: 2026-08-19
 Verification: just verify
 
 ## Test categories
@@ -55,6 +55,38 @@ Verification: just verify
   active progress-test context and poison the shared test lock after the first
   assertion failure. This serializes test cases, not the worker concurrency
   exercised inside an imaging run.
+
+## Native imaging product-contract gates
+
+Product Graph changes must prove that `compile` always owns one canonical typed
+graph, that graph identity changes with every encoded semantic field, and that
+Product Generation rejects missing, unexpected, duplicate, and stale source
+bindings. Plan integration must prove the sole public `plan` entrypoint rejects
+an incomplete or misplaced generation artifact ledger, accepts exactly one
+Publication node and fence owner, seals Product Generation into plan identity,
+and reopens the same typed generation identity from the retained receipt. The
+physical-layout gate separately proves exact output coverage, per-MeasurementSet
+MODEL_DATA participants, writer/allocation/fence ownership, distinct mapped
+acquisition and Release events, serial reuse versus same-node concurrency,
+zero-mapped layouts, and adequate staged/final/writer/cache resources. Logical
+Product Graph payload bytes must never be treated as those adapter-derived
+physical bounds.
+Publication-fence failure must never record a published output. These checks do
+not replace the 2x2 interoperability matrix when a later ticket changes image
+bytes or metadata.
+
+- Model topology, identity, and source binding:
+  `cargo test -p casa-imaging-model --test product_graph`
+- Mandatory generation/publication plan seal:
+  `cargo test -p casa-imaging-runtime --test compile_plan_run plan_requires_the_exact_product_generation_publication -- --exact`
+- Adapter-derived publication topology and resources:
+  `cargo test -p casa-imaging-runtime --test compile_plan_run publication_layouts_bind_staging_topology_and_resources -- --exact`
+- External mapped-allocation release invariant:
+  `cargo test -p casa-imaging-runtime --lib execution::tests::external_release_requires_prior_non_release_use -- --exact`
+- Typed receipt projection:
+  `cargo test -p casa-imaging-runtime --test compile_plan_run receipt_reopens_the_complete_selected_plan_projection -- --exact`
+- Publication failure accounting:
+  `cargo test -p casa-imaging-runtime --test compile_plan_run failed_publication_fence_never_records_a_published_output -- --exact`
 
 ## Mocking policy
 

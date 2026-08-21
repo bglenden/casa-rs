@@ -2510,6 +2510,74 @@ fn lazy_disk_open_reads_selected_tiled_array_channel_ranges_without_full_column(
 }
 
 #[test]
+fn lazy_disk_open_reads_selected_standard_indirect_array_channel_ranges_without_full_cells() {
+    let schema = TableSchema::new(vec![ColumnSchema::array_variable(
+        "data",
+        PrimitiveType::Float32,
+        Some(2),
+    )])
+    .expect("schema");
+
+    let mut table = Table::with_schema(schema);
+    for row_idx in 0..6 {
+        let mut values = Vec::new();
+        for channel in 0..5 {
+            for corr in 0..2 {
+                values.push(row_idx as f32 * 100.0 + channel as f32 * 10.0 + corr as f32);
+            }
+        }
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "data",
+                Value::Array(ArrayValue::Float32(
+                    ArrayD::from_shape_vec(ndarray::IxDyn(&[2, 5]).f(), values)
+                        .expect("shape data"),
+                )),
+            )]))
+            .expect("push row");
+    }
+
+    let root = unique_test_dir("lazy_selected_standard_indirect_channel_ranges");
+    std::fs::create_dir_all(&root).expect("create test dir");
+    table
+        .save(TableOptions::new(&root).with_data_manager(DataManagerKind::StandardStMan))
+        .expect("save StandardStMan table");
+
+    let reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+    assert!(!reopened.inner.has_loaded_rows());
+    assert!(!reopened.inner.has_loaded_array_column("data"));
+
+    let typed = reopened
+        .column_accessor("data")
+        .expect("data accessor")
+        .array_cells_2d_channel_range_typed_uncached(&[5, 1], 1, 3)
+        .expect("typed selected StandardStMan channel ranges")
+        .expect("defined selected cells");
+    let SelectedArray2DCells::Float32(typed) = typed else {
+        panic!("expected Float32 typed selected cells");
+    };
+    assert_eq!(typed.row_count(), 2);
+    assert_eq!(typed.axis0_count(), 2);
+    assert_eq!(typed.channel_count(), 3);
+    assert_eq!(
+        typed.values(),
+        &[
+            510.0, 511.0, 110.0, 111.0, 520.0, 521.0, 120.0, 121.0, 530.0, 531.0, 130.0, 131.0,
+        ]
+    );
+    assert!(
+        !reopened.inner.has_loaded_rows(),
+        "selected StandardStMan reads should not force row materialization"
+    );
+    assert!(
+        !reopened.inner.has_loaded_array_column("data"),
+        "selected StandardStMan reads should not populate the full array-column cache"
+    );
+
+    std::fs::remove_dir_all(&root).expect("cleanup test dir");
+}
+
+#[test]
 fn lazy_disk_open_reads_selected_fixed_array_cells_without_loading_full_column() {
     let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
         "uvw",
@@ -5016,6 +5084,26 @@ mod lock_tests {
         assert!(table.has_lock(LockType::Write));
         assert!(table.has_lock(LockType::Read));
         assert_eq!(table.row_count(), 1);
+    }
+
+    #[test]
+    fn locked_open_and_selected_scalar_reads_remain_lazy() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+        let lock_opts = LockOptions::new(LockMode::AutoLocking);
+
+        let table = Table::open_with_lock(opts, lock_opts).unwrap();
+        assert!(table.has_lock(LockType::Read));
+        assert!(!table.inner.rows_are_loaded());
+
+        let values = table
+            .required_scalar_columns_owned_for_rows(&["id"], &[0])
+            .unwrap();
+        assert_eq!(
+            values.get("id"),
+            Some(&RequiredScalarColumnValues::Int32(vec![1]))
+        );
+        assert!(!table.inner.rows_are_loaded());
     }
 
     #[test]

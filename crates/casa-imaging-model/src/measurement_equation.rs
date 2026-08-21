@@ -11,23 +11,27 @@
 use std::fmt;
 
 use sha2::{Digest, Sha256};
+use thiserror::Error;
 
 use crate::{
     ProblemInputIdentities,
     compiled_problem::{
-        InstrumentResponse, LogicalIdentity, PolarizationContract, ProductKind,
+        CanonicalEncoder, InstrumentResponse, LogicalIdentity, PolarizationContract, ProductKind,
         ProductNormalization, ReconstructionBasis, ReconstructionContract, RestoringBeamPolicy,
         ScientificContract, SpectralSampling, UvTaper, WeightDensityScope, WeightingContract,
-        WeightingScheme,
+        WeightingScheme, polarization_tag, reconstruction_basis_tag,
     },
     geometry::{CompiledGeometry, CompiledGeometryId, VisibilityPhaseConvention},
     observation::{
-        FlagPolicy, MeasurementSetIdentity, MsColumnKind, ObservationSnapshotId, WeightColumn,
+        FlagPolicy, MeasurementSetIdentity, MsColumnKind, ObservationSnapshot,
+        ObservationSnapshotId, WeightColumn,
     },
 };
 
 const WEIGHTING_GENERATION_IDENTITY_DOMAIN: &[u8] = b"casa-rs-weighting-generation";
 const WEIGHTING_GENERATION_IDENTITY_VERSION: u32 = 1;
+const NORMAL_EQUATION_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-normal-equation-contract";
+const NORMAL_EQUATION_CONTRACT_IDENTITY_VERSION: u32 = 1;
 
 /// Inner product on the model-coefficient space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -315,6 +319,204 @@ impl WeightingSource {
     }
 }
 
+/// Actual completion facts for one selected MeasurementSet consumed by weighting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WeightingSourceCompletion {
+    source: MeasurementSetIdentity,
+    processed_selected_rows: u64,
+    processed_visibility_samples: u64,
+    accepted_visibility_samples: u64,
+}
+
+impl WeightingSourceCompletion {
+    /// Validate and record exact row coverage and visibility-sample counts.
+    pub const fn new(
+        source: MeasurementSetIdentity,
+        processed_selected_rows: u64,
+        processed_visibility_samples: u64,
+        accepted_visibility_samples: u64,
+    ) -> Result<Self, WeightingGenerationCompletionError> {
+        if accepted_visibility_samples > processed_visibility_samples {
+            return Err(
+                WeightingGenerationCompletionError::AcceptedVisibilitySamplesExceedProcessed {
+                    measurement_set: source,
+                    processed: processed_visibility_samples,
+                    accepted: accepted_visibility_samples,
+                },
+            );
+        }
+        Ok(Self {
+            source,
+            processed_selected_rows,
+            processed_visibility_samples,
+            accepted_visibility_samples,
+        })
+    }
+
+    /// Return the completed MeasurementSet source.
+    #[must_use]
+    pub const fn source(self) -> MeasurementSetIdentity {
+        self.source
+    }
+
+    /// Return the number of selected rows processed for this source.
+    #[must_use]
+    pub const fn processed_selected_rows(self) -> u64 {
+        self.processed_selected_rows
+    }
+
+    /// Return the number of visibility samples processed before weighting exclusions.
+    #[must_use]
+    pub const fn processed_visibility_samples(self) -> u64 {
+        self.processed_visibility_samples
+    }
+
+    /// Return the number of visibility samples accepted after weighting exclusions.
+    #[must_use]
+    pub const fn accepted_visibility_samples(self) -> u64 {
+        self.accepted_visibility_samples
+    }
+}
+
+/// Snapshot-bound evidence that one weighting generation completed exact source coverage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WeightingGenerationCompletionEvidence {
+    generation_id: WeightingGenerationId,
+    snapshot: ObservationSnapshotId,
+    sources: Box<[WeightingSourceCompletion]>,
+}
+
+impl WeightingGenerationCompletionEvidence {
+    /// Schema version of the structured weighting completion evidence.
+    pub const SCHEMA_VERSION: u32 = 1;
+
+    /// Validate actual completion facts against the compiled weighting owner and snapshot.
+    pub fn new(
+        contract: &WeightingOperatorContract,
+        snapshot: &ObservationSnapshot,
+        sources: Vec<WeightingSourceCompletion>,
+    ) -> Result<Self, WeightingGenerationCompletionError> {
+        if contract.snapshot != snapshot.snapshot_id() {
+            return Err(WeightingGenerationCompletionError::SnapshotMismatch {
+                expected: contract.snapshot,
+                actual: snapshot.snapshot_id(),
+            });
+        }
+        if sources.len() != snapshot.sources().len() {
+            return Err(
+                WeightingGenerationCompletionError::SourceCoverageCountMismatch {
+                    expected: snapshot.sources().len(),
+                    actual: sources.len(),
+                },
+            );
+        }
+        for (ordinal, ((actual, expected), weighting_source)) in sources
+            .iter()
+            .zip(snapshot.sources())
+            .zip(contract.sources())
+            .enumerate()
+        {
+            if actual.source != expected.identity() || actual.source != weighting_source.source {
+                return Err(WeightingGenerationCompletionError::SourceIdentityMismatch {
+                    ordinal,
+                    expected: expected.identity(),
+                    actual: actual.source,
+                });
+            }
+            let expected_rows = expected.selection().rows().selected_row_count();
+            if actual.processed_selected_rows != expected_rows {
+                return Err(
+                    WeightingGenerationCompletionError::ProcessedSelectedRowsMismatch {
+                        measurement_set: actual.source,
+                        expected: expected_rows,
+                        actual: actual.processed_selected_rows,
+                    },
+                );
+            }
+        }
+        Ok(Self {
+            generation_id: contract.generation_id,
+            snapshot: snapshot.snapshot_id(),
+            sources: sources.into_boxed_slice(),
+        })
+    }
+
+    /// Return the owner-derived weighting generation completed by this evidence.
+    #[must_use]
+    pub const fn generation_id(&self) -> WeightingGenerationId {
+        self.generation_id
+    }
+
+    /// Return the immutable observation snapshot validated by this evidence.
+    #[must_use]
+    pub const fn snapshot(&self) -> ObservationSnapshotId {
+        self.snapshot
+    }
+
+    /// Return actual source completion facts in canonical snapshot order.
+    #[must_use]
+    pub const fn sources(&self) -> &[WeightingSourceCompletion] {
+        &self.sources
+    }
+}
+
+/// Exact reason actual weighting completion facts do not match their owner contract.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum WeightingGenerationCompletionError {
+    /// Accepted samples cannot exceed all visibility samples processed for the source.
+    #[error(
+        "weighting completion for {measurement_set:?} accepted {accepted} visibility samples after processing only {processed}"
+    )]
+    AcceptedVisibilitySamplesExceedProcessed {
+        /// MeasurementSet whose reported counts are inconsistent.
+        measurement_set: MeasurementSetIdentity,
+        /// Total visibility samples processed before exclusions.
+        processed: u64,
+        /// Visibility samples accepted after exclusions.
+        accepted: u64,
+    },
+    /// Completion uses a snapshot other than the one frozen into the weighting generation.
+    #[error("weighting completion snapshot {actual} does not match expected snapshot {expected}")]
+    SnapshotMismatch {
+        /// Snapshot frozen into the weighting contract.
+        expected: ObservationSnapshotId,
+        /// Snapshot supplied with actual completion facts.
+        actual: ObservationSnapshotId,
+    },
+    /// Completion facts do not cover every canonical snapshot source exactly once.
+    #[error("weighting completion covers {actual} sources, expected {expected}")]
+    SourceCoverageCountMismatch {
+        /// Number of sources in the immutable snapshot.
+        expected: usize,
+        /// Number of supplied source completion records.
+        actual: usize,
+    },
+    /// One canonical completion position names the wrong MeasurementSet.
+    #[error(
+        "weighting completion source {ordinal} is {actual:?}, expected canonical source {expected:?}"
+    )]
+    SourceIdentityMismatch {
+        /// Canonical source ordinal.
+        ordinal: usize,
+        /// MeasurementSet expected at this ordinal.
+        expected: MeasurementSetIdentity,
+        /// MeasurementSet supplied at this ordinal.
+        actual: MeasurementSetIdentity,
+    },
+    /// One source was not processed over its exact selected-row coverage.
+    #[error(
+        "weighting completion for {measurement_set:?} processed {actual} selected rows, expected {expected}"
+    )]
+    ProcessedSelectedRowsMismatch {
+        /// MeasurementSet whose coverage is incomplete or excessive.
+        measurement_set: MeasurementSetIdentity,
+        /// Exact selected-row count frozen in the snapshot.
+        expected: u64,
+        /// Selected-row count reported by execution.
+        actual: u64,
+    },
+}
+
 /// Positive-semidefinite data metric W and its frozen global generation.
 ///
 /// Callers cannot construct a weighting operator with a snapshot or source
@@ -420,12 +622,19 @@ impl NormalEquationForm {
 /// Typed normal-equation contract sharing one paired A/A* and one frozen W.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NormalEquationContract {
+    contract_id: NormalEquationContractId,
     measurement_operator: MeasurementOperatorContract,
     weighting: WeightingOperatorContract,
     output: NormalStateSpace,
 }
 
 impl NormalEquationContract {
+    /// Return the compiler-derived identity of the complete normal-equation contract.
+    #[must_use]
+    pub const fn contract_id(&self) -> NormalEquationContractId {
+        self.contract_id
+    }
+
     /// Return the complete paired measurement operator A/A*.
     #[must_use]
     pub const fn measurement_operator(&self) -> &MeasurementOperatorContract {
@@ -448,6 +657,35 @@ impl NormalEquationContract {
     #[must_use]
     pub const fn forms(&self) -> [NormalEquationForm; 3] {
         NormalEquationForm::ALL
+    }
+}
+
+/// Stable compiler-derived identity of one complete normal-equation contract.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NormalEquationContractId([u8; 32]);
+
+impl NormalEquationContractId {
+    /// Identity schema version used by the normal-equation encoder.
+    pub const SCHEMA_VERSION: u32 = NORMAL_EQUATION_CONTRACT_IDENTITY_VERSION;
+
+    /// Return the exact SHA-256 digest.
+    #[must_use]
+    pub const fn as_bytes(self) -> [u8; 32] {
+        self.0
+    }
+}
+
+impl fmt::Debug for NormalEquationContractId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("NormalEquationContractId(")?;
+        write_hex(formatter, &self.0)?;
+        formatter.write_str(")")
+    }
+}
+
+impl fmt::Display for NormalEquationContractId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_hex(formatter, &self.0)
     }
 }
 
@@ -534,13 +772,16 @@ pub(crate) fn compile_normal_equation(
         transforms: transforms.into_boxed_slice(),
     };
     let weighting = compile_weighting_operator(geometry, inputs, weighting);
+    let output = NormalStateSpace {
+        model: domain,
+        normalization: NormalStateNormalization::Unnormalized,
+    };
+    let contract_id = normal_equation_contract_id(&measurement_operator, &weighting, &output);
     NormalEquationContract {
+        contract_id,
         measurement_operator,
         weighting,
-        output: NormalStateSpace {
-            model: domain,
-            normalization: NormalStateNormalization::Unnormalized,
-        },
+        output,
     }
 }
 
@@ -619,6 +860,148 @@ fn compile_weighting_operator(
         density_scope: weighting.density_scope(),
         uv_taper: weighting.uv_taper(),
         sources,
+    }
+}
+
+fn normal_equation_contract_id(
+    operator: &MeasurementOperatorContract,
+    weighting: &WeightingOperatorContract,
+    output: &NormalStateSpace,
+) -> NormalEquationContractId {
+    let mut encoder = CanonicalEncoder::new();
+    encoder.bytes(NORMAL_EQUATION_CONTRACT_IDENTITY_DOMAIN);
+    encoder.u32(NORMAL_EQUATION_CONTRACT_IDENTITY_VERSION);
+    encode_model_coefficient_space(&mut encoder, operator.domain());
+    encoder.digest(operator.codomain().observation().as_bytes());
+    encode_visibility_inner_product(&mut encoder, operator.codomain().inner_product());
+    encoder.usize(operator.transforms().len());
+    for transform in operator.transforms() {
+        match transform {
+            PairedMeasurementTransform::SpectralBasis { basis } => {
+                encoder.u8(0);
+                encode_reconstruction_basis(&mut encoder, *basis);
+            }
+            PairedMeasurementTransform::PolarizationMapping => encoder.u8(1),
+            PairedMeasurementTransform::DirectionDependentResponse { response } => {
+                encoder.u8(2);
+                encoder.u8(instrument_response_tag(*response));
+            }
+            PairedMeasurementTransform::PhaseRotation { convention } => {
+                encoder.u8(3);
+                encoder.u8(match convention {
+                    VisibilityPhaseConvention::NegativeTwoPiFrequencyDelay => 0,
+                });
+            }
+            PairedMeasurementTransform::SpectralResampling { sampling } => {
+                encoder.u8(4);
+                encode_spectral_sampling(&mut encoder, *sampling);
+            }
+            PairedMeasurementTransform::ChannelIntegration { channels_per_bin } => {
+                encoder.u8(5);
+                encoder.usize(*channels_per_bin);
+            }
+        }
+    }
+    encoder.digest(weighting.generation_id.as_bytes());
+    encoder.digest(weighting.snapshot.as_bytes());
+    match weighting.scheme {
+        WeightingScheme::Natural => encoder.u8(0),
+        WeightingScheme::Uniform => encoder.u8(1),
+        WeightingScheme::Briggs { robust } => {
+            encoder.u8(2);
+            encoder.f64(robust);
+        }
+        WeightingScheme::BriggsBandwidthTaper { robust } => {
+            encoder.u8(3);
+            encoder.f64(robust);
+        }
+    }
+    encoder.u8(match weighting.density_scope {
+        WeightDensityScope::NotApplicable => 0,
+        WeightDensityScope::GlobalSelection => 1,
+        WeightDensityScope::PerOutputChannel => 2,
+    });
+    match weighting.uv_taper {
+        None => encoder.u8(0),
+        Some(taper) => {
+            encoder.u8(1);
+            encoder.f64(taper.major_lambda());
+            encoder.f64(taper.minor_lambda());
+            encoder.f64(taper.position_angle_rad());
+        }
+    }
+    encoder.usize(weighting.sources.len());
+    for source in &weighting.sources {
+        encoder.digest(source.source.identity().as_bytes());
+        encoder.u8(match source.flags {
+            FlagPolicy::FlagOrFlagRow => 0,
+        });
+        encoder.u8(match source.input_weights {
+            WeightColumn::Weight => 0,
+            WeightColumn::WeightSpectrum => 1,
+        });
+        encoder.identity(source.flag_generation);
+        encoder.identity(source.flag_row_generation);
+        encoder.identity(source.input_weight_generation);
+    }
+    encode_model_coefficient_space(&mut encoder, output.model());
+    encoder.u8(match output.normalization {
+        NormalStateNormalization::Unnormalized => 0,
+    });
+    NormalEquationContractId(encoder.finish())
+}
+
+fn encode_model_coefficient_space(encoder: &mut CanonicalEncoder, space: &ModelCoefficientSpace) {
+    encoder.digest(space.geometry.as_bytes());
+    encode_reconstruction_basis(encoder, space.basis);
+    encoder.usize(space.polarization.coordinates().len());
+    for coordinate in space.polarization.coordinates() {
+        encoder.u8(polarization_tag(*coordinate));
+    }
+    encoder.u8(match space.inner_product {
+        ModelInnerProduct::HermitianEuclidean => 0,
+    });
+}
+
+fn encode_reconstruction_basis(encoder: &mut CanonicalEncoder, basis: ReconstructionBasis) {
+    encoder.u8(reconstruction_basis_tag(basis));
+    match basis {
+        ReconstructionBasis::Constant => {}
+        ReconstructionBasis::Taylor { terms } => {
+            encoder.usize(terms);
+        }
+        ReconstructionBasis::ChannelLocal { channels } => {
+            encoder.usize(channels);
+        }
+    }
+}
+
+pub(crate) fn encode_visibility_inner_product(
+    encoder: &mut CanonicalEncoder,
+    inner_product: VisibilityInnerProduct,
+) {
+    encoder.u8(match inner_product {
+        VisibilityInnerProduct::HermitianEuclidean => 0,
+    });
+}
+
+pub(crate) fn encode_spectral_sampling(encoder: &mut CanonicalEncoder, sampling: SpectralSampling) {
+    match sampling {
+        SpectralSampling::Identity => encoder.u8(0),
+        SpectralSampling::Nearest => encoder.u8(1),
+        SpectralSampling::Linear => encoder.u8(2),
+        SpectralSampling::ChannelAverage { channels_per_bin } => {
+            encoder.u8(3);
+            encoder.usize(channels_per_bin);
+        }
+    }
+}
+
+fn instrument_response_tag(response: InstrumentResponse) -> u8 {
+    match response {
+        InstrumentResponse::Scalar => 0,
+        InstrumentResponse::PrimaryBeam => 1,
+        InstrumentResponse::FullMueller => 2,
     }
 }
 

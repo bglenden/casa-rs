@@ -322,6 +322,110 @@ impl StManArrayFileReader {
         Ok(Some(Value::Array(array_value)))
     }
 
+    /// Read a bounded channel range from one two-dimensional array cell.
+    ///
+    /// The stored array is Fortran ordered as `[axis0, channel]`. This method
+    /// seeks directly to the requested channel range and never materializes
+    /// the unselected channels.
+    pub(crate) fn read_array_2d_channel_range_at(
+        &mut self,
+        offset: i64,
+        dt: CasacoreDataType,
+        channel_start: usize,
+        channel_count: usize,
+    ) -> Result<Option<ArrayValue>, StorageError> {
+        if offset == 0 {
+            return Ok(None);
+        }
+        let target = u64::try_from(offset).map_err(|_| {
+            StorageError::FormatMismatch(format!("negative array-file offset {offset}"))
+        })?;
+        self.file.seek(SeekFrom::Start(target))?;
+
+        if self.version > 0 {
+            let _ref_count = read_u32(&mut self.file, self.bo)?;
+        }
+        let ndim = read_u32(&mut self.file, self.bo)? as usize;
+        if ndim != 2 {
+            return Err(StorageError::FormatMismatch(format!(
+                "selected channel read requires a two-dimensional array, found {ndim} dimensions"
+            )));
+        }
+        let axis0_count = usize::try_from(read_i32(&mut self.file, self.bo)?).map_err(|_| {
+            StorageError::FormatMismatch("negative array axis-0 length".to_string())
+        })?;
+        let stored_channel_count =
+            usize::try_from(read_i32(&mut self.file, self.bo)?).map_err(|_| {
+                StorageError::FormatMismatch("negative array channel length".to_string())
+            })?;
+        let channel_end = channel_start.checked_add(channel_count).ok_or_else(|| {
+            StorageError::FormatMismatch("selected channel range overflow".to_string())
+        })?;
+        if channel_count == 0 || channel_end > stored_channel_count {
+            return Err(StorageError::FormatMismatch(format!(
+                "selected channel range {channel_start}..{channel_end} exceeds stored channel count {stored_channel_count}"
+            )));
+        }
+        let selected_count = axis0_count.checked_mul(channel_count).ok_or_else(|| {
+            StorageError::FormatMismatch("selected array element count overflow".to_string())
+        })?;
+        let first_element = axis0_count.checked_mul(channel_start).ok_or_else(|| {
+            StorageError::FormatMismatch("selected array element offset overflow".to_string())
+        })?;
+        let data_start = self.file.stream_position()?;
+
+        let value = if dt == CasacoreDataType::TpBool {
+            let first_byte = first_element / 8;
+            let first_bit = first_element % 8;
+            let byte_count = first_bit
+                .checked_add(selected_count)
+                .ok_or_else(|| {
+                    StorageError::FormatMismatch("selected boolean range overflow".to_string())
+                })?
+                .div_ceil(8);
+            self.file.seek(SeekFrom::Start(
+                data_start.checked_add(first_byte as u64).ok_or_else(|| {
+                    StorageError::FormatMismatch(
+                        "selected boolean file offset overflow".to_string(),
+                    )
+                })?,
+            ))?;
+            let mut bytes = vec![0u8; byte_count];
+            self.file.read_exact(&mut bytes)?;
+            let values = (0..selected_count)
+                .map(|index| {
+                    let bit = first_bit + index;
+                    (bytes[bit / 8] >> (bit % 8)) & 1 != 0
+                })
+                .collect();
+            ArrayValue::Bool(
+                ArrayD::from_shape_vec(IxDyn(&[axis0_count, channel_count]).f(), values).map_err(
+                    |error| StorageError::FormatMismatch(format!("array shape: {error}")),
+                )?,
+            )
+        } else {
+            let element_bytes = canonical_elem_bytes(dt);
+            if element_bytes < 1.0 || element_bytes.fract() != 0.0 {
+                return Err(StorageError::FormatMismatch(format!(
+                    "selected channel read does not support array-file type {dt:?}"
+                )));
+            }
+            let byte_offset = first_element
+                .checked_mul(element_bytes as usize)
+                .ok_or_else(|| {
+                    StorageError::FormatMismatch("selected array byte offset overflow".to_string())
+                })?;
+            self.file.seek(SeekFrom::Start(
+                data_start.checked_add(byte_offset as u64).ok_or_else(|| {
+                    StorageError::FormatMismatch("selected array file offset overflow".to_string())
+                })?,
+            ))?;
+            self.read_typed_data(dt, selected_count, &[axis0_count, channel_count])?
+        };
+        self.pos = u64::MAX;
+        Ok(Some(value))
+    }
+
     fn read_typed_data(
         &mut self,
         dt: CasacoreDataType,

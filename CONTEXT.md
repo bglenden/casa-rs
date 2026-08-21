@@ -102,6 +102,41 @@ normalization, beam/restoration policy, validity, dependencies, schema, and
 atomic publication rules for an imaging problem.
 _Avoid_: Output files, sidecars
 
+**Product Graph**:
+The mandatory compiler-owned DAG inside a Compiled Problem. It canonically
+identifies typed product roles, exact source slots, axes, units, normalization,
+beam and validity rules, dependencies, interoperable schema, logical payload
+envelopes, and the complete publication set; callers cannot compile or replace
+it separately.
+_Avoid_: Writer manifest, output-name list
+
+**Product Payload Envelope**:
+The Product Graph's logical element representation and exact pixel/metadata byte
+projection for one product. It is part of product identity but is not a physical
+writer-buffer, mapped-page, staged-storage, or final-storage reservation.
+_Avoid_: File size estimate, adapter allocation
+
+**Product Generation**:
+One Product Graph with every required source slot bound exactly once to an
+authoritative source-generation identity. Missing, unexpected, duplicate, and
+stale bindings are invalid.
+_Avoid_: Latest products, mutable output batch
+
+**Product Publication Binding**:
+The plan-sealed proof that every member of one Product Generation is an output
+artifact of the sole Publication work node and fence. The retained receipt
+projects its typed Product Generation identity without duplicating artifact
+accounting.
+_Avoid_: Writer, artifact copy, publication fallback
+
+**Publication Layout Ledger**:
+The plan-owned, adapter-derived physical layout for every output artifact. Each
+member binds a stable layout identity, exact writer node/allocation/terminal,
+optional mapped-cache acquisition and distinct Release event, and hard physical
+resource bounds; it never changes logical Product Graph semantics or persistent
+CASA formats.
+_Avoid_: Product metadata, logical payload bytes, direct-final write
+
 **Migration Obligation**:
 A visible, executable record of a scientific capability that is intentionally
 unavailable during architectural migration and must be restored before the
