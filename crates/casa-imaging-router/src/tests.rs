@@ -21,6 +21,10 @@ use casa_imaging_model::{
     StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
     WeightingContract, WeightingScheme,
 };
+use casa_imaging_runtime::{
+    ExecutionRouteDisposition, ExecutionRouteEvidence, ExecutionRouteRequirement,
+    ExecutionRouteRequirementEvidence, ExecutionRouteRequirementKind,
+};
 
 #[path = "../tests/common/mod.rs"]
 mod common;
@@ -29,7 +33,7 @@ use common::problem_inputs;
 
 use super::{
     DispatchError, ImagingRouter, LegacyWholeRunEnginePort, MIGRATION_MATRIX_JSON,
-    NativeEnginePort, RequestDisposition, parse_matrix,
+    MigrationRowKind, NativeEnginePort, RequestDisposition, RouteRecord, parse_matrix,
 };
 
 const STANDARD_DIRTY_ROWS: [&str; 6] = [
@@ -121,6 +125,133 @@ fn selected_engine_receives_the_exact_route_record() {
             .collect::<Vec<_>>(),
         STANDARD_DIRTY_ROWS
     );
+}
+
+#[test]
+fn authoritative_route_record_projects_losslessly_to_receipt_evidence() {
+    let routed = router(
+        MIGRATION_MATRIX_JSON.to_string(),
+        Arc::new(AtomicUsize::new(0)),
+        Arc::new(AtomicUsize::new(0)),
+    )
+    .dispatch(standard_dirty_request())
+    .expect("authoritative route");
+
+    let receipt_route = execution_route_evidence(routed.route());
+
+    assert_eq!(
+        receipt_route.matrix_schema_version(),
+        routed.route().matrix_schema_version()
+    );
+    assert_eq!(
+        receipt_route.matrix_contract_revision(),
+        routed.route().matrix_contract_revision()
+    );
+    assert_eq!(
+        receipt_route.disposition(),
+        execution_disposition(routed.route().disposition())
+    );
+    assert_eq!(
+        receipt_route.requirements().len(),
+        routed.route().requirements().len()
+    );
+    for (receipt, routed) in receipt_route
+        .requirements()
+        .iter()
+        .zip(routed.route().requirements())
+    {
+        let obligation = routed.obligation();
+        assert_eq!(receipt.id(), routed.id());
+        assert_eq!(receipt.kind(), execution_kind(routed.kind()));
+        assert_eq!(
+            receipt.disposition(),
+            execution_disposition(routed.status())
+        );
+        assert_eq!(receipt.evidence().current_owner, routed.current_owner());
+        assert_eq!(
+            receipt.evidence().destination_tickets,
+            routed.destination_tickets()
+        );
+        assert_eq!(receipt.evidence().evidence_issues, routed.evidence_issues());
+        assert_eq!(
+            receipt.evidence().baseline_manifests,
+            routed.baseline_manifests()
+        );
+        assert_eq!(
+            receipt.evidence().acceptance_contract,
+            routed.acceptance_contract()
+        );
+        assert_eq!(receipt.evidence().transfer_point, routed.transfer_point());
+        assert_eq!(
+            receipt.evidence().deletion_condition,
+            routed.deletion_condition()
+        );
+        assert_eq!(receipt.evidence().source_evidence, routed.source_evidence());
+        assert_eq!(
+            receipt.evidence().obligation_ticket.as_deref(),
+            obligation.as_ref().map(|obligation| obligation.ticket())
+        );
+        assert_eq!(
+            receipt.evidence().obligation_reason.as_deref(),
+            obligation.as_ref().map(|obligation| obligation.reason())
+        );
+    }
+}
+
+fn execution_route_evidence(route: &RouteRecord) -> ExecutionRouteEvidence {
+    ExecutionRouteEvidence::new(
+        route.matrix_schema_version(),
+        route.matrix_contract_revision(),
+        execution_disposition(route.disposition()),
+        route
+            .requirements()
+            .iter()
+            .map(|requirement| {
+                let obligation = requirement.obligation();
+                ExecutionRouteRequirement::new(
+                    requirement.id(),
+                    execution_kind(requirement.kind()),
+                    execution_disposition(requirement.status()),
+                    ExecutionRouteRequirementEvidence {
+                        current_owner: requirement.current_owner().to_string(),
+                        destination_tickets: requirement.destination_tickets().to_vec(),
+                        evidence_issues: requirement.evidence_issues().to_vec(),
+                        baseline_manifests: requirement.baseline_manifests().to_vec(),
+                        acceptance_contract: requirement.acceptance_contract().to_string(),
+                        transfer_point: requirement.transfer_point().to_string(),
+                        deletion_condition: requirement.deletion_condition().to_string(),
+                        source_evidence: requirement.source_evidence().to_vec(),
+                        obligation_ticket: obligation
+                            .map(|obligation| obligation.ticket().to_string()),
+                        obligation_reason: obligation
+                            .map(|obligation| obligation.reason().to_string()),
+                    },
+                )
+                .expect("authoritative route requirement")
+            })
+            .collect(),
+    )
+    .expect("authoritative route evidence")
+}
+
+const fn execution_disposition(disposition: RequestDisposition) -> ExecutionRouteDisposition {
+    match disposition {
+        RequestDisposition::Native => ExecutionRouteDisposition::Native,
+        RequestDisposition::LegacyWholeRun => ExecutionRouteDisposition::LegacyWholeRun,
+        RequestDisposition::TemporarilyUnavailable => {
+            ExecutionRouteDisposition::TemporarilyUnavailable
+        }
+    }
+}
+
+const fn execution_kind(kind: MigrationRowKind) -> ExecutionRouteRequirementKind {
+    match kind {
+        MigrationRowKind::Capability => ExecutionRouteRequirementKind::Capability,
+        MigrationRowKind::Product => ExecutionRouteRequirementKind::Product,
+        MigrationRowKind::Solver => ExecutionRouteRequirementKind::Solver,
+        MigrationRowKind::Frontend => ExecutionRouteRequirementKind::Frontend,
+        MigrationRowKind::Backend => ExecutionRouteRequirementKind::Backend,
+    }
 }
 
 #[test]

@@ -203,6 +203,10 @@ impl ClaimLifetime {
     pub fn through_fences(kinds: impl IntoIterator<Item = FenceKind>) -> Self {
         Self::Fences(kinds.into_iter().collect())
     }
+
+    fn retains_fence(&self, kind: FenceKind) -> bool {
+        matches!(self, Self::Fences(kinds) if kinds.contains(&kind))
+    }
 }
 
 /// One positive, typed lease claim made by a work node.
@@ -724,6 +728,35 @@ impl WorkExecutionContext {
     #[must_use]
     pub fn allocations(&self) -> &[WorkAllocationCapability] {
         &self.allocations
+    }
+
+    pub(crate) fn for_fence(&self, kind: FenceKind) -> Self {
+        Self {
+            node: self.node.clone(),
+            knobs: self.knobs.clone(),
+            lease_epoch: self.lease_epoch,
+            resources: self
+                .resources
+                .iter()
+                .filter(|capability| capability.lifetime.retains_fence(kind))
+                .map(|capability| WorkResourceCapability {
+                    resource: capability.resource.clone(),
+                    amount: capability.amount,
+                    lifetime: capability.lifetime.clone(),
+                })
+                .collect(),
+            allocations: self
+                .allocations
+                .iter()
+                .filter(|capability| capability.lifetime.retains_fence(kind))
+                .map(|capability| WorkAllocationCapability {
+                    allocation: capability.allocation.clone(),
+                    physical_slot: capability.physical_slot.clone(),
+                    capacity_bytes: capability.capacity_bytes,
+                    lifetime: capability.lifetime.clone(),
+                })
+                .collect(),
+        }
     }
 }
 

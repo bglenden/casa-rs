@@ -1335,6 +1335,22 @@ fn execution_provenance(
                     "capability.compiled-problem",
                     ExecutionRouteRequirementKind::Capability,
                     ExecutionRouteDisposition::Native,
+                    casa_imaging_runtime::ExecutionRouteRequirementEvidence {
+                        current_owner: "crates/casa-imaging-model".to_string(),
+                        destination_tickets: vec!["T05/#491".to_string()],
+                        evidence_issues: vec![486, 491],
+                        baseline_manifests: vec![
+                            "repo://crates/casa-imaging-model/src/lib.rs".to_string(),
+                        ],
+                        acceptance_contract: "compiled-problem-foundation-v1".to_string(),
+                        transfer_point: "immutable backend-independent logical problem and stable identity landed in Wave 1".to_string(),
+                        deletion_condition: "not applicable; canonical logical-problem owner".to_string(),
+                        source_evidence: vec![
+                            "crates/casa-imaging-model/src/lib.rs::CompiledProblem".to_string(),
+                        ],
+                        obligation_ticket: None,
+                        obligation_reason: None,
+                    },
                 )
                 .expect("canonical route row"),
             ],
@@ -2323,13 +2339,40 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         .expect("reopen durable receipt");
 
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
-    assert_eq!(receipt.schema_version(), 2);
+    assert_eq!(receipt.schema_version(), 3);
     assert_eq!(receipt.route_matrix_schema_version(), 1);
     assert_eq!(receipt.route_matrix_contract_revision(), 1);
     assert_eq!(receipt.route_disposition(), "native");
     assert_eq!(
         receipt.route_requirement_identities(),
         vec!["capability.compiled-problem"]
+    );
+    assert_eq!(
+        receipt
+            .route_requirement("capability.compiled-problem")
+            .expect("lossless routed row"),
+        ExecutionRouteRequirement::new(
+            "capability.compiled-problem",
+            ExecutionRouteRequirementKind::Capability,
+            ExecutionRouteDisposition::Native,
+            casa_imaging_runtime::ExecutionRouteRequirementEvidence {
+                current_owner: "crates/casa-imaging-model".to_string(),
+                destination_tickets: vec!["T05/#491".to_string()],
+                evidence_issues: vec![486, 491],
+                baseline_manifests: vec![
+                    "repo://crates/casa-imaging-model/src/lib.rs".to_string(),
+                ],
+                acceptance_contract: "compiled-problem-foundation-v1".to_string(),
+                transfer_point: "immutable backend-independent logical problem and stable identity landed in Wave 1".to_string(),
+                deletion_condition: "not applicable; canonical logical-problem owner".to_string(),
+                source_evidence: vec![
+                    "crates/casa-imaging-model/src/lib.rs::CompiledProblem".to_string(),
+                ],
+                obligation_ticket: None,
+                obligation_reason: None,
+            },
+        )
+        .expect("authoritative routed row")
     );
     assert_eq!(receipt.status(), ReceiptStatus::Completed);
     assert_eq!(receipt.plan_identity(), execution_plan.plan_id().as_bytes());

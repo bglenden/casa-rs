@@ -633,6 +633,7 @@ name = "casa-imaging-router"
 version = "0.27.0"
 dependencies = [
  "casa-imaging-model",
+ "casa-imaging-runtime",
  "serde",
  "serde_json",
 ]

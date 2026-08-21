@@ -409,6 +409,22 @@ fn execution_provenance(
                     "capability.compiled-problem",
                     crate::ExecutionRouteRequirementKind::Capability,
                     crate::ExecutionRouteDisposition::Native,
+                    crate::ExecutionRouteRequirementEvidence {
+                        current_owner: "crates/casa-imaging-model".to_string(),
+                        destination_tickets: vec!["T05/#491".to_string()],
+                        evidence_issues: vec![486, 491],
+                        baseline_manifests: vec![
+                            "repo://crates/casa-imaging-model/src/lib.rs".to_string(),
+                        ],
+                        acceptance_contract: "compiled-problem-foundation-v1".to_string(),
+                        transfer_point: "immutable backend-independent logical problem and stable identity landed in Wave 1".to_string(),
+                        deletion_condition: "not applicable; canonical logical-problem owner".to_string(),
+                        source_evidence: vec![
+                            "crates/casa-imaging-model/src/lib.rs::CompiledProblem".to_string(),
+                        ],
+                        obligation_ticket: None,
+                        obligation_reason: None,
+                    },
                 )
                 .expect("canonical route row"),
             ],
@@ -988,6 +1004,59 @@ fn scheduler_dispatches_ready_work_deterministically_under_lease_limits() {
     assert_eq!(
         scheduler.next_action().expect("terminal action"),
         SchedulerAction::Complete(SchedulerTerminal::Succeeded)
+    );
+}
+
+#[test]
+fn fence_context_exposes_only_capabilities_live_for_that_fence() {
+    let node = cpu_node("fenced", BTreeSet::new());
+    let context = WorkExecutionContext {
+        node,
+        knobs: ExecutionKnobs::serial(),
+        lease_epoch: 7,
+        resources: vec![
+            WorkResourceCapability {
+                resource: crate::LeaseResource::Workers,
+                amount: 1,
+                lifetime: ClaimLifetime::Work,
+            },
+            WorkResourceCapability {
+                resource: crate::LeaseResource::Queue {
+                    demand_id: "io-queue".to_string(),
+                },
+                amount: 1,
+                lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+            },
+        ],
+        allocations: vec![
+            WorkAllocationCapability {
+                allocation: AllocationId::new("work-buffer"),
+                physical_slot: PhysicalSlotId::new("work-slot"),
+                capacity_bytes: 64,
+                lifetime: ClaimLifetime::Work,
+            },
+            WorkAllocationCapability {
+                allocation: AllocationId::new("io-buffer"),
+                physical_slot: PhysicalSlotId::new("io-slot"),
+                capacity_bytes: 128,
+                lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+            },
+        ],
+    };
+
+    let fence = context.for_fence(FenceKind::Io);
+
+    assert_eq!(fence.resources().len(), 1);
+    assert_eq!(
+        fence.resources()[0].resource(),
+        &crate::LeaseResource::Queue {
+            demand_id: "io-queue".to_string(),
+        }
+    );
+    assert_eq!(fence.allocations().len(), 1);
+    assert_eq!(
+        fence.allocations()[0].allocation(),
+        &AllocationId::new("io-buffer")
     );
 }
 

@@ -1372,7 +1372,12 @@ pub fn plan<E>(
         )
         .map_err(PlanError::Resource)?;
     let selected = lease.selected_alternative().clone();
-    drop(lease);
+    let release = lease.release().map_err(PlanError::Resource)?;
+    if !release.is_released() {
+        return Err(PlanError::Resource(ResourceError::Invalid(
+            "provisional planning lease retained an unexpected fence".to_string(),
+        )));
+    }
     let physical_work = candidates
         .into_iter()
         .find(|candidate| candidate.execution_dag.resource_alternative().id == selected)
@@ -2190,7 +2195,10 @@ where
                         .into_run_error());
                 };
                 let implementation = implementations[&work.node().implementation];
-                if let Err(source) = implementation.wait_for_fence(problem, work, fence.kind()) {
+                let fence_work = work.for_fence(fence.kind());
+                if let Err(source) =
+                    implementation.wait_for_fence(problem, &fence_work, fence.kind())
+                {
                     if pending.is_none() {
                         pending = Some(PendingRunError::Execution {
                             node: fence.node().clone(),

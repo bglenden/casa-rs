@@ -41,7 +41,7 @@ use crate::{
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 2;
+const RECEIPT_SCHEMA_VERSION: u32 = 3;
 const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 2;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const MAX_FAILURE_SUBJECT_BYTES: usize = 128;
@@ -123,6 +123,32 @@ pub struct ExecutionRouteRequirement {
     id: String,
     kind: ExecutionRouteRequirementKind,
     disposition: ExecutionRouteDisposition,
+    evidence: ExecutionRouteRequirementEvidence,
+}
+
+/// Lossless authoritative migration evidence carried by one routed row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionRouteRequirementEvidence {
+    /// Sole current implementation owner.
+    pub current_owner: String,
+    /// Accepted transfer tickets.
+    pub destination_tickets: Vec<String>,
+    /// Authoritative issue evidence.
+    pub evidence_issues: Vec<u64>,
+    /// Content-pinned baseline manifests.
+    pub baseline_manifests: Vec<String>,
+    /// Versioned Acceptance Contract identifier.
+    pub acceptance_contract: String,
+    /// Exact transfer milestone.
+    pub transfer_point: String,
+    /// Same-merge deletion or quarantine condition.
+    pub deletion_condition: String,
+    /// Repository source locators supporting the current status.
+    pub source_evidence: Vec<String>,
+    /// Owning transfer ticket for a non-native row.
+    pub obligation_ticket: Option<String>,
+    /// Reason a non-native row remains open.
+    pub obligation_reason: Option<String>,
 }
 
 impl ExecutionRouteRequirement {
@@ -131,6 +157,7 @@ impl ExecutionRouteRequirement {
         id: impl Into<String>,
         kind: ExecutionRouteRequirementKind,
         disposition: ExecutionRouteDisposition,
+        evidence: ExecutionRouteRequirementEvidence,
     ) -> Result<Self, ReceiptError> {
         let id = id.into();
         if id.is_empty()
@@ -140,10 +167,52 @@ impl ExecutionRouteRequirement {
         {
             return Err(ReceiptError::InvalidRouteEvidence);
         }
+        let required_text = [
+            evidence.current_owner.as_str(),
+            evidence.acceptance_contract.as_str(),
+            evidence.transfer_point.as_str(),
+            evidence.deletion_condition.as_str(),
+        ];
+        let has_complete_evidence = required_text.iter().all(|value| !value.trim().is_empty())
+            && !evidence.destination_tickets.is_empty()
+            && evidence
+                .destination_tickets
+                .iter()
+                .all(|value| !value.trim().is_empty())
+            && !evidence.evidence_issues.is_empty()
+            && evidence.evidence_issues.iter().all(|issue| *issue > 0)
+            && !evidence.baseline_manifests.is_empty()
+            && evidence
+                .baseline_manifests
+                .iter()
+                .all(|value| !value.trim().is_empty())
+            && !evidence.source_evidence.is_empty()
+            && evidence
+                .source_evidence
+                .iter()
+                .all(|value| !value.trim().is_empty());
+        let obligation_is_valid = match (
+            disposition,
+            evidence.obligation_ticket.as_deref(),
+            evidence.obligation_reason.as_deref(),
+        ) {
+            (ExecutionRouteDisposition::Native, None, None) => true,
+            (
+                ExecutionRouteDisposition::LegacyWholeRun
+                | ExecutionRouteDisposition::TemporarilyUnavailable,
+                Some(ticket),
+                Some(reason),
+            ) => !ticket.trim().is_empty() && !reason.trim().is_empty(),
+            _ => false,
+        };
+        if !has_complete_evidence || !obligation_is_valid {
+            return Err(ReceiptError::InvalidRouteEvidence);
+        }
         Ok(Self {
             id,
             kind,
             disposition,
+            evidence,
         })
     }
 
@@ -163,6 +232,12 @@ impl ExecutionRouteRequirement {
     #[must_use]
     pub const fn disposition(&self) -> ExecutionRouteDisposition {
         self.disposition
+    }
+
+    /// Return the full authoritative migration evidence without truncation.
+    #[must_use]
+    pub const fn evidence(&self) -> &ExecutionRouteRequirementEvidence {
+        &self.evidence
     }
 }
 
@@ -495,6 +570,35 @@ impl ExecutionReceipt {
             .iter()
             .map(|requirement| requirement.id.as_str())
             .collect()
+    }
+
+    /// Reconstruct one complete typed authoritative routed row.
+    #[must_use]
+    pub fn route_requirement(&self, id: &str) -> Option<ExecutionRouteRequirement> {
+        let requirement = self
+            .body
+            .route
+            .requirements
+            .iter()
+            .find(|requirement| requirement.id == id)?;
+        ExecutionRouteRequirement::new(
+            requirement.id.clone(),
+            execution_route_requirement_kind(&requirement.kind)?,
+            execution_route_disposition(&requirement.disposition)?,
+            ExecutionRouteRequirementEvidence {
+                current_owner: requirement.current_owner.clone(),
+                destination_tickets: requirement.destination_tickets.clone(),
+                evidence_issues: requirement.evidence_issues.clone(),
+                baseline_manifests: requirement.baseline_manifests.clone(),
+                acceptance_contract: requirement.acceptance_contract.clone(),
+                transfer_point: requirement.transfer_point.clone(),
+                deletion_condition: requirement.deletion_condition.clone(),
+                source_evidence: requirement.source_evidence.clone(),
+                obligation_ticket: requirement.obligation_ticket.clone(),
+                obligation_reason: requirement.obligation_reason.clone(),
+            },
+        )
+        .ok()
     }
 
     /// Return the typed terminal or active status.
@@ -975,22 +1079,37 @@ impl ExecutionReceipt {
 #[derive(Debug)]
 pub struct ExecutionReceiptStore {
     root: PathBuf,
-    retention: ReceiptRetention,
-    mutation: Arc<Mutex<()>>,
+    state: Arc<ReceiptRootState>,
 }
 
-static RECEIPT_ROOT_LOCKS: OnceLock<Mutex<BTreeMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+#[derive(Debug)]
+struct ReceiptRootState {
+    retention: ReceiptRetention,
+    mutation: Mutex<()>,
+}
 
-fn receipt_root_lock(root: &Path) -> Result<Arc<Mutex<()>>, ReceiptError> {
-    let locks = RECEIPT_ROOT_LOCKS.get_or_init(|| Mutex::new(BTreeMap::new()));
-    let mut locks = locks.lock().map_err(|_| ReceiptError::InvalidStore)?;
-    locks.retain(|_, lock| lock.strong_count() != 0);
-    if let Some(lock) = locks.get(root).and_then(Weak::upgrade) {
-        return Ok(lock);
+static RECEIPT_ROOT_STATES: OnceLock<Mutex<BTreeMap<PathBuf, Weak<ReceiptRootState>>>> =
+    OnceLock::new();
+
+fn receipt_root_state(
+    root: &Path,
+    retention: ReceiptRetention,
+) -> Result<Arc<ReceiptRootState>, ReceiptError> {
+    let states = RECEIPT_ROOT_STATES.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let mut states = states.lock().map_err(|_| ReceiptError::InvalidStore)?;
+    states.retain(|_, state| state.strong_count() != 0);
+    if let Some(state) = states.get(root).and_then(Weak::upgrade) {
+        if state.retention != retention {
+            return Err(ReceiptError::ConflictingRetention);
+        }
+        return Ok(state);
     }
-    let lock = Arc::new(Mutex::new(()));
-    locks.insert(root.to_owned(), Arc::downgrade(&lock));
-    Ok(lock)
+    let state = Arc::new(ReceiptRootState {
+        retention,
+        mutation: Mutex::new(()),
+    });
+    states.insert(root.to_owned(), Arc::downgrade(&state));
+    Ok(state)
 }
 
 /// One attempt-scoped durable-evidence binding consumed by the run seam.
@@ -1025,12 +1144,8 @@ impl ExecutionReceiptStore {
             action: "canonicalize receipt directory",
             source,
         })?;
-        let mutation = receipt_root_lock(&root)?;
-        Ok(Self {
-            root,
-            retention,
-            mutation,
-        })
+        let state = receipt_root_state(&root, retention)?;
+        Ok(Self { root, state })
     }
 
     /// Bind one caller-owned attempt and build identity to this local store.
@@ -1083,6 +1198,7 @@ impl ExecutionReceiptStore {
 
     fn persist(&self, body: &ReceiptBody, is_new: bool) -> Result<(), ReceiptError> {
         let _mutation = self
+            .state
             .mutation
             .lock()
             .map_err(|_| ReceiptError::InvalidStore)?;
@@ -1103,7 +1219,7 @@ impl ExecutionReceiptStore {
     }
 
     fn make_room(&self, body: &ReceiptBody, incoming_bytes: u64) -> Result<(), ReceiptError> {
-        if incoming_bytes > self.retention.max_bytes {
+        if incoming_bytes > self.state.retention.max_bytes {
             return Err(ReceiptError::RetentionExceeded);
         }
         let current_path = self.receipt_path(body.attempt());
@@ -1152,7 +1268,8 @@ impl ExecutionReceiptStore {
         let mut bytes = total_bytes.saturating_add(incoming_bytes);
         let mut prune = Vec::new();
         for (path, file_bytes, terminal, _, _) in retained {
-            if count <= self.retention.max_receipts && bytes <= self.retention.max_bytes {
+            if count <= self.state.retention.max_receipts && bytes <= self.state.retention.max_bytes
+            {
                 break;
             }
             if !terminal {
@@ -1162,7 +1279,7 @@ impl ExecutionReceiptStore {
             count -= 1;
             bytes = bytes.saturating_sub(file_bytes);
         }
-        if count > self.retention.max_receipts || bytes > self.retention.max_bytes {
+        if count > self.state.retention.max_receipts || bytes > self.state.retention.max_bytes {
             return Err(ReceiptError::RetentionExceeded);
         }
         for path in prune {
@@ -1296,6 +1413,16 @@ impl RouteProjection {
                     id: requirement.id().to_string(),
                     kind: route_requirement_kind(requirement.kind()).to_string(),
                     disposition: route_disposition(requirement.disposition()).to_string(),
+                    current_owner: requirement.evidence().current_owner.clone(),
+                    destination_tickets: requirement.evidence().destination_tickets.clone(),
+                    evidence_issues: requirement.evidence().evidence_issues.clone(),
+                    baseline_manifests: requirement.evidence().baseline_manifests.clone(),
+                    acceptance_contract: requirement.evidence().acceptance_contract.clone(),
+                    transfer_point: requirement.evidence().transfer_point.clone(),
+                    deletion_condition: requirement.evidence().deletion_condition.clone(),
+                    source_evidence: requirement.evidence().source_evidence.clone(),
+                    obligation_ticket: requirement.evidence().obligation_ticket.clone(),
+                    obligation_reason: requirement.evidence().obligation_reason.clone(),
                 })
                 .collect(),
         }
@@ -1307,6 +1434,16 @@ struct RouteRequirementProjection {
     id: String,
     kind: String,
     disposition: String,
+    current_owner: String,
+    destination_tickets: Vec<String>,
+    evidence_issues: Vec<u64>,
+    baseline_manifests: Vec<String>,
+    acceptance_contract: String,
+    transfer_point: String,
+    deletion_condition: String,
+    source_evidence: Vec<String>,
+    obligation_ticket: Option<String>,
+    obligation_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -3047,6 +3184,8 @@ fn terminal_item_status(
 pub enum ReceiptError {
     /// A retention ceiling was zero.
     InvalidRetention,
+    /// Another live store already owns this canonical root with different ceilings.
+    ConflictingRetention,
     /// The configured root is not a directory.
     InvalidStore,
     /// Routing evidence was empty, unordered, or not canonical.
@@ -3093,6 +3232,9 @@ impl fmt::Display for ReceiptError {
             Self::InvalidRetention => {
                 formatter.write_str("receipt retention ceilings must be positive")
             }
+            Self::ConflictingRetention => formatter.write_str(
+                "receipt store root already has different process-wide retention ceilings",
+            ),
             Self::InvalidStore => formatter.write_str("receipt store root is not a directory"),
             Self::InvalidRouteEvidence => {
                 formatter.write_str("execution route evidence is not canonical")
@@ -3277,6 +3419,40 @@ fn validate_route_projection(route: &RouteProjection) -> Result<(), ReceiptError
                 })
                 && route_requirement_kind_is_valid(&requirement.kind)
                 && route_disposition_is_valid(&requirement.disposition)
+                && !requirement.current_owner.trim().is_empty()
+                && !requirement.destination_tickets.is_empty()
+                && requirement
+                    .destination_tickets
+                    .iter()
+                    .all(|value| !value.trim().is_empty())
+                && !requirement.evidence_issues.is_empty()
+                && requirement.evidence_issues.iter().all(|issue| *issue > 0)
+                && !requirement.baseline_manifests.is_empty()
+                && requirement
+                    .baseline_manifests
+                    .iter()
+                    .all(|value| !value.trim().is_empty())
+                && !requirement.acceptance_contract.trim().is_empty()
+                && !requirement.transfer_point.trim().is_empty()
+                && !requirement.deletion_condition.trim().is_empty()
+                && !requirement.source_evidence.is_empty()
+                && requirement
+                    .source_evidence
+                    .iter()
+                    .all(|value| !value.trim().is_empty())
+                && match (
+                    requirement.disposition.as_str(),
+                    requirement.obligation_ticket.as_deref(),
+                    requirement.obligation_reason.as_deref(),
+                ) {
+                    ("native", None, None) => true,
+                    (
+                        "legacy_whole_run" | "temporarily_unavailable",
+                        Some(ticket),
+                        Some(reason),
+                    ) => !ticket.trim().is_empty() && !reason.trim().is_empty(),
+                    _ => false,
+                }
                 && previous.is_none_or(|id| id < requirement.id.as_str()),
         )?;
         previous = Some(requirement.id.as_str());
@@ -5487,6 +5663,26 @@ const fn route_requirement_kind(kind: ExecutionRouteRequirementKind) -> &'static
     }
 }
 
+fn execution_route_disposition(value: &str) -> Option<ExecutionRouteDisposition> {
+    match value {
+        "native" => Some(ExecutionRouteDisposition::Native),
+        "legacy_whole_run" => Some(ExecutionRouteDisposition::LegacyWholeRun),
+        "temporarily_unavailable" => Some(ExecutionRouteDisposition::TemporarilyUnavailable),
+        _ => None,
+    }
+}
+
+fn execution_route_requirement_kind(value: &str) -> Option<ExecutionRouteRequirementKind> {
+    match value {
+        "capability" => Some(ExecutionRouteRequirementKind::Capability),
+        "product" => Some(ExecutionRouteRequirementKind::Product),
+        "solver" => Some(ExecutionRouteRequirementKind::Solver),
+        "frontend" => Some(ExecutionRouteRequirementKind::Frontend),
+        "backend" => Some(ExecutionRouteRequirementKind::Backend),
+        _ => None,
+    }
+}
+
 fn route_disposition_is_valid(value: &str) -> bool {
     matches!(
         value,
@@ -5776,7 +5972,8 @@ mod tests {
 
     use super::{
         ExecutionReceiptStore, ExecutionRouteDisposition, ExecutionRouteEvidence,
-        ExecutionRouteRequirement, ExecutionRouteRequirementKind, ReceiptError, ReceiptRetention,
+        ExecutionRouteRequirement, ExecutionRouteRequirementEvidence,
+        ExecutionRouteRequirementKind, ReceiptError, ReceiptRetention,
         maximum_json_serialized_text, stable_float,
     };
 
@@ -5811,7 +6008,21 @@ mod tests {
         let second = ExecutionReceiptStore::new(directory.path().join("."), retention)
             .expect("second receipt store");
 
-        assert!(Arc::ptr_eq(&first.mutation, &second.mutation));
+        assert!(Arc::ptr_eq(&first.state, &second.state));
+    }
+
+    #[test]
+    fn stores_for_the_same_canonical_root_reject_conflicting_retention() {
+        let directory = tempfile::tempdir().expect("receipt directory");
+        let first_retention = ReceiptRetention::new(1, 1_048_576).expect("retention");
+        let second_retention = ReceiptRetention::new(2, 1_048_576).expect("retention");
+        let _first = ExecutionReceiptStore::new(directory.path(), first_retention)
+            .expect("first receipt store");
+
+        assert!(matches!(
+            ExecutionReceiptStore::new(directory.path().join("."), second_retention),
+            Err(ReceiptError::ConflictingRetention)
+        ));
     }
 
     #[test]
@@ -5820,6 +6031,18 @@ mod tests {
             "capability.compiled-problem",
             ExecutionRouteRequirementKind::Capability,
             ExecutionRouteDisposition::LegacyWholeRun,
+            ExecutionRouteRequirementEvidence {
+                current_owner: "legacy-imaging".to_string(),
+                destination_tickets: vec!["T06".to_string()],
+                evidence_issues: vec![492],
+                baseline_manifests: vec!["tests/fixtures/imaging/manifest.json".to_string()],
+                acceptance_contract: "compiled-problem-v1".to_string(),
+                transfer_point: "T06 acceptance".to_string(),
+                deletion_condition: "legacy compiler removed".to_string(),
+                source_evidence: vec!["crates/casa-imaging/src/lib.rs".to_string()],
+                obligation_ticket: Some("T06".to_string()),
+                obligation_reason: Some("transfer remains incomplete".to_string()),
+            },
         )
         .expect("canonical route row");
 

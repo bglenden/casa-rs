@@ -162,8 +162,10 @@ validates the bindings and registry snapshot, reacquires the selected plan's
 sole Resource Authority lease, then privately drives every node and fence to a
 terminal outcome. Registry adapters execute only one exact scheduled node and
 receive only scheduler-issued, lease-epoch-bound resource and allocation
-capabilities for that call; no whole-plan executor or public scheduler can
-bypass the compile/plan/run seam.
+capabilities for that call. Fence callbacks receive a freshly narrowed context
+containing only claims and allocations still live through that exact fence;
+work-scoped capabilities are never replayed after synchronous completion. No
+whole-plan executor or public scheduler can bypass the compile/plan/run seam.
 Controllers can observe only plan-listed transitions eligible at the current
 global cut. Cancellation, rejected directives, and adapter errors drain every
 launched fence before `run` returns; mapped pages and storage-manager state also
@@ -174,9 +176,12 @@ Typed I/O-buffer ceilings bound concurrent logical activity while MemoryDemand
 and plan-owned physical slots are the sole physical-byte charge, allowing
 compatible buffers from disjoint processing segments to reuse storage.
 Every execution receipt also retains the router's exact migration-matrix schema,
-contract revision, overall disposition, and canonical requirement rows. Stores
-opened on the same canonical receipt root share one process-wide mutation lock,
-so pruning and persistence enforce one aggregate retention ceiling.
+contract revision, overall disposition, and every canonical requirement row's
+owner, tickets, issue evidence, baselines, Acceptance Contract, transfer point,
+deletion condition, source evidence, and any active obligation. Stores opened
+on the same canonical receipt root share one process-wide mutation lock and
+must agree on one registered retention policy, so pruning and persistence
+enforce one aggregate retention ceiling.
 
 ## Runtime model
 
