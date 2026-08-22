@@ -3,12 +3,13 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
-    io,
+    fs, io,
     path::PathBuf,
     sync::{
-        Arc, Mutex, OnceLock,
+        Arc, Condvar, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
+    time::Duration,
 };
 
 use casa_imaging_model::{
@@ -18,13 +19,13 @@ use casa_imaging_model::{
     ImagingRequestVersion, InstrumentResponse, MeasurementEquationContract, MetadataTableKind,
     MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct, ModelStateIdentity, MsColumnKind,
     NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
-    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
-    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
-    PolarizationContract, PolarizationCoordinate, ProblemSpecification, ProductKind,
-    ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    ObservationTransactionId, ObservationTransactionRequirements, PhaseCentreLaw,
+    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
+    ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements, Projection,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
+    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
     SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
     WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
@@ -269,8 +270,31 @@ fn recording_executor(
         fence_failure_event: None,
         publication_failure: None,
         generic_source_access: None,
+        initial_consistency_expected: None,
         visibility_during_fence_settlement: None,
         publication_buffer_held: None,
+        receipt_root_to_disrupt: None,
+        publication_pause: None,
+    }
+}
+
+#[derive(Debug, Default)]
+struct PublicationPause {
+    entered: AtomicBool,
+    release: Mutex<bool>,
+    released: Condvar,
+}
+
+impl PublicationPause {
+    fn wait_until_entered(&self) {
+        while !self.entered.load(Ordering::SeqCst) {
+            std::thread::yield_now();
+        }
+    }
+
+    fn release(&self) {
+        *self.release.lock().expect("publication pause lock") = true;
+        self.released.notify_all();
     }
 }
 
@@ -291,8 +315,11 @@ struct RecordingExecutor {
     fence_failure_event: Option<(&'static str, FenceKind)>,
     publication_failure: Option<&'static str>,
     generic_source_access: Option<Arc<AtomicBool>>,
+    initial_consistency_expected: Option<(ObservationTransactionId, Arc<AtomicBool>)>,
     visibility_during_fence_settlement: Option<Arc<AtomicBool>>,
     publication_buffer_held: Option<Arc<AtomicBool>>,
+    receipt_root_to_disrupt: Option<PathBuf>,
+    publication_pause: Option<Arc<PublicationPause>>,
 }
 
 impl WorkImplementation for RecordingExecutor {
@@ -303,31 +330,47 @@ impl WorkImplementation for RecordingExecutor {
     }
 
     fn execute(&self, context: WorkExecutionContext<'_>) -> Result<WorkMeasurements, Self::Error> {
-        let work = context.scheduled();
         assert!(!self.panic_on_execute, "interrupted adapter");
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.observed_knobs
             .lock()
             .expect("recording executor knobs lock")
-            .push(work.knobs().clone());
+            .push(context.knobs().clone());
         if let Some(message) = self.failure {
             return Err(io::Error::other(message));
         }
-        if self.failure_node == Some(work.node().id.as_str()) {
+        if self.failure_node == Some(context.node().id.as_str()) {
             return Err(io::Error::other("stateful transaction execute failure"));
         }
-        if work.node().kind == WorkKind::Io
+        if let Some((expected, accessed)) = &self.initial_consistency_expected {
+            if context.node().kind == WorkKind::DataCensus {
+                accessed.store(
+                    context
+                        .observation_consistency()
+                        .is_some_and(|transaction| {
+                            transaction.transaction_id() == *expected
+                                && !transaction.read_set().sources().is_empty()
+                        }),
+                    Ordering::SeqCst,
+                );
+            } else if context.observation_consistency().is_some() {
+                return Err(io::Error::other(
+                    "observation consistency capability escaped its initial check",
+                ));
+            }
+        }
+        if context.node().kind == WorkKind::Io
             && context.observation_reads().is_some()
             && let Some(accessed) = &self.generic_source_access
         {
             accessed.store(true, Ordering::SeqCst);
         }
-        if work.node().kind == WorkKind::Publication
+        if context.node().kind == WorkKind::Publication
             && let Some(launched) = &self.publication_launched
         {
             launched.store(true, Ordering::SeqCst);
         }
-        let resources = work
+        let resources = context
             .node()
             .claims
             .iter()
@@ -341,9 +384,24 @@ impl WorkImplementation for RecordingExecutor {
             .collect();
         let (io, artifacts) = self
             .measurements
-            .get(&work.node().id)
+            .get(&context.node().id)
             .cloned()
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                (
+                    context
+                        .node()
+                        .claims
+                        .iter()
+                        .filter_map(|claim| match claim.resource {
+                            LeaseResource::IoBuffer(kind) => {
+                                Some(IoMeasurement::new(kind, claim.amount, 1))
+                            }
+                            _ => None,
+                        })
+                        .collect(),
+                    Vec::new(),
+                )
+            });
         Ok(WorkMeasurements::new(resources, io, artifacts))
     }
 
@@ -352,14 +410,13 @@ impl WorkImplementation for RecordingExecutor {
         context: WorkExecutionContext<'_>,
         fence: FenceKind,
     ) -> Result<(), Self::Error> {
-        let work = context.scheduled();
         self.fence_waits.fetch_add(1, Ordering::SeqCst);
         if let Some(message) = self.fence_failure
             && self.fail_only_fence.is_none_or(|kind| kind == fence)
         {
             return Err(io::Error::other(message));
         }
-        if self.fence_failure_event == Some((work.node().id.as_str(), fence)) {
+        if self.fence_failure_event == Some((context.node().id.as_str(), fence)) {
             return Err(io::Error::other("stateful transaction fence failure"));
         }
         if self
@@ -374,14 +431,23 @@ impl WorkImplementation for RecordingExecutor {
     }
 
     fn publish(&self, context: WorkExecutionContext<'_>) -> Result<(), Self::Error> {
-        let work = context.scheduled();
-        if work.node().kind != WorkKind::Publication || context.publication().is_none() {
+        if context.node().kind != WorkKind::Publication || context.publication().is_none() {
             return Err(io::Error::other(
                 "publication requires the transaction-bound Publication node",
             ));
         }
         if let Some(message) = self.publication_failure {
             return Err(io::Error::other(message));
+        }
+        if let Some(pause) = &self.publication_pause {
+            pause.entered.store(true, Ordering::SeqCst);
+            let mut release = pause.release.lock().expect("publication pause lock");
+            while !*release {
+                release = pause
+                    .released
+                    .wait(release)
+                    .expect("publication pause wait");
+            }
         }
         if let Some(observed) = &self.publication_buffer_held {
             let allocation = AllocationId::new("transaction-publication-buffer");
@@ -396,6 +462,14 @@ impl WorkImplementation for RecordingExecutor {
         }
         if let Some(visible) = &self.visible_generation {
             visible.store(1, Ordering::SeqCst);
+        }
+        if let Some(root) = &self.receipt_root_to_disrupt {
+            for entry in fs::read_dir(root)? {
+                let path = entry?.path();
+                if path.extension().is_none_or(|extension| extension != "json") {
+                    fs::remove_file(path)?;
+                }
+            }
         }
         Ok(())
     }
@@ -422,8 +496,11 @@ fn publication_recording_executor(
         fence_failure_event: None,
         publication_failure: None,
         generic_source_access: None,
+        initial_consistency_expected: None,
         visibility_during_fence_settlement: None,
         publication_buffer_held: None,
+        receipt_root_to_disrupt: None,
+        publication_pause: None,
     }
 }
 
@@ -450,13 +527,81 @@ fn failing_transaction_executor(
         fence_failure_event,
         publication_failure,
         generic_source_access: None,
+        initial_consistency_expected: None,
         visibility_during_fence_settlement: None,
         publication_buffer_held: None,
+        receipt_root_to_disrupt: None,
+        publication_pause: None,
     }
 }
 
 fn physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
     physical_work_with_transaction_staging(implementation_byte, None, false, false)
+}
+
+fn physical_work_for_problem(
+    problem: &casa_imaging_model::CompiledProblem,
+    implementation_byte: u8,
+) -> PhysicalWorkBinding {
+    let base = physical_work(implementation_byte);
+    let measurement_sets = problem
+        .observation_transaction()
+        .read_set()
+        .sources()
+        .iter()
+        .map(|source| source.measurement_set())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        measurement_sets.len(),
+        1,
+        "this focused fixture models one MeasurementSet"
+    );
+    let mut nodes = base
+        .execution_dag()
+        .nodes()
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    for claim in nodes.iter_mut().flat_map(|node| &mut node.claims) {
+        if let LeaseResource::MeasurementSetLock { measurement_set } = &mut claim.resource {
+            *measurement_set = measurement_sets[0];
+        }
+    }
+    let dag = ExecutionDag::new(ExecutionDagSpecification {
+        required_resource_capabilities: base
+            .execution_dag()
+            .required_resource_capabilities()
+            .clone(),
+        resource_alternative: base.execution_dag().resource_alternative().clone(),
+        nodes,
+        logical_allocations: base
+            .execution_dag()
+            .logical_allocations()
+            .values()
+            .cloned()
+            .collect(),
+        physical_slots: base
+            .execution_dag()
+            .physical_slots()
+            .values()
+            .cloned()
+            .collect(),
+        initial_knobs: base.execution_dag().initial_knobs().clone(),
+        adaptations: base
+            .execution_dag()
+            .adaptations()
+            .values()
+            .cloned()
+            .collect(),
+    })
+    .expect("problem-bound transaction DAG");
+    PhysicalWorkBinding::new(
+        dag,
+        base.prediction().clone(),
+        base.artifacts().to_vec(),
+        base.observation_transaction().clone(),
+    )
+    .expect("problem-bound physical work")
 }
 
 fn physical_work_with_product_staging(
@@ -601,6 +746,8 @@ fn transaction_binding(
     let commit = WorkNodeId::new("transaction-commit");
     let publication_allocation = AllocationId::new("transaction-publication-buffer");
     let publication_slot = PhysicalSlotId::new("transaction-publication-slot");
+    let commit_allocation = AllocationId::new("transaction-commit-buffer");
+    let commit_slot = PhysicalSlotId::new("transaction-commit-slot");
     let publication_lifetime =
         ClaimLifetime::through_fences([FenceKind::Io, FenceKind::Publication]);
     let publication_compatibility = SlotCompatibility {
@@ -611,6 +758,10 @@ fn transaction_binding(
         layout: AllocationLayout::new("transaction-publication-buffer"),
         initialization: InitializationPolicy::Preserve,
         access: AllocationAccess::ReadWrite,
+    };
+    let commit_compatibility = SlotCompatibility {
+        layout: AllocationLayout::new("transaction-commit-buffer"),
+        ..publication_compatibility.clone()
     };
     let writeback_allocation = AllocationId::new("transaction-writeback-buffer");
     let writeback_slot = PhysicalSlotId::new("transaction-writeback-slot");
@@ -670,6 +821,18 @@ fn transaction_binding(
             preferred_bytes: 1,
             views: vec![CapacityViewId::new("host-memory")],
         });
+    if acquire_publication_early {
+        specification
+            .resource_alternative
+            .demand
+            .memory
+            .push(MemoryDemand {
+                allocation_id: "transaction-commit-slot".to_string(),
+                hard_bytes: 1,
+                preferred_bytes: 1,
+                views: vec![CapacityViewId::new("host-memory")],
+            });
+    }
     if include_model_staging {
         specification
             .resource_alternative
@@ -691,7 +854,7 @@ fn transaction_binding(
             domain: casa_imaging_runtime::StorageDomainId::new("atomic-output"),
             temporary_bytes: 0,
             staged_output_bytes: if include_model_staging { 2 } else { 1 },
-            final_output_bytes: 0,
+            final_output_bytes: 1,
             persistent_cache_bytes: 0,
             read_rate: CountDemand::zero(),
             write_rate: CountDemand::zero(),
@@ -737,7 +900,7 @@ fn transaction_binding(
             WorkDependency::Fence(FenceId::new(model.clone(), FenceKind::Writeback)),
         ]);
     }
-    let mut product_claims = vec![
+    let product_claims = vec![
         ResourceClaim {
             resource: LeaseResource::Workers,
             amount: 1,
@@ -753,11 +916,6 @@ fn transaction_binding(
         },
     ];
     let product_allocations = if acquire_publication_early {
-        product_claims.push(ResourceClaim {
-            resource: LeaseResource::IoBuffer(IoBufferKind::Publication),
-            amount: 1,
-            lifetime: ClaimLifetime::Work,
-        });
         vec![AllocationUse {
             allocation: publication_allocation.clone(),
             lifetime: ClaimLifetime::Work,
@@ -893,15 +1051,36 @@ fn transaction_binding(
                     lifetime: publication_lifetime.clone(),
                 },
                 ResourceClaim {
+                    resource: LeaseResource::Storage {
+                        demand_id: "transaction-output".to_string(),
+                        use_kind: casa_imaging_runtime::StorageUseKind::FinalOutput,
+                    },
+                    amount: 1,
+                    lifetime: publication_lifetime.clone(),
+                },
+                ResourceClaim {
                     resource: LeaseResource::IoBuffer(IoBufferKind::Publication),
                     amount: 1,
                     lifetime: publication_lifetime.clone(),
                 },
             ],
-            allocations: vec![AllocationUse {
-                allocation: publication_allocation.clone(),
-                lifetime: publication_lifetime.clone(),
-            }],
+            allocations: if acquire_publication_early {
+                vec![
+                    AllocationUse {
+                        allocation: publication_allocation.clone(),
+                        lifetime: publication_lifetime.clone(),
+                    },
+                    AllocationUse {
+                        allocation: commit_allocation.clone(),
+                        lifetime: publication_lifetime.clone(),
+                    },
+                ]
+            } else {
+                vec![AllocationUse {
+                    allocation: publication_allocation.clone(),
+                    lifetime: publication_lifetime.clone(),
+                }]
+            },
             fences: BTreeSet::from([FenceKind::Io, FenceKind::Publication]),
             quiescence_after: BTreeSet::new(),
         },
@@ -953,7 +1132,11 @@ fn transaction_binding(
     specification.logical_allocations.push(LogicalAllocation {
         id: publication_allocation,
         bytes: 1,
-        purpose: AllocationPurpose::IoBuffer(IoBufferKind::Publication),
+        purpose: if acquire_publication_early {
+            AllocationPurpose::Data
+        } else {
+            AllocationPurpose::IoBuffer(IoBufferKind::Publication)
+        },
         compatibility: publication_compatibility.clone(),
         physical_slot: publication_slot.clone(),
         lifetime: AllocationLifetime {
@@ -976,6 +1159,30 @@ fn transaction_binding(
         capacity_bytes: 1,
         compatibility: publication_compatibility,
     });
+    if acquire_publication_early {
+        specification.logical_allocations.push(LogicalAllocation {
+            id: commit_allocation,
+            bytes: 1,
+            purpose: AllocationPurpose::IoBuffer(IoBufferKind::Publication),
+            compatibility: commit_compatibility.clone(),
+            physical_slot: commit_slot.clone(),
+            lifetime: AllocationLifetime {
+                acquire_at: commit.clone(),
+                release_after: BTreeSet::from([
+                    WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Io)),
+                    WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Publication)),
+                ]),
+            },
+        });
+        specification.physical_slots.push(PhysicalSlot {
+            id: commit_slot,
+            lease_resource: LeaseResource::Memory {
+                allocation_id: "transaction-commit-slot".to_string(),
+            },
+            capacity_bytes: 1,
+            compatibility: commit_compatibility,
+        });
+    }
     if include_model_staging {
         specification.logical_allocations.push(LogicalAllocation {
             id: writeback_allocation,
@@ -1078,6 +1285,7 @@ fn evidenced_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
         .iter_mut()
         .find(|node| node.id == read)
         .expect("source read node");
+    read_node.kind = WorkKind::Prefetch;
     read_node.claims.push(ResourceClaim {
         resource: LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead),
         amount: 32,
@@ -2017,8 +2225,16 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
         required_resource_capabilities: contract_base_dag.required_resource_capabilities().clone(),
         resource_alternative: contract_base_dag.resource_alternative().clone(),
         nodes: contract_nodes,
-        logical_allocations: Vec::new(),
-        physical_slots: Vec::new(),
+        logical_allocations: contract_base_dag
+            .logical_allocations()
+            .values()
+            .cloned()
+            .collect(),
+        physical_slots: contract_base_dag
+            .physical_slots()
+            .values()
+            .cloned()
+            .collect(),
         initial_knobs: contract_base_dag.initial_knobs().clone(),
         adaptations: contract_base_dag.adaptations().values().cloned().collect(),
     })
@@ -2060,18 +2276,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
 
     let publication_base = physical_work(6);
     let publication_dag = publication_base.execution_dag().clone();
-    let publication_prediction = PlanPrediction::new(
-        200,
-        PredictionConfidence::new(900_000).expect("confidence"),
-        Vec::new(),
-        publication_dag
-            .nodes()
-            .keys()
-            .cloned()
-            .map(|node| StagePrediction::new(node, 100))
-            .collect(),
-    )
-    .expect("well-formed prediction ledger");
+    let publication_prediction = publication_base.prediction().clone();
     let output = PlannedArtifact::new(
         ArtifactIdentity::from_sha256([79; 32]),
         WorkNodeId::new("execute"),
@@ -2235,7 +2440,7 @@ fn run_rejects_artifact_dispositions_that_contradict_plan_semantics() {
                 ArtifactMeasurement::new(
                     input,
                     Some(input),
-                    ArtifactDisposition::Published,
+                    ArtifactDisposition::Staged,
                     4_096,
                     None,
                 ),
@@ -2257,7 +2462,7 @@ fn run_rejects_artifact_dispositions_that_contradict_plan_semantics() {
             node,
             artifact,
             role: ArtifactRole::Input,
-            disposition: ArtifactDisposition::Published,
+            disposition: ArtifactDisposition::Staged,
         }) if node == WorkNodeId::new("read") && artifact == input
     ));
 }
@@ -2309,6 +2514,40 @@ fn run_can_invoke_only_the_implementation_identity_sealed_by_plan() {
             .calls
             .load(Ordering::SeqCst),
         0
+    );
+}
+
+#[test]
+fn initial_consistency_check_receives_the_exact_observation_transaction() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical_work(6)),
+    )
+    .expect("physical planning");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let observed = Arc::new(AtomicBool::new(false));
+    let mut executor = recording_executor(6, None, None);
+    executor.initial_consistency_expected = Some((
+        problem.observation_transaction().transaction_id(),
+        Arc::clone(&observed),
+    ));
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+
+    execute_plan(&problem, &execution_plan, &current, &registry)
+        .expect("initial consistency check executes with its capability");
+
+    assert!(
+        observed.load(Ordering::SeqCst),
+        "the initial consistency node must receive the exact transaction state"
     );
 }
 
@@ -2473,8 +2712,8 @@ fn plan_seals_physical_work_and_every_required_binding() {
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            50, 82, 44, 253, 147, 108, 140, 234, 107, 182, 127, 134, 177, 23, 66, 27, 6, 38, 149,
-            24, 253, 180, 183, 8, 196, 76, 220, 189, 186, 72, 78, 163,
+            207, 50, 95, 40, 52, 197, 52, 190, 245, 12, 141, 70, 68, 103, 79, 129, 159, 12, 184,
+            240, 98, 96, 1, 154, 214, 114, 101, 213, 81, 35, 76, 21,
         ]
     );
 }
@@ -2939,8 +3178,6 @@ fn cancellation_cannot_report_cancelled_after_atomic_publication_is_irrevocable(
             after_fence,
             requested: false,
         };
-        let _guard = run_lock().lock().expect("runtime test lock");
-
         let outcome = run(
             &problem,
             &execution_plan,
@@ -3000,8 +3237,6 @@ fn controller_cannot_adapt_after_atomic_publication_is_irrevocable() {
         publication_launched,
         requested: false,
     };
-    let _guard = run_lock().lock().expect("runtime test lock");
-
     let outcome = run(
         &problem,
         &execution_plan,
@@ -3045,8 +3280,6 @@ fn publication_visibility_is_final_after_fence_and_scheduler_settlement() {
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
     let mut controller = RunToCompletion;
-    let _guard = run_lock().lock().expect("runtime test lock");
-
     let outcome = run(
         &problem,
         &execution_plan,
@@ -3062,6 +3295,195 @@ fn publication_visibility_is_final_after_fence_and_scheduler_settlement() {
     assert!(
         !visible_during_settlement.load(Ordering::SeqCst),
         "the new generation cannot become visible during fallible fence settlement"
+    );
+}
+
+#[test]
+fn receipt_finalize_failure_after_publish_returns_success_and_reopens_prepared_evidence() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical_work(6)),
+    )
+    .expect("physical planning");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let directory = tempfile::tempdir().expect("receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
+    )
+    .expect("receipt store");
+    let provenance = execution_provenance(
+        casa_imaging_runtime::ExecutionAttemptId::from_sha256([91; 32]),
+        BuildIdentity::from_sha256([92; 32]),
+    );
+    let publication_launched = Arc::new(AtomicBool::new(false));
+    let visible_generation = Arc::new(AtomicUsize::new(0));
+    let mut executor = publication_recording_executor(
+        6,
+        Arc::clone(&publication_launched),
+        Arc::clone(&visible_generation),
+    );
+    executor.receipt_root_to_disrupt = Some(directory.path().to_owned());
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let mut controller = RunToCompletion;
+
+    let outcome = run_receipted(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+        receipts.bind(provenance.clone()),
+    )
+    .expect("publication success remains the terminal runtime result");
+    let receipt = receipts
+        .open(provenance.attempt_id())
+        .expect("prepared receipt remains reopenable");
+
+    assert_eq!(outcome, ExecutionOutcome::Succeeded);
+    assert!(publication_launched.load(Ordering::SeqCst));
+    assert_eq!(visible_generation.load(Ordering::SeqCst), 1);
+    assert_eq!(receipt.schema_version(), 4);
+    assert_eq!(receipt.status(), ReceiptStatus::PublicationPrepared);
+}
+
+#[test]
+fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical_work(6)),
+    )
+    .expect("physical planning");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let directory = tempfile::tempdir().expect("receipt directory");
+    let max_bytes = 1_048_576;
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(8, max_bytes).expect("bounded retention"),
+    )
+    .expect("receipt store");
+    let pause = Arc::new(PublicationPause::default());
+    let mut executor = recording_executor(6, None, None);
+    executor.publication_pause = Some(Arc::clone(&pause));
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let first = execution_provenance(
+        casa_imaging_runtime::ExecutionAttemptId::from_sha256([93; 32]),
+        BuildIdentity::from_sha256([94; 32]),
+    );
+    let second = execution_provenance(
+        casa_imaging_runtime::ExecutionAttemptId::from_sha256([95; 32]),
+        BuildIdentity::from_sha256([96; 32]),
+    );
+
+    std::thread::scope(|scope| {
+        let (first_tx, first_rx) = std::sync::mpsc::channel();
+        let first_provenance = first.clone();
+        let problem = &problem;
+        let execution_plan = &execution_plan;
+        let current = &current;
+        let registry = &registry;
+        let receipts = &receipts;
+        scope.spawn(move || {
+            let mut controller = RunToCompletion;
+            first_tx
+                .send(authority_run(
+                    problem,
+                    execution_plan,
+                    current,
+                    registry,
+                    authority(),
+                    &mut controller,
+                    receipts.bind(first_provenance),
+                ))
+                .expect("first run result receiver");
+        });
+
+        pause.wait_until_entered();
+        let retained_bytes = fs::read_dir(directory.path())
+            .expect("receipt root")
+            .map(|entry| {
+                entry
+                    .expect("receipt entry")
+                    .metadata()
+                    .expect("receipt metadata")
+                    .len()
+            })
+            .sum::<u64>();
+        assert!(
+            retained_bytes <= max_bytes,
+            "prepared marker plus terminal candidate must remain within retention"
+        );
+
+        let (second_tx, second_rx) = std::sync::mpsc::channel();
+        let second_provenance = second.clone();
+        scope.spawn(move || {
+            let mut controller = RunToCompletion;
+            second_tx
+                .send(authority_run(
+                    problem,
+                    execution_plan,
+                    current,
+                    registry,
+                    authority(),
+                    &mut controller,
+                    receipts.bind(second_provenance),
+                ))
+                .expect("second run result receiver");
+        });
+        assert!(matches!(
+            second_rx.recv_timeout(Duration::from_millis(100)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+
+        pause.release();
+        assert_eq!(
+            first_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("first run result")
+                .expect("first run"),
+            ExecutionOutcome::Succeeded
+        );
+        assert_eq!(
+            second_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("second run result")
+                .expect("second run"),
+            ExecutionOutcome::Succeeded
+        );
+    });
+
+    assert_eq!(
+        receipts
+            .open(first.attempt_id())
+            .expect("first receipt")
+            .status(),
+        ReceiptStatus::Completed
+    );
+    assert_eq!(
+        receipts
+            .open(second.attempt_id())
+            .expect("second receipt")
+            .status(),
+        ReceiptStatus::Completed
     );
 }
 
@@ -3086,8 +3508,6 @@ fn earlier_acquired_publication_buffer_is_held_through_publish_and_then_released
         id: registry(3),
         executors: BTreeMap::from([(implementation(6), executor)]),
     };
-    let _guard = run_lock().lock().expect("runtime test lock");
-
     for attempt in 1..=2 {
         held_during_publish.store(false, Ordering::SeqCst);
         let mut controller = RunToCompletion;
@@ -3166,8 +3586,6 @@ fn transaction_failures_leave_the_old_generation_visible() {
             )]),
         };
         let mut completion = RunToCompletion;
-        let _guard = run_lock().lock().expect("runtime test lock");
-
         run(
             &problem,
             &execution_plan,
@@ -3212,8 +3630,6 @@ fn transaction_failures_leave_the_old_generation_visible() {
         )]),
     };
     let mut completion = RunToCompletion;
-    let _guard = run_lock().lock().expect("runtime test lock");
-
     run(
         &problem,
         &execution_plan,
@@ -3427,7 +3843,7 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         .expect("reopen durable receipt");
 
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
-    assert_eq!(receipt.schema_version(), 3);
+    assert_eq!(receipt.schema_version(), 4);
     assert_eq!(receipt.route_matrix_schema_version(), 1);
     assert_eq!(receipt.route_matrix_contract_revision(), 1);
     assert_eq!(receipt.route_disposition(), "native");
@@ -3543,7 +3959,7 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
     let execution_plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| Ok::<_, ()>(physical_work(6)),
+        |problem, _| Ok::<_, ()>(physical_work_for_problem(problem, 6)),
     )
     .expect("physical planning");
     let current = RunBindings::new(
@@ -3881,7 +4297,7 @@ fn receipt_compares_plan_predictions_with_actual_stage_resource_and_fence_use() 
     let read = WorkNodeId::new("read");
     let io_fence = FenceId::new(read.clone(), FenceKind::Io);
 
-    assert_eq!(receipt.predicted_elapsed_nanos(), 200);
+    assert_eq!(receipt.predicted_elapsed_nanos(), 700);
     assert_eq!(receipt.prediction_confidence_ppm(), 900_000);
     assert_eq!(receipt.prediction_uncertainty_count(), 1);
     assert_eq!(receipt.stage_predicted_elapsed_nanos(&read), Some(100));
@@ -3957,13 +4373,13 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
             ),
         ),
         (
-            WorkNodeId::new("publish"),
+            WorkNodeId::new("transaction-commit"),
             (
                 vec![IoMeasurement::new(IoBufferKind::Publication, 2_048, 1)],
                 vec![ArtifactMeasurement::new(
                     output,
                     Some(ArtifactIdentity::from_sha256([36; 32])),
-                    ArtifactDisposition::Published,
+                    ArtifactDisposition::Staged,
                     2_048,
                     Some(output_path),
                 )],
@@ -3998,7 +4414,7 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
     .expect("receipted execution");
     let receipt = receipts.open(provenance.attempt_id()).expect("receipt");
     let read = WorkNodeId::new("read");
-    let publish = WorkNodeId::new("publish");
+    let publish = WorkNodeId::new("transaction-commit");
 
     assert_eq!(
         receipt.stage_predicted_io(&read, IoBufferKind::SourceReadAhead),
@@ -4024,9 +4440,13 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
     assert_eq!(receipt.artifact_role(output), Some(ArtifactRole::Output));
     assert_eq!(
         receipt.artifact_node(output),
-        Some(WorkNodeId::new("publish"))
+        Some(WorkNodeId::new("transaction-commit"))
     );
     assert_eq!(receipt.artifact_actual_bytes(output), Some(2_048));
+    assert_eq!(
+        receipt.artifact_disposition(output),
+        Some(ArtifactDisposition::Published)
+    );
     assert_eq!(
         receipt.artifact_disposition(cache),
         Some(ArtifactDisposition::RejectedStale)
@@ -4104,13 +4524,13 @@ fn failed_publication_fence_never_records_a_published_output() {
             ),
         ),
         (
-            WorkNodeId::new("publish"),
+            WorkNodeId::new("transaction-commit"),
             (
                 vec![IoMeasurement::new(IoBufferKind::Publication, 2_048, 1)],
                 vec![ArtifactMeasurement::new(
                     output,
                     Some(staged_output),
-                    ArtifactDisposition::Published,
+                    ArtifactDisposition::Staged,
                     2_048,
                     None,
                 )],
@@ -4145,14 +4565,17 @@ fn failed_publication_fence_never_records_a_published_output() {
     .expect_err("publication fence failure must fail the run");
     assert!(matches!(
         error,
-        RunError::Execution { ref node, .. } if node == &WorkNodeId::new("publish")
+        RunError::Execution { ref node, .. } if node == &WorkNodeId::new("transaction-commit")
     ));
 
     let receipt = receipts
         .open(provenance.attempt_id())
         .expect("failed receipt");
     assert_eq!(receipt.status(), ReceiptStatus::Failed);
-    assert_eq!(receipt.artifact_disposition(output), None);
+    assert_eq!(
+        receipt.artifact_disposition(output),
+        Some(ArtifactDisposition::Staged)
+    );
     assert_eq!(
         receipt.artifact_observed_identity(output),
         Some(staged_output.as_bytes())
@@ -4160,7 +4583,7 @@ fn failed_publication_fence_never_records_a_published_output() {
     assert_eq!(receipt.artifact_actual_bytes(output), Some(2_048));
     assert_eq!(
         receipt.fence_status(&FenceId::new(
-            WorkNodeId::new("publish"),
+            WorkNodeId::new("transaction-commit"),
             FenceKind::Publication,
         )),
         Some(ReceiptStatus::Failed)
@@ -4213,13 +4636,16 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
         .expect("failed receipt");
     assert_eq!(failed.status(), ReceiptStatus::Failed);
     assert_eq!(failed.failure_kind(), Some(ReceiptFailureKind::Adapter));
-    assert_eq!(failed.failure_node(), Some(WorkNodeId::new("read")));
     assert_eq!(
-        failed.node_status(&WorkNodeId::new("read")),
+        failed.failure_node(),
+        Some(WorkNodeId::new("transaction-check"))
+    );
+    assert_eq!(
+        failed.node_status(&WorkNodeId::new("transaction-check")),
         Some(ReceiptStatus::Failed)
     );
     assert_eq!(
-        failed.node_status(&WorkNodeId::new("execute")),
+        failed.node_status(&WorkNodeId::new("read")),
         Some(ReceiptStatus::Cancelled)
     );
 
@@ -4251,7 +4677,7 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
     assert_eq!(cancelled.failure_kind(), None);
     assert_eq!(
         cancelled.node_status(&WorkNodeId::new("read")),
-        Some(ReceiptStatus::Completed)
+        Some(ReceiptStatus::Cancelled)
     );
     assert_eq!(
         cancelled.node_status(&WorkNodeId::new("execute")),
@@ -4328,13 +4754,16 @@ fn receipts_preserve_typed_terminal_outcomes_and_every_node_state() {
         aborted.failure_kind(),
         Some(ReceiptFailureKind::Interrupted)
     );
-    assert_eq!(aborted.failure_node(), Some(WorkNodeId::new("read")));
     assert_eq!(
-        aborted.node_status(&WorkNodeId::new("read")),
+        aborted.failure_node(),
+        Some(WorkNodeId::new("transaction-check"))
+    );
+    assert_eq!(
+        aborted.node_status(&WorkNodeId::new("transaction-check")),
         Some(ReceiptStatus::Aborted)
     );
     assert_eq!(
-        aborted.node_status(&WorkNodeId::new("execute")),
+        aborted.node_status(&WorkNodeId::new("read")),
         Some(ReceiptStatus::NotStarted)
     );
 }

@@ -3,20 +3,129 @@
 mod common;
 
 use casa_imaging_model::{
+    AxisOrder, CentreLaws, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
+    DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
+    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest,
+    InstrumentResponse, MeasurementEquationContract, MissingPointingPolicy,
     ModelColumnInitialization, ModelColumnPrecondition, ModelColumnState, ModelColumnWrite,
-    ModelColumnWriteDisposition, ModelStateIdentity, MsColumnKind, ObservationSnapshotInput,
-    ObservationTransactionRequirements, compile_observation, compile_observation_transaction,
+    ModelColumnWriteDisposition, ModelInnerProduct, ModelStateIdentity, MsColumnKind,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ObservationSnapshot, ObservationSnapshotInput, ObservationTransactionRequirements,
+    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
+    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
+    PolarizationCoordinate, ProblemInputIdentities, ProblemSpecification, ProductKind,
+    ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
+    StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile, compile_observation,
 };
+
+fn compile_transaction(
+    snapshot: ObservationSnapshot,
+    transaction: ObservationTransactionRequirements,
+) -> casa_imaging_model::CompiledProblem {
+    let direction = DirectionCoordinateSpec::new(
+        Projection::Sin,
+        SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+        [255.0, 255.0],
+        [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
+        [[1.0, 0.0], [0.0, 1.0]],
+        [180.0, 0.0],
+    );
+    let geometry = GeometryInput::new(
+        vec![ImageDomainSpec::new(
+            ImageDomainRole::Main,
+            ImageShape::new(512, 512),
+            direction,
+            FacetLayout::Single,
+            AxisOrder::new([
+                ImageAxis::DirectionLongitude,
+                ImageAxis::DirectionLatitude,
+                ImageAxis::Polarization,
+                ImageAxis::Spectral,
+            ]),
+        )],
+        CentreLaws::new(
+            PhaseCentreLaw::Fixed(direction.reference_direction()),
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::Observation(ObservationPointingLaw::new(
+                PointingDirectionColumn::Direction,
+                PointingDirectionSemantic::AntennaBoresight,
+                PointingTimeSampling::VisibilityTimeCentroid,
+                PointingInterpolation::GreatCircleShortestArc,
+                PointingExtrapolation::Reject,
+                MissingPointingPolicy::Reject,
+            )),
+        ),
+        UvwCoordinateLaw::PhaseTrackingCentre,
+        SpectralCoordinateSpec::new(
+            FrequencyFrame::Topocentric,
+            FrequencyFrame::Topocentric,
+            SpectralFrameAnchor::NotApplicable,
+            SpectralWcs::Linear {
+                channels: 1,
+                reference_pixel: 0.0,
+                reference_frequency_hz: 1.4e9,
+                increment_hz: 1.0e6,
+            },
+            RestFrequency::NotApplicable,
+            DopplerConvention::NotApplicable,
+        ),
+    );
+    let specification = ProblemSpecification::new(
+        ScientificContract::new(
+            SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+            MeasurementEquationContract::new(
+                InstrumentResponse::Scalar,
+                DeclaredInnerProducts::new(
+                    ModelInnerProduct::HermitianEuclidean,
+                    VisibilityInnerProduct::HermitianEuclidean,
+                ),
+            ),
+        ),
+        ReconstructionContract::new(
+            ReconstructionBasis::Constant,
+            ReconstructionAlgorithm::Dirty,
+            ReconstructionControls::new(0, 1.0, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        ),
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+        ProductRequirements::new(
+            vec![ProductKind::Psf],
+            ProductNormalization::UnitResponse,
+            RestoringBeamPolicy::None,
+        ),
+        transaction,
+        NumericsContract::new(
+            vec![NumericPrecision::F32, NumericPrecision::F64],
+            ReductionPolicy::Compensated,
+            FiniteValuePolicy::FlagInputRejectGenerated,
+            NumericalStage::ALL
+                .into_iter()
+                .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
+                .collect(),
+        ),
+    );
+    compile(ImagingRequest::new(
+        specification,
+        geometry,
+        ProblemInputIdentities::new(snapshot),
+    ))
+    .expect("compile problem with observation transaction")
+}
 
 #[test]
 fn transaction_contract_derives_the_exact_snapshot_read_set() {
     let snapshot =
         common::observation_snapshot(7, Vec::new(), casa_imaging_model::ModelStateIdentity::Empty);
 
-    let contract = compile_observation_transaction(
-        &snapshot,
+    let problem = compile_transaction(
+        snapshot.clone(),
         ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
     );
+    let contract = problem.observation_transaction();
 
     assert_eq!(contract.observation_snapshot_id(), snapshot.snapshot_id());
     assert_eq!(contract.read_set().sources().len(), 1);
@@ -42,15 +151,17 @@ fn transaction_contract_derives_the_exact_snapshot_read_set() {
 fn selected_model_column_writes_have_a_pinned_schema_two_identity() {
     let snapshot =
         common::observation_snapshot(8, Vec::new(), casa_imaging_model::ModelStateIdentity::Empty);
-    let read_only = compile_observation_transaction(
-        &snapshot,
+    let read_only_problem = compile_transaction(
+        snapshot.clone(),
         ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
     );
+    let read_only = read_only_problem.observation_transaction();
 
-    let writable = compile_observation_transaction(
-        &snapshot,
+    let writable_problem = compile_transaction(
+        snapshot.clone(),
         ObservationTransactionRequirements::new(ModelColumnWrite::SelectedRows),
     );
+    let writable = writable_problem.observation_transaction();
 
     assert_ne!(read_only.transaction_id(), writable.transaction_id());
     assert_eq!(
@@ -93,10 +204,11 @@ fn model_write_preconditions_preserve_the_previous_generation() {
     ))
     .expect("compile observation with MODEL_DATA");
 
-    let contract = compile_observation_transaction(
-        &snapshot,
+    let problem = compile_transaction(
+        snapshot.clone(),
         ObservationTransactionRequirements::new(ModelColumnWrite::SelectedRows),
     );
+    let contract = problem.observation_transaction();
 
     assert_eq!(
         contract.write_set().model_columns()[0].precondition(),
@@ -122,10 +234,11 @@ fn output_only_model_columns_are_preconditioned_without_entering_the_read_set() 
     ))
     .expect("compile observation with output-only MODEL_DATA");
 
-    let contract = compile_observation_transaction(
-        &snapshot,
+    let problem = compile_transaction(
+        snapshot.clone(),
         ObservationTransactionRequirements::new(ModelColumnWrite::SelectedRows),
     );
+    let contract = problem.observation_transaction();
 
     assert!(
         contract.read_set().sources()[0]
@@ -151,10 +264,11 @@ fn multi_ms_read_and_write_sets_are_canonical() {
     ))
     .expect("compile reversed multi-MS observation");
 
-    let contract = compile_observation_transaction(
-        &snapshot,
+    let problem = compile_transaction(
+        snapshot.clone(),
         ObservationTransactionRequirements::new(ModelColumnWrite::SelectedRows),
     );
+    let contract = problem.observation_transaction();
     let canonical_sources = snapshot
         .sources()
         .iter()

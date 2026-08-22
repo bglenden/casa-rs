@@ -202,6 +202,10 @@ capabilities for that call. Fence callbacks receive a freshly narrowed context
 containing only claims and allocations still live through that exact fence;
 work-scoped capabilities are never replayed after synchronous completion. No
 whole-plan executor or public scheduler can bypass the compile/plan/run seam.
+The transaction's initial consistency node alone receives the expected
+observation transaction, typed observation reads receive its exact read set,
+the private writeback node receives its exact write set, and only the atomic
+publication node receives publication authority.
 Controllers can observe only plan-listed transitions eligible at the current
 global cut. Cancellation, rejected directives, and adapter errors drain every
 launched fence before `run` returns; mapped pages and storage-manager state also
@@ -218,6 +222,16 @@ deletion condition, source evidence, and any active obligation. Stores opened
 on the same canonical receipt root share one process-wide mutation lock and
 must agree on one registered retention policy, so pruning and persistence
 enforce one aggregate retention ceiling.
+Before the sole external publication operation, the runtime durably records a
+non-prunable `PublicationPrepared` receipt with exact Staged outputs and
+pre-syncs its terminal candidate. Prepared and terminal bytes are charged
+together, and the shared-root mutation guard remains held through publication
+and promotion. Publication success is the final runtime result:
+terminal-candidate promotion cannot turn visible output into a failed run, and
+a failed promotion leaves the prepared receipt for fail-closed reconciliation
+without republishing. Receipt-owned staging files use a closed name and are
+removed and directory-synced under that same guard when a store reopens after
+an interrupted process.
 
 ## Runtime model
 

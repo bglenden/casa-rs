@@ -55,5 +55,5 @@ pub use transaction::{
     MeasurementSetReadAccess, ModelColumnInitialization, ModelColumnPrecondition, ModelColumnWrite,
     ModelColumnWriteAccess, ModelColumnWriteDisposition, ObservationReadSet,
     ObservationTransactionContract, ObservationTransactionId, ObservationTransactionRequirements,
-    ObservationWriteSet, compile_observation_transaction,
+    ObservationWriteSet,
 };

@@ -403,7 +403,7 @@ impl fmt::Debug for RedactedPath {
     }
 }
 
-/// Final observed treatment of one plan-listed artifact.
+/// Observed treatment of one plan-listed artifact.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArtifactDisposition {
     /// Built by the owning node.
@@ -414,7 +414,9 @@ pub enum ArtifactDisposition {
     Reused,
     /// Examined but rejected because its identity or compatibility was stale.
     RejectedStale,
-    /// Durably published as an output.
+    /// Staged as an output and ready for the sole atomic publication operation.
+    Staged,
+    /// Durably published as an output, as reported only by a completed receipt.
     Published,
 }
 
@@ -1628,12 +1630,14 @@ impl<'a> CompiledWorkContext<'a> {
 /// Capability-scoped compiled inputs supplied to one exact work node.
 ///
 /// Generic work receives compiled science but no MeasurementSet source set.
-/// Only typed observation reads, model writeback, and atomic publication
-/// receive their corresponding transaction authority.
+/// Only the initial consistency check, typed observation reads, model
+/// writeback, and atomic publication receive their corresponding transaction
+/// authority.
 #[derive(Clone, Copy, Debug)]
 pub struct WorkExecutionContext<'a> {
     compiled: CompiledWorkContext<'a>,
     scheduled: &'a crate::execution::WorkExecutionContext,
+    observation_consistency: Option<&'a ObservationTransactionContract>,
     observation_reads: Option<&'a ObservationReadSet>,
     model_writes: Option<&'a ObservationWriteSet>,
     publication: Option<&'a ObservationTransactionContract>,
@@ -1645,12 +1649,6 @@ impl<'a> WorkExecutionContext<'a> {
     #[must_use]
     pub const fn compiled(self) -> CompiledWorkContext<'a> {
         self.compiled
-    }
-
-    /// Return the exact scheduled node declaration and lease-scoped capabilities.
-    #[must_use]
-    pub const fn scheduled(self) -> &'a crate::execution::WorkExecutionContext {
-        self.scheduled
     }
 
     /// Return the exact planned node declaration.
@@ -1681,6 +1679,12 @@ impl<'a> WorkExecutionContext<'a> {
     #[must_use]
     pub fn allocations(self) -> &'a [crate::WorkAllocationCapability] {
         self.scheduled.allocations()
+    }
+
+    /// Return the expected observation state only for the initial consistency check.
+    #[must_use]
+    pub const fn observation_consistency(self) -> Option<&'a ObservationTransactionContract> {
+        self.observation_consistency
     }
 
     /// Return exact MeasurementSet sources only for [`WorkKind::ObservationRead`].
@@ -2028,9 +2032,18 @@ fn validate_work_measurements(
             });
         };
         let disposition = measurement.disposition();
-        if (planned.role() == ArtifactRole::Output)
-            != (disposition == ArtifactDisposition::Published)
-        {
+        let disposition_matches_role = if planned.role() == ArtifactRole::Output {
+            disposition == ArtifactDisposition::Staged
+        } else {
+            matches!(
+                disposition,
+                ArtifactDisposition::Built
+                    | ArtifactDisposition::Loaded
+                    | ArtifactDisposition::Reused
+                    | ArtifactDisposition::RejectedStale
+            )
+        };
+        if !disposition_matches_role {
             return Err(ExecutionEvidenceError::ArtifactDispositionMismatch {
                 node: node.clone(),
                 artifact,
@@ -2062,6 +2075,7 @@ fn work_execution_context<'a>(
         WorkExecutionContext {
             compiled,
             scheduled: work,
+            observation_consistency: None,
             observation_reads: Some(problem.observation_transaction().read_set()),
             model_writes: None,
             publication: None,
@@ -2071,6 +2085,7 @@ fn work_execution_context<'a>(
         WorkExecutionContext {
             compiled,
             scheduled: work,
+            observation_consistency: None,
             observation_reads: None,
             model_writes: Some(problem.observation_transaction().write_set()),
             publication: None,
@@ -2080,6 +2095,7 @@ fn work_execution_context<'a>(
         WorkExecutionContext {
             compiled,
             scheduled: work,
+            observation_consistency: None,
             observation_reads: None,
             model_writes: None,
             publication: Some(problem.observation_transaction()),
@@ -2089,6 +2105,9 @@ fn work_execution_context<'a>(
         WorkExecutionContext {
             compiled,
             scheduled: work,
+            observation_consistency: (transaction_work.initial_consistency_check()
+                == &work.node().id)
+                .then_some(problem.observation_transaction()),
             observation_reads: None,
             model_writes: None,
             publication: None,
@@ -2133,6 +2152,9 @@ where
         controller,
         &mut receipt,
     );
+    if receipt.is_terminal() {
+        return result;
+    }
     let status = match &result {
         Ok(ExecutionOutcome::Succeeded) => ReceiptStatus::Completed,
         Ok(ExecutionOutcome::Cancelled) => ReceiptStatus::Cancelled,
@@ -2551,13 +2573,20 @@ where
                     work,
                     &resources,
                 );
-                implementation
-                    .publish(context)
-                    .map_err(|source| RunError::Execution {
-                        node: publication,
-                        source,
-                    })?;
-                return Ok(ExecutionOutcome::Succeeded);
+                let prepared = receipt.prepare_publication().map_err(RunError::Receipt)?;
+                match implementation.publish(context) {
+                    Ok(()) => {
+                        receipt.complete_publication(prepared);
+                        return Ok(ExecutionOutcome::Succeeded);
+                    }
+                    Err(source) => {
+                        drop(prepared);
+                        return Err(RunError::Execution {
+                            node: publication,
+                            source,
+                        });
+                    }
+                }
             }
             SchedulerAction::Complete(terminal) => {
                 return match pending.take() {

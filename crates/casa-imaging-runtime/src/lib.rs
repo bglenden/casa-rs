@@ -25,8 +25,7 @@ pub use execution::{
     ExecutionDagSpecification, ExecutionError, ExecutionKnobs, ExecutionOutcome, FenceId,
     FenceKind, InitializationPolicy, LogicalAllocation, PhysicalSlot, PhysicalSlotId,
     ResourceClaim, SlotCompatibility, StorageMode, WorkAllocationCapability, WorkDependency,
-    WorkDomain, WorkExecutionContext as ScheduledWorkContext, WorkImplementationId, WorkKind,
-    WorkNode, WorkNodeId, WorkResourceCapability,
+    WorkDomain, WorkImplementationId, WorkKind, WorkNode, WorkNodeId, WorkResourceCapability,
 };
 pub use observation_transaction::{
     BoundObservationTransaction, ObservationTransactionPlanError, ObservationTransactionWork,

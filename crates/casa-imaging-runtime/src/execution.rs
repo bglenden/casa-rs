@@ -694,7 +694,7 @@ impl WorkAllocationCapability {
 
 /// Non-constructible, lease-scoped execution context for one exact plan node.
 #[derive(Debug, PartialEq, Eq)]
-pub struct WorkExecutionContext {
+pub(crate) struct WorkExecutionContext {
     node: WorkNode,
     knobs: ExecutionKnobs,
     lease_epoch: u64,
@@ -705,31 +705,31 @@ pub struct WorkExecutionContext {
 impl WorkExecutionContext {
     /// Returns the exact planned work declaration.
     #[must_use]
-    pub const fn node(&self) -> &WorkNode {
+    pub(crate) const fn node(&self) -> &WorkNode {
         &self.node
     }
 
     /// Returns the current pre-authorized execution configuration.
     #[must_use]
-    pub const fn knobs(&self) -> &ExecutionKnobs {
+    pub(crate) const fn knobs(&self) -> &ExecutionKnobs {
         &self.knobs
     }
 
     /// Return the Resource Authority lease epoch that issued these capabilities.
     #[must_use]
-    pub const fn lease_epoch(&self) -> u64 {
+    pub(crate) const fn lease_epoch(&self) -> u64 {
         self.lease_epoch
     }
 
     /// Return only the scheduler-issued resource capabilities for this call.
     #[must_use]
-    pub fn resources(&self) -> &[WorkResourceCapability] {
+    pub(crate) fn resources(&self) -> &[WorkResourceCapability] {
         &self.resources
     }
 
     /// Return only the scheduler-issued allocation capabilities for this call.
     #[must_use]
-    pub fn allocations(&self) -> &[WorkAllocationCapability] {
+    pub(crate) fn allocations(&self) -> &[WorkAllocationCapability] {
         &self.allocations
     }
 

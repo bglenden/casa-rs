@@ -890,6 +890,6 @@ fn compiled_problem_identity_has_a_pinned_schema_six_digest() {
     assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 6);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "11ef7f91c78b19d42dd189996f1261affe9fd66fe0a33c75bc95d0a671827a11"
+        "a089ac5abff5a2ff111366750293481528cc136258b55c63875ccf1169bc7865"
     );
 }

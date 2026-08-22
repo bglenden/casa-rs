@@ -1048,13 +1048,18 @@ fn execution_plan_owns_the_bound_physical_work_dag() {
         PlannerCostModelProfileId::from_sha256([8; 32]),
     );
 
+    let physical = physical_work_binding(dag);
+    let expected_dag = physical.execution_dag().clone();
     let execution_plan = plan(&problem, bindings, |_, _| {
-        Ok::<_, std::convert::Infallible>(physical_work_binding(dag.clone()))
+        Ok::<_, std::convert::Infallible>(physical)
     })
     .expect("physical planning succeeds");
 
-    assert_eq!(execution_plan.execution_dag(), &dag);
-    assert_eq!(execution_plan.physical_work_id(), dag.physical_work_id());
+    assert_eq!(execution_plan.execution_dag(), &expected_dag);
+    assert_eq!(
+        execution_plan.physical_work_id(),
+        expected_dag.physical_work_id()
+    );
 }
 
 #[test]
@@ -1077,7 +1082,7 @@ fn execution_plan_owns_the_resource_policy_selected_during_planning() {
     ExecutionScheduler::start(
         execution_plan.execution_dag(),
         execution_plan.resource_policy(),
-        &cpu_authority(),
+        &io_authority(),
         Some(execution_plan.observation_transaction().work().commit()),
     )
     .expect("scheduler admits the plan under its sealed resource policy");
@@ -1106,7 +1111,7 @@ fn planning_seals_the_first_resource_authority_feasible_candidate() {
             ResourcePolicy::Exclusive,
             PlannerCostModelProfileId::from_sha256([8; 32]),
         ),
-        &cpu_authority(),
+        &io_authority(),
         |_, _| Ok::<_, std::convert::Infallible>(candidates),
     )
     .expect("serial candidate is feasible");

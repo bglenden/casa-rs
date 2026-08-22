@@ -258,7 +258,7 @@ impl ObservationTransactionContract {
 /// The read set is derived rather than caller-supplied, so execution cannot
 /// omit a generation that participated in snapshot identity.
 #[must_use]
-pub fn compile_observation_transaction(
+pub(crate) fn compile_observation_transaction(
     snapshot: &ObservationSnapshot,
     requirements: ObservationTransactionRequirements,
 ) -> ObservationTransactionContract {
