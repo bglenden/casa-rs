@@ -482,7 +482,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_casars_frontend_services_checksum_func_notebook_begin_recording() != 45172:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_casars_frontend_services_checksum_func_notebook_cells() != 39913:
+    if lib.uniffi_casars_frontend_services_checksum_func_notebook_cells() != 30288:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_casars_frontend_services_checksum_func_notebook_create() != 1695:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -6284,54 +6284,75 @@ class _UniffiConverterTypeNotebookBeginRecordingResult(_UniffiConverterRustBuffe
         _UniffiConverterOptionalString.write(value.warning, buf)
 
 
-class NotebookCellState:
+class NotebookCellProjection:
     id: "str"
     kind: "str"
-    body: "str"
     task_intent: "typing.Optional[NotebookTaskIntent]"
-    def __init__(self, *, id: "str", kind: "str", body: "str", task_intent: "typing.Optional[NotebookTaskIntent]"):
+    full_start: "int"
+    full_end: "int"
+    body_start: "int"
+    body_end: "int"
+    def __init__(self, *, id: "str", kind: "str", task_intent: "typing.Optional[NotebookTaskIntent]", full_start: "int", full_end: "int", body_start: "int", body_end: "int"):
         self.id = id
         self.kind = kind
-        self.body = body
         self.task_intent = task_intent
+        self.full_start = full_start
+        self.full_end = full_end
+        self.body_start = body_start
+        self.body_end = body_end
 
     def __str__(self):
-        return "NotebookCellState(id={}, kind={}, body={}, task_intent={})".format(self.id, self.kind, self.body, self.task_intent)
+        return "NotebookCellProjection(id={}, kind={}, task_intent={}, full_start={}, full_end={}, body_start={}, body_end={})".format(self.id, self.kind, self.task_intent, self.full_start, self.full_end, self.body_start, self.body_end)
 
     def __eq__(self, other):
         if self.id != other.id:
             return False
         if self.kind != other.kind:
             return False
-        if self.body != other.body:
-            return False
         if self.task_intent != other.task_intent:
+            return False
+        if self.full_start != other.full_start:
+            return False
+        if self.full_end != other.full_end:
+            return False
+        if self.body_start != other.body_start:
+            return False
+        if self.body_end != other.body_end:
             return False
         return True
 
-class _UniffiConverterTypeNotebookCellState(_UniffiConverterRustBuffer):
+class _UniffiConverterTypeNotebookCellProjection(_UniffiConverterRustBuffer):
     @staticmethod
     def read(buf):
-        return NotebookCellState(
+        return NotebookCellProjection(
             id=_UniffiConverterString.read(buf),
             kind=_UniffiConverterString.read(buf),
-            body=_UniffiConverterString.read(buf),
             task_intent=_UniffiConverterOptionalTypeNotebookTaskIntent.read(buf),
+            full_start=_UniffiConverterUInt64.read(buf),
+            full_end=_UniffiConverterUInt64.read(buf),
+            body_start=_UniffiConverterUInt64.read(buf),
+            body_end=_UniffiConverterUInt64.read(buf),
         )
 
     @staticmethod
     def check_lower(value):
         _UniffiConverterString.check_lower(value.id)
         _UniffiConverterString.check_lower(value.kind)
-        _UniffiConverterString.check_lower(value.body)
         _UniffiConverterOptionalTypeNotebookTaskIntent.check_lower(value.task_intent)
+        _UniffiConverterUInt64.check_lower(value.full_start)
+        _UniffiConverterUInt64.check_lower(value.full_end)
+        _UniffiConverterUInt64.check_lower(value.body_start)
+        _UniffiConverterUInt64.check_lower(value.body_end)
 
     @staticmethod
     def write(value, buf):
         _UniffiConverterString.write(value.id, buf)
         _UniffiConverterString.write(value.kind, buf)
-        _UniffiConverterString.write(value.body, buf)
         _UniffiConverterOptionalTypeNotebookTaskIntent.write(value.task_intent, buf)
+        _UniffiConverterUInt64.write(value.full_start, buf)
+        _UniffiConverterUInt64.write(value.full_end, buf)
+        _UniffiConverterUInt64.write(value.body_start, buf)
+        _UniffiConverterUInt64.write(value.body_end, buf)
 
 
 class NotebookCreateRequest:
@@ -6382,10 +6403,10 @@ class NotebookDocumentProjection:
     filename: "str"
     source: "str"
     content_hash: "str"
-    cells: "typing.List[NotebookCellState]"
+    cells: "typing.List[NotebookCellProjection]"
     receipts: "typing.List[NotebookExecutionReceipt]"
     visualizations: "typing.List[NotebookVisualizationSnapshot]"
-    def __init__(self, *, id: "str", filename: "str", source: "str", content_hash: "str", cells: "typing.List[NotebookCellState]", receipts: "typing.List[NotebookExecutionReceipt]", visualizations: "typing.List[NotebookVisualizationSnapshot]"):
+    def __init__(self, *, id: "str", filename: "str", source: "str", content_hash: "str", cells: "typing.List[NotebookCellProjection]", receipts: "typing.List[NotebookExecutionReceipt]", visualizations: "typing.List[NotebookVisualizationSnapshot]"):
         self.id = id
         self.filename = filename
         self.source = source
@@ -6422,7 +6443,7 @@ class _UniffiConverterTypeNotebookDocumentProjection(_UniffiConverterRustBuffer)
             filename=_UniffiConverterString.read(buf),
             source=_UniffiConverterString.read(buf),
             content_hash=_UniffiConverterString.read(buf),
-            cells=_UniffiConverterSequenceTypeNotebookCellState.read(buf),
+            cells=_UniffiConverterSequenceTypeNotebookCellProjection.read(buf),
             receipts=_UniffiConverterSequenceTypeNotebookExecutionReceipt.read(buf),
             visualizations=_UniffiConverterSequenceTypeNotebookVisualizationSnapshot.read(buf),
         )
@@ -6433,7 +6454,7 @@ class _UniffiConverterTypeNotebookDocumentProjection(_UniffiConverterRustBuffer)
         _UniffiConverterString.check_lower(value.filename)
         _UniffiConverterString.check_lower(value.source)
         _UniffiConverterString.check_lower(value.content_hash)
-        _UniffiConverterSequenceTypeNotebookCellState.check_lower(value.cells)
+        _UniffiConverterSequenceTypeNotebookCellProjection.check_lower(value.cells)
         _UniffiConverterSequenceTypeNotebookExecutionReceipt.check_lower(value.receipts)
         _UniffiConverterSequenceTypeNotebookVisualizationSnapshot.check_lower(value.visualizations)
 
@@ -6443,7 +6464,7 @@ class _UniffiConverterTypeNotebookDocumentProjection(_UniffiConverterRustBuffer)
         _UniffiConverterString.write(value.filename, buf)
         _UniffiConverterString.write(value.source, buf)
         _UniffiConverterString.write(value.content_hash, buf)
-        _UniffiConverterSequenceTypeNotebookCellState.write(value.cells, buf)
+        _UniffiConverterSequenceTypeNotebookCellProjection.write(value.cells, buf)
         _UniffiConverterSequenceTypeNotebookExecutionReceipt.write(value.receipts, buf)
         _UniffiConverterSequenceTypeNotebookVisualizationSnapshot.write(value.visualizations, buf)
 
@@ -18253,18 +18274,18 @@ class _UniffiConverterSequenceTypeNotebookApprovalRecord(_UniffiConverterRustBuf
 
 
 
-class _UniffiConverterSequenceTypeNotebookCellState(_UniffiConverterRustBuffer):
+class _UniffiConverterSequenceTypeNotebookCellProjection(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
         for item in value:
-            _UniffiConverterTypeNotebookCellState.check_lower(item)
+            _UniffiConverterTypeNotebookCellProjection.check_lower(item)
 
     @classmethod
     def write(cls, value, buf):
         items = len(value)
         buf.write_i32(items)
         for item in value:
-            _UniffiConverterTypeNotebookCellState.write(item, buf)
+            _UniffiConverterTypeNotebookCellProjection.write(item, buf)
 
     @classmethod
     def read(cls, buf):
@@ -18273,7 +18294,7 @@ class _UniffiConverterSequenceTypeNotebookCellState(_UniffiConverterRustBuffer):
             raise InternalError("Unexpected negative sequence length")
 
         return [
-            _UniffiConverterTypeNotebookCellState.read(buf) for i in range(count)
+            _UniffiConverterTypeNotebookCellProjection.read(buf) for i in range(count)
         ]
 
 
@@ -20046,14 +20067,14 @@ def notebook_begin_recording(request: "NotebookBeginRecordingRequest") -> "Noteb
         _UniffiConverterTypeNotebookBeginRecordingRequest.lower(request)))
 
 
-def notebook_cells(source: "str") -> "typing.List[NotebookCellState]":
+def notebook_cells(source: "str") -> "typing.List[NotebookCellProjection]":
     """
     Parse one complete in-memory Markdown draft through the Rust-owned cell contract.
     """
 
     _UniffiConverterString.check_lower(source)
 
-    return _UniffiConverterSequenceTypeNotebookCellState.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_notebook_cells,
+    return _UniffiConverterSequenceTypeNotebookCellProjection.lift(_uniffi_rust_call_with_error(_UniffiConverterTypeFrontendServiceError,_UniffiLib.uniffi_casars_frontend_services_fn_func_notebook_cells,
         _UniffiConverterString.lower(source)))
 
 
@@ -20551,7 +20572,7 @@ __all__ = [
     "NotebookAttemptHandle",
     "NotebookBeginRecordingRequest",
     "NotebookBeginRecordingResult",
-    "NotebookCellState",
+    "NotebookCellProjection",
     "NotebookCreateRequest",
     "NotebookDocumentProjection",
     "NotebookExecutionInput",

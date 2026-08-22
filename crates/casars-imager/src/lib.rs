@@ -9812,7 +9812,9 @@ fn can_run_standard_mfs_fixed_tile_streaming_clean(
         && config.use_mask == CleanMaskMode::User
         && config.uv_taper.is_none()
         && matches!(config.w_term_mode, WTermMode::None | WTermMode::WProject)
-        && !needs_single_field_primary_beam_products(config)
+        && (!needs_single_field_primary_beam_products(config)
+            || force_standard_gridder
+            || config.force_standard_gridder)
 }
 
 fn can_run_standard_mfs_dirty_streaming(
@@ -9833,7 +9835,9 @@ fn can_run_standard_mfs_dirty_streaming(
         && config.use_mask == CleanMaskMode::User
         && config.uv_taper.is_none()
         && matches!(config.w_term_mode, WTermMode::None | WTermMode::WProject)
-        && !needs_single_field_primary_beam_products(config)
+        && (!needs_single_field_primary_beam_products(config)
+            || force_standard_gridder
+            || config.force_standard_gridder)
         && (config.dirty_only || config.niter == 0)
 }
 
@@ -9851,9 +9855,10 @@ fn standard_mfs_field_geometry_can_use_bounded_stream(
     config: &CliConfig,
     force_standard_gridder: bool,
 ) -> bool {
+    let standard_gridder_is_forced = force_standard_gridder || config.force_standard_gridder;
     matches!(config.w_term_mode, WTermMode::WProject)
         || (config.field_ids.as_ref().is_none_or(|ids| ids.len() <= 1)
-            && (config.phasecenter.is_none() || force_standard_gridder)
+            && (config.phasecenter.is_none() || standard_gridder_is_forced)
             && phasecenter_field_matches_single_selected_field(config))
 }
 
@@ -15551,12 +15556,23 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
         Some(run_result.estimated_product_payload_bytes()),
     );
     emit_imager_progress_product_write(config, &run_result, true);
+    let single_field_pb_context = if needs_single_field_primary_beam_products(config) {
+        Some(single_field_primary_beam_context_for_antennas(
+            ms,
+            phase_center.angles_rad,
+            active_selected_rows
+                .iter()
+                .flat_map(|row| [row.antenna1_id, row.antenna2_id]),
+        )?)
+    } else {
+        None
+    };
     write_products(
         config,
         &coords,
         &run_result,
         effective_clean_mask.as_ref(),
-        None,
+        single_field_pb_context,
     )?;
     drop(product_guard);
     emit_imager_progress_product_write(config, &run_result, false);
@@ -15886,12 +15902,23 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
         Some(run_result.estimated_product_payload_bytes()),
     );
     emit_imager_progress_product_write(config, &run_result, true);
+    let single_field_pb_context = if needs_single_field_primary_beam_products(config) {
+        Some(single_field_primary_beam_context_for_antennas(
+            ms,
+            phase_center.angles_rad,
+            active_selected_rows
+                .iter()
+                .flat_map(|row| [row.antenna1_id, row.antenna2_id]),
+        )?)
+    } else {
+        None
+    };
     write_products(
         config,
         &coords,
         &run_result,
         effective_clean_mask.as_ref(),
-        None,
+        single_field_pb_context,
     )?;
     drop(product_guard);
     emit_imager_progress_product_write(config, &run_result, false);
@@ -26126,7 +26153,9 @@ fn can_plan_standard_mfs_acceleration(
         && config.use_mask == CleanMaskMode::User
         && config.uv_taper.is_none()
         && matches!(config.w_term_mode, WTermMode::None | WTermMode::WProject)
-        && !needs_single_field_primary_beam_products(config)
+        && (!needs_single_field_primary_beam_products(config)
+            || force_standard_gridder
+            || config.force_standard_gridder)
 }
 
 fn standard_mfs_shared_acceleration_spectral_mode_is_eligible(config: &CliConfig) -> bool {
@@ -46111,6 +46140,12 @@ fn extract_phase_center(ms: &MeasurementSet, field_id: usize) -> Result<PhaseCen
     })
 }
 
+fn extract_phase_center_field(ms: &MeasurementSet, field_id: i32) -> Result<PhaseCenter, String> {
+    let field_id = usize::try_from(field_id)
+        .map_err(|_| format!("phasecenter FIELD_ID {field_id} must be non-negative"))?;
+    extract_phase_center(ms, field_id)
+}
+
 fn phase_center_obsinfo_direction_rad(
     ms: &MeasurementSet,
     phase_center: &PhaseCenter,
@@ -46274,16 +46309,13 @@ fn resolve_phase_center(
         return Err("selection resolved to no field".to_string());
     };
     if let Some(text) = config.phasecenter.as_deref() {
+        if let Ok(field_id) = text.trim().parse::<i32>() {
+            return extract_phase_center_field(ms, field_id);
+        }
         return parse_phase_center_literal(text);
     }
     if let Some(field_id) = config.phasecenter_field {
-        if !selected_fields.contains(&field_id) {
-            return Err(format!(
-                "phase-center FIELD_ID {field_id} is not part of the selected field set {:?}",
-                selected_fields
-            ));
-        }
-        return extract_phase_center(ms, field_id as usize);
+        return extract_phase_center_field(ms, field_id);
     }
     if selected_fields.len() == 1 {
         return extract_phase_center(ms, first_selected as usize);
@@ -53085,9 +53117,23 @@ fn single_field_primary_beam_context(
     phase_center_direction_rad: [f64; 2],
     samples: &[PreparedVisibilitySampleTrace],
 ) -> Result<PrimaryBeamProductContext, String> {
+    single_field_primary_beam_context_for_antennas(
+        ms,
+        phase_center_direction_rad,
+        samples
+            .iter()
+            .flat_map(|sample| [sample.antenna1_id, sample.antenna2_id]),
+    )
+}
+
+fn single_field_primary_beam_context_for_antennas(
+    ms: &MeasurementSet,
+    phase_center_direction_rad: [f64; 2],
+    selected_antenna_ids: impl IntoIterator<Item = i32>,
+) -> Result<PrimaryBeamProductContext, String> {
     Ok(PrimaryBeamProductContext {
         phase_center_direction_rad,
-        primary_beam_model: infer_primary_beam_model(ms, samples)?,
+        primary_beam_model: infer_primary_beam_model_for_antennas(ms, selected_antenna_ids)?,
     })
 }
 
@@ -57681,7 +57727,7 @@ Options:
   --uvrange SELECTOR        restrict baseline length (for example <12km)
   --intent SELECTOR         restrict STATE observing intent (CASA selector syntax)
   --phasecenter-field ID    FIELD_ID used as the image phase center
-  --phasecenter TEXT        explicit CASA-style direction used as the image phase center
+  --phasecenter VALUE       CASA-style direction or FIELD_ID used as the image phase center
   --ddid ID                 restrict to one DATA_DESC_ID
   --spw ID                  restrict to one spectral window when DDID is omitted
   --channel-start N         first selected channel
@@ -63797,6 +63843,51 @@ mod tests {
             &config, false, 1
         ));
         assert!(can_run_standard_mfs_dirty_streaming(&config, false, 1));
+    }
+
+    #[test]
+    fn explicit_standard_mfs_streaming_accepts_primary_beam_products() {
+        let mut dirty = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("standard"),
+            OsString::from("--niter"),
+            OsString::from("0"),
+            OsString::from("--dirty-only"),
+            OsString::from("--write-pb"),
+        ])
+        .expect("parse explicit standard-gridder PB config");
+        dirty.phasecenter = Some("3".to_string());
+
+        assert!(can_plan_standard_mfs_acceleration(&dirty, false, 1));
+        assert!(can_run_standard_mfs_dirty_streaming(&dirty, false, 1));
+
+        let mut clean = dirty.clone();
+        clean.dirty_only = false;
+        clean.niter = 100;
+        assert!(can_run_standard_mfs_fixed_tile_streaming_clean(
+            &clean, false, 1
+        ));
+
+        let mut inferred_gridder = dirty;
+        inferred_gridder.force_standard_gridder = false;
+        assert!(!can_plan_standard_mfs_acceleration(
+            &inferred_gridder,
+            false,
+            1
+        ));
+        assert!(!can_run_standard_mfs_dirty_streaming(
+            &inferred_gridder,
+            false,
+            1
+        ));
     }
 
     #[test]
@@ -74108,6 +74199,42 @@ deconvolver=mtmfs
         let obsinfo_direction = phase_center_obsinfo_direction_rad(&ms, &phase_center).unwrap();
         assert!((obsinfo_direction[0] - 1.0).abs() < 1e-9);
         assert!((obsinfo_direction[1] - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn numeric_casa_phasecenter_resolves_field_direction() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("numeric_phasecenter.ms");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_vla_antenna_row(&mut ms);
+        add_field_row(&mut ms);
+        add_field_row(&mut ms);
+        add_field_row(&mut ms);
+        add_field_row_with_direction(
+            &mut ms,
+            MDirection::from_angles(1.25, 0.75, DirectionRef::J2000),
+            TEST_TIME_MJD_SEC,
+        );
+        ms.save().unwrap();
+
+        let mut config =
+            minimal_start_model_config(ms_path, tmp.path().join("numeric-phasecenter"));
+        config.phasecenter = Some("3".to_string());
+        let phase_center =
+            resolve_phase_center(&ms, &BTreeSet::from([0]), &config).expect("resolve FIELD_ID 3");
+
+        assert_eq!(phase_center.field_id, Some(3));
+        assert_eq!(phase_center.reference, DirectionRef::J2000);
+        assert!((phase_center.angles_rad[0] - 1.25).abs() < 1e-12);
+        assert!((phase_center.angles_rad[1] - 0.75).abs() < 1e-12);
+
+        config.phasecenter = Some("-1".to_string());
+        let error = resolve_phase_center(&ms, &BTreeSet::from([0]), &config).unwrap_err();
+        assert_eq!(error, "phasecenter FIELD_ID -1 must be non-negative");
     }
 
     #[test]

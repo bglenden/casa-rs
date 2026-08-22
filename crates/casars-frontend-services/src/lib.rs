@@ -57,7 +57,7 @@ use casars_imagebrowser_protocol::{
     ImagePlaneContentMode,
 };
 use casars_tablebrowser_protocol::{BrowserCommand, BrowserFocus, BrowserView, BrowserViewport};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 const MAX_PROJECT_SCAN_ENTRIES: usize = 512;
@@ -1404,7 +1404,7 @@ pub enum FrontendServiceError {
 
 type FrontendResult<T> = Result<T, FrontendServiceError>;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum NotebookValue {
     String { value: String },
     Number { value: f64 },
@@ -1412,6 +1412,66 @@ pub enum NotebookValue {
     Array { values: Vec<NotebookValue> },
     Object { entries: Vec<NotebookValueEntry> },
     Null,
+}
+
+// Swift synthesizes `Codable` for the UniFFI enum using these lower-case,
+// externally tagged variants, including an empty object for the unit case.
+// Keep serde on that same wire contract because Swift writes notebook receipts
+// into the assistant-context projection that the Rust project MCP reads.
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum NotebookValueRef<'a> {
+    String { value: &'a str },
+    Number { value: f64 },
+    Bool { value: bool },
+    Array { values: &'a [NotebookValue] },
+    Object { entries: &'a [NotebookValueEntry] },
+    Null {},
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum NotebookValueOwned {
+    String { value: String },
+    Number { value: f64 },
+    Bool { value: bool },
+    Array { values: Vec<NotebookValue> },
+    Object { entries: Vec<NotebookValueEntry> },
+    Null {},
+}
+
+impl Serialize for NotebookValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::String { value } => NotebookValueRef::String { value }.serialize(serializer),
+            Self::Number { value } => {
+                NotebookValueRef::Number { value: *value }.serialize(serializer)
+            }
+            Self::Bool { value } => NotebookValueRef::Bool { value: *value }.serialize(serializer),
+            Self::Array { values } => NotebookValueRef::Array { values }.serialize(serializer),
+            Self::Object { entries } => NotebookValueRef::Object { entries }.serialize(serializer),
+            Self::Null => NotebookValueRef::Null {}.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for NotebookValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(match NotebookValueOwned::deserialize(deserializer)? {
+            NotebookValueOwned::String { value } => Self::String { value },
+            NotebookValueOwned::Number { value } => Self::Number { value },
+            NotebookValueOwned::Bool { value } => Self::Bool { value },
+            NotebookValueOwned::Array { values } => Self::Array { values },
+            NotebookValueOwned::Object { entries } => Self::Object { entries },
+            NotebookValueOwned::Null {} => Self::Null,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
@@ -1494,11 +1554,14 @@ pub struct NotebookExecutionReceipt {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, uniffi::Record)]
-pub struct NotebookCellState {
+pub struct NotebookCellProjection {
     pub id: String,
     pub kind: String,
-    pub body: String,
     pub task_intent: Option<NotebookTaskIntent>,
+    pub full_start: u64,
+    pub full_end: u64,
+    pub body_start: u64,
+    pub body_end: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, uniffi::Record)]
@@ -1544,7 +1607,7 @@ pub struct NotebookDocumentProjection {
     pub filename: String,
     pub source: String,
     pub content_hash: String,
-    pub cells: Vec<NotebookCellState>,
+    pub cells: Vec<NotebookCellProjection>,
     pub receipts: Vec<NotebookExecutionReceipt>,
     pub visualizations: Vec<NotebookVisualizationSnapshot>,
 }
@@ -3009,20 +3072,27 @@ fn notebook_receipt_projection(
 
 fn notebook_cell_projections(
     document: &NotebookDocument,
-) -> FrontendResult<Vec<NotebookCellState>> {
+) -> FrontendResult<Vec<NotebookCellProjection>> {
     document
         .cells()
         .iter()
         .map(|cell| {
-            Ok(NotebookCellState {
+            Ok(NotebookCellProjection {
                 id: cell.id.to_string(),
                 kind: cell.kind.as_str().to_owned(),
-                body: document.source()[cell.body_range.clone()].to_owned(),
                 task_intent: cell
                     .task
                     .as_ref()
                     .map(notebook_task_intent_projection)
                     .transpose()?,
+                full_start: u64::try_from(cell.full_range.start)
+                    .map_err(|error| notebook_error("project notebook full start", error))?,
+                full_end: u64::try_from(cell.full_range.end)
+                    .map_err(|error| notebook_error("project notebook full end", error))?,
+                body_start: u64::try_from(cell.body_range.start)
+                    .map_err(|error| notebook_error("project notebook body start", error))?,
+                body_end: u64::try_from(cell.body_range.end)
+                    .map_err(|error| notebook_error("project notebook body end", error))?,
             })
         })
         .collect()
@@ -3219,7 +3289,7 @@ fn notebook_projection(
 
 /// Parse one complete in-memory Markdown draft through the Rust-owned cell contract.
 #[uniffi::export]
-pub fn notebook_cells(source: String) -> FrontendResult<Vec<NotebookCellState>> {
+pub fn notebook_cells(source: String) -> FrontendResult<Vec<NotebookCellProjection>> {
     let document = NotebookDocument::parse(source)
         .map_err(|error| notebook_error("parse notebook draft cells", error))?;
     notebook_cell_projections(&document)
@@ -4207,10 +4277,17 @@ pub fn tutorial_project_list(
         .map_err(|error| tutorial_error("open tutorial project", error))?;
     let store = NotebookStore::open(&project_root)
         .map_err(|error| tutorial_error("open tutorial notebook store", error))?;
+    let notebook_ids = store
+        .list_notebooks()
+        .map_err(|error| notebook_error("list tutorial notebooks", error))?
+        .into_iter()
+        .map(|entry| entry.id)
+        .collect::<BTreeSet<_>>();
     project
         .list_locks()
         .map_err(|error| tutorial_error("list tutorial locks", error))?
         .into_iter()
+        .filter(|lock| notebook_ids.contains(&lock.notebook_id))
         .map(|lock| tutorial_project_projection(&store, lock))
         .collect()
 }
@@ -10640,6 +10717,112 @@ mod tests {
     }
 
     #[test]
+    fn notebook_value_serde_matches_swift_codable_wire_contract() {
+        let values = vec![
+            (
+                NotebookValue::String {
+                    value: "science".to_owned(),
+                },
+                serde_json::json!({"string": {"value": "science"}}),
+            ),
+            (
+                NotebookValue::Number { value: 4.0 },
+                serde_json::json!({"number": {"value": 4.0}}),
+            ),
+            (
+                NotebookValue::Bool { value: true },
+                serde_json::json!({"bool": {"value": true}}),
+            ),
+            (
+                NotebookValue::Array {
+                    values: vec![NotebookValue::Null],
+                },
+                serde_json::json!({"array": {"values": [{"null": {}}]}}),
+            ),
+            (
+                NotebookValue::Object {
+                    entries: vec![NotebookValueEntry {
+                        name: "enabled".to_owned(),
+                        value: NotebookValue::Bool { value: true },
+                    }],
+                },
+                serde_json::json!({
+                    "object": {
+                        "entries": [{
+                            "name": "enabled",
+                            "value": {"bool": {"value": true}}
+                        }]
+                    }
+                }),
+            ),
+            (NotebookValue::Null, serde_json::json!({"null": {}})),
+        ];
+
+        for (value, swift_json) in values {
+            assert_eq!(
+                serde_json::to_value(&value).expect("serialize notebook value"),
+                swift_json
+            );
+            assert_eq!(
+                serde_json::from_value::<NotebookValue>(swift_json)
+                    .expect("deserialize Swift notebook value"),
+                value
+            );
+        }
+
+        let projection: AssistantContextProjectionState =
+            serde_json::from_value(serde_json::json!({
+                "schema_version": 1,
+                "session_nonce": "nonce",
+                "open_tabs": [],
+                "data_semantics": [],
+                "receipts": [{
+                    "notebook_id": "notebook",
+                    "notebook": "Tutorial.md",
+                    "receipts": [{
+                        "schema_version": 1,
+                        "run_id": "run",
+                        "revision": 1,
+                        "notebook_id": "notebook",
+                        "cell_id": "cell",
+                        "initiating_surface": "gui",
+                        "operation_id": "imager",
+                        "started_at": 1,
+                        "finished_at": 2,
+                        "status": "succeeded",
+                        "sparse_intent": null,
+                        "execution_input": null,
+                        "ordered_outputs": null,
+                        "resolved_parameters": {
+                            "attempt_kind": {"string": {"value": "imaging"}}
+                        },
+                        "provider_contract_version": 1,
+                        "affected_paths": [],
+                        "products": [],
+                        "artifacts": [],
+                        "diagnostics": [],
+                        "replay_claim": "deterministic"
+                    }]
+                }],
+                "resource_plan": {
+                    "schema_version": 1,
+                    "corpus_text_units": 0,
+                    "diagnostics": []
+                },
+                "action_catalog": []
+            }))
+            .expect("deserialize Swift assistant-context projection");
+        assert_eq!(
+            projection.receipts[0].receipts[0]
+                .resolved_parameters
+                .get("attempt_kind"),
+            Some(&NotebookValue::String {
+                value: "imaging".to_owned()
+            })
+        );
+    }
+
+    #[test]
     fn notebook_projection_includes_authored_task_cells_without_receipts() {
         let project = tempfile::tempdir().expect("project");
         let project_root = project.path().canonicalize().expect("canonical project");
@@ -10658,7 +10841,7 @@ mod tests {
             project_root: project_root.display().to_string(),
             filename: "Authored.md".to_owned(),
             base_hash: created.content_hash,
-            source,
+            source: source.clone(),
             resolution: NotebookConflictResolution::Reject,
         })
         .expect("save authored task cell");
@@ -10669,7 +10852,19 @@ mod tests {
         assert!(notebook.receipts.is_empty());
         assert_eq!(notebook.cells[0].id, cell_id.to_string());
         assert_eq!(notebook.cells[0].kind, "task");
-        assert!(notebook.cells[0].body.contains("[parameters]"));
+        let cell = &notebook.cells[0];
+        let full_start = usize::try_from(cell.full_start).expect("full start");
+        let full_end = usize::try_from(cell.full_end).expect("full end");
+        let body_start = usize::try_from(cell.body_start).expect("body start");
+        let body_end = usize::try_from(cell.body_end).expect("body end");
+        assert_eq!(&notebook.source.as_bytes()[body_start..body_end], b"```toml\n[casars]\nformat = 1\nsurface = \"imhead\"\nkind = \"task\"\ncontract = 1\n\n[parameters]\nmode = \"summary\"\n```\n");
+        assert_eq!(
+            &notebook.source.as_bytes()[full_start..full_end],
+            source[full_start..full_end].as_bytes()
+        );
+        assert!(full_start < body_start);
+        assert!(body_start < body_end);
+        assert!(body_end < full_end);
         assert_eq!(
             notebook.cells[0].task_intent.as_ref().unwrap().surface,
             "imhead"
@@ -10683,6 +10878,55 @@ mod tests {
                 value: "summary".to_owned()
             })
         );
+    }
+
+    #[test]
+    fn notebook_cells_preserve_ordered_utf8_ranges_and_exact_body_slices() {
+        let project = tempfile::tempdir().expect("project");
+        let project_root = project.path().canonicalize().expect("canonical project");
+        let created = notebook_create(NotebookCreateRequest {
+            project_root: project_root.display().to_string(),
+            filename: Some("Ranges.md".to_owned()),
+            title: "Ranges".to_owned(),
+        })
+        .expect("create notebook");
+        let first_id = casa_notebook::CellId::new();
+        let second_id = casa_notebook::CellId::new();
+        let source = format!(
+            "{}\n<!-- casa-rs-cell:v1 id={first_id} kind=output -->\nπ body é\n<!-- /casa-rs-cell -->\n\n<!-- casa-rs-cell:v1 id={second_id} kind=python -->\nsecond body\n<!-- /casa-rs-cell -->\n",
+            created.source
+        );
+
+        let cells = notebook_cells(source.clone()).expect("project cell ranges");
+        assert_eq!(
+            cells.iter().map(|cell| cell.id.clone()).collect::<Vec<_>>(),
+            [first_id.to_string(), second_id.to_string()]
+        );
+        assert!(cells.windows(2).all(|pair| {
+            pair[0].full_start < pair[0].full_end
+                && pair[0].full_end <= pair[1].full_start
+                && pair[0].body_start < pair[0].body_end
+                && pair[0].body_end <= pair[1].body_start
+        }));
+
+        let first = &cells[0];
+        let first_body_start = usize::try_from(first.body_start).expect("first body start");
+        let first_body_end = usize::try_from(first.body_end).expect("first body end");
+        assert_eq!(
+            &source.as_bytes()[first_body_start..first_body_end],
+            "π body é\n".as_bytes()
+        );
+        for cell in &cells {
+            for offset in [
+                cell.full_start,
+                cell.full_end,
+                cell.body_start,
+                cell.body_end,
+            ] {
+                let offset = usize::try_from(offset).expect("UTF-8 offset");
+                assert!(source.is_char_boundary(offset));
+            }
+        }
     }
 
     #[test]

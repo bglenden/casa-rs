@@ -4,6 +4,79 @@ import XCTest
 @testable import CasarsMacCore
 
 final class TutorialPersistenceTests: XCTestCase {
+    func testListingTutorialsIgnoresManagedStateForTrashedNotebook() throws {
+        let project = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-tutorial-orphan-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: project) }
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+
+        let client = UniFFITutorialPersistenceClient()
+        let removed = try client.fork(
+            projectRoot: project.path,
+            templatePath: bundledTWHyaTutorial.path,
+            filename: "removed.md"
+        )
+        let surviving = try client.fork(
+            projectRoot: project.path,
+            templatePath: bundledTWHyaTutorial.path,
+            filename: "surviving.md"
+        )
+        try FileManager.default.removeItem(
+            at: project.appendingPathComponent("notebooks/removed.md")
+        )
+
+        let reopened = try client.list(projectRoot: project.path)
+
+        XCTAssertEqual(reopened.map(\.tutorial.notebookId), [surviving.tutorial.notebookId])
+        XCTAssertFalse(reopened.map(\.tutorial.notebookId).contains(removed.tutorial.notebookId))
+    }
+
+    func testBundledTWHyaTutorialLoadsEveryGuideTaskAgainstCanonicalSurfaces() throws {
+        let project = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-tutorial-template-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: project) }
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+
+        let forked = try UniFFITutorialPersistenceClient().fork(
+            projectRoot: project.path,
+            templatePath: bundledTWHyaTutorial.path,
+            filename: "tw-hya-first-look.md"
+        )
+        let cells = forked.notebook.cells
+        XCTAssertEqual(cells.map(\.taskIntent?.surface), [
+            "imager",
+            "imager",
+            "split",
+            "imager",
+            "impbcor",
+        ])
+        XCTAssertEqual(forked.tutorial.sections.count, 9)
+
+        let parameterClient = UniFFISurfaceParameterClient()
+        for cell in cells {
+            let intent = try XCTUnwrap(cell.taskIntent)
+            _ = try parameterClient.load(
+                surfaceID: intent.surface,
+                profileTOML: intent.profileTOML,
+                sourcePath: "\(project.path)/notebooks/tw-hya-first-look.md#\(cell.id)"
+            )
+        }
+
+        let targetImage = try XCTUnwrap(
+            cells.first { $0.id == "019f6666-6666-7666-8666-666666666666" }?.taskIntent
+        )
+        let targetSnapshot = try parameterClient.load(
+            surfaceID: targetImage.surface,
+            profileTOML: targetImage.profileTOML,
+            sourcePath: "tw-hya-first-look.md#\(cells[3].id)"
+        )
+        XCTAssertEqual(targetSnapshot.states["vis"]?.value, .array([.string("data/twhya_smoothed.ms")]))
+        XCTAssertEqual(targetSnapshot.states["field"]?.value, .string("0"))
+        XCTAssertEqual(targetSnapshot.states["niter"]?.value, .integer(10_000))
+        XCTAssertEqual(targetSnapshot.states["threshold"]?.value, .string("0.015Jy"))
+        XCTAssertEqual(targetSnapshot.states["mask_box"]?.value, .string("100,100,150,150"))
+    }
+
     func testRustBackedTemplateForkAcquisitionAndOfflineReopenRoundTrip() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("casars-tutorial-swift-\(UUID().uuidString)", isDirectory: true)
@@ -121,5 +194,15 @@ final class TutorialPersistenceTests: XCTestCase {
         let reopened = try client.list(projectRoot: project.path)
         XCTAssertEqual(reopened.first?.tutorial.datasets.first?.phase, .ready)
         XCTAssertEqual(reopened.first?.notebook.receipts.first?.operationId, "tutorial.acquire.science")
+    }
+
+    private var bundledTWHyaTutorial: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("resources/tutorials/tw-hya-first-look", isDirectory: true)
     }
 }

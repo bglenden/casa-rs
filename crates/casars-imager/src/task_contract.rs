@@ -1890,7 +1890,7 @@ pub struct ImagerRunTaskRequest {
     /// Optional `FIELD_ID` used as the image phase center.
     #[serde(default)]
     pub phasecenter_field: Option<i32>,
-    /// Optional explicit CASA-style phase center.
+    /// Optional CASA-style direction or `FIELD_ID` used as the image phase center.
     #[serde(default)]
     pub phasecenter: Option<String>,
     /// Optional `DATA_DESC_ID` restriction.
