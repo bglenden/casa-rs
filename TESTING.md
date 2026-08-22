@@ -163,6 +163,17 @@ only documentation, planning, or workflow-policy changes. Do not rerun a gate
 solely because review started; if executable changes intervened, rerun only the
 affected gate.
 
+For the #486 imaging programme, a downstream ticket starts only from the merged
+commit containing each blocker interface. Its focused gate exercises the deep
+owner interface plus the immediately affected compile/plan/run composition;
+tests on a mixed multi-ticket branch are exploratory evidence, not acceptance.
+At an intermediate merge checkpoint, run the affected identity/schema cascade,
+`just arch-check` when ownership or dependency policy changed, and the narrow
+composition gates that cross the newly landed seam. Reserve the programme-wide
+scientific/resource/full-repository sweep for the explicit ticket and final
+milestones defined by #486; this does not waive any ticket-specific CASA,
+interoperability, performance, or persistent-data gate.
+
 - Native macOS GUI prototype and frontend services:
   `scripts/generate-frontend-bindings.sh --check`,
   `cargo test -p casa-notebook --test wave1_contract`,
