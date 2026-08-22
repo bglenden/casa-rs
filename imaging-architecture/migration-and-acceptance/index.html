@@ -773,11 +773,15 @@
 
 <h1 id="imaging-migration-and-acceptance-matrix">Imaging migration and acceptance matrix<a class="headerlink" href="#imaging-migration-and-acceptance-matrix" title="Permanent link">&para;</a></h1>
 <p>Truth class: normative
-Last reality check: 2026-08-19
+Last reality check: 2026-08-22
 Verification: <code>just arch-check</code></p>
 <p>The authoritative machine-readable inventory is
 <a href="https://github.com/bglenden/casa-rs/blob/main/resources/imaging-architecture/migration-matrix.json"><code>resources/imaging-architecture/migration-matrix.json</code></a>.
 It is owned by GitHub issue #487 under the #486 imaging-architecture programme.</p>
+<p>The first-tranche delivery findings and corrected T13-T23 order are normative
+in <a href="../lessons-and-next-tranche/">the lessons and next-tranche contract</a>. They
+refine dependency and ownership sequencing without changing this matrix's role
+as the sole capability and product inventory.</p>
 <h2 id="what-one-row-means">What one row means<a class="headerlink" href="#what-one-row-means" title="Permanent link">&para;</a></h2>
 <p>Every current imaging capability, product, solver, frontend, and backend has
 exactly one stable row. A row records:</p>
@@ -824,7 +828,19 @@ solver trajectories, cross-surface request round trips, the immutable
 Compiled Problem foundation, and both the Resource Authority foundation and
 its eventual production integration. Scientific product contracts use a
 normalized-RMS ceiling of <code>0.001</code> only on declared valid support and only with
-a declared denominator.
+a declared denominator.</p>
+<p>Product generation is a closed two-phase authority. Planning binds the Product
+Graph's exact typed source commitments into an opaque planned generation.
+Publication requires a seal minted only after owner-generated completion
+evidence matches every commitment and cross-generation dependency. Raw digest
+binding, caller-authored staging maps, dynamic source registries, and
+backend/resource pseudo-sources are not authority seams. T13 lands topology,
+layout, and store structure; T22 performs the first real continuum catalog and
+planned-generation/seal cutover after T17-T21 and the model lifecycle can
+supply their typed evidence. A later product source role extends that same
+closed catalog through its scientific owner's typed commitment/completion,
+identity and receipt ratchets, matrix ownership, and acceptance evidence; it
+does not add another public authority method.
 That scalar ceiling supplements rather than replaces exact topology, WCS,
 units, beam, sum-of-weights, flux, centroid, operator-law, and resource gates.</p>
 <p>Exact CLEAN component order is diagnostic rather than normative. The optional
@@ -846,10 +862,19 @@ measurement equation ends at an explicitly unnormalized normal state, while
 normalization, residual scaling, restoration, PB correction, blanking, and
 unit conversion are typed as Product Contract operations. <code>product.image</code> and
 <code>product.image-pbcor</code> therefore remain <code>LegacyWholeRun</code>: T13/#499 must land the
-Product Graph and atomic store, T39/#525 owns common-beam restoration, T47/#533
-owns PB/sensitivity and mosaic normalization algorithms, and T43/#529 owns
-wideband <code>product.alpha-pbcor</code> behavior. Their legacy writers are removed only
-under the transfer ratchet above.</p>
+Product Graph and atomic store, T22/#508 owns the first continuum Product
+Generation Authority and sealed publication, T39/#525 owns common-beam
+restoration, T47/#533 owns PB/sensitivity and mosaic normalization algorithms,
+and T43/#529 owns wideband <code>product.alpha-pbcor</code> behavior. Their legacy writers
+are removed only under the transfer ratchet above.</p>
+<p>The next tranche corrects one dependency discovered during composition: model
+generation is an input to Major-Cycle reconciliation, not its output owner.
+T28/#514 therefore lands solver-independent model ingest, reprojection,
+generation, and Model Delta application after T15 and before T20. T17 and T28
+may run in parallel; T20 joins T19 complete-data evidence with the T28 model
+lifecycle. T22 then consumes the typed weighting, normal-state, and model
+completions. No earlier ticket may invent those future records or expose a raw
+construction path to avoid the ordering.</p>
 <p>The architecture checker validates schema, the independently pinned logical
 graph, canonical inventories, complete Acceptance Contracts, complete binding
 row ledger, structured issue outcomes, content-pinned evidence locators,

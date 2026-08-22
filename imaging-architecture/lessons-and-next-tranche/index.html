@@ -1,0 +1,1183 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Imaging architecture lessons and next-tranche contract - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#imaging-architecture-lessons-and-next-tranche-contract" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Imaging architecture lessons and next-tranche contract
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scientific Workbench
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scientific Workbench
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scientific-notebooks-and-assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks, Tutorials, Python, and AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mac-native-gui-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#lessons-from-the-first-tranche" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lessons from the first tranche
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Lessons from the first tranche">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-dependency-means-a-landed-interface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A dependency means a landed interface
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#planning-completion-and-publication-are-different-phases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Planning, completion, and publication are different phases
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#exact-evidence-is-derived-not-declared" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exact evidence is derived, not declared
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bounded-streams-must-remain-fallible-and-one-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bounded streams must remain fallible and one-pass
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#visibility-is-the-irreversible-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Visibility is the irreversible boundary
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#merge-checkpoints-are-architecture-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Merge checkpoints are architecture gates
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#corrected-next-tranche" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Corrected next tranche
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Corrected next tranche">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#independent-landed-interface-tracks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Independent landed-interface tracks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#target-native-module-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Target native module ownership
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ticket-and-merge-discipline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ticket and merge discipline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#persistent-interoperability-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Persistent interoperability boundary
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="imaging-architecture-lessons-and-next-tranche-contract">Imaging architecture lessons and next-tranche contract<a class="headerlink" href="#imaging-architecture-lessons-and-next-tranche-contract" title="Permanent link">&para;</a></h1>
+<p>Truth class: normative programme delivery
+Last reality check: 2026-08-22
+Verification: <code>just docs-check</code>; <code>just arch-check</code></p>
+<p>This document records the delivery consequences learned while implementing and
+merging T01-T12 and T14, together with the subsequently archived multi-ticket
+T13 composition experiment. It refines
+ticket order and ownership; it does not reduce any #486 outcome, Acceptance
+Contract, persistent interoperability requirement, or deletion ratchet.</p>
+<p>The migration matrix remains the sole capability/product inventory. GitHub
+issues remain the authoritative work record. This document defines how the
+remaining owners meet those records without recreating cross-ticket authority.</p>
+<h2 id="lessons-from-the-first-tranche">Lessons from the first tranche<a class="headerlink" href="#lessons-from-the-first-tranche" title="Permanent link">&para;</a></h2>
+<h3 id="a-dependency-means-a-landed-interface">A dependency means a landed interface<a class="headerlink" href="#a-dependency-means-a-landed-interface" title="Permanent link">&para;</a></h3>
+<p>A ticket may depend only on an interface merged to <code>main</code>, not on an
+unreviewed commit, stash, composition branch, or anticipated type from another
+ticket. Exploratory composition is useful evidence, but it cannot become the
+acceptance implementation for any participating ticket.</p>
+<p>If a required owner interface is absent, stop at that seam and correct the
+ticket graph. Do not bridge the gap with a raw digest, caller-filled map,
+test-only public constructor, placeholder completion, compatibility adapter, or
+second authority.</p>
+<h3 id="planning-completion-and-publication-are-different-phases">Planning, completion, and publication are different phases<a class="headerlink" href="#planning-completion-and-publication-are-different-phases" title="Permanent link">&para;</a></h3>
+<p>The logical compiler owns immutable commitments. A scientific owner later
+mints completion evidence from the actual bounded execution. Product
+publication consumes an exact set of those typed completions and yields a
+seal. These records have distinct identities and schema revisions:</p>
+<ol>
+<li>compiler-owned commitment;</li>
+<li>owner-minted, attempt-bound completion;</li>
+<li>planned product generation;</li>
+<li>authorized product-generation seal; and</li>
+<li>durable publication result.</li>
+</ol>
+<p>None may be reconstructed from another record's digest. Runtime transports the
+closed evidence envelope and enforces attempt/fence placement; it does not
+reinterpret science or maintain a second source-role catalog.</p>
+<h3 id="exact-evidence-is-derived-not-declared">Exact evidence is derived, not declared<a class="headerlink" href="#exact-evidence-is-derived-not-declared" title="Permanent link">&para;</a></h3>
+<p>Caller-supplied <code>ProductKind</code> staging maps, raw artifact digests, broad count
+reports, and open string maps collapse identities and create parallel
+authorities. Exact product staging derives from one Product Graph publication
+member/layout ledger. Exact observation completion derives from the compiled
+selection plus the actual ordered sample traversal. Exact receipt validation
+uses closed typed projections and rejects missing, additional, reordered, or
+unknown members.</p>
+<p>Capability-scoped completion owners are affine, fresh for one execution
+attempt, and available only after the owning work node's fences settle. A
+physical row-read completion is not a full Selected Observation traversal; a
+weighting-generation completion is not a weighting replay completion.</p>
+<h3 id="bounded-streams-must-remain-fallible-and-one-pass">Bounded streams must remain fallible and one-pass<a class="headerlink" href="#bounded-streams-must-remain-fallible-and-one-pass" title="Permanent link">&para;</a></h3>
+<p>An interface that accepts only borrowed elements from an ordinary <code>Iterator</code>
+quietly requires retaining the entire stream. Native observation and
+reconstruction interfaces therefore consume owned or lending-equivalent
+bounded blocks and preserve source errors, including a failure discovered on
+the terminal poll. Coverage, content identity, and resource measurement are
+computed in the same bounded pass; no full-MeasurementSet row list, hidden
+prepass, or uncharged duplicate block is permitted.</p>
+<p>The Observation Snapshot remains the storage-owner logical-manifest
+commitment. T17 adds a separate content-derived Selected Observation generation
+from the actual canonical sample stream. The latter can demonstrate equal
+content across distinct logical sources but never replaces the snapshot,
+provenance, access capability, or attempt evidence.</p>
+<h3 id="visibility-is-the-irreversible-boundary">Visibility is the irreversible boundary<a class="headerlink" href="#visibility-is-the-irreversible-boundary" title="Permanent link">&para;</a></h3>
+<p>T08 established the required publication choreography: durably prepare the
+exact staged result and terminal candidate, perform the sole external
+visibility operation once, then promote or retain fail-closed reconciliation
+evidence. No fallible scientific validation, receipt mutation that can change
+the run result, retry, or alternate publisher is legal after visibility.
+Pre-publication artifacts are <code>Staged</code>, never <code>Published</code>.</p>
+<h3 id="merge-checkpoints-are-architecture-gates">Merge checkpoints are architecture gates<a class="headerlink" href="#merge-checkpoints-are-architecture-gates" title="Permanent link">&para;</a></h3>
+<p>The first tranche showed that waiting for a large composition branch increases
+semantic conflict and hides ticket ownership. Merge a reviewed ticket when its
+deep interface is complete and it unblocks another ticket. A checkpoint is
+appropriate even when the programme is far from complete.</p>
+<p>Each active ticket has one clean worktree and one linked pull request. A mixed
+experiment is preserved under an explicitly non-acceptance branch and is mined
+ticket by ticket. Completed work is not left unmerged merely to batch a wave.</p>
+<h2 id="corrected-next-tranche">Corrected next tranche<a class="headerlink" href="#corrected-next-tranche" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Order</th>
+<th>Ticket</th>
+<th>Sole outcome in this tranche</th>
+<th>Explicit exclusion</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>T13/#499</td>
+<td>Product Contract, Product Graph topology, exact publication-layout ledger, and atomic store protocol</td>
+<td>No future scientific completion catalog and no real product seal cutover</td>
+</tr>
+<tr>
+<td>2</td>
+<td>T15/#501</td>
+<td>Private synthetic walking skeleton across the landed T01-T14 interfaces</td>
+<td>No public fake source/completion types and no second runner</td>
+</tr>
+<tr>
+<td>3a</td>
+<td>T17/#503</td>
+<td>Bounded Selected Observation values, access/traversal validation, content generation, and owner-minted completion</td>
+<td>Physical ObservationRead evidence alone cannot satisfy traversal</td>
+</tr>
+<tr>
+<td>3b</td>
+<td>T28/#514</td>
+<td>Solver-independent model-generation owner, ingest/reprojection, and Model Delta application</td>
+<td>No dependency on Major Cycle or Product Generation Authority</td>
+</tr>
+<tr>
+<td>4</td>
+<td>T18/#504</td>
+<td>Frozen global weighting generation and distinct bounded replay</td>
+<td>No caller-count completion and no chunk-local weighting</td>
+</tr>
+<tr>
+<td>5</td>
+<td>T19/#505</td>
+<td>Serial CPU complete-data operator consuming only weighted blocks and replay completion</td>
+<td>No re-binding of W and no product authority</td>
+</tr>
+<tr>
+<td>6</td>
+<td>T20/#506</td>
+<td>Major-Cycle reconciliation joining T19 output with the T28 model lifecycle</td>
+<td>No independently forgeable normal-state/final-model pair</td>
+</tr>
+<tr>
+<td>7</td>
+<td>T21/#507</td>
+<td>Bounded Högbom Model Deltas against named model generations</td>
+<td>No authoritative residual mutation</td>
+</tr>
+<tr>
+<td>8</td>
+<td>T22/#508</td>
+<td>Continuum product algorithms plus the first real Product Generation Authority, planned-generation/seal cutover, and atomic publication</td>
+<td>No raw/manual generation path retained</td>
+</tr>
+<tr>
+<td>9</td>
+<td>T23/#509</td>
+<td>Continuum Acceptance Contract, matrix transfer, and legacy-route deletion</td>
+<td>No native-to-legacy fallback</td>
+</tr>
+</tbody>
+</table>
+<p>T17 and T28 may proceed in parallel after T15 because neither owns the other's
+interface. T20 waits for both the complete-data operator and model lifecycle.
+This replaces the stale T28-after-T20 ordering without changing either
+ticket's scientific outcome.</p>
+<h3 id="independent-landed-interface-tracks">Independent landed-interface tracks<a class="headerlink" href="#independent-landed-interface-tracks" title="Permanent link">&para;</a></h3>
+<p>The live blocker graph also makes T50/#536 and T61/#547 ready. They may proceed
+in separate worktrees without becoming dependencies of the continuum tranche:</p>
+<ul>
+<li>T50 owns prepared implementation artifacts such as convolution functions,
+  spectral maps, and kernels. A <code>PreparedArtifact</code> is not a scientific
+  Product Graph artifact, product-generation member, or publication seal. T50
+  may reuse lower-level atomic-storage mechanics but cannot share or extend the
+  product authority.</li>
+<li>T61 projects only the canonical request and matrix semantics already merged
+  to <code>main</code>. It does not predeclare a later ticket's control, default,
+  capability, or validation rule. Each later owner extends the same catalog in
+  the merge that lands its stable contract.</li>
+</ul>
+<p>If either track touches the same receipt, identity, or checker files as the
+continuum tranche, merge one reviewed owner first and rebase the other on that
+landed interface. File-level parallelism is not permission for competing
+semantic owners.</p>
+<h2 id="target-native-module-ownership">Target native module ownership<a class="headerlink" href="#target-native-module-ownership" title="Permanent link">&para;</a></h2>
+<p>The current package table in <code>ARCHITECTURE.md</code> remains descriptive until each
+owner lands. The target direct workspace dependencies after the relevant
+cutover are:</p>
+<table>
+<thead>
+<tr>
+<th>Owner</th>
+<th>Direct workspace dependencies</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>casa-imaging-model</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td>native Selected Observation path in <code>casa-ms</code></td>
+<td><code>casa-imaging-model</code> plus storage/foundation crates; no legacy, application, task-runtime, or imaging-runtime dependency</td>
+</tr>
+<tr>
+<td><code>casa-imaging-reconstruction</code></td>
+<td><code>casa-imaging-model</code></td>
+</tr>
+<tr>
+<td><code>casa-imaging-products</code></td>
+<td><code>casa-imaging-model</code>, <code>casa-imaging-reconstruction</code></td>
+</tr>
+<tr>
+<td><code>casa-imaging-runtime</code></td>
+<td><code>casa-imaging-model</code>, <code>casa-ms</code>, <code>casa-imaging-reconstruction</code>, <code>casa-imaging-products</code></td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><code>casa-imaging-model</code> remains dependency-free and owns compiler commitments,
+  logical Product Graph topology, and closed backend-free value schemas.</li>
+<li><code>casa-ms</code> is already the logical observation layer. T17 makes its native
+  Selected Observation path depend inward on the model and own retained source
+  access, canonical bounded traversal, and traversal completion. The current
+  crate's legacy/application-shaped dependencies may not leak into that path;
+  T17 removes or relocates them as necessary before the path is classified
+  native. The model never depends outward on <code>casa-ms</code>.</li>
+<li><code>casa-imaging-reconstruction</code> depends only on the model (plus ecosystem
+  numerics), consumes model-owned block values through execution composition,
+  and owns model, weighting, replay, complete-data, and normal-state algorithms
+  and their opaque completions. It does not import MeasurementSet/storage APIs.</li>
+<li><code>casa-imaging-products</code> depends on the model and reconstruction owners. It
+  owns the entire product-generation construction capability: typed source
+  catalog, planned generation, artifact identities, authority, seal, product
+  algorithms, and publication projection. Leaving raw generation construction
+  in the model would preserve the bypass and make this module shallow.</li>
+<li><code>casa-imaging-runtime</code> depends inward on the owners it schedules. It retains
+  physical plans, leases, layouts, attempts, fences, receipt I/O, and the sole
+  publication capability; it does not own scientific completion meaning.</li>
+</ul>
+<p>No dependency is added merely to predeclare this shape. The owning ticket adds
+the crate/edge, machine-readable policy, matrix ownership, tests, and caller
+migration atomically.</p>
+<h2 id="ticket-and-merge-discipline">Ticket and merge discipline<a class="headerlink" href="#ticket-and-merge-discipline" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Begin a ticket from current <code>origin/main</code> after every listed blocker is
+  closed and its interface is present there.</li>
+<li>Fix ownership and public shape before parallel fixture, implementation, and
+  evidence work begins inside the ticket.</li>
+<li>Run focused owner-interface tests and affected composition gates. A
+  downstream branch is not a substitute for the owning ticket's test surface.</li>
+<li>Before opening the next dependent ticket, merge the reviewed predecessor and
+  rebase the next clean worktree on that merge.</li>
+<li>Treat schema/identity changes as a declared cascade. Update every affected
+  projection, pin, receipt validator, and matrix/checker ratchet in the owning
+  change; do not leave recomputation placeholders in an acceptance branch.</li>
+<li>Keep status dashboards as derived views of GitHub issue/linked-PR state.
+  Manual fallback data is conservative and never an alternate work record.</li>
+</ul>
+<h2 id="persistent-interoperability-boundary">Persistent interoperability boundary<a class="headerlink" href="#persistent-interoperability-boundary" title="Permanent link">&para;</a></h2>
+<p>The new commitment, completion, generation, seal, plan, and receipt records are
+CASA-RS control/evidence schemas. They do not alter casacore MeasurementSet or
+image-table persistence. Any proposal for a new MS sidecar, intrinsic dataset
+identifier, co-committed receipt, or other CASA-visible persisted structure
+still stops for a separate interoperability decision and Rust/C++ evidence.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
