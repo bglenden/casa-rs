@@ -5,7 +5,7 @@ Last reality check: 2026-08-19
 Verification: `just arch-check`
 
 The authoritative machine-readable inventory is
-[`resources/imaging-architecture/migration-matrix.json`](../../resources/imaging-architecture/migration-matrix.json).
+[`resources/imaging-architecture/migration-matrix.json`](https://github.com/bglenden/casa-rs/blob/main/resources/imaging-architecture/migration-matrix.json).
 It is owned by GitHub issue #487 under the #486 imaging-architecture programme.
 
 ## What one row means

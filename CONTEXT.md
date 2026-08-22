@@ -24,10 +24,22 @@ The immutable logical identity and consistency generation of selected MS data,
 metadata, reference tables, ephemerides, and input models. It is a manifest,
 not a materialized copy of bulk samples. Its compiler canonicalizes exact
 per-MS row, SPW/channel, and correlation semantics plus selected column and
-metadata generations. Selected rows are retained only as counts and an ordered
-row-sequence digest. Content identity ignores source location and request order;
-a separate provenance identity preserves them.
+metadata generations and the independent existence/generation of the optional
+`MODEL_DATA` column. Selected rows are retained only as counts and an ordered
+row-sequence digest. Content identity ignores source location and request
+order; a separate provenance identity preserves them.
 _Avoid_: MeasurementSet clone, input path
+
+**Observation Transaction**:
+The snapshot-bound, compiler-derived read/write contract for one imaging run.
+It names exact per-MS selections and generations, optional `MODEL_DATA` write
+preconditions, typed physical observation-read nodes, exact per-required-product
+private staging completions, and the sole atomic publication gate. The sole
+`plan` entrypoint derives all read completion events and binds this declaration
+to the exact Compiled Problem and physical-work identity. The terminal gate
+follows every other completion, revalidates while holding every source lock,
+ends controller polling on launch, and never exposes staging.
+_Avoid_: Incremental output write, best-effort model save
 
 **Selected Observation**:
 The bounded stream evaluating an Observation Snapshot and compiled transform

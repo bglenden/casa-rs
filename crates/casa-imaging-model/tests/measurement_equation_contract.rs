@@ -15,19 +15,20 @@ use casa_imaging_model::{
     AxisOrder, CentreLaws, CompiledProblemId, DeclaredInnerProducts, DelayCentreLaw,
     DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FiniteValuePolicy, FlagPolicy,
     FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, InstrumentResponse, MeasurementEquationContract, ModelInnerProduct,
-    ModelStateIdentity, NormalEquationForm, NormalStateNormalization, NumericPrecision,
-    NumericalStage, NumericsContract, ObservationPointingLaw, PairedMeasurementTransform,
-    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
-    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
-    PolarizationCoordinate, ProblemSpecification, ProductBoundaryOperation, ProductKind,
-    ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
-    VisibilityPhaseConvention, WeightColumn, WeightDensityScope, WeightingContract,
-    WeightingGenerationId, WeightingScheme, compile,
+    ImagingRequest, InstrumentResponse, MeasurementEquationContract, ModelColumnWrite,
+    ModelInnerProduct, ModelStateIdentity, NormalEquationForm, NormalStateNormalization,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ObservationTransactionRequirements, PairedMeasurementTransform, PhaseCentreLaw,
+    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
+    ProblemSpecification, ProductBoundaryOperation, ProductKind, ProductNormalization,
+    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
+    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
+    RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSampling, SpectralWcs,
+    StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, VisibilityPhaseConvention,
+    WeightColumn, WeightDensityScope, WeightingContract, WeightingGenerationId, WeightingScheme,
+    compile,
 };
 
 mod common;
@@ -245,7 +246,14 @@ fn compile_contract(sampling: SpectralSampling) -> casa_imaging_model::CompiledP
     );
 
     compile(ImagingRequest::new(
-        ProblemSpecification::new(science, reconstruction, weighting, products, numerics),
+        ProblemSpecification::new(
+            science,
+            reconstruction,
+            weighting,
+            products,
+            ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
+            numerics,
+        ),
         geometry(),
         inputs,
     ))
@@ -392,10 +400,10 @@ fn paired_compositions_obey_linearity_and_weighted_adjointness() {
 }
 
 #[test]
-fn schema_five_problem_and_weighting_generation_identities_are_pinned() {
+fn schema_six_problem_and_weighting_generation_identities_are_pinned() {
     let problem = compile_contract(SpectralSampling::Linear);
 
-    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 5);
+    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 6);
     assert_eq!(WeightingGenerationId::SCHEMA_VERSION, 1);
     assert_eq!(
         (
@@ -407,8 +415,8 @@ fn schema_five_problem_and_weighting_generation_identities_are_pinned() {
                 .to_string(),
         ),
         (
-            "1b92f5c50ad9081c1f45e3ae959d0d66436e7f861205039cc629b69193f749ea".to_string(),
-            "60dec5d9b99b65683119f97b83d56e77202f91acdd58731b0fff7d1bfde56d8d".to_string(),
+            "3a440101add9d74a137601766036cb400933da204ba0c9e7a6749b18b017d411".to_string(),
+            "550f22492d158e34f075329e2577fa795391f37d25e6185e417785fe2f6bbb8c".to_string(),
         )
     );
 }

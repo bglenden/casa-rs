@@ -4,12 +4,13 @@ use casa_imaging_model::{
     AntennaBaseline, AntennaSelection, ColumnGeneration, CompileObservationError, ConsistencyToken,
     CorrelationProduct, CorrelationSelection, CorrelationType, FlagPolicy, IdSelection,
     IntentSelection, LogicalIdentity, MeasurementSetIdentity, MetadataGeneration,
-    MetadataTableKind, ModelStateIdentity, MsColumnKind, ObservationConsistencyError,
-    ObservationSelection, ObservationSnapshot, ObservationSnapshotInput, ObservationSourceInput,
-    ObservationSourceProvenance, ObservationSourceState, ObservationState, ReferenceDataKind,
-    ResolvedIntent, RowSelection, SelectedColumns, SelectedRows, SelectionBound, SourceGenerations,
-    SpectralWindowSelection, TimeRange, TimeSelection, UvDistanceRange, UvDistanceUnit,
-    UvSelection, VisibilityColumn, WeightColumn, compile_observation,
+    MetadataTableKind, ModelColumnState, ModelStateIdentity, MsColumnKind,
+    ObservationConsistencyError, ObservationSelection, ObservationSnapshot,
+    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
+    ObservationSourceState, ObservationState, ReferenceDataKind, ResolvedIntent, RowSelection,
+    SelectedColumns, SelectedRows, SelectionBound, SourceGenerations, SpectralWindowSelection,
+    TimeRange, TimeSelection, UvDistanceRange, UvDistanceUnit, UvSelection, VisibilityColumn,
+    WeightColumn, compile_observation,
 };
 
 fn identity(byte: u8) -> LogicalIdentity {
@@ -149,6 +150,24 @@ fn source(
     locator: &str,
     reverse: bool,
 ) -> ObservationSourceInput {
+    source_with_model_column(
+        source_id,
+        row_digest,
+        generation_seed,
+        locator,
+        reverse,
+        ModelColumnState::Absent,
+    )
+}
+
+fn source_with_model_column(
+    source_id: u8,
+    row_digest: u8,
+    generation_seed: u8,
+    locator: &str,
+    reverse: bool,
+    model_column: ModelColumnState,
+) -> ObservationSourceInput {
     ObservationSourceInput::new(
         MeasurementSetIdentity::new(identity(source_id)),
         ObservationSourceProvenance::new(locator.to_string(), identity(source_id + 40)),
@@ -157,6 +176,7 @@ fn source(
             ConsistencyToken::new(identity(source_id + 50)),
             columns(generation_seed, reverse),
             metadata(generation_seed + 24, reverse),
+            model_column,
         ),
     )
 }
@@ -245,6 +265,7 @@ fn all_defined_measurement_set_correlation_coordinates_are_lossless() {
                 ConsistencyToken::new(identity(61)),
                 columns(60, false),
                 metadata(84, false),
+                ModelColumnState::Absent,
             ),
         )],
         Vec::new(),
@@ -258,6 +279,68 @@ fn all_defined_measurement_set_correlation_coordinates_are_lossless() {
         .map(|product| product.correlation_type())
         .collect::<Vec<_>>();
     assert_eq!(compiled_types, correlation_types);
+}
+
+#[test]
+fn model_column_state_is_snapshot_identity_bearing() {
+    let compile = |state| {
+        compile_observation(ObservationSnapshotInput::new(
+            vec![source_with_model_column(
+                11,
+                31,
+                60,
+                "/archive/a.ms",
+                false,
+                state,
+            )],
+            Vec::new(),
+            ModelStateIdentity::Empty,
+        ))
+        .expect("compile explicit MODEL_DATA state")
+    };
+
+    let absent = compile(ModelColumnState::Absent);
+    let present = compile(ModelColumnState::Present(identity(210)));
+
+    assert_ne!(absent.snapshot_id(), present.snapshot_id());
+    assert_eq!(
+        present.sources()[0].generations().model_column(),
+        ModelColumnState::Present(identity(210))
+    );
+}
+
+#[test]
+fn model_column_state_must_match_a_consumed_model_generation() {
+    let mut selected = columns(60, false).generations().to_vec();
+    selected.push(ColumnGeneration::new(
+        MsColumnKind::ModelData,
+        identity(210),
+    ));
+    let source = ObservationSourceInput::new(
+        MeasurementSetIdentity::new(identity(11)),
+        ObservationSourceProvenance::new("/archive/a.ms".to_string(), identity(51)),
+        selection(31, false),
+        SourceGenerations::new(
+            ConsistencyToken::new(identity(61)),
+            SelectedColumns::new(
+                VisibilityColumn::CorrectedData,
+                FlagPolicy::FlagOrFlagRow,
+                WeightColumn::WeightSpectrum,
+                selected,
+            ),
+            metadata(84, false),
+            ModelColumnState::Present(identity(211)),
+        ),
+    );
+
+    assert_eq!(
+        compile_observation(ObservationSnapshotInput::new(
+            vec![source],
+            Vec::new(),
+            ModelStateIdentity::Empty,
+        )),
+        Err(CompileObservationError::InconsistentModelColumnState)
+    );
 }
 
 #[test]
@@ -277,7 +360,7 @@ fn content_identity_is_canonical_but_provenance_retains_origin_and_request_order
     );
     assert_eq!(first.sources()[0].input_ordinal(), 0);
     assert_eq!(reordered.sources()[0].input_ordinal(), 1);
-    assert_eq!(casa_imaging_model::ObservationSnapshotId::SCHEMA_VERSION, 1);
+    assert_eq!(casa_imaging_model::ObservationSnapshotId::SCHEMA_VERSION, 2);
 }
 
 #[test]
@@ -387,6 +470,7 @@ fn compilation_fails_closed_on_incomplete_or_ambiguous_manifests() {
             ConsistencyToken::new(identity(61)),
             incomplete_columns,
             metadata(84, false),
+            ModelColumnState::Absent,
         ),
     );
 
@@ -415,6 +499,7 @@ fn compilation_fails_closed_on_incomplete_or_ambiguous_manifests() {
             ConsistencyToken::new(identity(61)),
             columns(60, false),
             metadata(84, false),
+            ModelColumnState::Absent,
         ),
     );
     assert!(matches!(
@@ -492,6 +577,7 @@ fn consistency_validation_attributes_disallowed_input_mutation() {
                 .generations()
                 .metadata_generations()
                 .to_vec(),
+            changed_sources[0].generations().model_column(),
         ),
     );
     assert!(matches!(
@@ -504,6 +590,29 @@ fn consistency_validation_attributes_disallowed_input_mutation() {
             column: MsColumnKind::Flag,
             ..
         })
+    ));
+
+    let mut changed_sources = current_sources.clone();
+    changed_sources[0] = ObservationSourceState::new(
+        changed_sources[0].identity(),
+        changed_sources[0].selected_rows().clone(),
+        SourceGenerations::new(
+            changed_sources[0].generations().consistency_token(),
+            changed_sources[0].generations().columns().clone(),
+            changed_sources[0]
+                .generations()
+                .metadata_generations()
+                .to_vec(),
+            ModelColumnState::Present(identity(253)),
+        ),
+    );
+    assert!(matches!(
+        compiled.validate_consistency(ObservationState::new(
+            changed_sources,
+            compiled.reference_data().to_vec(),
+            compiled.model(),
+        )),
+        Err(ObservationConsistencyError::ModelColumnStateChanged { .. })
     ));
 
     let mut changed_sources = current_sources.clone();
@@ -526,6 +635,7 @@ fn consistency_validation_attributes_disallowed_input_mutation() {
             changed_sources[0].generations().consistency_token(),
             changed_sources[0].generations().columns().clone(),
             changed_metadata,
+            changed_sources[0].generations().model_column(),
         ),
     );
     assert!(matches!(
@@ -551,6 +661,7 @@ fn consistency_validation_attributes_disallowed_input_mutation() {
                 .generations()
                 .metadata_generations()
                 .to_vec(),
+            changed_sources[0].generations().model_column(),
         ),
     );
     assert!(matches!(

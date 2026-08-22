@@ -3,23 +3,19 @@
 use casa_imaging_model::{
     AntennaSelection, ColumnGeneration, ConsistencyToken, CorrelationProduct, CorrelationSelection,
     CorrelationType, FlagPolicy, IdSelection, IntentSelection, LogicalIdentity,
-    MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, ModelStateIdentity,
-    MsColumnKind, ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
-    ObservationSourceProvenance, ProblemInputIdentities, ReferenceDataKind, RowSelection,
-    SelectedColumns, SelectedRows, SourceGenerations, SpectralWindowSelection, TimeSelection,
-    UvSelection, VisibilityColumn, WeightColumn, compile_observation,
+    MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, ModelColumnState,
+    ModelStateIdentity, MsColumnKind, ObservationSelection, ObservationSnapshotInput,
+    ObservationSourceInput, ObservationSourceProvenance, ProblemInputIdentities, ReferenceDataKind,
+    RowSelection, SelectedColumns, SelectedRows, SourceGenerations, SpectralWindowSelection,
+    TimeSelection, UvSelection, VisibilityColumn, WeightColumn, compile_observation,
 };
 
-fn scoped_identity(seed: u8, scope: u8) -> LogicalIdentity {
-    let mut digest = [seed; 32];
-    digest[0] = scope;
-    LogicalIdentity::from_sha256(digest)
+fn identity(scope: u8) -> LogicalIdentity {
+    LogicalIdentity::from_sha256([scope; 32])
 }
 
 pub fn problem_inputs(
-    observation: u8,
     reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
-    model: ModelStateIdentity,
 ) -> ProblemInputIdentities {
     let columns = [
         MsColumnKind::Data,
@@ -44,9 +40,7 @@ pub fn problem_inputs(
     ]
     .into_iter()
     .enumerate()
-    .map(|(index, kind)| {
-        ColumnGeneration::new(kind, scoped_identity(observation, 20 + index as u8))
-    })
+    .map(|(index, kind)| ColumnGeneration::new(kind, identity(20 + index as u8)))
     .collect();
     let metadata = [
         MetadataTableKind::Antenna,
@@ -61,12 +55,10 @@ pub fn problem_inputs(
     ]
     .into_iter()
     .enumerate()
-    .map(|(index, kind)| {
-        MetadataGeneration::new(kind, scoped_identity(observation, 60 + index as u8))
-    })
+    .map(|(index, kind)| MetadataGeneration::new(kind, identity(60 + index as u8)))
     .collect();
     let selection = ObservationSelection::new(
-        SelectedRows::new(1, 1, scoped_identity(observation, 2)),
+        SelectedRows::new(1, 1, identity(2)),
         RowSelection::new(
             IdSelection::All,
             TimeSelection::All,
@@ -85,14 +77,11 @@ pub fn problem_inputs(
     );
     let snapshot = compile_observation(ObservationSnapshotInput::new(
         vec![ObservationSourceInput::new(
-            MeasurementSetIdentity::new(scoped_identity(observation, 1)),
-            ObservationSourceProvenance::new(
-                format!("fixture://observation/{observation}"),
-                scoped_identity(observation, 3),
-            ),
+            MeasurementSetIdentity::new(identity(1)),
+            ObservationSourceProvenance::new("fixture://router.ms".to_string(), identity(3)),
             selection,
             SourceGenerations::new(
-                ConsistencyToken::new(scoped_identity(observation, 4)),
+                ConsistencyToken::new(identity(4)),
                 SelectedColumns::new(
                     VisibilityColumn::Data,
                     FlagPolicy::FlagOrFlagRow,
@@ -100,10 +89,11 @@ pub fn problem_inputs(
                     columns,
                 ),
                 metadata,
+                ModelColumnState::Absent,
             ),
         )],
         reference_data,
-        model,
+        ModelStateIdentity::Empty,
     ))
     .expect("compile router test observation");
     ProblemInputIdentities::new(snapshot)
