@@ -11,7 +11,7 @@ use crate::{
     ProductNormalization, ProductNormalizationBoundary, ProductRequirements,
     ProductSupportComparison, ReconstructionBasis, ReconstructionContract, RestoringBeamPolicy,
     SpectralCoordinateSpec, TaylorSupportReference, TaylorValidityPolicy,
-    compiled_problem::CanonicalEncoder,
+    compiled_problem::{CanonicalEncoder, polarization_tag},
 };
 
 const PRODUCT_GRAPH_IDENTITY_DOMAIN: &[u8] = b"casa-rs-product-graph";
@@ -1198,23 +1198,6 @@ fn encode_restoring_beam(encoder: &mut CanonicalEncoder, policy: RestoringBeamPo
         RestoringBeamPolicy::PerPlane => 1,
         RestoringBeamPolicy::Common => 2,
     });
-}
-
-fn polarization_tag(coordinate: PolarizationCoordinate) -> u8 {
-    match coordinate {
-        PolarizationCoordinate::StokesI => 0,
-        PolarizationCoordinate::StokesQ => 1,
-        PolarizationCoordinate::StokesU => 2,
-        PolarizationCoordinate::StokesV => 3,
-        PolarizationCoordinate::LinearXx => 4,
-        PolarizationCoordinate::LinearXy => 5,
-        PolarizationCoordinate::LinearYx => 6,
-        PolarizationCoordinate::LinearYy => 7,
-        PolarizationCoordinate::CircularRr => 8,
-        PolarizationCoordinate::CircularRl => 9,
-        PolarizationCoordinate::CircularLr => 10,
-        PolarizationCoordinate::CircularLl => 11,
-    }
 }
 
 fn product_axes(

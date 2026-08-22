@@ -20,8 +20,11 @@ use casa_imaging_model::{
 };
 
 mod common;
+#[path = "fixtures/model_lifecycle.rs"]
+mod model_lifecycle_fixture;
 
 use common::{identity, problem_inputs};
+use model_lifecycle_fixture::model_lifecycle;
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
     casa_imaging_model::ProductValidityPolicies::new(
@@ -121,6 +124,7 @@ fn request(
             .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
             .collect(),
     );
+    let inputs = problem_inputs(1, references, ModelStateIdentity::Empty);
     ImagingRequest::new(
         ProblemSpecification::new(
             ScientificContract::new(
@@ -150,7 +154,8 @@ fn request(
             numerics,
         ),
         geometry,
-        problem_inputs(1, references, ModelStateIdentity::Empty),
+        inputs,
+        model_lifecycle(ModelStateIdentity::Empty),
     )
 }
 

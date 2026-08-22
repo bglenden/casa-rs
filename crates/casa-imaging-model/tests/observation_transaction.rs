@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 mod common;
+#[path = "fixtures/model_lifecycle.rs"]
+mod model_lifecycle_fixture;
 
 use casa_imaging_model::{
     AxisOrder, CentreLaws, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
@@ -44,6 +46,7 @@ fn compile_transaction(
     snapshot: ObservationSnapshot,
     transaction: ObservationTransactionRequirements,
 ) -> casa_imaging_model::CompiledProblem {
+    let lifecycle = model_lifecycle_fixture::model_lifecycle(snapshot.model());
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
@@ -131,6 +134,7 @@ fn compile_transaction(
         specification,
         geometry,
         ProblemInputIdentities::new(snapshot),
+        lifecycle,
     ))
     .expect("compile problem with observation transaction")
 }

@@ -22,6 +22,7 @@ members = [
     "crates/casa-coordinates",
     "crates/casa-images",
     "crates/casa-imaging-model",
+    "crates/casa-imaging-reconstruction",
     "crates/casa-imaging-router",
     "crates/casa-imaging-runtime",
     "crates/casa-imaging",

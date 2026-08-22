@@ -3,16 +3,28 @@
 use casa_imaging_model::{
     AntennaSelection, ColumnGeneration, ConsistencyToken, CorrelationProduct, CorrelationSelection,
     CorrelationType, DataDescriptionSelection, FlagPolicy, IdSelection, IntentSelection,
-    LogicalIdentity, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
-    ModelColumnState, ModelStateIdentity, MsColumnKind, ObservationSelection,
-    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
-    ProblemInputIdentities, ReferenceDataKind, RowSelection, SelectedColumns, SelectedMainRow,
-    SelectedRows, SourceGenerations, SpectralWindowSelection, TimeSelection, UvSelection,
-    VisibilityColumn, WeightColumn, compile_observation,
+    LogicalIdentity, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, ModelBounds,
+    ModelColumnState, ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity,
+    MsColumnKind, NumericPrecision, ObservationSelection, ObservationSnapshotInput,
+    ObservationSourceInput, ObservationSourceProvenance, ProblemInputIdentities, ReferenceDataKind,
+    RowSelection, SelectedColumns, SelectedMainRow, SelectedRows, SourceGenerations,
+    SpectralWindowSelection, TimeSelection, UvSelection, VisibilityColumn, WeightColumn,
+    compile_observation,
 };
 
 fn identity(scope: u8) -> LogicalIdentity {
     LogicalIdentity::from_sha256([scope; 32])
+}
+
+pub fn model_lifecycle() -> ModelLifecycleRequirements {
+    ModelLifecycleRequirements::new(
+        ModelBounds::new(
+            10_000_000, 10_000_000, 10_000_000, 10_000_000, 1.0e30, 1.0e30,
+        )
+        .expect("valid model lifecycle fixture bounds"),
+        NumericPrecision::F64,
+        ModelInputCommitment::Empty,
+    )
 }
 
 pub fn problem_inputs(

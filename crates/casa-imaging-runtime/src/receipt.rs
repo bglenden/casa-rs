@@ -15,19 +15,26 @@ use casa_imaging_model::{
     AntennaSelection, CompiledGeometry, CompiledProblem, CorrelationType, DelayCentreLaw,
     DirectionFrame, DopplerConvention, FiniteValuePolicy, FlagPolicy, FrequencyFrame, IdSelection,
     ImageAxis, ImageDomainRole, InstrumentResponse, IntentSelection, LogicalIdentity,
-    MeasurementSetIdentity, MetadataTableKind, MissingPointingPolicy, ModelInnerProduct,
-    ModelStateIdentity, MsColumnKind, NormalEquationForm, NormalStateNormalization,
-    NumericPrecision, NumericalStage, PairedMeasurementTransform, PairedTransformKind,
-    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
-    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationCoordinate,
-    ProblemInputIdentities, ProductAxisKind, ProductBeamRule, ProductBlankingPolicy,
-    ProductBoundaryOperation, ProductGraphId, ProductKind, ProductNormalization, ProductRole,
-    ProductSchema, ProductSupportComparison, ProductTerm, ProductUnit, ProductValidityRule,
-    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReductionPolicy, ReferenceDataKind,
+    MeasurementSetIdentity, MetadataTableKind, MissingPointingPolicy, ModelBounds,
+    ModelInnerProduct, ModelInputCommitment, ModelInputCommitmentIdentity, ModelReprojectionPolicy,
+    ModelStateEncoding, ModelStateIdentity, ModelSupportSemantics, MsColumnKind,
+    NormalEquationForm, NormalStateNormalization, NumericPrecision, NumericalStage,
+    PairedMeasurementTransform, PairedTransformKind, PhaseCentreLaw, PointingCentreLaw,
+    PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationCoordinate, ProblemInputIdentities,
+    ProductAxisKind, ProductBeamRule, ProductBlankingPolicy, ProductBoundaryOperation,
+    ProductGraphId, ProductKind, ProductNormalization, ProductRole, ProductSchema,
+    ProductSupportComparison, ProductTerm, ProductUnit, ProductValidityRule, Projection,
+    ReconstructionAlgorithm, ReconstructionBasis, ReductionPolicy, ReferenceDataKind,
     RequiredCapability, RestFrequency, RestoringBeamPolicy, SpectralCoupling, SpectralFrameAnchor,
     SpectralSampling, SpectralWcs, TaylorSupportReference, TimeScale, TimeSelection,
     UvDistanceUnit, UvSelection, UvwAxes, UvwUnit, VisibilityColumn, VisibilityInnerProduct,
     VisibilityPhaseConvention, WeightColumn, WeightDensityScope, WeightingScheme,
+    validate_compiled_problem_identity, validate_model_lifecycle_contract_identity,
+    validate_model_reprojection_contract_identity,
+};
+use casa_imaging_reconstruction::{
+    ExecutableModelProblem, validate_reprojected_seed_proof_identity,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -44,8 +51,8 @@ use crate::{
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 7;
-const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 3;
+const RECEIPT_SCHEMA_VERSION: u32 = 11;
+const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 7;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
 const RECEIPT_STAGING_SUFFIX: &str = ".tmp";
@@ -833,6 +840,12 @@ impl ExecutionReceipt {
         parse_digest(&self.body.problem.numerics_identity)
     }
 
+    /// Return the exact compiler-bound model-lifecycle commitment identity.
+    #[must_use]
+    pub fn model_lifecycle_identity(&self) -> [u8; 32] {
+        parse_digest(&self.body.problem.model_lifecycle.identity)
+    }
+
     /// Return the bound implementation-registry identity.
     #[must_use]
     pub fn implementation_registry_identity(&self) -> [u8; 32] {
@@ -1397,10 +1410,11 @@ pub struct ExecutionReceiptBinding<'store> {
 impl<'store> ExecutionReceiptBinding<'store> {
     pub(crate) fn begin(
         self,
-        problem: &CompiledProblem,
+        problem: &ExecutableModelProblem,
         plan: &ExecutionPlan,
     ) -> Result<ReceiptRecorder<'store>, ReceiptError> {
-        self.store.begin(self.provenance, problem, plan)
+        self.store
+            .begin(self.provenance, problem.compiled_problem(), plan)
     }
 }
 
@@ -1935,12 +1949,14 @@ impl ReceiptFailure {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct ProblemProjection {
     problem_identity: String,
+    problem_identity_basis: String,
     geometry_identity: String,
     product_graph: ProductGraphProjection,
     observation_identity: String,
     reference_identities: Vec<ReferenceIdentityProjection>,
     model_identity: ModelIdentityProjection,
     numerics_identity: String,
+    model_lifecycle: ModelLifecycleProjection,
     effective: CompiledProblemEvidence,
 }
 
@@ -1949,6 +1965,7 @@ impl ProblemProjection {
         let inputs = problem.inputs();
         Self {
             problem_identity: hex(&problem.problem_id().as_bytes()),
+            problem_identity_basis: hex(&problem.problem_identity_basis().as_bytes()),
             geometry_identity: hex(&problem.geometry().geometry_id().as_bytes()),
             product_graph: ProductGraphProjection::new(problem),
             observation_identity: hex(&inputs.observation().identity().as_bytes()),
@@ -1962,7 +1979,466 @@ impl ProblemProjection {
                 .collect(),
             model_identity: model_projection(inputs),
             numerics_identity: hex(&problem.numerics_id().as_bytes()),
+            model_lifecycle: ModelLifecycleProjection::new(problem),
             effective: CompiledProblemEvidence::project(problem),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct ModelLifecycleProjection {
+    identity: String,
+    numerics_identity: String,
+    target_shape_identity: String,
+    reprojection: ModelReprojectionProjection,
+    bounds: ModelBoundsProjection,
+    arithmetic_precision: String,
+    state_encoding: String,
+    support_semantics: String,
+    input: ModelLifecycleInputProjection,
+}
+
+impl ModelLifecycleProjection {
+    fn new(problem: &CompiledProblem) -> Self {
+        let contract = problem.model_lifecycle();
+        let bounds = contract.bounds();
+        Self {
+            identity: hex(&contract.contract_id().as_bytes()),
+            numerics_identity: hex(&contract.numerics().as_bytes()),
+            target_shape_identity: hex(&contract.target().identity().as_bytes()),
+            reprojection: ModelReprojectionProjection::new(problem),
+            bounds: ModelBoundsProjection {
+                max_model_samples: bounds.max_model_samples(),
+                max_source_samples: bounds.max_source_samples(),
+                max_reprojection_terms: bounds.max_reprojection_terms(),
+                max_delta_terms: bounds.max_delta_terms(),
+                max_absolute_model_value_bits: bounds.max_absolute_model_value().to_bits(),
+                max_absolute_delta_value_bits: bounds.max_absolute_delta_value().to_bits(),
+            },
+            arithmetic_precision: numeric_precision(contract.arithmetic_precision()).to_string(),
+            state_encoding: model_state_encoding(contract.state_encoding()).to_string(),
+            support_semantics: model_support_semantics(contract.support_semantics()).to_string(),
+            input: ModelLifecycleInputProjection::new(contract.input()),
+        }
+    }
+
+    fn validate(
+        &self,
+        product_graph_identity: &str,
+        numerics_identity: &str,
+        evidence: &CompiledProblemEvidence,
+    ) -> Result<(), ReceiptError> {
+        require_integrity(
+            is_nonzero_digest(&self.identity)
+                && is_nonzero_digest(&self.numerics_identity)
+                && is_nonzero_digest(&self.target_shape_identity)
+                && self.bounds.is_valid()
+                && matches!(self.arithmetic_precision.as_str(), "f32" | "f64")
+                && self.state_encoding == "canonical_f64"
+                && self.support_semantics == "explicit_validity",
+        )?;
+        let arithmetic_precision = parse_numeric_precision(&self.arithmetic_precision)
+            .ok_or(ReceiptError::IntegrityMismatch)?;
+        require_integrity(self.numerics_identity == numerics_identity)?;
+        self.reprojection.validate(
+            product_graph_identity,
+            numerics_identity,
+            arithmetic_precision,
+            evidence,
+        )?;
+        self.input.validate()?;
+        let bounds = ModelBounds::new(
+            self.bounds.max_model_samples,
+            self.bounds.max_source_samples,
+            self.bounds.max_reprojection_terms,
+            self.bounds.max_delta_terms,
+            f64::from_bits(self.bounds.max_absolute_model_value_bits),
+            f64::from_bits(self.bounds.max_absolute_delta_value_bits),
+        )
+        .map_err(|_| ReceiptError::IntegrityMismatch)?;
+        validate_model_lifecycle_contract_identity(
+            LogicalIdentity::from_sha256(parse_digest(&self.identity)),
+            LogicalIdentity::from_sha256(parse_digest(&self.numerics_identity)),
+            LogicalIdentity::from_sha256(parse_digest(&self.reprojection.identity)),
+            LogicalIdentity::from_sha256(parse_digest(&self.target_shape_identity)),
+            bounds,
+            arithmetic_precision,
+            parse_model_state_encoding(&self.state_encoding)
+                .ok_or(ReceiptError::IntegrityMismatch)?,
+            parse_model_support_semantics(&self.support_semantics)
+                .ok_or(ReceiptError::IntegrityMismatch)?,
+            &self.input.identity(),
+        )
+        .map_err(|_| ReceiptError::IntegrityMismatch)?;
+        let max_model_samples = self.bounds.max_model_samples.to_string();
+        let max_source_samples = self.bounds.max_source_samples.to_string();
+        let max_reprojection_terms = self.bounds.max_reprojection_terms.to_string();
+        let max_delta_terms = self.bounds.max_delta_terms.to_string();
+        let max_absolute_model_value =
+            stable_float(f64::from_bits(self.bounds.max_absolute_model_value_bits));
+        let max_absolute_delta_value =
+            stable_float(f64::from_bits(self.bounds.max_absolute_delta_value_bits));
+        require_integrity(
+            evidence.field("model_lifecycle.identity") == Some(self.identity.as_str())
+                && evidence.field("model_lifecycle.numerics_identity")
+                    == Some(self.numerics_identity.as_str())
+                && evidence.field("model_lifecycle.target_shape_identity")
+                    == Some(self.target_shape_identity.as_str())
+                && evidence.field("model_lifecycle.arithmetic_precision")
+                    == Some(self.arithmetic_precision.as_str())
+                && evidence.field("model_lifecycle.state_encoding")
+                    == Some(self.state_encoding.as_str())
+                && evidence.field("model_lifecycle.support_semantics")
+                    == Some(self.support_semantics.as_str())
+                && evidence.field("model_lifecycle.bounds.max_model_samples")
+                    == Some(max_model_samples.as_str())
+                && evidence.field("model_lifecycle.bounds.max_source_samples")
+                    == Some(max_source_samples.as_str())
+                && evidence.field("model_lifecycle.bounds.max_reprojection_terms")
+                    == Some(max_reprojection_terms.as_str())
+                && evidence.field("model_lifecycle.bounds.max_delta_terms")
+                    == Some(max_delta_terms.as_str())
+                && evidence.field("model_lifecycle.bounds.max_absolute_model_value")
+                    == Some(max_absolute_model_value.as_str())
+                && evidence.field("model_lifecycle.bounds.max_absolute_delta_value")
+                    == Some(max_absolute_delta_value.as_str()),
+        )?;
+        self.input.validate_audit_fields(evidence)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct ModelReprojectionProjection {
+    identity: String,
+    product_graph_identity: String,
+    numerics_identity: String,
+    conversion_precision: String,
+    direction_registry: String,
+    basis_registry: String,
+    polarization_registry: String,
+    invalid_contributor_policy: String,
+    uncovered_target_policy: String,
+}
+
+impl ModelReprojectionProjection {
+    fn new(problem: &CompiledProblem) -> Self {
+        let contract = problem.model_lifecycle();
+        let policy = contract.reprojection_policy();
+        Self {
+            identity: hex(&contract.reprojection_contract_identity().as_bytes()),
+            product_graph_identity: hex(&problem.product_graph().graph_id().as_bytes()),
+            numerics_identity: hex(&contract.numerics().as_bytes()),
+            conversion_precision: numeric_precision(contract.arithmetic_precision()).to_string(),
+            direction_registry: policy.direction_registry().as_str().to_owned(),
+            basis_registry: policy.basis_registry().as_str().to_owned(),
+            polarization_registry: policy.polarization_registry().as_str().to_owned(),
+            invalid_contributor_policy: policy.invalid_contributor().as_str().to_owned(),
+            uncovered_target_policy: policy.uncovered_target().as_str().to_owned(),
+        }
+    }
+
+    fn validate(
+        &self,
+        product_graph_identity: &str,
+        numerics_identity: &str,
+        conversion_precision: NumericPrecision,
+        evidence: &CompiledProblemEvidence,
+    ) -> Result<(), ReceiptError> {
+        let policy = ModelReprojectionPolicy::canonical();
+        require_integrity(
+            is_digest(&self.identity)
+                && is_digest(&self.product_graph_identity)
+                && is_digest(&self.numerics_identity)
+                && matches!(self.conversion_precision.as_str(), "f32" | "f64")
+                && self.direction_registry == policy.direction_registry().as_str()
+                && self.basis_registry == policy.basis_registry().as_str()
+                && self.polarization_registry == policy.polarization_registry().as_str()
+                && self.invalid_contributor_policy == policy.invalid_contributor().as_str()
+                && self.uncovered_target_policy == policy.uncovered_target().as_str()
+                && self.product_graph_identity == product_graph_identity
+                && self.numerics_identity == numerics_identity
+                && self.conversion_precision == numeric_precision(conversion_precision),
+        )?;
+        validate_model_reprojection_contract_identity(
+            LogicalIdentity::from_sha256(parse_digest(&self.identity)),
+            LogicalIdentity::from_sha256(parse_digest(product_graph_identity)),
+            LogicalIdentity::from_sha256(parse_digest(numerics_identity)),
+            conversion_precision,
+            policy,
+        )
+        .map_err(|_| ReceiptError::IntegrityMismatch)?;
+        let fields = [
+            (
+                "model_lifecycle.reprojection.identity",
+                self.identity.as_str(),
+            ),
+            (
+                "model_lifecycle.reprojection.product_graph_identity",
+                self.product_graph_identity.as_str(),
+            ),
+            (
+                "model_lifecycle.reprojection.numerics_identity",
+                self.numerics_identity.as_str(),
+            ),
+            (
+                "model_lifecycle.reprojection.conversion_precision",
+                self.conversion_precision.as_str(),
+            ),
+            (
+                "model_lifecycle.reprojection.direction_registry",
+                self.direction_registry.as_str(),
+            ),
+            (
+                "model_lifecycle.reprojection.basis_registry",
+                self.basis_registry.as_str(),
+            ),
+            (
+                "model_lifecycle.reprojection.polarization_registry",
+                self.polarization_registry.as_str(),
+            ),
+            (
+                "model_lifecycle.reprojection.invalid_contributor_policy",
+                self.invalid_contributor_policy.as_str(),
+            ),
+            (
+                "model_lifecycle.reprojection.uncovered_target_policy",
+                self.uncovered_target_policy.as_str(),
+            ),
+        ];
+        require_integrity(
+            fields
+                .into_iter()
+                .all(|(field, value)| evidence.field(field) == Some(value)),
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct ModelBoundsProjection {
+    max_model_samples: usize,
+    max_source_samples: usize,
+    max_reprojection_terms: usize,
+    max_delta_terms: usize,
+    max_absolute_model_value_bits: u64,
+    max_absolute_delta_value_bits: u64,
+}
+
+impl ModelBoundsProjection {
+    fn is_valid(&self) -> bool {
+        let model = f64::from_bits(self.max_absolute_model_value_bits);
+        let delta = f64::from_bits(self.max_absolute_delta_value_bits);
+        self.max_model_samples > 0
+            && self.max_source_samples > 0
+            && self.max_reprojection_terms > 0
+            && self.max_delta_terms > 0
+            && model.is_finite()
+            && model > 0.0
+            && delta.is_finite()
+            && delta > 0.0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum ModelLifecycleInputProjection {
+    Empty,
+    AlignedSeed {
+        source_identity: String,
+        support_identity: String,
+    },
+    ReprojectedSeed {
+        source_identity: String,
+        source_shape_identity: String,
+        preparation_contract_identity: String,
+        reprojection_identity: String,
+        support_identity: String,
+        sample_identity: String,
+        stencil_identity: String,
+        proof_identity: String,
+    },
+    Generation {
+        generation_identity: String,
+    },
+}
+
+impl ModelLifecycleInputProjection {
+    fn new(input: &ModelInputCommitment) -> Self {
+        match input {
+            ModelInputCommitment::Empty => Self::Empty,
+            ModelInputCommitment::AlignedSeed { source, support } => Self::AlignedSeed {
+                source_identity: hex(&source.as_bytes()),
+                support_identity: hex(&support.as_bytes()),
+            },
+            ModelInputCommitment::ReprojectedSeed(commitment) => Self::ReprojectedSeed {
+                source_identity: hex(&commitment.source().as_bytes()),
+                source_shape_identity: hex(&commitment.source_shape().identity().as_bytes()),
+                preparation_contract_identity: hex(&commitment.preparation_contract().as_bytes()),
+                reprojection_identity: hex(&commitment.reprojection().as_bytes()),
+                support_identity: hex(&commitment.support().as_bytes()),
+                sample_identity: hex(&commitment.samples().as_bytes()),
+                stencil_identity: hex(&commitment.stencil().as_bytes()),
+                proof_identity: hex(&commitment.proof().as_bytes()),
+            },
+            ModelInputCommitment::Generation(generation) => Self::Generation {
+                generation_identity: hex(&generation.as_bytes()),
+            },
+        }
+    }
+
+    fn validate(&self) -> Result<(), ReceiptError> {
+        require_integrity(match self {
+            Self::Empty => true,
+            Self::AlignedSeed {
+                source_identity,
+                support_identity,
+            } => is_nonzero_digest(source_identity) && is_nonzero_digest(support_identity),
+            Self::ReprojectedSeed {
+                source_identity,
+                source_shape_identity,
+                preparation_contract_identity,
+                reprojection_identity,
+                support_identity,
+                sample_identity,
+                stencil_identity,
+                proof_identity,
+            } => {
+                is_nonzero_digest(source_identity)
+                    && is_nonzero_digest(source_shape_identity)
+                    && is_nonzero_digest(preparation_contract_identity)
+                    && is_nonzero_digest(reprojection_identity)
+                    && is_nonzero_digest(support_identity)
+                    && is_nonzero_digest(sample_identity)
+                    && is_nonzero_digest(stencil_identity)
+                    && is_nonzero_digest(proof_identity)
+            }
+            Self::Generation {
+                generation_identity,
+            } => is_nonzero_digest(generation_identity),
+        })?;
+        if let Self::ReprojectedSeed {
+            source_identity,
+            source_shape_identity,
+            preparation_contract_identity,
+            reprojection_identity,
+            support_identity,
+            sample_identity,
+            stencil_identity,
+            proof_identity,
+        } = self
+        {
+            validate_reprojected_seed_proof_identity(
+                LogicalIdentity::from_sha256(parse_digest(proof_identity)),
+                LogicalIdentity::from_sha256(parse_digest(source_identity)),
+                LogicalIdentity::from_sha256(parse_digest(source_shape_identity)),
+                LogicalIdentity::from_sha256(parse_digest(preparation_contract_identity)),
+                LogicalIdentity::from_sha256(parse_digest(reprojection_identity)),
+                LogicalIdentity::from_sha256(parse_digest(support_identity)),
+                LogicalIdentity::from_sha256(parse_digest(sample_identity)),
+                LogicalIdentity::from_sha256(parse_digest(stencil_identity)),
+            )
+            .map_err(|_| ReceiptError::IntegrityMismatch)?;
+        }
+        Ok(())
+    }
+
+    fn identity(&self) -> ModelInputCommitmentIdentity {
+        match self {
+            Self::Empty => ModelInputCommitmentIdentity::Empty,
+            Self::AlignedSeed {
+                source_identity,
+                support_identity,
+            } => ModelInputCommitmentIdentity::AlignedSeed {
+                source: LogicalIdentity::from_sha256(parse_digest(source_identity)),
+                support: LogicalIdentity::from_sha256(parse_digest(support_identity)),
+            },
+            Self::ReprojectedSeed {
+                source_identity,
+                source_shape_identity,
+                preparation_contract_identity,
+                reprojection_identity,
+                support_identity,
+                sample_identity,
+                stencil_identity,
+                proof_identity,
+            } => ModelInputCommitmentIdentity::ReprojectedSeed {
+                source: LogicalIdentity::from_sha256(parse_digest(source_identity)),
+                source_shape: LogicalIdentity::from_sha256(parse_digest(source_shape_identity)),
+                preparation_contract: LogicalIdentity::from_sha256(parse_digest(
+                    preparation_contract_identity,
+                )),
+                reprojection: LogicalIdentity::from_sha256(parse_digest(reprojection_identity)),
+                support: LogicalIdentity::from_sha256(parse_digest(support_identity)),
+                samples: LogicalIdentity::from_sha256(parse_digest(sample_identity)),
+                stencil: LogicalIdentity::from_sha256(parse_digest(stencil_identity)),
+                proof: LogicalIdentity::from_sha256(parse_digest(proof_identity)),
+            },
+            Self::Generation {
+                generation_identity,
+            } => ModelInputCommitmentIdentity::Generation(LogicalIdentity::from_sha256(
+                parse_digest(generation_identity),
+            )),
+        }
+    }
+
+    fn validate_audit_fields(
+        &self,
+        evidence: &CompiledProblemEvidence,
+    ) -> Result<(), ReceiptError> {
+        let matches = evidence.field("model_lifecycle.input.kind") == Some(self.kind())
+            && match self {
+                Self::Empty => true,
+                Self::AlignedSeed {
+                    source_identity,
+                    support_identity,
+                } => {
+                    evidence.field("model_lifecycle.input.source_identity")
+                        == Some(source_identity.as_str())
+                        && evidence.field("model_lifecycle.input.support_identity")
+                            == Some(support_identity.as_str())
+                }
+                Self::ReprojectedSeed {
+                    source_identity,
+                    source_shape_identity,
+                    preparation_contract_identity,
+                    reprojection_identity,
+                    support_identity,
+                    sample_identity,
+                    stencil_identity,
+                    proof_identity,
+                } => {
+                    evidence.field("model_lifecycle.input.source_identity")
+                        == Some(source_identity.as_str())
+                        && evidence.field("model_lifecycle.input.source_shape_identity")
+                            == Some(source_shape_identity.as_str())
+                        && evidence.field("model_lifecycle.input.preparation_contract_identity")
+                            == Some(preparation_contract_identity.as_str())
+                        && evidence.field("model_lifecycle.input.reprojection_identity")
+                            == Some(reprojection_identity.as_str())
+                        && evidence.field("model_lifecycle.input.support_identity")
+                            == Some(support_identity.as_str())
+                        && evidence.field("model_lifecycle.input.sample_identity")
+                            == Some(sample_identity.as_str())
+                        && evidence.field("model_lifecycle.input.stencil_identity")
+                            == Some(stencil_identity.as_str())
+                        && evidence.field("model_lifecycle.input.proof_identity")
+                            == Some(proof_identity.as_str())
+                }
+                Self::Generation {
+                    generation_identity,
+                } => {
+                    evidence.field("model_lifecycle.input.generation_identity")
+                        == Some(generation_identity.as_str())
+                }
+            };
+        require_integrity(matches)
+    }
+
+    const fn kind(&self) -> &'static str {
+        match self {
+            Self::Empty => "empty",
+            Self::AlignedSeed { .. } => "aligned_seed",
+            Self::ReprojectedSeed { .. } => "reprojected_seed",
+            Self::Generation { .. } => "generation",
         }
     }
 }
@@ -1992,6 +2468,46 @@ impl ModelIdentityProjection {
                 ModelStateIdentity::Generation(LogicalIdentity::from_sha256(parse_digest(identity)))
             }
         }
+    }
+
+    fn validate_against(
+        &self,
+        input: &ModelLifecycleInputProjection,
+        evidence: &CompiledProblemEvidence,
+    ) -> Result<(), ReceiptError> {
+        let valid = match (self, input) {
+            (Self::Empty, ModelLifecycleInputProjection::Empty) => {
+                evidence.field("observation.model.kind") == Some("empty")
+                    && evidence.field("observation.model.identity").is_none()
+            }
+            (
+                Self::Seed(identity),
+                ModelLifecycleInputProjection::AlignedSeed {
+                    source_identity, ..
+                }
+                | ModelLifecycleInputProjection::ReprojectedSeed {
+                    source_identity, ..
+                },
+            ) => {
+                is_nonzero_digest(identity)
+                    && identity == source_identity
+                    && evidence.field("observation.model.kind") == Some("seed")
+                    && evidence.field("observation.model.identity") == Some(identity.as_str())
+            }
+            (
+                Self::Generation(identity),
+                ModelLifecycleInputProjection::Generation {
+                    generation_identity,
+                },
+            ) => {
+                is_nonzero_digest(identity)
+                    && identity == generation_identity
+                    && evidence.field("observation.model.kind") == Some("generation")
+                    && evidence.field("observation.model.identity") == Some(identity.as_str())
+            }
+            _ => false,
+        };
+        require_integrity(valid)
     }
 }
 
@@ -3785,10 +4301,21 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
         &body.attempt_identity,
         &body.build_identity,
         &body.problem.problem_identity,
+        &body.problem.problem_identity_basis,
         &body.problem.geometry_identity,
         &body.problem.product_graph.identity,
         &body.problem.observation_identity,
         &body.problem.numerics_identity,
+        &body.problem.model_lifecycle.identity,
+        &body.problem.model_lifecycle.numerics_identity,
+        &body.problem.model_lifecycle.target_shape_identity,
+        &body.problem.model_lifecycle.reprojection.identity,
+        &body
+            .problem
+            .model_lifecycle
+            .reprojection
+            .product_graph_identity,
+        &body.problem.model_lifecycle.reprojection.numerics_identity,
         &body.plan.plan_identity,
         &body.plan.dag_identity,
         &body.plan.product_graph_identity,
@@ -3812,12 +4339,20 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
         .map(|reference| reference.kind.as_str())
         .collect::<BTreeSet<_>>();
     require_integrity(reference_kinds.len() == body.problem.reference_identities.len())?;
-    match &body.problem.model_identity {
-        ModelIdentityProjection::Empty => {}
-        ModelIdentityProjection::Seed(identity) | ModelIdentityProjection::Generation(identity) => {
-            require_integrity(is_digest(identity))?;
-        }
-    }
+    body.problem.model_lifecycle.validate(
+        &body.problem.product_graph.identity,
+        &body.problem.numerics_identity,
+        &body.problem.effective,
+    )?;
+    body.problem
+        .model_identity
+        .validate_against(&body.problem.model_lifecycle.input, &body.problem.effective)?;
+    require_integrity(validate_compiled_problem_identity(
+        parse_digest(&body.problem.problem_identity),
+        LogicalIdentity::from_sha256(parse_digest(&body.problem.problem_identity_basis)),
+        body.problem.model_identity.to_runtime(),
+        LogicalIdentity::from_sha256(parse_digest(&body.problem.model_lifecycle.identity)),
+    ))?;
     validate_problem_evidence(&body.problem)?;
     require_integrity(body.problem.product_graph.identity == body.plan.product_graph_identity)?;
     validate_route_projection(&body.route)?;
@@ -4010,8 +4545,12 @@ fn validate_problem_evidence(problem: &ProblemProjection) -> Result<(), ReceiptE
     require_integrity(evidence.schema_version == COMPILED_PROBLEM_EVIDENCE_VERSION)?;
     require_integrity(
         evidence.field("problem.identity") == Some(problem.problem_identity.as_str())
+            && evidence.field("problem.identity_basis")
+                == Some(problem.problem_identity_basis.as_str())
             && evidence.field("problem.numerics_identity")
                 == Some(problem.numerics_identity.as_str())
+            && evidence.field("model_lifecycle.identity")
+                == Some(problem.model_lifecycle.identity.as_str())
             && evidence.field("geometry.identity") == Some(problem.geometry_identity.as_str())
             && evidence.field("products.graph.identity")
                 == Some(problem.product_graph.identity.as_str())
@@ -4035,6 +4574,7 @@ fn validate_problem_evidence(problem: &ProblemProjection) -> Result<(), ReceiptE
         "weighting.",
         "products.",
         "numerics.",
+        "model_lifecycle.",
         "required_capabilities.",
         "geometry.",
         "observation.",
@@ -4749,6 +5289,11 @@ fn project_problem_fields(problem: &CompiledProblem) -> BTreeMap<String, String>
     );
     evidence_field(
         &mut fields,
+        "problem.identity_basis",
+        hex(&problem.problem_identity_basis().as_bytes()),
+    );
+    evidence_field(
+        &mut fields,
         "problem.numerics_identity",
         hex(&problem.numerics_id().as_bytes()),
     );
@@ -4757,6 +5302,7 @@ fn project_problem_fields(problem: &CompiledProblem) -> BTreeMap<String, String>
     project_weighting(&mut fields, problem);
     project_products(&mut fields, problem);
     project_numerics(&mut fields, problem);
+    project_model_lifecycle(&mut fields, problem);
     for (index, capability) in problem.required_capabilities().iter().enumerate() {
         evidence_field(
             &mut fields,
@@ -5345,6 +5891,186 @@ fn project_numerics(fields: &mut BTreeMap<String, String>, problem: &CompiledPro
             format!("{prefix}.relative"),
             stable_float(budget.relative()),
         );
+    }
+}
+
+fn project_model_lifecycle(fields: &mut BTreeMap<String, String>, problem: &CompiledProblem) {
+    let contract = problem.model_lifecycle();
+    let reprojection_policy = contract.reprojection_policy();
+    let bounds = contract.bounds();
+    evidence_field(
+        fields,
+        "model_lifecycle.identity",
+        hex(&contract.contract_id().as_bytes()),
+    );
+    evidence_field(
+        fields,
+        "model_lifecycle.numerics_identity",
+        hex(&contract.numerics().as_bytes()),
+    );
+    evidence_field(
+        fields,
+        "model_lifecycle.target_shape_identity",
+        hex(&contract.target().identity().as_bytes()),
+    );
+    evidence_field(
+        fields,
+        "model_lifecycle.bounds.max_model_samples",
+        bounds.max_model_samples(),
+    );
+    evidence_field(
+        fields,
+        "model_lifecycle.bounds.max_source_samples",
+        bounds.max_source_samples(),
+    );
+    evidence_field(
+        fields,
+        "model_lifecycle.bounds.max_reprojection_terms",
+        bounds.max_reprojection_terms(),
+    );
+    evidence_field(
+        fields,
+        "model_lifecycle.bounds.max_delta_terms",
+        bounds.max_delta_terms(),
+    );
+    evidence_field(
+        fields,
+        "model_lifecycle.bounds.max_absolute_model_value",
+        stable_float(bounds.max_absolute_model_value()),
+    );
+    evidence_field(
+        fields,
+        "model_lifecycle.bounds.max_absolute_delta_value",
+        stable_float(bounds.max_absolute_delta_value()),
+    );
+    evidence_field(
+        fields,
+        "model_lifecycle.arithmetic_precision",
+        numeric_precision(contract.arithmetic_precision()),
+    );
+    evidence_field(
+        fields,
+        "model_lifecycle.state_encoding",
+        model_state_encoding(contract.state_encoding()),
+    );
+    evidence_field(
+        fields,
+        "model_lifecycle.support_semantics",
+        model_support_semantics(contract.support_semantics()),
+    );
+    evidence_field(
+        fields,
+        "model_lifecycle.reprojection.identity",
+        hex(&contract.reprojection_contract_identity().as_bytes()),
+    );
+    evidence_field(
+        fields,
+        "model_lifecycle.reprojection.product_graph_identity",
+        hex(&problem.product_graph().graph_id().as_bytes()),
+    );
+    evidence_field(
+        fields,
+        "model_lifecycle.reprojection.numerics_identity",
+        hex(&contract.numerics().as_bytes()),
+    );
+    evidence_field(
+        fields,
+        "model_lifecycle.reprojection.conversion_precision",
+        numeric_precision(contract.arithmetic_precision()),
+    );
+    evidence_field(
+        fields,
+        "model_lifecycle.reprojection.direction_registry",
+        reprojection_policy.direction_registry().as_str(),
+    );
+    evidence_field(
+        fields,
+        "model_lifecycle.reprojection.basis_registry",
+        reprojection_policy.basis_registry().as_str(),
+    );
+    evidence_field(
+        fields,
+        "model_lifecycle.reprojection.polarization_registry",
+        reprojection_policy.polarization_registry().as_str(),
+    );
+    evidence_field(
+        fields,
+        "model_lifecycle.reprojection.invalid_contributor_policy",
+        reprojection_policy.invalid_contributor().as_str(),
+    );
+    evidence_field(
+        fields,
+        "model_lifecycle.reprojection.uncovered_target_policy",
+        reprojection_policy.uncovered_target().as_str(),
+    );
+    match contract.input() {
+        ModelInputCommitment::Empty => {
+            evidence_field(fields, "model_lifecycle.input.kind", "empty");
+        }
+        ModelInputCommitment::AlignedSeed { source, support } => {
+            evidence_field(fields, "model_lifecycle.input.kind", "aligned_seed");
+            evidence_field(
+                fields,
+                "model_lifecycle.input.source_identity",
+                hex(&source.as_bytes()),
+            );
+            evidence_field(
+                fields,
+                "model_lifecycle.input.support_identity",
+                hex(&support.as_bytes()),
+            );
+        }
+        ModelInputCommitment::ReprojectedSeed(commitment) => {
+            evidence_field(fields, "model_lifecycle.input.kind", "reprojected_seed");
+            evidence_field(
+                fields,
+                "model_lifecycle.input.source_identity",
+                hex(&commitment.source().as_bytes()),
+            );
+            evidence_field(
+                fields,
+                "model_lifecycle.input.source_shape_identity",
+                hex(&commitment.source_shape().identity().as_bytes()),
+            );
+            evidence_field(
+                fields,
+                "model_lifecycle.input.preparation_contract_identity",
+                hex(&commitment.preparation_contract().as_bytes()),
+            );
+            evidence_field(
+                fields,
+                "model_lifecycle.input.reprojection_identity",
+                hex(&commitment.reprojection().as_bytes()),
+            );
+            evidence_field(
+                fields,
+                "model_lifecycle.input.support_identity",
+                hex(&commitment.support().as_bytes()),
+            );
+            evidence_field(
+                fields,
+                "model_lifecycle.input.sample_identity",
+                hex(&commitment.samples().as_bytes()),
+            );
+            evidence_field(
+                fields,
+                "model_lifecycle.input.stencil_identity",
+                hex(&commitment.stencil().as_bytes()),
+            );
+            evidence_field(
+                fields,
+                "model_lifecycle.input.proof_identity",
+                hex(&commitment.proof().as_bytes()),
+            );
+        }
+        ModelInputCommitment::Generation(generation) => {
+            evidence_field(fields, "model_lifecycle.input.kind", "generation");
+            evidence_field(
+                fields,
+                "model_lifecycle.input.generation_identity",
+                hex(&generation.as_bytes()),
+            );
+        }
     }
 }
 
@@ -6313,6 +7039,40 @@ fn numeric_precision(value: NumericPrecision) -> &'static str {
     }
 }
 
+fn parse_numeric_precision(value: &str) -> Option<NumericPrecision> {
+    match value {
+        "f32" => Some(NumericPrecision::F32),
+        "f64" => Some(NumericPrecision::F64),
+        _ => None,
+    }
+}
+
+const fn model_state_encoding(value: ModelStateEncoding) -> &'static str {
+    match value {
+        ModelStateEncoding::CanonicalF64 => "canonical_f64",
+    }
+}
+
+fn parse_model_state_encoding(value: &str) -> Option<ModelStateEncoding> {
+    match value {
+        "canonical_f64" => Some(ModelStateEncoding::CanonicalF64),
+        _ => None,
+    }
+}
+
+const fn model_support_semantics(value: ModelSupportSemantics) -> &'static str {
+    match value {
+        ModelSupportSemantics::ExplicitValidity => "explicit_validity",
+    }
+}
+
+fn parse_model_support_semantics(value: &str) -> Option<ModelSupportSemantics> {
+    match value {
+        "explicit_validity" => Some(ModelSupportSemantics::ExplicitValidity),
+        _ => None,
+    }
+}
+
 fn reduction_policy(value: ReductionPolicy) -> &'static str {
     match value {
         ReductionPolicy::DeterministicPairwise => "deterministic_pairwise",
@@ -6966,6 +7726,10 @@ fn hex(bytes: &[u8]) -> String {
 
 fn is_digest(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn is_nonzero_digest(value: &str) -> bool {
+    is_digest(value) && value.bytes().any(|byte| byte != b'0')
 }
 
 fn parse_digest(value: &str) -> [u8; 32] {

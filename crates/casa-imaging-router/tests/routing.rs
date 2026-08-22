@@ -238,5 +238,6 @@ fn request_with_phase_centre(
         ),
         geometry,
         common::problem_inputs(reference_data),
+        common::model_lifecycle(),
     )
 }
