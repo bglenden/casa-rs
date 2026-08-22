@@ -28,37 +28,6 @@ impl Table {
             return Self::open(options);
         }
 
-        crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
-        let storage = CompositeStorage;
-        let row_hint = crate::lock::read_sync_data_from_table_dir(&options.path)
-            .map_err(|e| TableError::LockIo {
-                path: options.path.display().to_string(),
-                message: e.to_string(),
-            })?
-            .map(|sync| sync.nrrow);
-        let snapshot = storage.load_with_row_hint(&options.path, row_hint)?;
-        let info = snapshot.table_info;
-        let mut table = Self {
-            inner: TableImpl::with_rows_keywords_and_schema(
-                snapshot.rows,
-                snapshot.undefined_cells,
-                snapshot.keywords,
-                snapshot.column_keywords,
-                snapshot.schema,
-            ),
-            source_path: Some(options.path.clone()),
-            kind: TableKind::Plain,
-            virtual_columns: snapshot.virtual_columns,
-            virtual_bindings: Vec::new(),
-            table_info: info,
-            dm_info: snapshot.dm_info,
-            external_sync: None,
-            measures: None,
-            marked_for_delete: false,
-            lock_state: None,
-        };
-        table.validate()?;
-
         let perm = matches!(
             lock_opts.mode,
             LockMode::PermanentLocking | LockMode::PermanentLockingWait
@@ -101,13 +70,31 @@ impl Table {
                 }
             }
             LockMode::AutoLocking | LockMode::DefaultLocking => {
-                let _ = lock_file.acquire(LockType::Read, 1);
+                if !lock_file
+                    .acquire(LockType::Read, 1)
+                    .map_err(|e| TableError::LockIo {
+                        path: options.path.display().to_string(),
+                        message: e.to_string(),
+                    })?
+                {
+                    return Err(TableError::LockFailed {
+                        path: options.path.display().to_string(),
+                        message: "could not acquire retained read lock".into(),
+                    });
+                }
             }
             LockMode::AutoNoReadLocking => {
                 // Skip read lock on open — only write locks are acquired.
             }
             LockMode::UserLocking | LockMode::UserNoReadLocking | LockMode::NoLocking => {}
         }
+
+        // Metadata must be read only after the initial lock is acquired. A
+        // writer may publish a new table generation while this opener waits;
+        // opening first would retain the stale pre-publication descriptor.
+        // Ordinary open remains lazy, so retained readers do not materialize
+        // row payloads here.
+        let mut table = Self::open(options.clone())?;
 
         // Read sync data if available.
         let sync_data = lock_file

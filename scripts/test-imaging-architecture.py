@@ -889,6 +889,62 @@ class MigrationMatrixTests(unittest.TestCase):
         ):
             checker.validate_migration_matrix(matrix, self.policy)
 
+    def test_t17_runtime_completion_check_rejects_structural_bypasses(self) -> None:
+        path = REPO_ROOT / "crates/casa-imaging-runtime/src/execution_bindings.rs"
+        source = path.read_text(encoding="utf-8")
+        mutations = [
+            (
+                source.replace(
+                    "lease_epoch: u64,\n    owner_completion: T,\n}",
+                    "lease_epoch: u64,\n    owner_completion_digest: [u8; 32],\n}",
+                    1,
+                ),
+                "must structurally retain owner completion",
+            ),
+            (
+                source.replace(
+                    "if fence_transition_succeeded && let Some(completion) = observation_completion",
+                    "if let Some(completion) = observation_completion",
+                    1,
+                ),
+                "must bind owner completion exactly once",
+            ),
+        ]
+        for mutation, message in mutations:
+            with self.subTest(message=message):
+                self.assertNotEqual(mutation, source)
+                with self.assertRaisesRegex(checker.ArchitectureError, message):
+                    checker.validate_t17_runtime_completion_source(mutation, path)
+
+    def test_t17_transfer_requires_generation_source_and_fixture_evidence(self) -> None:
+        for field, locator in (
+            (
+                "source_evidence",
+                "crates/casa-imaging-model/src/selected_observation_sample.rs::SelectedObservationGenerationEncoder",
+            ),
+            (
+                "baseline_manifests",
+                "repo://crates/casa-imaging-model/src/selected_observation_sample.rs",
+            ),
+            (
+                "baseline_manifests",
+                "repo://resources/imaging-architecture/baselines/selected-observation-generation-v3.txt",
+            ),
+        ):
+            with self.subTest(field=field, locator=locator):
+                matrix = checker.load_object(MATRIX_PATH, "migration matrix")
+                row = next(
+                    row
+                    for row in matrix["rows"]
+                    if row["id"] == "capability.ms-selection"
+                )
+                row[field].remove(locator)
+                with self.assertRaisesRegex(
+                    checker.ArchitectureError,
+                    r"lacks (?:the accepted T17 traversal/completion|pinned T17 generation source and fixture) evidence",
+                ):
+                    checker.validate_t17_ms_selection_transfer(matrix["rows"])
+
     def test_live_baseline_rejects_a_missing_repository_manifest(self) -> None:
         matrix = checker.load_object(MATRIX_PATH, "migration matrix")
         missing = "repo://tools/perf/imager/evidence/missing.json"

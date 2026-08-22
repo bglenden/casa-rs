@@ -18,8 +18,8 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     AdaptationId, AdaptationTransition, AllocationId, ClaimLifetime, DemandAlternatives,
-    ExecutionError, ExecutionKnobs, ExecutionOutcome, ExecutionReceiptBinding, FenceKind,
-    IoBufferKind, LeaseResource, PhysicalSlotId, PublicationLayoutLedger, ReceiptError,
+    ExecutionAttemptId, ExecutionError, ExecutionKnobs, ExecutionOutcome, ExecutionReceiptBinding,
+    FenceKind, IoBufferKind, LeaseResource, PhysicalSlotId, PublicationLayoutLedger, ReceiptError,
     ReceiptFailureKind, ReceiptStatus, ResourceAuthority, ResourceError, ResourceOverride,
     ResourcePolicy, WorkImplementationId, WorkKind, WorkNodeId,
     execution::{
@@ -2027,6 +2027,104 @@ pub struct PublicationResources<'a> {
     reservation: &'a PublicationReservation,
 }
 
+/// Fresh runtime authority for finalizing one selected-observation read.
+///
+/// The runtime creates this affine value only after the owning
+/// [`WorkKind::ObservationRead`] completes and every declared fence, if any, has
+/// settled successfully. It has no public constructor: the selected-observation
+/// adapter must consume it together with its owner-minted scientific completion.
+#[derive(Debug)]
+pub struct ObservationReadCompletionContext {
+    attempt_id: ExecutionAttemptId,
+    owner_node: WorkNodeId,
+    settled_fences: BTreeSet<FenceKind>,
+    lease_epoch: u64,
+}
+
+impl ObservationReadCompletionContext {
+    /// Return the execution attempt to which this fresh authority belongs.
+    #[must_use]
+    pub const fn attempt_id(&self) -> ExecutionAttemptId {
+        self.attempt_id
+    }
+
+    /// Return the exact ObservationRead node that owns this authority.
+    #[must_use]
+    pub const fn owner_node(&self) -> &WorkNodeId {
+        &self.owner_node
+    }
+
+    /// Return the complete set of successfully settled owner fences, empty for a synchronous read.
+    #[must_use]
+    pub const fn settled_fences(&self) -> &BTreeSet<FenceKind> {
+        &self.settled_fences
+    }
+
+    /// Return the live Resource Authority lease epoch used by the owner.
+    #[must_use]
+    pub const fn lease_epoch(&self) -> u64 {
+        self.lease_epoch
+    }
+
+    /// Bind an owner-minted scientific completion to this execution attempt and settled node.
+    #[must_use]
+    pub fn bind<T>(self, owner_completion: T) -> AttemptBoundObservationCompletion<T> {
+        AttemptBoundObservationCompletion {
+            attempt_id: self.attempt_id,
+            owner_node: self.owner_node,
+            settled_fences: self.settled_fences,
+            lease_epoch: self.lease_epoch,
+            owner_completion,
+        }
+    }
+}
+
+/// Affine selected-observation completion bound to one execution attempt and owning node.
+///
+/// `T` is the storage owner's opaque scientific completion. Keeping that value
+/// inside this proof prevents the runtime from synthesizing science identity or
+/// treating physical I/O completion alone as selected-observation completion.
+#[derive(Debug)]
+pub struct AttemptBoundObservationCompletion<T> {
+    attempt_id: ExecutionAttemptId,
+    owner_node: WorkNodeId,
+    settled_fences: BTreeSet<FenceKind>,
+    lease_epoch: u64,
+    owner_completion: T,
+}
+
+impl<T> AttemptBoundObservationCompletion<T> {
+    /// Return the caller-owned execution-attempt identity.
+    #[must_use]
+    pub const fn attempt_id(&self) -> ExecutionAttemptId {
+        self.attempt_id
+    }
+
+    /// Return the exact ObservationRead node that owned this completion.
+    #[must_use]
+    pub const fn owner_node(&self) -> &WorkNodeId {
+        &self.owner_node
+    }
+
+    /// Return the complete set of successfully settled owner fences, empty for a synchronous read.
+    #[must_use]
+    pub const fn settled_fences(&self) -> &BTreeSet<FenceKind> {
+        &self.settled_fences
+    }
+
+    /// Return the live Resource Authority lease epoch used by the owning node.
+    #[must_use]
+    pub const fn lease_epoch(&self) -> u64 {
+        self.lease_epoch
+    }
+
+    /// Return the storage owner's opaque scientific completion.
+    #[must_use]
+    pub const fn owner_completion(&self) -> &T {
+        &self.owner_completion
+    }
+}
+
 impl<'a> PublicationResources<'a> {
     /// Return the Resource Authority epoch of the still-live execution lease.
     #[must_use]
@@ -2045,6 +2143,8 @@ impl<'a> PublicationResources<'a> {
 pub trait WorkImplementation {
     /// Execution failure.
     type Error: Error + 'static;
+    /// Storage-owner scientific completion bound by an ObservationRead adapter.
+    type ObservationReadCompletion;
 
     /// Return this adapter's stable plan identity.
     fn implementation_id(&self) -> &WorkImplementationId;
@@ -2077,6 +2177,19 @@ pub trait WorkImplementation {
         context: WorkExecutionContext<'_>,
         fence: FenceKind,
     ) -> Result<(), Self::Error>;
+
+    /// Bind the storage owner's selected-observation completion to runtime freshness evidence.
+    ///
+    /// This is invoked exactly once for an [`WorkKind::ObservationRead`] node,
+    /// after synchronous work completion and all of that node's declared fences,
+    /// if any, settle successfully, and before dependent work may launch. The
+    /// implementation must consume `completion` with
+    /// [`ObservationReadCompletionContext::bind`]; returning an error fails the
+    /// run and prevents dependent work from launching.
+    fn complete_observation_read(
+        &self,
+        completion: ObservationReadCompletionContext,
+    ) -> Result<AttemptBoundObservationCompletion<Self::ObservationReadCompletion>, Self::Error>;
 
     /// Atomically activate all staged products and optional model-column output.
     ///
@@ -2559,6 +2672,13 @@ where
     )
     .map_err(RunError::Scheduler)?;
     let mut launched = BTreeMap::<WorkNodeId, crate::execution::WorkExecutionContext>::new();
+    let mut settled_observation_fences = BTreeMap::<WorkNodeId, BTreeSet<FenceKind>>::new();
+    let mut completed_observation_reads = BTreeMap::<
+        WorkNodeId,
+        AttemptBoundObservationCompletion<
+            <R::Implementation as WorkImplementation>::ObservationReadCompletion,
+        >,
+    >::new();
     let mut pending = None;
     let mut controller_stopped = false;
     loop {
@@ -2702,12 +2822,54 @@ where
                                     defer_receipt_error(&mut scheduler, &mut pending, error);
                                     controller_stopped = true;
                                 }
+                                let synchronous_observation_read = work.node().kind
+                                    == WorkKind::ObservationRead
+                                    && work.node().fences.is_empty();
+                                let work_lease_epoch = context.lease_epoch();
                                 launched.insert(node_id.clone(), work);
-                                if let Err(error) =
-                                    scheduler.finish_work(node_id, WorkResult::Succeeded)
+                                match scheduler.finish_work(node_id.clone(), WorkResult::Succeeded)
                                 {
-                                    defer_scheduler_error(&mut scheduler, &mut pending, error);
-                                    controller_stopped = true;
+                                    Ok(_) if synchronous_observation_read => {
+                                        let completion = ObservationReadCompletionContext {
+                                            attempt_id: receipt.attempt_id(),
+                                            owner_node: node_id.clone(),
+                                            settled_fences: BTreeSet::new(),
+                                            lease_epoch: work_lease_epoch,
+                                        };
+                                        match implementation.complete_observation_read(completion) {
+                                            Ok(completion) => {
+                                                if completed_observation_reads
+                                                    .insert(node_id.clone(), completion)
+                                                    .is_some()
+                                                {
+                                                    defer_scheduler_error(
+                                                        &mut scheduler,
+                                                        &mut pending,
+                                                        ExecutionError::InvalidState(format!(
+                                                            "observation read {} completed more than once",
+                                                            node_id.as_str()
+                                                        )),
+                                                    );
+                                                    controller_stopped = true;
+                                                }
+                                            }
+                                            Err(source) => {
+                                                if pending.is_none() {
+                                                    pending = Some(PendingRunError::Execution {
+                                                        node: node_id,
+                                                        source,
+                                                    });
+                                                }
+                                                controller_stopped = true;
+                                                scheduler.cancel_after_error();
+                                            }
+                                        }
+                                    }
+                                    Ok(_) => {}
+                                    Err(error) => {
+                                        defer_scheduler_error(&mut scheduler, &mut pending, error);
+                                        controller_stopped = true;
+                                    }
                                 }
                             }
                             Err(error) => {
@@ -2844,13 +3006,64 @@ where
                         ));
                     }
                 } else {
+                    let observation_completion = if work.node().kind == WorkKind::ObservationRead {
+                        let settled = settled_observation_fences
+                            .entry(work.node().id.clone())
+                            .or_default();
+                        settled.insert(fence.kind());
+                        if settled == &work.node().fences {
+                            Some(ObservationReadCompletionContext {
+                                attempt_id: receipt.attempt_id(),
+                                owner_node: work.node().id.clone(),
+                                settled_fences: settled.clone(),
+                                lease_epoch: context.lease_epoch(),
+                            })
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    let mut fence_transition_succeeded = true;
                     if let Err(error) = receipt.fence_completed(&fence) {
                         defer_receipt_error(&mut scheduler, &mut pending, error);
                         controller_stopped = true;
+                        fence_transition_succeeded = false;
                     }
                     if let Err(error) = scheduler.complete_fence(fence) {
                         defer_scheduler_error(&mut scheduler, &mut pending, error);
                         controller_stopped = true;
+                        fence_transition_succeeded = false;
+                    }
+                    if fence_transition_succeeded && let Some(completion) = observation_completion {
+                        match implementation.complete_observation_read(completion) {
+                            Ok(completion) => {
+                                if completed_observation_reads
+                                    .insert(work.node().id.clone(), completion)
+                                    .is_some()
+                                {
+                                    defer_scheduler_error(
+                                        &mut scheduler,
+                                        &mut pending,
+                                        ExecutionError::InvalidState(format!(
+                                            "observation read {} completed more than once",
+                                            work.node().id.as_str()
+                                        )),
+                                    );
+                                    controller_stopped = true;
+                                }
+                            }
+                            Err(source) => {
+                                if pending.is_none() {
+                                    pending = Some(PendingRunError::Execution {
+                                        node: work.node().id.clone(),
+                                        source,
+                                    });
+                                }
+                                controller_stopped = true;
+                                scheduler.cancel_after_error();
+                            }
+                        }
                     }
                 }
             }

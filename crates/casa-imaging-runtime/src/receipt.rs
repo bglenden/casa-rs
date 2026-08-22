@@ -3327,6 +3327,10 @@ pub(crate) struct PreparedPublicationReceipt<'store> {
 }
 
 impl<'store> ReceiptRecorder<'store> {
+    pub(crate) fn attempt_id(&self) -> ExecutionAttemptId {
+        self.body.attempt()
+    }
+
     pub(crate) fn work_started(&mut self, node: &WorkNodeId) -> Result<(), ReceiptError> {
         let node_id = stable_text(node.as_str());
         let item = self
@@ -5766,8 +5770,13 @@ fn project_observation_selection(
     );
     evidence_field(
         fields,
+        format!("{prefix}.data_descriptions.count"),
+        selection.data_descriptions().len(),
+    );
+    evidence_field(
+        fields,
         format!("{prefix}.rows.sequence_identity"),
-        hex(&rows.canonical_sequence_identity().as_bytes()),
+        hex(&rows.sequence_id().as_bytes()),
     );
     let row_filter = selection.rows_filter();
     project_id_selection(
@@ -5810,6 +5819,24 @@ fn project_observation_selection(
         &format!("{prefix}.row_filter.arrays"),
         row_filter.arrays(),
     );
+    for (index, data_description) in selection.data_descriptions().iter().enumerate() {
+        let data_description_prefix = format!("{prefix}.data_descriptions.{index}");
+        evidence_field(
+            fields,
+            format!("{data_description_prefix}.data_description_id"),
+            data_description.data_description_id(),
+        );
+        evidence_field(
+            fields,
+            format!("{data_description_prefix}.spectral_window_id"),
+            data_description.spectral_window_id(),
+        );
+        evidence_field(
+            fields,
+            format!("{data_description_prefix}.polarization_id"),
+            data_description.polarization_id(),
+        );
+    }
     for (index, window) in selection.spectral_windows().iter().enumerate() {
         let window_prefix = format!("{prefix}.spectral_windows.{index}");
         evidence_field(
@@ -5817,13 +5844,6 @@ fn project_observation_selection(
             format!("{window_prefix}.spectral_window_id"),
             window.spectral_window_id(),
         );
-        for (item, id) in window.data_description_ids().iter().enumerate() {
-            evidence_field(
-                fields,
-                format!("{window_prefix}.data_description_ids.{item}"),
-                *id,
-            );
-        }
         for (item, channel) in window.channel_indices().iter().enumerate() {
             evidence_field(
                 fields,

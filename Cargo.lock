@@ -710,6 +710,7 @@ version = "0.27.0"
 dependencies = [
  "casa-coordinates",
  "casa-imaging",
+ "casa-imaging-model",
  "casa-logging",
  "casa-measures-data",
  "casa-provider-contracts",

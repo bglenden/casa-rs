@@ -419,7 +419,7 @@ fn paired_compositions_obey_linearity_and_weighted_adjointness() {
 }
 
 #[test]
-fn schema_six_problem_and_weighting_generation_identities_are_pinned() {
+fn schema_seven_problem_and_weighting_generation_identities_are_pinned() {
     let problem = compile_contract(SpectralSampling::Linear);
 
     assert_eq!(CompiledProblemId::SCHEMA_VERSION, 7);
@@ -434,8 +434,8 @@ fn schema_six_problem_and_weighting_generation_identities_are_pinned() {
                 .to_string(),
         ),
         (
-            "3a440101add9d74a137601766036cb400933da204ba0c9e7a6749b18b017d411".to_string(),
-            "550f22492d158e34f075329e2577fa795391f37d25e6185e417785fe2f6bbb8c".to_string(),
+            "5da737ff9e65bf2f3a20fdfa485bec1ed9dfd4bdb49cc361a94461915da6f847".to_string(),
+            "362e03ee3a7cea3c1826b0193421838ce7e0744b2e0391e0b457648297c7259d".to_string(),
         )
     );
 }

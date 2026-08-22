@@ -17,6 +17,7 @@ performance-tests = ["casa-test-support/performance-tests"]
 [dependencies]
 casa-coordinates = { path = "../casa-coordinates" }
 casa-imaging = { path = "../casa-imaging" }
+casa-imaging-model = { path = "../casa-imaging-model" }
 casa-logging = { path = "../casa-logging" }
 casa-measures-data = { path = "../casa-measures-data" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }

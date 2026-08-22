@@ -102,8 +102,8 @@ use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::spectral_selection::{CubeGridChannelContributions, CubeRowSpectralContributions};
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,
-    CubeSpectralSetup, MsSelection, MsSelectionIoBudget, ResolvedMsSelectionRow, SourcePartition,
-    SubTable, VisibilityBuffer, VisibilityBufferFillReport, VisibilityBufferRequest,
+    CubeSpectralSetup, MsSelectionIoBudget, SelectedObservationRow, SourcePartition, SubTable,
+    VisibilityBuffer, VisibilityBufferFillReport, VisibilityBufferRequest,
     VisibilityChannelReadRange, VisibilityComplexSamples, VisibilityFloatSamples,
     VisibilityReadBlockPlan, convert_frequency_to_frame_with_frame, parse_numeric_id_selector,
     parse_rest_frequency_hz as parse_ms_rest_frequency_hz, parse_spw_selector,
@@ -34347,34 +34347,40 @@ fn select_main_rows(
             .filter_map(|(ddid, allowed)| allowed.then_some(ddid as i32))
             .collect::<Vec<_>>()
     };
-    let mut request = MsSelection::new();
-    if !selected_ddids.is_empty() {
-        request = request.data_description(&selected_ddids);
-    }
-    if let Some(field_ids) = config.field_ids.as_deref() {
-        request = request.field(field_ids);
-    }
-    request.uvrange.clone_from(&config.uvrange);
-    request.intent.clone_from(&config.intent);
-    let selection_memory = imaging_process_memory_ledger(config);
-    let row_selection = ms
-        .resolve_selection(
-            &request,
-            MsSelectionIoBudget {
-                available_bytes: selection_memory.target_bytes,
-                maximum_live_blocks: 2,
-                requested_bytes_per_row: std::mem::size_of::<ResolvedMsSelectionRow>(),
-                storage_alignment_rows: None,
-            },
+    let selection = ms
+        .selected_observation_row_selection(
+            &selected_ddids,
+            config.field_ids.as_deref(),
+            config.uvrange.as_deref(),
+            config.intent.as_deref(),
         )
         .map_err(|error| match error {
-            casa_ms::MsSelectionError::Domain(casa_ms::MsError::InvalidInput(message)) => message,
+            casa_ms::MsError::InvalidInput(message) | casa_ms::MsError::VersionError(message) => {
+                message
+            }
             other => other.to_string(),
         })?;
-    let selected_ddids = row_selection
-        .selected_rows
+    let selection_memory = imaging_process_memory_ledger(config);
+    let mut resolved_rows = Vec::new();
+    ms.visit_selected_observation_rows(
+        &selection,
+        MsSelectionIoBudget {
+            available_bytes: selection_memory.target_bytes,
+            maximum_live_blocks: 2,
+            requested_bytes_per_row: SelectedObservationRow::STORAGE_BYTES_PER_ROW,
+            storage_alignment_rows: None,
+        },
+        |row| resolved_rows.push(row),
+    )
+    .map_err(|error| match error {
+        casa_ms::MsError::InvalidInput(message) | casa_ms::MsError::VersionError(message) => {
+            message
+        }
+        other => other.to_string(),
+    })?;
+    let selected_ddids = resolved_rows
         .iter()
-        .map(|row| row.data_desc_id)
+        .map(|row| row.data_description_id())
         .collect::<BTreeSet<_>>();
     let selected_ddids = selected_ddids
         .into_iter()
@@ -34387,59 +34393,52 @@ fn select_main_rows(
     } else {
         selected_ddids[0]
     };
-    let selected_fields = row_selection
-        .selected_rows
+    let selected_fields = resolved_rows
         .iter()
-        .map(|row| row.field_id)
+        .map(|row| row.field_id())
         .collect::<BTreeSet<_>>();
     let reference_row_time_mjd_sec = needs_row_times
-        .then(|| {
-            row_selection
-                .selected_rows
-                .first()
-                .map(|row| row.time_mjd_seconds)
-        })
+        .then(|| resolved_rows.first().map(|row| row.time_mjd_seconds()))
         .flatten();
     let time_bounds_mjd_sec = config.spectral_mode.is_cube_like().then(|| {
-        row_selection.selected_rows.iter().fold(
-            [f64::INFINITY, f64::NEG_INFINITY],
-            |mut bounds, row| {
-                bounds[0] = bounds[0].min(row.time_mjd_seconds);
-                bounds[1] = bounds[1].max(row.time_mjd_seconds);
+        resolved_rows
+            .iter()
+            .fold([f64::INFINITY, f64::NEG_INFINITY], |mut bounds, row| {
+                bounds[0] = bounds[0].min(row.time_mjd_seconds());
+                bounds[1] = bounds[1].max(row.time_mjd_seconds());
                 bounds
-            },
-        )
+            })
     });
     let mut flag_row = vec![false; ms.row_count()];
-    for row in &row_selection.selected_rows {
-        flag_row[row.row_index] = row.flag_row;
+    for row in &resolved_rows {
+        flag_row[row.physical_row()] = row.flag_row();
     }
-    let selected_rows = row_selection
-        .selected_rows
+    let selected_rows = resolved_rows
         .iter()
         .map(|row| {
+            let ddid = usize::try_from(row.data_description_id()).map_err(|_| {
+                format!(
+                    "selected DATA_DESC_ID {} is negative",
+                    row.data_description_id()
+                )
+            })?;
+            let (spw_id, polarization_id) = ddid_info
+                .get(ddid)
+                .and_then(Option::as_ref)
+                .copied()
+                .ok_or_else(|| {
+                format!("selected DATA_DESC_ID {ddid} has no resolved SPW/polarization pair")
+            })?;
             Ok(SelectedMainRow {
-                row_index: row.row_index,
-                field_id: usize::try_from(row.field_id)
-                    .map_err(|_| format!("selected FIELD_ID {} is negative", row.field_id))?,
-                ddid: usize::try_from(row.data_desc_id).map_err(|_| {
-                    format!("selected DATA_DESC_ID {} is negative", row.data_desc_id)
-                })?,
-                spw_id: usize::try_from(row.spectral_window_id).map_err(|_| {
-                    format!(
-                        "selected SPECTRAL_WINDOW_ID {} is negative",
-                        row.spectral_window_id
-                    )
-                })?,
-                polarization_id: usize::try_from(row.polarization_id).map_err(|_| {
-                    format!(
-                        "selected POLARIZATION_ID {} is negative",
-                        row.polarization_id
-                    )
-                })?,
-                antenna1_id: row.antenna1_id,
-                antenna2_id: row.antenna2_id,
-                time_mjd_seconds: needs_row_times.then_some(row.time_mjd_seconds),
+                row_index: row.physical_row(),
+                field_id: usize::try_from(row.field_id())
+                    .map_err(|_| format!("selected FIELD_ID {} is negative", row.field_id()))?,
+                ddid,
+                spw_id,
+                polarization_id,
+                antenna1_id: row.antenna1(),
+                antenna2_id: row.antenna2(),
+                time_mjd_seconds: needs_row_times.then_some(row.time_mjd_seconds()),
             })
         })
         .collect::<Result<Vec<_>, String>>()?;

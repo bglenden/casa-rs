@@ -1634,7 +1634,7 @@ fn encode_direction_coordinate(encoder: &mut CanonicalEncoder, direction: Direct
     }
 }
 
-fn encode_sky_direction(encoder: &mut CanonicalEncoder, direction: SkyDirection) {
+pub(crate) fn encode_sky_direction(encoder: &mut CanonicalEncoder, direction: SkyDirection) {
     encoder.u8(direction_frame_tag(direction.frame));
     encoder.f64(direction.longitude_rad);
     encoder.f64(direction.latitude_rad);
@@ -1791,11 +1791,20 @@ fn direction_frame_tag(frame: DirectionFrame) -> u8 {
     }
 }
 
-fn frequency_frame_tag(frame: FrequencyFrame) -> u8 {
+pub(crate) fn frequency_frame_tag(frame: FrequencyFrame) -> u8 {
     match frame {
         FrequencyFrame::Topocentric => 0,
         FrequencyFrame::Barycentric => 1,
         FrequencyFrame::Lsrk => 2,
+    }
+}
+
+pub(crate) const fn time_scale_tag(scale: TimeScale) -> u8 {
+    match scale {
+        TimeScale::Utc => 0,
+        TimeScale::Tai => 1,
+        TimeScale::Tt => 2,
+        TimeScale::Tdb => 3,
     }
 }
 
