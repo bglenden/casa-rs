@@ -10,18 +10,17 @@ use std::{
 use casa_imaging_model::{
     CompiledGeometry, CompiledGeometryId, CompiledProblem, CompiledProblemId, NumericsContract,
     NumericsContractId, ObservationReadSet, ObservationSnapshotId, ObservationTransactionContract,
-    ObservationWriteSet, ProblemInputIdentities, ProductKind, ProductRequirements,
-    ReconstructionContract, ReferenceDataKind, RequiredCapability, ScientificContract,
-    WeightingOperatorContract,
+    ObservationWriteSet, ProblemInputIdentities, ProductRequirements, ReconstructionContract,
+    ReferenceDataKind, RequiredCapability, ScientificContract, WeightingOperatorContract,
 };
 use sha2::{Digest, Sha256};
 
 use crate::{
     AdaptationId, AdaptationTransition, AllocationId, ClaimLifetime, DemandAlternatives,
     ExecutionError, ExecutionKnobs, ExecutionOutcome, ExecutionReceiptBinding, FenceKind,
-    IoBufferKind, LeaseResource, PhysicalSlotId, ReceiptError, ReceiptFailureKind, ReceiptStatus,
-    ResourceAuthority, ResourceError, ResourceOverride, ResourcePolicy, WorkImplementationId,
-    WorkKind, WorkNodeId,
+    IoBufferKind, LeaseResource, PhysicalSlotId, PublicationLayoutLedger, ReceiptError,
+    ReceiptFailureKind, ReceiptStatus, ResourceAuthority, ResourceError, ResourceOverride,
+    ResourcePolicy, WorkImplementationId, WorkKind, WorkNodeId,
     execution::{
         ExecutionDag, ExecutionScheduler, PublicationReservation, SchedulerAction,
         SchedulerTerminal, WorkResult, io_buffer_kind_supports_work_kind, validate_topology,
@@ -34,7 +33,7 @@ use crate::{
 };
 
 const EXECUTION_PLAN_IDENTITY_DOMAIN: &[u8] = b"casa-rs-execution-plan";
-const EXECUTION_PLAN_IDENTITY_VERSION: u32 = 6;
+const EXECUTION_PLAN_IDENTITY_VERSION: u32 = 7;
 const RESOURCE_POLICY_IDENTITY_DOMAIN: &[u8] = b"casa-rs-resource-policy";
 const RESOURCE_POLICY_IDENTITY_VERSION: u32 = 1;
 
@@ -654,6 +653,11 @@ pub enum PhysicalWorkBindingError {
         /// Exact owning node.
         node: WorkNodeId,
     },
+    /// The publication-layout ledger disagreed with artifacts, resources, or events.
+    InvalidPublicationLayout {
+        /// Stable diagnostic for the rejected physical declaration.
+        reason: String,
+    },
 }
 
 impl fmt::Display for PhysicalWorkBindingError {
@@ -721,6 +725,9 @@ impl fmt::Display for PhysicalWorkBindingError {
                 "output artifact {artifact} at node {} lacks an explicit publication buffer, staging, storage, and fence contract",
                 node.as_str()
             ),
+            Self::InvalidPublicationLayout { reason } => {
+                write!(formatter, "invalid publication layout: {reason}")
+            }
         }
     }
 }
@@ -929,6 +936,7 @@ pub struct PhysicalWorkBinding {
     prediction: PlanPrediction,
     artifacts: Vec<PlannedArtifact>,
     observation_transaction: ObservationTransactionWork,
+    publication_layouts: PublicationLayoutLedger,
 }
 
 impl PhysicalWorkBinding {
@@ -938,6 +946,7 @@ impl PhysicalWorkBinding {
         prediction: PlanPrediction,
         mut artifacts: Vec<PlannedArtifact>,
         observation_transaction: ObservationTransactionWork,
+        publication_layouts: PublicationLayoutLedger,
     ) -> Result<Self, PhysicalWorkBindingError> {
         for node in execution_dag.nodes().keys() {
             if !prediction.stages.contains_key(node) {
@@ -981,11 +990,18 @@ impl PhysicalWorkBinding {
                 pair[0].node.clone(),
             ));
         }
+        validate_publication_layouts(
+            &execution_dag,
+            &prediction,
+            &artifacts,
+            &publication_layouts,
+        )?;
         Ok(Self {
             execution_dag,
             prediction,
             artifacts,
             observation_transaction,
+            publication_layouts,
         })
     }
 
@@ -1012,6 +1028,174 @@ impl PhysicalWorkBinding {
     pub fn artifacts(&self) -> &[PlannedArtifact] {
         &self.artifacts
     }
+}
+
+fn validate_publication_layouts(
+    dag: &ExecutionDag,
+    prediction: &PlanPrediction,
+    artifacts: &[PlannedArtifact],
+    layouts: &PublicationLayoutLedger,
+) -> Result<(), PhysicalWorkBindingError> {
+    let outputs = artifacts
+        .iter()
+        .filter(|artifact| artifact.role == ArtifactRole::Output)
+        .map(|artifact| artifact.identity)
+        .collect::<BTreeSet<_>>();
+    let layout_artifacts = layouts
+        .entries()
+        .iter()
+        .map(crate::PublicationPhysicalLayout::artifact)
+        .collect::<BTreeSet<_>>();
+    if outputs != layout_artifacts {
+        return invalid_publication_layout("layout artifacts do not exactly match planned outputs");
+    }
+
+    let mut staged_by_producer = BTreeMap::<WorkNodeId, u64>::new();
+    let mut writer_by_producer = BTreeMap::<(WorkNodeId, IoBufferKind), u64>::new();
+    let mut bytes_by_allocation = BTreeMap::<AllocationId, u64>::new();
+    for layout in layouts.entries() {
+        let staging = layout.staging();
+        let producer = dag.nodes().get(staging.producer()).ok_or_else(|| {
+            PhysicalWorkBindingError::InvalidPublicationLayout {
+                reason: format!(
+                    "artifact {} names absent producer {}",
+                    layout.artifact(),
+                    staging.producer().as_str()
+                ),
+            }
+        })?;
+        let terminal_is_declared = match staging.terminal() {
+            crate::WorkDependency::Work(node) => node == &producer.id && producer.fences.is_empty(),
+            crate::WorkDependency::Fence(fence) => {
+                fence.node() == &producer.id && producer.fences.contains(&fence.kind())
+            }
+        };
+        if !terminal_is_declared {
+            return invalid_publication_layout(format!(
+                "artifact {} terminal is not a declared completion of {}",
+                layout.artifact(),
+                producer.id.as_str()
+            ));
+        }
+        let allocation = dag
+            .logical_allocations()
+            .get(staging.writer_allocation())
+            .ok_or_else(|| PhysicalWorkBindingError::InvalidPublicationLayout {
+                reason: format!(
+                    "artifact {} names absent writer allocation {}",
+                    layout.artifact(),
+                    staging.writer_allocation().as_str()
+                ),
+            })?;
+        if allocation.purpose != crate::AllocationPurpose::IoBuffer(staging.writer_buffer_kind())
+            || !producer
+                .allocations
+                .iter()
+                .any(|usage| usage.allocation == allocation.id)
+            || !allocation
+                .lifetime
+                .release_after
+                .contains(staging.terminal())
+        {
+            return invalid_publication_layout(format!(
+                "artifact {} writer allocation is not producer-owned through its terminal event",
+                layout.artifact()
+            ));
+        }
+        *staged_by_producer.entry(producer.id.clone()).or_default() = staged_by_producer
+            .get(&producer.id)
+            .copied()
+            .unwrap_or(0)
+            .saturating_add(layout.resource_bounds().staged_storage_bytes());
+        *writer_by_producer
+            .entry((producer.id.clone(), staging.writer_buffer_kind()))
+            .or_default() = writer_by_producer
+            .get(&(producer.id.clone(), staging.writer_buffer_kind()))
+            .copied()
+            .unwrap_or(0)
+            .saturating_add(layout.resource_bounds().writer_buffer_bytes());
+        *bytes_by_allocation
+            .entry(allocation.id.clone())
+            .or_default() = bytes_by_allocation
+            .get(&allocation.id)
+            .copied()
+            .unwrap_or(0)
+            .saturating_add(layout.resource_bounds().writer_buffer_bytes());
+    }
+    for (producer, required) in staged_by_producer {
+        let declared = dag.nodes()[&producer]
+            .claims
+            .iter()
+            .filter_map(|claim| match claim.resource {
+                LeaseResource::Storage {
+                    use_kind: crate::StorageUseKind::StagedOutput,
+                    ..
+                } => Some(claim.amount),
+                _ => None,
+            })
+            .fold(0_u64, u64::saturating_add);
+        if declared < required {
+            return invalid_publication_layout(format!(
+                "producer {} stages {required} bytes but declares {declared}",
+                producer.as_str()
+            ));
+        }
+    }
+    for ((producer, kind), required) in writer_by_producer {
+        let node = &dag.nodes()[&producer];
+        let claimed = node
+            .claims
+            .iter()
+            .filter(|claim| claim.resource == LeaseResource::IoBuffer(kind))
+            .map(|claim| claim.amount)
+            .fold(0_u64, u64::saturating_add);
+        let predicted = prediction.stages()[&producer]
+            .io()
+            .iter()
+            .find(|io| io.kind() == kind)
+            .map_or(0, |io| io.bytes());
+        if claimed < required || predicted < required {
+            return invalid_publication_layout(format!(
+                "producer {} requires {required} {} bytes, claims {claimed}, predicts {predicted}",
+                producer.as_str(),
+                io_buffer_name(kind)
+            ));
+        }
+    }
+    for (allocation, required) in bytes_by_allocation {
+        let declared = dag.logical_allocations()[&allocation].bytes;
+        if declared < required {
+            return invalid_publication_layout(format!(
+                "writer allocation {} requires {required} bytes but declares {declared}",
+                allocation.as_str()
+            ));
+        }
+    }
+    let demand = &dag.resource_alternative().demand;
+    let staged = demand
+        .storage
+        .iter()
+        .map(|storage| storage.staged_output_bytes)
+        .fold(0_u64, u64::saturating_add);
+    let final_output = demand
+        .storage
+        .iter()
+        .map(|storage| storage.final_output_bytes)
+        .fold(0_u64, u64::saturating_add);
+    if staged < layouts.staged_storage_bytes() || final_output < layouts.final_storage_bytes() {
+        return invalid_publication_layout(format!(
+            "resource demand stages {staged}/{} bytes and retains {final_output}/{} final bytes",
+            layouts.staged_storage_bytes(),
+            layouts.final_storage_bytes()
+        ));
+    }
+    Ok(())
+}
+
+fn invalid_publication_layout<T>(reason: impl Into<String>) -> Result<T, PhysicalWorkBindingError> {
+    Err(PhysicalWorkBindingError::InvalidPublicationLayout {
+        reason: reason.into(),
+    })
 }
 
 fn validate_io_contracts(
@@ -1116,6 +1300,12 @@ impl PhysicalWorkBinding {
     #[must_use]
     pub const fn observation_transaction(&self) -> &ObservationTransactionWork {
         &self.observation_transaction
+    }
+
+    /// Return the complete adapter-derived publication-layout ledger.
+    #[must_use]
+    pub const fn publication_layouts(&self) -> &PublicationLayoutLedger {
+        &self.publication_layouts
     }
 }
 
@@ -1244,6 +1434,7 @@ pub struct ExecutionPlan {
     prediction: PlanPrediction,
     artifacts: Vec<PlannedArtifact>,
     observation_transaction: BoundObservationTransaction,
+    publication_layouts: PublicationLayoutLedger,
 }
 
 impl ExecutionPlan {
@@ -1329,6 +1520,12 @@ impl ExecutionPlan {
     #[must_use]
     pub const fn observation_transaction(&self) -> &BoundObservationTransaction {
         &self.observation_transaction
+    }
+
+    /// Return physical layouts and resource bounds sealed by planning.
+    #[must_use]
+    pub const fn publication_layouts(&self) -> &PublicationLayoutLedger {
+        &self.publication_layouts
     }
 }
 
@@ -1426,6 +1623,8 @@ pub fn plan<E>(
         problem,
         &physical_work.execution_dag,
         physical_work.observation_transaction.clone(),
+        &physical_work.publication_layouts,
+        &physical_work.artifacts,
     )
     .map_err(PlanError::ObservationTransaction)?;
     let mut plan = ExecutionPlan {
@@ -1442,6 +1641,7 @@ pub fn plan<E>(
         prediction: physical_work.prediction,
         artifacts: physical_work.artifacts,
         observation_transaction,
+        publication_layouts: physical_work.publication_layouts,
     };
     plan.plan_id = execution_plan_id(&plan);
     Ok(plan)
@@ -2760,6 +2960,33 @@ fn execution_plan_id(plan: &ExecutionPlan) -> ExecutionPlanId {
         }
     }
     encode_observation_transaction(&mut encoder, &plan.observation_transaction);
+    encoder.usize(plan.publication_layouts.entries().len());
+    for layout in plan.publication_layouts.entries() {
+        match layout.participant() {
+            crate::PublicationParticipant::Product(node) => {
+                encoder.u8(0);
+                encoder.usize(node.ordinal());
+            }
+            crate::PublicationParticipant::ModelData(measurement_set) => {
+                encoder.u8(1);
+                encoder.digest(measurement_set.identity().as_bytes());
+            }
+        }
+        encoder.digest(layout.artifact().as_bytes());
+        encoder.digest(layout.layout_id().as_bytes());
+        encoder.string(layout.staging().producer().as_str());
+        encode_dependencies(
+            &mut encoder,
+            &BTreeSet::from([layout.staging().terminal().clone()]),
+        );
+        encoder.string(io_buffer_name(layout.staging().writer_buffer_kind()));
+        encoder.string(layout.staging().writer_allocation().as_str());
+        let bounds = layout.resource_bounds();
+        encoder.u64(bounds.staged_storage_bytes());
+        encoder.u64(bounds.final_storage_bytes());
+        encoder.u64(bounds.writer_buffer_bytes());
+        encoder.u64(bounds.mapped_page_cache_bytes());
+    }
     ExecutionPlanId(encoder.finish())
 }
 
@@ -2774,11 +3001,7 @@ fn encode_observation_transaction(
     encoder.string(work.initial_consistency_check().as_str());
     encode_dependencies(encoder, work.observation_reads());
     encoder.string(work.final_reconciliation().as_str());
-    encoder.usize(work.required_product_staging().len());
-    for (product, completions) in work.required_product_staging() {
-        encoder.u8(product_tag(*product));
-        encode_dependencies(encoder, completions);
-    }
+    encode_dependencies(encoder, work.product_staging());
     match work.model_column_staging() {
         Some(node) => {
             encoder.u8(1);
@@ -2811,26 +3034,6 @@ fn encode_dependencies(
                 });
             }
         }
-    }
-}
-
-fn product_tag(product: ProductKind) -> u8 {
-    match product {
-        ProductKind::Psf => 0,
-        ProductKind::Residual => 1,
-        ProductKind::Model => 2,
-        ProductKind::RestoredImage => 3,
-        ProductKind::SumWeights => 4,
-        ProductKind::Mask => 5,
-        ProductKind::Weight => 6,
-        ProductKind::PrimaryBeam => 7,
-        ProductKind::Sensitivity => 8,
-        ProductKind::PbCorrectedImage => 9,
-        ProductKind::TaylorTerms => 10,
-        ProductKind::SpectralIndex => 11,
-        ProductKind::SpectralIndexError => 12,
-        ProductKind::PbCorrectedSpectralIndex => 13,
-        ProductKind::Beam => 14,
     }
 }
 

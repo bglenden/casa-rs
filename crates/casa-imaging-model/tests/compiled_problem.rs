@@ -10,14 +10,16 @@ use casa_imaging_model::{
     ObservationSnapshotInput, ObservationTransactionRequirements, PhaseCentreLaw,
     PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
     PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
-    ProblemInputIdentities, ProblemSpecification, ProductKind, ProductNormalization,
-    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
-    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
-    RequiredCapability, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSampling, SpectralWcs, StageErrorBudget, TimeScale, UvTaper, UvwCoordinateLaw,
-    VisibilityInnerProduct, WeightDensityScope, WeightingContract, WeightingScheme, compile,
-    compile_observation,
+    PrimaryBeamValidityPolicy, ProblemInputIdentities, ProblemSpecification, ProductAxisKind,
+    ProductBeamRule, ProductBlankingPolicy, ProductKind, ProductNormalization, ProductRequirements,
+    ProductRole, ProductSchema, ProductSupportComparison, ProductTerm, ProductUnit,
+    ProductValidityPolicies, ProductValidityRule, Projection, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    ReferenceDataKind, RequiredCapability, RestFrequency, RestoringBeamPolicy, ScientificContract,
+    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSampling, SpectralWcs, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
+    TimeScale, UvTaper, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile, compile_observation,
 };
 
 mod common;
@@ -91,7 +93,30 @@ fn products_with_beam(reverse: bool, restoring_beam: RestoringBeamPolicy) -> Pro
     if reverse {
         products.reverse();
     }
-    ProductRequirements::new(products, ProductNormalization::FlatNoise, restoring_beam)
+    ProductRequirements::new(
+        products,
+        ProductNormalization::FlatNoise,
+        restoring_beam,
+        product_validity(),
+    )
+}
+
+fn product_validity() -> ProductValidityPolicies {
+    ProductValidityPolicies::new(
+        PrimaryBeamValidityPolicy::new(
+            0.2,
+            ProductSupportComparison::StrictlyGreater,
+            ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid primary-beam support"),
+        TaylorValidityPolicy::new(
+            TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
+            0.1,
+            ProductSupportComparison::StrictlyGreater,
+            ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid Taylor support"),
+    )
 }
 
 fn science() -> ScientificContract {
@@ -215,6 +240,104 @@ fn equivalent_science_has_one_canonical_compiled_identity() {
     assert_eq!(first.weighting(), reordered.weighting());
     assert_eq!(first.products(), reordered.products());
     assert_eq!(first.numerics(), reordered.numerics());
+}
+
+#[test]
+fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
+    let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
+    let graph = compiled.product_graph();
+    let reordered = compile_request(specification(true), inputs(true)).expect("compile reordered");
+
+    assert_eq!(graph.graph_id(), reordered.product_graph().graph_id());
+    assert_eq!(graph.schema_version(), 1);
+    assert_eq!(
+        graph
+            .nodes()
+            .iter()
+            .filter_map(|node| node.name())
+            .collect::<Vec<_>>(),
+        vec![
+            ".psf.tt0",
+            ".psf.tt1",
+            ".psf.tt2",
+            ".residual.tt0",
+            ".residual.tt1",
+            ".model.tt0",
+            ".model.tt1",
+            ".image.tt0",
+            ".image.tt1",
+            ".sumwt.tt0",
+            ".sumwt.tt1",
+            ".sumwt.tt2",
+            ".sensitivity",
+            ".alpha",
+        ]
+    );
+
+    let restored = graph
+        .nodes()
+        .iter()
+        .find(|node| node.role() == ProductRole::RestoredImage(ProductTerm::Taylor(0)))
+        .expect("restored Taylor-zero node");
+    assert_eq!(restored.axes().kind(), ProductAxisKind::SkyImage);
+    assert_eq!(restored.axes().shape(), [512, 512, 1, 1]);
+    assert_eq!(restored.unit(), ProductUnit::JyPerBeam);
+    assert_eq!(
+        restored.beam(),
+        ProductBeamRule::Restoring(RestoringBeamPolicy::PerPlane)
+    );
+    assert_eq!(restored.validity(), ProductValidityRule::FinalNormalState);
+    assert_eq!(restored.schema(), ProductSchema::ImageF32V1);
+
+    let spectral_index = graph
+        .nodes()
+        .iter()
+        .find(|node| node.role() == ProductRole::SpectralIndex)
+        .expect("spectral-index node");
+    assert_eq!(spectral_index.unit(), ProductUnit::Dimensionless);
+    assert_eq!(
+        spectral_index.validity(),
+        ProductValidityRule::Taylor(product_validity().taylor())
+    );
+    assert!(
+        spectral_index.dependencies().contains(
+            &graph
+                .node(ProductRole::Model(ProductTerm::Taylor(0)))
+                .unwrap()
+                .node_id()
+        )
+    );
+    assert!(
+        spectral_index.dependencies().contains(
+            &graph
+                .node(ProductRole::Model(ProductTerm::Taylor(1)))
+                .unwrap()
+                .node_id()
+        )
+    );
+
+    assert_eq!(
+        graph.publication().members(),
+        graph
+            .nodes()
+            .iter()
+            .filter(|node| node.schema() == ProductSchema::ImageF32V1)
+            .map(|node| node.node_id())
+            .collect::<Vec<_>>()
+    );
+    assert!(graph.publication().protocol().requires_durable_prepare());
+    assert!(
+        graph
+            .publication()
+            .protocol()
+            .has_one_visibility_operation()
+    );
+    assert!(
+        graph
+            .publication()
+            .protocol()
+            .has_infallible_terminal_promotion()
+    );
 }
 
 #[test]
@@ -356,6 +479,7 @@ fn channel_local_basis_must_match_compiled_geometry_channels() {
                 ],
                 ProductNormalization::UnitResponse,
                 RestoringBeamPolicy::None,
+                product_validity(),
             ),
             read_only_transaction(),
             numerics(false),
@@ -424,6 +548,7 @@ fn flat_normalization_without_sensitivity_fails_at_compile_time() {
             ],
             ProductNormalization::FlatNoise,
             RestoringBeamPolicy::PerPlane,
+            product_validity(),
         ),
         read_only_transaction(),
         numerics(false),
@@ -512,6 +637,7 @@ fn derived_products_require_their_scientific_sources() {
             ],
             ProductNormalization::UnitResponse,
             RestoringBeamPolicy::PerPlane,
+            product_validity(),
         ),
         read_only_transaction(),
         numerics(false),
@@ -565,7 +691,7 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
         positive_zero.weighting().generation_id()
     );
     assert_ne!(positive_zero.problem_id(), changed.problem_id());
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 6);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 7);
 }
 
 #[test]
@@ -627,6 +753,7 @@ fn multiscale_order_and_duplicate_scales_do_not_change_scientific_identity() {
                 ],
                 ProductNormalization::UnitResponse,
                 RestoringBeamPolicy::PerPlane,
+                product_validity(),
             ),
             read_only_transaction(),
             numerics(false),
@@ -761,6 +888,7 @@ fn dirty_reconstruction_rejects_scientifically_unused_controls() {
                 ],
                 ProductNormalization::UnitResponse,
                 RestoringBeamPolicy::None,
+                product_validity(),
             ),
             read_only_transaction(),
             numerics(false),
@@ -884,12 +1012,12 @@ fn invalid_polarization_is_a_reconstruction_contract_error() {
 }
 
 #[test]
-fn compiled_problem_identity_has_a_pinned_schema_six_digest() {
+fn compiled_problem_identity_has_a_pinned_schema_seven_digest() {
     let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 6);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 7);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "a089ac5abff5a2ff111366750293481528cc136258b55c63875ccf1169bc7865"
+        "8b39a9cd1ff8bf092acef1c9eacab9d2f9f553560c2bd8b93dfd3e0de580e407"
     );
 }

@@ -15,13 +15,13 @@ use casa_imaging_model::{
     AntennaSelection, CompiledGeometry, CompiledProblem, CorrelationType, DelayCentreLaw,
     DirectionFrame, DopplerConvention, FiniteValuePolicy, FlagPolicy, FrequencyFrame, IdSelection,
     ImageAxis, ImageDomainRole, InstrumentResponse, IntentSelection, LogicalIdentity,
-    MetadataTableKind, MissingPointingPolicy, ModelInnerProduct, ModelStateIdentity, MsColumnKind,
-    NormalEquationForm, NormalStateNormalization, NumericPrecision, NumericalStage,
-    PairedMeasurementTransform, PairedTransformKind, PhaseCentreLaw, PointingCentreLaw,
-    PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
-    PointingInterpolation, PointingTimeSampling, PolarizationCoordinate, ProblemInputIdentities,
-    ProductBoundaryOperation, ProductKind, ProductNormalization, Projection,
-    ReconstructionAlgorithm, ReconstructionBasis, ReductionPolicy, ReferenceDataKind,
+    MeasurementSetIdentity, MetadataTableKind, MissingPointingPolicy, ModelInnerProduct,
+    ModelStateIdentity, MsColumnKind, NormalEquationForm, NormalStateNormalization,
+    NumericPrecision, NumericalStage, PairedMeasurementTransform, PairedTransformKind,
+    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
+    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationCoordinate,
+    ProblemInputIdentities, ProductBoundaryOperation, ProductKind, ProductNormalization,
+    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReductionPolicy, ReferenceDataKind,
     RequiredCapability, RestFrequency, RestoringBeamPolicy, SpectralCoupling, SpectralFrameAnchor,
     SpectralSampling, SpectralWcs, TimeScale, TimeSelection, UvDistanceUnit, UvSelection, UvwAxes,
     UvwUnit, VisibilityColumn, VisibilityInnerProduct, VisibilityPhaseConvention, WeightColumn,
@@ -35,13 +35,14 @@ use crate::{
     AdaptationId, AdaptationTransition, AllocationId, AllocationPurpose, ArtifactDisposition,
     ArtifactIdentity, ArtifactMeasurement, ArtifactRole, CacheIdentity, CapabilityId,
     ClaimLifetime, DemandAlternative, ExecutionKnobs, ExecutionPlan, FenceId, FenceKind,
-    InitializationPolicy, IoBufferKind, LeaseResource, PhysicalSlotId, QuiescencePoint,
-    ResourcePolicy, StorageMode, WorkDependency, WorkDomain, WorkImplementationId, WorkKind,
-    WorkMeasurements, WorkNodeId,
+    InitializationPolicy, IoBufferKind, LeaseResource, PhysicalLayoutId, PhysicalSlotId,
+    PublicationParticipant, PublicationResourceBounds, QuiescencePoint, ResourcePolicy,
+    StorageMode, WorkDependency, WorkDomain, WorkImplementationId, WorkKind, WorkMeasurements,
+    WorkNodeId,
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 4;
+const RECEIPT_SCHEMA_VERSION: u32 = 5;
 const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 2;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
@@ -493,6 +494,18 @@ pub struct ExecutionReceipt {
     body: ReceiptBody,
 }
 
+/// Audit-only semantic identity of one coordinated publication member.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReceiptPublicationParticipant {
+    /// One compiler-owned product graph node, represented by its graph-local ordinal.
+    Product {
+        /// Zero-based identity within the compiler-owned Product Graph.
+        node_ordinal: usize,
+    },
+    /// The optional `MODEL_DATA` member for one MeasurementSet.
+    ModelData(MeasurementSetIdentity),
+}
+
 /// Stable, versioned field projection of one effective Compiled Problem.
 ///
 /// This is audit evidence only. It deliberately cannot be converted back into
@@ -833,6 +846,128 @@ impl ExecutionReceipt {
             .collect()
     }
 
+    /// Return the number of exact coordinated publication layouts.
+    #[must_use]
+    pub fn publication_layout_count(&self) -> usize {
+        self.body.plan.publication_layouts.len()
+    }
+
+    /// Return the audit-only semantic member bound to one output artifact.
+    #[must_use]
+    pub fn publication_participant(
+        &self,
+        artifact: ArtifactIdentity,
+    ) -> Option<ReceiptPublicationParticipant> {
+        Some(self.publication_layout(artifact)?.participant.to_runtime())
+    }
+
+    /// Return the exact adapter-selected physical layout identity.
+    #[must_use]
+    pub fn publication_layout_identity(
+        &self,
+        artifact: ArtifactIdentity,
+    ) -> Option<PhysicalLayoutId> {
+        Some(PhysicalLayoutId::from_sha256(parse_digest(
+            &self.publication_layout(artifact)?.layout_identity,
+        )))
+    }
+
+    /// Return the exact private-staging producer.
+    #[must_use]
+    pub fn publication_producer(&self, artifact: ArtifactIdentity) -> Option<WorkNodeId> {
+        Some(WorkNodeId::new(
+            self.publication_layout(artifact)?.producer.clone(),
+        ))
+    }
+
+    /// Return the producer completion event required before publication.
+    #[must_use]
+    pub fn publication_terminal(&self, artifact: ArtifactIdentity) -> Option<WorkDependency> {
+        Some(parse_dependency(
+            &self.publication_layout(artifact)?.terminal,
+        ))
+    }
+
+    /// Return the selected private writer-buffer category.
+    #[must_use]
+    pub fn publication_writer_buffer_kind(
+        &self,
+        artifact: ArtifactIdentity,
+    ) -> Option<IoBufferKind> {
+        Some(parse_io_buffer(
+            &self.publication_layout(artifact)?.writer_buffer_kind,
+        ))
+    }
+
+    /// Return the producer-owned writer allocation.
+    #[must_use]
+    pub fn publication_writer_allocation(
+        &self,
+        artifact: ArtifactIdentity,
+    ) -> Option<AllocationId> {
+        Some(AllocationId::new(
+            self.publication_layout(artifact)?.writer_allocation.clone(),
+        ))
+    }
+
+    /// Return exact staged, final, writer, and mapped resource bounds.
+    #[must_use]
+    pub fn publication_resource_bounds(
+        &self,
+        artifact: ArtifactIdentity,
+    ) -> Option<PublicationResourceBounds> {
+        let bounds = &self.publication_layout(artifact)?.resource_bounds;
+        PublicationResourceBounds::new(
+            bounds.staged_storage_bytes,
+            bounds.final_storage_bytes,
+            bounds.writer_buffer_bytes,
+            bounds.mapped_page_cache_bytes,
+        )
+        .ok()
+    }
+
+    /// Return the mapped/page-cache producer, when the layout retains mapped exposure.
+    #[must_use]
+    pub fn publication_mapped_producer(&self, artifact: ArtifactIdentity) -> Option<WorkNodeId> {
+        Some(WorkNodeId::new(
+            self.publication_layout(artifact)?
+                .mapped_page_cache
+                .as_ref()?
+                .producer
+                .clone(),
+        ))
+    }
+
+    /// Return the mapped/page-cache release event, when present.
+    #[must_use]
+    pub fn publication_mapped_terminal(
+        &self,
+        artifact: ArtifactIdentity,
+    ) -> Option<WorkDependency> {
+        Some(parse_dependency(
+            &self
+                .publication_layout(artifact)?
+                .mapped_page_cache
+                .as_ref()?
+                .terminal,
+        ))
+    }
+
+    /// Return the mapped/page-cache allocation, when present.
+    #[must_use]
+    pub fn publication_mapped_allocation(
+        &self,
+        artifact: ArtifactIdentity,
+    ) -> Option<AllocationId> {
+        Some(AllocationId::new(
+            self.publication_layout(artifact)?
+                .mapped_page_cache
+                .as_ref()?
+                .allocation
+                .clone(),
+        ))
+    }
+
     /// Return every plan-listed cache namespace identity.
     #[must_use]
     pub fn cache_identities(&self) -> BTreeSet<CacheIdentity> {
@@ -1078,6 +1213,18 @@ impl ExecutionReceipt {
         self.body
             .plan
             .artifacts
+            .iter()
+            .find(|item| item.artifact_identity == artifact)
+    }
+
+    fn publication_layout(
+        &self,
+        artifact: ArtifactIdentity,
+    ) -> Option<&PublicationLayoutProjection> {
+        let artifact = hex(&artifact.as_bytes());
+        self.body
+            .plan
+            .publication_layouts
             .iter()
             .find(|item| item.artifact_identity == artifact)
     }
@@ -1743,6 +1890,7 @@ struct PlanProjection {
     allocation_generations: Vec<AllocationProjection>,
     physical_slots: Vec<PhysicalSlotProjection>,
     artifacts: Vec<ArtifactProjection>,
+    publication_layouts: Vec<PublicationLayoutProjection>,
     initial_execution_knobs: ExecutionKnobsProjection,
     adaptations: Vec<AdaptationProjection>,
 }
@@ -1803,12 +1951,112 @@ impl PlanProjection {
                 .iter()
                 .map(ArtifactProjection::new)
                 .collect(),
+            publication_layouts: plan
+                .publication_layouts()
+                .entries()
+                .iter()
+                .map(PublicationLayoutProjection::new)
+                .collect(),
             initial_execution_knobs: ExecutionKnobsProjection::new(dag.initial_knobs()),
             adaptations: dag
                 .adaptations()
                 .values()
                 .map(AdaptationProjection::new)
                 .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum PublicationParticipantProjection {
+    Product { node_ordinal: usize },
+    ModelData { measurement_set_identity: String },
+}
+
+impl PublicationParticipantProjection {
+    fn new(participant: PublicationParticipant) -> Self {
+        match participant {
+            PublicationParticipant::Product(node) => Self::Product {
+                node_ordinal: node.ordinal(),
+            },
+            PublicationParticipant::ModelData(measurement_set) => Self::ModelData {
+                measurement_set_identity: measurement_set.to_string(),
+            },
+        }
+    }
+
+    fn to_runtime(&self) -> ReceiptPublicationParticipant {
+        match self {
+            Self::Product { node_ordinal } => ReceiptPublicationParticipant::Product {
+                node_ordinal: *node_ordinal,
+            },
+            Self::ModelData {
+                measurement_set_identity,
+            } => ReceiptPublicationParticipant::ModelData(MeasurementSetIdentity::new(
+                LogicalIdentity::from_sha256(parse_digest(measurement_set_identity)),
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PublicationLayoutProjection {
+    participant: PublicationParticipantProjection,
+    artifact_identity: String,
+    layout_identity: String,
+    producer: String,
+    terminal: String,
+    writer_buffer_kind: String,
+    writer_allocation: String,
+    mapped_page_cache: Option<PublicationMappedStagingProjection>,
+    resource_bounds: PublicationResourceBoundsProjection,
+}
+
+impl PublicationLayoutProjection {
+    fn new(layout: &crate::PublicationPhysicalLayout) -> Self {
+        Self {
+            participant: PublicationParticipantProjection::new(layout.participant()),
+            artifact_identity: hex(&layout.artifact().as_bytes()),
+            layout_identity: hex(&layout.layout_id().as_bytes()),
+            producer: stable_text(layout.staging().producer().as_str()),
+            terminal: dependency(layout.staging().terminal()),
+            writer_buffer_kind: io_buffer(layout.staging().writer_buffer_kind()).to_string(),
+            writer_allocation: stable_text(layout.staging().writer_allocation().as_str()),
+            mapped_page_cache: layout.staging().mapped_page_cache().map(|mapped| {
+                PublicationMappedStagingProjection {
+                    producer: stable_text(mapped.producer().as_str()),
+                    terminal: dependency(mapped.terminal()),
+                    allocation: stable_text(mapped.allocation().as_str()),
+                }
+            }),
+            resource_bounds: PublicationResourceBoundsProjection::new(layout.resource_bounds()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PublicationMappedStagingProjection {
+    producer: String,
+    terminal: String,
+    allocation: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PublicationResourceBoundsProjection {
+    staged_storage_bytes: u64,
+    final_storage_bytes: u64,
+    writer_buffer_bytes: u64,
+    mapped_page_cache_bytes: u64,
+}
+
+impl PublicationResourceBoundsProjection {
+    fn new(bounds: PublicationResourceBounds) -> Self {
+        Self {
+            staged_storage_bytes: bounds.staged_storage_bytes(),
+            final_storage_bytes: bounds.final_storage_bytes(),
+            writer_buffer_bytes: bounds.writer_buffer_bytes(),
+            mapped_page_cache_bytes: bounds.mapped_page_cache_bytes(),
         }
     }
 }
@@ -3822,6 +4070,63 @@ fn validate_plan_projection(plan: &PlanProjection, revision: u64) -> Result<(), 
                     || artifact.role == "output")
                 && (artifact.path_identity.is_none() || artifact.actual_bytes.is_some()),
         )?;
+    }
+    let output_artifacts = plan
+        .artifacts
+        .iter()
+        .filter(|artifact| artifact.role == "output")
+        .map(|artifact| artifact.artifact_identity.as_str())
+        .collect::<BTreeSet<_>>();
+    let layout_artifacts = plan
+        .publication_layouts
+        .iter()
+        .map(|layout| layout.artifact_identity.as_str())
+        .collect::<BTreeSet<_>>();
+    require_integrity(
+        layout_artifacts.len() == plan.publication_layouts.len()
+            && layout_artifacts == output_artifacts,
+    )?;
+    let participants = plan
+        .publication_layouts
+        .iter()
+        .map(|layout| match &layout.participant {
+            PublicationParticipantProjection::Product { node_ordinal } => {
+                format!("product:{node_ordinal}")
+            }
+            PublicationParticipantProjection::ModelData {
+                measurement_set_identity,
+            } => format!("model_data:{measurement_set_identity}"),
+        })
+        .collect::<BTreeSet<_>>();
+    require_integrity(participants.len() == plan.publication_layouts.len())?;
+    for layout in &plan.publication_layouts {
+        let bounds = &layout.resource_bounds;
+        let participant_is_valid = match &layout.participant {
+            PublicationParticipantProjection::Product { .. } => true,
+            PublicationParticipantProjection::ModelData {
+                measurement_set_identity,
+            } => is_digest(measurement_set_identity),
+        };
+        require_integrity(
+            participant_is_valid
+                && is_digest(&layout.artifact_identity)
+                && is_digest(&layout.layout_identity)
+                && node_ids.contains(layout.producer.as_str())
+                && valid_events.contains(&layout.terminal)
+                && allocation_ids.contains(layout.writer_allocation.as_str())
+                && io_buffer_is_valid(&layout.writer_buffer_kind)
+                && bounds.staged_storage_bytes > 0
+                && bounds.final_storage_bytes > 0
+                && bounds.writer_buffer_bytes > 0
+                && (bounds.mapped_page_cache_bytes > 0) == layout.mapped_page_cache.is_some(),
+        )?;
+        if let Some(mapped) = &layout.mapped_page_cache {
+            require_integrity(
+                node_ids.contains(mapped.producer.as_str())
+                    && valid_events.contains(&mapped.terminal)
+                    && allocation_ids.contains(mapped.allocation.as_str()),
+            )?;
+        }
     }
 
     let adaptation_ids = plan
@@ -5911,6 +6216,22 @@ fn dependency(dependency: &WorkDependency) -> String {
     }
 }
 
+fn parse_dependency(value: &str) -> WorkDependency {
+    if let Some(node) = value.strip_prefix("work:") {
+        return WorkDependency::Work(WorkNodeId::new(node.to_string()));
+    }
+    let value = value
+        .strip_prefix("fence:")
+        .expect("validated publication terminal");
+    let (node, kind) = value
+        .rsplit_once(':')
+        .expect("validated publication fence terminal");
+    WorkDependency::Fence(FenceId::new(
+        WorkNodeId::new(node.to_string()),
+        parse_fence_kind(kind),
+    ))
+}
+
 fn claim_lifetime(lifetime: &ClaimLifetime) -> String {
     match lifetime {
         ClaimLifetime::Work => "work".to_string(),
@@ -6028,6 +6349,26 @@ fn io_buffer(kind: crate::IoBufferKind) -> &'static str {
         crate::IoBufferKind::Writeback => "writeback",
         crate::IoBufferKind::Publication => "publication",
         crate::IoBufferKind::MappedPageCache => "mapped_page_cache",
+    }
+}
+
+fn parse_io_buffer(value: &str) -> IoBufferKind {
+    match value {
+        "source_read_ahead" => IoBufferKind::SourceReadAhead,
+        "decode" => IoBufferKind::Decode,
+        "preparation" => IoBufferKind::Preparation,
+        "host_to_device_transfer" => IoBufferKind::HostToDeviceTransfer,
+        "device_to_host_transfer" => IoBufferKind::DeviceToHostTransfer,
+        "spill_read" => IoBufferKind::SpillRead,
+        "spill_write" => IoBufferKind::SpillWrite,
+        "serialization" => IoBufferKind::Serialization,
+        "storage_manager" => IoBufferKind::StorageManager,
+        "tiled_column_writer" => IoBufferKind::TiledColumnWriter,
+        "scalar_column_writer" => IoBufferKind::ScalarColumnWriter,
+        "writeback" => IoBufferKind::Writeback,
+        "publication" => IoBufferKind::Publication,
+        "mapped_page_cache" => IoBufferKind::MappedPageCache,
+        _ => unreachable!("validated receipt I/O buffer projection"),
     }
 }
 

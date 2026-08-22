@@ -34,6 +34,24 @@ use super::{
     MigrationRowKind, NativeEnginePort, RequestDisposition, RouteRecord, parse_matrix,
 };
 
+fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
+    casa_imaging_model::ProductValidityPolicies::new(
+        casa_imaging_model::PrimaryBeamValidityPolicy::new(
+            0.2,
+            casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid PB policy"),
+        casa_imaging_model::TaylorValidityPolicy::new(
+            casa_imaging_model::TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
+            0.1,
+            casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid Taylor policy"),
+    )
+}
+
 const STANDARD_DIRTY_ROWS: [&str; 7] = [
     "capability.compiled-problem",
     "capability.continuum-mfs",
@@ -507,6 +525,7 @@ fn standard_dirty_request_with(model_column_write: ModelColumnWrite) -> ImagingR
             vec![ProductKind::Psf],
             ProductNormalization::UnitResponse,
             RestoringBeamPolicy::None,
+            product_validity(),
         ),
         model_column_write,
     )
@@ -524,6 +543,7 @@ fn mtmfs_request() -> ImagingRequest {
             vec![ProductKind::TaylorTerms],
             ProductNormalization::UnitResponse,
             RestoringBeamPolicy::None,
+            product_validity(),
         ),
         ModelColumnWrite::Disabled,
     )

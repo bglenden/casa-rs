@@ -6,18 +6,21 @@ mod compiled_problem;
 mod geometry;
 mod measurement_equation;
 mod observation;
+mod product_graph;
 mod transaction;
 
 pub use compiled_problem::{
     CompileProblemError, CompiledProblem, CompiledProblemId, FiniteValuePolicy, ImagingRequest,
     ImagingRequestVersion, InstrumentResponse, LogicalIdentity, MeasurementEquationContract,
     ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, NumericsContractId,
-    PolarizationContract, PolarizationCoordinate, ProblemInputIdentities, ProblemSpecification,
-    ProductKind, ProductNormalization, ProductRequirements, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    ReferenceDataKind, RequiredCapability, RestoringBeamPolicy, ScientificContract,
-    SpectralContract, SpectralCoupling, SpectralSampling, StageErrorBudget, UvTaper,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
+    ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
+    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
+    ProductValidityPolicyError, ReconstructionAlgorithm, ReconstructionBasis,
+    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
+    RequiredCapability, RestoringBeamPolicy, ScientificContract, SpectralContract,
+    SpectralCoupling, SpectralSampling, StageErrorBudget, TaylorSupportReference,
+    TaylorValidityPolicy, UvTaper, WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
 
 pub use geometry::{
@@ -49,6 +52,12 @@ pub use observation::{
     ObservationState, ResolvedIntent, RowSelection, SelectedColumns, SelectedRows, SelectionBound,
     SourceGenerations, SpectralWindowSelection, TimeRange, TimeSelection, UvDistanceRange,
     UvDistanceUnit, UvSelection, VisibilityColumn, WeightColumn, compile_observation,
+};
+
+pub use product_graph::{
+    AtomicStoreProtocol, ProductAxes, ProductAxisKind, ProductBeamRule, ProductGraph,
+    ProductGraphId, ProductNode, ProductNodeId, ProductPublication, ProductRole, ProductSchema,
+    ProductTerm, ProductUnit, ProductValidityRule,
 };
 
 pub use transaction::{

@@ -35,6 +35,24 @@ mod common;
 
 use common::{identity, problem_inputs};
 
+fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
+    casa_imaging_model::ProductValidityPolicies::new(
+        casa_imaging_model::PrimaryBeamValidityPolicy::new(
+            0.2,
+            casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid PB policy"),
+        casa_imaging_model::TaylorValidityPolicy::new(
+            casa_imaging_model::TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
+            0.1,
+            casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid Taylor policy"),
+    )
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct Complex {
     re: f64,
@@ -229,6 +247,7 @@ fn compile_contract(sampling: SpectralSampling) -> casa_imaging_model::CompiledP
         ],
         ProductNormalization::FlatNoise,
         RestoringBeamPolicy::PerPlane,
+        product_validity(),
     );
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
@@ -403,7 +422,7 @@ fn paired_compositions_obey_linearity_and_weighted_adjointness() {
 fn schema_six_problem_and_weighting_generation_identities_are_pinned() {
     let problem = compile_contract(SpectralSampling::Linear);
 
-    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 6);
+    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 7);
     assert_eq!(WeightingGenerationId::SCHEMA_VERSION, 1);
     assert_eq!(
         (

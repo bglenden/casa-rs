@@ -42,18 +42,38 @@ use casa_imaging_runtime::{
     ExecutionStatus, ExternalPressure, FenceId, FenceKind, HostInventory, ImplementationRegistry,
     ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
     IoPrediction, LeaseResource, LogicalAllocation, MemoryCapacityDomain, MemoryCapacityKind,
-    MemoryDemand, MemoryView, MemoryViewKind, ObservationTransactionWork, PhysicalSlot,
-    PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction,
-    PlannedArtifact, PlannerCostModelProfileId, PlanningBindings, PredictionConfidence,
-    PredictionUncertainty, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint,
-    RateDemand, RateResource, RateResourceId, RateUnit, ReceiptFailureKind, ReceiptRetention,
-    ReceiptStatus, RedactedPath, ResourceAuthority, ResourceClaim, ResourceError, ResourceHeadroom,
-    ResourceMeasurement, ResourceOverride, ResourcePolicy, ResourceTopology, RunBindings,
-    RunController, RunDirective, RunError, RunToCompletion, RuntimeOverheadDemand, ScalingMetadata,
-    SlotCompatibility, StagePrediction, StorageDomain, StorageDomainId, StorageMode,
-    WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementation, WorkImplementationId,
-    WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as authority_plan, run as authority_run,
+    MemoryDemand, MemoryView, MemoryViewKind, ObservationTransactionWork, PhysicalLayoutId,
+    PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanError,
+    PlanPrediction, PlannedArtifact, PlannerCostModelProfileId, PlanningBindings,
+    PredictionConfidence, PredictionUncertainty, PublicationLayoutLedger, PublicationParticipant,
+    PublicationPhysicalLayout, PublicationResourceBounds, PublicationStaging, QueueDemand,
+    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
+    RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus, RedactedPath, ResourceAuthority,
+    ResourceClaim, ResourceError, ResourceHeadroom, ResourceMeasurement, ResourceOverride,
+    ResourcePolicy, ResourceTopology, RunBindings, RunController, RunDirective, RunError,
+    RunToCompletion, RuntimeOverheadDemand, ScalingMetadata, SlotCompatibility, StagePrediction,
+    StorageDomain, StorageDomainId, StorageMode, WorkDependency, WorkDomain, WorkExecutionContext,
+    WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId,
+    plan as authority_plan, run as authority_run,
 };
+
+fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
+    casa_imaging_model::ProductValidityPolicies::new(
+        casa_imaging_model::PrimaryBeamValidityPolicy::new(
+            0.2,
+            casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid PB policy"),
+        casa_imaging_model::TaylorValidityPolicy::new(
+            casa_imaging_model::TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
+            0.1,
+            casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid Taylor policy"),
+    )
+}
 
 mod common;
 
@@ -226,6 +246,7 @@ fn request_with_geometry_references_weighting_products_and_model(
             products,
             ProductNormalization::UnitResponse,
             RestoringBeamPolicy::None,
+            product_validity(),
         ),
         ObservationTransactionRequirements::new(model_column_write),
         numerics,
@@ -382,7 +403,7 @@ impl WorkImplementation for RecordingExecutor {
                 )
             })
             .collect();
-        let (io, artifacts) = self
+        let (io, mut artifacts) = self
             .measurements
             .get(&context.node().id)
             .cloned()
@@ -402,6 +423,24 @@ impl WorkImplementation for RecordingExecutor {
                     Vec::new(),
                 )
             });
+        if context.node().kind == WorkKind::Publication && artifacts.is_empty() {
+            let product_count = context.compiled().products().products().len();
+            let model_count = context.publication().map_or(0, |transaction| {
+                transaction.write_set().model_columns().len()
+            });
+            artifacts = (0..product_count + model_count)
+                .map(|index| {
+                    let identity = ArtifactIdentity::from_sha256([34 + index as u8; 32]);
+                    ArtifactMeasurement::new(
+                        identity,
+                        Some(identity),
+                        ArtifactDisposition::Staged,
+                        1,
+                        None,
+                    )
+                })
+                .collect();
+        }
         Ok(WorkMeasurements::new(resources, io, artifacts))
     }
 
@@ -536,14 +575,62 @@ fn failing_transaction_executor(
 }
 
 fn physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
-    physical_work_with_transaction_staging(implementation_byte, None, false, false)
+    let problem = compile(request(1)).expect("default physical-work problem");
+    physical_work_with_transaction_staging(
+        implementation_byte,
+        product_participants(&problem),
+        false,
+        false,
+    )
+}
+
+fn product_participants(
+    problem: &casa_imaging_model::CompiledProblem,
+) -> Vec<PublicationParticipant> {
+    problem
+        .product_graph()
+        .publication()
+        .members()
+        .iter()
+        .copied()
+        .map(PublicationParticipant::Product)
+        .collect()
+}
+
+fn default_product_participants() -> Vec<PublicationParticipant> {
+    product_participants(&compile(request(1)).expect("default physical-work problem"))
 }
 
 fn physical_work_for_problem(
     problem: &casa_imaging_model::CompiledProblem,
     implementation_byte: u8,
 ) -> PhysicalWorkBinding {
-    let base = physical_work(implementation_byte);
+    let participants = problem
+        .product_graph()
+        .publication()
+        .members()
+        .iter()
+        .copied()
+        .map(PublicationParticipant::Product)
+        .chain(
+            problem
+                .observation_transaction()
+                .write_set()
+                .model_columns()
+                .iter()
+                .map(|write| PublicationParticipant::ModelData(write.measurement_set())),
+        )
+        .collect();
+    let base = physical_work_with_transaction_staging(
+        implementation_byte,
+        participants,
+        !problem
+            .observation_transaction()
+            .write_set()
+            .model_columns()
+            .is_empty(),
+        false,
+    );
     let measurement_sets = problem
         .observation_transaction()
         .read_set()
@@ -600,33 +687,43 @@ fn physical_work_for_problem(
         base.prediction().clone(),
         base.artifacts().to_vec(),
         base.observation_transaction().clone(),
+        base.publication_layouts().clone(),
     )
     .expect("problem-bound physical work")
 }
 
 fn physical_work_with_product_staging(
     implementation_byte: u8,
-    required_product_staging: Option<BTreeMap<ProductKind, BTreeSet<WorkDependency>>>,
+    participants: Vec<PublicationParticipant>,
 ) -> PhysicalWorkBinding {
-    physical_work_with_transaction_staging(
-        implementation_byte,
-        required_product_staging,
-        false,
-        false,
-    )
+    physical_work_with_transaction_staging(implementation_byte, participants, false, false)
 }
 
 fn physical_work_with_model_staging(implementation_byte: u8) -> PhysicalWorkBinding {
-    physical_work_with_transaction_staging(implementation_byte, None, true, false)
+    let problem = compile(request_with_model_write(1)).expect("model-write physical-work problem");
+    physical_work_for_problem(&problem, implementation_byte)
 }
 
 fn physical_work_with_early_publication_buffer(implementation_byte: u8) -> PhysicalWorkBinding {
-    physical_work_with_transaction_staging(implementation_byte, None, false, true)
+    let problem = compile(request(1)).expect("early-publication physical-work problem");
+    physical_work_with_transaction_staging(
+        implementation_byte,
+        problem
+            .product_graph()
+            .publication()
+            .members()
+            .iter()
+            .copied()
+            .map(PublicationParticipant::Product)
+            .collect(),
+        false,
+        true,
+    )
 }
 
 fn physical_work_with_transaction_staging(
     implementation_byte: u8,
-    required_product_staging: Option<BTreeMap<ProductKind, BTreeSet<WorkDependency>>>,
+    participants: Vec<PublicationParticipant>,
     include_model_staging: bool,
     acquire_publication_early: bool,
 ) -> PhysicalWorkBinding {
@@ -725,7 +822,7 @@ fn physical_work_with_transaction_staging(
     transaction_binding(
         specification,
         implementation(implementation_byte),
-        required_product_staging,
+        participants,
         include_model_staging,
         acquire_publication_early,
     )
@@ -734,10 +831,15 @@ fn physical_work_with_transaction_staging(
 fn transaction_binding(
     mut specification: ExecutionDagSpecification,
     work_implementation: WorkImplementationId,
-    required_product_staging: Option<BTreeMap<ProductKind, BTreeSet<WorkDependency>>>,
+    participants: Vec<PublicationParticipant>,
     include_model_staging: bool,
     acquire_publication_early: bool,
 ) -> PhysicalWorkBinding {
+    let product_count = participants
+        .iter()
+        .filter(|participant| matches!(participant, PublicationParticipant::Product(_)))
+        .count() as u64;
+    let member_count = participants.len() as u64;
     let initial = WorkNodeId::new("transaction-check");
     let read = WorkNodeId::new("transaction-read");
     let reconciliation = WorkNodeId::new("transaction-reconciliation");
@@ -758,6 +860,12 @@ fn transaction_binding(
         layout: AllocationLayout::new("transaction-publication-buffer"),
         initialization: InitializationPolicy::Preserve,
         access: AllocationAccess::ReadWrite,
+    };
+    let product_writer_allocation = AllocationId::new("transaction-product-writer-buffer");
+    let product_writer_slot = PhysicalSlotId::new("transaction-product-writer-slot");
+    let product_writer_compatibility = SlotCompatibility {
+        layout: AllocationLayout::new("transaction-product-writer-buffer"),
+        ..publication_compatibility.clone()
     };
     let commit_compatibility = SlotCompatibility {
         layout: AllocationLayout::new("transaction-commit-buffer"),
@@ -821,6 +929,16 @@ fn transaction_binding(
             preferred_bytes: 1,
             views: vec![CapacityViewId::new("host-memory")],
         });
+    specification
+        .resource_alternative
+        .demand
+        .memory
+        .push(MemoryDemand {
+            allocation_id: "transaction-product-writer-slot".to_string(),
+            hard_bytes: product_count,
+            preferred_bytes: product_count,
+            views: vec![CapacityViewId::new("host-memory")],
+        });
     if acquire_publication_early {
         specification
             .resource_alternative
@@ -853,8 +971,8 @@ fn transaction_binding(
             demand_id: "transaction-output".to_string(),
             domain: casa_imaging_runtime::StorageDomainId::new("atomic-output"),
             temporary_bytes: 0,
-            staged_output_bytes: if include_model_staging { 2 } else { 1 },
-            final_output_bytes: 1,
+            staged_output_bytes: member_count,
+            final_output_bytes: member_count,
             persistent_cache_bytes: 0,
             read_rate: CountDemand::zero(),
             write_rate: CountDemand::zero(),
@@ -880,6 +998,11 @@ fn transaction_binding(
             slots: CountDemand::new(1, 1),
         });
     specification.resource_alternative.demand.locks = CountDemand::new(1, 1);
+    specification
+        .resource_alternative
+        .demand
+        .io_buffers
+        .serialization_bytes = product_count;
     specification
         .resource_alternative
         .demand
@@ -911,18 +1034,19 @@ fn transaction_binding(
                 demand_id: "transaction-output".to_string(),
                 use_kind: casa_imaging_runtime::StorageUseKind::StagedOutput,
             },
-            amount: 1,
+            amount: product_count,
+            lifetime: ClaimLifetime::Work,
+        },
+        ResourceClaim {
+            resource: LeaseResource::IoBuffer(IoBufferKind::Serialization),
+            amount: product_count,
             lifetime: ClaimLifetime::Work,
         },
     ];
-    let product_allocations = if acquire_publication_early {
-        vec![AllocationUse {
-            allocation: publication_allocation.clone(),
-            lifetime: ClaimLifetime::Work,
-        }]
-    } else {
-        Vec::new()
-    };
+    let product_allocations = vec![AllocationUse {
+        allocation: product_writer_allocation.clone(),
+        lifetime: ClaimLifetime::Work,
+    }];
 
     specification.nodes.extend([
         WorkNode {
@@ -1047,7 +1171,7 @@ fn transaction_binding(
                         demand_id: "transaction-output".to_string(),
                         use_kind: casa_imaging_runtime::StorageUseKind::StagedOutput,
                     },
-                    amount: 1,
+                    amount: member_count,
                     lifetime: publication_lifetime.clone(),
                 },
                 ResourceClaim {
@@ -1055,7 +1179,7 @@ fn transaction_binding(
                         demand_id: "transaction-output".to_string(),
                         use_kind: casa_imaging_runtime::StorageUseKind::FinalOutput,
                     },
-                    amount: 1,
+                    amount: member_count,
                     lifetime: publication_lifetime.clone(),
                 },
                 ResourceClaim {
@@ -1130,6 +1254,25 @@ fn transaction_binding(
         });
     }
     specification.logical_allocations.push(LogicalAllocation {
+        id: product_writer_allocation.clone(),
+        bytes: product_count,
+        purpose: AllocationPurpose::IoBuffer(IoBufferKind::Serialization),
+        compatibility: product_writer_compatibility.clone(),
+        physical_slot: product_writer_slot.clone(),
+        lifetime: AllocationLifetime {
+            acquire_at: product.clone(),
+            release_after: BTreeSet::from([WorkDependency::Work(product.clone())]),
+        },
+    });
+    specification.physical_slots.push(PhysicalSlot {
+        id: product_writer_slot,
+        lease_resource: LeaseResource::Memory {
+            allocation_id: "transaction-product-writer-slot".to_string(),
+        },
+        capacity_bytes: product_count,
+        compatibility: product_writer_compatibility,
+    });
+    specification.logical_allocations.push(LogicalAllocation {
         id: publication_allocation,
         bytes: 1,
         purpose: if acquire_publication_early {
@@ -1185,7 +1328,7 @@ fn transaction_binding(
     }
     if include_model_staging {
         specification.logical_allocations.push(LogicalAllocation {
-            id: writeback_allocation,
+            id: writeback_allocation.clone(),
             bytes: 1,
             purpose: AllocationPurpose::IoBuffer(IoBufferKind::Writeback),
             compatibility: writeback_compatibility.clone(),
@@ -1239,19 +1382,59 @@ fn transaction_binding(
     PhysicalWorkBinding::new(
         dag,
         prediction,
-        Vec::new(),
+        participants
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                PlannedArtifact::new(
+                    ArtifactIdentity::from_sha256([34 + index as u8; 32]),
+                    commit.clone(),
+                    ArtifactRole::Output,
+                    None,
+                )
+            })
+            .collect(),
         ObservationTransactionWork::new(
             initial,
             reconciliation,
-            required_product_staging.unwrap_or_else(|| {
-                BTreeMap::from([(
-                    ProductKind::Psf,
-                    BTreeSet::from([WorkDependency::Work(product)]),
-                )])
-            }),
-            include_model_staging.then_some(model),
-            commit,
+            include_model_staging.then_some(model.clone()),
+            commit.clone(),
         ),
+        PublicationLayoutLedger::new(
+            participants
+                .into_iter()
+                .enumerate()
+                .map(|(index, participant)| {
+                    let (producer, terminal, kind, allocation) = match participant {
+                        PublicationParticipant::Product(_) => (
+                            product.clone(),
+                            WorkDependency::Work(product.clone()),
+                            IoBufferKind::Serialization,
+                            product_writer_allocation.clone(),
+                        ),
+                        PublicationParticipant::ModelData(_) => (
+                            model.clone(),
+                            WorkDependency::Fence(FenceId::new(
+                                model.clone(),
+                                FenceKind::Writeback,
+                            )),
+                            IoBufferKind::Writeback,
+                            writeback_allocation.clone(),
+                        ),
+                    };
+                    PublicationPhysicalLayout::new(
+                        participant,
+                        ArtifactIdentity::from_sha256([34 + index as u8; 32]),
+                        PhysicalLayoutId::from_sha256([150 + index as u8; 32]),
+                        PublicationStaging::new(producer, terminal, kind, allocation)
+                            .expect("valid publication staging"),
+                        PublicationResourceBounds::new(1, 1, 1, 0)
+                            .expect("valid publication bounds"),
+                    )
+                })
+                .collect(),
+        )
+        .expect("complete publication layout ledger"),
     )
     .expect("bound transaction physical work")
 }
@@ -1392,14 +1575,12 @@ fn evidenced_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
                 ArtifactRole::Cache,
                 Some(CacheIdentity::from_sha256([33; 32])),
             ),
-            PlannedArtifact::new(
-                ArtifactIdentity::from_sha256([34; 32]),
-                publish,
-                ArtifactRole::Output,
-                None,
-            ),
-        ],
+        ]
+        .into_iter()
+        .chain(base.artifacts().iter().cloned())
+        .collect(),
         base.observation_transaction().clone(),
+        base.publication_layouts().clone(),
     )
     .expect("bound evidenced transaction work")
 }
@@ -1501,7 +1682,7 @@ fn adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
     transaction_binding(
         specification,
         implementation(implementation_byte),
-        None,
+        default_product_participants(),
         false,
         false,
     )
@@ -1588,13 +1769,17 @@ fn auditable_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
     PhysicalWorkBinding::new(
         dag,
         base.prediction().clone(),
-        vec![PlannedArtifact::new(
+        [PlannedArtifact::new(
             ArtifactIdentity::from_sha256([51; 32]),
             WorkNodeId::new("first-major-work"),
             ArtifactRole::Cache,
             Some(CacheIdentity::from_sha256([52; 32])),
-        )],
+        )]
+        .into_iter()
+        .chain(base.artifacts().iter().cloned())
+        .collect(),
         base.observation_transaction().clone(),
+        base.publication_layouts().clone(),
     )
     .expect("auditable physical work binding")
 }
@@ -1846,7 +2031,7 @@ fn release_failure_physical_work(
     transaction_binding(
         specification,
         implementation(implementation_byte),
-        None,
+        default_product_participants(),
         false,
         false,
     )
@@ -2201,6 +2386,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
             io_prediction,
             Vec::new(),
             io_base.observation_transaction().clone(),
+            PublicationLayoutLedger::empty(),
         ),
         Err(PhysicalWorkBindingError::IoKindMismatch {
             kind: IoBufferKind::SourceReadAhead,
@@ -2267,6 +2453,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
             contract_prediction,
             Vec::new(),
             contract_base.observation_transaction().clone(),
+            PublicationLayoutLedger::empty(),
         ),
         Err(PhysicalWorkBindingError::MissingIoContract {
             kind: IoBufferKind::SourceReadAhead,
@@ -2290,6 +2477,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
             publication_prediction,
             vec![output],
             publication_base.observation_transaction().clone(),
+            PublicationLayoutLedger::empty(),
         ),
         Err(PhysicalWorkBindingError::MissingPublicationContract { .. })
     ));
@@ -2317,6 +2505,7 @@ fn physical_work_binding_rejects_typed_io_contracts_without_predictions() {
             prediction,
             Vec::new(),
             base.observation_transaction().clone(),
+            PublicationLayoutLedger::empty(),
         ),
         Err(PhysicalWorkBindingError::MissingIoPrediction { .. })
     ));
@@ -2407,6 +2596,7 @@ fn physical_work_binding_rejects_cpu_io_buffer_contracts_without_predictions() {
             prediction,
             Vec::new(),
             base.observation_transaction().clone(),
+            PublicationLayoutLedger::empty(),
         ),
         Err(PhysicalWorkBindingError::MissingIoPrediction {
             kind: IoBufferKind::Preparation,
@@ -2651,7 +2841,7 @@ fn run_rejects_a_different_implementation_returned_under_the_bound_key() {
 #[test]
 fn versioned_request_compiles_before_physical_planning() {
     let request = request(1);
-    assert_eq!(request.version(), ImagingRequestVersion::V2);
+    assert_eq!(request.version(), ImagingRequestVersion::V3);
 
     let problem = compile(request).expect("logical compilation");
     assert_eq!(problem.numerics_id().as_bytes().len(), 32);
@@ -2659,7 +2849,7 @@ fn versioned_request_compiles_before_physical_planning() {
 
 #[test]
 fn plan_seals_physical_work_and_every_required_binding() {
-    assert_eq!(ExecutionPlanId::SCHEMA_VERSION, 6);
+    assert_eq!(ExecutionPlanId::SCHEMA_VERSION, 7);
     let problem = compile(request(1)).expect("logical compilation");
     let expected_problem_id = problem.problem_id();
     let bindings = PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4));
@@ -2712,73 +2902,67 @@ fn plan_seals_physical_work_and_every_required_binding() {
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            207, 50, 95, 40, 52, 197, 52, 190, 245, 12, 141, 70, 68, 103, 79, 129, 159, 12, 184,
-            240, 98, 96, 1, 154, 214, 114, 101, 213, 81, 35, 76, 21,
+            55, 75, 226, 136, 37, 77, 129, 124, 119, 91, 6, 110, 221, 105, 244, 63, 237, 228, 217,
+            170, 92, 31, 155, 139, 33, 114, 92, 236, 196, 116, 204, 193,
         ]
     );
 }
 
 #[test]
-fn transaction_seal_rejects_omitted_required_product_staging() {
+fn transaction_seal_rejects_omitted_product_graph_publication_member() {
     let problem = compile(request_with_products(
         1,
         geometry(255.0),
         vec![ProductKind::Psf, ProductKind::Residual],
     ))
     .expect("two-product logical compilation");
-    let product_completion = || {
-        BTreeSet::from([WorkDependency::Work(WorkNodeId::new(
-            "transaction-stage-psf",
-        ))])
-    };
     plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| {
-            Ok::<_, io::Error>(physical_work_with_product_staging(
-                6,
-                Some(BTreeMap::from([
-                    (ProductKind::Psf, product_completion()),
-                    (ProductKind::Residual, product_completion()),
-                ])),
-            ))
-        },
+        |problem, _| Ok::<_, io::Error>(physical_work_for_problem(problem, 6)),
     )
     .expect("canonical complete two-product transaction seal");
 
+    let omitted = product_participants(&problem).into_iter().take(1).collect();
     let result = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| {
-            Ok::<_, io::Error>(physical_work_with_product_staging(
-                6,
-                Some(BTreeMap::from([(ProductKind::Psf, product_completion())])),
-            ))
-        },
+        |_, _| Ok::<_, io::Error>(physical_work_with_product_staging(6, omitted)),
     );
 
     let error = result.expect_err("one omitted product must fail the exact plan seal");
-    assert_eq!(
-        error.to_string(),
-        "invalid observation transaction plan: required product staging keys {Psf} do not match compiled product requirements {Psf, Residual}"
+    assert!(
+        error
+            .to_string()
+            .contains("publication product nodes {ProductNodeId(0)} do not match graph members")
     );
 }
 
 #[test]
 fn transaction_seal_blocks_unbound_transaction_work() {
     let problem = compile(request(1)).expect("logical compilation");
+    let base = physical_work_for_problem(&problem, 6);
+    let unbound = PhysicalWorkBinding::new(
+        base.execution_dag().clone(),
+        base.prediction().clone(),
+        base.artifacts().to_vec(),
+        ObservationTransactionWork::new(
+            WorkNodeId::new("execute"),
+            base.observation_transaction()
+                .final_reconciliation()
+                .clone(),
+            base.observation_transaction()
+                .model_column_staging()
+                .cloned(),
+            base.observation_transaction().commit().clone(),
+        ),
+        base.publication_layouts().clone(),
+    )
+    .expect("physically valid but transaction-unbound candidate");
     let result = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
-        |_, _| {
-            Ok::<_, io::Error>(physical_work_with_product_staging(
-                6,
-                Some(BTreeMap::from([(
-                    ProductKind::Psf,
-                    BTreeSet::from([WorkDependency::Work(WorkNodeId::new("execute"))]),
-                )])),
-            ))
-        },
+        |_, _| Ok::<_, io::Error>(unbound),
     );
 
     assert!(
@@ -3353,8 +3537,22 @@ fn receipt_finalize_failure_after_publish_returns_success_and_reopens_prepared_e
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
     assert!(publication_launched.load(Ordering::SeqCst));
     assert_eq!(visible_generation.load(Ordering::SeqCst), 1);
-    assert_eq!(receipt.schema_version(), 4);
+    assert_eq!(receipt.schema_version(), 5);
     assert_eq!(receipt.status(), ReceiptStatus::PublicationPrepared);
+    for layout in execution_plan.publication_layouts().entries() {
+        assert_eq!(
+            receipt.artifact_disposition(layout.artifact()),
+            Some(ArtifactDisposition::Staged)
+        );
+        assert_eq!(
+            receipt.publication_layout_identity(layout.artifact()),
+            Some(layout.layout_id())
+        );
+        assert_eq!(
+            receipt.publication_resource_bounds(layout.artifact()),
+            Some(layout.resource_bounds())
+        );
+    }
 }
 
 #[test]
@@ -3843,7 +4041,7 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         .expect("reopen durable receipt");
 
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
-    assert_eq!(receipt.schema_version(), 4);
+    assert_eq!(receipt.schema_version(), 5);
     assert_eq!(receipt.route_matrix_schema_version(), 1);
     assert_eq!(receipt.route_matrix_contract_revision(), 1);
     assert_eq!(receipt.route_disposition(), "native");

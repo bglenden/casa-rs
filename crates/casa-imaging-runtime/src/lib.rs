@@ -5,6 +5,7 @@
 mod execution;
 mod execution_bindings;
 mod observation_transaction;
+mod publication_layout;
 mod receipt;
 mod resource_authority;
 
@@ -30,12 +31,19 @@ pub use execution::{
 pub use observation_transaction::{
     BoundObservationTransaction, ObservationTransactionPlanError, ObservationTransactionWork,
 };
+pub use publication_layout::{
+    PhysicalLayoutId, PublicationBoundKind, PublicationLayoutError, PublicationLayoutLedger,
+    PublicationMappedStaging, PublicationParticipant, PublicationPhysicalLayout,
+    PublicationResourceBounds, PublicationResourceBoundsError, PublicationStaging,
+    PublicationStagingError,
+};
 pub use receipt::{
     BuildIdentity, CompiledProblemEvidence, ExecutionAttemptId, ExecutionProvenance,
     ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionRouteDisposition,
     ExecutionRouteEvidence, ExecutionRouteRequirement, ExecutionRouteRequirementEvidence,
     ExecutionRouteRequirementKind, ReceiptAdaptation, ReceiptError, ReceiptFailureKind,
-    ReceiptInfeasibilityCertificate, ReceiptRetention, ReceiptStatus,
+    ReceiptInfeasibilityCertificate, ReceiptPublicationParticipant, ReceiptRetention,
+    ReceiptStatus,
 };
 pub use resource_authority::{
     Accelerator, AcceleratorDemand, AcceleratorId, AcceleratorKind, AlternativeId, CacheDemand,

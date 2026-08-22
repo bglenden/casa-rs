@@ -26,6 +26,24 @@ use casa_imaging_router::{
 };
 
 mod common;
+
+fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
+    casa_imaging_model::ProductValidityPolicies::new(
+        casa_imaging_model::PrimaryBeamValidityPolicy::new(
+            0.2,
+            casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid PB policy"),
+        casa_imaging_model::TaylorValidityPolicy::new(
+            casa_imaging_model::TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
+            0.1,
+            casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid Taylor policy"),
+    )
+}
 #[test]
 fn legacy_request_invokes_only_whole_run_legacy_engine() {
     let native_calls = Arc::new(AtomicUsize::new(0));
@@ -213,6 +231,7 @@ fn request_with_phase_centre(
                 vec![ProductKind::Psf],
                 ProductNormalization::UnitResponse,
                 RestoringBeamPolicy::None,
+                product_validity(),
             ),
             ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
             numerics,
