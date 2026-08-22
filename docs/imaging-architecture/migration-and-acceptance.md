@@ -1,12 +1,17 @@
 # Imaging migration and acceptance matrix
 
 Truth class: normative
-Last reality check: 2026-08-19
+Last reality check: 2026-08-22
 Verification: `just arch-check`
 
 The authoritative machine-readable inventory is
 [`resources/imaging-architecture/migration-matrix.json`](https://github.com/bglenden/casa-rs/blob/main/resources/imaging-architecture/migration-matrix.json).
 It is owned by GitHub issue #487 under the #486 imaging-architecture programme.
+
+The first-tranche delivery findings and corrected T13-T23 order are normative
+in [the lessons and next-tranche contract](lessons-and-next-tranche.md). They
+refine dependency and ownership sequencing without changing this matrix's role
+as the sole capability and product inventory.
 
 ## What one row means
 
@@ -61,6 +66,19 @@ Compiled Problem foundation, and both the Resource Authority foundation and
 its eventual production integration. Scientific product contracts use a
 normalized-RMS ceiling of `0.001` only on declared valid support and only with
 a declared denominator.
+
+Product generation is a closed two-phase authority. Planning binds the Product
+Graph's exact typed source commitments into an opaque planned generation.
+Publication requires a seal minted only after owner-generated completion
+evidence matches every commitment and cross-generation dependency. Raw digest
+binding, caller-authored staging maps, dynamic source registries, and
+backend/resource pseudo-sources are not authority seams. T13 lands topology,
+layout, and store structure; T22 performs the first real continuum catalog and
+planned-generation/seal cutover after T17-T21 and the model lifecycle can
+supply their typed evidence. A later product source role extends that same
+closed catalog through its scientific owner's typed commitment/completion,
+identity and receipt ratchets, matrix ownership, and acceptance evidence; it
+does not add another public authority method.
 That scalar ceiling supplements rather than replaces exact topology, WCS,
 units, beam, sum-of-weights, flux, centroid, operator-law, and resource gates.
 
@@ -86,10 +104,20 @@ measurement equation ends at an explicitly unnormalized normal state, while
 normalization, residual scaling, restoration, PB correction, blanking, and
 unit conversion are typed as Product Contract operations. `product.image` and
 `product.image-pbcor` therefore remain `LegacyWholeRun`: T13/#499 must land the
-Product Graph and atomic store, T39/#525 owns common-beam restoration, T47/#533
-owns PB/sensitivity and mosaic normalization algorithms, and T43/#529 owns
-wideband `product.alpha-pbcor` behavior. Their legacy writers are removed only
-under the transfer ratchet above.
+Product Graph and atomic store, T22/#508 owns the first continuum Product
+Generation Authority and sealed publication, T39/#525 owns common-beam
+restoration, T47/#533 owns PB/sensitivity and mosaic normalization algorithms,
+and T43/#529 owns wideband `product.alpha-pbcor` behavior. Their legacy writers
+are removed only under the transfer ratchet above.
+
+The next tranche corrects one dependency discovered during composition: model
+generation is an input to Major-Cycle reconciliation, not its output owner.
+T28/#514 therefore lands solver-independent model ingest, reprojection,
+generation, and Model Delta application after T15 and before T20. T17 and T28
+may run in parallel; T20 joins T19 complete-data evidence with the T28 model
+lifecycle. T22 then consumes the typed weighting, normal-state, and model
+completions. No earlier ticket may invent those future records or expose a raw
+construction path to avoid the ordering.
 
 The architecture checker validates schema, the independently pinned logical
 graph, canonical inventories, complete Acceptance Contracts, complete binding

@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-08-19
+Last reality check: 2026-08-22
 Verification: just docs-check
 
 ## System purpose
@@ -50,6 +50,14 @@ permission for new native dependencies. Three current surface-to-domain edges
 that violate the accepted logical direction are separately frozen as
 transitional exceptions; the architecture gate permits no additions to either
 ledger.
+
+The remaining programme introduces reconstruction and product owners only in
+the ticket that can migrate all callers and enforce their exact dependencies.
+The target tranche split and corrected T13-T23 order are recorded in
+[`docs/imaging-architecture/lessons-and-next-tranche.md`](docs/imaging-architecture/lessons-and-next-tranche.md).
+Until those crates land, this package table remains descriptive: no branch may
+import an anticipated interface from another ticket or treat composition WIP
+as a dependency.
 
 with `casa-test-support` outside the product dependency chain.
 
@@ -143,11 +151,15 @@ SPW/DDID/channel selection, correlation coordinate, selected data/flag/weight
 column, coordinate and metadata generation, independent optional `MODEL_DATA`
 state, consistency token, reference-data identity, and input-model identity.
 Selected MAIN rows remain a count plus an ordered-row digest; visibility
-samples, row arrays, chunks, and execution order are never retained. Content
-identity is independent of source location and request order, while a separate
-provenance identity retains both. Current legacy adapters still resolve
-selection expressions and evaluate rows; T17/#503 owns their bounded transfer
-and deletion.
+samples, row arrays, chunks, and execution order are never retained. The
+snapshot is the storage owner's logical-manifest commitment, not an intrinsic
+digest of MeasurementSet bytes. Its identity is independent of source location
+and request order, while a separate provenance identity retains both. T17/#503
+adds a distinct content-derived Selected Observation generation from the
+actual canonical bounded sample stream and binds it back to the snapshot,
+access capability, and execution attempt; equal content never aliases the
+logical source commitment. Current legacy adapters still resolve selection
+expressions and evaluate rows; T17 owns their bounded transfer and deletion.
 
 The Compiled Problem also owns one compiler-derived Observation Transaction.
 Its canonical read set contains every consumed per-MS selection, selected MAIN
