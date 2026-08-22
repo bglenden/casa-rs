@@ -21,9 +21,9 @@ use casa_imaging_model::{
     PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
     PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationCoordinate,
     ProblemInputIdentities, ProductAxisKind, ProductBeamRule, ProductBlankingPolicy,
-    ProductBoundaryOperation, ProductKind, ProductNormalization, ProductRole, ProductSchema,
-    ProductSupportComparison, ProductTerm, ProductUnit, ProductValidityRule, Projection,
-    ReconstructionAlgorithm, ReconstructionBasis, ReductionPolicy, ReferenceDataKind,
+    ProductBoundaryOperation, ProductGraphId, ProductKind, ProductNormalization, ProductRole,
+    ProductSchema, ProductSupportComparison, ProductTerm, ProductUnit, ProductValidityRule,
+    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReductionPolicy, ReferenceDataKind,
     RequiredCapability, RestFrequency, RestoringBeamPolicy, SpectralCoupling, SpectralFrameAnchor,
     SpectralSampling, SpectralWcs, TaylorSupportReference, TimeScale, TimeSelection,
     UvDistanceUnit, UvSelection, UvwAxes, UvwUnit, VisibilityColumn, VisibilityInnerProduct,
@@ -44,7 +44,7 @@ use crate::{
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 6;
+const RECEIPT_SCHEMA_VERSION: u32 = 7;
 const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 3;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
@@ -510,6 +510,98 @@ pub enum ReceiptPublicationParticipant {
     ModelData(MeasurementSetIdentity),
 }
 
+/// Closed audit projection of the compiler-owned Product Graph.
+///
+/// Publication validation consumes this typed projection directly. The open
+/// Compiled Problem field map remains descriptive audit evidence and is never
+/// reconstructed into publication authority.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct ProductGraphProjection {
+    identity: String,
+    schema_version: u32,
+    node_ordinals: Vec<usize>,
+    publication_member_ordinals: Vec<usize>,
+}
+
+impl ProductGraphProjection {
+    const AUDIT_NODE_PREFIX: &'static str = "products.graph.nodes.";
+    const AUDIT_PUBLICATION_MEMBER_PREFIX: &'static str = "products.graph.publication.members.";
+
+    fn new(problem: &CompiledProblem) -> Self {
+        let graph = problem.product_graph();
+        Self {
+            identity: hex(&graph.graph_id().as_bytes()),
+            schema_version: graph.schema_version(),
+            node_ordinals: graph
+                .nodes()
+                .iter()
+                .map(|node| node.node_id().ordinal())
+                .collect(),
+            publication_member_ordinals: graph
+                .publication()
+                .members()
+                .iter()
+                .map(|member| member.ordinal())
+                .collect(),
+        }
+    }
+
+    fn validate(&self) -> Result<(), ReceiptError> {
+        require_integrity(
+            is_digest(&self.identity)
+                && self.schema_version == ProductGraphId::SCHEMA_VERSION
+                && self
+                    .node_ordinals
+                    .iter()
+                    .copied()
+                    .eq(0..self.node_ordinals.len())
+                && self
+                    .publication_member_ordinals
+                    .windows(2)
+                    .all(|pair| pair[0] < pair[1])
+                && self
+                    .publication_member_ordinals
+                    .iter()
+                    .all(|member| self.node_ordinals.binary_search(member).is_ok()),
+        )
+    }
+
+    fn validate_audit_fields(
+        &self,
+        evidence: &CompiledProblemEvidence,
+    ) -> Result<(), ReceiptError> {
+        let node_ordinal_fields = evidence
+            .fields
+            .keys()
+            .filter(|path| {
+                path.strip_prefix(Self::AUDIT_NODE_PREFIX)
+                    .and_then(|suffix| suffix.strip_suffix(".ordinal"))
+                    .is_some()
+            })
+            .count();
+        require_integrity(node_ordinal_fields == self.node_ordinals.len())?;
+        for ordinal in &self.node_ordinals {
+            let path = format!("{}{ordinal}.ordinal", Self::AUDIT_NODE_PREFIX);
+            require_integrity(evidence.field(&path) == Some(ordinal.to_string().as_str()))?;
+        }
+
+        let publication_member_fields = evidence
+            .fields
+            .keys()
+            .filter(|path| {
+                path.strip_prefix(Self::AUDIT_PUBLICATION_MEMBER_PREFIX)
+                    .is_some()
+            })
+            .count();
+        require_integrity(publication_member_fields == self.publication_member_ordinals.len())?;
+        for (index, ordinal) in self.publication_member_ordinals.iter().enumerate() {
+            let path = format!("{}{index}", Self::AUDIT_PUBLICATION_MEMBER_PREFIX);
+            require_integrity(evidence.field(&path) == Some(ordinal.to_string().as_str()))?;
+        }
+        Ok(())
+    }
+}
+
 /// Stable, versioned field projection of one effective Compiled Problem.
 ///
 /// This is audit evidence only. It deliberately cannot be converted back into
@@ -690,7 +782,25 @@ impl ExecutionReceipt {
     /// Return the compiler-derived product-topology identity.
     #[must_use]
     pub fn product_graph_identity(&self) -> [u8; 32] {
-        parse_digest(&self.body.problem.product_graph_identity)
+        parse_digest(&self.body.problem.product_graph.identity)
+    }
+
+    /// Return the compiler-owned Product Graph schema version.
+    #[must_use]
+    pub const fn product_graph_schema_version(&self) -> u32 {
+        self.body.problem.product_graph.schema_version
+    }
+
+    /// Return every graph-local product node ordinal in canonical order.
+    #[must_use]
+    pub fn product_graph_node_ordinals(&self) -> &[usize] {
+        &self.body.problem.product_graph.node_ordinals
+    }
+
+    /// Return the exact atomic-publication member ordinals in canonical order.
+    #[must_use]
+    pub fn product_graph_publication_member_ordinals(&self) -> &[usize] {
+        &self.body.problem.product_graph.publication_member_ordinals
     }
 
     /// Return the observation-snapshot identity.
@@ -1826,7 +1936,7 @@ impl ReceiptFailure {
 struct ProblemProjection {
     problem_identity: String,
     geometry_identity: String,
-    product_graph_identity: String,
+    product_graph: ProductGraphProjection,
     observation_identity: String,
     reference_identities: Vec<ReferenceIdentityProjection>,
     model_identity: ModelIdentityProjection,
@@ -1840,7 +1950,7 @@ impl ProblemProjection {
         Self {
             problem_identity: hex(&problem.problem_id().as_bytes()),
             geometry_identity: hex(&problem.geometry().geometry_id().as_bytes()),
-            product_graph_identity: hex(&problem.product_graph().graph_id().as_bytes()),
+            product_graph: ProductGraphProjection::new(problem),
             observation_identity: hex(&inputs.observation().identity().as_bytes()),
             reference_identities: inputs
                 .reference_data()
@@ -3672,7 +3782,7 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
         &body.build_identity,
         &body.problem.problem_identity,
         &body.problem.geometry_identity,
-        &body.problem.product_graph_identity,
+        &body.problem.product_graph.identity,
         &body.problem.observation_identity,
         &body.problem.numerics_identity,
         &body.plan.plan_identity,
@@ -3705,7 +3815,7 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
         }
     }
     validate_problem_evidence(&body.problem)?;
-    require_integrity(body.problem.product_graph_identity == body.plan.product_graph_identity)?;
+    require_integrity(body.problem.product_graph.identity == body.plan.product_graph_identity)?;
     validate_route_projection(&body.route)?;
 
     require_integrity(body.revision > 0)?;
@@ -3747,7 +3857,7 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
         )?;
     }
 
-    validate_plan_projection(&body.problem, &body.plan, body.revision)?;
+    validate_plan_projection(&body.problem.product_graph, &body.plan, body.revision)?;
     let expected_publications = body
         .plan
         .artifacts
@@ -3891,6 +4001,8 @@ fn validate_route_projection(route: &RouteProjection) -> Result<(), ReceiptError
 
 fn validate_problem_evidence(problem: &ProblemProjection) -> Result<(), ReceiptError> {
     let evidence = &problem.effective;
+    problem.product_graph.validate()?;
+    problem.product_graph.validate_audit_fields(evidence)?;
     require_integrity(evidence.schema_version == COMPILED_PROBLEM_EVIDENCE_VERSION)?;
     require_integrity(
         evidence.field("problem.identity") == Some(problem.problem_identity.as_str())
@@ -3898,7 +4010,11 @@ fn validate_problem_evidence(problem: &ProblemProjection) -> Result<(), ReceiptE
                 == Some(problem.numerics_identity.as_str())
             && evidence.field("geometry.identity") == Some(problem.geometry_identity.as_str())
             && evidence.field("products.graph.identity")
-                == Some(problem.product_graph_identity.as_str())
+                == Some(problem.product_graph.identity.as_str())
+            && evidence
+                .field("products.graph.schema_version")
+                .and_then(|value| value.parse::<u32>().ok())
+                == Some(problem.product_graph.schema_version)
             && evidence.field("observation.snapshot.identity")
                 == Some(problem.observation_identity.as_str()),
     )?;
@@ -3925,12 +4041,12 @@ fn validate_problem_evidence(problem: &ProblemProjection) -> Result<(), ReceiptE
 }
 
 fn validate_plan_projection(
-    problem: &ProblemProjection,
+    product_graph: &ProductGraphProjection,
     plan: &PlanProjection,
     revision: u64,
 ) -> Result<(), ReceiptError> {
     require_integrity(is_digest(&plan.product_graph_identity))?;
-    let publication_members = projected_publication_members(&problem.effective)?;
+    let publication_members = &product_graph.publication_member_ordinals;
     let node_ids = plan
         .nodes
         .iter()
@@ -4144,8 +4260,8 @@ fn validate_plan_projection(
             PublicationParticipantProjection::Product { node_ordinal, .. } => Some(*node_ordinal),
             PublicationParticipantProjection::ModelData { .. } => None,
         })
-        .collect::<BTreeSet<_>>();
-    require_integrity(product_participants == publication_members)?;
+        .collect::<Vec<_>>();
+    require_integrity(product_participants.as_slice() == publication_members)?;
     for layout in &plan.publication_layouts {
         let bounds = &layout.resource_bounds;
         let participant_is_valid = match &layout.participant {
@@ -4155,7 +4271,7 @@ fn validate_plan_projection(
             } => {
                 is_digest(graph_identity)
                     && graph_identity == &plan.product_graph_identity
-                    && publication_members.contains(node_ordinal)
+                    && publication_members.binary_search(node_ordinal).is_ok()
             }
             PublicationParticipantProjection::ModelData {
                 measurement_set_identity,
@@ -4212,65 +4328,6 @@ fn validate_plan_projection(
     }
     require_integrity(plan.prediction.confidence_ppm <= 1_000_000)?;
     Ok(())
-}
-
-fn projected_publication_members(
-    evidence: &CompiledProblemEvidence,
-) -> Result<BTreeSet<usize>, ReceiptError> {
-    const MEMBER_PREFIX: &str = "products.graph.publication.members.";
-    const NODE_PREFIX: &str = "products.graph.nodes.";
-    const NODE_SUFFIX: &str = ".ordinal";
-
-    let mut indexed_members = evidence
-        .fields
-        .iter()
-        .filter_map(|(path, value)| path.strip_prefix(MEMBER_PREFIX).map(|index| (index, value)))
-        .map(|(index, value)| {
-            Ok::<_, ReceiptError>((
-                index
-                    .parse::<usize>()
-                    .map_err(|_| ReceiptError::IntegrityMismatch)?,
-                value
-                    .parse::<usize>()
-                    .map_err(|_| ReceiptError::IntegrityMismatch)?,
-            ))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    indexed_members.sort_unstable_by_key(|(index, _)| *index);
-    require_integrity(
-        indexed_members
-            .iter()
-            .enumerate()
-            .all(|(expected, (index, _))| expected == *index),
-    )?;
-    let member_count = indexed_members.len();
-    let members = indexed_members
-        .into_iter()
-        .map(|(_, ordinal)| ordinal)
-        .collect::<BTreeSet<_>>();
-    require_integrity(members.len() == member_count)?;
-
-    let graph_nodes = evidence
-        .fields
-        .iter()
-        .filter_map(|(path, value)| {
-            path.strip_prefix(NODE_PREFIX)
-                .and_then(|path| path.strip_suffix(NODE_SUFFIX))
-                .map(|ordinal| (ordinal, value))
-        })
-        .map(|(path_ordinal, value_ordinal)| {
-            let path_ordinal = path_ordinal
-                .parse::<usize>()
-                .map_err(|_| ReceiptError::IntegrityMismatch)?;
-            let value_ordinal = value_ordinal
-                .parse::<usize>()
-                .map_err(|_| ReceiptError::IntegrityMismatch)?;
-            require_integrity(path_ordinal == value_ordinal)?;
-            Ok(path_ordinal)
-        })
-        .collect::<Result<BTreeSet<_>, _>>()?;
-    require_integrity(members.iter().all(|member| graph_nodes.contains(member)))?;
-    Ok(members)
 }
 
 fn validate_resource_policy_projection(

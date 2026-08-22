@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "contract_revision": 9,
+  "contract_revision": 10,
   "programme_issue": 486,
   "owner_issue": 487,
   "status_values": ["Native", "LegacyWholeRun", "TemporarilyUnavailable"],

@@ -4,13 +4,15 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
     fs, io,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
+
+use sha2::{Digest, Sha256};
 
 use casa_imaging_model::{
     AxisOrder, CentreLaws, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
@@ -78,6 +80,143 @@ fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
 mod common;
 
 use common::{identity, problem_inputs};
+
+fn only_receipt_path(root: &Path) -> PathBuf {
+    let mut entries = fs::read_dir(root)
+        .expect("receipt directory listing")
+        .map(|entry| entry.expect("receipt entry").path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        });
+    let path = entries.next().expect("one persisted receipt");
+    assert!(
+        entries.next().is_none(),
+        "fixture persists exactly one receipt"
+    );
+    path
+}
+
+fn compact_json(value: &str) -> String {
+    let mut compact = String::with_capacity(value.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    for character in value.chars() {
+        if in_string {
+            compact.push(character);
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+        } else if character == '"' {
+            in_string = true;
+            compact.push(character);
+        } else if !character.is_whitespace() {
+            compact.push(character);
+        }
+    }
+    assert!(!in_string && !escaped, "complete JSON string");
+    compact
+}
+
+fn receipt_payload(document: &str) -> &str {
+    let marker = "\"receipt\":";
+    let marker_start = document.find(marker).expect("receipt payload field");
+    let start = document[marker_start + marker.len()..]
+        .find('{')
+        .map(|offset| marker_start + marker.len() + offset)
+        .expect("receipt payload object");
+    let mut depth = 0_usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (offset, character) in document[start..].char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match character {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &document[start..=start + offset];
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("complete receipt payload object")
+}
+
+fn payload_sha256(document: &str) -> String {
+    let payload = compact_json(receipt_payload(document));
+    Sha256::digest(payload.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn with_current_payload_checksum(mut document: String) -> String {
+    let digest = payload_sha256(&document);
+    let marker = "\"payload_sha256\": \"";
+    let start = document.find(marker).expect("payload checksum") + marker.len();
+    let end = start + 64;
+    assert_eq!(&document[end..end + 1], "\"");
+    document.replace_range(start..end, &digest);
+    document
+}
+
+fn with_usize_array(mut document: String, field: &str, values: &[usize]) -> String {
+    let marker = format!("\"{field}\": [");
+    let start = document.find(&marker).expect("typed projection field") + marker.len();
+    let end = document[start..]
+        .find(']')
+        .map(|offset| start + offset)
+        .expect("typed projection array");
+    let replacement = values
+        .iter()
+        .map(usize::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    document.replace_range(start..end, &replacement);
+    with_current_payload_checksum(document)
+}
+
+fn with_forged_product_graph_identity(mut document: String) -> String {
+    let graph_marker = "\"product_graph\": {";
+    let graph_start = document
+        .find(graph_marker)
+        .expect("typed Product Graph projection");
+    let identity_marker = "\"identity\": \"";
+    let start = document[graph_start..]
+        .find(identity_marker)
+        .map(|offset| graph_start + offset + identity_marker.len())
+        .expect("typed Product Graph identity");
+    let end = start + 64;
+    document.replace_range(start..end, &"f".repeat(64));
+    with_current_payload_checksum(document)
+}
+
+fn with_forged_audit_field(mut document: String, field: &str, value: &str) -> String {
+    let marker = format!("\"{field}\": \"");
+    let start = document.find(&marker).expect("Product Graph audit field") + marker.len();
+    let end = document[start..]
+        .find('"')
+        .map(|offset| start + offset)
+        .expect("Product Graph audit value");
+    document.replace_range(start..end, value);
+    with_current_payload_checksum(document)
+}
 
 fn geometry(reference_pixel: f64) -> GeometryInput {
     let direction = DirectionCoordinateSpec::new(
@@ -3687,7 +3826,7 @@ fn receipt_finalize_failure_after_publish_returns_success_and_reopens_prepared_e
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
     assert!(publication_launched.load(Ordering::SeqCst));
     assert_eq!(visible_generation.load(Ordering::SeqCst), 1);
-    assert_eq!(receipt.schema_version(), 6);
+    assert_eq!(receipt.schema_version(), 7);
     assert_eq!(receipt.status(), ReceiptStatus::PublicationPrepared);
     for layout in execution_plan.publication_layouts().entries() {
         assert_eq!(
@@ -4191,7 +4330,7 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         .expect("reopen durable receipt");
 
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
-    assert_eq!(receipt.schema_version(), 6);
+    assert_eq!(receipt.schema_version(), 7);
     assert_eq!(receipt.route_matrix_schema_version(), 1);
     assert_eq!(receipt.route_matrix_contract_revision(), 1);
     assert_eq!(receipt.route_disposition(), "native");
@@ -4266,6 +4405,117 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         receipt.node_status(&WorkNodeId::new("execute")),
         Some(ReceiptStatus::Completed)
     );
+}
+
+#[test]
+fn receipt_rejects_checksum_valid_product_graph_projection_and_audit_forgery() {
+    let problem = compile(request_with_products(
+        1,
+        geometry(255.0),
+        vec![ProductKind::Psf, ProductKind::Residual],
+    ))
+    .expect("two-product logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |problem, _| Ok::<_, ()>(physical_work_for_problem(problem, 6)),
+    )
+    .expect("physical planning");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let registry = test_registry(3, 6, None);
+    let directory = tempfile::tempdir().expect("receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
+    )
+    .expect("receipt store");
+    let provenance = execution_provenance(
+        casa_imaging_runtime::ExecutionAttemptId::from_sha256([85; 32]),
+        BuildIdentity::from_sha256([86; 32]),
+    );
+    let mut controller = RunToCompletion;
+
+    run_receipted(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+        receipts.bind(provenance.clone()),
+    )
+    .expect("receipted execution");
+    let path = only_receipt_path(directory.path());
+    let original = fs::read_to_string(&path).expect("serialized receipt");
+    let checksum_marker = "\"payload_sha256\": \"";
+    let checksum_start =
+        original.find(checksum_marker).expect("payload checksum") + checksum_marker.len();
+    assert_eq!(
+        &original[checksum_start..checksum_start + 64],
+        payload_sha256(&original),
+        "the raw-test checksum reproduces receipt canonicalization"
+    );
+    let reopened = receipts
+        .open(provenance.attempt_id())
+        .expect("valid receipt");
+    assert_eq!(
+        reopened.product_graph_schema_version(),
+        problem.product_graph().schema_version()
+    );
+    assert_eq!(reopened.product_graph_node_ordinals(), &[0, 1]);
+    assert_eq!(
+        reopened.product_graph_publication_member_ordinals(),
+        &[0, 1]
+    );
+
+    let cases = [
+        (
+            "forged graph identity",
+            with_forged_product_graph_identity(original.clone()),
+        ),
+        (
+            "missing publication member",
+            with_usize_array(original.clone(), "publication_member_ordinals", &[0]),
+        ),
+        (
+            "extra unknown publication member",
+            with_usize_array(original.clone(), "publication_member_ordinals", &[0, 1, 2]),
+        ),
+        (
+            "duplicate publication member",
+            with_usize_array(original.clone(), "publication_member_ordinals", &[0, 0, 1]),
+        ),
+        (
+            "reordered publication members",
+            with_usize_array(original.clone(), "publication_member_ordinals", &[1, 0]),
+        ),
+        (
+            "audit node ordinal contradicts the typed projection",
+            with_forged_audit_field(original.clone(), "products.graph.nodes.0.ordinal", "1"),
+        ),
+        (
+            "audit publication member contradicts the typed projection",
+            with_forged_audit_field(
+                original.clone(),
+                "products.graph.publication.members.0",
+                "1",
+            ),
+        ),
+    ];
+    for (case, document) in cases {
+        fs::write(&path, document).expect("rewrite checksum-valid receipt");
+        assert!(
+            matches!(
+                receipts.open(provenance.attempt_id()),
+                Err(casa_imaging_runtime::ReceiptError::IntegrityMismatch)
+            ),
+            "{case} must fail the typed Product Graph projection"
+        );
+    }
 }
 
 #[test]
@@ -4344,6 +4594,25 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
     .expect("receipted execution");
     let reopened = receipts.open(provenance.attempt_id()).expect("receipt");
     let projected = reopened.compiled_problem_evidence();
+    assert_eq!(
+        reopened.product_graph_node_ordinals(),
+        problem
+            .product_graph()
+            .nodes()
+            .iter()
+            .map(|node| node.node_id().ordinal())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        reopened.product_graph_publication_member_ordinals(),
+        problem
+            .product_graph()
+            .publication()
+            .members()
+            .iter()
+            .map(|member| member.ordinal())
+            .collect::<Vec<_>>()
+    );
     let source = &problem.inputs().observation_snapshot().sources()[0];
     let data_generation = source
         .generations()
