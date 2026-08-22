@@ -31,20 +31,22 @@ mod common;
 
 use super::{
     DispatchError, ImagingRouter, LegacyWholeRunEnginePort, MIGRATION_MATRIX_JSON,
-    MigrationRowKind, NativeEnginePort, RequestDisposition, RouteRecord, parse_matrix,
+    MigrationRowKind, NativeEnginePort, ProviderRequestCompiler, RequestDisposition, RouteRecord,
+    parse_matrix,
 };
 
-const STANDARD_DIRTY_ROWS: [&str; 7] = [
+const STANDARD_DIRTY_ROWS: [&str; 8] = [
     "capability.compiled-problem",
     "capability.continuum-mfs",
     "capability.ms-selection",
     "capability.observation-transaction",
     "capability.standard-gridder",
     "capability.stokes-i",
+    "frontend.task-provider",
     "product.psf",
 ];
 
-const MTMFS_ROWS: [&str; 9] = [
+const MTMFS_ROWS: [&str; 10] = [
     "capability.compiled-problem",
     "capability.major-minor-cycles",
     "capability.ms-selection",
@@ -52,6 +54,7 @@ const MTMFS_ROWS: [&str; 9] = [
     "capability.observation-transaction",
     "capability.standard-gridder",
     "capability.stokes-i",
+    "frontend.task-provider",
     "product.taylor-terms",
     "solver.mtmfs",
 ];
@@ -114,7 +117,7 @@ fn selected_engine_receives_the_exact_route_record() {
 
     assert_eq!(outcome.output(), outcome.route());
     assert_eq!(outcome.output().matrix_schema_version(), 1);
-    assert_eq!(outcome.output().matrix_contract_revision(), 9);
+    assert_eq!(outcome.output().matrix_contract_revision(), 10);
     assert_eq!(outcome.output().disposition(), RequestDisposition::Native);
     assert_eq!(
         outcome
@@ -276,6 +279,25 @@ fn mtmfs_request_derives_its_solver_and_major_minor_cycle_rows() {
 }
 
 #[test]
+fn provider_compiler_returns_one_semantic_identity_and_typed_matrix_diagnostics() {
+    let compiled = ProviderRequestCompiler::new()
+        .compile(standard_dirty_request())
+        .expect("compile provider request");
+
+    assert_eq!(compiled.semantic_id(), compiled.problem().problem_id());
+    let provider = compiled
+        .route()
+        .requirements()
+        .iter()
+        .find(|requirement| requirement.id() == "frontend.task-provider")
+        .expect("typed provider requirement");
+    assert_eq!(provider.kind(), MigrationRowKind::Frontend);
+    assert_eq!(provider.status(), RequestDisposition::Native);
+    assert_eq!(provider.acceptance_contract(), "surface-roundtrip-v1");
+    assert!(provider.obligation().is_none());
+}
+
+#[test]
 fn authoritative_matrix_binding_drives_product_requirement() {
     let routed = router(
         matrix_with_product_binding("Psf", "product.residual"),
@@ -299,6 +321,7 @@ fn authoritative_matrix_binding_drives_product_requirement() {
             "capability.observation-transaction",
             "capability.standard-gridder",
             "capability.stokes-i",
+            "frontend.task-provider",
             "product.residual",
         ]
     );
@@ -315,7 +338,7 @@ fn matrix_contract_revision_is_a_positive_u32() {
     .unwrap();
 
     let revision: u32 = routed.route().matrix_contract_revision();
-    assert_eq!(revision, 9);
+    assert_eq!(revision, 10);
 
     for invalid in [serde_json::json!(0), serde_json::json!("5")] {
         let mut matrix = serde_json::from_str::<serde_json::Value>(MIGRATION_MATRIX_JSON).unwrap();

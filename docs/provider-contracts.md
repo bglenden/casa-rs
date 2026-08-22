@@ -158,6 +158,14 @@ should contain at least:
 The semantic layer is authoritative. Annotations and projections may add
 presentation or mapping metadata, but they must not change semantic meaning.
 
+The `imager` task surface additionally names the landed
+`ImagingRequest` version and its sole provider compiler. That projection does
+not copy scientific defaults, capability rules, or migration decisions into
+the provider bundle. `casa-imaging-model` remains the authority for logical
+validation and normalized problem identity; `casa-imaging-router` attaches the
+typed migration-matrix disposition and evidence. Later imaging tickets extend
+the catalog only when their stable contracts land.
+
 Task and session providers use the shared
 `ProviderContractEnvelope<Semantic, Schemas>` implementation in
 `casa-provider-contracts`. The envelope owns protocol identity, semantic

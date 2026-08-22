@@ -10,9 +10,9 @@ use std::{
 };
 
 use casa_imaging_model::{
-    CompileProblemError, CompiledProblem, ImageDomainRole, ImagingRequest, InstrumentResponse,
-    ModelStateIdentity, PhaseCentreLaw, PolarizationCoordinate, ProductKind, ReconstructionBasis,
-    RequiredCapability, SpectralSampling, compile,
+    CompileProblemError, CompiledProblem, CompiledProblemId, ImageDomainRole, ImagingRequest,
+    InstrumentResponse, ModelStateIdentity, PhaseCentreLaw, PolarizationCoordinate, ProductKind,
+    ReconstructionBasis, RequiredCapability, SpectralSampling, compile,
 };
 use serde::Deserialize;
 
@@ -103,6 +103,124 @@ impl RouteRecord {
     #[must_use]
     pub fn requirements(&self) -> &[RouteRequirement] {
         &self.requirements
+    }
+}
+
+/// One canonical provider request after logical compilation and migration classification.
+///
+/// The problem identity is the normalized semantic request identity. The route carries the
+/// authoritative typed reason for every currently native, legacy, or unavailable requirement;
+/// provider surfaces do not duplicate those decisions.
+#[derive(Debug)]
+pub struct CompiledProviderRequest {
+    problem: CompiledProblem,
+    route: RouteRecord,
+}
+
+impl CompiledProviderRequest {
+    /// Return the normalized semantic request identity.
+    #[must_use]
+    pub const fn semantic_id(&self) -> CompiledProblemId {
+        self.problem.problem_id()
+    }
+
+    /// Return the immutable compiled logical problem.
+    #[must_use]
+    pub const fn problem(&self) -> &CompiledProblem {
+        &self.problem
+    }
+
+    /// Return the authoritative migration classification and diagnostics.
+    #[must_use]
+    pub const fn route(&self) -> &RouteRecord {
+        &self.route
+    }
+
+    /// Consume the projection without losing either authority record.
+    #[must_use]
+    pub fn into_parts(self) -> (CompiledProblem, RouteRecord) {
+        (self.problem, self.route)
+    }
+}
+
+/// Failure while resolving one provider request into the canonical native contract.
+#[derive(Debug)]
+pub enum ProviderRequestCompileError {
+    /// The canonical logical compiler rejected the request.
+    Compile(CompileProblemError),
+    /// The authoritative migration matrix was incomplete or invalid.
+    InvalidMatrix(String),
+}
+
+impl fmt::Display for ProviderRequestCompileError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Compile(error) => {
+                write!(formatter, "imaging request compilation failed: {error}")
+            }
+            Self::InvalidMatrix(error) => {
+                write!(formatter, "imaging migration matrix is invalid: {error}")
+            }
+        }
+    }
+}
+
+impl Error for ProviderRequestCompileError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Compile(error) => Some(error),
+            Self::InvalidMatrix(_) => None,
+        }
+    }
+}
+
+/// Sole catalog-backed resolver used by imaging task providers.
+pub struct ProviderRequestCompiler {
+    #[cfg(test)]
+    matrix: Option<MatrixCatalog>,
+}
+
+impl ProviderRequestCompiler {
+    /// Construct the resolver over the built-in authoritative migration matrix.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            #[cfg(test)]
+            matrix: None,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_matrix_json(matrix_json: String) -> Self {
+        Self {
+            matrix: Some(parse_matrix(&matrix_json).expect("test migration matrix must be valid")),
+        }
+    }
+
+    /// Compile one canonical request and attach exact matrix diagnostics.
+    pub fn compile(
+        &self,
+        request: ImagingRequest,
+    ) -> Result<CompiledProviderRequest, ProviderRequestCompileError> {
+        let problem = compile(request).map_err(ProviderRequestCompileError::Compile)?;
+        let route = self
+            .route(&problem)
+            .map_err(ProviderRequestCompileError::InvalidMatrix)?;
+        Ok(CompiledProviderRequest { problem, route })
+    }
+
+    fn route(&self, problem: &CompiledProblem) -> Result<RouteRecord, String> {
+        #[cfg(test)]
+        if let Some(catalog) = &self.matrix {
+            return route_with_catalog(problem, catalog);
+        }
+        route(problem)
+    }
+}
+
+impl Default for ProviderRequestCompiler {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -371,8 +489,7 @@ impl<EngineError: Error + 'static> Error for DispatchError<EngineError> {
 pub struct ImagingRouter<Output, EngineError> {
     native: NativeEnginePort<Output, EngineError>,
     legacy: LegacyWholeRunEnginePort<Output, EngineError>,
-    #[cfg(test)]
-    matrix: Option<MatrixCatalog>,
+    compiler: ProviderRequestCompiler,
 }
 
 impl<Output, EngineError> ImagingRouter<Output, EngineError> {
@@ -385,8 +502,7 @@ impl<Output, EngineError> ImagingRouter<Output, EngineError> {
         Self {
             native,
             legacy,
-            #[cfg(test)]
-            matrix: None,
+            compiler: ProviderRequestCompiler::new(),
         }
     }
 
@@ -399,7 +515,7 @@ impl<Output, EngineError> ImagingRouter<Output, EngineError> {
         Self {
             native,
             legacy,
-            matrix: Some(parse_matrix(&matrix_json).expect("test migration matrix must be valid")),
+            compiler: ProviderRequestCompiler::with_matrix_json(matrix_json),
         }
     }
 
@@ -408,8 +524,16 @@ impl<Output, EngineError> ImagingRouter<Output, EngineError> {
         &self,
         request: ImagingRequest,
     ) -> Result<DispatchOutcome<Output>, DispatchError<EngineError>> {
-        let problem = compile(request).map_err(DispatchError::Compile)?;
-        let route = self.route(&problem).map_err(DispatchError::InvalidMatrix)?;
+        let compiled = self
+            .compiler
+            .compile(request)
+            .map_err(|error| match error {
+                ProviderRequestCompileError::Compile(error) => DispatchError::Compile(error),
+                ProviderRequestCompileError::InvalidMatrix(error) => {
+                    DispatchError::InvalidMatrix(error)
+                }
+            })?;
+        let (problem, route) = compiled.into_parts();
         match route.disposition {
             RequestDisposition::Native => match (self.native.run)(&problem, &route) {
                 Ok(output) => Ok(DispatchOutcome { route, output }),
@@ -423,14 +547,6 @@ impl<Output, EngineError> ImagingRouter<Output, EngineError> {
                 Err(DispatchError::TemporarilyUnavailable(route))
             }
         }
-    }
-
-    fn route(&self, problem: &CompiledProblem) -> Result<RouteRecord, String> {
-        #[cfg(test)]
-        if let Some(catalog) = &self.matrix {
-            return route_with_catalog(problem, catalog);
-        }
-        route(problem)
     }
 }
 
@@ -703,6 +819,7 @@ fn required_rows<'a>(
         "capability.compiled-problem",
         "capability.ms-selection",
         "capability.observation-transaction",
+        "frontend.task-provider",
     ]);
     if !problem
         .observation_transaction()

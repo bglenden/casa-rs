@@ -139,6 +139,12 @@ Additional constraints:
 The native interface has one `ImagingRequest` contract (version 2) and exactly
 one `compile` / `plan` / `run` sequence. `compile` validates and canonicalizes
 logical science, including immutable coordinate and image-domain geometry.
+The canonical `imager` provider surface projects this request version to
+`casa-imaging-router::ProviderRequestCompiler`. The compiler returns the
+`CompiledProblemId` as the normalized semantic request identity together with
+the exact typed migration-matrix route record. Provider code owns neither
+science validation nor capability routing, and later frontend tickets consume
+this projection without adding surface-local defaults.
 Compiled Geometry identity is derived only by `compile`; callers supply geometry
 laws, not an identity. Observation pointing records the selected MeasurementSet
 column and meaning plus timestamp, interpolation, extrapolation, and missing-row

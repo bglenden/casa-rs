@@ -75,9 +75,10 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use crate::{
-        CELL_CONCEPT_ID, IMSIZE_CONCEPT_ID, MigrationStep, OVERWRITE_CONCEPT_ID, ParameterRole,
-        ParameterType, ParameterValue, Predicate, ResourceKind, RunProductSource, RunSafetyClass,
-        SemanticRevision, SurfaceKind, SurfaceProductContract, ValueAdapter,
+        CELL_CONCEPT_ID, CanonicalRequestCompiler, CanonicalRequestContract, IMSIZE_CONCEPT_ID,
+        MigrationStep, OVERWRITE_CONCEPT_ID, ParameterRole, ParameterType, ParameterValue,
+        Predicate, ResourceKind, RunProductSource, RunSafetyClass, SemanticRevision, SurfaceKind,
+        SurfaceProductContract, ValueAdapter,
     };
 
     use super::*;
@@ -111,6 +112,29 @@ mod tests {
         assert!(ids.contains("imexplore"));
         assert!(ids.contains("tablebrowser"));
         assert!(!ids.contains("casars"));
+    }
+
+    #[test]
+    fn imager_alone_projects_the_landed_native_request_compiler() {
+        let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
+        for surface in &catalog.surfaces {
+            let projection = surface.execution().canonical_request;
+            if surface.id() == "imager" {
+                let projection = projection.expect("imager canonical request projection");
+                assert_eq!(projection.contract, CanonicalRequestContract::ImagingV2);
+                assert_eq!(
+                    projection.compiler,
+                    CanonicalRequestCompiler::ImagingProviderV1
+                );
+            } else {
+                assert_eq!(
+                    projection,
+                    None,
+                    "{} must not predeclare a request",
+                    surface.id()
+                );
+            }
+        }
     }
 
     #[test]
@@ -355,7 +379,7 @@ mod tests {
     fn imager_vlass_controls_share_one_catalog_owned_awproject_surface() {
         let catalog = builtin_surface_catalog().unwrap();
         let surface = catalog.surface("imager").unwrap();
-        assert_eq!(surface.contract_version(), 7);
+        assert_eq!(surface.contract_version(), 8);
         let memory_target = catalog
             .catalog
             .concepts

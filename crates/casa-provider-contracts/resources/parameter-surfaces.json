@@ -8221,7 +8221,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 7,
+      "contract_version": 8,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -8256,6 +8256,10 @@
               "probe_supported": true
             }
           ]
+        },
+        "canonical_request": {
+          "contract": "imaging_v2",
+          "compiler": "imaging_provider_v1"
         }
       },
       "safety_rules": [
@@ -12810,6 +12814,12 @@
           "changed_defaults": [
             "imaging_memory_pressure_policy"
           ]
+        },
+        {
+          "from_contract": 7,
+          "to_contract": 8,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },

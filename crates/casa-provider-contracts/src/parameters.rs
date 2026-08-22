@@ -803,6 +803,31 @@ pub enum SurfaceProductContract {
     },
 }
 
+/// Canonical native request contract selected by a provider surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CanonicalRequestContract {
+    /// Version 2 of `casa-imaging-model::ImagingRequest`.
+    ImagingV2,
+}
+
+/// Resolver that compiles a provider projection without owning science semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CanonicalRequestCompiler {
+    /// The migration router's canonical provider compiler and typed matrix diagnostics.
+    ImagingProviderV1,
+}
+
+/// Native request projection owned by one task provider surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CanonicalRequestProjection {
+    /// Sole native request contract targeted by this provider.
+    pub contract: CanonicalRequestContract,
+    /// Sole compiler that resolves the request and returns matrix diagnostics.
+    pub compiler: CanonicalRequestCompiler,
+}
+
 impl SurfaceProductContract {
     pub fn descriptors(&self) -> &[RunProductDescriptor] {
         match self {
@@ -824,6 +849,9 @@ pub struct SurfaceExecutionProjection {
     pub managed_output: Option<ManagedOutputContract>,
     #[serde(default)]
     pub products: SurfaceProductContract,
+    /// Optional native request projection. Absence means the surface has not transferred yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_request: Option<CanonicalRequestProjection>,
 }
 
 /// Fully projected provider invocation, including an optional private stdin
