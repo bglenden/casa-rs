@@ -3473,7 +3473,7 @@ fn validate_adaptations(
             {
                 validate_mandatory_claims(
                     &transition.to,
-                    nodes_remaining_after(nodes, boundary_node.as_ref()).into_iter(),
+                    nodes_remaining_after(nodes, boundary_node.as_ref()),
                 )?;
                 reachable_configurations.insert(transition.to.clone());
                 reachable_transitions.insert(transition.id.clone());
