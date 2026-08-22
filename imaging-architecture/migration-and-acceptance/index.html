@@ -1,0 +1,959 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Imaging migration and acceptance matrix - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#imaging-migration-and-acceptance-matrix" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Imaging migration and acceptance matrix
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scientific Workbench
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scientific Workbench
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scientific-notebooks-and-assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks, Tutorials, Python, and AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mac-native-gui-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-one-row-means" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What one row means
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#acceptance-contracts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acceptance contracts
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#transfer-ratchet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transfer ratchet
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#preserved-issue-and-evidence-crosswalk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Preserved issue and evidence crosswalk
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="imaging-migration-and-acceptance-matrix">Imaging migration and acceptance matrix<a class="headerlink" href="#imaging-migration-and-acceptance-matrix" title="Permanent link">&para;</a></h1>
+<p>Truth class: normative
+Last reality check: 2026-08-19
+Verification: <code>just arch-check</code></p>
+<p>The authoritative machine-readable inventory is
+<a href="https://github.com/bglenden/casa-rs/blob/main/resources/imaging-architecture/migration-matrix.json"><code>resources/imaging-architecture/migration-matrix.json</code></a>.
+It is owned by GitHub issue #487 under the #486 imaging-architecture programme.</p>
+<h2 id="what-one-row-means">What one row means<a class="headerlink" href="#what-one-row-means" title="Permanent link">&para;</a></h2>
+<p>Every current imaging capability, product, solver, frontend, and backend has
+exactly one stable row. A row records:</p>
+<ul>
+<li>its sole current production owner;</li>
+<li><code>Native</code>, <code>LegacyWholeRun</code>, or <code>TemporarilyUnavailable</code> disposition;</li>
+<li>exact evidence issues and baseline-manifest locators;</li>
+<li>one versioned Acceptance Contract;</li>
+<li>its destination ticket and transfer point;</li>
+<li>the deletion condition for the displaced implementation; and</li>
+<li>a Migration Obligation whenever it is not native.</li>
+</ul>
+<p>The matrix binds seventeen current Rust request, science, solver, product, and
+backend enums to rows, including <code>ProductKind</code>, both spectral-mode and
+deconvolver surfaces, <code>GridderRequest</code>, both cube-interpolation surfaces,
+<code>PolarizationCoordinate</code>, <code>StandardMfsBackend</code>, both FFT-backend surfaces, and
+the standard-MFS acceleration policy. The polarization map includes the XY,
+YX, RL, and LR cross-hands even while their execution routes are temporarily
+unavailable; backend maps keep automatic policy, fixed-tile, and each Metal
+family distinct. Additions, removals, and aliases therefore cannot silently
+redefine an accepted production surface.</p>
+<p>Every baseline locator resolves to repository content and is paired with a
+pinned SHA-256 digest in <code>baseline_manifest_digests</code>. Mutable issue URLs are
+not baseline evidence; issue-backed rows use exact committed snapshots with
+the issue title, body, URL, and source update timestamp. A baseline replacement
+therefore requires an explicit matrix revision and accepted digest update.</p>
+<p><code>LegacyWholeRun</code> is an ownership classification, not a compatibility promise.
+It permits the current production implementation to remain reachable only
+through <code>casa-imaging-router</code> once a frontend is migrated to the router. It
+never permits a native stage to call into legacy code or a failed native run to
+retry through legacy.</p>
+<p><code>casa-imaging-router</code> compiles each <code>ImagingRequest</code>, derives the required rows
+from the resulting immutable <code>CompiledProblem</code>, and records the matrix schema,
+contract revision, disposition, and complete evidence for each row. It then
+invokes exactly one sealed whole-run engine port. Enum-to-row bindings come
+directly from the matrix inventories already checked against their Rust enums;
+the router does not maintain a second binding table. <code>TemporarilyUnavailable</code>
+invokes neither port, and compile, matrix, native compile/plan/run, or selected
+legacy failures are terminal. Production code has no differential or
+stage-mixing entry point; test-only fake ports exercise both owners separately.</p>
+<h2 id="acceptance-contracts">Acceptance contracts<a class="headerlink" href="#acceptance-contracts" title="Permanent link">&para;</a></h2>
+<p>The matrix defines reusable contracts for scientific products, exact routing,
+solver trajectories, cross-surface request round trips, the immutable
+Compiled Problem foundation, and both the Resource Authority foundation and
+its eventual production integration. Scientific product contracts use a
+normalized-RMS ceiling of <code>0.001</code> only on declared valid support and only with
+a declared denominator.
+That scalar ceiling supplements rather than replaces exact topology, WCS,
+units, beam, sum-of-weights, flux, centroid, operator-law, and resource gates.</p>
+<p>Exact CLEAN component order is diagnostic rather than normative. The optional
+trajectory record may retain the first component-selection divergence, Major
+Cycle, location, scale, term, polarization, residual peak, threshold, and flux.</p>
+<h2 id="transfer-ratchet">Transfer ratchet<a class="headerlink" href="#transfer-ratchet" title="Permanent link">&para;</a></h2>
+<p>A row transfers to <code>Native</code> only when the same change:</p>
+<ol>
+<li>passes its referenced Acceptance Contract;</li>
+<li>updates the row, evidence, and contract revision;</li>
+<li>makes the displaced production route unreachable, or quarantines a helper
+   still required by another legacy row behind the legacy boundary; and</li>
+<li>leaves no runtime fallback or dual patch owner.</li>
+</ol>
+<p>Before transfer, corrective and performance changes land only in the row's
+current owner. After transfer, they land only in the native owner.</p>
+<p>T14/#500 is a boundary checkpoint, not a product-row transfer. The compiled
+measurement equation ends at an explicitly unnormalized normal state, while
+normalization, residual scaling, restoration, PB correction, blanking, and
+unit conversion are typed as Product Contract operations. <code>product.image</code> and
+<code>product.image-pbcor</code> therefore remain <code>LegacyWholeRun</code>: T13/#499 must land the
+Product Graph and atomic store, T39/#525 owns common-beam restoration, T47/#533
+owns PB/sensitivity and mosaic normalization algorithms, and T43/#529 owns
+wideband <code>product.alpha-pbcor</code> behavior. Their legacy writers are removed only
+under the transfer ratchet above.</p>
+<p>The architecture checker validates schema, the independently pinned logical
+graph, canonical inventories, complete Acceptance Contracts, complete binding
+row ledger, structured issue outcomes, content-pinned evidence locators,
+Migration Obligations, and source evidence. It binds the seventeen variant maps
+to their Rust enums, classifies every Cargo workspace package, requires native
+dependency sets to match exactly, pins <code>casa-imaging-router</code> as the sole owner
+of <code>ImagingRouter</code> and both whole-run engine ports, requires its direct matrix
+embedding, scans native science/runtime/router and Rust/Swift frontend roots for
+forbidden legacy/backend/device imports, ratchets the existing legacy
+Rust-frontend violations while rejecting additions, and permits only the 16
+exact frozen legacy edges plus three exact pre-existing transitional surface
+edges. Its mutation tests prove coordinated inventory and issue deletion, row
+reclassification, router relocation or duplication, matrix detachment,
+contract or graph weakening, unmapped packages, and forbidden logical,
+package, module, and Swift edges fail closed.</p>
+<p><code>capability.compiled-problem</code> is Native only for its backend-independent
+logical contract and stable identity; later observation and geometry tickets
+own concrete manifests. Likewise <code>backend.resource-authority-contract</code> is the
+Native topology/admission/lease foundation, while
+<code>backend.process-resource-authority</code> remains <code>TemporarilyUnavailable</code> until
+production schedulers acquire its leases and retain prediction-versus-actual
+execution receipts.</p>
+<h2 id="preserved-issue-and-evidence-crosswalk">Preserved issue and evidence crosswalk<a class="headerlink" href="#preserved-issue-and-evidence-crosswalk" title="Permanent link">&para;</a></h2>
+<p>The required crosswalk set and a structured per-issue outcome ledger are
+encoded in the matrix and pinned by the checker. They cannot disappear through
+a coordinated policy/matrix edit without failing <code>just arch-check</code>: #35, #40,</p>
+<h1 id="42-45-52-54-55-217-319-445-450-462-466-473-and-478">42, #45, #52, #54, #55, #217, #319, #445-#450, #462, #466, #473, and #478.<a class="headerlink" href="#42-45-52-54-55-217-319-445-450-462-466-473-and-478" title="Permanent link">&para;</a></h1>
+<ul>
+<li>
+<h1 id="319-is-the-closed-july-2026-consolidation-baseline-its-bounded-streaming">319 is the closed July 2026 consolidation baseline. Its bounded streaming,<a class="headerlink" href="#319-is-the-closed-july-2026-consolidation-baseline-its-bounded-streaming" title="Permanent link">&para;</a></h1>
+  request boundary, fixed-tile/Metal staging, evidence, and deletion ledger
+  remain valid; the #486 programme does not reopen it.</li>
+<li>
+<h1 id="35-42-45-54-and-55-preserve-cube-cycle-cubic-sampling-global">35, #42, #45, #54, and #55 preserve cube-cycle, cubic sampling, global<a class="headerlink" href="#35-42-45-54-and-55-preserve-cube-cycle-cubic-sampling-global" title="Permanent link">&para;</a></h1>
+  weighting, selection, and moving-source evidence.</li>
+<li>
+<h1 id="217-466-473-and-478-preserve-product-masks-bounded-cube-routing">217, #466, #473, and #478 preserve product masks, bounded cube routing,<a class="headerlink" href="#217-466-473-and-478-preserve-product-masks-bounded-cube-routing" title="Permanent link">&para;</a></h1>
+  reopenable products/beams, and multifield W-cube behavior.</li>
+<li>
+<h1 id="40-52-and-462-preserve-the-distinction-between-w-and-genuine-aw">40, #52, and #462 preserve the distinction between W and genuine AW<a class="headerlink" href="#40-52-and-462-preserve-the-distinction-between-w-and-genuine-aw" title="Permanent link">&para;</a></h1>
+  projection, typed convolution-function identity, cache interoperability, and
+  the deliberately deferred distributed-execution non-goal.</li>
+<li>
+<h1 id="445-450-preserve-the-full-vlass-correctness-bounded-input-acceleration">445-#450 preserve the full VLASS correctness, bounded-input, acceleration,<a class="headerlink" href="#445-450-preserve-the-full-vlass-correctness-bounded-input-acceleration" title="Permanent link">&para;</a></h1>
+  resource, and cross-surface commitments. Their durable checked-in locator is
+  <code>tools/perf/imager/evidence/imaging_performance_evidence_manifest.json</code>; the
+  full-data receipts named in <code>TESTING.md</code> remain milestone evidence.</li>
+</ul>
+<p>The matrix row is the binding locator. This document is the human orientation
+and must not be maintained as a second inventory.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

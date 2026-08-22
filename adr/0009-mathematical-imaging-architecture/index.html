@@ -1,0 +1,1154 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>ADR-0009: Mathematical imaging architecture - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#adr-0009-mathematical-imaging-architecture" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ADR-0009: Mathematical imaging architecture
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scientific Workbench
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scientific Workbench
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scientific-notebooks-and-assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks, Tutorials, Python, and AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mac-native-gui-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Decision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ownership-and-dependency-direction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ownership and dependency direction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compile-plan-and-run-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compile, plan, and run boundary
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#measurement-equation-and-weighting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measurement equation and weighting
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#geometry-and-polarization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Geometry and polarization
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#spectral-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Spectral semantics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#observation-snapshot-and-side-effects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observation snapshot and side effects
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#major-and-minor-cycles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Major and Minor Cycles
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#products" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Products
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Migration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternatives considered
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#enforcement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enforcement
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#drift-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Drift detection
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="adr-0009-mathematical-imaging-architecture">ADR-0009: Mathematical imaging architecture<a class="headerlink" href="#adr-0009-mathematical-imaging-architecture" title="Permanent link">&para;</a></h1>
+<p>Status: accepted
+Date: 2026-08-18
+Truth class: normative
+Supersedes:
+Superseded by:</p>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p>Imaging behavior is distributed across application dispatch, mode-specific
+preparation, imaging modules, solver controllers, and product writers.
+Continuum, spectral-line, mosaic, W/AW-projection, MT-MFS, CPU, and Metal paths
+repeat or reinterpret scientific choices. Geometry, measurement-equation terms,
+weighting, normalization, products, and migration ownership have no enforceable
+dependency boundaries. A new vocabulary alone would permit the same architecture
+to reappear behind new names.</p>
+<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
+<p>CASA-RS imaging follows one normative mathematical and ownership architecture.</p>
+<h3 id="ownership-and-dependency-direction">Ownership and dependency direction<a class="headerlink" href="#ownership-and-dependency-direction" title="Permanent link">&para;</a></h3>
+<p>Application and frontend layers may version-migrate and validate request syntax,
+select a Resource Policy, invoke compile/plan/run, and present results. They do
+not query devices, evaluate scientific capability/backend eligibility, select
+gridders or solvers, construct science caches, allocate imaging work buffers, or
+define or write scientific products.</p>
+<p>Scientific definitions depend on no frontend, execution backend, or device API.
+Observation and MeasurementSet interoperability are isolated behind observation
+interfaces. Reconstruction depends on Measurement Operator and Normal State
+contracts rather than casacore or concrete backends. Product semantics depend on
+scientific state rather than solvers or execution implementations. Backends
+implement declarative work-node and operator interfaces and do not own modes,
+coordinates, weighting, normalization, or products.</p>
+<p>The sole whole-run legacy adapter is a leaf reachable only from the migration
+router. Native modules do not import the adapter or legacy-owned modules. CI
+enforces the permitted crate/module graph and rejects forbidden edges.</p>
+<h3 id="compile-plan-and-run-boundary">Compile, plan, and run boundary<a class="headerlink" href="#compile-plan-and-run-boundary" title="Permanent link">&para;</a></h3>
+<p><code>compile(request)</code> produces an immutable Compiled Problem containing logical
+science, an Observation Snapshot manifest, reference-data identities, required
+capabilities, coordinate and reconstruction contracts, measurement-equation and
+weighting contracts, a Numerics Contract, and a Product Contract. It contains no
+backend-specific prepared operator or resource allocation.</p>
+<p><code>plan(problem, resource_policy)</code> produces an immutable Execution Plan bound to
+the exact problem and input identities. ADR-0010 defines its physical work and
+resource contract.</p>
+<p><code>run(problem, plan)</code> validates the bindings and executes only the plan. It does
+not silently recompile, perform capability routing, choose an unlisted backend,
+or fall back to legacy.</p>
+<h3 id="measurement-equation-and-weighting">Measurement equation and weighting<a class="headerlink" href="#measurement-equation-and-weighting" title="Permanent link">&para;</a></h3>
+<p>Let X be the declared model-coefficient space and D the selected unweighted
+visibility-sample space. The complete logical measurement operator is A: X -&gt; D.
+A* is its adjoint under explicitly declared inner products. W is the
+positive-semidefinite data metric containing flags, input weights, tapering, and
+globally derived uniform or Briggs density weights.</p>
+<p>The authoritative normal right-hand side is b = A<em> W d. For model x, the
+authoritative normal residual is g(x) = A</em> W (d - A x), and the logical normal
+operator is H = A* W A.</p>
+<p>Any phase transformation, spectral sampling, polarization or Mueller mapping,
+channel integration, or direction-dependent response that affects both
+prediction and imaging belongs to a paired operator or explicitly paired
+composition. Data-only interpolation may not bypass the adjoint contract.</p>
+<p>Published normalization, PB correction, sensitivity division, residual scaling,
+restoring-beam convolution, blanking, and unit conversion belong to the Product
+Contract and its normalization rules. They are not silently folded into a
+backend adjoint.</p>
+<h3 id="geometry-and-polarization">Geometry and polarization<a class="headerlink" href="#geometry-and-polarization" title="Permanent link">&para;</a></h3>
+<p>Compiled Geometry owns coordinate frames, image-domain charts, requested output
+coordinates, user-visible facet and outlier definitions, and deterministic
+transform specifications. It does not own sample-sized UVW, frequency, phase, or
+pointing arrays. Selected Observation streams evaluate per-sample coordinates
+from the compiled specifications.</p>
+<p>Facet batching, tiling, halo sizing, and device partitioning are execution.
+W-, AW-, and facet convolution kernels are Measurement Operator
+implementations. Requested polarization coordinates belong to reconstruction;
+feed/correlation basis, parallactic-angle behavior, and Mueller response belong
+to the measurement equation and instrument response.</p>
+<h3 id="spectral-semantics">Spectral semantics<a class="headerlink" href="#spectral-semantics" title="Permanent link">&para;</a></h3>
+<p>Continuum and line share reconstruction, Measurement Operator, Normal State,
+product, and execution interfaces. Four distinct contracts define spectral
+behavior:</p>
+<ul>
+<li>Spectral Coordinate Law defines native/output frames, rest frequency,
+  velocity convention, epoch/direction/ephemeris dependencies, channel
+  boundaries, and output WCS.</li>
+<li>Spectral Sampling Operator defines paired channel integration or
+  interpolation, coverage, flag/weight propagation, edge behavior, and the
+  declared treatment of induced inter-channel covariance.</li>
+<li>Reconstruction Basis defines constant, Taylor, channel-local, or other model
+  coefficient functions.</li>
+<li>Spectral Coupling Policy defines whether channels or basis blocks are
+  independent, sequentially transformed, jointly reconstructed, regularized,
+  or coupled through shared products such as a common restoring beam.</li>
+</ul>
+<p>A cube uses a channel-local Reconstruction Basis but is not defined by that
+basis and is not an application loop around a continuum imager. Sequential
+continuum fitting/subtraction is an explicit visibility transform with fit
+channels, weights, model, provenance, and output-weight semantics. Joint
+continuum-plus-line reconstruction is a different capability requiring a block
+normal operator with continuum-line cross terms and a separately accepted
+scientific decision.</p>
+<h3 id="observation-snapshot-and-side-effects">Observation snapshot and side effects<a class="headerlink" href="#observation-snapshot-and-side-effects" title="Permanent link">&para;</a></h3>
+<p>Selected Observation is evaluated against an immutable logical Observation
+Snapshot. The snapshot records source-table and selected-column consistency
+identities, exact row/channel/correlation selection semantics, relevant metadata
+generations, reference-data and ephemeris identities, and input-model identities.
+Bulk samples remain bounded streams; snapshot does not mean materialization.</p>
+<p>Read and write sets are explicit. Execution detects disallowed mutation of
+selected data, flags, weights, or metadata before consuming mixed generations.
+Scientific products and optional model-column writes use staging and commit
+atomically only after final complete-data reconciliation and all required Product
+Contract nodes succeed. Cancellation, input mutation, numerical failure,
+resource failure, or output failure leaves neither partially published products
+nor a partially committed model column.</p>
+<h3 id="major-and-minor-cycles">Major and Minor Cycles<a class="headerlink" href="#major-and-minor-cycles" title="Permanent link">&para;</a></h3>
+<p>A Major Cycle performs complete-data reconciliation over every selected sample
+using the logical operator and one frozen weighting generation. Complete-data
+excludes Minor Cycle approximations but does not imply bitwise identity, full
+materialization, one resident grid, or a shift-invariant PSF.</p>
+<p>A Normal State Generation identifies the Observation Snapshot, model generation,
+weighting generation, normal right-hand side, normal-operator or PSF
+approximation, sensitivity and sum-weight state, valid support, Numerics
+Contract, and provenance. It may be partitioned, streamed, tiled, sparse,
+manifest-based, or operator-backed.</p>
+<p>A Minor Cycle consumes an immutable Minor Cycle View recording the approximation
+identifier, valid domain, error or staleness bound, cycle threshold, and maximum
+admissible update. It returns a Model Delta and Solver Evidence and stops before
+violating that envelope. A final Major Cycle is mandatory before restoration and
+publication.</p>
+<h3 id="products">Products<a class="headerlink" href="#products" title="Permanent link">&para;</a></h3>
+<p>A Product Contract and Product Graph own required/optional products,
+authoritative source generations, WCS and axes, units and normalization,
+per-plane/common-beam policy, residual scaling and restoration, PB/sensitivity
+correction, blanking and validity, cross-product dependencies, output schema,
+and atomic publication. Backends may provide primitive transforms but may not
+define the meaning of image, residual, PSF, alpha, beam, mask, sensitivity, or
+PB-corrected products.</p>
+<h3 id="migration">Migration<a class="headerlink" href="#migration" title="Permanent link">&para;</a></h3>
+<p>The authoritative migration matrix classifies each supported request capability
+as Native, LegacyWholeRun, or TemporarilyUnavailable. Routing occurs once before
+planning and is recorded in the request disposition and receipt. A native
+compile, plan, or execution failure is never retried through legacy. Native
+execution never delegates a stage to legacy, and a mixed request remains wholly
+legacy until all required capabilities are native.</p>
+<p>Migration Obligations are typed and executable. Each records the capability key,
+current owner, reason, authoritative issue/evidence, Acceptance Contract,
+destination ticket, transfer milestone, and deletion condition. A capability
+transfers only when its native Acceptance Contract passes and the same merge
+makes the legacy route unreachable. Helpers still needed by other legacy
+capabilities are quarantined behind the legacy dependency boundary. A test-only
+differential harness may invoke both engines but is not production routing.</p>
+<p>Before transfer, corrective and performance work lands only in the legacy owner;
+after transfer it lands only in the native owner. Dual production ownership and
+dual patching are prohibited.</p>
+<h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
+<p>Positive:
+- code and verification follow the normal-equation and cycle mathematics
+- geometry, spectral sampling, reconstruction, normalization, and execution
+  have distinct enforceable owners
+- continuum and line share infrastructure without claiming false semantic
+  equivalence
+- products and MeasurementSet side effects become atomic and generation-safe
+- migrations have a same-merge ownership and deletion ratchet</p>
+<p>Negative:
+- capability may contract temporarily during migration
+- broad internal APIs and dependency edges will change
+- observation consistency and output transactions require new infrastructure
+- every solver and backend must satisfy explicit science and product contracts</p>
+<p>Neutral / tradeoffs:
+- exact CLEAN component order and bitwise pixels are not preserved when the
+  versioned Acceptance Contract remains satisfied
+- the two proposed architecture ADRs contain several tightly coupled normative
+  sections rather than creating an ADR for each vocabulary term</p>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Preserve mode-oriented runners and share utilities.</li>
+<li>Translate LibRA/CASA C++ class and inheritance families directly.</li>
+<li>Build one broad imaging-run object owning science, resources, solvers, and products.</li>
+<li>Treat continuum, line, mosaic, and projections as independent top-level modes.</li>
+<li>Let a channel-local basis alone define spectral-line semantics.</li>
+<li>Allow capability transfer without deleting or quarantining the legacy route.</li>
+</ol>
+<h2 id="enforcement">Enforcement<a class="headerlink" href="#enforcement" title="Permanent link">&para;</a></h2>
+<p>This decision is enforced by:
+- tests: weighted-adjoint and linearity laws, spectral identity/nonidentity
+  cases, cycle invariants, mutation/cancellation rollback, product-generation
+  consistency, differential evidence, and versioned Acceptance Contracts
+- lint/import/dependency rules: CI rejects forbidden frontend, backend, native,
+  legacy, observation, reconstruction, and product dependencies
+- CI checks: the migration matrix and obligations remain executable; transferred
+  routes are unreachable; products/model-column writes are atomic
+- review trigger: stop before adding a second public run interface, a per-stage
+  legacy path, backend-owned science/product semantics, or unpaired sampling
+- none / guidance only:</p>
+<h2 id="drift-detection">Drift detection<a class="headerlink" href="#drift-detection" title="Permanent link">&para;</a></h2>
+<p>Suspect drift if:
+- a frontend or backend evaluates a science mode or writes a scientific product
+- Geometry owns sample-sized arrays or execution tiling
+- spectral interpolation is not represented in prediction and adjoint paths
+- a Minor Cycle mutates authoritative residual state or exceeds its view envelope
+- a capability can silently retry through legacy
+- a solver or backend defines normalization, restoration, or output semantics</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
