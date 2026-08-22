@@ -150,16 +150,41 @@ MeasurementSet field/time/UV/baseline/scan/observation/intent/array predicate,
 SPW/DDID/channel selection, correlation coordinate, selected data/flag/weight
 column, coordinate and metadata generation, independent optional `MODEL_DATA`
 state, consistency token, reference-data identity, and input-model identity.
-Selected MAIN rows remain a count plus an ordered-row digest; visibility
-samples, row arrays, chunks, and execution order are never retained. The
-snapshot is the storage owner's logical-manifest commitment, not an intrinsic
-digest of MeasurementSet bytes. Its identity is independent of source location
-and request order, while a separate provenance identity retains both. T17/#503
-adds a distinct content-derived Selected Observation generation from the
-actual canonical bounded sample stream and binds it back to the snapshot,
-access capability, and execution attempt; equal content never aliases the
-logical source commitment. Current legacy adapters still resolve selection
-expressions and evaluate rows; T17 owns their bounded transfer and deletion.
+Selected MAIN rows retain source and selected counts, the exact used-DDID set,
+the canonical ordered `(physical row, DATA_DESC_ID)` manifest, and its
+content-derived identity. Visibility samples, stored MAIN facts, content
+blocks, and execution order remain absent. The exact manifest lets retained
+access seek directly to sparse selected rows without reading the intervening
+physical row span. The snapshot is the
+storage owner's logical-manifest commitment, not an intrinsic digest of all
+MeasurementSet science bytes. Its identity is independent of source location
+and request order, while a separate provenance identity retains both.
+
+T17/#503 adds the native bounded Selected Observation path. `casa-ms` owns the
+retained read capability, canonical one-pass traversal, per-sample validation,
+and owner-minted terminal completion. Its owner plan may read ahead into the
+explicitly charged live-block count and rotates those blocks in canonical
+consumer order; block size, read-ahead, and buffer slot are absent from content
+identity. The source budget charges retained geometry and selected-coordinate
+catalogs, coordinate-construction scratch, request and retained row-index
+vectors, POINTING work, and every simultaneously live content block before
+constructing the geometry engine or reading content. `casa-imaging-model` owns the closed backend-free sample schema,
+compiler commitment, a closed validation pass, and a distinct content-derived
+generation computed from the actual canonical sample stream. Incremental
+inspection state and generation encoding never cross its public boundary. The storage
+completion binds logical snapshot identity, provenance, physical access,
+content generation, and retained-access traversal. After synchronous work
+completion and every declared fence, if any, of the owning ObservationRead node
+settles, the runtime supplies a fresh, affine authority that binds that opaque
+storage completion to the execution attempt, owning node, exact settled fence
+set, and live lease epoch. A physical I/O fence alone cannot mint this proof.
+Equal science content may share a content generation while remaining distinct
+logical source and access commitments; prediction destination is provenance and
+therefore cannot split prediction and residual views of the same content
+generation. The legacy
+`casars-imager` `MsSelection`/`resolve_selection` preparation route is removed:
+its frontend projection delegates to the same bounded `casa-ms` predicate as
+native Selected Observation access.
 
 The Compiled Problem also owns one compiler-derived Observation Transaction.
 Its canonical read set contains every consumed per-MS selection, selected MAIN

@@ -2535,7 +2535,7 @@ fn validate_nodes(
             }
             validate_lifetime(node, &allocation_use.lifetime)?;
             if matches!(&node.domain, WorkDomain::Metal { .. } | WorkDomain::Io)
-                && allocation_use.lifetime != asynchronous_lifetime(node)
+                && allocation_use.lifetime != required_payload_lifetime(node)
             {
                 return Err(ExecutionError::invalid_plan(format!(
                     "work node {} has an allocation use without its exact asynchronous lifetime",
@@ -2557,8 +2557,8 @@ fn validate_claims(node: &WorkNode) -> Result<(), ExecutionError> {
             )));
         }
         validate_lifetime(node, &claim.lifetime)?;
-        if claim_requires_asynchronous_lifetime(node, &claim.resource)
-            && claim.lifetime != asynchronous_lifetime(node)
+        if claim_requires_domain_lifetime(node, &claim.resource)
+            && claim.lifetime != required_payload_lifetime(node)
         {
             return Err(ExecutionError::invalid_plan(format!(
                 "work node {} has a payload claim without its exact asynchronous lifetime",
@@ -2575,11 +2575,15 @@ fn validate_claims(node: &WorkNode) -> Result<(), ExecutionError> {
     Ok(())
 }
 
-fn asynchronous_lifetime(node: &WorkNode) -> ClaimLifetime {
-    ClaimLifetime::Fences(node.fences.clone())
+fn required_payload_lifetime(node: &WorkNode) -> ClaimLifetime {
+    if node.fences.is_empty() {
+        ClaimLifetime::Work
+    } else {
+        ClaimLifetime::Fences(node.fences.clone())
+    }
 }
 
-fn claim_requires_asynchronous_lifetime(node: &WorkNode, resource: &LeaseResource) -> bool {
+fn claim_requires_domain_lifetime(node: &WorkNode, resource: &LeaseResource) -> bool {
     match &node.domain {
         WorkDomain::Metal { .. } | WorkDomain::Io => !matches!(
             resource,
@@ -2614,7 +2618,10 @@ fn validate_domain(node: &WorkNode) -> Result<(), ExecutionError> {
         (WorkDomain::Io, _) => BTreeSet::from([FenceKind::Io]),
         (WorkDomain::Cpu | WorkDomain::Control, _) => BTreeSet::new(),
     };
-    if node.fences != expected_fences {
+    let synchronous_observation_read = node.domain == WorkDomain::Io
+        && node.kind == WorkKind::ObservationRead
+        && node.fences.is_empty();
+    if node.fences != expected_fences && !synchronous_observation_read {
         return Err(ExecutionError::invalid_plan(format!(
             "work node {} must declare its exact asynchronous fence set {expected_fences:?}",
             node.id.as_str()
@@ -2672,7 +2679,11 @@ fn validate_domain(node: &WorkNode) -> Result<(), ExecutionError> {
                 },
                 "I/O or transfer rate",
             )?;
-            require_fence(node, FenceKind::Io)
+            if synchronous_observation_read {
+                Ok(())
+            } else {
+                require_fence(node, FenceKind::Io)
+            }
         }
         WorkDomain::Control => {
             if node.kind != WorkKind::Synchronization

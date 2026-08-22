@@ -121,18 +121,18 @@ ACCEPTED_PER_PLANE_EXECUTION_BACKEND_INVENTORY_SHA256 = (
     "2f622825a283efc3580072ae37c6dbf78dc52530923b9a1c56834a44f23b2583"
 )
 ACCEPTED_ISSUE_OUTCOMES_SHA256 = (
-    "ffc816c216e9b969c1229f2e813d33a9e12118555e3b286ea66e769218d86713"
+    "6aa3525971d60dbb09fefa17a201c173c36db3f211aa87bec3a22df957533703"
 )
 ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "ca2a1c2567b8c93b495fd279dc77fff8f330137b7811fa136b95fd3fc2a88507"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "6a2611391fc78f6a3401029dfef32ae8a51cd116e7b61a17e8e21aeaf58a1cb5"
+    "8674f55f55672486f2cebdc8a6eaadc8723221acd8d4f38feafdbc5fc94ebf70"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "9bb58adfe3eef0b0d8fcda483528044b12a08396379c12aa19353319844e1aac"
+    "bad319d615a275f7faac6f265344adb7820171a5ce45cbdddff21b9dbd913276"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 10
+ACCEPTED_MATRIX_CONTRACT_REVISION = 12
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -2043,6 +2043,66 @@ def rust_unit_enum_variants(path: Path, identifier: str) -> set[str]:
     return variants
 
 
+def rust_function_body(source: str, identifier: str, path: Path) -> str:
+    declaration = re.search(
+        rf"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+{re.escape(identifier)}(?:\s*<[^>]+>)?\s*\(",
+        source,
+    )
+    if declaration is None:
+        raise ArchitectureError(
+            f"cannot find Rust function {identifier} in {display_path(path)}"
+        )
+    opening = source.find("{", declaration.end())
+    if opening < 0:
+        raise ArchitectureError(
+            f"Rust function {identifier} in {display_path(path)} has no body"
+        )
+    depth = 1
+    end = opening + 1
+    while end < len(source) and depth:
+        if source[end] == "{":
+            depth += 1
+        elif source[end] == "}":
+            depth -= 1
+        end += 1
+    if depth:
+        raise ArchitectureError(
+            f"Rust function {identifier} in {display_path(path)} has no closing brace"
+        )
+    return source[opening + 1 : end - 1]
+
+
+def rust_struct_fields(source: str, identifier: str, path: Path) -> dict[str, str]:
+    declaration = re.search(
+        rf"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?struct\s+{re.escape(identifier)}(?:\s*<[^>]+>)?\s*\{{",
+        source,
+    )
+    if declaration is None:
+        raise ArchitectureError(
+            f"cannot find Rust struct {identifier} in {display_path(path)}"
+        )
+    depth = 1
+    end = declaration.end()
+    while end < len(source) and depth:
+        if source[end] == "{":
+            depth += 1
+        elif source[end] == "}":
+            depth -= 1
+        end += 1
+    if depth:
+        raise ArchitectureError(
+            f"Rust struct {identifier} in {display_path(path)} has no closing brace"
+        )
+    body = source[declaration.end() : end - 1]
+    return {
+        name: re.sub(r"\s+", "", field_type)
+        for name, field_type in re.findall(
+            r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?([a-z][A-Za-z0-9_]*)\s*:\s*([^,\n]+),\s*$",
+            body,
+        )
+    }
+
+
 def validate_rust_enum_inventory(
     matrix: dict[str, Any],
     field: str,
@@ -2417,6 +2477,9 @@ def validate_migration_matrix(
             row.get("source_evidence"), f"{context}.source_evidence"
         )
 
+    if enforce_accepted_scope:
+        validate_t17_ms_selection_transfer(rows)
+
     if row_pairs != inventory_pairs:
         raise ArchitectureError(
             "migration matrix inventory and rows differ: "
@@ -2438,6 +2501,152 @@ def validate_migration_matrix(
     if enforce_accepted_scope and stable_digest(rows) != ACCEPTED_MATRIX_ROWS_SHA256:
         raise ArchitectureError(
             "migration matrix row ledger differs from the accepted scope"
+        )
+
+
+def validate_t17_ms_selection_transfer(rows: list[dict[str, Any]]) -> None:
+    row = next((item for item in rows if item.get("id") == "capability.ms-selection"), None)
+    if row is None or row.get("status") != "Native":
+        raise ArchitectureError(
+            "T17 must leave capability.ms-selection Native with no migration obligation"
+        )
+    required_evidence = {
+        "crates/casa-imaging-model/src/selected_observation_sample.rs::SelectedObservationGenerationEncoder",
+        "crates/casa-ms/src/selected_observation/access.rs::BoundObservationSource",
+        "crates/casa-ms/src/selected_observation/row_access.rs::visit_selected_observation_rows",
+        "crates/casa-imaging-runtime/src/execution_bindings.rs::ObservationReadCompletionContext",
+        "crates/casars-imager/src/lib.rs::select_main_rows",
+    }
+    if not required_evidence.issubset(set(row.get("source_evidence", []))):
+        raise ArchitectureError(
+            "capability.ms-selection lacks the accepted T17 traversal/completion evidence"
+        )
+    required_baselines = {
+        "repo://crates/casa-imaging-model/src/selected_observation_sample.rs",
+        "repo://resources/imaging-architecture/baselines/selected-observation-generation-v3.txt",
+    }
+    if not required_baselines.issubset(set(row.get("baseline_manifests", []))):
+        raise ArchitectureError(
+            "capability.ms-selection lacks pinned T17 generation source and fixture evidence"
+        )
+
+    imager_path = REPO_ROOT / "crates/casars-imager/src/lib.rs"
+    access_path = REPO_ROOT / "crates/casa-ms/src/selected_observation/access.rs"
+    row_access_path = REPO_ROOT / "crates/casa-ms/src/selected_observation/row_access.rs"
+    model_path = REPO_ROOT / "crates/casa-imaging-model/src/selected_observation.rs"
+    compiled_problem_path = REPO_ROOT / "crates/casa-imaging-model/src/compiled_problem.rs"
+    model_lib_path = REPO_ROOT / "crates/casa-imaging-model/src/lib.rs"
+    runtime_path = REPO_ROOT / "crates/casa-imaging-runtime/src/execution_bindings.rs"
+    try:
+        imager = imager_path.read_text(encoding="utf-8")
+        access = access_path.read_text(encoding="utf-8")
+        row_access = row_access_path.read_text(encoding="utf-8")
+        model = model_path.read_text(encoding="utf-8")
+        compiled_problem = compiled_problem_path.read_text(encoding="utf-8")
+        model_lib = model_lib_path.read_text(encoding="utf-8")
+        runtime = runtime_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ArchitectureError(f"cannot inspect T17 transfer sources: {error}") from error
+
+    forbidden_imager_patterns = {
+        r"\bMsSelection\b": "casars-imager retains the legacy selection request",
+        r"\bResolvedMsSelectionRow\b": "casars-imager retains the legacy resolved-row contract",
+        r"\.resolve_selection\s*\(": "casars-imager can still reach legacy MS selection evaluation",
+    }
+    for pattern, message in forbidden_imager_patterns.items():
+        if re.search(pattern, imager):
+            raise ArchitectureError(message)
+    imager_selection = rust_function_body(imager, "select_main_rows", imager_path)
+    if ".visit_selected_observation_rows(" not in imager_selection:
+        raise ArchitectureError(
+            "casars-imager must delegate row evaluation to canonical selected-observation access"
+        )
+    if "fn validate_selected_rows(" in access:
+        raise ArchitectureError(
+            "selected-observation binding retains a hidden MAIN validation prepass"
+        )
+    frontend_projection = rust_function_body(
+        row_access, "visit_selected_observation_rows", row_access_path
+    )
+    if (
+        "CompiledRowPredicate::new(" not in frontend_projection
+        or ".main_row_selection_blocks(" not in frontend_projection
+    ):
+        raise ArchitectureError(
+            "frontend row projection does not own the canonical bounded T17 predicate traversal"
+        )
+    if (
+        ".ordered_main_rows()" not in access
+        or ".row_predicate" not in access
+        or ".main_row_selection_blocks(" in access
+        or "struct SelectedMainRows" in access
+    ):
+        raise ArchitectureError(
+            "retained selected-observation access must seek by the exact model manifest and must not scan the MAIN row span"
+        )
+    forbidden_incremental_evidence_patterns = {
+        r"pub\s+struct\s+SelectedObservationInspection\b": (
+            "selected-observation incremental evidence state is public"
+        ),
+        r"pub\s+fn\s+selected_observation_inspection\s*\(": (
+            "compiled problem exposes an incremental evidence factory"
+        ),
+    }
+    combined_model_surface = "\n".join((model, compiled_problem))
+    for pattern, message in forbidden_incremental_evidence_patterns.items():
+        if re.search(pattern, combined_model_surface):
+            raise ArchitectureError(message)
+    if re.search(r"\bSelectedObservationInspection\b", model_lib):
+        raise ArchitectureError(
+            "casa-imaging-model re-exports incremental evidence state"
+        )
+    validate_t17_runtime_completion_source(runtime, runtime_path)
+
+
+def validate_t17_runtime_completion_source(source: str, path: Path) -> None:
+    context_fields = rust_struct_fields(source, "ObservationReadCompletionContext", path)
+    if context_fields != {
+        "attempt_id": "ExecutionAttemptId",
+        "owner_node": "WorkNodeId",
+        "settled_fences": "BTreeSet<FenceKind>",
+        "lease_epoch": "u64",
+    }:
+        raise ArchitectureError(
+            "ObservationReadCompletionContext differs from the accepted fresh runtime authority"
+        )
+    completion_fields = rust_struct_fields(
+        source, "AttemptBoundObservationCompletion", path
+    )
+    if completion_fields != {
+        **context_fields,
+        "owner_completion": "T",
+    }:
+        raise ArchitectureError(
+            "attempt-bound observation completion must structurally retain owner completion"
+        )
+    completion_declaration = re.search(
+        r"#\[derive\(([^)]*)\)\]\s*pub\s+struct\s+AttemptBoundObservationCompletion",
+        source,
+    )
+    if completion_declaration is None or "Clone" in completion_declaration.group(1).split(","):
+        raise ArchitectureError(
+            "attempt-bound observation completion must remain owner-only and non-Clone"
+        )
+
+    run_body = re.sub(r"\s+", "", rust_function_body(source, "run_inner", path))
+    required_runtime_structure = {
+        "letsynchronous_observation_read=work.node().kind==WorkKind::ObservationRead&&work.node().fences.is_empty();",
+        "Ok(_)ifsynchronous_observation_read=>",
+        "ifsettled==&work.node().fences{Some(ObservationReadCompletionContext{",
+        "iffence_transition_succeeded&&letSome(completion)=observation_completion{",
+    }
+    if (
+        not all(fragment in run_body for fragment in required_runtime_structure)
+        or run_body.count("implementation.complete_observation_read(completion)") != 2
+        or run_body.count("completed_observation_reads.insert(") != 2
+    ):
+        raise ArchitectureError(
+            "runtime must bind owner completion exactly once after synchronous or settled-fence ObservationRead completion"
         )
 
 

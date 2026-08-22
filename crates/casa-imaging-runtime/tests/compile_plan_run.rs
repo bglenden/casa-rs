@@ -34,29 +34,30 @@ use casa_imaging_model::{
 use casa_imaging_runtime::{
     AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,
     AllocationLifetime, AllocationPurpose, AllocationUse, AlternativeId, ArtifactDisposition,
-    ArtifactIdentity, ArtifactMeasurement, ArtifactRole, BindingKind, BuildIdentity, CacheDemand,
-    CacheIdentity, CapabilityPredicate, CapacityDomainId, CapacityViewId, ClaimLifetime,
-    CompiledProblemEvidence, CountDemand, CpuClassCapacity, DemandAlternative, DemandEnvelope,
-    ExecutionDag, ExecutionDagSpecification, ExecutionError, ExecutionEvidenceError,
-    ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance,
+    ArtifactIdentity, ArtifactMeasurement, ArtifactRole, AttemptBoundObservationCompletion,
+    BindingKind, BuildIdentity, CacheDemand, CacheIdentity, CapabilityPredicate, CapacityDomainId,
+    CapacityViewId, ClaimLifetime, CompiledProblemEvidence, CountDemand, CpuClassCapacity,
+    DemandAlternative, DemandEnvelope, ExecutionDag, ExecutionDagSpecification, ExecutionError,
+    ExecutionEvidenceError, ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance,
     ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionRouteDisposition,
     ExecutionRouteEvidence, ExecutionRouteRequirement, ExecutionRouteRequirementKind,
     ExecutionStatus, ExternalPressure, FenceId, FenceKind, HostInventory, ImplementationRegistry,
     ImplementationRegistryId, InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement,
     IoPrediction, LeaseResource, LogicalAllocation, MemoryCapacityDomain, MemoryCapacityKind,
-    MemoryDemand, MemoryView, MemoryViewKind, ObservationTransactionWork, PhysicalLayoutId,
-    PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanError,
-    PlanPrediction, PlannedArtifact, PlannerCostModelProfileId, PlanningBindings,
-    PredictionConfidence, PredictionUncertainty, PublicationLayoutLedger, PublicationMappedStaging,
-    PublicationParticipant, PublicationPhysicalLayout, PublicationResourceBounds,
-    PublicationStaging, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint, RateDemand,
-    RateResource, RateResourceId, RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus,
-    RedactedPath, ResourceAuthority, ResourceClaim, ResourceError, ResourceHeadroom,
-    ResourceMeasurement, ResourceOverride, ResourcePolicy, ResourceTopology, RunBindings,
-    RunController, RunDirective, RunError, RunToCompletion, RuntimeOverheadDemand, ScalingMetadata,
-    SlotCompatibility, StagePrediction, StorageDomain, StorageDomainId, StorageMode,
-    WorkDependency, WorkDomain, WorkExecutionContext, WorkImplementation, WorkImplementationId,
-    WorkKind, WorkMeasurements, WorkNode, WorkNodeId, plan as runtime_plan, run as runtime_run,
+    MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
+    ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
+    PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
+    PlannerCostModelProfileId, PlanningBindings, PredictionConfidence, PredictionUncertainty,
+    PublicationLayoutLedger, PublicationMappedStaging, PublicationParticipant,
+    PublicationPhysicalLayout, PublicationResourceBounds, PublicationStaging, QueueDemand,
+    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
+    RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus, RedactedPath, ResourceAuthority,
+    ResourceClaim, ResourceError, ResourceHeadroom, ResourceMeasurement, ResourceOverride,
+    ResourcePolicy, ResourceTopology, RunBindings, RunController, RunDirective, RunError,
+    RunToCompletion, RuntimeOverheadDemand, ScalingMetadata, SlotCompatibility, StagePrediction,
+    StorageDomain, StorageDomainId, StorageMode, WorkDependency, WorkDomain, WorkExecutionContext,
+    WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId,
+    plan as runtime_plan, run as runtime_run,
 };
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
@@ -439,6 +440,9 @@ fn recording_executor(
         receipt_root_to_disrupt: None,
         publication_pause: None,
         publication_probe: None,
+        observation_completions: None,
+        observation_completion_failure: None,
+        publication_probe: None,
     }
 }
 
@@ -460,6 +464,14 @@ impl PublicationPause {
         *self.release.lock().expect("publication pause lock") = true;
         self.released.notify_all();
     }
+}
+
+#[derive(Debug)]
+struct RecordedObservationCompletion {
+    attempt_id: casa_imaging_runtime::ExecutionAttemptId,
+    owner_node: WorkNodeId,
+    settled_fences: BTreeSet<FenceKind>,
+    lease_epoch: u64,
 }
 
 #[derive(Debug)]
@@ -486,6 +498,8 @@ struct RecordingExecutor {
     receipt_root_to_disrupt: Option<PathBuf>,
     publication_pause: Option<Arc<PublicationPause>>,
     publication_probe: Option<PublicationProbe>,
+    observation_completions: Option<Arc<Mutex<Vec<RecordedObservationCompletion>>>>,
+    observation_completion_failure: Option<&'static str>,
 }
 
 #[derive(Debug)]
@@ -498,6 +512,7 @@ struct PublicationProbe {
 
 impl WorkImplementation for RecordingExecutor {
     type Error = io::Error;
+    type ObservationReadCompletion = ();
 
     fn implementation_id(&self) -> &WorkImplementationId {
         &self.id
@@ -625,6 +640,27 @@ impl WorkImplementation for RecordingExecutor {
         Ok(())
     }
 
+    fn complete_observation_read(
+        &self,
+        completion: ObservationReadCompletionContext,
+    ) -> Result<AttemptBoundObservationCompletion<()>, Self::Error> {
+        if let Some(completions) = &self.observation_completions {
+            completions
+                .lock()
+                .expect("observation completion lock")
+                .push(RecordedObservationCompletion {
+                    attempt_id: completion.attempt_id(),
+                    owner_node: completion.owner_node().clone(),
+                    settled_fences: completion.settled_fences().clone(),
+                    lease_epoch: completion.lease_epoch(),
+                });
+        }
+        if let Some(message) = self.observation_completion_failure {
+            return Err(io::Error::other(message));
+        }
+        Ok(completion.bind(()))
+    }
+
     fn publish(&self, context: WorkExecutionContext<'_>) -> Result<(), Self::Error> {
         if context.node().kind != WorkKind::Publication || context.publication().is_none() {
             return Err(io::Error::other(
@@ -722,6 +758,18 @@ fn physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
         product_participants(&problem),
         false,
         false,
+        true,
+    )
+}
+
+fn physical_work_with_synchronous_observation_read(implementation_byte: u8) -> PhysicalWorkBinding {
+    let problem = compile(request(1)).expect("synchronous observation-read problem");
+    physical_work_with_transaction_staging(
+        implementation_byte,
+        product_participants(&problem),
+        false,
+        false,
+        false,
     )
 }
 
@@ -773,6 +821,7 @@ fn physical_work_for_problem(
             .model_columns()
             .is_empty(),
         false,
+        true,
     );
     let measurement_sets = problem
         .observation_transaction()
@@ -839,7 +888,7 @@ fn physical_work_with_product_staging(
     implementation_byte: u8,
     participants: Vec<PublicationParticipant>,
 ) -> PhysicalWorkBinding {
-    physical_work_with_transaction_staging(implementation_byte, participants, false, false)
+    physical_work_with_transaction_staging(implementation_byte, participants, false, false, true)
 }
 
 fn physical_work_with_model_staging(implementation_byte: u8) -> PhysicalWorkBinding {
@@ -862,6 +911,7 @@ fn physical_work_with_early_publication_buffer(implementation_byte: u8) -> Physi
             .collect(),
         false,
         true,
+        true,
     )
 }
 
@@ -870,6 +920,7 @@ fn physical_work_with_transaction_staging(
     participants: Vec<PublicationParticipant>,
     include_model_staging: bool,
     acquire_publication_early: bool,
+    fenced_observation_read: bool,
 ) -> PhysicalWorkBinding {
     let work_implementation = implementation(implementation_byte);
     let specification = ExecutionDagSpecification {
@@ -969,6 +1020,7 @@ fn physical_work_with_transaction_staging(
         participants,
         include_model_staging,
         acquire_publication_early,
+        fenced_observation_read,
     )
 }
 
@@ -978,6 +1030,7 @@ fn transaction_binding(
     participants: Vec<PublicationParticipant>,
     include_model_staging: bool,
     acquire_publication_early: bool,
+    fenced_observation_read: bool,
 ) -> PhysicalWorkBinding {
     let product_count = participants
         .iter()
@@ -994,6 +1047,16 @@ fn transaction_binding(
     let publication_slot = PhysicalSlotId::new("transaction-publication-slot");
     let commit_allocation = AllocationId::new("transaction-commit-buffer");
     let commit_slot = PhysicalSlotId::new("transaction-commit-slot");
+    let observation_read_lifetime = if fenced_observation_read {
+        ClaimLifetime::through_fence(FenceKind::Io)
+    } else {
+        ClaimLifetime::Work
+    };
+    let observation_read_fences = if fenced_observation_read {
+        BTreeSet::from([FenceKind::Io])
+    } else {
+        BTreeSet::new()
+    };
     let publication_lifetime =
         ClaimLifetime::through_fences([FenceKind::Io, FenceKind::Publication]);
     let publication_compatibility = SlotCompatibility {
@@ -1054,7 +1117,11 @@ fn transaction_binding(
             }
         })
         .collect::<BTreeSet<_>>();
-    let read_completion = WorkDependency::Fence(FenceId::new(read.clone(), FenceKind::Io));
+    let read_completion = if fenced_observation_read {
+        WorkDependency::Fence(FenceId::new(read.clone(), FenceKind::Io))
+    } else {
+        WorkDependency::Work(read.clone())
+    };
     for node in specification
         .nodes
         .iter_mut()
@@ -1237,14 +1304,14 @@ fn transaction_binding(
                         demand_id: "transaction-io-rate".to_string(),
                     },
                     amount: 1,
-                    lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+                    lifetime: observation_read_lifetime.clone(),
                 },
                 ResourceClaim {
                     resource: LeaseResource::Queue {
                         demand_id: "transaction-io-queue".to_string(),
                     },
                     amount: 1,
-                    lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+                    lifetime: observation_read_lifetime.clone(),
                 },
                 ResourceClaim {
                     resource: LeaseResource::MeasurementSetLock {
@@ -1253,11 +1320,11 @@ fn transaction_binding(
                         )),
                     },
                     amount: 1,
-                    lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+                    lifetime: observation_read_lifetime,
                 },
             ],
             allocations: Vec::new(),
-            fences: BTreeSet::from([FenceKind::Io]),
+            fences: observation_read_fences,
             quiescence_after: BTreeSet::new(),
         },
         WorkNode {
@@ -1835,6 +1902,7 @@ fn adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
         default_product_participants(),
         false,
         false,
+        true,
     )
 }
 
@@ -2184,6 +2252,7 @@ fn release_failure_physical_work(
         default_product_participants(),
         false,
         false,
+        true,
     )
 }
 
@@ -3107,8 +3176,8 @@ fn plan_seals_physical_work_and_every_required_binding() {
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            72, 213, 244, 9, 44, 54, 148, 112, 243, 26, 15, 197, 239, 246, 212, 71, 71, 197, 162,
-            22, 44, 91, 86, 42, 42, 212, 48, 183, 202, 2, 96, 175,
+            188, 248, 135, 221, 143, 91, 227, 244, 180, 184, 94, 29, 96, 96, 105, 119, 11, 183,
+            107, 29, 253, 77, 121, 84, 77, 19, 183, 133, 81, 201, 208, 139,
         ]
     );
 }
@@ -4022,6 +4091,230 @@ fn earlier_acquired_publication_buffer_is_held_through_publish_and_then_released
             "the earlier-acquired Publication buffer, slot, permit, and lease must remain held through publish"
         );
     }
+}
+
+#[test]
+fn observation_completion_is_attempt_node_and_fence_bound_after_successful_settlement() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical_work(6)),
+    )
+    .expect("physical planning");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let directory = tempfile::tempdir().expect("receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
+    )
+    .expect("receipt store");
+    let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([157; 32]);
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let mut executor = recording_executor(6, None, None);
+    executor.observation_completions = Some(Arc::clone(&completions));
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let mut controller = RunToCompletion;
+
+    run_receipted(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+        receipts.bind(execution_provenance(
+            attempt,
+            BuildIdentity::from_sha256([158; 32]),
+        )),
+    )
+    .expect("observation completion must bind after its fence settles");
+
+    let completions = completions.lock().expect("observation completion lock");
+    assert_eq!(completions.len(), 1);
+    let completion = &completions[0];
+    assert_eq!(completion.attempt_id, attempt);
+    assert_eq!(completion.owner_node, WorkNodeId::new("transaction-read"));
+    assert_eq!(completion.settled_fences, BTreeSet::from([FenceKind::Io]));
+    assert!(completion.lease_epoch > 0);
+}
+
+#[test]
+fn synchronous_observation_completion_is_exactly_once_attempt_node_and_lease_bound() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical_work_with_synchronous_observation_read(6)),
+    )
+    .expect("synchronous ObservationRead is valid physical work");
+    let read = &execution_plan.execution_dag().nodes()[&WorkNodeId::new("transaction-read")];
+    assert!(read.fences.is_empty());
+    assert!(
+        read.claims
+            .iter()
+            .all(|claim| claim.lifetime == ClaimLifetime::Work),
+        "a fence-free read must retain each source claim through synchronous work completion"
+    );
+    assert!(
+        execution_plan
+            .observation_transaction()
+            .work()
+            .observation_reads()
+            .contains(&WorkDependency::Work(read.id.clone()))
+    );
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let directory = tempfile::tempdir().expect("receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(8, 1_048_576).expect("bounded retention"),
+    )
+    .expect("receipt store");
+    let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([159; 32]);
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let mut executor = recording_executor(6, None, None);
+    executor.observation_completions = Some(Arc::clone(&completions));
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let mut controller = RunToCompletion;
+
+    run_receipted(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+        receipts.bind(execution_provenance(
+            attempt,
+            BuildIdentity::from_sha256([160; 32]),
+        )),
+    )
+    .expect("synchronous ObservationRead completion must precede dependent work");
+
+    let completions = completions.lock().expect("observation completion lock");
+    assert_eq!(completions.len(), 1);
+    let completion = &completions[0];
+    assert_eq!(completion.attempt_id, attempt);
+    assert_eq!(completion.owner_node, WorkNodeId::new("transaction-read"));
+    assert!(completion.settled_fences.is_empty());
+    assert!(completion.lease_epoch > 0);
+}
+
+#[test]
+fn failed_synchronous_observation_completion_prevents_dependent_work() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical_work_with_synchronous_observation_read(6)),
+    )
+    .expect("synchronous ObservationRead is valid physical work");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let mut executor = recording_executor(6, None, None);
+    executor.observation_completions = Some(Arc::clone(&completions));
+    executor.observation_completion_failure = Some("selected-observation completion failed");
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let mut controller = RunToCompletion;
+
+    let error = run(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+    )
+    .expect_err("failed synchronous selected-observation completion must fail the attempt");
+
+    assert!(matches!(
+        error,
+        RunError::Execution { node, .. } if node == WorkNodeId::new("transaction-read")
+    ));
+    assert_eq!(
+        completions
+            .lock()
+            .expect("observation completion lock")
+            .len(),
+        1,
+        "the failing affine completion hook is still invoked exactly once"
+    );
+    assert_eq!(
+        registry.executors[&implementation(6)]
+            .calls
+            .load(Ordering::SeqCst),
+        2,
+        "only the initial check and synchronous ObservationRead may execute"
+    );
+}
+
+#[test]
+fn failed_observation_fence_cannot_mint_attempt_bound_completion() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, cost_model(4)),
+        |_, _| Ok::<_, ()>(physical_work(6)),
+    )
+    .expect("physical planning");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let mut executor = failing_transaction_executor(
+        6,
+        Arc::new(AtomicUsize::new(0)),
+        None,
+        Some(("transaction-read", FenceKind::Io)),
+        None,
+    );
+    executor.observation_completions = Some(Arc::clone(&completions));
+    let registry = TestRegistry {
+        id: registry(3),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
+    let mut controller = RunToCompletion;
+
+    run(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+    )
+    .expect_err("failed observation fence must fail the attempt");
+
+    assert!(
+        completions
+            .lock()
+            .expect("observation completion lock")
+            .is_empty(),
+        "physical fence failure cannot mint selected-observation completion"
+    );
 }
 
 #[test]

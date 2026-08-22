@@ -14,6 +14,13 @@ use crate::measurement_equation::{
 };
 use crate::observation::{FlagPolicy, ObservationSnapshot, ObservationSnapshotId, WeightColumn};
 use crate::product_graph::{ProductGraph, compile_product_graph};
+use crate::selected_observation::{
+    SelectedObservationCommitment, SelectedObservationPassError,
+    compile_selected_observation_commitment, inspect_selected_observation,
+};
+use crate::selected_observation_sample::{
+    SelectedObservationGenerationId, SelectedObservationSample,
+};
 use crate::transaction::{
     ObservationTransactionContract, ObservationTransactionRequirements,
     compile_observation_transaction,
@@ -1273,6 +1280,7 @@ pub struct CompiledProblem {
     products: ProductRequirements,
     product_graph: ProductGraph,
     observation_transaction: ObservationTransactionContract,
+    selected_observation: SelectedObservationCommitment,
     numerics: NumericsContract,
     required_capabilities: BTreeSet<RequiredCapability>,
 }
@@ -1342,6 +1350,30 @@ impl CompiledProblem {
     #[must_use]
     pub const fn observation_transaction(&self) -> &ObservationTransactionContract {
         &self.observation_transaction
+    }
+
+    /// Return the sole compiler-owned selected-observation commitment.
+    #[must_use]
+    pub const fn selected_observation(&self) -> &SelectedObservationCommitment {
+        &self.selected_observation
+    }
+
+    /// Validate, consume, and identify one canonical selected-observation sample pass.
+    ///
+    /// Each sample is scientifically validated before reaching `consume`. The
+    /// inspection state and content-identity encoder never escape this closed
+    /// call. This does not prove retained source access or mint completion.
+    pub fn inspect_selected_observation<E>(
+        &self,
+        samples: impl IntoIterator<Item = Result<SelectedObservationSample, E>>,
+        consume: impl FnMut(SelectedObservationSample) -> Result<(), E>,
+    ) -> Result<(SelectedObservationGenerationId, u64), SelectedObservationPassError<E>> {
+        inspect_selected_observation(
+            &self.selected_observation,
+            self.observation_transaction.write_set(),
+            samples,
+            consume,
+        )
     }
 
     /// Return numerical requirements.
@@ -1445,6 +1477,15 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         &reconstruction,
         specification.weighting,
     );
+    let selected_observation = compile_selected_observation_commitment(
+        &observation_transaction,
+        geometry.geometry_id(),
+        normal_equation
+            .measurement_operator()
+            .codomain()
+            .inner_product(),
+        science.spectral().sampling(),
+    );
     let required_capabilities = derive_capabilities(
         &geometry,
         &science,
@@ -1475,6 +1516,7 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         products,
         product_graph,
         observation_transaction,
+        selected_observation,
         numerics,
         required_capabilities,
     })
@@ -2147,6 +2189,10 @@ impl CanonicalEncoder {
         self.0.update(value.to_le_bytes());
     }
 
+    pub(crate) fn i32(&mut self, value: i32) {
+        self.0.update(value.to_le_bytes());
+    }
+
     pub(crate) fn u64(&mut self, value: u64) {
         self.0.update(value.to_le_bytes());
     }
@@ -2169,6 +2215,11 @@ impl CanonicalEncoder {
     }
 
     pub(crate) fn f64(&mut self, value: f64) {
+        let bits = if value == 0.0 { 0 } else { value.to_bits() };
+        self.0.update(bits.to_le_bytes());
+    }
+
+    pub(crate) fn f32(&mut self, value: f32) {
         let bits = if value == 0.0 { 0 } else { value.to_bits() };
         self.0.update(bits.to_le_bytes());
     }

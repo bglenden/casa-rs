@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+//! Retained and bounded MeasurementSet observation access for native imaging.
+//!
+//! This module evaluates storage-owned selected content against immutable
+//! casa-imaging-model contracts. It owns no reconstruction, scheduling,
+//! device selection, product generation, or publication behavior.
+
+mod access;
+mod bound_observation;
+mod content_plan;
+mod row_access;
+mod row_selection;
+#[cfg(test)]
+mod tests;
+
+pub use access::BoundObservationSourceError;
+pub(crate) use access::{BoundObservationSamples, BoundObservationSource};
+pub use bound_observation::{
+    BoundSelectedObservation, BoundSelectedObservationError, ObservationSourceReadPlan,
+    SelectedObservationCompletion, SelectedObservationTraversalError,
+};
+pub use content_plan::SelectedObservationContentBudget;
+pub(crate) use content_plan::{
+    SelectedObservationContentPlan, SelectedObservationContentPlanError,
+};
+pub use row_access::{SelectedObservationRow, SelectedObservationRowSelection};
