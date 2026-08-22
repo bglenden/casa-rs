@@ -5,6 +5,7 @@
 mod compiled_problem;
 mod geometry;
 mod measurement_equation;
+mod model_state;
 mod observation;
 mod product_graph;
 mod transaction;
@@ -40,6 +41,15 @@ pub use measurement_equation::{
     PairedMeasurementTransform, PairedTransformKind, ProductBoundaryOperation,
     ProductNormalizationBoundary, VisibilityInnerProduct, VisibilitySampleSpace,
     WeightingGenerationId, WeightingOperatorContract, WeightingSource,
+};
+
+pub use model_state::{
+    ModelBasisConversionRegistry, ModelBounds, ModelCell, ModelContractError, ModelDeltaTerm,
+    ModelDirectionConversionRegistry, ModelExecutionAttemptId, ModelInputCommitment,
+    ModelInvalidContributorPolicy, ModelLifecycleContract, ModelLifecycleContractId,
+    ModelLifecycleRequirements, ModelPolarizationConversionRegistry, ModelReprojectionPolicy,
+    ModelSample, ModelSourceShape, ModelStateEncoding, ModelSupport, ModelSupportSemantics,
+    ModelUncoveredTargetPolicy, ModelValue, validate_model_reprojection_contract_identity,
 };
 
 pub use observation::{

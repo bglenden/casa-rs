@@ -79,7 +79,7 @@ fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
 
 mod common;
 
-use common::{identity, problem_inputs};
+use common::{identity, model_lifecycle, problem_inputs};
 
 fn only_receipt_path(root: &Path) -> PathBuf {
     let mut entries = fs::read_dir(root)
@@ -204,6 +204,22 @@ fn with_forged_product_graph_identity(mut document: String) -> String {
         .expect("typed Product Graph identity");
     let end = start + 64;
     document.replace_range(start..end, &"f".repeat(64));
+    with_current_payload_checksum(document)
+}
+
+fn with_forged_reprojection_identity(mut document: String) -> String {
+    let reprojection_marker = "\"reprojection\": {";
+    let reprojection_start = document
+        .find(reprojection_marker)
+        .expect("typed model reprojection projection");
+    let identity_marker = "\"identity\": \"";
+    let start = document[reprojection_start..]
+        .find(identity_marker)
+        .map(|offset| reprojection_start + offset + identity_marker.len())
+        .expect("typed model reprojection identity");
+    let original = document[start..start + 64].to_owned();
+    assert_ne!(original, "e".repeat(64));
+    document = document.replace(&original, &"e".repeat(64));
     with_current_payload_checksum(document)
 }
 
@@ -394,6 +410,7 @@ fn request_with_geometry_references_weighting_products_and_model(
         specification,
         geometry,
         problem_inputs(observation, references, ModelStateIdentity::Empty),
+        model_lifecycle(ModelStateIdentity::Empty),
     )
 }
 
@@ -3105,8 +3122,8 @@ fn plan_seals_physical_work_and_every_required_binding() {
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            72, 213, 244, 9, 44, 54, 148, 112, 243, 26, 15, 197, 239, 246, 212, 71, 71, 197, 162,
-            22, 44, 91, 86, 42, 42, 212, 48, 183, 202, 2, 96, 175,
+            199, 78, 194, 151, 182, 238, 49, 86, 116, 181, 40, 132, 42, 200, 207, 49, 199, 111, 46,
+            252, 8, 5, 53, 155, 208, 52, 84, 20, 227, 148, 141, 9,
         ]
     );
 }
@@ -3832,7 +3849,7 @@ fn receipt_finalize_failure_after_publish_returns_success_and_reopens_prepared_e
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
     assert!(publication_launched.load(Ordering::SeqCst));
     assert_eq!(visible_generation.load(Ordering::SeqCst), 1);
-    assert_eq!(receipt.schema_version(), 7);
+    assert_eq!(receipt.schema_version(), 10);
     assert_eq!(receipt.status(), ReceiptStatus::PublicationPrepared);
     for layout in execution_plan.publication_layouts().entries() {
         assert_eq!(
@@ -4574,7 +4591,7 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         .expect("reopen durable receipt");
 
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
-    assert_eq!(receipt.schema_version(), 7);
+    assert_eq!(receipt.schema_version(), 10);
     assert_eq!(receipt.route_matrix_schema_version(), 1);
     assert_eq!(receipt.route_matrix_contract_revision(), 1);
     assert_eq!(receipt.route_disposition(), "native");
@@ -4722,6 +4739,10 @@ fn receipt_rejects_checksum_valid_product_graph_projection_and_audit_forgery() {
             with_forged_product_graph_identity(original.clone()),
         ),
         (
+            "coordinated reprojection identity and audit forgery",
+            with_forged_reprojection_identity(original.clone()),
+        ),
+        (
             "missing publication member",
             with_usize_array(original.clone(), "publication_member_ordinals", &[0]),
         ),
@@ -4747,6 +4768,14 @@ fn receipt_rejects_checksum_valid_product_graph_projection_and_audit_forgery() {
                 original.clone(),
                 "products.graph.publication.members.0",
                 "1",
+            ),
+        ),
+        (
+            "audit reprojection contract contradicts the typed projection",
+            with_forged_audit_field(
+                original.clone(),
+                "model_lifecycle.reprojection.direction_registry",
+                "forged",
             ),
         ),
     ];
@@ -4870,8 +4899,23 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
         .expect("antenna generation")
         .to_string();
 
-    assert_eq!(projected.schema_version(), 3);
+    assert_eq!(projected.schema_version(), 6);
     assert_eq!(projected, &CompiledProblemEvidence::project(&problem));
+    assert_eq!(
+        reopened.model_lifecycle_identity(),
+        problem.model_lifecycle().contract_id().as_bytes()
+    );
+    let lifecycle_identity = problem.model_lifecycle().contract_id().to_string();
+    let target_shape_identity = problem.model_lifecycle().target().identity().to_string();
+    assert_eq!(
+        projected.field("model_lifecycle.identity"),
+        Some(lifecycle_identity.as_str())
+    );
+    assert_eq!(
+        projected.field("model_lifecycle.target_shape_identity"),
+        Some(target_shape_identity.as_str())
+    );
+    assert_eq!(projected.field("model_lifecycle.input.kind"), Some("empty"));
     assert_eq!(
         projected.field("science.spectral.sampling"),
         Some("identity")

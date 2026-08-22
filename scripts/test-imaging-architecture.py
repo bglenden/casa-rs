@@ -379,26 +379,34 @@ class ArchitecturePolicyTests(unittest.TestCase):
         ):
             checker.validate_workspace(self.policy, metadata)
 
-    def test_rust_science_module_rejects_an_execution_import(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            source = root / "crates/casa-imaging-model/src"
-            source.mkdir(parents=True)
-            (source / "lib.rs").write_text(
-                "use casa_imaging_runtime::ResourceAuthority;\n",
-                encoding="utf-8",
-            )
-            policy = copy.deepcopy(self.policy)
-            policy["source_boundaries"] = [
-                boundary
-                for boundary in policy.get("source_boundaries", [])
-                if boundary.get("id") == "native-science-rust"
-            ]
-            with self.assertRaisesRegex(
-                checker.ArchitectureError,
-                r"native science Rust source imports an execution, backend, legacy, or device API",
-            ):
-                checker.validate_source_boundaries(policy, root)
+    def test_rust_science_and_reconstruction_modules_reject_execution_imports(
+        self,
+    ) -> None:
+        source_roots = [
+            "crates/casa-imaging-model/src",
+            "crates/casa-imaging-reconstruction/src",
+        ]
+        for source_root in source_roots:
+            with self.subTest(source_root=source_root), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                for required_root in source_roots:
+                    (root / required_root).mkdir(parents=True)
+                source = root / source_root
+                (source / "lib.rs").write_text(
+                    "use casa_imaging_runtime::ResourceAuthority;\n",
+                    encoding="utf-8",
+                )
+                policy = copy.deepcopy(self.policy)
+                policy["source_boundaries"] = [
+                    boundary
+                    for boundary in policy.get("source_boundaries", [])
+                    if boundary.get("id") == "native-science-reconstruction-rust"
+                ]
+                with self.assertRaisesRegex(
+                    checker.ArchitectureError,
+                    r"native science or reconstruction Rust source imports an execution, backend, legacy, or device API",
+                ):
+                    checker.validate_source_boundaries(policy, root)
 
     def test_swift_frontend_rejects_device_discovery(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -899,6 +907,133 @@ class MigrationMatrixTests(unittest.TestCase):
             r"cannot read baseline manifest",
         ):
             checker.validate_migration_matrix(matrix, self.policy)
+
+    def test_t28_transfer_rejects_weakened_identity_and_policy_bindings(self) -> None:
+        model_path = REPO_ROOT / "crates/casa-imaging-model/src/model_state.rs"
+        reconstruction_path = REPO_ROOT / "crates/casa-imaging-reconstruction/src/lib.rs"
+        receipt_path = REPO_ROOT / "crates/casa-imaging-runtime/src/receipt.rs"
+        model = model_path.read_text(encoding="utf-8")
+        reconstruction = reconstruction_path.read_text(encoding="utf-8")
+        receipt = receipt_path.read_text(encoding="utf-8")
+
+        weakened_model = model.replace(
+            "reprojection_contract: LogicalIdentity::from_sha256(reprojection.as_bytes()),",
+            "reprojection_contract: LogicalIdentity::zero(),",
+            1,
+        )
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"T28 compiler does not retain the closed reprojection contract",
+        ):
+            checker.validate_t28_model_lifecycle_sources(
+                weakened_model,
+                reconstruction,
+                receipt,
+                model_path=model_path,
+                reconstruction_path=reconstruction_path,
+                receipt_path=receipt_path,
+            )
+
+        weakened_validator = model.replace(
+            "if claimed\n        == model_reprojection_contract_identity(",
+            "if claimed\n        != model_reprojection_contract_identity(",
+            1,
+        )
+        self.assertNotEqual(weakened_validator, model)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError,
+            r"T28 model owner does not recompute and validate the reprojection identity",
+        ):
+            checker.validate_t28_model_lifecycle_sources(
+                weakened_validator,
+                reconstruction,
+                receipt,
+                model_path=model_path,
+                reconstruction_path=reconstruction_path,
+                receipt_path=receipt_path,
+            )
+
+        receipt_mutations = (
+            (
+                "&& self.product_graph_identity == product_graph_identity",
+                "&& self.product_graph_identity != product_graph_identity",
+            ),
+            (
+                "&& self.numerics_identity == numerics_identity",
+                "&& self.numerics_identity != numerics_identity",
+            ),
+            (
+                "&& self.conversion_precision == numeric_precision(conversion_precision)",
+                "&& self.conversion_precision != numeric_precision(conversion_precision)",
+            ),
+            (
+                "        validate_model_reprojection_contract_identity(\n"
+                "            LogicalIdentity::from_sha256(parse_digest(&self.identity)),",
+                "        ignore_model_reprojection_contract_identity(\n"
+                "            LogicalIdentity::from_sha256(parse_digest(&self.identity)),",
+            ),
+        )
+        for expression, weakened_expression in receipt_mutations:
+            with self.subTest(expression=expression):
+                weakened_receipt = receipt.replace(expression, weakened_expression, 1)
+                self.assertNotEqual(weakened_receipt, receipt)
+                with self.assertRaisesRegex(
+                    checker.ArchitectureError,
+                    r"T28 receipt validation does not recompute the cross-bound reprojection identity",
+                ):
+                    checker.validate_t28_model_lifecycle_sources(
+                        model,
+                        reconstruction,
+                        weakened_receipt,
+                        model_path=model_path,
+                        reconstruction_path=reconstruction_path,
+                        receipt_path=receipt_path,
+                    )
+
+        reconstruction_mutations = (
+            (
+                "target_contract.reprojection_policy()",
+                "ModelReprojectionPolicy::canonical()",
+            ),
+            (
+                "reprojection_policy.direction_registry()",
+                "ModelReprojectionPolicy::canonical().direction_registry()",
+            ),
+            (
+                "reprojection_policy.basis_registry()",
+                "ModelReprojectionPolicy::canonical().basis_registry()",
+            ),
+            (
+                "reprojection_policy.polarization_registry()",
+                "ModelReprojectionPolicy::canonical().polarization_registry()",
+            ),
+            (
+                "reprojection_policy.invalid_contributor()",
+                "ModelReprojectionPolicy::canonical().invalid_contributor()",
+            ),
+            (
+                "reprojection_policy.uncovered_target()",
+                "ModelReprojectionPolicy::canonical().uncovered_target()",
+            ),
+        )
+        for expression, weakened_expression in reconstruction_mutations:
+            with self.subTest(expression=expression):
+                weakened_reconstruction = reconstruction.replace(
+                    expression, weakened_expression, 1
+                )
+                self.assertNotEqual(weakened_reconstruction, reconstruction)
+                with self.assertRaisesRegex(
+                    checker.ArchitectureError,
+                    r"T28 reconstruction execution does not consume the exact lifecycle reprojection policy",
+                ):
+                    checker.validate_t28_model_lifecycle_sources(
+                        model,
+                        weakened_reconstruction,
+                        receipt,
+                        model_path=model_path,
+                        reconstruction_path=reconstruction_path,
+                        receipt_path=receipt_path,
+                    )
 
 
 if __name__ == "__main__":

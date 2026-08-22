@@ -21,7 +21,7 @@ use casa_imaging_model::{
 
 mod common;
 
-use common::{identity, problem_inputs};
+use common::{identity, model_lifecycle, problem_inputs};
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
     casa_imaging_model::ProductValidityPolicies::new(
@@ -121,6 +121,7 @@ fn request(
             .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
             .collect(),
     );
+    let inputs = problem_inputs(1, references, ModelStateIdentity::Empty);
     ImagingRequest::new(
         ProblemSpecification::new(
             ScientificContract::new(
@@ -150,7 +151,8 @@ fn request(
             numerics,
         ),
         geometry,
-        problem_inputs(1, references, ModelStateIdentity::Empty),
+        inputs,
+        model_lifecycle(ModelStateIdentity::Empty),
     )
 }
 

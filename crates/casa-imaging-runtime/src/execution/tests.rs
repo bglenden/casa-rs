@@ -25,7 +25,7 @@ use sha2::{Digest, Sha256};
 #[path = "../../tests/common/mod.rs"]
 mod common;
 
-use common::{identity, problem_inputs};
+use common::{identity, model_lifecycle, problem_inputs};
 
 use super::*;
 use crate::{
@@ -173,8 +173,13 @@ fn compiled_problem() -> casa_imaging_model::CompiledProblem {
         ),
     );
     let inputs = problem_inputs(1, Vec::new(), ModelStateIdentity::Empty);
-    compile(ImagingRequest::new(specification, geometry, inputs))
-        .expect("valid scheduler test problem")
+    compile(ImagingRequest::new(
+        specification,
+        geometry,
+        inputs,
+        model_lifecycle(ModelStateIdentity::Empty),
+    ))
+    .expect("valid scheduler test problem")
 }
 
 fn cpu_node(id: &str, dependencies: BTreeSet<WorkDependency>) -> WorkNode {

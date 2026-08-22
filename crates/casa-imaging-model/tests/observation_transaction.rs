@@ -44,6 +44,7 @@ fn compile_transaction(
     snapshot: ObservationSnapshot,
     transaction: ObservationTransactionRequirements,
 ) -> casa_imaging_model::CompiledProblem {
+    let lifecycle = common::model_lifecycle(snapshot.model());
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
@@ -131,6 +132,7 @@ fn compile_transaction(
         specification,
         geometry,
         ProblemInputIdentities::new(snapshot),
+        lifecycle,
     ))
     .expect("compile problem with observation transaction")
 }

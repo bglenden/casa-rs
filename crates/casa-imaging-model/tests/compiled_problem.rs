@@ -24,7 +24,7 @@ use casa_imaging_model::{
 
 mod common;
 
-use common::{identity, observation_source, problem_inputs};
+use common::{identity, model_lifecycle, observation_source, problem_inputs};
 
 fn compile_request(
     specification: ProblemSpecification,
@@ -38,7 +38,13 @@ fn compile_with_geometry(
     geometry: GeometryInput,
     inputs: ProblemInputIdentities,
 ) -> Result<casa_imaging_model::CompiledProblem, CompileProblemError> {
-    compile(ImagingRequest::new(specification, geometry, inputs))
+    let lifecycle = model_lifecycle(inputs.model());
+    compile(ImagingRequest::new(
+        specification,
+        geometry,
+        inputs,
+        lifecycle,
+    ))
 }
 
 fn numerics(reverse: bool) -> NumericsContract {
@@ -962,7 +968,7 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
         positive_zero.weighting().generation_id()
     );
     assert_ne!(positive_zero.problem_id(), changed.problem_id());
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 7);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 8);
 }
 
 #[test]
@@ -1283,12 +1289,12 @@ fn invalid_polarization_is_a_reconstruction_contract_error() {
 }
 
 #[test]
-fn compiled_problem_identity_has_a_pinned_schema_seven_digest() {
+fn compiled_problem_identity_has_a_pinned_schema_eight_digest() {
     let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 7);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 8);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "8b39a9cd1ff8bf092acef1c9eacab9d2f9f553560c2bd8b93dfd3e0de580e407"
+        "d2e3b6671c502e5fd9bc27b58c82f523b7431d48c7e3ba5aea8da8c7744e2d61"
     );
 }

@@ -33,7 +33,7 @@ use casa_imaging_model::{
 
 mod common;
 
-use common::{identity, problem_inputs};
+use common::{identity, model_lifecycle, problem_inputs};
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
     casa_imaging_model::ProductValidityPolicies::new(
@@ -275,6 +275,7 @@ fn compile_contract(sampling: SpectralSampling) -> casa_imaging_model::CompiledP
         ),
         geometry(),
         inputs,
+        model_lifecycle(ModelStateIdentity::Empty),
     ))
     .expect("compile typed measurement equation")
 }
@@ -419,10 +420,10 @@ fn paired_compositions_obey_linearity_and_weighted_adjointness() {
 }
 
 #[test]
-fn schema_six_problem_and_weighting_generation_identities_are_pinned() {
+fn schema_eight_problem_and_weighting_generation_identities_are_pinned() {
     let problem = compile_contract(SpectralSampling::Linear);
 
-    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 7);
+    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 8);
     assert_eq!(WeightingGenerationId::SCHEMA_VERSION, 1);
     assert_eq!(
         (
@@ -434,7 +435,7 @@ fn schema_six_problem_and_weighting_generation_identities_are_pinned() {
                 .to_string(),
         ),
         (
-            "3a440101add9d74a137601766036cb400933da204ba0c9e7a6749b18b017d411".to_string(),
+            "70600786a2ac6e9debf2e294c76c4d5e65fb3311e65abb6efb9e27c1c3e9533b".to_string(),
             "550f22492d158e34f075329e2577fa795391f37d25e6185e417785fe2f6bbb8c".to_string(),
         )
     );

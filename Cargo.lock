@@ -629,6 +629,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "casa-imaging-reconstruction"
+version = "0.27.0"
+dependencies = [
+ "casa-imaging-model",
+ "sha2",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "casa-imaging-router"
 version = "0.27.0"
 dependencies = [

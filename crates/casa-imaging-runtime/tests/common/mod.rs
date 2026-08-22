@@ -3,15 +3,35 @@
 use casa_imaging_model::{
     AntennaSelection, ColumnGeneration, ConsistencyToken, CorrelationProduct, CorrelationSelection,
     CorrelationType, FlagPolicy, IdSelection, IntentSelection, LogicalIdentity,
-    MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, ModelColumnState,
-    ModelStateIdentity, MsColumnKind, ObservationSelection, ObservationSnapshotInput,
-    ObservationSourceInput, ObservationSourceProvenance, ProblemInputIdentities, ReferenceDataKind,
-    RowSelection, SelectedColumns, SelectedRows, SourceGenerations, SpectralWindowSelection,
-    TimeSelection, UvSelection, VisibilityColumn, WeightColumn, compile_observation,
+    MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, ModelBounds, ModelColumnState,
+    ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity, MsColumnKind,
+    NumericPrecision, ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
+    ObservationSourceProvenance, ProblemInputIdentities, ReferenceDataKind, RowSelection,
+    SelectedColumns, SelectedRows, SourceGenerations, SpectralWindowSelection, TimeSelection,
+    UvSelection, VisibilityColumn, WeightColumn, compile_observation,
 };
 
 pub fn identity(byte: u8) -> LogicalIdentity {
     LogicalIdentity::from_sha256([byte; 32])
+}
+
+pub fn model_lifecycle(model: ModelStateIdentity) -> ModelLifecycleRequirements {
+    let input = match model {
+        ModelStateIdentity::Empty => ModelInputCommitment::Empty,
+        ModelStateIdentity::Seed(source) => ModelInputCommitment::AlignedSeed {
+            source,
+            support: identity(0xa5),
+        },
+        ModelStateIdentity::Generation(generation) => ModelInputCommitment::Generation(generation),
+    };
+    ModelLifecycleRequirements::new(
+        ModelBounds::new(
+            10_000_000, 10_000_000, 10_000_000, 10_000_000, 1.0e30, 1.0e30,
+        )
+        .expect("valid model lifecycle fixture bounds"),
+        NumericPrecision::F64,
+        input,
+    )
 }
 
 fn scoped_identity(seed: u8, scope: u8) -> LogicalIdentity {

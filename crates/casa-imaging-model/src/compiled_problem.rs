@@ -12,6 +12,10 @@ use crate::measurement_equation::{
     VisibilityInnerProduct, WeightingOperatorContract, compile_normal_equation,
     compile_product_boundary,
 };
+use crate::model_state::{
+    ModelContractError, ModelLifecycleContract, ModelLifecycleRequirements,
+    compile_model_lifecycle_contract,
+};
 use crate::observation::{FlagPolicy, ObservationSnapshot, ObservationSnapshotId, WeightColumn};
 use crate::product_graph::{ProductGraph, compile_product_graph};
 use crate::transaction::{
@@ -20,7 +24,7 @@ use crate::transaction::{
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 7;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 8;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
 const NUMERICS_CONTRACT_IDENTITY_VERSION: u32 = 1;
 
@@ -1102,6 +1106,7 @@ pub struct ImagingRequest {
     specification: ProblemSpecification,
     geometry: GeometryInput,
     inputs: ProblemInputIdentities,
+    model_lifecycle: ModelLifecycleRequirements,
 }
 
 impl ImagingRequest {
@@ -1111,12 +1116,14 @@ impl ImagingRequest {
         specification: ProblemSpecification,
         geometry: GeometryInput,
         inputs: ProblemInputIdentities,
+        model_lifecycle: ModelLifecycleRequirements,
     ) -> Self {
         Self {
             version: ImagingRequestVersion::CURRENT,
             specification,
             geometry,
             inputs,
+            model_lifecycle,
         }
     }
 
@@ -1265,6 +1272,7 @@ impl fmt::Display for CompiledProblemId {
 pub struct CompiledProblem {
     problem_id: CompiledProblemId,
     numerics_id: NumericsContractId,
+    model_lifecycle: ModelLifecycleContract,
     inputs: ProblemInputIdentities,
     geometry: CompiledGeometry,
     science: ScientificContract,
@@ -1288,6 +1296,12 @@ impl CompiledProblem {
     #[must_use]
     pub const fn numerics_id(&self) -> NumericsContractId {
         self.numerics_id
+    }
+
+    /// Return the compiler-owned model-lifecycle commitment.
+    #[must_use]
+    pub const fn model_lifecycle(&self) -> &ModelLifecycleContract {
+        &self.model_lifecycle
     }
 
     /// Return immutable input identities.
@@ -1363,6 +1377,9 @@ pub enum CompileProblemError {
     /// Coordinate or image-domain geometry is invalid or incomplete.
     #[error(transparent)]
     Geometry(#[from] CompileGeometryError),
+    /// The requested model lifecycle is incomplete or conflicts with the problem.
+    #[error(transparent)]
+    ModelLifecycle(#[from] ModelContractError),
     /// Reconstruction and capability requirements contradict each other.
     #[error("invalid capability combination: {reason}")]
     InvalidCapabilityCombination {
@@ -1424,6 +1441,7 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         specification,
         geometry,
         inputs,
+        model_lifecycle,
     } = request;
     let geometry = compile_geometry(geometry, &inputs)?;
     let science = specification.science;
@@ -1452,6 +1470,17 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         normal_equation.weighting(),
         &products,
     );
+    let numerics_id = canonical_numerics_id(&numerics);
+    let product_graph = compile_product_graph(&geometry, &reconstruction, &products);
+    let model_lifecycle = compile_model_lifecycle_contract(
+        &geometry,
+        normal_equation.measurement_operator().domain(),
+        &inputs,
+        &numerics,
+        numerics_id,
+        product_graph.graph_id(),
+        model_lifecycle,
+    )?;
     let problem_id = canonical_problem_id(ProblemIdentityInput {
         inputs: &inputs,
         geometry: &geometry,
@@ -1461,12 +1490,12 @@ pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProble
         products: &products,
         observation_transaction: &observation_transaction,
         numerics: &numerics,
+        model_lifecycle: &model_lifecycle,
     });
-    let numerics_id = canonical_numerics_id(&numerics);
-    let product_graph = compile_product_graph(&geometry, &reconstruction, &products);
     Ok(CompiledProblem {
         problem_id,
         numerics_id,
+        model_lifecycle,
         inputs,
         geometry,
         science,
@@ -1841,6 +1870,7 @@ struct ProblemIdentityInput<'a> {
     products: &'a ProductRequirements,
     observation_transaction: &'a ObservationTransactionContract,
     numerics: &'a NumericsContract,
+    model_lifecycle: &'a ModelLifecycleContract,
 }
 
 fn canonical_problem_id(input: ProblemIdentityInput<'_>) -> CompiledProblemId {
@@ -1853,6 +1883,7 @@ fn canonical_problem_id(input: ProblemIdentityInput<'_>) -> CompiledProblemId {
         products,
         observation_transaction,
         numerics,
+        model_lifecycle,
     } = input;
     let mut encoder = CanonicalEncoder::new();
     encoder.bytes(COMPILED_PROBLEM_IDENTITY_DOMAIN);
@@ -1860,6 +1891,7 @@ fn canonical_problem_id(input: ProblemIdentityInput<'_>) -> CompiledProblemId {
     encoder.identity(inputs.observation().identity());
     encoder.digest(observation_transaction.transaction_id().as_bytes());
     encoder.digest(geometry.geometry_id().as_bytes());
+    encoder.digest(model_lifecycle.contract_id().as_bytes());
     encoder.usize(inputs.reference_data().len());
     for (kind, identity) in inputs.reference_data() {
         encoder.u8(reference_data_tag(*kind));
@@ -1918,17 +1950,7 @@ fn canonical_problem_id(input: ProblemIdentityInput<'_>) -> CompiledProblemId {
         match transform {
             PairedMeasurementTransform::SpectralBasis { basis } => {
                 encoder.u8(0);
-                match basis {
-                    ReconstructionBasis::Constant => encoder.u8(0),
-                    ReconstructionBasis::Taylor { terms } => {
-                        encoder.u8(1);
-                        encoder.usize(*terms);
-                    }
-                    ReconstructionBasis::ChannelLocal { channels } => {
-                        encoder.u8(2);
-                        encoder.usize(*channels);
-                    }
-                }
+                encode_reconstruction_basis(&mut encoder, *basis);
             }
             PairedMeasurementTransform::PolarizationMapping => encoder.u8(1),
             PairedMeasurementTransform::DirectionDependentResponse { response } => {
@@ -1981,17 +2003,7 @@ fn canonical_problem_id(input: ProblemIdentityInput<'_>) -> CompiledProblemId {
     encoder.u8(match normal_equation.output().normalization() {
         NormalStateNormalization::Unnormalized => 0,
     });
-    match reconstruction.basis {
-        ReconstructionBasis::Constant => encoder.u8(0),
-        ReconstructionBasis::Taylor { terms } => {
-            encoder.u8(1);
-            encoder.usize(terms);
-        }
-        ReconstructionBasis::ChannelLocal { channels } => {
-            encoder.u8(2);
-            encoder.usize(channels);
-        }
-    }
+    encode_reconstruction_basis(&mut encoder, reconstruction.basis);
     match &reconstruction.algorithm {
         ReconstructionAlgorithm::Dirty => encoder.u8(0),
         ReconstructionAlgorithm::Hogbom => encoder.u8(1),
@@ -2208,7 +2220,24 @@ fn product_tag(product: ProductKind) -> u8 {
     }
 }
 
-fn polarization_tag(coordinate: PolarizationCoordinate) -> u8 {
+pub(crate) fn encode_reconstruction_basis(
+    encoder: &mut CanonicalEncoder,
+    basis: ReconstructionBasis,
+) {
+    match basis {
+        ReconstructionBasis::Constant => encoder.u8(0),
+        ReconstructionBasis::Taylor { terms } => {
+            encoder.u8(1);
+            encoder.usize(terms);
+        }
+        ReconstructionBasis::ChannelLocal { channels } => {
+            encoder.u8(2);
+            encoder.usize(channels);
+        }
+    }
+}
+
+pub(crate) const fn polarization_tag(coordinate: PolarizationCoordinate) -> u8 {
     match coordinate {
         PolarizationCoordinate::StokesI => 0,
         PolarizationCoordinate::StokesQ => 1,
