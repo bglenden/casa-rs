@@ -5,8 +5,8 @@ Last reality check: 2026-08-22
 Verification: `just docs-check`; `just arch-check`
 
 This document records the delivery consequences learned while implementing and
-merging T01-T14, including the T08 transaction/publication work and the
-subsequently archived multi-ticket T13 composition experiment. It refines
+merging T01-T12 and T14, together with the subsequently archived multi-ticket
+T13 composition experiment. It refines
 ticket order and ownership; it does not reduce any #486 outcome, Acceptance
 Contract, persistent interoperability requirement, or deletion ratchet.
 
