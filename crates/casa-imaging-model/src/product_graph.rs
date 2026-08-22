@@ -522,7 +522,7 @@ impl<'a> GraphBuilder<'a> {
             }
             ProductKind::RestoredImage => {
                 for term in self.image_terms() {
-                    let dependencies = self.nodes_for(
+                    let dependencies = self.required_nodes_for(
                         domain_index,
                         [ProductRole::Residual(term), ProductRole::Model(term)],
                     );
@@ -904,14 +904,14 @@ impl<'a> GraphBuilder<'a> {
         self.node_ids[&(domain, role)]
     }
 
-    fn nodes_for<const N: usize>(
+    fn required_nodes_for<const N: usize>(
         &self,
         domain: usize,
         roles: [ProductRole; N],
     ) -> Vec<ProductNodeId> {
         roles
             .into_iter()
-            .filter_map(|role| self.node_ids.get(&(domain, role)).copied())
+            .map(|role| self.node_id(domain, role))
             .collect()
     }
 

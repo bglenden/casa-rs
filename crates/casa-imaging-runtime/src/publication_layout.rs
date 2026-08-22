@@ -2,11 +2,7 @@
 
 //! Adapter-derived physical layouts for graph-owned publication members.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    error::Error,
-    fmt,
-};
+use std::{collections::BTreeSet, error::Error, fmt};
 
 use casa_imaging_model::{MeasurementSetIdentity, ProductGraphId, ProductNodeId};
 
@@ -329,8 +325,8 @@ impl PublicationLayoutLedger {
         let mut participants = BTreeSet::new();
         let mut staged_storage_bytes = 0_u64;
         let mut final_storage_bytes = 0_u64;
-        let mut writer_bytes = BTreeMap::<WorkNodeId, u64>::new();
-        let mut mapped_bytes = BTreeMap::<WorkNodeId, u64>::new();
+        let mut writer_buffer_bytes = 0_u64;
+        let mut mapped_page_cache_bytes = 0_u64;
         for entry in &entries {
             if entry.layout_id.as_bytes() == [0; 32] {
                 return Err(PublicationLayoutError::EmptyLayoutIdentity {
@@ -375,17 +371,13 @@ impl PublicationLayoutLedger {
                 .ok_or(PublicationLayoutError::AggregateOverflow {
                     kind: PublicationBoundKind::FinalStorage,
                 })?;
-            let producer_writer = writer_bytes
-                .entry(entry.staging.producer().clone())
-                .or_default();
-            *producer_writer = producer_writer
+            writer_buffer_bytes = writer_buffer_bytes
                 .checked_add(entry.resource_bounds.writer_buffer_bytes())
                 .ok_or(PublicationLayoutError::AggregateOverflow {
                     kind: PublicationBoundKind::WriterBuffer,
                 })?;
-            if let Some(mapped) = entry.staging.mapped_page_cache() {
-                let producer_mapped = mapped_bytes.entry(mapped.producer().clone()).or_default();
-                *producer_mapped = producer_mapped
+            if entry.staging.mapped_page_cache().is_some() {
+                mapped_page_cache_bytes = mapped_page_cache_bytes
                     .checked_add(entry.resource_bounds.mapped_page_cache_bytes())
                     .ok_or(PublicationLayoutError::AggregateOverflow {
                         kind: PublicationBoundKind::MappedPageCache,
@@ -396,8 +388,8 @@ impl PublicationLayoutLedger {
             entries: entries.into_boxed_slice(),
             staged_storage_bytes,
             final_storage_bytes,
-            writer_buffer_bytes: writer_bytes.into_values().max().unwrap_or(0),
-            mapped_page_cache_bytes: mapped_bytes.into_values().max().unwrap_or(0),
+            writer_buffer_bytes,
+            mapped_page_cache_bytes,
         })
     }
 
@@ -419,13 +411,13 @@ impl PublicationLayoutLedger {
         self.final_storage_bytes
     }
 
-    /// Return peak writer-buffer capacity across concurrently produced members.
+    /// Return a conservative bound covering every member's writer buffer.
     #[must_use]
     pub const fn writer_buffer_bytes(&self) -> u64 {
         self.writer_buffer_bytes
     }
 
-    /// Return peak mapped/page-cache exposure across concurrent producers.
+    /// Return a conservative bound covering every retained mapped/page-cache exposure.
     #[must_use]
     pub const fn mapped_page_cache_bytes(&self) -> u64 {
         self.mapped_page_cache_bytes

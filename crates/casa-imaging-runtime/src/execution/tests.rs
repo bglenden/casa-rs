@@ -933,7 +933,7 @@ fn publication_layout_ledger_names_every_atomic_member_and_staging_event() {
     );
     assert_eq!(ledger.staged_storage_bytes(), 128 * 4);
     assert_eq!(ledger.final_storage_bytes(), 96 * 4);
-    assert_eq!(ledger.writer_buffer_bytes(), 32 * 3);
+    assert_eq!(ledger.writer_buffer_bytes(), 32 * 4);
     assert_eq!(
         ledger
             .entries()
@@ -949,6 +949,48 @@ fn publication_layout_ledger_names_every_atomic_member_and_staging_event() {
             FenceKind::Writeback,
         ))
     );
+}
+
+#[test]
+fn publication_layout_ledger_sums_asynchronous_exposure_across_producers() {
+    let problem = compiled_problem();
+    let graph_id = problem.product_graph().graph_id();
+    let members = problem.product_graph().publication().members();
+    let layout = |index: usize, writer_bytes, mapped_bytes| {
+        let writer = WorkNodeId::new(format!("writer-{index}"));
+        let mapped = WorkNodeId::new(format!("mapped-{index}"));
+        let release = WorkNodeId::new(format!("release-{index}"));
+        crate::PublicationPhysicalLayout::new(
+            crate::PublicationParticipant::Product {
+                graph_id,
+                node_id: members[index],
+            },
+            crate::ArtifactIdentity::from_sha256([u8::try_from(index + 1).unwrap(); 32]),
+            crate::PhysicalLayoutId::from_sha256([u8::try_from(index + 11).unwrap(); 32]),
+            crate::PublicationStaging::new(
+                writer.clone(),
+                WorkDependency::Work(writer),
+                IoBufferKind::Serialization,
+                AllocationId::new(format!("writer-allocation-{index}")),
+            )
+            .expect("writer staging")
+            .with_mapped_page_cache(
+                crate::PublicationMappedStaging::new(
+                    mapped,
+                    WorkDependency::Work(release),
+                    AllocationId::new(format!("mapped-allocation-{index}")),
+                )
+                .expect("mapped exposure retained through a distinct release"),
+            ),
+            crate::PublicationResourceBounds::new(1, 1, writer_bytes, mapped_bytes)
+                .expect("publication bounds"),
+        )
+    };
+    let ledger = crate::PublicationLayoutLedger::new(vec![layout(0, 20, 30), layout(1, 40, 50)])
+        .expect("two-producer publication ledger");
+
+    assert_eq!(ledger.writer_buffer_bytes(), 60);
+    assert_eq!(ledger.mapped_page_cache_bytes(), 80);
 }
 
 fn inactive_release_predecessor_plan(fenced_predecessor: bool) -> (ExecutionDag, WorkNodeId) {

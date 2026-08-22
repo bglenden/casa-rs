@@ -1656,6 +1656,13 @@ fn validate_products(
             reason: "restored-image and restoring-beam requirements must be requested together",
         });
     }
+    if restored_image_requested
+        && !(products.contains(ProductKind::Residual) && products.contains(ProductKind::Model))
+    {
+        return Err(CompileProblemError::InvalidProductCombination {
+            reason: "a restored image requires residual and model products",
+        });
+    }
     let common_spectral_beam = science.spectral.coupling == SpectralCoupling::CommonRestoringBeam;
     let common_product_beam = products.restoring_beam == RestoringBeamPolicy::Common;
     if common_spectral_beam != common_product_beam {
@@ -1687,11 +1694,32 @@ fn validate_products(
             reason: "Taylor products require a Taylor reconstruction basis",
         });
     }
-    if products.contains(ProductKind::SpectralIndex)
-        && !(taylor_terms >= 2 && products.contains(ProductKind::TaylorTerms))
+    if products.contains(ProductKind::TaylorTerms)
+        && ![
+            ProductKind::Psf,
+            ProductKind::Residual,
+            ProductKind::Model,
+            ProductKind::RestoredImage,
+            ProductKind::SumWeights,
+            ProductKind::Weight,
+            ProductKind::PrimaryBeam,
+            ProductKind::PbCorrectedImage,
+        ]
+        .into_iter()
+        .any(|product| products.contains(product))
     {
         return Err(CompileProblemError::InvalidProductCombination {
-            reason: "spectral index requires at least two Taylor terms and Taylor products",
+            reason: "a Taylor coefficient set requires at least one Taylor image product",
+        });
+    }
+    if products.contains(ProductKind::SpectralIndex)
+        && !(taylor_terms >= 2
+            && products.contains(ProductKind::TaylorTerms)
+            && products.contains(ProductKind::Residual)
+            && products.contains(ProductKind::RestoredImage))
+    {
+        return Err(CompileProblemError::InvalidProductCombination {
+            reason: "spectral index requires at least two Taylor terms plus Taylor, residual, and restored-image products",
         });
     }
     if products.contains(ProductKind::SpectralIndexError)
@@ -1707,6 +1735,19 @@ fn validate_products(
     {
         return Err(CompileProblemError::InvalidProductCombination {
             reason: "PB-corrected spectral index requires spectral-index and primary-beam products",
+        });
+    }
+    if products.contains(ProductKind::Beam)
+        && ![
+            ProductKind::Psf,
+            ProductKind::Residual,
+            ProductKind::RestoredImage,
+        ]
+        .into_iter()
+        .any(|product| products.contains(product))
+    {
+        return Err(CompileProblemError::InvalidProductCombination {
+            reason: "beam metadata requires a PSF, residual, or restored-image product",
         });
     }
     Ok(())

@@ -225,6 +225,41 @@ fn inputs_with_instrument() -> ProblemInputIdentities {
     )
 }
 
+fn compile_product_set(
+    requested: Vec<ProductKind>,
+    instrument_response: InstrumentResponse,
+) -> Result<casa_imaging_model::CompiledProblem, CompileProblemError> {
+    let restoring_beam = if requested.contains(&ProductKind::RestoredImage) {
+        RestoringBeamPolicy::PerPlane
+    } else {
+        RestoringBeamPolicy::None
+    };
+    let inputs = if instrument_response == InstrumentResponse::Scalar {
+        inputs(false)
+    } else {
+        inputs_with_instrument()
+    };
+    compile_request(
+        ProblemSpecification::new(
+            ScientificContract::new(
+                SpectralContract::new(SpectralSampling::Identity, SpectralCoupling::Independent),
+                MeasurementEquationContract::new(instrument_response, inner_products()),
+            ),
+            reconstruction(),
+            weighting(),
+            ProductRequirements::new(
+                requested,
+                ProductNormalization::UnitResponse,
+                restoring_beam,
+                product_validity(),
+            ),
+            read_only_transaction(),
+            numerics(false),
+        ),
+        inputs,
+    )
+}
+
 #[test]
 fn equivalent_science_has_one_canonical_compiled_identity() {
     let first = compile_request(specification(false), inputs(false)).expect("compile first");
@@ -763,37 +798,126 @@ fn incomplete_or_non_finite_numerics_fail_at_compile_time() {
 }
 
 #[test]
-fn derived_products_require_their_scientific_sources() {
-    let specification = ProblemSpecification::new(
-        science(),
-        ReconstructionContract::new(
-            ReconstructionBasis::Constant,
-            ReconstructionAlgorithm::Hogbom,
-            ReconstructionControls::new(100, 0.1, 0.0),
-            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+fn every_derived_product_requires_a_closed_scientific_source_set() {
+    let cases = [
+        (
+            "restored image without residual",
+            vec![ProductKind::Model, ProductKind::RestoredImage],
+            InstrumentResponse::Scalar,
         ),
-        weighting(),
-        ProductRequirements::new(
+        (
+            "restored image without model",
+            vec![ProductKind::Residual, ProductKind::RestoredImage],
+            InstrumentResponse::Scalar,
+        ),
+        (
+            "PB-corrected image without restored image",
+            vec![ProductKind::PrimaryBeam, ProductKind::PbCorrectedImage],
+            InstrumentResponse::PrimaryBeam,
+        ),
+        (
+            "Taylor collection without a Taylor image",
+            vec![ProductKind::TaylorTerms],
+            InstrumentResponse::Scalar,
+        ),
+        (
+            "spectral index without Taylor collection",
             vec![
-                ProductKind::Psf,
                 ProductKind::Residual,
                 ProductKind::Model,
                 ProductKind::RestoredImage,
-                ProductKind::SumWeights,
-                ProductKind::TaylorTerms,
+                ProductKind::SpectralIndex,
             ],
-            ProductNormalization::UnitResponse,
-            RestoringBeamPolicy::PerPlane,
-            product_validity(),
+            InstrumentResponse::Scalar,
         ),
-        read_only_transaction(),
-        numerics(false),
-    );
+        (
+            "spectral index without residual",
+            vec![
+                ProductKind::Model,
+                ProductKind::RestoredImage,
+                ProductKind::TaylorTerms,
+                ProductKind::SpectralIndex,
+            ],
+            InstrumentResponse::Scalar,
+        ),
+        (
+            "spectral index without restored image",
+            vec![
+                ProductKind::Residual,
+                ProductKind::Model,
+                ProductKind::TaylorTerms,
+                ProductKind::SpectralIndex,
+            ],
+            InstrumentResponse::Scalar,
+        ),
+        (
+            "spectral-index error without spectral index",
+            vec![
+                ProductKind::Residual,
+                ProductKind::Model,
+                ProductKind::RestoredImage,
+                ProductKind::TaylorTerms,
+                ProductKind::SpectralIndexError,
+            ],
+            InstrumentResponse::Scalar,
+        ),
+        (
+            "PB-corrected spectral index without spectral index",
+            vec![
+                ProductKind::PrimaryBeam,
+                ProductKind::PbCorrectedSpectralIndex,
+            ],
+            InstrumentResponse::PrimaryBeam,
+        ),
+        (
+            "PB-corrected spectral index without primary beam",
+            vec![
+                ProductKind::Residual,
+                ProductKind::Model,
+                ProductKind::RestoredImage,
+                ProductKind::TaylorTerms,
+                ProductKind::SpectralIndex,
+                ProductKind::PbCorrectedSpectralIndex,
+            ],
+            InstrumentResponse::PrimaryBeam,
+        ),
+        (
+            "beam metadata without a beam-bearing image",
+            vec![ProductKind::Model, ProductKind::Beam],
+            InstrumentResponse::Scalar,
+        ),
+    ];
 
-    assert!(matches!(
-        compile_request(specification, inputs(false)),
-        Err(CompileProblemError::InvalidProductCombination { .. })
-    ));
+    for (case, requested, response) in cases {
+        assert!(
+            matches!(
+                compile_product_set(requested, response),
+                Err(CompileProblemError::InvalidProductCombination { .. })
+            ),
+            "{case} must fail before Product Graph construction"
+        );
+    }
+}
+
+#[test]
+fn taylor_collection_accepts_an_explicit_taylor_image_source() {
+    let compiled = compile_product_set(
+        vec![ProductKind::Psf, ProductKind::TaylorTerms],
+        InstrumentResponse::Scalar,
+    )
+    .expect("Taylor PSF terms form a nonempty coefficient collection");
+    let graph = compiled.product_graph();
+    let collection = graph
+        .node(ProductRole::TaylorCoefficientSet)
+        .expect("Taylor collection");
+
+    assert!(!collection.dependencies().is_empty());
+    assert!(collection.dependencies().iter().all(|dependency| {
+        matches!(
+            graph.nodes()[dependency.ordinal()].role(),
+            ProductRole::Psf(ProductTerm::Taylor(_))
+        )
+    }));
 }
 
 #[test]
